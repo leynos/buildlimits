@@ -189,7 +189,7 @@ def refusing_runner(argv: cabc.Sequence[str]) -> subprocess.CompletedProcess[str
 def _requested(argv: cabc.Sequence[str], verb: str) -> bool:
     """Report whether an argv asks the manager for one control verb.
 
-    Both transports are recognised, so the assertion holds whichever one the
+    Both transports are recognized, so the assertion holds whichever one the
     managed cache fell back to: the private path passes ``stop``/``start``
     directly, and the public bus names the D-Bus method instead.
 

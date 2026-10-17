@@ -199,7 +199,7 @@ def test_an_unreadable_barrier_is_reported_even_where_exists_reports_absent(
 
     monkeypatch.setattr(Path, "exists", absent_on_error)
     supervisor.recovery.reclaim_after_accounting()
-    assert state.verbs == [], "an unreadable directory never authorises a start"
+    assert state.verbs == [], "an unreadable directory never authorizes a start"
     assert "cannot inspect" in capsys.readouterr().err, (
         "the unknown path is reported rather than read as absent"
     )

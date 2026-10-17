@@ -1,4 +1,4 @@
-"""Listener pressure metrics preserve backlog and due retry behavior."""
+"""Listener pressure metrics preserve backlog and due retry behaviour."""
 
 import errno
 import typing as typ

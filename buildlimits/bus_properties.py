@@ -204,7 +204,7 @@ def service_properties(
         raise BusQueryError(msg)
     path = _unit_path(runner, unit)
     # MainPID/cgroup come from one service snapshot. Unit state is sampled
-    # afterward: a newly active service cannot be mistaken for a stopped one.
+    # afterwards: a newly active service cannot be mistaken for a stopped one.
     entries = _snapshot(runner, path, SERVICE + ".Service")
     if "ActiveState" in properties:
         entries["ActiveState"] = _snapshot(runner, path, SERVICE + ".Unit").get(
