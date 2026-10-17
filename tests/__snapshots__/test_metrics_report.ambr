@@ -1,0 +1,407 @@
+# serializer version: 1
+# name: test_empty_window_has_no_invented_samples
+  dict({
+    'adapters': dict({
+      'connection_attempts': dict({
+        'count': 0,
+        'maximum': None,
+        'p50': None,
+        'p90': None,
+        'p99': None,
+      }),
+      'outcomes': dict({
+      }),
+      'runtime_seconds': dict({
+        'count': 0,
+        'maximum': None,
+        'p50': None,
+        'p90': None,
+        'p99': None,
+      }),
+      'self_reported': True,
+      'wait_seconds': dict({
+        'count': 0,
+        'maximum': None,
+        'p50': None,
+        'p90': None,
+        'p99': None,
+      }),
+    }),
+    'cache': dict({
+      'direct_fallback_ratio': None,
+      'paths': dict({
+      }),
+    }),
+    'first_timestamp': None,
+    'gauges': dict({
+      'held_maximum': None,
+      'queue_maximum': None,
+      'queue_sample_mean': None,
+    }),
+    'history': list([
+    ]),
+    'last_timestamp': None,
+    'records': 0,
+    'requests': dict({
+      'cancellations': dict({
+      }),
+      'outcomes': dict({
+      }),
+      'per_minute': 0.0,
+      'reasons': dict({
+      }),
+      'runtime_seconds': dict({
+        'count': 0,
+        'maximum': None,
+        'p50': None,
+        'p90': None,
+        'p99': None,
+      }),
+      'wait_seconds': dict({
+        'count': 0,
+        'maximum': None,
+        'p50': None,
+        'p90': None,
+        'p99': None,
+      }),
+    }),
+    'transitions': dict({
+      'cache_load_unknown': dict({
+      }),
+      'cache_load_unknown_transitions': 0,
+      'health': dict({
+      }),
+      'health_transitions': 0,
+      'internal_errors': 0,
+      'pool_failure_count': 0,
+      'pool_failures': dict({
+      }),
+      'reachability': dict({
+      }),
+      'reachability_transitions': 0,
+      'server_drain_released': 0,
+      'supervisor_starts': 0,
+    }),
+    'truncated': False,
+    'window_seconds': 3600,
+  })
+# ---
+# name: test_metrics_report
+  dict({
+    'adapters': dict({
+      'connection_attempts': dict({
+        'count': 1,
+        'maximum': 2.0,
+        'p50': 2.0,
+        'p90': 2.0,
+        'p99': 2.0,
+      }),
+      'outcomes': dict({
+        'completed': 1,
+      }),
+      'runtime_seconds': dict({
+        'count': 1,
+        'maximum': 5.0,
+        'p50': 5.0,
+        'p90': 5.0,
+        'p99': 5.0,
+      }),
+      'self_reported': True,
+      'wait_seconds': dict({
+        'count': 1,
+        'maximum': 3.0,
+        'p50': 3.0,
+        'p90': 3.0,
+        'p99': 3.0,
+      }),
+    }),
+    'cache': dict({
+      'direct_fallback_ratio': 0.5,
+      'paths': dict({
+        'cached': 1,
+        'direct_fallback': 1,
+      }),
+    }),
+    'first_timestamp': '2026-01-01T00:00:00+00:00',
+    'gauges': dict({
+      'held_maximum': 2.0,
+      'queue_maximum': 2.0,
+      'queue_sample_mean': 1.0,
+    }),
+    'history': list([
+      dict({
+        'event': 'supervisor_started',
+        'fields': dict({
+          'health': 'healthy',
+          'held': '0',
+          'queued': '0',
+        }),
+        'self_reported': False,
+        'source': 'supervisor',
+        'timestamp': '2026-01-01T00:00:00+00:00',
+      }),
+      dict({
+        'event': 'request_queued',
+        'fields': dict({
+          'held': '1',
+          'queued': '2',
+        }),
+        'self_reported': False,
+        'source': 'supervisor',
+        'timestamp': '2026-01-01T00:00:01+00:00',
+      }),
+      dict({
+        'event': 'request_admitted',
+        'fields': dict({
+          'cache_path': 'cached',
+          'held': '2',
+          'queued': '1',
+        }),
+        'self_reported': False,
+        'source': 'supervisor',
+        'timestamp': '2026-01-01T00:00:02+00:00',
+      }),
+      dict({
+        'event': 'request_admitted',
+        'fields': dict({
+          'cache_path': 'direct_fallback',
+        }),
+        'self_reported': False,
+        'source': 'supervisor',
+        'timestamp': '2026-01-01T00:00:03+00:00',
+      }),
+      dict({
+        'event': 'request_finished',
+        'fields': dict({
+          'cancellation': 'none',
+          'outcome': 'completed',
+          'reason': 'none',
+          'runtime_seconds': '5.000',
+          'wait_seconds': '2.000',
+        }),
+        'self_reported': False,
+        'source': 'supervisor',
+        'timestamp': '2026-01-01T00:00:07+00:00',
+      }),
+      dict({
+        'event': 'request_finished',
+        'fields': dict({
+          'cancellation': 'health',
+          'outcome': 'refused',
+          'reason': 'unhealthy',
+          'runtime_seconds': '0.000',
+          'wait_seconds': '4.000',
+        }),
+        'self_reported': False,
+        'source': 'supervisor',
+        'timestamp': '2026-01-01T00:00:08+00:00',
+      }),
+      dict({
+        'event': 'cache_reachability',
+        'fields': dict({
+          'reachable': '0',
+        }),
+        'self_reported': False,
+        'source': 'supervisor',
+        'timestamp': '2026-01-01T00:00:09+00:00',
+      }),
+      dict({
+        'event': 'pool_failure',
+        'fields': dict({
+          'operation': 'read',
+        }),
+        'self_reported': False,
+        'source': 'supervisor',
+        'timestamp': '2026-01-01T00:00:10+00:00',
+      }),
+      dict({
+        'event': 'health_changed',
+        'fields': dict({
+          'health': 'unhealthy',
+        }),
+        'self_reported': False,
+        'source': 'supervisor',
+        'timestamp': '2026-01-01T00:00:11+00:00',
+      }),
+      dict({
+        'event': 'adapter_finished',
+        'fields': dict({
+          'connection_attempts': '2',
+          'outcome': 'completed',
+          'runtime_seconds': '5.000',
+          'wait_seconds': '3.000',
+        }),
+        'self_reported': True,
+        'source': 'adapter',
+        'timestamp': '2026-01-01T00:00:12+00:00',
+      }),
+    ]),
+    'last_timestamp': '2026-01-01T00:00:12+00:00',
+    'records': 10,
+    'requests': dict({
+      'cancellations': dict({
+        'health': 1,
+        'none': 1,
+      }),
+      'outcomes': dict({
+        'completed': 1,
+        'refused': 1,
+      }),
+      'per_minute': 0.033333,
+      'reasons': dict({
+        'none': 1,
+        'unhealthy': 1,
+      }),
+      'runtime_seconds': dict({
+        'count': 2,
+        'maximum': 5.0,
+        'p50': 0.0,
+        'p90': 5.0,
+        'p99': 5.0,
+      }),
+      'wait_seconds': dict({
+        'count': 2,
+        'maximum': 4.0,
+        'p50': 2.0,
+        'p90': 4.0,
+        'p99': 4.0,
+      }),
+    }),
+    'transitions': dict({
+      'cache_load_unknown': dict({
+      }),
+      'cache_load_unknown_transitions': 0,
+      'health': dict({
+        'unhealthy': 1,
+      }),
+      'health_transitions': 1,
+      'internal_errors': 0,
+      'pool_failure_count': 1,
+      'pool_failures': dict({
+        'read': 1,
+      }),
+      'reachability': dict({
+        '0': 1,
+      }),
+      'reachability_transitions': 1,
+      'server_drain_released': 0,
+      'supervisor_starts': 1,
+    }),
+    'truncated': False,
+    'window_seconds': 3600,
+  })
+# ---
+# name: test_query_cap_precedes_source_filter.1
+  dict({
+    'adapters': dict({
+      'connection_attempts': dict({
+        'count': 1,
+        'maximum': 2.0,
+        'p50': 2.0,
+        'p90': 2.0,
+        'p99': 2.0,
+      }),
+      'outcomes': dict({
+        'completed': 1,
+      }),
+      'runtime_seconds': dict({
+        'count': 1,
+        'maximum': 5.0,
+        'p50': 5.0,
+        'p90': 5.0,
+        'p99': 5.0,
+      }),
+      'self_reported': True,
+      'wait_seconds': dict({
+        'count': 1,
+        'maximum': 3.0,
+        'p50': 3.0,
+        'p90': 3.0,
+        'p99': 3.0,
+      }),
+    }),
+    'cache': dict({
+      'direct_fallback_ratio': None,
+      'paths': dict({
+      }),
+    }),
+    'first_timestamp': '2026-01-01T00:00:12+00:00',
+    'gauges': dict({
+      'held_maximum': None,
+      'queue_maximum': None,
+      'queue_sample_mean': None,
+    }),
+    'history': list([
+      dict({
+        'event': 'adapter_finished',
+        'fields': dict({
+          'connection_attempts': '2',
+          'outcome': 'completed',
+          'runtime_seconds': '5.000',
+          'wait_seconds': '3.000',
+        }),
+        'self_reported': True,
+        'source': 'adapter',
+        'timestamp': '2026-01-01T00:00:12+00:00',
+      }),
+    ]),
+    'last_timestamp': '2026-01-01T00:00:12+00:00',
+    'records': 1,
+    'requests': dict({
+      'cancellations': dict({
+      }),
+      'outcomes': dict({
+      }),
+      'per_minute': 0.0,
+      'reasons': dict({
+      }),
+      'runtime_seconds': dict({
+        'count': 0,
+        'maximum': None,
+        'p50': None,
+        'p90': None,
+        'p99': None,
+      }),
+      'wait_seconds': dict({
+        'count': 0,
+        'maximum': None,
+        'p50': None,
+        'p90': None,
+        'p99': None,
+      }),
+    }),
+    'transitions': dict({
+      'cache_load_unknown': dict({
+      }),
+      'cache_load_unknown_transitions': 0,
+      'health': dict({
+      }),
+      'health_transitions': 0,
+      'internal_errors': 0,
+      'pool_failure_count': 0,
+      'pool_failures': dict({
+      }),
+      'reachability': dict({
+      }),
+      'reachability_transitions': 0,
+      'server_drain_released': 0,
+      'supervisor_starts': 0,
+    }),
+    'truncated': True,
+    'window_seconds': 1800,
+  })
+# ---
+# name: test_query_cap_precedes_source_filter[journal_command]
+  list([
+    list([
+      'journalctl',
+      '--user',
+      '--output=json',
+      '--no-pager',
+      '--output-fields=BUILD_LIMITS_ACCEPT_ERRNO,BUILD_LIMITS_ACCEPT_PAUSED,BUILD_LIMITS_ACCEPT_PAUSE_SECONDS,BUILD_LIMITS_ACCEPT_STATE,BUILD_LIMITS_BUSY_RETRIES,BUILD_LIMITS_CACHE_PATH,BUILD_LIMITS_CANCELLATION,BUILD_LIMITS_CAPACITY,BUILD_LIMITS_CONNECTION_ATTEMPTS,BUILD_LIMITS_DRAINING,BUILD_LIMITS_DRAIN_ATTEMPTS,BUILD_LIMITS_DRAIN_FAILURES,BUILD_LIMITS_DRAIN_OPERATION,BUILD_LIMITS_DRAIN_REASON,BUILD_LIMITS_DRAIN_RECOVERIES,BUILD_LIMITS_DRAIN_STATE,BUILD_LIMITS_EVENT,BUILD_LIMITS_FAILURES,BUILD_LIMITS_FD_BUDGET,BUILD_LIMITS_FD_BUDGET_KNOWN,BUILD_LIMITS_FD_HIGH_WATER,BUILD_LIMITS_FD_RETAINED,BUILD_LIMITS_HEALTH,BUILD_LIMITS_HELD,BUILD_LIMITS_LOAD_UNKNOWN,BUILD_LIMITS_OPERATION,BUILD_LIMITS_OUTCOME,BUILD_LIMITS_PHASE,BUILD_LIMITS_QUEUED,BUILD_LIMITS_QUEUED_HIGH_WATER,BUILD_LIMITS_REACHABLE,BUILD_LIMITS_REASON,BUILD_LIMITS_RECOVERY_ATTEMPTS,BUILD_LIMITS_RECOVERY_COMPLETIONS,BUILD_LIMITS_RECOVERY_EXHAUSTIONS,BUILD_LIMITS_RECOVERY_FAILURES,BUILD_LIMITS_RELEASED,BUILD_LIMITS_RUNNING,BUILD_LIMITS_RUNTIME_SECONDS,BUILD_LIMITS_SCHEMA,BUILD_LIMITS_SERVER_DRAIN,BUILD_LIMITS_SOURCE,BUILD_LIMITS_WAIT_SECONDS,_SYSTEMD_USER_UNIT,__REALTIME_TIMESTAMP',
+      '--since=-30m',
+      '--lines=11',
+      'BUILD_LIMITS_SCHEMA=1',
+    ]),
+  ])
+# ---

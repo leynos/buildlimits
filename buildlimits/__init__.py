@@ -1,17 +1,28 @@
-"""buildlimits package."""
+"""Machine-wide admission for concurrent Cargo compilation.
 
-import importlib
-import typing as typ
+The package provides the compiler adapters that Cargo runs through
+``RUSTC_WRAPPER`` and ``RUSTDOC``, the per-owner admission supervisor that
+holds guildmaster tokens for admitted compiler groups, and the operator
+status, recovery and metrics commands. ``docs/users-guide.md`` describes
+their use and ``docs/developers-guide.md`` the internal interfaces.
 
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
+Examples
+--------
+>>> Admission(cached=False).submit(1)
+[NotifyQueued(request_id=1, position=0), RequestToken()]
+"""
 
-PACKAGE_NAME = "buildlimits"
+from buildlimits.admission import Admission, GroupState
+from buildlimits.config import SupervisorConfig, load
+from buildlimits.effects import Exit
+from buildlimits.protocol import PROTOCOL_VERSION, CompileRequest
 
-try:  # pragma: no cover - Rust optional
-    rust = importlib.import_module(f"._{PACKAGE_NAME}_rs", package=__name__)
-    hello = typ.cast("cabc.Callable[[], str]", rust.hello)
-except ModuleNotFoundError:  # pragma: no cover - Python fallback
-    from .pure import hello
-
-__all__ = ["hello"]
+__all__ = [
+    "PROTOCOL_VERSION",
+    "Admission",
+    "CompileRequest",
+    "Exit",
+    "GroupState",
+    "SupervisorConfig",
+    "load",
+]

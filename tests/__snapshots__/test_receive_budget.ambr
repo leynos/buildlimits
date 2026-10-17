@@ -1,0 +1,38 @@
+# serializer version: 1
+# name: test_incomplete_truncation_does_not_supply_a_policy_body[deadline-missing-body]
+  dict({
+    'baseline': True,
+    'error': 'TimeoutError',
+    'timeout': 0.01,
+  })
+# ---
+# name: test_incomplete_truncation_does_not_supply_a_policy_body[deadline-partial-header]
+  dict({
+    'baseline': True,
+    'error': 'TimeoutError',
+    'timeout': 0.01,
+  })
+# ---
+# name: test_incomplete_truncation_does_not_supply_a_policy_body[eof-missing-body]
+  dict({
+    'baseline': True,
+    'error': 'ProtocolError',
+    'timeout': 0.01,
+  })
+# ---
+# name: test_incomplete_truncation_does_not_supply_a_policy_body[eof-partial-header]
+  dict({
+    'baseline': True,
+    'error': 'ProtocolError',
+    'timeout': 0.01,
+  })
+# ---
+# name: test_truncation_retains_only_complete_body_and_closes_rights_immediately
+  dict({
+    'baseline': True,
+    'body': True,
+    'immediate': True,
+    'private': True,
+    'timeout': 10.0,
+  })
+# ---

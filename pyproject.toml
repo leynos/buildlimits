@@ -1,11 +1,21 @@
 [project]
 name = "buildlimits"
 version = "0.1.0"
-description = "buildlimits package"
+description = "Machine-wide admission for concurrent Cargo compilation through guildmaster."
 readme = "README.md"
 requires-python = ">=3.14"
 license = { text = "ISC" }
+# The compiler adapters run once per rustc invocation, so the package has no
+# runtime dependencies: every import is from the standard library.
 dependencies = []
+
+[project.scripts]
+build-limits-rustc = "buildlimits.adapter:rustc_main"
+build-limits-rustdoc = "buildlimits.adapter:rustdoc_main"
+build-limits-supervisor = "buildlimits.service:main"
+build-limits-status = "buildlimits.status_cli:main"
+build-limits-recover = "buildlimits.recover_cli:main"
+build-limits-metrics = "buildlimits.metrics_cli:main"
 
 [dependency-groups]
 dev = [
@@ -17,9 +27,13 @@ dev = [
     "pyyaml==6.0.3",
     "types-pyyaml",
     "pyright",
-    "ty==0.0.56",
+    "ty==0.0.74",
     "pytest-timeout",
     "pytest-xdist",
+    "crosshair-tool>=0.0.80",
+    "hypothesis>=6.0,<7",
+    "pytest-bdd>=8.0,<9",
+    "syrupy>=6.0,<7",
 ]
 
 [tool.ruff]
@@ -86,9 +100,48 @@ extend-ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/__init__.py" = ["RUF067"]
-"**/test_*.py" = ["S101", "PLR0913", "PLR0917", "PLR2004", "PLR6301"]
-"tests/steps/*.py" = ["S101", "PLR0913", "PLR0917", "PLR2004", "PLR6301"]
+"**/__init__.py" = ["non-empty-init-module"]
+# Pytest modules are not reusable public APIs; reusable support modules remain
+# subject to the DOC policy.
+"**/test_*.py" = [
+    "missing-type-function-argument",
+    "undocumented-public-method",
+    "undocumented-public-function",
+    "docstring-missing-returns",
+    "docstring-missing-yields",
+    "docstring-missing-exception",
+    "line-too-long",
+    "boolean-type-hint-positional-argument",
+    "boolean-positional-value-in-call",
+    "manual-list-comprehension",
+    "too-many-arguments",
+    "too-many-locals",
+    "too-many-positional-arguments",
+    "magic-value-comparison",
+    "no-self-use",
+    "pytest-composite-assertion",
+    "assert",
+    "suspicious-subprocess-import",
+    "subprocess-without-shell-equals-true",
+    "start-process-with-partial-path",
+    "multiple-with-statements",
+    "typing-only-standard-library-import",
+    "raise-vanilla-args",
+]
+"tests/steps/*.py" = ["assert", "too-many-arguments", "too-many-positional-arguments", "magic-value-comparison", "no-self-use"]
+# CrossHair proves the ``assert`` statements in these contracts; they are the
+# specification, not debugging aids.
+"tests/crosshair_contracts.py" = ["assert"]
+# The state machine is the specification of the recovery transaction's safety
+# contract, and Hypothesis refuses to report a counterexample against a bare
+# ``AssertionError``. Its ``assert`` statements are the contract and its guards
+# carry the message a failing search is read from, so they are not debugging
+# aids to be deleted under ``-O``.
+"tests/cache_recovery_state_machine.py" = ["assert"]
+# The acceptance harness and the fake sccache drive the user's own systemd
+# tools and the vectors their tests supply, found on PATH as a build would.
+"tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
+"tests/fixtures/fake_sccache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
@@ -156,6 +209,11 @@ typing = "typ"
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
+
+[tool.ruff.lint.pydoclint]
+# Public one-line docstrings must still describe their returns and exceptions.
+# Private-helper exceptions are declared at their individual definitions.
+ignore-one-line-docstrings = false
 
 [tool.ruff.lint.mccabe]
 max-complexity = 8
@@ -308,6 +366,39 @@ exclude = [".venv", ".uv-cache", ".uv-tools", ".tools", ".git"]
 [tool.skylos.gate]
 strict = true
 
+# The supervisor reaches these members through typed collaborators and
+# dataclass-held owners, which a static call graph cannot resolve. Entry-point
+# rules do not rescue private callees, so each verified callee is named too.
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = [
+    "buildlimits.cache_recovery.CacheRecovery.tick",
+    "buildlimits.cache_recovery.CacheRecovery.request_stop",
+    "buildlimits.cache_recovery.CacheRecovery._starved",
+    "buildlimits.cache_recovery.CacheRecovery._step",
+    "buildlimits.cache_recovery.CacheRecovery._write_barrier",
+    "buildlimits.cache_recovery.CacheRecovery._try_stop",
+    "buildlimits.cache_recovery.CacheRecovery._account",
+    "buildlimits.cache_recovery.CacheRecovery._try_start",
+]
+path = ["buildlimits/cache_recovery.py"]
+reason = "supervisor_polling._poll_server calls supervisor.recovery.tick on every server poll, after the drain probe, and tick dispatches _starved and _step; _step invokes the phase actions; _try_stop calls request_stop to retain bounded queued-job progress. Recovery transaction, queued-request and cancellation regressions exercise this path. Skylos resolves neither the dataclass-held CacheRecovery reached through Supervisor.recovery nor the private callees of an unresolved dispatch."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.recovery_barrier.RecoveryBarrier.write"]
+path = ["buildlimits/recovery_barrier.py"]
+reason = "CacheRecovery._write_barrier writes the restart barrier through the RecoveryBarrier the transaction holds; it is a callee of the declared recovery dispatch above."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = [
+    "buildlimits.launch.HeldChild.reap",
+    "buildlimits.sccache.ManagedSccache.stop",
+    "buildlimits.systemd.UserManager.control_unit",
+]
+reason = "The supervisor reaches these through typed collaborators (Groups, ManagedSccache and CacheRecovery), which a static call graph cannot resolve. CacheRecovery selects its control verb dynamically, so no call edge reaches the queued-unit-job method the user manager exposes."
+
 
 
 [tool.nose]
@@ -323,7 +414,38 @@ exclude = [".venv/**", ".uv-cache/**", ".uv-tools/**", ".tools/**", ".git/**"]
 # dead-helper detection there. Names collected by pytest are entry points;
 # their function bodies and all other definitions remain checked.
 [tool.vulture]
-ignore_names = ["test_*", "pytestmark"]
+# The remaining names are read outside the scanned test tree: production code
+# reads the attributes tests set on real objects, mocks read their configured
+# results, callers dispatch ``__call__`` on runner doubles, and CrossHair
+# loads its contracts by name.
+ignore_names = [
+    "test_*",
+    "pytestmark",
+    "__call__",
+    "return_value",
+    "side_effect",
+    "_next_cache_poll",
+    "_next_drain",
+    "_next_server_poll",
+    "ahead",
+    "baseline_known",
+    "busy_retries",
+    "high_water",
+    "next_due",
+    "slice_dir",
+    "limit_order_is_total",
+    "planned_limits_are_reachable",
+]
+# pytest-bdd steps and Hypothesis state-machine rules are registered by their
+# decorators and dispatched by the framework, never called by name.
+ignore_decorators = [
+    "@given",
+    "@when",
+    "@then",
+    "@rule",
+    "@invariant",
+    "@precondition",
+]
 min_confidence = 60
 
 [tool.mutmut]
@@ -338,7 +460,13 @@ pytest_add_cli_args_test_selection = ["tests/"]
 [tool.pytest.ini_options]
 # Tests automatically killed after seconds elapsed
 timeout = 30
-testpaths = ["tests"]
+# Module doctests are part of the contract, so collection covers the package
+# as well as the test tree.
+testpaths = ["tests", "buildlimits"]
+addopts = ["--doctest-modules"]
+markers = [
+    "systemd_user: needs a running systemd user manager and busctl",
+]
 
 [tool.uv]
 package = true
@@ -351,3 +479,657 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["buildlimits"]
 
+# Reasoned exceptions to the shared duplication gate. Each entry names every
+# location of one family, so a further copy still blocks.
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/requesters.py",
+    "tests/test_request_validation.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/admission.py",
+    "buildlimits/effect_dispatch.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/attributes.py",
+    "buildlimits/launch_setup.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/adapter.py",
+    "tests/test_cache_recovery_transport.py",
+    "buildlimits/status_client.py",
+    "tests/test_supervisor_startup.py",
+    "tests/test_queue_budget.py",
+    "tests/test_request_pressure.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/requesters.py",
+    "buildlimits/adapter.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_supervisor_loop.py",
+    "buildlimits/cache_recovery.py",
+    "buildlimits/server_watch.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/recover_cli.py::_summary",
+    "buildlimits/recover_cli.py::_report",
+]
+reason = "The text summary and the report dispatcher read the same document keys for different outputs; the detector matches their shared lookups, not shared logic."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/sccache.py::stop",
+    "buildlimits/sccache.py::start",
+]
+reason = "stop and start are the public, documented verbs of the managed-cache port; each delegates to the shared private _control, so only their docstrings repeat."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/cache_recovery.py",
+    "buildlimits/supervisor.py",
+]
+reason = "Two unrelated operator log lines share only the log-call shape."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_recovery_starvation.py::_permits_cooling",
+    "buildlimits/recovery_starvation.py",
+]
+reason = "The test oracle restates the cooldown rule independently so that a change to the production rule is caught, not mirrored."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/supervisor.py",
+    "tests/test_queue_budget.py",
+]
+reason = "The test calls the same private reply-flush method the supervisor loop calls; one statement is not duplicated logic."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_cache_recovery_composition.py"
+reason = "Counterpart scenarios: the same recovery transaction driven to different outcomes. Each test asserts a different contract with its own explanation, so the shared tick-and-assert shape is the specification, not copied logic."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_cache_recovery.py::test_the_transaction_stops_accounts_and_restarts_the_managed_cache",
+    "tests/test_cache_recovery.py::test_a_repeated_cancellation_cannot_lose_a_token_or_overflow_capacity",
+]
+reason = "Both scenarios drive one transaction through accounting and then assert different contracts (the full restart versus token conservation across a second drain); the shared arrange step is already the opened_recovery helper."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_adapter_busy.py",
+    "tests/test_adapter_run.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_combined_drain.py",
+    "tests/test_exec_failure.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_startup_accounting.py",
+    "tests/test_supervisor_startup.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_control_loop_metrics.py",
+    "tests/test_supervisor_drain_metrics.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission.py",
+    "tests/test_admission_rules_behaviour.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_supervisor_drain_metrics.py",
+    "tests/test_drain_control_faults.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_descriptor_mismatch.py",
+    "tests/test_combined_drain.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_server_watch_faults.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_recover_cli.py::test_the_json_output_is_the_document_an_operator_scripts_against",
+    "tests/test_recover_cli.py::test_the_operator_text_reports_each_outcome",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_on_systemd_behaviour.py",
+    "tests/test_cache_recovery_systemd.py",
+    "tests/test_pressure_systemd.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_drain_control_faults.py::test_unhealthy_journal_fault_preserves_token_and_health_transition",
+    "tests/test_drain_control_faults.py::test_fault_during_orderly_drain_keeps_unhealthy_reason",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_metrics_report.py::test_adapter_summary_is_self_reported",
+    "tests/test_metrics_report.py::test_invalid_record_identity",
+    "tests/test_metrics_report.py::test_event_source_matrix",
+    "tests/test_metrics_report.py::test_supervisor_requires_exact_unit",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_journal_lifecycle.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_adapter_metrics.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_launch.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_descriptor_status.py::test_descriptor_gauges_follow_live_process_state",
+    "tests/test_descriptor_status.py::test_unreadable_descriptor_usage_is_reported_without_failing_status",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_metrics_cli.py",
+    "tests/test_metrics_pressure_cli.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_adapter.py::make_socket"
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_cache_recovery_gauges.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_cache_recovery_machine.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_supervisor_drain_metrics.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/cached_unit_files.py",
+    "tests/test_nested_cargo.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_supervisor_loop.py",
+    "tests/test_supervisor_startup.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_cache_recovery_systemd.py",
+    "tests/test_pressure_systemd.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_journal_lifecycle.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_descriptor_pressure.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_adapter_metrics.py",
+    "tests/test_adapter_run.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_sccache_accounting.py",
+    "tests/test_server_watch.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_listener_metrics.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_cache_recovery_gauges.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_cache_recovery_machine.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_exec_failure.py",
+    "tests/test_service.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_launch_failure_pressure.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_server_watch.py::test_a_stopped_but_populated_cache_reports_its_own_kind",
+    "tests/test_server_watch.py::test_a_live_idle_cache_reports_the_live_work_kind",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_nested_cargo.py",
+    "tests/test_pressure_systemd.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/fixtures/fake_sccache.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_request_ownership.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_cache_recovery_machine.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_cache_recovery_machine.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_control_loop_metrics.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_adapter_metrics.py",
+    "tests/test_adapter_run.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_cache_recovery_transport.py",
+    "tests/test_combined_drain.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_cache_recovery_systemd.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_service.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_supervisor_health.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_framing_pressure.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_launch.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_adapter_run.py::fail_run",
+    "tests/test_nested_cargo_prerequisites.py::forbid",
+    "tests/test_rustdoc.py::fail_which",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_ports.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_server_watch.py::runner",
+    "tests/test_server_watch.py::refuse",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_recover_cli.py::departed",
+    "tests/test_status_query.py::fail",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_rules_behaviour.py::_drain",
+    "tests/test_admission_rules_behaviour.py::_killed",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/cache_recovery_state_machine.py::manager_transport",
+    "tests/cache_recovery_state_machine.py::cache_reachable",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_rules_behaviour.py::_one",
+    "tests/test_admission_rules_behaviour.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_cache_recovery_telemetry.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_adapter_busy_metrics.py",
+    "tests/test_adapter_run.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_listener_fairness.py",
+    "tests/test_listener_metrics.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_admission_cache_permission.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/cache_recovery_helpers.py::refusing_runner",
+    "tests/test_supervisor_loop.py::_empty_runner",
+    "tests/test_exec_failure.py::_quiet_runner",
+    "tests/test_supervisor_effects.py::_empty_runner",
+    "tests/test_supervisor_startup.py::_refusing_runner",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_group_drain_metrics.py",
+    "buildlimits/adapter_invocation.py",
+    "tests/test_cache_recovery_telemetry.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_drain_control_faults.py::fail",
+    "tests/test_launch_refusal_diagnostics.py::release",
+    "tests/test_listener_fairness.py::fail",
+    "tests/test_request_transactions.py::fail",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_status_render.py::test_the_fault_kind_renders_above_the_recovery_action",
+    "tests/test_status_render.py::test_the_summary_describes_each_state",
+    "tests/test_status_render.py::test_a_running_recovery_renders_its_fault_below_the_phase",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_drain_control_faults.py::fail",
+    "tests/test_launch_failure_pressure.py::fail_exec",
+    "tests/test_launch_lifecycle.py::fail",
+    "tests/test_request_ownership.py::refuse",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_adapter_metrics.py::emit",
+    "tests/test_control_loop_metrics.py::emit",
+    "tests/test_request_transactions.py::__setitem__",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/conftest.py",
+    "tests/test_cache_recovery_gauges.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_listener_metrics.py",
+    "tests/test_server_watch.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_receive_budget.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_sccache_accounting.py::test_zero_pid_without_stopped_state_does_not_account_for_work",
+    "tests/test_sccache_accounting.py::test_invalid_cgroup_paths_cannot_account_for_detached_work",
+    "tests/test_sccache_accounting.py::test_no_allocated_cgroup_and_stopped_state_account_for_old_work",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_adapter_busy.py",
+    "tests/test_adapter_busy_metrics.py",
+    "tests/test_adapter_metrics.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_adapter_metrics.py::reject",
+    "tests/test_exec_reader_ownership.py::fail",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_pressure_metrics.py::emit",
+    "tests/test_metrics.py::emit",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_listener_metrics.py",
+    "tests/test_requesters.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_launch_pressure.py::fail",
+    "tests/test_startup_descriptor_ownership.py::fail",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_request_cycles.py::fail",
+    "tests/test_unreleased_disconnect.py::fail",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_metrics_properties.py::test_counter_rejects_non_counts",
+    "tests/test_metrics_properties.py::test_duration_rejects_invalid_scalars",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_journal_native.py::test_invalid_native_values_are_rejected",
+    "tests/test_journal_native.py::test_invalid_native_names_are_rejected",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_server_watch_hold.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_launch_pressure.py",
+    "tests/test_recursive_jobserver.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_admission_on_systemd_behaviour.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_rules_behaviour.py::_cancel_second",
+    "tests/test_admission_rules_behaviour.py::_cancel_first",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_rules_behaviour.py::_busy",
+    "tests/test_admission_rules_behaviour.py::_idle",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_metrics_report.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_groups.py::__init__",
+    "tests/test_groups.py::abandon",
+]
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_requesters.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_ports.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_status_render.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_on_systemd_behaviour.py::_succeeds",
+    "tests/test_admission_on_systemd_behaviour.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_adapter_helpers.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/descriptor_helpers.py",
+    "tests/test_descriptor_pressure.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_host_acceptance_opt_in.py",
+    "tests/test_service_readiness.py",
+]
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_admission_rules_behaviour.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_supervisor_effects.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_admission_on_systemd_behaviour.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."

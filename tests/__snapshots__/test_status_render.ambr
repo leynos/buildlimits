@@ -1,0 +1,147 @@
+# serializer version: 1
+# name: test_the_summary_describes_each_state[cached]
+  '''
+  capacity 4, held 0, healthy, caching through sccache
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[descriptors]
+  '''
+  capacity None, held None, healthy, compiling directly
+  open descriptors 1277, soft limit 524288, hard limit 524288
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[direct]
+  '''
+  capacity 4, held 0, healthy, compiling directly
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[drain-fault-kind]
+  '''
+  capacity 4, held 1, UNHEALTHY, caching through sccache
+  drain fault kind: live_work
+  drain check failed; tokens retained: retained detached work: live sccache service
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[drain-fault]
+  '''
+  capacity 4, held 1, UNHEALTHY, caching through sccache
+  drain check failed; tokens retained: manager query failed: connection refused
+  no requests waiting
+  g3 server-drain (cached): tokio in <project>, 40.0s
+  '''
+# ---
+# name: test_the_summary_describes_each_state[group]
+  '''
+  capacity 1, held 1, healthy, caching through sccache
+  no requests waiting
+  g3 running (cached): tokio in <project>, 40.0s
+  '''
+# ---
+# name: test_the_summary_describes_each_state[health-reason]
+  '''
+  capacity 4, held 1, UNHEALTHY, caching through sccache
+  unhealthy reason: internal error; draining before exit
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[live-work-guidance]
+  '''
+  capacity 4, held 1, UNHEALTHY, caching through sccache
+  drain fault kind: live_work
+  drain check failed; tokens retained: retained detached work: live sccache service
+  required recovery action: Run build-limits-recover to stop the managed cache.
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[missing-group-directory]
+  '''
+  capacity 1, held 1, UNHEALTHY, caching through sccache
+  no requests waiting
+  g3 server-drain (cached): request metadata unavailable; retaining compiler token
+  '''
+# ---
+# name: test_the_summary_describes_each_state[missing-group-duration]
+  '''
+  capacity 1, held 1, healthy, caching through sccache
+  no requests waiting
+  g3 running (cached): tokio in <project>, duration unavailable
+  '''
+# ---
+# name: test_the_summary_describes_each_state[missing-group-label]
+  '''
+  capacity 1, held 1, UNHEALTHY, caching through sccache
+  no requests waiting
+  g3 server-drain (cached): request metadata unavailable; retaining compiler token
+  '''
+# ---
+# name: test_the_summary_describes_each_state[queued]
+  '''
+  capacity 1, held 1, healthy, caching through sccache
+  waiting 12.5s: serde in <project>
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[recovered]
+  '''
+  capacity 1, held 0, healthy, caching through sccache
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[recovering]
+  '''
+  capacity 1, held 1, healthy, caching through sccache
+  cache recovery stopping: next attempt in 60.0s, attempts 2
+  cache recovery last fault: cannot stop the managed cache
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[recovery-action]
+  '''
+  capacity 4, held 1, UNHEALTHY, caching through sccache
+  required recovery action: restore manager query transport; do not release tokens
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[unavailable-descriptors]
+  '''
+  capacity None, held None, healthy, compiling directly
+  open descriptors unavailable (errno 24), soft limit 524288, hard limit 524288
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[unhealthy]
+  '''
+  capacity 4, held 1, UNHEALTHY, caching through sccache
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[unlimited-descriptors]
+  '''
+  capacity None, held None, healthy, compiling directly
+  open descriptors 12, soft limit unlimited, hard limit unlimited
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[unreachable-cache]
+  '''
+  capacity 4, held 0, healthy, sccache unreachable, compiling directly
+  no requests waiting
+  no compiler groups
+  '''
+# ---

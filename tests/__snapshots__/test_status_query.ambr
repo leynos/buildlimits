@@ -1,0 +1,37 @@
+# serializer version: 1
+# name: test_an_idle_supervisor_describes_itself
+  dict({
+    'cache_mode': 'sccache',
+    'cache_recovery': dict({
+      'attempts': 0,
+      'last_fault': None,
+      'phase': 'idle',
+      'retry_in': 0.0,
+    }),
+    'caching': False,
+    'capacity': 3,
+    'descriptors': dict({
+      'budget': 30,
+      'hard': 128,
+      'hard_limit': 128,
+      'high_water': 0,
+      'open': 12,
+      'retained': 0,
+      'sampling_errno': None,
+      'soft': 64,
+      'soft_limit': 64,
+    }),
+    'device': '<device>',
+    'drain_attempts': 0,
+    'drain_fault': None,
+    'drain_fault_kind': None,
+    'groups': list([
+    ]),
+    'health_reason': None,
+    'healthy': True,
+    'held': 0,
+    'queued': list([
+    ]),
+    'recovery_action': None,
+  })
+# ---

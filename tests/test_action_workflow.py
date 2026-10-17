@@ -2,7 +2,7 @@
 
 import os
 import shutil
-import subprocess  # ruff: ignore[suspicious-subprocess-import] - integration tests drive the installed Actionlint.
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -170,7 +170,7 @@ def test_action_adapter_runs_outside_project_environment(tmp_path: Path) -> None
     environment.pop("VIRTUAL_ENV", None)
     uv = shutil.which("uv")
     assert uv is not None, "Standalone script validation requires uv on PATH"
-    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - resolved uv command and generated fixture, no shell.
+    result = subprocess.run(
         [
             uv,
             "run",
@@ -222,7 +222,7 @@ def test_actionlint_checks_adapted_action_expressions(
     actionlint = shutil.which("actionlint")
     if actionlint is None:
         pytest.skip("The Actionlint integration check requires actionlint on PATH")
-    result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - resolved detector and generated fixture, no shell.
+    result = subprocess.run(
         [actionlint, str(workflow)],
         capture_output=True,
         text=True,
