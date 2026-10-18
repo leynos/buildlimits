@@ -27,7 +27,12 @@ from systemd_harness import (
     wait_for,
 )
 
-pytestmark = systemd_user_marks("needs a systemd user manager and busctl")
+# The busy-host scenario waits out one stop retry (30 s of backoff) before the
+# cache can stop, so the default 30 s bound is too short for it.
+pytestmark = [
+    *systemd_user_marks("needs a systemd user manager and busctl"),
+    pytest.mark.timeout(180),
+]
 
 scenarios("features/cache_recovery_on_systemd.feature")
 
@@ -242,6 +247,71 @@ def _recover(recovery_world: RecoveryWorld) -> None:
         check=False,
         timeout=300,
     )
+
+
+@when("one of the two builds is killed while it waits")
+def _one_killed(recovery_world: RecoveryWorld) -> None:
+    """Kill only the first build, leaving the second running beside it."""
+    first = recovery_world.processes[0]
+    recovery_world.cancelled.append(first)
+    kill_group(first)
+    assert first.wait(timeout=30) == -9, "the adapter was killed, not asked"
+    assert recovery_world.processes[1].poll() is None, "the other build lives on"
+
+
+@then("the killed build's token stays held while the other build keeps running")
+def _one_retained(recovery_world: RecoveryWorld) -> None:
+    """Wait for the retained-work fault with a cached build still admitted."""
+    harness = recovery_world.harness
+    assert wait_for(lambda: _RETAINED in _drain_fault(recovery_world)), (
+        harness.journal()
+    )
+    assert harness.status()["held"] == 2, "the live build keeps its own token"
+
+
+@when("the operator asks for recovery without waiting")
+def _recover_nowait(recovery_world: RecoveryWorld) -> None:
+    """Open the transaction beside the running cached build."""
+    recovery_world.recovered = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; from buildlimits.recover_cli import main; sys.exit(main([]))",
+        ],
+        env=recovery_world.harness.env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+
+@then("recovery opens but leaves the cache running under the live build")
+def _opened_beside_live_build(recovery_world: RecoveryWorld) -> None:
+    """Require an open transaction, a written barrier and an untouched cache."""
+    result = recovery_world.recovered
+    assert result is not None, "the operator command must have run"
+    assert "cannot start" not in result.stderr + result.stdout, (
+        result.stdout,
+        result.stderr,
+    )
+    harness = recovery_world.harness
+    marker = harness.runtime / "cache-recovery"
+    assert wait_for(marker.exists, timeout=30), harness.journal()
+    assert wait_for(
+        lambda: "still moving" in str(harness.status()["cache_recovery"]["last_fault"]),
+        timeout=60,
+    ), harness.journal()
+    assert recovery_world.cache_active(), "the stop waits for the running build"
+
+
+@when("the surviving build is killed")
+def _survivor_killed(recovery_world: RecoveryWorld) -> None:
+    """Kill the second build so no cached work remains to wait for."""
+    second = recovery_world.processes[1]
+    recovery_world.cancelled.append(second)
+    kill_group(second)
+    assert second.wait(timeout=30) == -9, "the adapter was killed, not asked"
 
 
 @then("the recovery completes and frees both held tokens")

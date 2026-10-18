@@ -95,6 +95,7 @@ COUNTERS = frozenset({
     "recovery_failures",
     "recovery_exhaustions",
     "recovery_completions",
+    "recovery_stale_openings",
 })
 BOOLEANS = frozenset({"reachable", "load_unknown", "fd_budget_known", "accept_paused"})
 FIELD_KINDS = {

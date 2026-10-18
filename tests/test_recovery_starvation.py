@@ -1,7 +1,8 @@
 """The automatic trigger, decided over every combination it can be asked about.
 
 :func:`~buildlimits.recovery_starvation.starvation` is a conjunction of named
-clauses over finite categories, so it has a finite input space and every point
+clauses over finite categories, the last of them a disjunction of two proofs, so
+it has a finite input space and every point
 in it can be visited rather than sampled. The parameterized cases in
 :mod:`test_cache_recovery_machine` drive the real transaction for a selection
 of these points, which is what shows the answer reaches the manager; this
@@ -23,7 +24,9 @@ only for a live-work fault and clears it for every other kind, which
 :class:`~cache_recovery_helpers.DrainReading` exists to keep out of the
 fixtures. ``cooling`` is compared against ``now`` rather than combined with it,
 so it contributes two cases — a cooldown that has passed and one that has not —
-instead of a continuum of instants.
+instead of a continuum of instants. ``drain_age`` likewise contributes the two
+instants either side of the 300-second staleness limit, written as literals so
+a change to the production constant is a disagreement, not a tidy update.
 """
 
 import collections.abc as cabc
@@ -44,6 +47,9 @@ POLICIES = ("starved", "manual")
 # A cooldown the instant has passed, and one it has not. ``now`` is 100.0 in
 # every case below.
 COOLINGS = (0.0, 200.0)
+# Just short of the staleness limit, and exactly at it.
+STALE_LIMIT_SECONDS = 300.0
+AGES = (STALE_LIMIT_SECONDS - 1.0, STALE_LIMIT_SECONDS)
 # The drain readings a live watch can hold, as ``(fault_kind, roots)`` pairs.
 # Only the live-work kind carries a root count, so the other kinds pair with
 # the unreadable count rather than with a number the watch never records.
@@ -93,6 +99,8 @@ class Case:
         The visible root count recorded beside that fault.
     gauges : str
         The name of the gauge shape in :data:`GAUGES`.
+    drain_age : float
+        Seconds the retained drain has been held without a break.
     """
 
     cache_mode: str
@@ -101,6 +109,7 @@ class Case:
     fault_kind: str | None
     roots: int | None
     gauges: str
+    drain_age: float = AGES[0]
 
     @property
     def now(self) -> float:
@@ -131,6 +140,7 @@ class Case:
             counts=GAUGES[self.gauges],
             fault_kind=self.fault_kind,
             zero_visible_roots=self.fault_kind == "live_work" and self.roots == 0,
+            drain_age=self.drain_age,
         )
 
 
@@ -160,19 +170,9 @@ def _permits_live_work(case: Case) -> bool:
     return case.fault_kind == "live_work"
 
 
-def _permits_no_root(case: Case) -> bool:
-    """Require the probe to have proved no visible root.
-
-    A live-work fault alone is also the ordinary reading for a compile that is
-    simply still running, so this clause is what tells the two apart.
-    """
-    return case.roots == 0
-
-
-def _permits_server_alone(case: Case) -> bool:
-    """Require a token awaiting the server and no cached group moving."""
-    counts = GAUGES[case.gauges]
-    return counts.server_drain > 0 and counts.cached_moving == 0
+def _permits_retained(case: Case) -> bool:
+    """Require a token awaiting server accounting."""
+    return GAUGES[case.gauges].server_drain > 0
 
 
 def _permits_queue(case: Case) -> bool:
@@ -180,14 +180,33 @@ def _permits_queue(case: Case) -> bool:
     return GAUGES[case.gauges].queued > 0
 
 
+def _proves_detached(case: Case) -> bool:
+    """Prove the work detached: no visible root and no cached group moving.
+
+    A live-work fault alone is also the ordinary reading for a compile that is
+    simply still running, so this proof is what tells the two apart at once.
+    """
+    return case.roots == 0 and GAUGES[case.gauges].cached_moving == 0
+
+
+def _proves_stale(case: Case) -> bool:
+    """Prove the drain stale: held without a break for 300 seconds or more."""
+    return case.drain_age >= STALE_LIMIT_SECONDS
+
+
+def _permits_evidence(case: Case) -> bool:
+    """Require one of the two proofs that the retained work justifies a stop."""
+    return _proves_detached(case) or _proves_stale(case)
+
+
 _CLAUSES: typ.Final[tuple[tuple[str, cabc.Callable[[Case], bool]], ...]] = (
     ("the cache mode owns the barrier", _permits_mode),
     ("the policy permits automatic recovery", _permits_policy),
     ("the cooldown has elapsed", _permits_cooling),
     ("the probe faulted on live work", _permits_live_work),
-    ("the probe proved no visible root", _permits_no_root),
-    ("only the server holds cached work", _permits_server_alone),
+    ("a token awaits the server", _permits_retained),
     ("a request is waiting behind them", _permits_queue),
+    ("the work is proven detached or stale", _permits_evidence),
 )
 
 
@@ -213,9 +232,13 @@ def _expected(case: Case) -> str | None:
     if not all(clause(case) for _, clause in _CLAUSES):
         return None
     counts = GAUGES[case.gauges]
+    cause = (
+        "live cache work is starving admission"
+        if _proves_detached(case)
+        else f"a cache drain has been retained for {case.drain_age:.0f}s"
+    )
     return (
-        f"live cache work is starving admission: {counts.server_drain} token(s) "
-        "await server accounting, and "
+        f"{cause}: {counts.server_drain} token(s) await server accounting, and "
         f"{counts.queued} request(s) are waiting"
     )
 
@@ -229,9 +252,9 @@ def _cases() -> list[Case]:
         One case per point in the finite space, in a stable order.
     """
     return [
-        Case(cache_mode, policy, cooling, kind, roots, gauges)
-        for cache_mode, policy, cooling, (kind, roots), gauges in itertools.product(
-            CACHE_MODES, POLICIES, COOLINGS, READINGS, GAUGES
+        Case(cache_mode, policy, cooling, kind, roots, gauges, age)
+        for cache_mode, policy, cooling, (kind, roots), gauges, age in (
+            itertools.product(CACHE_MODES, POLICIES, COOLINGS, READINGS, GAUGES, AGES)
         )
     ]
 
@@ -246,7 +269,7 @@ CASES = _cases()
         f"{case.cache_mode}-{case.policy}-"
         f"{'cooled' if case.now >= case.cooling else 'cooling'}-"
         f"{case.fault_kind or 'clean'}-"
-        f"roots={case.roots}-{case.gauges}"
+        f"roots={case.roots}-{case.gauges}-age={case.drain_age:.0f}"
         for case in CASES
     ],
 )
@@ -319,17 +342,17 @@ _QUESTIONS: typ.Final[dict[str, tuple[Case, Case]]] = {
         _PERMITTING,
         dc.replace(_PERMITTING, fault_kind="manager", roots=None),
     ),
-    "the probe proved no visible root": (
+    "a token awaits the server": (
         _PERMITTING,
-        dc.replace(_PERMITTING, roots=2),
-    ),
-    "only the server holds cached work": (
-        _PERMITTING,
-        dc.replace(_PERMITTING, gauges="group-moving"),
+        dc.replace(_PERMITTING, gauges="nothing-held"),
     ),
     "a request is waiting behind them": (
         _PERMITTING,
         dc.replace(_PERMITTING, gauges="no-queue"),
+    ),
+    "the work is proven detached or stale": (
+        _PERMITTING,
+        dc.replace(_PERMITTING, roots=2, gauges="group-moving"),
     ),
 }
 

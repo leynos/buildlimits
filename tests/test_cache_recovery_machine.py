@@ -100,8 +100,11 @@ def test_only_starvation_by_live_cache_work_starts_recovery(
 
     # However long the transaction runs, a live cache is never accounted for,
     # and a stopped cache is still not accounting while a token waits on it.
+    # The ticks stay inside the staleness limit, so a case that must not start
+    # is not opened by its retained drain's age instead; that path has its own
+    # tests in ``test_recovery_stale_drain``.
     state.active = False
-    for second in range(1, 4):
+    for second in range(1, 3):
         machine.tick(float(second) * cache_recovery.RECOVERY_MAX_RETRY_SECONDS)
     phase = machine.describe(1_000.0)["phase"]
     assert (phase != "idle") is case.starts, "no elapsed time completes the transaction"
@@ -150,22 +153,25 @@ def test_a_clean_recovery_rests_only_briefly(tmp_path: Path) -> None:
     )
 
 
-def test_a_draining_group_is_refused_with_its_own_reason(tmp_path: Path) -> None:
+def test_a_draining_group_holds_the_stop_with_its_own_reason(tmp_path: Path) -> None:
     """A draining group is named as still moving, not as an accounting defect.
 
     A draining group's leader has ended, but its processes may still run, so
-    stopping the cache can kill them. The refusal must say that, rather than
-    describing the group as a token that simply has no accounting to await —
-    the operator can act on the first and not the second.
+    stopping the cache can kill them. The request still opens, because opening
+    only holds new compiles off the cache; the stop waits, and the reason it
+    reports must say why, rather than describing the group as a token that
+    simply has no accounting to await.
     """
     cache = scripted_machine(tmp_path, [gauges(queued=1, draining=1, server_drain=1)])
     document = cache.machine.request("manual", 0.0)
+    assert not document["blocked"], "a draining group does not refuse the request"
+    cache.machine.tick(0.0)
+    cache.machine.tick(1.0)
 
-    assert "moving" in str(document["blocked"]), (
-        "a draining group is refused as live work"
+    assert "moving" in str(cache.machine.describe(1.0)["last_fault"]), (
+        "the waiting stop names the draining group as live work"
     )
-    assert document["phase"] == "idle", "the refused request opens nothing"
-    assert "stop" not in cache.cache.verbs, "no stop follows the refusal"
+    assert "stop" not in cache.cache.verbs, "no stop is issued under it"
 
 
 def test_only_cached_groups_hold_the_stop(tmp_path: Path) -> None:
@@ -186,10 +192,14 @@ def test_only_cached_groups_hold_the_stop(tmp_path: Path) -> None:
     cached = scripted_machine(
         tmp_path / "cached", [Counts(1, 2, 1, 0, 1, capacity=2, cached_moving=1)]
     )
-    refused = cached.machine.request("manual", 0.0)
-    assert "1 cached compiler group(s) are still moving" in str(refused["blocked"]), (
-        "a cached running group still blocks the stop"
-    )
+    opened = cached.machine.request("manual", 0.0)
+    assert not opened["blocked"], "a cached running group does not refuse the request"
+    cached.machine.tick(0.0)
+    cached.machine.tick(1.0)
+    assert "1 cached compiler group(s) are still moving" in str(
+        cached.machine.describe(1.0)["last_fault"]
+    ), "a cached running group still holds the stop"
+    assert "stop" not in cached.cache.verbs, "no stop is issued under it"
 
 
 def test_a_lapsed_root_proof_holds_the_automatic_stop(tmp_path: Path) -> None:
@@ -344,3 +354,21 @@ def test_a_manager_fault_cannot_be_answered_by_stopping_the_cache(
     assert machine.describe(0.0)["phase"] == "idle", (
         "a raised stop leaves the machine idle"
     )
+
+
+def test_a_manual_request_is_refused_while_the_manager_transport_is_faulted(
+    tmp_path: Path,
+) -> None:
+    """The request path keeps the one refusal that protects an unreadable cache."""
+    machine, state = machine_for(
+        tmp_path,
+        snapshot=gauges(queued=1, server_drain=1),
+        reading=DrainReading(kind="manager"),
+    )
+    document = machine.request("manual", 0.0)
+    assert "user manager transport is faulted" in str(document["blocked"]), (
+        "the operator is told why recovery cannot open"
+    )
+    assert document["phase"] == "idle", "no transaction opens on a faulted transport"
+    assert not state.marker.exists(), "no barrier is written for a transport fault"
+    assert state.verbs == [], "no control verb is issued to an unreadable manager"
