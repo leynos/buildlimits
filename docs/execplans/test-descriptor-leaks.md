@@ -49,6 +49,12 @@ Findings on `047d183` (single process, `-n0`):
 | Supervisor started by `_started` (signal self-pipe)       | 2 pipes           | 1 in `test_supervisor_startup.py`                                                                                 | nobody                        |
 | `Popen(stderr=PIPE)` of the fake sccache server           | pipe              | 2 in `test_fake_sccache.py`                                                                                       | collector (`ResourceWarning`) |
 
+| `systemctl restart` and build `Popen` pipes in `test_graceful_restart_systemd.py` | pipes | 5 (opt-in `systemd_user` scenarios) | collector (`ResourceWarning`) |
+
+The last row was not visible to the first two probes, because the scenarios are
+skipped without `BUILD_LIMITS_HOST_ACCEPTANCE=1`; the guard found it on the
+first `make test-systemd-user` run after it landed.
+
 All 29 descriptor-diff entries trace to the first four rows. `Supervisor` holds
 reference cycles (lambdas that capture `self`), so its selector survives until
 a cyclic collection. The production code had no way to release the pool, the
@@ -86,6 +92,17 @@ listener, the signal self-pipe or the selector: it relied on process exit.
 - Existing ad hoc `selector.close()` calls in other tests are left as they are:
   they already close deterministically and the guard covers regressions.
   Converting them to `Supervisor.close()` is optional follow-up.
+
+## Separate timing flake found on the way
+
+Run 2 of 5 repeated `make test` runs failed
+`test_incomplete_truncation_does_not_supply_a_policy_body[eof-missing-body]`
+(`TimeoutError` instead of `TruncatedFrameError`). It is not a descriptor leak:
+the receiving socket carried a 10 ms total frame deadline in a forked child,
+which expires when a loaded worker is descheduled between header and body,
+although every byte and the EOF are already queued. The EOF cases now use a 1 s
+hang guard; the deadline cases keep 10 ms, since expiry is what they test. The
+snapshots for the two EOF cases record the new limit.
 
 ## Progress
 
