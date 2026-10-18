@@ -59,7 +59,7 @@ stayed held. Incident 3 has two halves. The automatic trigger required a
 live-work fault with zero visible compiler roots _and_ no cached group moving
 in the same reading; under a busy queue the two never coincided, so one
 retained server-drain token cost a slot for more than 30 minutes, until every
-slot was retained. Meanwhile `build-limits-recover` refused outright while any
+slot was retained. Meanwhile, `build-limits-recover` refused outright while any
 cached compile ran, so the operator could not intervene either. Incidents 2 and
 4 were silent: tokens were retained correctly, but status did not say why.
 
@@ -204,30 +204,35 @@ that claim, and every counterexample report names the assumptions in force.
 Safety properties hold in every reachable state or transition; liveness
 properties hold under F1 to F7. Table 3 lists them.
 
-| ID  | Property                   | Statement                                                                                         |
-| --- | -------------------------- | ------------------------------------------------------------------------------------------------- |
-| S1  | Stop safety                | A stop is issued only with no cached group running or draining and a readable manager             |
-| S2  | Token conservation         | Tokens sum to capacity; waiting requests hold none; a token returns once, after its scope empties |
-| S3  | Accounted release          | A `SERVER_DRAIN` token is released only on a reading of a stopped, empty service                  |
-| S4  | Barrier ordering           | A start is issued only with the barrier absent; the barrier stands from stop to restart           |
-| S5  | Composition                | No group is composed with the cache under a hold or after a negative reachability reading         |
-| S6  | Server work coverage       | Live server work never exceeds the tokens held by cached groups (ADR 011[^3])                     |
-| S7  | Unhealthy quiescence       | Nothing launches while the supervisor is unhealthy                                                |
-| S8  | Explainable retention      | A retained token with a waiting request and no transaction always has a reason in status          |
-| S9  | Fault persistence          | A refused restart's fault stays in status until a later transaction ends cleanly                  |
-| L1  | Retained drains accounted  | Under the `starved` policy, eventually always no token is in `SERVER_DRAIN`                       |
-| L2  | Queue progress             | The tracked request, unless cancelled, is eventually admitted                                     |
-| L3  | Transactions complete      | Every opened transaction eventually returns to idle                                               |
-| L4  | Operator requests complete | An operator request eventually ends in a completed transaction or accounted tokens                |
-| R1  | Proportionate rest         | After a clean ending the trigger is eligible within the settle units                              |
+| ID  | Property                   | Statement                                                                                                                                                               |
+| --- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1  | Stop safety                | A stop is issued only with no cached group running or draining and a readable manager                                                                                   |
+| S2  | Token conservation         | Tokens sum to capacity; held tokens partition into running, draining and server-drain groups; waiting requests hold none; a token returns once, after its scope empties |
+| S3  | Accounted release          | A `SERVER_DRAIN` token is released only on a reading of a stopped, empty service                                                                                        |
+| S4  | Barrier ordering           | A start is issued only with the barrier absent; the barrier stands from stop to restart                                                                                 |
+| S5  | Composition                | No group is composed with the cache under a hold or after a negative reachability reading                                                                               |
+| S6  | Server work coverage       | Live server work never exceeds the tokens held by cached groups (ADR 011[^3])                                                                                           |
+| S7  | Unhealthy quiescence       | Nothing launches while the supervisor is unhealthy                                                                                                                      |
+| S8  | Explainable retention      | A retained token with a waiting request and no transaction always has a reason in status                                                                                |
+| S9  | Fault persistence          | A refused restart's fault stays in status until a later transaction ends cleanly                                                                                        |
+| L1  | Retained drains accounted  | Under the `starved` policy, eventually always no token is in `SERVER_DRAIN`                                                                                             |
+| L2  | Queue progress             | The tracked request, unless cancelled or refused by a health failure, is eventually admitted                                                                            |
+| L3  | Transactions complete      | Every opened transaction eventually returns to idle                                                                                                                     |
+| L4  | Operator requests complete | An operator request not refused at once eventually ends in a completed transaction or accounted tokens                                                                  |
+| R1  | Proportionate rest         | After a clean ending the trigger is eligible within the settle units                                                                                                    |
 
 _Table 3: Safety (S), liveness (L) and bounded-response (R) properties._
 
 S8's reasons are a positive `cooling_for`, the drain fault with its guidance,
-or the `manual` policy. L4 assumes the manager transport is not permanently
-faulted. R1 captures a requirement that liveness cannot: only a faulted ending
-imposes the cooldown. Table 4 maps each incident to the property it violates
-and the counterexample predicted on its pre-fix behaviour.
+or the `manual` policy. A health failure refuses every queued request
+(`Admission.health_failed`), so L2 treats that refusal as a terminal outcome,
+and S7 keeps the supervisor quiescent afterwards. L4 treats a refusal at once
+as terminal too: `CacheRecovery.request` answers a faulted manager transport
+with a `blocked` reason and keeps no request pending[^10]. L4 therefore binds
+only a request the supervisor accepted. R1 captures a requirement that liveness
+cannot: only a faulted ending imposes the cooldown. Table 4 maps each incident
+to the property it violates and the counterexample predicted on its pre-fix
+behaviour.
 
 | Incident         | Pre-fix behaviour                             | Property | Predicted counterexample                           |
 | ---------------- | --------------------------------------------- | -------- | -------------------------------------------------- |
@@ -256,8 +261,9 @@ the model's atomicity is wrong.
 ### 4. Illustrative sketch
 
 For screen readers: the following block is an illustrative fragment of the
-model in pseudo-FizzBee. It declares state, one supervisor action with a switch
-that restores incident 1's pre-fix guard, and three properties.
+model in pseudo-FizzBee. It declares state, the steps that lead a transaction
+to its stop, one supervisor action with a switch that restores incident 1's
+pre-fix guard, and four properties.
 
 ```plaintext
 # Illustrative pseudo-FizzBee: unchecked; syntax is to be confirmed in W1.
@@ -265,19 +271,29 @@ CAPACITY = 3
 PREFIX_GUARD_COUNTS_UNCACHED = False   # True restores incident 1's guard
 
 action Init:
-    free, held, held_by_others, server_drain = CAPACITY, 0, 0, 0
+    # One token is already retained for the server. held_by_others counts
+    # tokens other supervisors hold; held covers only this supervisor's own,
+    # which partition into running, draining and server-drain groups.
+    free, held, held_by_others, server_drain = CAPACITY - 1, 1, 0, 1
     running = {"cached": 0, "uncached": 0}
     draining = {"cached": 0, "uncached": 0}
     phase, manager_faulted, stop_issued = "idle", False, False
 
+atomic action OpenTransaction:         # trigger conditions elided
+    require phase == "idle" and server_drain > 0
+    phase = "quiescing"
+
+atomic fair action Quiesce:            # the barrier write, elided (F1)
+    require phase == "quiescing"
+    phase = "stopping"
+
 atomic fair action RecoveryStop:       # a weakly fair poll step (F1)
-    require phase == "stopping"
-    moving = running["cached"] + draining["cached"]
-    if PREFIX_GUARD_COUNTS_UNCACHED:
-        moving += running["uncached"] + draining["uncached"]
-    if moving == 0 and not manager_faulted:
-        stop_issued = True
-        phase = "accounting"
+    require phase == "stopping" and not manager_faulted
+    require running["cached"] + draining["cached"] == 0
+    require not PREFIX_GUARD_COUNTS_UNCACHED or \
+        running["uncached"] + draining["uncached"] == 0
+    stop_issued = True
+    phase = "accounting"
 
 transition assertion StopSafety(before, after):
     if not before.stop_issued and after.stop_issued:
@@ -286,6 +302,10 @@ transition assertion StopSafety(before, after):
 
 always assertion TokensConserved:
     return free + held + held_by_others == CAPACITY
+
+always assertion HeldPartitioned:
+    return held == (sum(running.values()) + sum(draining.values())
+                    + server_drain)
 
 eventually always assertion RetainedDrainsAccounted:
     return server_drain == 0
@@ -296,8 +316,13 @@ actions, `require` guards, `oneof` choice, `always`, `always eventually` and
 `eventually always` assertions, and `transition` assertions over `before` and
 `after`[^2]. Its documentation warns that copying shared state into a local can
 introduce an interleaving point, and that some function calls must stand as
-separate statements[^4]; the sketch's `moving` local is exactly the pattern W1
-must check.
+separate statements[^4]. The sketch therefore states the stop's guard with
+`require` and reads state in place rather than through an assigned local: an
+assignment enables an action even when the condition it computes is false, and
+control flow alone does not disable one[^11]. A guard written as a local plus an
+`if` would leave the action enabled in every state, which would let strong
+fairness be met by a no-op and hide the capacity-2 counterexample. W1 must
+still check the interleaving points this style leaves.
 
 ### 5. Keeping the model honest
 
@@ -606,3 +631,12 @@ evidence settles them. Delivery is tracked in phase 1 of
 [^9]: `buildlimits/cache_recovery.py`: `_try_stop` fails a `starved`
       transaction with "the visible compiler roots proof lapsed before
       stopping" unless `zero_visible_roots()` holds, at `37d08e5`.
+
+[^10]: `buildlimits/cache_recovery.py`: `CacheRecovery.request` returns
+       `describe(now) | {"blocked": reason}` without opening a transaction
+       when `recovery_starvation.refusal` gives a reason, at `37d08e5`;
+       `buildlimits/admission.py`: `Admission.health_failed` refuses the whole
+       queue.
+
+[^11]: FizzBee, "Actions" (action enabling semantics), retrieved 2026-10-18:
+       <https://fizzbee.io/reference/language/actions/>
