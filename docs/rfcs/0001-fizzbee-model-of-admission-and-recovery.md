@@ -6,10 +6,9 @@
 - **Status:** Accepted
 - **Created:** 2026-10-18
 - **Accepted:** 2026-10-18; see [Acceptance](#acceptance)
-- **Baseline:** `main` at `37d08e5` (PR #10), which carries the fixes for
-  incidents 1, 2 and 4 (PR #9) and for incident 3 (PR #10)[^1]. One gap in
-  incident 3's fix remains: the automatic stop still waits for zero visible
-  roots, and is being fixed on the `stale-root-deadline` branch.
+- **Baseline:** `main` at `7445bf0` (PR #12), which carries the fixes for
+  incidents 1, 2 and 4 (PR #9), for incident 3 (PR #10), and for the stale-path
+  automatic stop that PR #10 left waiting for zero visible roots (PR #12)[^1].
 - **Scope:** verification tooling for maintainers. Nothing in the package,
   its behaviour or its interfaces changes.
 
@@ -42,12 +41,12 @@ built.
 On 2026-10-18 four defects were observed on the shared host, and each was
 confirmed against the code. Table 1 summarizes them.
 
-| Incident         | Symptom                                     | Cause                                        | Resolution                            |
-| ---------------- | ------------------------------------------- | -------------------------------------------- | ------------------------------------- |
-| 1. Livelock      | Retained tokens held while the stop retried | Stop guard counted uncached groups as moving | PR #9, `Counts.cached_moving`         |
-| 2. Idle cooldown | New drains idle for ~15 min, not in status  | 900 s cooldown after clean endings too       | PR #9, 60 s settle and `cooling_for`  |
-| 3. Capacity loss | One slot lost for 30+ min, then all slots   | Trigger needed two readings to coincide      | PR #10, stale proof and early opening |
-| 4. Hidden fault  | Refused restart's fault absent from status  | Idle transaction dropped its last fault      | PR #9                                 |
+| Incident         | Symptom                                     | Cause                                        | Resolution                                                 |
+| ---------------- | ------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------- |
+| 1. Livelock      | Retained tokens held while the stop retried | Stop guard counted uncached groups as moving | PR #9, `Counts.cached_moving`                              |
+| 2. Idle cooldown | New drains idle for ~15 min, not in status  | 900 s cooldown after clean endings too       | PR #9, 60 s settle and `cooling_for`                       |
+| 3. Capacity loss | One slot lost for 30+ min, then all slots   | Trigger needed two readings to coincide      | PRs #10 and #12, stale proof, early open and stop deadline |
+| 4. Hidden fault  | Refused restart's fault absent from status  | Idle transaction dropped its last fault      | PR #9                                                      |
 
 _Table 1: Recovery incidents observed on 2026-10-18._
 
@@ -69,11 +68,16 @@ drain held without a break for `RECOVERY_STALE_DRAIN_SECONDS = 300`
 `recovery_starvation.refusal` refuses to open a transaction only when the user
 manager transport is faulted, so `build-limits-recover` and the automatic
 trigger open while cached work runs. The stop itself still waits for that work
-through `recovery_starvation.blocked`[^4]. A stale-opened transaction does not
-stop the cache on age alone: `CacheRecovery._try_stop` re-arms an automatic
-transaction until the drain probe again proves zero visible roots[^5]. Visible
-roots that never clear therefore hold the stop off, which is the gap
-`stale-root-deadline` closes.
+through `recovery_starvation.blocked`[^4]. At `37d08e5` a stale-opened
+transaction did not stop the cache on age alone: `CacheRecovery._try_stop`
+re-armed an automatic transaction until the drain probe again proves zero
+visible roots. Visible roots that never clear therefore held the stop off,
+which left the retained tokens in place. PR #12 closed that gap: once no cached
+group is moving, an automatic stop proceeds after roots have stayed visible for
+`RECOVERY_ROOTS_GRACE_SECONDS = 600`, because a root visible under the held
+barrier serves no admitted client. A manual request is exempt from the proof,
+and an unreadable root count neither starts nor completes the clock
+(`recovery_roots.stop_verdict`)[^5].
 
 ### Why the existing verification did not find them
 
@@ -153,10 +157,10 @@ is, which keeps the state space small and matches the metrics:
 - groups by lifecycle (`RUNNING`, `DRAINING`, `SERVER_DRAIN`), composition
   and ending, so that `Group.may_orphan_server_work` is computable;
 - the last reachability reading, and whether a recovery hold is in force;
-- the drain probe's fault kind, whether it proved zero visible roots, and
-  the retained-drain age, which `RetainedDrainAge` measures on idle ticks and
-  retires at the accounting observation, with the staleness limit as a timer
-  class[^3];
+- the drain probe's fault kind, whether it proved zero visible roots, found
+  some visible, or could not tell, and the retained-drain age, which
+  `RetainedDrainAge` measures on idle ticks and retires at the accounting
+  observation, with the staleness limit as a timer class[^3];
 - the transaction's phase, attempts (abstracted to a small limit), trigger,
   last fault and rest timer; the barrier; an operator request; health.
 
@@ -166,8 +170,8 @@ returns; _builds_ whose leaders exit cleanly or by signal, and requesters who
 cancel, a bounded number of times; the _managed cache_, live or stopped, with
 its control group and the detached work that abnormal cached endings leave; the
 _user manager_, which accepts or refuses jobs, completes them later, and may
-fault and restore its transport; _timers_ for settle, cooldown, staleness and
-backoff; and an _operator_.
+fault and restore its transport; _timers_ for settle, cooldown, staleness,
+visible-roots grace and backoff; and an _operator_.
 
 Time is abstract. A timer is armed with a duration class and expires through an
 environment action, so the checker explores every order in which timers expire
@@ -420,9 +424,10 @@ The thresholds below are proposals for approval before any trial runs.
 - **Prediction:** at capacity 3, incident 1's known-bad configuration (the
   stop guard counting uncached groups) yields a lasso to L3, and incident 3's
   (the trigger and refusal at `eba08ad`) yields lassos to L1 and L4. The fixed
-  configurations (PR #9's guard, and PR #10's trigger, opening and stop) yield
-  none. At capacity 2, incident 1's counterexample appears under weak but not
-  strong fairness of the recovery step.
+  configurations (PR #9's guard, and the trigger, opening and stop at
+  `7445bf0`, from PRs #10 and #12) yield none. At capacity 2, incident 1's
+  counterexample appears under weak but not strong fairness of the recovery
+  step.
 - **Comparator:** the Hypothesis recovery machine extended with uncached
   groups and a bounded-progress proxy: the stop is issued within N steps.
 - **Falsified if:** a known-bad configuration passes after the one permitted
@@ -454,18 +459,20 @@ The thresholds below are proposals for approval before any trial runs.
 
 ### H4. The stale-path automatic stop
 
-- **Question:** does L1 hold for the automatic stop at `37d08e5`, and for the
-  fix on the `stale-root-deadline` branch, and under what assumption? At
-  `37d08e5` a stale-opened transaction still needs the zero-root proof to stop,
-  which a manual request skips[^5].
+- **Question:** does L1 hold for the stale-path automatic stop, and under what
+  assumption? At `37d08e5` a stale-opened transaction stopped only once the
+  drain probe again proved zero visible roots; PR #12 added the 600-second
+  visible-roots grace, so `7445bf0` stops without that proof once nothing
+  cached is moving[^5].
 - **Prediction:** at `37d08e5`, L1 holds with F3 and fails without it, through
-  detached work that holds a visible root for ever; L4 holds without F3. With
-  the `stale-root-deadline` fix, L1 holds without F3.
-- **Falsified if:** the fixed configuration fails L1 without F3, or `37d08e5`
-  satisfies L1 without F3.
-- **Decision:** none here. The model checks that fix; it does not design it.
-  The result goes to the branch owner, who decides whether F3 is an acceptable
-  operating assumption.
+  detached work that holds a visible root for ever; L4 holds without F3. At
+  `7445bf0`, L1 holds without F3, because the grace timer expires under F6.
+- **Falsified if:** `7445bf0` fails L1 without F3, or `37d08e5` satisfies L1
+  without F3. A grace that cannot expire, such as one broken by an unreadable
+  root count at every attempt, would also falsify it.
+- **Decision:** none here. The model checks the merged fix; it does not design
+  it. If the `37d08e5` prediction holds, that revision becomes a fifth
+  known-bad configuration.
 
 ## Workstreams
 
@@ -475,7 +482,7 @@ acyclic.
 | ID  | Outcome                                                                                | Requires          | Exit evidence                                                                | Gate                             |
 | --- | -------------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------- | -------------------------------- |
 | W1  | Minimal model and busy queue; known-bad and fixed configurations for incidents 1 and 3 | None              | H1 verdict, traces replayed, open questions 1 to 6 and 8 answered            | G1: proceed, change tool or stop |
-| W2  | Full scope; S1 to S9, L1 to L4 and R1; known-bad configurations for all four incidents | W1 at G1          | All properties hold at `37d08e5` under F1 to F7; known-bad fail; H4 answered | G2: bounds and CI budget         |
+| W2  | Full scope; S1 to S9, L1 to L4 and R1; known-bad configurations for all four incidents | W1 at G1          | All properties hold at `7445bf0` under F1 to F7; known-bad fail; H4 answered | G2: bounds and CI budget         |
 | W3  | Drift check, counterexample replay and projection inclusion as pytest suites           | W2                | H3 verdict; every counterexample has a regression or correspondence test     | G3: required or advisory         |
 | W4  | Pinned tool, `make model-check`, CI job, update policy and layout entry                | W2; W3 to require | Within H2's budget; identical results on unchanged sources                   | G4: place in the quality gates   |
 
@@ -484,8 +491,9 @@ _Table 6: Proposed workstreams, their evidence and the decisions they enable._
 W1 excludes health, start-up, escalation detail and metrics, and is limited to
 two model revisions after its first full run; it stops at H1's falsification
 condition. At `eba08ad`, W2 expects L1 and L4 to fail, because that revision is
-incident 3's pre-fix behaviour; at `37d08e5` it expects them to hold under F3.
-W3 may add journal trace checking as an optional tool.
+incident 3's pre-fix behaviour; at `37d08e5` it expects L1 to hold only under
+F3, and at `7445bf0` it expects L1 and L4 to hold. W3 may add journal trace
+checking as an optional tool.
 
 ## Risks and mitigations
 
@@ -608,32 +616,35 @@ as each gate, G1 to G4, decides. The open questions stay open until the
 evidence settles them. Delivery is tracked in phase 1 of
 [the roadmap](../roadmap.md).
 
-[^1]: Commits `eba08ad` (PR #9) and `37d08e5` (PR #10), as read on
-      2026-10-18.
+[^1]: Commits `eba08ad` (PR #9), `37d08e5` (PR #10) and `7445bf0` (PR #12),
+      as read on 2026-10-18.
 
 [^2]: FizzBee, "Getting Started", retrieved 2026-10-18:
       <https://fizzbee.io/design/tutorials/getting-started/>
 
 [^3]: `buildlimits/recovery_starvation.py`: `RECOVERY_STALE_DRAIN_SECONDS`,
-      `RetainedDrainAge` and `proof`, at `37d08e5`.
+      `RetainedDrainAge` and `proof`, at `7445bf0`.
 
 [^4]: `buildlimits/recovery_starvation.py`: `refusal` and `blocked`;
       `CacheRecovery.request` calls `refusal`, and `CacheRecovery._try_stop`
-      calls `blocked`, at `37d08e5`.
+      calls `blocked`, at `7445bf0`.
 
-[^5]: `buildlimits/cache_recovery.py`: `_try_stop` fails a `starved`
-      transaction with "the visible compiler roots proof lapsed before
-      stopping" unless `zero_visible_roots()` holds, at `37d08e5`.
+[^5]: `buildlimits/cache_recovery.py` and `buildlimits/recovery_roots.py`: at
+      `37d08e5`, `_try_stop` failed a `starved` transaction with "the visible
+      compiler roots proof lapsed before stopping" unless `zero_visible_roots()`
+      held. At `7445bf0` it calls `recovery_roots.stop_verdict`, which returns
+      `deadline` once `VisibleRootsGrace` has run for
+      `RECOVERY_ROOTS_GRACE_SECONDS` (`recovery_starvation.py`).
 
 [^6]: `buildlimits/admission.py`: `Admission.queue` is a `collections.deque`;
-       `submit` appends and `token_arrived` takes `popleft`, at `37d08e5`.
+       `submit` appends and `token_arrived` takes `popleft`, at `7445bf0`.
 
 [^7]: ADR 011, dev-env-rocky:
       <https://github.com/leynos/dev-env-rocky/blob/main/docs/adr-011-sccache-under-compile-admission.md>
 
 [^8]: `buildlimits/cache_recovery.py`: `CacheRecovery.request` returns
        `describe(now) | {"blocked": reason}` without opening a transaction
-       when `recovery_starvation.refusal` gives a reason, at `37d08e5`;
+       when `recovery_starvation.refusal` gives a reason, at `7445bf0`;
        `buildlimits/admission.py`: `Admission.health_failed` refuses the whole
        queue.
 
