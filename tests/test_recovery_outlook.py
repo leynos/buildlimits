@@ -14,14 +14,14 @@ import pytest
 from hypothesis import event, given
 from hypothesis import strategies as st
 
-from buildlimits import recovery_starvation
+from buildlimits import recovery_outlook
 from buildlimits.admission_state import Counts
 from buildlimits.recovery_starvation import StarvationReading, starvation
 
 NOW = 1_000.0
 
 
-def _reading(  # noqa: PLR0913 - one keyword per clause the trigger judges
+def _reading(
     *,
     drain_age: float,
     roots: int = 2,
@@ -73,7 +73,7 @@ def test_the_countdown_runs_to_the_three_hundred_second_limit(
     drain_age: float, expected: float
 ) -> None:
     """The stale proof holds at 300 seconds, so 299 seconds still has 1 to go."""
-    assert recovery_starvation.opens_in(_reading(drain_age=drain_age)) == expected, (
+    assert recovery_outlook.opens_in(_reading(drain_age=drain_age)) == expected, (
         "the wait is the 300 second limit less the drain's age"
     )
 
@@ -87,7 +87,9 @@ def test_the_boundary_agrees_with_the_trigger() -> None:
 def test_a_provably_detached_drain_has_nothing_to_wait_for() -> None:
     """The prompt proof opens at once, however young the drain."""
     reading = _reading(drain_age=1.0, roots=0, cached_moving=0)
-    assert recovery_starvation.opens_in(reading) == 0.0, "the trigger acts now"
+    assert recovery_outlook.opens_in(reading) == pytest.approx(0.0), (
+        "the trigger acts now"
+    )
     assert starvation(reading) is not None, "and the trigger agrees"
 
 
@@ -107,7 +109,7 @@ def test_a_provably_detached_drain_has_nothing_to_wait_for() -> None:
 def test_a_failed_clause_shows_no_countdown(clause: dict[str, object]) -> None:
     """Time cannot open a trigger whose other clauses refuse it."""
     reading = _reading(drain_age=10.0, **clause)  # type: ignore[arg-type]
-    assert recovery_starvation.opens_in(reading) is None, (
+    assert recovery_outlook.opens_in(reading) is None, (
         "no countdown is promised for a recovery that will not come"
     )
 
@@ -115,9 +117,13 @@ def test_a_failed_clause_shows_no_countdown(clause: dict[str, object]) -> None:
 def test_the_cooldown_delays_the_countdown() -> None:
     """A resting trigger opens at the later of its cooldown and the limit."""
     resting = _reading(drain_age=250.0, cooling=NOW + 80.0)
-    assert recovery_starvation.opens_in(resting) == 80.0, "the cooldown is later"
+    assert recovery_outlook.opens_in(resting) == pytest.approx(80.0), (
+        "the cooldown is later"
+    )
     young = _reading(drain_age=100.0, cooling=NOW + 80.0)
-    assert recovery_starvation.opens_in(young) == 200.0, "the limit is later"
+    assert recovery_outlook.opens_in(young) == pytest.approx(200.0), (
+        "the limit is later"
+    )
     assert starvation(_later(resting, 79.0)) is None, "still cooling at 79 seconds"
     assert starvation(_later(resting, 80.0)) is not None, "acts as it cools"
 
@@ -125,7 +131,9 @@ def test_the_cooldown_delays_the_countdown() -> None:
 def test_a_cooldown_alone_counts_down_for_a_stale_drain() -> None:
     """A drain already stale waits only for the cooldown."""
     reading = _reading(drain_age=900.0, cooling=NOW + 42.5)
-    assert recovery_starvation.opens_in(reading) == 42.5, "only cooling remains"
+    assert recovery_outlook.opens_in(reading) == pytest.approx(42.5), (
+        "only cooling remains"
+    )
 
 
 def _grid(upper: int) -> st.SearchStrategy[float]:
@@ -168,7 +176,7 @@ def test_a_shown_countdown_ends_with_the_trigger_opening(
     reading: StarvationReading,
 ) -> None:
     """If a countdown is shown, the trigger opens when it runs out, not before."""
-    wait = recovery_starvation.opens_in(reading)
+    wait = recovery_outlook.opens_in(reading)
     event(f"countdown {'shown' if wait is not None else 'absent'}")
     if wait is None:
         return
@@ -187,7 +195,7 @@ def test_no_countdown_means_time_alone_never_opens_the_trigger(
     reading: StarvationReading, passed: float
 ) -> None:
     """If the trigger can never open, no countdown is shown."""
-    if recovery_starvation.opens_in(reading) is not None:
+    if recovery_outlook.opens_in(reading) is not None:
         return
     assert starvation(_later(reading, passed)) is None, (
         "a reading with no countdown cannot be opened by waiting"
@@ -200,6 +208,7 @@ def test_a_zero_countdown_is_exactly_an_opening_trigger(
 ) -> None:
     """The query and the trigger share their clauses, so they agree on now."""
     is_open = starvation(reading) is not None
-    assert (recovery_starvation.opens_in(reading) == 0.0) is is_open, (
+    wait = recovery_outlook.opens_in(reading)
+    assert (wait is not None and wait <= 0.0) is is_open, (
         "the trigger acts exactly when nothing is left to wait for"
     )

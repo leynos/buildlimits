@@ -1,0 +1,9 @@
+# serializer version: 1
+# name: test_the_pending_status_line_is_stable
+  list([
+    'drain fault kind: live_work',
+    'drain check failed; tokens retained: retained detached work: live sccache service may retain detached requests; visible compiler roots=0; operator accounting required',
+    'fallback recovery action: Automatic recovery of the managed sccache service is pending and needs no operator action yet. As a fallback only, if it does not start or complete, run build-limits-recover to stop the service under the admission barrier, verify it is stopped and empty, and release the retained tokens; tokens remain held until that verification succeeds.',
+    'cache recovery idle: automatic recovery may start in 180.0s',
+  ])
+# ---

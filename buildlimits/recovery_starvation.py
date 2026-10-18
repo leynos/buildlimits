@@ -42,9 +42,9 @@ moving cached group, a faulted manager and the verified-empty accounting that
 releases tokens are untouched.
 
 The same clauses answer a third question for the status document: how long the
-trigger still has to wait on time alone (:func:`opens_in`). Only the cooldown
-and the staleness proof are matters of time, so that answer is ``None`` when any
-other clause refuses and is zero exactly when :func:`starvation` acts.
+trigger still has to wait on time alone. Only the cooldown and the staleness
+proof are matters of time, so :func:`permits_but_for_time` asks every other
+clause, and :mod:`buildlimits.recovery_outlook` builds the countdown on it.
 
 Both belong beside the transaction they authorize rather than beside the
 start-up reclamation that once shared this code's module: that module retires a
@@ -240,7 +240,7 @@ def starvation(reading: StarvationReading) -> str | None:
     str | None
         The reason to trigger, or ``None`` to leave admission alone.
     """
-    if not _every_clause_but_time_permits(reading) or _is_cooling(reading):
+    if not permits_but_for_time(reading) or _is_cooling(reading):
         return None
     counts = reading.counts
     match proof(reading):
@@ -254,42 +254,6 @@ def starvation(reading: StarvationReading) -> str | None:
         f"{cause}: {counts.server_drain} token(s) await server accounting, and "
         f"{counts.queued} request(s) are waiting"
     )
-
-
-def opens_in(reading: StarvationReading) -> float | None:
-    """Say how long the automatic trigger must still wait on time alone.
-
-    Status prints this answer, so it is read from the clauses
-    :func:`starvation` judges rather than from a copy of them: it cannot
-    promise an opening that the trigger would not perform. Only two clauses
-    are matters of time, the cooldown and the stale proof, and the trigger
-    opens at the later of the two. :func:`blocked` gates the stop that follows
-    an opening, not the opening itself, so it has no part here.
-
-    Parameters
-    ----------
-    reading : StarvationReading
-        The one instant the trigger is judged against.
-
-    Returns
-    -------
-    float | None
-        ``None`` when waiting will not open the trigger, because a clause that
-        time cannot change refuses it; ``0.0`` when :func:`starvation` acts on
-        this very reading; otherwise the seconds until it will, provided
-        nothing else changes.
-
-    Examples
-    --------
-    >>> opens_in.__name__
-    'opens_in'
-    """
-    if not _every_clause_but_time_permits(reading):
-        return None
-    cooling = max(0.0, reading.cooling - reading.now)
-    if proof(reading) is not None:
-        return cooling
-    return max(cooling, RECOVERY_STALE_DRAIN_SECONDS - reading.drain_age)
 
 
 def refusal(fault_kind: str | None) -> str:
@@ -349,7 +313,7 @@ def blocked(counts: Counts, fault_kind: str | None) -> str:
     return refusal(fault_kind)
 
 
-def _every_clause_but_time_permits(reading: StarvationReading) -> bool:
+def permits_but_for_time(reading: StarvationReading) -> bool:
     """Report whether every clause that time cannot change permits acting.
 
     One clause per question the module docstring names, each asked in turn
@@ -358,7 +322,7 @@ def _every_clause_but_time_permits(reading: StarvationReading) -> bool:
     have to hold eight terms at once, and a clause that fails should be
     attributable to a named question rather than to a position in a chain. The
     cooldown and the stale proof are left out because they are the two that
-    elapsing time satisfies; see :func:`opens_in`.
+    elapsing time satisfies; see :mod:`buildlimits.recovery_outlook`.
 
     Returns
     -------

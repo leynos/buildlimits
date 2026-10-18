@@ -66,6 +66,12 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
         "drain_attempts": supervisor.server.drain_attempts,
         "recovery_action": supervisor.server.recovery_action
         or supervisor.loop.recovery_action,
+        # True only for the cache-recovery text that tells the operator the
+        # command is a fallback; the loop's own action never is.
+        "recovery_action_is_fallback": bool(
+            supervisor.server.recovery_action
+            and supervisor.server.recovery_action_is_fallback
+        ),
         "device": str(settings.device),
         "cache_mode": settings.cache_mode,
         "caching": admission.cached,
