@@ -575,7 +575,8 @@ extending Hypothesis, and that result recorded.
 Accepted on 2026-10-18. Acceptance approves the recommendation above: W1 goes
 ahead now, with the H1 to H4 thresholds as written, and W2 to W4 proceed only
 as each gate, G1 to G4, decides. The open questions stay open until the
-evidence settles them.
+evidence settles them. Delivery is tracked in phase 1 of
+[the roadmap](../roadmap.md).
 
 [^1]: Commits `eba08ad` (PR #9) and `37d08e5` (PR #10), as read on
       2026-10-18.

@@ -35,9 +35,13 @@
   explains how to validate workflow behaviour locally before relying on remote
   Continuous Integration (CI) runs.
 
+## Planning
+
+- [Roadmap](roadmap.md) sequences the delivery of accepted RFCs as phases,
+  steps and tasks with dependencies and success criteria.
+
 ## Requests for comments
 
 - [RFC 0001: FizzBee model of compile admission and cache recovery](rfcs/0001-fizzbee-model-of-admission-and-recovery.md)
   proposes a formal model of admission and recovery, its safety and liveness
-  properties, conformance checks and a gated adoption plan. Accepted
-  2026-10-18.
+  properties, conformance checks and a gated adoption plan. Accepted 2026-10-18.
