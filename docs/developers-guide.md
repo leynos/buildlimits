@@ -445,6 +445,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `request_helpers.py`        | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
 | `pool_helpers.py`           | `FakePool` and `attach_pool`                                                                        |
 | `descriptor_helpers.py`     | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
+| `descriptor_guard.py`       | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                          |
 | `launch_helpers.py`         | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
 | `adapter_doubles.py`        | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
 | `journal_fixtures.py`       | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
@@ -489,6 +490,41 @@ against both the fixture and the user's guide. The unit-file edits a role needs
 for a new behaviour must change the guide, the fixture and that test together.
 `tests/cache_unit_fake.py` plays a cache unit through its states for unit tests
 that need the order of the barrier, stop and start.
+
+### 11.5. Closing what a test opens
+
+A test that opens a descriptor closes it before it ends. Leaving the object to
+the garbage collector is a defect, not a style choice: the collector runs
+during whichever test the xdist worker is executing, so the next test finds
+descriptors that are not its own and fails its descriptor baseline although it
+did nothing wrong.
+
+- **Own it with a context manager or a yield fixture.** Enter sockets, pipes,
+  pools and supervisors into the `owned` fixture (a `contextlib.ExitStack`
+  unwound at teardown), wrapping objects that only have `close()` in
+  `contextlib.closing`. Obtain recovery supervisors from `recovery_harnesses`,
+  which closes each harness it builds. A bare `harness_for(...)` call is for
+  `with` blocks only.
+- **Release a supervisor with `Supervisor.close()`.** A `Supervisor` holds
+  reference cycles, so its selector outlives the test that built it. `close()`
+  releases the selector, listener, token pool, signal self-pipe and request
+  connections, and withdraws the process-wide `SIGCHLD` handler and wakeup
+  descriptor. It is idempotent.
+- **Close subprocess pipes.** Enter a `Popen` as a context manager, or close
+  its `stdout` and `stderr`, after killing and reaping it.
+- **Do not call `gc.collect()` to tidy up.** It hides which test leaked.
+
+An autouse fixture in `conftest.py` enforces this. `descriptor_guard.no_leaks`
+suspends the cyclic collector for the length of one test and compares
+`/proc/self/fd`, as (number, target) pairs, before and after every fixture has
+torn down. A leak fails that test at teardown and lists the descriptors. The
+comparison is local to one process, so each xdist worker checks only itself,
+and with the collector suspended the verdict does not depend on allocation
+timing. `pyproject.toml` also turns `ResourceWarning` and unraisable-exception
+warnings into errors, which catches objects freed unclosed by reference
+counting. A session- or module-scoped fixture that holds a descriptor shows up
+as a leak in the first test that uses it; give it function scope, or close it
+in the test that created it.
 
 ## 12. Static-analysis exceptions
 
