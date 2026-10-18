@@ -183,12 +183,19 @@ def test_truncation_retains_only_complete_body_and_closes_rights_immediately(
     assert result == snapshot, "the bounded receipt evidence changed"
 
 
+# The deadline case needs a window short enough to expire. The EOF case has
+# every byte it will ever get already queued, so its limit is only a hang guard:
+# a 10 ms total frame deadline there expires whenever a loaded worker is
+# descheduled between header and body, and reports a timeout for what is EOF.
+_INCOMPLETE_LIMIT = {False: 0.01, True: 1.0}
+
+
 def _incomplete_truncation(_report: int, header: bytes, *, eof: bool) -> object:
     """Lose rights in an incomplete frame, then encounter EOF or deadline expiry."""
     sender, receiver = socket.socketpair()
     outcome: dict[str, object]
     with sender, receiver:
-        receiver.settimeout(0.01)
+        receiver.settimeout(_INCOMPLETE_LIMIT[eof])
         baseline = open_fds()
         socket.send_fds(sender, [header], [sender.fileno()] * 2)
         if eof:
@@ -219,7 +226,7 @@ def test_incomplete_truncation_does_not_supply_a_policy_body(
         "incomplete receipt must not become a complete-body truncation refusal"
     )
     assert result["baseline"], "all received rights return to the initial baseline"
-    assert result["timeout"] == pytest.approx(0.01), (
+    assert result["timeout"] == pytest.approx(_INCOMPLETE_LIMIT[eof]), (
         "receipt restores the original socket timeout"
     )
     assert result == snapshot, "the bounded incomplete-receipt evidence changed"
