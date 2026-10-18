@@ -18,8 +18,8 @@ mistaken for one carrying the post-accounting snapshot.
 import typing as typ
 from pathlib import Path
 
-from cache_recovery_harness import metered_machine
 from cache_recovery_helpers import gauges, settle_transaction
+from cache_recovery_machines import metered_machine
 
 if typ.TYPE_CHECKING:
     from conftest import RecordingSink

@@ -9,6 +9,7 @@ reason to queue a start that the unit will skip — it is a fault to report.
 """
 
 import contextlib
+import typing as typ
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,9 @@ from buildlimits.config import SupervisorConfig
 from buildlimits.supervisor import Supervisor
 from buildlimits.systemd import UserManager
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
 
 def test_the_barrier_survives_a_failed_startup_accounting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -50,46 +54,44 @@ def test_the_barrier_survives_a_failed_startup_accounting(
         assert marker.exists(), "the barrier outlives an unaccounted start-up"
 
 
-def _restarted(
-    owned: contextlib.ExitStack,
-    tmp_path: Path,
-    *,
-    mode: str = "sccache",
-    present: bool = True,
-    refuse: str | None = None,
-) -> tuple[Supervisor, CacheState, Path]:
-    """Build a supervisor restarting over a stopped, empty managed cache.
+type _Restarted = tuple[Supervisor, CacheState, Path]
 
-    Parameters
-    ----------
-    owned : contextlib.ExitStack
-        Closes the supervisor's descriptors when the test ends.
-    tmp_path : Path
-        The disposable fixture directory holding the barrier.
-    mode : str
-        The configured cache mode.
-    present : bool
-        Whether an interrupted transaction left its barrier behind.
-    refuse : str or None
-        The control verb the scripted manager refuses, or None for none.
+
+@pytest.fixture
+def restarted(
+    owned: contextlib.ExitStack, tmp_path: Path
+) -> cabc.Callable[..., _Restarted]:
+    """Provide a builder of supervisors restarting over a stopped, empty cache.
+
+    The builder's supervisors are closed when the test ends.
 
     Returns
     -------
-    tuple[Supervisor, CacheState, Path]
-        The supervisor, its scripted cache and the barrier's path.
+    Callable[..., tuple[Supervisor, CacheState, Path]]
+        Called with ``mode`` (the configured cache mode), ``present`` (whether
+        an interrupted transaction left its barrier) and ``refuse`` (the
+        control verb the scripted manager refuses, or None); returns the
+        supervisor, its scripted cache and the barrier's path.
     """
-    marker = tmp_path / "cache-recovery"
-    if present:
-        marker.write_text("recovering\n", encoding="ascii")
-    state = CacheState(refuse=refuse, active=False)
-    state.marker = marker
-    settings = SupervisorConfig(
-        cache_mode=mode, sccache_unit=CACHE_UNIT, recovery_marker=marker
-    )
-    supervisor = owned.enter_context(
-        contextlib.closing(Supervisor(settings, manager_for(state)))
-    )
-    return supervisor, state, marker
+
+    def build(
+        *, mode: str = "sccache", present: bool = True, refuse: str | None = None
+    ) -> _Restarted:
+        """Build one supervisor over a stopped, empty managed cache."""
+        marker = tmp_path / "cache-recovery"
+        if present:
+            marker.write_text("recovering\n", encoding="ascii")
+        state = CacheState(refuse=refuse, active=False)
+        state.marker = marker
+        settings = SupervisorConfig(
+            cache_mode=mode, sccache_unit=CACHE_UNIT, recovery_marker=marker
+        )
+        supervisor = owned.enter_context(
+            contextlib.closing(Supervisor(settings, manager_for(state)))
+        )
+        return supervisor, state, marker
+
+    return build
 
 
 @pytest.mark.parametrize(
@@ -102,22 +104,20 @@ def _restarted(
     ids=["interrupted", "absent", "direct-mode"],
 )
 def test_an_accounted_startup_reclaims_only_its_own_barrier(
-    owned: contextlib.ExitStack,
-    tmp_path: Path,
+    restarted: cabc.Callable[..., _Restarted],
     mode: str,
     present: bool,
     fate: BarrierFate,
 ) -> None:
     """The barrier clears, and the cache restarts, in the owning mode only."""
-    supervisor, state, marker = _restarted(owned, tmp_path, mode=mode, present=present)
+    supervisor, state, marker = restarted(mode=mode, present=present)
     supervisor.recovery.reclaim_after_accounting()
     assert marker.exists() is fate.remaining, "the barrier's fate follows the mode"
     assert state.verbs == (["start"] if fate.starts else []), "only the owner restarts"
 
 
 def test_a_refused_reclaim_restart_is_reported_without_reblocking_the_cache(
-    owned: contextlib.ExitStack,
-    tmp_path: Path,
+    restarted: cabc.Callable[..., _Restarted],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A cache that will not start is announced, and stays free to start.
@@ -128,7 +128,7 @@ def test_a_refused_reclaim_restart_is_reported_without_reblocking_the_cache(
     operator who sees no cache must be told why rather than left to infer it
     from a supervisor that quietly compiles directly.
     """
-    supervisor, state, marker = _restarted(owned, tmp_path, refuse="start")
+    supervisor, state, marker = restarted(refuse="start")
     supervisor.recovery.reclaim_after_accounting()
     assert not marker.exists(), "a refused start does not re-block the cache"
     assert "start" in state.verbs, "the restart was attempted"
@@ -138,7 +138,7 @@ def test_a_refused_reclaim_restart_is_reported_without_reblocking_the_cache(
 
 
 def test_a_barrier_that_cannot_be_cleared_keeps_a_reclaimed_cache_from_starting(
-    owned: contextlib.ExitStack,
+    restarted: cabc.Callable[..., _Restarted],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -151,7 +151,7 @@ def test_a_barrier_that_cannot_be_cleared_keeps_a_reclaimed_cache_from_starting(
     barrier that is still there reaches a unit whose own condition skips it.
     The journal must carry the real reason.
     """
-    supervisor, state, marker = _restarted(owned, tmp_path)
+    supervisor, state, marker = restarted()
     unremovable_barrier(monkeypatch, marker, "Read-only file system")
     supervisor.recovery.reclaim_after_accounting()
     assert marker.exists(), "the barrier survives the refused removal"
@@ -162,7 +162,7 @@ def test_a_barrier_that_cannot_be_cleared_keeps_a_reclaimed_cache_from_starting(
 
 
 def test_a_barrier_that_cannot_be_inspected_is_left_alone(
-    owned: contextlib.ExitStack,
+    restarted: cabc.Callable[..., _Restarted],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -177,7 +177,7 @@ def test_a_barrier_that_cannot_be_inspected_is_left_alone(
     unreadable path. So nothing is attempted, and the operator is given the
     reason instead of a cache that silently never returns.
     """
-    supervisor, state, marker = _restarted(owned, tmp_path)
+    supervisor, state, marker = restarted()
     unreadable_barrier(monkeypatch, marker, "Permission denied")
     supervisor.recovery.reclaim_after_accounting()
     assert state.verbs == [], "no start is issued on an unreadable barrier"
@@ -192,7 +192,7 @@ def test_a_barrier_that_cannot_be_inspected_is_left_alone(
 
 
 def test_an_unreadable_barrier_is_reported_even_where_exists_reports_absent(
-    owned: contextlib.ExitStack,
+    restarted: cabc.Callable[..., _Restarted],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -208,7 +208,7 @@ def test_an_unreadable_barrier_is_reported_even_where_exists_reports_absent(
     assertion holds whatever interpreter runs the suite: if the reclaim path
     consults ``exists`` it silently does nothing and the journal stays empty.
     """
-    supervisor, state, marker = _restarted(owned, tmp_path)
+    supervisor, state, marker = restarted()
     unreadable_barrier(monkeypatch, marker, "Permission denied")
 
     def absent_on_error(self: Path, *, follow_symlinks: bool = True) -> bool:

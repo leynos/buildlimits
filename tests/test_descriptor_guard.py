@@ -20,8 +20,7 @@ if typ.TYPE_CHECKING:
 def _selector_kept_by_a_cycle() -> None:
     """Open an epoll selector that only the cyclic collector can reclaim."""
     cycle: list[object] = []
-    cycle.append(cycle)
-    cycle.append(selectors.DefaultSelector())
+    cycle.extend((cycle, selectors.DefaultSelector()))
 
 
 def test_opened_since_reports_new_descriptors_and_reused_numbers() -> None:

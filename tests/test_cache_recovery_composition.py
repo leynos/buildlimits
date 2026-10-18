@@ -42,8 +42,6 @@ from buildlimits.effects import Launch
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-    import pytest
-
     from buildlimits.supervisor import Supervisor
 
 SOCKET_PATH = "sccache.sock"

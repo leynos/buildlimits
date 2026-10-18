@@ -73,9 +73,11 @@ class _Started:
 
     def close(self) -> None:
         """Release the supervisor's descriptors, then the pipes this test made."""
-        self.supervisor.close()
-        for fd in self.pipes:
-            os.close(fd)
+        try:
+            self.supervisor.close()
+        finally:
+            for fd in self.pipes:
+                os.close(fd)
 
 
 def _manager(
@@ -239,7 +241,7 @@ def test_closing_a_started_supervisor_releases_every_descriptor_it_owns(
 
         supervisor.close()
 
-        assert still_open(held) == [], "close returns every descriptor"
+        assert not still_open(held), "close returns every descriptor"
         assert pool.is_closed, "close releases the token pool"
         assert supervisor.pool is None, "a released pool is not left to be reused"
         assert signal.set_wakeup_fd(-1) == -1, (

@@ -441,10 +441,12 @@ exclude = [".venv/**", ".uv-cache/**", ".uv-tools/**", ".tools/**", ".git/**"]
 # The remaining names are read outside the scanned test tree: production code
 # reads the attributes tests set on real objects, mocks read their configured
 # results, callers dispatch ``__call__`` on runner doubles, and CrossHair
-# loads its contracts by name.
+# loads its contracts by name, and pytest runs the autouse leak guard without
+# any test naming it.
 ignore_names = [
     "test_*",
     "pytestmark",
+    "descriptor_leak_guard",
     "__call__",
     "return_value",
     "side_effect",

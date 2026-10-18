@@ -30,6 +30,7 @@ def make_pool(owned: contextlib.ExitStack) -> cabc.Callable[[Path], TokenPool]:
     """
 
     def build(device: Path) -> TokenPool:
+        """Open a pool on ``device`` and own its close."""
         return owned.enter_context(contextlib.closing(TokenPool(device)))
 
     return build
@@ -89,19 +90,20 @@ def test_end_of_file_fails_the_pool(
     assert "end of file" in events[0].reason, events[0].reason
 
 
-def test_a_replaced_device_is_detected(
-    tmp_path: Path, make_pool: cabc.Callable[[Path], TokenPool]
-) -> None:
+def test_a_replaced_device_is_detected(tmp_path: Path) -> None:
     """A restart that recreates the device path is noticed."""
     fifo = tmp_path / "guild"
     os.mkfifo(fifo)
-    pool = make_pool(fifo)
-    assert pool.is_same_device(), "the opened device is still in place"
-    fifo.unlink()
-    os.mkfifo(fifo)
-    assert not pool.is_same_device(), "a new device at the same path differs"
-    fifo.unlink()
-    assert not pool.is_same_device(), "a missing device differs"
+    pool = TokenPool(fifo)
+    try:
+        assert pool.is_same_device(), "the opened device is still in place"
+        fifo.unlink()
+        os.mkfifo(fifo)
+        assert not pool.is_same_device(), "a new device at the same path differs"
+        fifo.unlink()
+        assert not pool.is_same_device(), "a missing device differs"
+    finally:
+        pool.close()
 
 
 def test_the_handle_is_not_inherited(
@@ -146,16 +148,30 @@ def _pool_descriptors(pool: TokenPool) -> list[int]:
     return [pool.fd, pool.wake_fd, pool._wake_write]
 
 
-def test_close_releases_every_descriptor_the_pool_owns(tmp_path: Path) -> None:
-    """A closed pool leaves neither its device nor its wake pipe open."""
-    fifo = tmp_path / "guild"
-    os.mkfifo(fifo)
-    pool = TokenPool(fifo)
+@pytest.mark.parametrize("has_failed", [False, True], ids=["idle", "failed"])
+def test_close_releases_every_descriptor_the_pool_owns(
+    tmp_path: Path, has_failed: bool
+) -> None:
+    """A closed pool leaves neither its device nor its wake pipe open.
+
+    The failed case is a reader that already ended on end of file; it is closed
+    all the same.
+    """
+    device = tmp_path / "guild"
+    if has_failed:
+        device.write_bytes(b"")
+    else:
+        os.mkfifo(device)
+    pool = TokenPool(device)
     owned_fds = _pool_descriptors(pool)
     assert still_open(owned_fds) == owned_fds, "the pool holds all three while open"
+    if has_failed:
+        pool.request()
+        assert isinstance(_next_events(pool)[0], PoolFailure), "the reader failed"
+        pool._reader.join(5.0)
     pool.close()
-    assert still_open(owned_fds) == [], "close returns the device and both pipe ends"
-    assert not pool._reader.is_alive(), "close ends the idle reader thread"
+    assert not still_open(owned_fds), "close returns the device and both pipe ends"
+    assert not pool._reader.is_alive(), "close ends the reader thread"
 
 
 def test_close_is_idempotent_and_survives_descriptor_reuse(tmp_path: Path) -> None:
@@ -176,19 +192,6 @@ def test_close_is_idempotent_and_survives_descriptor_reuse(tmp_path: Path) -> No
         assert still_open([device]) == [device], "the repeat close left it alone"
     finally:
         os.close(device)
-
-
-def test_close_after_a_failed_read_still_releases_the_device(tmp_path: Path) -> None:
-    """A pool whose reader already ended on end of file is closed all the same."""
-    device = tmp_path / "guild"
-    device.write_bytes(b"")
-    pool = TokenPool(device)
-    owned_fds = _pool_descriptors(pool)
-    pool.request()
-    assert isinstance(_next_events(pool)[0], PoolFailure), "the reader failed"
-    pool._reader.join(5.0)
-    pool.close()
-    assert still_open(owned_fds) == [], "a failed pool still gives everything back"
 
 
 def test_close_leaves_a_blocked_read_to_close_the_device_when_it_returns(
@@ -217,7 +220,7 @@ def test_close_leaves_a_blocked_read_to_close_the_device_when_it_returns(
     pool.request()  # the FIFO is empty, so the reader blocks inside read
     assert inside_read.wait(5.0), "the reader reached its blocking read"
     pool.close()
-    assert still_open([wake_read, wake_write]) == [], "the wake pipe closes at once"
+    assert not still_open([wake_read, wake_write]), "the wake pipe closes at once"
     assert still_open([device]) == [device], "the device stays open under the read"
     writer = os.open(fifo, os.O_WRONLY)
     try:
@@ -226,4 +229,4 @@ def test_close_leaves_a_blocked_read_to_close_the_device_when_it_returns(
     finally:
         os.close(writer)
     assert not pool._reader.is_alive(), "the returned read lets the reader finish"
-    assert still_open([device]) == [], "the reader closed the device it was using"
+    assert not still_open([device]), "the reader closed the device it was using"

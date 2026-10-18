@@ -32,8 +32,8 @@ True
 
 import contextlib
 import gc
-import os
 import typing as typ
+from pathlib import Path
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -61,9 +61,11 @@ def describe_descriptors() -> Descriptors:
         ``pipe:[1234]`` or ``anon_inode:[eventpoll]``.
     """
     found: Descriptors = {}
-    for name in os.listdir(_FD_DIRECTORY):
+    # Materialize the listing first: while the scan is open its own descriptor
+    # is still readable and would be reported as the caller's.
+    for entry in list(Path(_FD_DIRECTORY).iterdir()):
         try:
-            found[int(name)] = os.readlink(f"{_FD_DIRECTORY}/{name}")
+            found[int(entry.name)] = str(entry.readlink())
         except OSError:
             continue
     return found

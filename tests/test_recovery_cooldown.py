@@ -8,15 +8,15 @@ Each rest is checked at both edges of its boundary through the real trigger.
 
 import typing as typ
 
-from cache_recovery_harness import scripted_machine, tick_phase
 from cache_recovery_helpers import gauges
+from cache_recovery_machines import scripted_machine, tick_phase
 
 from buildlimits.recovery_starvation import cooldown_after
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
-    from cache_recovery_harness import ScriptedCache
+    from cache_recovery_machines import ScriptedCache
 
     from buildlimits.admission_state import Counts
 

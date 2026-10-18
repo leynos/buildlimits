@@ -13,7 +13,7 @@ constant is a disagreement rather than a tidy update.
 import typing as typ
 
 import pytest
-from cache_recovery_harness import scripted_machine, tick_phase
+from cache_recovery_machines import scripted_machine, tick_phase
 from cache_recovery_scenarios import busy_supervisor, retained_counts
 
 from buildlimits.admission_state import Counts
@@ -22,7 +22,7 @@ from buildlimits.recovery_roots import VisibleRootsGrace, roots_verdict
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
-    from cache_recovery_harness import ScriptedCache
+    from cache_recovery_machines import ScriptedCache
     from conftest import RecordingSink
 
     from buildlimits.metrics import Metrics
