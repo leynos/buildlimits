@@ -75,8 +75,8 @@ and H1.
       configurations.
   - Requires 1.1.1 and 1.1.4.
   - Provide the `PREFIX_GUARD_COUNTS_UNCACHED` switch and the trigger and
-    refusal rules at `eba08ad`, beside the fixed configurations of PR #9 and
-    PR #10 (`37d08e5`).
+    refusal rules at `eba08ad`, beside the fixed configurations of PRs #9, #10
+    and #12 (`7445bf0`).
   - Success: at capacity 3, incident 1 yields a lasso to L3 and incident 3
     yields lassos to L1 and L4, and the fixed configurations yield none; at
     capacity 2, incident 1's lasso appears under weak but not strong fairness.
@@ -118,7 +118,7 @@ and W2.
   - Requires 1.2.1.
   - Express stop safety, accounted release, server work coverage, explainable
     retention and fault persistence as `always` and `transition` assertions.
-  - Success: all of S1 to S9 hold on the `37d08e5` configuration.
+  - Success: all of S1 to S9 hold on the `7445bf0` configuration.
 - [ ] 1.2.3. Add the liveness properties L1 to L4 under F1 to F7.
   - Requires 1.2.1.
   - Success: L1 to L4 are checked with each fairness assumption stated beside
@@ -133,8 +133,8 @@ and W2.
       whole.
   - Requires 1.2.3 and 1.2.4.
   - Success: each of the four known-bad configurations fails its Table 4
-    property, and every property holds on the `37d08e5` configuration under F1
-    to F7, with the exceptions that 1.3.1 predicts recorded rather than hidden.
+    property, and every property holds on the `7445bf0` configuration under F1
+    to F7.
 - [ ] 1.2.6. Measure runtime at H2's bounds and record the G2 decision.
   - Requires 1.2.5.
   - Use capacity 3 with two waiting requests, two abnormal endings, one manager
@@ -144,27 +144,31 @@ and W2.
     records whether the model stays whole, runs nightly only, or is split into
     a coupling model and a transaction model.
 
-### 1.3. Check the fixes that are in flight
+### 1.3. Check the stale-path stop and the restart design
 
-This step answers whether the model confirms the two fixes being written in
-code now, rather than planning either. It informs the branch owners and,
-through F3, whether an operating assumption is acceptable. See RFC 0001 §2 and
-H4.
+This step answers whether the model confirms the fix to the stale-path stop,
+merged since as pull request 12, and whether start-up quiescence, being
+designed now, belongs in the model. It checks both and plans neither. It
+informs, through F3, whether an operating assumption is acceptable. See RFC
+0001 §2 and H4.
 
-- [ ] 1.3.1. Check the stale-path automatic stop on `37d08e5`.
+- [ ] 1.3.1. Check the stale-path automatic stop at `37d08e5` as a known-bad
+      configuration.
   - Requires 1.2.3.
-  - A stale-opened transaction stops only after the drain probe again proves
-    zero visible roots (`CacheRecovery._try_stop`); a manual request skips the
-    proof.
+  - At `37d08e5` a stale-opened transaction stopped only after the drain probe
+    again proved zero visible roots (`CacheRecovery._try_stop`); a manual
+    request skipped the proof.
   - Success: the H4 prediction is confirmed or falsified: L1 holds with F3 and
     fails without it, through detached work holding a visible root for ever,
-    and L4 holds without F3. Any counterexample is replayed as in 1.1.6.
-- [ ] 1.3.2. Check the `stale-root-deadline` fix against the model.
+    and L4 holds without F3. A confirmed result is kept as a fifth known-bad
+    configuration, and any counterexample is replayed as in 1.1.6.
+- [ ] 1.3.2. Check the visible-roots grace of PR #12 at `7445bf0`.
   - Requires 1.3.1.
-  - Model the fix from the merged code, or from the reviewed branch head with
-    its commit recorded if the model is ready first.
-  - Success: the H4 verdict on whether L1 holds without F3 is reported to the
-    branch owner, with a regression test for any genuine counterexample. The
+  - Model `recovery_roots.stop_verdict` with `RECOVERY_ROOTS_GRACE_SECONDS`
+    counted in timer units, including that an unreadable root count neither
+    starts nor completes the clock and that a blocked stop breaks it.
+  - Success: L1 holds without F3 at `7445bf0`, or the counterexample is
+    replayed through the production doubles and becomes a regression test. The
     model designs nothing in the fix.
 - [ ] 1.3.3. Decide whether start-up quiescence belongs in the model.
   - Requires 1.2.6.
@@ -176,8 +180,8 @@ H4.
     action cites the merged code, and S3, S4 and L1 hold across a supervisor
     restart that finds a live cache; if not, the deferral is recorded in 2.1.
 - [ ] 1.3.4. Close W2 by recording that its exit evidence is met.
-  - Requires 1.2.6, 1.3.1 and 1.3.3.
-  - Success: RFC 0001 W2 shows all properties holding at `37d08e5` under F1 to
+  - Requires 1.2.6, 1.3.2 and 1.3.3.
+  - Success: RFC 0001 W2 shows all properties holding at `7445bf0` under F1 to
     F7, the known-bad configurations failing, and H4 answered.
 
 ### 1.4. Keep the model honest against the code
