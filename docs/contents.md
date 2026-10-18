@@ -34,3 +34,9 @@
 - [Local validation of GitHub Actions with act and pytest](local-validation-of-github-actions-with-act-and-pytest.md)
   explains how to validate workflow behaviour locally before relying on remote
   Continuous Integration (CI) runs.
+
+## Requests for comments
+
+- [RFC 0001: FizzBee model of compile admission and cache recovery](rfcs/0001-fizzbee-model-of-admission-and-recovery.md)
+  proposes a formal model of admission and recovery, its safety and liveness
+  properties, conformance checks and a gated adoption plan.
