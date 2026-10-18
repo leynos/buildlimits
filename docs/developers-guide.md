@@ -514,19 +514,20 @@ did nothing wrong.
   its `stdout` and `stderr`, after killing and reaping it.
 - **Do not call `gc.collect()` to tidy up.** It hides which test leaked.
 
-An autouse fixture in `conftest.py` enforces this. `descriptor_guard.no_leaks`
-suspends the cyclic collector for the length of one test and compares
-`/proc/self/fd`, as (number, target) pairs, before and after every fixture has
-torn down. A leak fails that test at teardown and lists the descriptors. The
-comparison is local to one process, so each xdist worker checks only itself,
-and with the collector suspended the verdict does not depend on allocation
-timing. `pyproject.toml` also turns `ResourceWarning` and unraisable-exception
-warnings into errors, which catches objects freed unclosed by reference
-counting. The guard is registered as a plugin (`-p descriptor_guard`), so it
-covers the package's doctests as well as `tests/`. It brackets function-scoped
-fixtures only: a session- or module-scoped fixture is set up before the
-baseline and torn down after the comparison, so its descriptors are outside the
-guard and must be closed by that fixture's own teardown.
+The autouse fixture in the `descriptor_guard` plugin enforces this.
+`descriptor_guard.no_leaks` suspends the cyclic collector for the length of one
+test and compares `/proc/self/fd`, as (number, target) pairs, before and after
+every function-scoped fixture has torn down. A leak fails that test at teardown
+and lists the descriptors. The comparison is local to one process, so each
+xdist worker checks only itself, and with the collector suspended the verdict
+does not depend on allocation timing. `pyproject.toml` also turns
+`ResourceWarning` and unraisable-exception warnings into errors, which catches
+objects freed unclosed by reference counting. The guard is registered as a
+plugin (`-p descriptor_guard`), so it covers the package's doctests as well as
+`tests/`. It brackets function-scoped fixtures only: a session- or
+module-scoped fixture is set up before the baseline and torn down after the
+comparison, so its descriptors are outside the guard and must be closed by that
+fixture's own teardown.
 
 ## 12. Static-analysis exceptions
 
