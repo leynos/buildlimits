@@ -15,6 +15,9 @@ These documents take precedence over this guide when they disagree with it:
   [ADR 011][adr-011] on sccache under compile admission, [ADR 012][adr-012] on
   the provisioning collection and [ADR 013][adr-013] on compile-admission
   metrics.
+- [ADR 001](adr-001-graceful-supervisor-restart.md) records how a supervisor
+  restart cancels nothing: the graceful `SIGTERM` stop, the adapters' retry and
+  the start-up stop of a live cache.
 - The [repository layout](repository-layout.md) names every path and its
   responsibility.
 - The [documentation style guide](documentation-style-guide.md) governs all
@@ -113,10 +116,10 @@ Each module owns one decision. This table is the single module inventory.
 | Module                                                    | Responsibility                                                                                  |
 | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | `admission`, `effects`                                    | Pure state machine: queue, tokens, draining                                                     |
-| `admission_state`                                         | Frozen, identifier-free admission gauge snapshot                                                |
+| `admission_state`                                         | Group lifecycle values; the identifier-free `Counts` snapshot and the `Gauges` read-only views  |
 | `supervisor`                                              | Event loop that carries out admission's effects                                                 |
 | `supervisor_polling`                                      | Poll cadence and ordered server, pool and cache checks; no token-release decisions              |
-| `supervisor_signals`, `supervisor_shutdown`               | `SIGCHLD` self-pipe wake-up; stop sequencing and its deadline                                   |
+| `supervisor_signals`, `supervisor_shutdown`               | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                             |
 | `supervisor_observability`                                | Wires cached pressure and drain observers into existing owners                                  |
 | `effect_dispatch`                                         | Effect handlers and their metric and health mappings                                            |
 | `requesters`, `pending_request`                           | Connections, queued requests and replies; recorded request data                                 |
@@ -132,11 +135,12 @@ Each module owns one decision. This table is the single module inventory.
 | `pool`                                                    | The token device, read on a thread of its own                                                   |
 | `sccache`, `server_watch`                                 | The managed cache's reachability and accounting; start-up and `SERVER_DRAIN` release            |
 | `cache_recovery`, `recovery_*`                            | The recovery transaction, its barrier, reclamation, trigger and guidance                        |
+| `cache_quiesce`                                           | Start-up stop of a live managed cache under the barrier, before the strict accounting           |
 | `bus_properties`, `systemd`                               | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl` |
 | `cgroups`, `startup`, `proc_trees`                        | Control-group reads, the restart barrier and diagnostic process-tree counts                     |
 | `protocol`, `replies`, `framing`, `frame_payload`, `wire` | Versioned JSON frames with passed descriptors                                                   |
-| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`  | Cargo-facing entry points, retries, signal handling, progress lines and rustdoc lookup          |
-| `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` notification and settings                                 |
+| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`  | Cargo-facing entry points, retries, restart handling, signal handling, progress and rustdoc     |
+| `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                 |
 | `status`, `status_client`, `status_render`, `status_cli`  | The status document, its transport, rendering and command                                       |
 | `recover_client`, `recover_cli`                           | The recovery request and the `build-limits-recover` command                                     |
 | `metrics*`, `journal`, `journal_native`                   | Metric vocabulary, native journal datagrams, journal queries and reports                        |
@@ -161,14 +165,23 @@ in the order the caller must carry them out:
   first, while the server's live work fits within the tokens that remain.
 - `health_failed()` refuses queued requests, terminates running groups and
   emits `Shutdown` once they have drained.
+- `begin_closing()` is the graceful stop. It sets `closing`: no token is
+  requested, a token already on its way is returned, no group launches and none
+  is terminated, and requests that wait or arrive stay queued. Once the last
+  group has emptied, `_maybe_shutdown` refuses what waits as `restarting` and
+  emits `Shutdown`; a request submitted after that point is refused at once.
+  `healthy` stays true throughout, so the immediate stop can still escalate.
 
-`Admission.counts()` returns a frozen `Counts` snapshot without identifiers.
-`tests/test_admission.py` drives the core with a Hypothesis
-`RuleBasedStateMachine` against a model pool and a model server, checking token
-conservation, that waiting requests hold nothing, that tokens return only after
-emptiness, that server work never exceeds cached tokens, and that nothing
-launches while unhealthy. The same module pins the import boundary: `admission`,
-`effects` and `attributes` import no wire, framing, reply or request module.
+`Admission.counts()`, `tokens_held()` and the `admitting` and `winding_down`
+views come from the `Gauges` mixin in `admission_state`, which keeps the
+read-only accessors out of the decision logic. `counts()` returns a frozen
+`Counts` snapshot without identifiers. `tests/test_admission.py` drives the
+core with a Hypothesis `RuleBasedStateMachine` against a model pool and a model
+server, checking token conservation, that waiting requests hold nothing, that
+tokens return only after emptiness, that server work never exceeds cached
+tokens, and that nothing launches while unhealthy. The same module pins the
+import boundary: `admission`, `effects` and `attributes` import no wire,
+framing, reply or request module.
 
 ## 6. Supervisor shell
 
@@ -184,15 +197,31 @@ Start-up takes a singleton lock and passes the restart barrier:
 waits for it to empty, because a crashed supervisor's tokens return to the pool
 while its compilers may still run. `ServerWatch.drain_orphans` then requires
 the managed cache to be accounted stopped and empty, or raises
-`StartupAccountingError`, which `service.main` turns into exit status 2. On
-success the supervisor opens the pool and listener, then sends `READY=1`.
+`StartupAccountingError`, which `service.main` turns into exit status 2. Just
+before that, `cache_quiesce.quiesce_live_cache` stops a cache the manager
+reports live: start-up holds the singleton lock and has terminated every
+compiler scope, so no admitted group can use it. It writes the barrier, queues
+the stop and polls `accounted_drain` for up to 60 seconds; it never reads a
+count or an idle CPU as proof, and it leaves the barrier for
+`reclaim_after_accounting` to retire. A stopped cache that holds processes, a
+state the manager cannot report and a stop that does not complete all still
+reach `drain_orphans` or fail start-up with exit 2. On success the supervisor
+opens the pool and listener, then sends `READY=1`.
 
-Signal handlers only call `Supervisor.request_stop()`; the next tick calls
-`stop()`, so every admission change stays on the event-loop path. Children end
-through `SIGCHLD` delivered by `signal.set_wakeup_fd`, and `Groups.reap`
-collects them with `waitpid(WNOHANG)`. `cgroups.is_populated()` reports an
-empty group only for `ENOENT` or `ENODEV`; any other read error raises, so an
-unreadable scope is never taken as drained.
+Signal handlers only record intent. `SIGTERM`, which `systemctl stop` and
+`restart` send, calls `request_graceful_stop()`; `SIGINT` calls
+`request_stop()`. The next tick honours the record, so every admission change
+stays on the event-loop path. A graceful stop calls `Admission.begin_closing()`
+and sends `STATUS=` to the manager; `settle_graceful_stop` opens the recovery
+transaction when only `SERVER_DRAIN` groups remain, and `settle_token_request`
+returns a token the pool reader took for a request nobody will launch before
+the process exits. An immediate stop still refuses the queue as `unhealthy` and
+terminates the running groups; it works after a graceful stop has begun. The
+exit status is 0 for both orderly stops. Children end through `SIGCHLD`
+delivered by `signal.set_wakeup_fd`, and `Groups.reap` collects them with
+`waitpid(WNOHANG)`. `cgroups.is_populated()` reports an empty group only for
+`ENOENT` or `ENODEV`; any other read error raises, so an unreadable scope is
+never taken as drained.
 
 ## 7. Launching a compiler
 
@@ -342,6 +371,18 @@ limit once queued, but gives up after `BUILD_LIMITS_UNAVAILABLE_SECS` when no
 supervisor answers; a pre-recording `busy` refusal is retried with jittered
 backoff under that deadline, through `timing.RetryWait`.
 
+A supervisor restart is invisible to a request that was not yet admitted. The
+supervisor refuses what waits as `restarting` when it stops, and a connection
+that closes or resets before `Admitted` means the same: nothing ran, so
+`adapter_invocation.retry_request` reconnects. `Progress` records what the
+supervisor had acknowledged, and a restart that interrupted a queued request
+(`QueuedRestartError`) gives the next supervisor a fresh unavailability window,
+because the wait was spent queued; one that did not (`RestartingError`) leaves
+the original deadline in force, so a supervisor that only refuses stays
+bounded. A connection lost after `Admitted` is a plain `AdapterError`, because
+the compiler may have run. `adapter_replies` reads one reply and reports a
+closed or reset connection as `SupervisorClosedError`.
+
 ## 11. Tests
 
 ### 11.1. Layout and conventions
@@ -396,6 +437,18 @@ own user manager, in uniquely named slices and units, and never open
 are opt-in. `make test-systemd-user` sets `BUILD_LIMITS_HOST_ACCEPTANCE=1`;
 without it, collection never contacts the manager and the scenarios skip. They
 also skip where no user manager runs.
+
+`tests/test_graceful_restart_systemd.py` runs the operator's
+`systemctl --user restart` against an isolated supervisor under a running
+cached build, a waiting build, a live idle cache and a token that only a
+stopped cache can release, and checks that every build finishes with its own
+status. `tests/cached_unit_files.py` renders the fixture units from
+`supervisor_unit_text` and `cache_unit_text`, and
+`tests/test_unit_file_contract.py` pins the directives the restart relies on
+against both the fixture and the user's guide. The unit-file edits a role needs
+for a new behaviour must change the guide, the fixture and that test together.
+`tests/cache_unit_fake.py` plays a cache unit through its states for unit tests
+that need the order of the barrier, stop and start.
 
 ## 12. Static-analysis exceptions
 

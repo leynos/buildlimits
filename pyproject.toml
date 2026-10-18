@@ -1177,3 +1177,7 @@ reason = "Matching import lists: each module names the protocol or port symbols 
 [[tool.duplication_gate.allow]]
 members = ["tests/test_supervisor_effects.py", "tests/test_supervisor_graceful_stop.py"]
 reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_cache_recovery_systemd.py", "tests/test_graceful_restart_systemd.py"]
+reason = "Both modules own an isolated real-systemd world and release it in the same try/finally fixture; the matching lines are the repository's fixture idiom for host acceptance, not shared logic, and a shared fixture would have to know both worlds' different resources."

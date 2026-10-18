@@ -37,6 +37,67 @@ def _wrapper(path: Path, argv: list[str], environment: dict[str, str]) -> None:
     path.chmod(0o700)
 
 
+def supervisor_unit_text(
+    *, sccache_unit: str, parent_slice: str, exec_start: str, limits: str = ""
+) -> str:
+    """Render the isolated supervisor unit, mirroring the role template.
+
+    The directives the graceful restart relies on are the role's own and must
+    not be varied here: ``Type=notify`` so ``systemctl restart`` returns when
+    the new supervisor is ready, ``TimeoutStopSec=infinity`` so that systemd
+    never kills a supervisor that is waiting for running groups, and
+    ``Restart=always`` with ``RestartPreventExitStatus=2`` so only a refusal that
+    needs an operator stays down. Only the timeouts that bound start-up are
+    shortened for the fixture.
+
+    Returns
+    -------
+    str
+        The unit file text.
+    """
+    return (
+        f"[Unit]\nDescription=Isolated admission supervisor\n"
+        f"Wants={sccache_unit}\nBefore={sccache_unit}\n"
+        f"[Service]\nType=notify\nNotifyAccess=main\nSlice={parent_slice}\n"
+        f"Restart=always\nRestartPreventExitStatus=2\nRestartSec=1\n"
+        f"TimeoutStartSec=30\nTimeoutStopSec=infinity\n"
+        f"ExecStart={exec_start}\n{limits}"
+    )
+
+
+def cache_unit_text(
+    *,
+    supervisor_unit: str,
+    parent_slice: str,
+    runtime: Path,
+    exec_start: str,
+) -> str:
+    """Render the isolated managed-cache unit, mirroring the role template.
+
+    The cache is deliberately not bound to the supervisor: it is ordered after
+    it and held down by the restart barrier, so a supervisor restart never
+    stops or restarts it implicitly. Start-up stops a live cache itself, under
+    that barrier. The barrier and the cache's socket live in ``runtime``.
+
+    Returns
+    -------
+    str
+        The unit file text.
+    """
+    socket_path = _exec_path(runtime / "sccache.sock")
+    return (
+        f"[Unit]\nDescription=Isolated managed cache\nAfter={supervisor_unit}\n"
+        # Mirrors the role template's restart barrier, so the fixture unit
+        # refuses to start while a recovery transaction is in flight.
+        f"ConditionPathExists=!{runtime / 'cache-recovery'}\n"
+        f"[Service]\nSlice={parent_slice}\nRestart=no\n"
+        # Mirrors the role template's own pre-start, so a restart under a
+        # recovery transaction can rebind rather than fail on a stale socket.
+        f"ExecStartPre=/usr/bin/rm -f {socket_path}\n"
+        f"ExecStart={exec_start}\n"
+    )
+
+
 class CachedUnits:
     """Install isolated supervisor/cache units with a readiness dependency.
 
@@ -86,7 +147,6 @@ class CachedUnits:
         """
         harness = self.harness
         python_path = {"PYTHONPATH": os.environ.get("PYTHONPATH", "")}
-        socket_path = _exec_path(harness.runtime / "sccache.sock")
         ready = harness.runtime / "supervisor-launch.py"
         cache = harness.runtime / "cache-launch.py"
         _wrapper(ready, supervisor, python_path)
@@ -109,24 +169,21 @@ class CachedUnits:
         )
         self._install_file(
             harness.unit,
-            f"[Unit]\nDescription=Isolated admission supervisor\n"
-            f"Wants={harness.sccache_unit}\nBefore={harness.sccache_unit}\n"
-            f"[Service]\nType=notify\nNotifyAccess=main\nSlice={harness.parent_slice}\n"
-            f"Restart=always\nRestartPreventExitStatus=2\nRestartSec=1\n"
-            f"TimeoutStartSec=30\nTimeoutStopSec=infinity\n"
-            f"ExecStart={_exec_path(ready)}\n{limits}",
+            supervisor_unit_text(
+                sccache_unit=harness.sccache_unit,
+                parent_slice=harness.parent_slice,
+                exec_start=_exec_path(ready),
+                limits=limits,
+            ),
         )
         self._install_file(
             harness.sccache_unit,
-            f"[Unit]\nDescription=Isolated managed cache\nAfter={harness.unit}\n"
-            # Mirrors the role template's restart barrier, so the fixture unit
-            # refuses to start while a recovery transaction is in flight.
-            f"ConditionPathExists=!{harness.runtime / 'cache-recovery'}\n"
-            f"[Service]\nSlice={harness.parent_slice}\nRestart=no\n"
-            # Mirrors the role template's own pre-start, so a restart under a
-            # recovery transaction can rebind rather than fail on a stale socket.
-            f"ExecStartPre=/usr/bin/rm -f {socket_path}\n"
-            f"ExecStart={_exec_path(cache)}\n",
+            cache_unit_text(
+                supervisor_unit=harness.unit,
+                parent_slice=harness.parent_slice,
+                runtime=harness.runtime,
+                exec_start=_exec_path(cache),
+            ),
         )
         self._run("daemon-reload")
 

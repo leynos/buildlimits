@@ -75,14 +75,19 @@ needed for this step.
 
 ## Restart safely
 
-A supervisor restart is not graceful for builds in flight. On stop, the
-supervisor marks admission unhealthy, so queued compile requests are refused,
-and it terminates the compiler groups that are running. Builds that were
-waiting or compiling fail.
+This restart is performed by the supervisor you are replacing, and the
+dev-env-rocky copy is not graceful for builds in flight. On stop, it marks
+admission unhealthy, so queued compile requests are refused, and it terminates
+the compiler groups that are running. Builds that were waiting or compiling
+fail. The new supervisor's start-up also stops a managed cache that the old one
+left running, so the restart no longer ends in an operator-action exit.
 
 Restart only when `build-limits-status` reports `held 0` and
 `no requests waiting`. Otherwise, wait for the builds to finish, or accept that
-they will be cancelled.
+they will be cancelled. Once this release is running, later upgrades need no
+such care: the
+[user's guide](users-guide.md#restart-the-supervisor-after-an-upgrade)
+describes the restart that waits for running builds and requeues waiting ones.
 
 ## Verification
 
