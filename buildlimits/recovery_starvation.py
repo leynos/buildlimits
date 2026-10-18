@@ -41,6 +41,11 @@ moving, the automatic stop proceeds without the proof (see
 moving cached group, a faulted manager and the verified-empty accounting that
 releases tokens are untouched.
 
+The same clauses answer a third question for the status document: how long the
+trigger still has to wait on time alone (:func:`opens_in`). Only the cooldown
+and the staleness proof are matters of time, so that answer is ``None`` when any
+other clause refuses and is zero exactly when :func:`starvation` acts.
+
 Both belong beside the transaction they authorize rather than beside the
 start-up reclamation that once shared this code's module: that module retires a
 barrier an interrupted transaction left behind, and it reads neither the gauges
@@ -148,6 +153,25 @@ class RetainedDrainAge:
 
     since: float | None = None
 
+    def age(self, now: float) -> float:
+        """Read the age without recording anything.
+
+        Status reads the age between ticks, so it must not start, move or end
+        the measurement that only the machine's own ticks may change.
+
+        Parameters
+        ----------
+        now : float
+            Current monotonic time.
+
+        Returns
+        -------
+        float
+            Seconds since the count last rose from zero, or zero when nothing
+            has been observed retained.
+        """
+        return 0.0 if self.since is None else now - self.since
+
     def observe(self, server_drain: int, *, now: float) -> float:
         """Record one reading of the retained count and return the age.
 
@@ -216,18 +240,9 @@ def starvation(reading: StarvationReading) -> str | None:
     str | None
         The reason to trigger, or ``None`` to leave admission alone.
     """
+    if not _every_clause_but_time_permits(reading) or _is_cooling(reading):
+        return None
     counts = reading.counts
-    # One clause per question the docstring names, each asked in turn rather
-    # than composed into a single expression. The evidence is conjunctive, but
-    # a reader verifying that every claim is present should not have to hold
-    # eight terms at once, and a clause that fails should be attributable to a
-    # named question rather than to a position in a chain.
-    if not _policy_permits_recovery(reading):
-        return None
-    if reading.fault_kind != "live_work":
-        return None
-    if counts.server_drain == 0 or counts.queued == 0:
-        return None
     match proof(reading):
         case "detached":
             cause = "live cache work is starving admission"
@@ -239,6 +254,42 @@ def starvation(reading: StarvationReading) -> str | None:
         f"{cause}: {counts.server_drain} token(s) await server accounting, and "
         f"{counts.queued} request(s) are waiting"
     )
+
+
+def opens_in(reading: StarvationReading) -> float | None:
+    """Say how long the automatic trigger must still wait on time alone.
+
+    Status prints this answer, so it is read from the clauses
+    :func:`starvation` judges rather than from a copy of them: it cannot
+    promise an opening that the trigger would not perform. Only two clauses
+    are matters of time, the cooldown and the stale proof, and the trigger
+    opens at the later of the two. :func:`blocked` gates the stop that follows
+    an opening, not the opening itself, so it has no part here.
+
+    Parameters
+    ----------
+    reading : StarvationReading
+        The one instant the trigger is judged against.
+
+    Returns
+    -------
+    float | None
+        ``None`` when waiting will not open the trigger, because a clause that
+        time cannot change refuses it; ``0.0`` when :func:`starvation` acts on
+        this very reading; otherwise the seconds until it will, provided
+        nothing else changes.
+
+    Examples
+    --------
+    >>> opens_in.__name__
+    'opens_in'
+    """
+    if not _every_clause_but_time_permits(reading):
+        return None
+    cooling = max(0.0, reading.cooling - reading.now)
+    if proof(reading) is not None:
+        return cooling
+    return max(cooling, RECOVERY_STALE_DRAIN_SECONDS - reading.drain_age)
 
 
 def refusal(fault_kind: str | None) -> str:
@@ -298,19 +349,40 @@ def blocked(counts: Counts, fault_kind: str | None) -> str:
     return refusal(fault_kind)
 
 
-def _policy_permits_recovery(reading: StarvationReading) -> bool:
-    """Report whether the cache mode, policy and cooldown all permit acting.
+def _every_clause_but_time_permits(reading: StarvationReading) -> bool:
+    """Report whether every clause that time cannot change permits acting.
+
+    One clause per question the module docstring names, each asked in turn
+    rather than composed into a single expression. The evidence is
+    conjunctive, but a reader verifying that every claim is present should not
+    have to hold eight terms at once, and a clause that fails should be
+    attributable to a named question rather than to a position in a chain. The
+    cooldown and the stale proof are left out because they are the two that
+    elapsing time satisfies; see :func:`opens_in`.
 
     Returns
     -------
     bool
-        Whether every policy condition for automatic recovery holds.
+        Whether the cache mode, the policy, the fault, the retained token, the
+        waiting request and the manager transport all permit an opening.
     """
-    if reading.cache_mode != "sccache":
+    if reading.cache_mode != "sccache" or reading.policy != "starved":
         return False
-    if reading.policy != "starved":
+    if reading.fault_kind != "live_work" or refusal(reading.fault_kind):
         return False
-    return reading.now >= reading.cooling
+    counts = reading.counts
+    return counts.server_drain > 0 and counts.queued > 0
+
+
+def _is_cooling(reading: StarvationReading) -> bool:
+    """Report whether a recent transaction still holds the trigger at rest.
+
+    Returns
+    -------
+    bool
+        Whether the cooldown has not yet passed.
+    """
+    return reading.now < reading.cooling
 
 
 def _the_probe_proved_detached_work(reading: StarvationReading) -> bool:
