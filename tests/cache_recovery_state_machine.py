@@ -20,7 +20,7 @@ test module asserts they are non-zero across the generated run.
 import typing as typ
 
 import pytest
-from cache_recovery_events import Events, Moment
+from cache_recovery_events import CalmClock, Events, Moment
 from cache_recovery_harness import scripted_machine
 from cache_recovery_model import MAX_GROUPS, Model
 from hypothesis import strategies as st
@@ -40,6 +40,10 @@ if typ.TYPE_CHECKING:
 # against. The retry schedule itself is exercised by the scripted tests; here
 # the point is to reach every phase and every refusal, not to time the retries.
 STEP_SECONDS = 200.0
+
+# The roots grace as a literal, so a shorter production deadline is a
+# disagreement here rather than a quiet update.
+ROOTS_GRACE_SECONDS = 600.0
 
 # A settled retry is reported as a rounded duration, so "nothing pending" is
 # read to within a float's rounding rather than by exact equality. Built once
@@ -81,6 +85,7 @@ class RecoveryMachine(RuleBasedStateMachine):
         # Whether the open transaction came from the automatic trigger rather
         # than an operator request, which skips the zero-root proof by design.
         self._automatic = False
+        self._calm = CalmClock()
         self._sync()
 
     def _phase(self) -> str:
@@ -140,14 +145,10 @@ class RecoveryMachine(RuleBasedStateMachine):
         """Advance due steps until the refused restart ends or the limit passes.
 
         An exhausted ending needs :data:`RECOVERY_FAILURE_LIMIT` consecutive
-        refusals, and each failure's backoff becomes due after its own step.
-        Drawing that run from the rule order is as good as impossible — the
-        instrumented search reached the restart phase 36 times, scripted 17
-        refusals, and never once observed a refused ending — so the branch
-        that reads the fault an ending keeps would be dead without a rule
-        that serves one through. Each step is still one due step at a time,
-        so the fault the ending keeps is read at the ending rather than after
-        some later state replaced it.
+        refusals, which the rule order as good as never draws (an instrumented
+        search never observed a refused ending), so the branch that reads the
+        fault an ending keeps would be dead without this rule. Each step is
+        still one due step at a time, so the fault is read at the ending.
         """
         for _ in range(cache_recovery.RECOVERY_FAILURE_LIMIT + 1):
             before = self._phase()
@@ -196,6 +197,8 @@ class RecoveryMachine(RuleBasedStateMachine):
         faulted = self.model.manager_faulted
         unproven = self.model.roots != 0
         before = self._moment()
+        is_calm = self._phase() != "idle" and not (moved or faulted)
+        self._calm.observe(is_calm=is_calm, now=self.clock + STEP_SECONDS)
 
         self._advance()
         self._check_the_ending(before.phase)
@@ -209,9 +212,17 @@ class RecoveryMachine(RuleBasedStateMachine):
         if self.state.verbs.count("stop") > before.stops:
             assert moved == 0, "a stop was issued while a compiler group was moving"
             assert not faulted, "the cache was stopped while its state was unreadable"
-            assert not (self._automatic and unproven), (
-                "an automatic stop was issued without the zero-root proof"
-            )
+            if self._automatic and unproven:
+                # Only the deadline can authorize this, and only after the
+                # roots have been visible with nothing cached moving.
+                assert self._calm.since is not None, (
+                    "an automatic stop was issued with roots visible and no calm"
+                )
+                assert self.clock - self._calm.since >= ROOTS_GRACE_SECONDS, (
+                    "an automatic stop was issued with roots visible before the "
+                    "grace had passed"
+                )
+                self.events.stopped_on_deadline += 1
         # The scripted manager settles the service on every control call, so
         # the model takes the cache's running state from the double rather
         # than assuming the job's effect.
@@ -235,10 +246,8 @@ class RecoveryMachine(RuleBasedStateMachine):
     def server_accounts(self, count: int) -> None:
         """Let the drain probe account for outstanding empty groups.
 
-        This only removes a token from ``server_drain``; it never grants one to
-        a group that has not emptied, because the drain probe is the only thing
-        that releases a server-drain token and it does so by proving the
-        service stopped and empty.
+        This only removes a token from ``server_drain``; the drain probe alone
+        releases one, by proving the service stopped and empty.
         """
         released = min(count, self.model.server_drain)
         self.model.server_drain -= released
@@ -335,6 +344,23 @@ class RecoveryMachine(RuleBasedStateMachine):
         for _ in range(2):
             self.tick()
 
+    @precondition(lambda self: self._phase() == "idle")
+    @rule()
+    def a_hung_root_outlives_the_clients(self) -> None:
+        """Hold a root visible after every cached group has ended.
+
+        The deadline needs an automatic transaction, nothing cached moving and
+        roots visible across several due stop attempts, a run the search is
+        unlikely to draw; each tick still goes through :meth:`tick`.
+        """
+        self.a_busy_drain_goes_stale()
+        self.model.running = 0
+        self.model.draining = 0
+        self.model.manager_faulted = False
+        self._sync()
+        for _ in range(8):
+            self.tick()
+
     @invariant()
     def no_start_is_queued_behind_a_live_barrier(self) -> None:
         """Check that no start is queued behind a barrier still in place.
@@ -364,8 +390,7 @@ class RecoveryMachine(RuleBasedStateMachine):
         follows: a fault kept by an exhausted restart is correct, and a later
         transaction would overwrite what this invariant could read.
 
-        The guard is on the running state, not a latch, so every idle moment
-        in the run is judged rather than the first alone.
+        Every idle moment in the run is judged, not the first alone.
         """
         document = self.machine.describe(self.clock)
         if document["phase"] != "idle":

@@ -30,6 +30,17 @@ compile without the server, and stopping the server cannot interrupt them.
 Counting those groups too would let a busy queue refill the free slots faster
 than the stop is retried, which held the retained tokens indefinitely.
 
+The stop has a matching second deadline. It waits for the zero-root proof, but
+once no cached group is moving a root still visible under the held barrier
+serves no admitted client: every group admitted since the barrier was written
+composes without the server. A compile that hangs inside the server would
+otherwise hold the retained tokens for ever, so after
+``RECOVERY_ROOTS_GRACE_SECONDS`` of unbroken visible roots with nothing cached
+moving, the automatic stop proceeds without the proof (see
+:mod:`buildlimits.recovery_roots`). Nothing else changes: a
+moving cached group, a faulted manager and the verified-empty accounting that
+releases tokens are untouched.
+
 Both belong beside the transaction they authorize rather than beside the
 start-up reclamation that once shared this code's module: that module retires a
 barrier an interrupted transaction left behind, and it reads neither the gauges
@@ -56,6 +67,13 @@ RECOVERY_SETTLE_SECONDS = 60.0
 # alone. Long enough that the prompt proof gets its chance on a quiet host,
 # short enough that a busy host does not run a slot short for long.
 RECOVERY_STALE_DRAIN_SECONDS = 300.0
+# How long, with no cached group moving, a root may stay visible in the server
+# before the automatic stop proceeds without the zero-root proof. Twice the
+# stale limit: the stale limit judges how long a token has been withheld, while
+# this judges a compile that outlives every client able to want its result, so
+# it must clear a slow but healthy cache miss that is finishing under the
+# barrier and still bound a hung one to ten minutes rather than for ever.
+RECOVERY_ROOTS_GRACE_SECONDS = 600.0
 
 
 def cooldown_after(*, faulted: bool) -> float:

@@ -296,9 +296,29 @@ clause. Opening early is safe because the open transaction holds new compiles
 off the cache. `recovery_starvation.proof` names which proof acted (`detached`
 or `stale`): the opening is journalled with its reason, which carries the
 retained age, and an age-opened transaction adds one to the
-`recovery_stale_openings` counter of the `cache_recovery` event. `recover_cli`
-polls under `--wait` and reports "unknown", never "complete", when a query
-fails part-way.
+`recovery_stale_openings` counter of the `cache_recovery` event.
+
+The automatic stop has a second, longer deadline. `_try_stop` first applies
+`blocked`, then asks `recovery_roots.stop_verdict` whether the roots evidence
+suffices. The pure `roots_verdict` answers `exempt` for a manual transaction,
+`proven` when the probe saw zero roots, `deadline` once
+`RECOVERY_ROOTS_GRACE_SECONDS` (600 s, twice the stale limit, defined in
+`recovery_starvation`) have passed, and otherwise `waiting`, which fails the
+attempt and backs off as before. The clock is
+`recovery_roots.VisibleRootsGrace`. It starts at the first stop attempt of an
+automatic transaction that finds nothing cached moving and a root visible, and
+it is reset when `blocked` refuses the stop (a cached group moves again, or the
+manager faults), when the roots clear, when a transaction opens and when it
+ends, so no later transaction inherits a start, which is the sibling of the
+retained-age bug fixed by retiring the drain age at accounting. It never weakens
+`blocked`: `cached_moving == 0` is still required. A stop taken on the
+deadline is journalled with the elapsed time and adds one to the
+`recovery_roots_deadline_stops` counter once the stop is accepted; the
+transaction document reports the running clock as `roots_waited` and
+`build-limits-status` renders it. The logic lives in `recovery_roots` rather
+than `recovery_starvation` only to keep both modules inside the size ceiling.
+`recover_cli` polls under `--wait` and reports "unknown", never "complete",
+when a query fails part-way.
 
 The supervisor and adapters emit bounded, identifier-free native journal fields
 through `metrics.Metrics` over a `JournalSink`; emission failures are isolated

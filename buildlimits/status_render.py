@@ -163,6 +163,12 @@ def _recovery_lines(state: cabc.Mapping[str, object]) -> list[str]:
                 f"attempts {transaction.get('attempts')}"
             )
         ]
+    waited = transaction.get("roots_waited")
+    if isinstance(waited, (int, float)) and waited > 0:
+        lines.append(
+            f"cache recovery: visible compiler roots have delayed the stop for "
+            f"{waited}s; an automatic stop proceeds after a longer grace"
+        )
     # A clean ending clears its fault, so an idle transaction that still holds
     # one ended with its restart refused, which the operator must see.
     last_fault = transaction.get("last_fault")

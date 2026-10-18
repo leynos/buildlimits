@@ -8,6 +8,7 @@
       'last_fault': None,
       'phase': 'idle',
       'retry_in': 0.0,
+      'roots_waited': 0.0,
     }),
     'caching': False,
     'capacity': 3,
