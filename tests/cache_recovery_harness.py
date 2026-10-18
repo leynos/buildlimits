@@ -370,3 +370,22 @@ def scripted_machine(
         zero_visible_roots=lambda: roots_cell[0] == 0,
     )
     return ScriptedCache(machine, state, snapshot, roots_cell, kind_cell)
+
+
+def tick_phase(cache: ScriptedCache, now: float) -> object:
+    """Tick a scripted machine at one instant and read back its phase.
+
+    Parameters
+    ----------
+    cache : ScriptedCache
+        The machine under test.
+    now : float
+        The instant of the tick.
+
+    Returns
+    -------
+    object
+        The phase the transaction document reports after the tick.
+    """
+    cache.machine.tick(now)
+    return cache.machine.describe(now)["phase"]

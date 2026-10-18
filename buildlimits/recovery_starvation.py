@@ -6,11 +6,23 @@ admission; either way the transaction may only open when the evidence permits
 it, and those are the two questions this module answers.
 
 The automatic evidence is narrow: the drain probe must have faulted on *live*
-work, it must have established that no compiler root is visible, some token
-must be waiting on the server with no cached group still moving, and a request
-must be waiting behind them. An unproven reading is not a
-weaker reason to act — it is no reason, which is why every clause is a separate
-question with a name rather than a term in one long conjunction.
+work, some token must be waiting on the server, and a request must be waiting
+behind it. On top of that the trigger needs one of two proofs that the retained
+work is worth stopping the cache for. Either the probe established that no
+compiler root is visible while no cached group is moving, or the drain has been
+held without a break for longer than ``RECOVERY_STALE_DRAIN_SECONDS``. An
+unproven reading is not a weaker reason to act — it is no reason, which is why
+every clause is a separate question with a name rather than a term in one long
+conjunction.
+
+The staleness proof exists because the first one cannot be met under load. A
+busy queue refills every free slot with a cached compile at once, so a single
+retained token can wait for a moment with nothing cached moving that never
+comes, costing the host one slot until every slot is retained. A retained token
+is only ever released by a verified stopped and empty cache, so its age is a
+sound measure of how long it has been withheld. Opening the transaction is safe
+either way: it holds new compiles off the cache, and the stop itself still
+waits for every cached group to finish and for the zero-root proof.
 
 Only cached groups are counted as moving. A transaction denies cache
 composition from the moment it opens, so the requests admitted while it runs
@@ -40,6 +52,10 @@ RECOVERY_COOLDOWN_SECONDS = 900.0
 # cooldown here left freshly retained tokens idle for a quarter of an hour
 # while a queue waited behind them.
 RECOVERY_SETTLE_SECONDS = 60.0
+# How long a retained drain may be held before the trigger acts on its age
+# alone. Long enough that the prompt proof gets its chance on a quiet host,
+# short enough that a busy host does not run a slot short for long.
+RECOVERY_STALE_DRAIN_SECONDS = 300.0
 
 
 def cooldown_after(*, faulted: bool) -> float:
@@ -87,6 +103,8 @@ class StarvationReading:
         The drain probe's last fault classification, if any.
     zero_visible_roots : bool
         Whether that fault established zero visible compiler roots.
+    drain_age : float
+        Seconds for which server-drain tokens have been held without a break.
     """
 
     cache_mode: str
@@ -96,16 +114,53 @@ class StarvationReading:
     counts: Counts
     fault_kind: str | None
     zero_visible_roots: bool
+    drain_age: float
+
+
+@dataclasses.dataclass(slots=True)
+class RetainedDrainAge:
+    """Measure how long server-drain tokens have been held without a break.
+
+    Examples
+    --------
+    >>> age = RetainedDrainAge()
+    >>> age.observe(1, now=10.0), age.observe(2, now=25.0), age.observe(0, now=30.0)
+    (0.0, 15.0, 0.0)
+    """
+
+    since: float | None = None
+
+    def observe(self, server_drain: int, *, now: float) -> float:
+        """Record one reading of the retained count and return the age.
+
+        Parameters
+        ----------
+        server_drain : int
+            Tokens currently awaiting server accounting.
+        now : float
+            Current monotonic time.
+
+        Returns
+        -------
+        float
+            Seconds since the count last rose from zero, or zero when nothing
+            is retained.
+        """
+        if server_drain == 0:
+            self.since = None
+            return 0.0
+        if self.since is None:
+            self.since = now
+        return now - self.since
 
 
 def starvation(reading: StarvationReading) -> str | None:
     """Decide whether live cache work is starving admission right now.
 
     Every clause is evidence, not a heuristic: the drain probe must have
-    faulted on live work *and* established that no compiler root is visible,
-    some token must be waiting on the server with no cached group moving, and
-    a request must be waiting. An unproven reading is not a weaker
-    reason to act — it is no reason.
+    faulted on live work, some token must be waiting on the server, a request
+    must be waiting, and the retained work must be either provably detached or
+    stale. An unproven reading is not a weaker reason to act — it is no reason.
 
     Parameters
     ----------
@@ -125,21 +180,52 @@ def starvation(reading: StarvationReading) -> str | None:
     # named question rather than to a position in a chain.
     if not _policy_permits_recovery(reading):
         return None
-    if not _the_probe_proved_detached_work(reading):
+    if reading.fault_kind != "live_work":
         return None
-    if not _the_server_alone_holds_cached_work(counts):
+    if counts.server_drain == 0 or counts.queued == 0:
         return None
-    if counts.queued == 0:
+    if _the_probe_proved_detached_work(reading):
+        cause = "live cache work is starving admission"
+    elif reading.drain_age >= RECOVERY_STALE_DRAIN_SECONDS:
+        cause = f"a cache drain has been retained for {reading.drain_age:.0f}s"
+    else:
         return None
     return (
-        f"live cache work is starving admission: {counts.server_drain} token(s) "
-        f"await server accounting, and "
+        f"{cause}: {counts.server_drain} token(s) await server accounting, and "
         f"{counts.queued} request(s) are waiting"
     )
 
 
+def refusal(fault_kind: str | None) -> str:
+    """Explain why a transaction must not even open.
+
+    Only a faulted manager transport refuses outright: a cache whose state
+    cannot be read must not be stopped. A running cached group does not, since
+    opening a transaction only holds new compiles off the cache, and the stop
+    itself waits for that group through :func:`blocked`. Refusing here as well
+    left an operator no way to recover while a busy queue kept a cached group
+    always running.
+
+    Parameters
+    ----------
+    fault_kind : str | None
+        The drain probe's last fault classification, if any.
+
+    Returns
+    -------
+    str
+        The reason it cannot open, or an empty string when it can.
+    """
+    if fault_kind == "manager":
+        return (
+            "the user manager transport is faulted; restore it before "
+            "stopping the managed cache"
+        )
+    return ""
+
+
 def blocked(counts: Counts, fault_kind: str | None) -> str:
-    """Explain why a transaction must not start.
+    """Explain why the stop must wait.
 
     A cached running group and a cached draining group each block the stop,
     because the cache serves them and a draining group's leader may still have
@@ -157,19 +243,14 @@ def blocked(counts: Counts, fault_kind: str | None) -> str:
     Returns
     -------
     str
-        The reason it cannot start, or an empty string when it can.
+        The reason the stop must wait, or an empty string when it may go.
     """
     if counts.cached_moving:
         return (
             f"{counts.cached_moving} cached compiler group(s) are still moving; "
             "stopping the cache would interrupt them"
         )
-    if fault_kind == "manager":
-        return (
-            "the user manager transport is faulted; restore it before "
-            "stopping the managed cache"
-        )
-    return ""
+    return refusal(fault_kind)
 
 
 def _policy_permits_recovery(reading: StarvationReading) -> bool:
@@ -188,32 +269,16 @@ def _policy_permits_recovery(reading: StarvationReading) -> bool:
 
 
 def _the_probe_proved_detached_work(reading: StarvationReading) -> bool:
-    """Report whether the drain probe proved live work with no visible root.
+    """Report whether no visible root and no cached group could own the work.
 
-    Without the zero-root proof a live-work fault alone is no reason to act: it
-    is also the ordinary reading for a compile that is simply still running.
-    With it, the retained work is provably detached from every visible root.
-
-    Returns
-    -------
-    bool
-        Whether the probe both faulted on live work and found no visible root.
-    """
-    return reading.fault_kind == "live_work" and reading.zero_visible_roots
-
-
-def _the_server_alone_holds_cached_work(counts: Counts) -> bool:
-    """Report whether the server holds tokens and no cached group is moving.
-
-    A cached running or draining group fails it, since stopping the cache
-    would interrupt that group. An uncached group does not: it never reached
-    the server, so the stop cannot harm it.
+    Without the zero-root proof a live-work fault alone is no reason to act at
+    once: it is also the ordinary reading for a compile that is simply still
+    running. With it, and with no cached group moving, the retained work is
+    provably detached from every visible root and every admitted group.
 
     Returns
     -------
     bool
-        Whether a token awaits the server and no cached group is moving.
+        Whether the probe found no visible root and no cached group is moving.
     """
-    if counts.server_drain == 0:
-        return False
-    return counts.cached_moving == 0
+    return reading.zero_visible_roots and reading.counts.cached_moving == 0

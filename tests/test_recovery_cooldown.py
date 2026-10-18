@@ -8,7 +8,7 @@ Each rest is checked at both edges of its boundary through the real trigger.
 
 import typing as typ
 
-from cache_recovery_harness import scripted_machine
+from cache_recovery_harness import scripted_machine, tick_phase
 from cache_recovery_helpers import gauges
 
 from buildlimits.recovery_starvation import cooldown_after
@@ -54,8 +54,7 @@ def _run_to_idle(cache: ScriptedCache, start: float) -> float:
     float
         The instant of the tick that ended the transaction.
     """
-    cache.machine.tick(start)
-    assert cache.machine.describe(start)["phase"] == "quiescing", (
+    assert tick_phase(cache, start) == "quiescing", (
         "the starving reading opens a transaction"
     )
     now = start

@@ -48,19 +48,23 @@ transaction running rather than rewinding it, because the ordering contract is
 about what happens between a proof arriving and the next action being
 attempted — rewinding would erase exactly the window under test.
 
-The search itself, and the event ledger it fills, live in
-:mod:`cache_recovery_state_machine`.
+The search itself lives in :mod:`cache_recovery_state_machine`, and the event
+ledger it fills in :mod:`cache_recovery_events`.
 """
 
 import tempfile
+import typing as typ
 from pathlib import Path
 
 from cache_recovery_helpers import CacheState
-from cache_recovery_state_machine import Events, RecoveryMachine
+from cache_recovery_state_machine import RecoveryMachine
 from hypothesis import settings
 from hypothesis.stateful import run_state_machine_as_test
 
 from buildlimits.recovery_guidance import GUIDANCE
+
+if typ.TYPE_CHECKING:
+    from cache_recovery_events import Events
 
 # Every control event the contract quantifies over. The guards are properties
 # of an action, so a search that never performs one would satisfy them all
@@ -69,7 +73,7 @@ from buildlimits.recovery_guidance import GUIDANCE
 # proof of it. Each is asserted non-zero below against the ledger the run
 # filled. It is a tuple rather than a set so the failure message names the
 # missing events in the order the contract introduces them.
-EVENTS = ("opened", "stopped", "started")
+EVENTS = ("opened", "stopped", "started", "opened_stale")
 
 
 def test_the_recovery_safety_contract_holds_for_any_interleaving(

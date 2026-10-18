@@ -129,21 +129,37 @@ def test_failed_stops_keep_tokens_and_the_barrier_with_bounded_backoff(
     )
 
 
-def test_a_blocked_request_starts_nothing(
+def test_a_request_under_a_running_compiler_waits_to_stop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Recovery never stops the cache under a compiler that is still running."""
+    """Recovery opens beside a running cached compiler but never stops under it.
+
+    Refusing the request outright left an operator no way in on a busy host,
+    where a cached compile is almost always running. Opening only writes the
+    barrier and holds new compiles off the cache; the stop waits for the
+    running group to finish.
+    """
     harness = harness_for(tmp_path, monkeypatch)
     supervisor = harness.supervisor
-    supervisor.admission.groups["g1"] = Group("g1", 1, b"+", True)
+    hold_drained_group(supervisor)
+    supervisor.admission.groups["g2"] = Group("g2", 2, b"+", True)
 
     document = supervisor.recovery.request("manual", harness.now)
-    assert document["blocked"], "the request explains why it cannot proceed"
-    assert document["phase"] == "idle", "a blocked request starts nothing"
+    assert not document["blocked"], "a running cached group does not refuse it"
     harness.tick()
-    assert not harness.cache.calls, "no state query, stop or start is attempted"
-    assert not harness.marker.exists(), "a blocked request writes no barrier"
-    assert supervisor.admission.tokens_held() == 1, "the running group keeps its token"
+    assert harness.marker.exists(), "the barrier is written beside the compile"
+    harness.tick()
+    assert "stop" not in harness.cache.verbs, "the cache is not stopped under it"
+    assert "still moving" in str(harness.described()["last_fault"]), (
+        "the waiting stop says what it waits for"
+    )
+    assert supervisor.admission.tokens_held() == 2, "the running group keeps its token"
+
+    # The compile finishes; the retried stop now finds nothing cached moving.
+    del supervisor.admission.groups["g2"]
+    harness.advance(cache_recovery.RECOVERY_MAX_RETRY_SECONDS)
+    harness.tick()
+    assert harness.cache.verbs == ["stop"], "the stop follows the compile"
 
 
 def test_a_queued_request_keeps_its_progress_and_cancellation(

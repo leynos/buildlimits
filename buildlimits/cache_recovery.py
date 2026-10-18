@@ -27,7 +27,6 @@ from buildlimits.recovery_reclaim import (
     reclaim_after_accounting,
     restart_fault,
 )
-from buildlimits.recovery_starvation import StarvationReading, blocked, starvation
 from buildlimits.systemd import SystemdError
 
 if typ.TYPE_CHECKING:
@@ -113,6 +112,9 @@ class CacheRecovery:
     _last_fault: str | None = dc.field(default=None, init=False)
     _cooling: float = dc.field(default=0.0, init=False)
     _trigger: str = dc.field(default="manual", init=False)
+    _drain_age: recovery_starvation.RetainedDrainAge = dc.field(
+        default_factory=recovery_starvation.RetainedDrainAge, init=False
+    )
     # Derived from ``marker`` rather than passed, so every caller supplies the
     # one fact the managed unit's own condition also reads: the path.
     barrier: RecoveryBarrier = dc.field(init=False)
@@ -162,9 +164,7 @@ class CacheRecovery:
         """
         if self._phase != "idle":
             return self.describe(now) | {"blocked": ""}
-        # The two readings are asked for together, at the one point a transaction
-        # is decided, so the policy beside the starvation trigger owns the answer.
-        reason = blocked(self.counts(), self.fault_kind())
+        reason = recovery_starvation.refusal(self.fault_kind())
         if not reason:
             # The hold is taken here as well as on the first tick, because a
             # token can arrive between this request and that tick, and a group
@@ -228,16 +228,18 @@ class CacheRecovery:
 
     def _starved(self, now: float) -> None:
         """Open the automatic transaction only for starvation by live cache work."""
-        reading = StarvationReading(
+        counts = self.counts()
+        reading = recovery_starvation.StarvationReading(
             cache_mode=self.cache_mode,
             policy=self.policy,
             cooling=self._cooling,
             now=now,
-            counts=self.counts(),
+            counts=counts,
             fault_kind=self.fault_kind(),
             zero_visible_roots=self.zero_visible_roots(),
+            drain_age=self._drain_age.observe(counts.server_drain, now=now),
         )
-        if starvation(reading) is not None:
+        if recovery_starvation.starvation(reading) is not None:
             self._begin("starved", now)
 
     def _begin(self, trigger: str, now: float) -> None:
@@ -273,13 +275,11 @@ class CacheRecovery:
 
     def _try_stop(self, now: float) -> None:
         """Queue the stop, retrying without bound: abandoning strands the barrier."""
-        # Admission keeps granting tokens while the transaction runs. An
-        # automatic transaction holds the cache only from its first tick, so a
-        # waiting request can become a cached running group before this stop.
-        # The check must be here, not only in ``request``: stopping the cache
-        # would kill that compile. Groups the hold composed without the cache
-        # do not count, or a busy queue would refuse this stop indefinitely.
-        if reason := blocked(self.counts(), self.fault_kind()):
+        # Admission keeps granting tokens while the transaction runs, and a
+        # transaction may open with cached groups still running, so this is the
+        # check that keeps the stop from killing a cached compile. Groups the
+        # hold composed without the cache do not count.
+        if reason := recovery_starvation.blocked(self.counts(), self.fault_kind()):
             self._fail(now, reason)
             return
         # The zero-root proof can lapse between the trigger and this stop — a

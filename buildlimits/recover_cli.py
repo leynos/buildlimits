@@ -18,9 +18,10 @@ is fixed:
 
 Notes
 -----
-Recovery is not a way to release tokens held by a *running* compiler, and the
-supervisor refuses to start while a compiler that uses the managed cache is
-running or draining. A compiler composed without the cache does not block it.
+Recovery is not a way to release tokens held by a *running* compiler: the
+transaction may open while a compiler that uses the managed cache is running or
+draining, but it does not stop the cache until that compiler has finished. A
+compiler composed without the cache does not hold the stop.
 Stopping sccache by hand does not release a token either: only the supervisor's
 own accounting does.
 """

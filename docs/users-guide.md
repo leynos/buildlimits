@@ -289,8 +289,19 @@ that accounting in four phases, at most one per supervisor tick:
 4. `restarting` removes the barrier, then starts the cache again.
 
 With the default `cache_recovery = "starved"` policy, the supervisor opens a
-transaction by itself when a retained drain is starving waiting work and the
-cache holds no visible compiler roots.
+transaction by itself when a retained drain holds a token while requests wait,
+on either of two kinds of evidence:
+
+- The cache holds no visible compiler roots and no cached compile is running,
+  so the retained work is provably detached. The supervisor acts at once.
+- The drain has been retained without a break for 300 seconds. On a busy host
+  every freed slot is refilled with a cached compile at once, so the first
+  proof may never be available; without this one, a single retained token would
+  cost the host a slot until every slot was retained.
+
+Either way the transaction holds new compiles off the cache while it runs, and
+it stops the cache only once no cached compile is running and the cache shows
+no visible compiler roots.
 
 After each transaction the automatic trigger rests before it may act again: 60
 seconds after a clean recovery, and 900 seconds after one whose restart was
@@ -310,13 +321,15 @@ transaction succeeds. With `manual`, the supervisor waits for an operator:
 build-limits-recover --wait --wait-timeout 300
 ```
 
-The command refuses to start under a running or draining compiler group that
-uses the managed cache, because stopping the cache would interrupt it. Groups
-composed without the cache do not block it; every request admitted while a
-transaction runs is composed that way, so a busy queue cannot hold the stop
-off. It also refuses while the user manager's transport is faulted, because a
-service whose state cannot be read must not be stopped. A supervisor in
-`direct` cache mode manages no cache and answers with `no-cache-recovery`.
+The command opens the transaction even while compiler groups that use the
+managed cache are running or draining, but the stop waits for them, because
+stopping the cache would interrupt them; until then the transaction reports
+`cache recovery stopping` with the reason as its last fault. Groups composed
+without the cache do not hold the stop, and every request admitted while a
+transaction runs is composed that way, so a busy queue cannot hold it off. The
+command refuses outright only while the user manager's transport is faulted,
+because a service whose state cannot be read must not be stopped. A supervisor
+in `direct` cache mode manages no cache and answers with `no-cache-recovery`.
 
 `--wait` polls the status document every 2 seconds for up to `--wait-timeout`
 seconds (300 by default). A failed step is retried after 30 seconds, then 60,

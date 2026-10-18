@@ -278,8 +278,20 @@ the retained tokens indefinitely. `recovery_starvation.cooldown_after` sets the
 rest after each transaction: `RECOVERY_SETTLE_SECONDS` after a clean ending and
 `RECOVERY_COOLDOWN_SECONDS`, which outlasts the whole bounded retry sequence,
 after one that ended with its restart refused. The transaction document reports
-the remainder as `cooling_for`. `recover_cli` polls under `--wait` and reports
-"unknown", never "complete", when a query fails part-way.
+the remainder as `cooling_for`.
+
+The automatic trigger accepts either of two proofs. The prompt proof is a
+zero-root reading with nothing cached moving. The staleness proof is a retained
+drain held without a break for `RECOVERY_STALE_DRAIN_SECONDS`. The machine
+measures that age itself with `recovery_starvation.RetainedDrainAge` on its
+idle ticks, because admission holds no clock. The age is sound because a
+`server-drain` token is released only by a verified stopped-and-empty cache.
+`recovery_starvation.refusal` decides whether a transaction may open at all,
+and refuses only on a faulted manager transport. `blocked` decides whether the
+stop must wait, and adds the cached-moving clause. Opening early is safe
+because the open transaction holds new compiles off the cache. `recover_cli`
+polls under `--wait` and reports "unknown", never "complete", when a query
+fails part-way.
 
 The supervisor and adapters emit bounded, identifier-free native journal fields
 through `metrics.Metrics` over a `JournalSink`; emission failures are isolated

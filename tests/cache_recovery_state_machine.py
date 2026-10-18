@@ -13,14 +13,14 @@ passing search evidence about the contract rather than about an empty prefix of
 it. A search whose rules never open a transaction, never stop the cache and
 never restart it would satisfy every guard in the contract vacuously: each
 guard is a property of an action, and an action never taken has no property.
-:class:`Events` is the ledger those counts land in; the test module asserts
-they are non-zero across the generated run.
+:class:`~cache_recovery_events.Events` is the ledger those counts land in; the
+test module asserts they are non-zero across the generated run.
 """
 
-import dataclasses as dc
 import typing as typ
 
 import pytest
+from cache_recovery_events import Events, Moment
 from cache_recovery_harness import scripted_machine
 from cache_recovery_model import MAX_GROUPS, Model
 from hypothesis import strategies as st
@@ -46,50 +46,6 @@ STEP_SECONDS = 200.0
 # at module scope: constructing it inside the invariant would make the import
 # look like it existed only for a type annotation.
 _NO_RETRY = pytest.approx(0.0)
-
-
-@dc.dataclass(slots=True)
-class Events:
-    """How many control events a search observed, as counts.
-
-    A count rather than a flag: the assertion the test module makes is that
-    each event happened at all, but a ledger that only latched the first
-    occurrence could not tell a search that reached the barrier once from one
-    that never left it, and that difference is what a later failing run needs
-    in order to be read.
-
-    Attributes
-    ----------
-    opened : int
-        Transactions the run started, by operator request or automatic policy.
-    stopped : int
-        Stop verbs issued to the managed cache.
-    started : int
-        Start verbs issued to the managed cache.
-    """
-
-    opened: int = 0
-    stopped: int = 0
-    started: int = 0
-
-
-@dc.dataclass(frozen=True, slots=True)
-class Moment:
-    """The phase and control-verb counts at one instant of the run.
-
-    Attributes
-    ----------
-    phase : str
-        The phase the transaction reported.
-    stops : int
-        Stop verbs issued so far.
-    starts : int
-        Start verbs issued so far.
-    """
-
-    phase: str
-    stops: int
-    starts: int
 
 
 class RecoveryMachine(RuleBasedStateMachine):
@@ -122,6 +78,9 @@ class RecoveryMachine(RuleBasedStateMachine):
         self.kind = cached.kind
         self.clock = 0.0
         self.events = Events()
+        # Whether the open transaction came from the automatic trigger rather
+        # than an operator request, which skips the zero-root proof by design.
+        self._automatic = False
         self._sync()
 
     def _phase(self) -> str:
@@ -235,15 +194,24 @@ class RecoveryMachine(RuleBasedStateMachine):
         """
         moved = self.model.moving
         faulted = self.model.manager_faulted
+        unproven = self.model.roots != 0
         before = self._moment()
 
         self._advance()
         self._check_the_ending(before.phase)
         self._note(before)
+        # A tick opens a transaction only through the automatic trigger, so an
+        # opening under a moving group or a visible root is the stale path.
+        if before.phase == "idle" and self._phase() != "idle":
+            self._automatic = True
+            self.events.opened_stale += bool(moved or unproven)
 
         if self.state.verbs.count("stop") > before.stops:
             assert moved == 0, "a stop was issued while a compiler group was moving"
             assert not faulted, "the cache was stopped while its state was unreadable"
+            assert not (self._automatic and unproven), (
+                "an automatic stop was issued without the zero-root proof"
+            )
         # The scripted manager settles the service on every control call, so
         # the model takes the cache's running state from the double rather
         # than assuming the job's effect.
@@ -326,6 +294,8 @@ class RecoveryMachine(RuleBasedStateMachine):
         """Ask for a transaction, as the operator or the policy does."""
         before = self._moment()
         self.machine.request("manual", self.clock)
+        if before.phase == "idle" and self._phase() != "idle":
+            self._automatic = False
         self._note(before)
 
     @precondition(lambda self: self._phase() == "idle")
@@ -345,6 +315,25 @@ class RecoveryMachine(RuleBasedStateMachine):
         self.model.server_drain = max(1, self.model.server_drain)
         self.model.queued = max(1, self.model.queued)
         self._sync()
+
+    @precondition(lambda self: self._phase() == "idle")
+    @rule()
+    def a_busy_drain_goes_stale(self) -> None:
+        """Hold a retained drain under cached work until only its age can act.
+
+        The staleness proof needs one retention unbroken for 300 seconds while
+        the prompt proof is absent, and the other rules reset the drain far
+        more often than two uninterrupted ticks occur. As with
+        :meth:`restart_runs_out`, this rule takes the draw out of the search's
+        hands so the stale opening is reached on purpose. Each tick still goes
+        through :meth:`tick`, so the stop's guards judge every step it takes.
+        """
+        # Start from the starving reading, then defeat its prompt proof.
+        self.starve()
+        self.model.running, self.model.roots = 1, 2
+        self._sync()
+        for _ in range(2):
+            self.tick()
 
     @invariant()
     def no_start_is_queued_behind_a_live_barrier(self) -> None:

@@ -392,6 +392,12 @@ reason = "CacheRecovery._write_barrier writes the restart barrier through the Re
 
 [[tool.skylos.dead_code.entrypoints]]
 type = "method"
+full_name = ["buildlimits.recovery_starvation.RetainedDrainAge.observe"]
+path = ["buildlimits/recovery_starvation.py"]
+reason = "CacheRecovery._starved measures the retained drain's age through the RetainedDrainAge the transaction holds in its _drain_age field; it is a callee of the declared recovery dispatch above, and the doctest and stale-drain tests exercise it."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
 full_name = [
     "buildlimits.launch.HeldChild.reap",
     "buildlimits.sccache.ManagedSccache.stop",
@@ -435,6 +441,9 @@ ignore_names = [
     "slice_dir",
     "limit_order_is_total",
     "planned_limits_are_reachable",
+    # The recovery search's Events counters are read by name through EVENTS
+    # and getattr in test_cache_recovery_properties, never as attributes.
+    "opened_stale",
 ]
 # pytest-bdd steps and Hypothesis state-machine rules are registered by their
 # decorators and dispatched by the framework, never called by name.
