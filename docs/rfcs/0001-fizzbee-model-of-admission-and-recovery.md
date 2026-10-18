@@ -5,9 +5,10 @@
 - **RFC number:** 0001
 - **Status:** Proposed
 - **Created:** 2026-10-18
-- **Baseline:** `main` at `eba08ad` (PR #9), which carries the fixes for
-  incidents 1, 2 and 4. The fix for incident 3 is in progress on the
-  `stale-drain-fix` branch at `d4fcc05`, and is described as read there[^1].
+- **Baseline:** `main` at `37d08e5` (PR #10), which carries the fixes for
+  incidents 1, 2 and 4 (PR #9) and for incident 3 (PR #10)[^1]. One gap in
+  incident 3's fix remains: the automatic stop still waits for zero visible
+  roots, and is being fixed on the `stale-root-deadline` branch.
 - **Scope:** verification tooling for maintainers. Nothing in the package,
   its behaviour or its interfaces changes.
 
@@ -40,12 +41,12 @@ built.
 On 2026-10-18 four defects were observed on the shared host, and each was
 confirmed against the code. Table 1 summarizes them.
 
-| Incident         | Symptom                                     | Cause                                        | Resolution                           |
-| ---------------- | ------------------------------------------- | -------------------------------------------- | ------------------------------------ |
-| 1. Livelock      | Retained tokens held while the stop retried | Stop guard counted uncached groups as moving | PR #9, `Counts.cached_moving`        |
-| 2. Idle cooldown | New drains idle for ~15 min, not in status  | 900 s cooldown after clean endings too       | PR #9, 60 s settle and `cooling_for` |
-| 3. Capacity loss | One slot lost for 30+ min, then all slots   | Trigger needed two readings to coincide      | In progress, `stale-drain-fix`       |
-| 4. Hidden fault  | Refused restart's fault absent from status  | Idle transaction dropped its last fault      | PR #9                                |
+| Incident         | Symptom                                     | Cause                                        | Resolution                            |
+| ---------------- | ------------------------------------------- | -------------------------------------------- | ------------------------------------- |
+| 1. Livelock      | Retained tokens held while the stop retried | Stop guard counted uncached groups as moving | PR #9, `Counts.cached_moving`         |
+| 2. Idle cooldown | New drains idle for ~15 min, not in status  | 900 s cooldown after clean endings too       | PR #9, 60 s settle and `cooling_for`  |
+| 3. Capacity loss | One slot lost for 30+ min, then all slots   | Trigger needed two readings to coincide      | PR #10, stale proof and early opening |
+| 4. Hidden fault  | Refused restart's fault absent from status  | Idle transaction dropped its last fault      | PR #9                                 |
 
 _Table 1: Recovery incidents observed on 2026-10-18._
 
@@ -60,6 +61,18 @@ retained server-drain token cost a slot for more than 30 minutes, until every
 slot was retained. Meanwhile `build-limits-recover` refused outright while any
 cached compile ran, so the operator could not intervene either. Incidents 2 and
 4 were silent: tokens were retained correctly, but status did not say why.
+
+PR #10 fixed both halves of incident 3. The trigger now also accepts a retained
+drain held without a break for `RECOVERY_STALE_DRAIN_SECONDS = 300`
+(`recovery_starvation.proof` names it `stale`, the other proof `detached`)[^7].
+`recovery_starvation.refusal` refuses to open a transaction only when the user
+manager transport is faulted, so `build-limits-recover` and the automatic
+trigger open while cached work runs. The stop itself still waits for that work
+through `recovery_starvation.blocked`[^8]. A stale-opened transaction does not
+stop the cache on age alone: `CacheRecovery._try_stop` re-arms an automatic
+transaction until the drain probe again proves zero visible roots[^9]. Visible
+roots that never clear therefore hold the stop off, which is the gap
+`stale-root-deadline` closes.
 
 ### Why the existing verification did not find them
 
@@ -139,7 +152,9 @@ is, which keeps the state space small and matches the metrics:
   and ending, so that `Group.may_orphan_server_work` is computable;
 - the last reachability reading, and whether a recovery hold is in force;
 - the drain probe's fault kind, whether it proved zero visible roots, and
-  the retained-drain age where the staleness proof applies;
+  the retained-drain age, which `RetainedDrainAge` measures on idle ticks and
+  retires at the accounting observation, with the staleness limit as a timer
+  class[^7];
 - the transaction's phase, attempts (abstracted to a small limit), trigger,
   last fault and rest timer; the barrier; an operator request; health.
 
@@ -374,9 +389,9 @@ The thresholds below are proposals for approval before any trial runs.
 - **Prediction:** at capacity 3, incident 1's known-bad configuration (the
   stop guard counting uncached groups) yields a lasso to L3, and incident 3's
   (the trigger and refusal at `eba08ad`) yields lassos to L1 and L4. The fixed
-  configurations (PR #9's guard, and the `stale-drain-fix` trigger, opening and
-  stop) yield none. At capacity 2, incident 1's counterexample appears under
-  weak but not strong fairness of the recovery step.
+  configurations (PR #9's guard, and PR #10's trigger, opening and stop) yield
+  none. At capacity 2, incident 1's counterexample appears under weak but not
+  strong fairness of the recovery step.
 - **Comparator:** the Hypothesis recovery machine extended with uncached
   groups and a bounded-progress proxy: the stop is issued within N steps.
 - **Falsified if:** a known-bad configuration passes after the one permitted
@@ -406,15 +421,20 @@ The thresholds below are proposals for approval before any trial runs.
 - **Decision:** make `make model-check` a required check only if H3
   survives; otherwise keep it advisory and record the gap.
 
-### H4. The in-progress staleness fix
+### H4. The stale-path automatic stop
 
-- **Question:** does L1 hold for the `stale-drain-fix` design, and under what
-  assumption? Its automatic stop still requires the zero-root proof, which a
-  manual request skips.
-- **Prediction:** L1 holds with F3 and fails without it, through detached
-  work that holds a visible root for ever; L4 holds without F3.
-- **Decision:** none here. The result goes to the branch owner, who decides
-  whether F3 is an acceptable operating assumption.
+- **Question:** does L1 hold for the automatic stop at `37d08e5`, and for the
+  fix on the `stale-root-deadline` branch, and under what assumption? At
+  `37d08e5` a stale-opened transaction still needs the zero-root proof to stop,
+  which a manual request skips[^9].
+- **Prediction:** at `37d08e5`, L1 holds with F3 and fails without it, through
+  detached work that holds a visible root for ever; L4 holds without F3. With
+  the `stale-root-deadline` fix, L1 holds without F3.
+- **Falsified if:** the fixed configuration fails L1 without F3, or `37d08e5`
+  satisfies L1 without F3.
+- **Decision:** none here. The model checks that fix; it does not design it.
+  The result goes to the branch owner, who decides whether F3 is an acceptable
+  operating assumption.
 
 ## Workstreams
 
@@ -424,7 +444,7 @@ acyclic.
 | ID  | Outcome                                                                                | Requires          | Exit evidence                                                                | Gate                             |
 | --- | -------------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------- | -------------------------------- |
 | W1  | Minimal model and busy queue; known-bad and fixed configurations for incidents 1 and 3 | None              | H1 verdict, traces replayed, open questions 1 to 6 and 8 answered            | G1: proceed, change tool or stop |
-| W2  | Full scope; S1 to S9, L1 to L4 and R1; known-bad configurations for all four incidents | W1 at G1          | All properties hold after incident 3's fix; known-bad fail; runtime measured | G2: bounds and CI budget         |
+| W2  | Full scope; S1 to S9, L1 to L4 and R1; known-bad configurations for all four incidents | W1 at G1          | All properties hold at `37d08e5` under F1 to F7; known-bad fail; H4 answered | G2: bounds and CI budget         |
 | W3  | Drift check, counterexample replay and projection inclusion as pytest suites           | W2                | H3 verdict; every counterexample has a regression or correspondence test     | G3: required or advisory         |
 | W4  | Pinned tool, `make model-check`, CI job, update policy and layout entry                | W2; W3 to require | Within H2's budget; identical results on unchanged sources                   | G4: place in the quality gates   |
 
@@ -433,8 +453,8 @@ _Table 6: Proposed workstreams, their evidence and the decisions they enable._
 W1 excludes health, start-up, escalation detail and metrics, and is limited to
 two model revisions after its first full run; it stops at H1's falsification
 condition. At `eba08ad`, W2 expects L1 and L4 to fail, because that revision is
-incident 3's pre-fix behaviour. W3 may add journal trace checking as an
-optional tool.
+incident 3's pre-fix behaviour; at `37d08e5` it expects them to hold under F3.
+W3 may add journal trace checking as an optional tool.
 
 ## Risks and mitigations
 
@@ -549,7 +569,8 @@ cheaply and decisively. If FizzBee cannot rediscover incidents 1 and 3 on their
 pre-fix behaviour, the RFC should be withdrawn or redirected to TLA+ or to
 extending Hypothesis, and that result recorded.
 
-[^1]: Commits `eba08ad` (PR #9) and `d4fcc05`, as read on 2026-10-18.
+[^1]: Commits `eba08ad` (PR #9) and `37d08e5` (PR #10), as read on
+      2026-10-18.
 
 [^2]: FizzBee, "Getting Started", retrieved 2026-10-18:
       <https://fizzbee.io/design/tutorials/getting-started/>
@@ -565,3 +586,14 @@ extending Hypothesis, and that result recorded.
 
 [^6]: FizzBee, "Quick Start" (testing), retrieved 2026-10-18:
       <https://fizzbee.io/testing/tutorials/quick-start/>
+
+[^7]: `buildlimits/recovery_starvation.py`: `RECOVERY_STALE_DRAIN_SECONDS`,
+      `RetainedDrainAge` and `proof`, at `37d08e5`.
+
+[^8]: `buildlimits/recovery_starvation.py`: `refusal` and `blocked`;
+      `CacheRecovery.request` calls `refusal`, and `CacheRecovery._try_stop`
+      calls `blocked`, at `37d08e5`.
+
+[^9]: `buildlimits/cache_recovery.py`: `_try_stop` fails a `starved`
+      transaction with "the visible compiler roots proof lapsed before
+      stopping" unless `zero_visible_roots()` holds, at `37d08e5`.
