@@ -58,6 +58,9 @@ def _frozen_clock() -> float:
 def _settling(status: dict[str, object]) -> cabc.Callable[[], dict[str, object]]:
     """Build a query that finds the transaction settled on its first poll.
 
+    The in-flight state the wait starts from comes from the request's own
+    reply, not from this query, which reports ``status`` on every poll.
+
     Parameters
     ----------
     status : dict[str, object]
@@ -66,16 +69,9 @@ def _settling(status: dict[str, object]) -> cabc.Callable[[], dict[str, object]]
     Returns
     -------
     Callable[[], dict[str, object]]
-        A query answering the in-flight status for the wait's opening read and
-        ``status`` from then on.
+        A query that always answers ``status``.
     """
-    answers = [status]
-
-    def asked() -> dict[str, object]:
-        """Report the transaction as still in flight, then as settled."""
-        return answers.pop() if answers else status
-
-    return asked
+    return lambda: status
 
 
 # The idle transaction exactly as the supervisor reports it, pinned rather than

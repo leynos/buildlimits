@@ -268,3 +268,17 @@ def test_a_running_recovery_renders_its_fault_below_the_phase() -> None:
     assert rendered[phase + 1] == (
         "cache recovery last fault: cannot stop the managed cache"
     ), "the fault is rendered immediately after the phase it stopped"
+
+
+def test_a_live_work_fault_on_a_healthy_supervisor_reports_it_healthy() -> None:
+    """A retained drain is not a health failure, so the summary says healthy.
+
+    This is the reading the users' guide shows for a retained managed cache:
+    the fault and its guidance render below a summary that stays healthy.
+    """
+    state, _line = STATES["live-work-guidance"]
+    lines = render({**state, "healthy": True}).splitlines()
+    assert lines[0] == "capacity 4, held 1, healthy, caching through sccache", (
+        "the summary keeps the supervisor's own health"
+    )
+    assert "drain fault kind: live_work" in lines, "the fault is still reported"

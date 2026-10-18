@@ -935,14 +935,6 @@ reason = "Single-purpose test doubles: each closure raises, records or answers t
 
 [[tool.duplication_gate.allow]]
 members = [
-    "tests/test_status_render.py::test_the_fault_kind_renders_above_the_recovery_action",
-    "tests/test_status_render.py::test_the_summary_describes_each_state",
-    "tests/test_status_render.py::test_a_running_recovery_renders_its_fault_below_the_phase",
-]
-reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
-
-[[tool.duplication_gate.allow]]
-members = [
     "tests/test_drain_control_faults.py::fail",
     "tests/test_launch_failure_pressure.py::fail_exec",
     "tests/test_launch_lifecycle.py::fail",

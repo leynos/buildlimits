@@ -35,10 +35,6 @@ scenarios("features/cache_recovery_on_systemd.feature")
 # its presence is the evidence that the held tokens are still explained.
 _RETAINED = "retained detached work"
 
-# The fixture cache's own server unit name, derived the same way the harness
-# derives it, so a step can ask the manager about the real unit.
-_CACHE_UNIT_TEMPLATE = "blt{tag}-sccache.service"
-
 
 class RecoveryWorld:
     """One isolated cached supervisor and the requesters it admits.
@@ -87,16 +83,6 @@ class RecoveryWorld:
         assert wait_for(marker.exists), self.harness.journal()
         return process
 
-    def cache_unit(self) -> str:
-        """Name the fixture cache's own server unit.
-
-        Returns
-        -------
-        str
-            The unit the harness installed for the isolated cache.
-        """
-        return _CACHE_UNIT_TEMPLATE.format(tag=self.harness.tag)
-
     def cache_active(self) -> bool:
         """Report whether the fixture cache's unit is active.
 
@@ -112,7 +98,7 @@ class RecoveryWorld:
                     "--user",
                     "is-active",
                     "--quiet",
-                    self.cache_unit(),
+                    self.harness.sccache_unit,
                 ],
                 check=False,
                 env=manager_env(),
@@ -131,7 +117,7 @@ class RecoveryWorld:
     def start_cache(self) -> None:
         """Ask the manager to start the fixture cache's unit."""
         subprocess.run(
-            ["/usr/bin/systemctl", "--user", "start", self.cache_unit()],
+            ["/usr/bin/systemctl", "--user", "start", self.harness.sccache_unit],
             check=False,
             env=manager_env(),
             timeout=30,
@@ -184,7 +170,7 @@ def _jobserver(recovery_world: RecoveryWorld) -> None:
     """
     harness = recovery_world.harness
     assert harness.status()["caching"], "the managed cache is ready to compose"
-    assert harness.held_tokens() == harness.slots, (
+    assert harness.free_tokens() == harness.slots, (
         "no build has been admitted yet, so the pool is at capacity"
     )
 
@@ -196,7 +182,7 @@ def _two_waiting(recovery_world: RecoveryWorld) -> None:
     recovery_world.start_waiting_build()
     harness = recovery_world.harness
     assert wait_for(lambda: harness.status()["held"] == 2), harness.journal()
-    assert harness.held_tokens() == 0, "both tokens are lent to waited builds"
+    assert harness.free_tokens() == 0, "both tokens are lent to waited builds"
 
 
 @when("both builds are killed while they wait")
@@ -222,7 +208,7 @@ def _held_without_visible_work(recovery_world: RecoveryWorld) -> None:
     assert harness.server_children() == 0, (
         "no visible compiler root remains, so no token may be released for being idle"
     )
-    assert harness.held_tokens() == 0, "the pool has lent both of its tokens"
+    assert harness.free_tokens() == 0, "the pool has lent both of its tokens"
 
 
 @then("a later build waits for a token that is never free")
@@ -291,7 +277,7 @@ def _cache_restarted(recovery_world: RecoveryWorld) -> None:
         "the cache unit the transaction restarted is active"
     )
     assert wait_for(
-        lambda: harness.status()["held"] == 0 and harness.held_tokens() == harness.slots
+        lambda: harness.status()["held"] == 0 and harness.free_tokens() == harness.slots
     ), harness.journal()
 
 
@@ -323,7 +309,7 @@ def _barrier_blocks_start(recovery_world: RecoveryWorld) -> None:
                     else None
                 ),
                 "held_after": recovery_world.harness.status()["held"],
-                "pool_after": recovery_world.harness.held_tokens(),
+                "pool_after": recovery_world.harness.free_tokens(),
                 "capacity": recovery_world.harness.status()["capacity"],
             },
             sort_keys=True,

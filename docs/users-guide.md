@@ -96,21 +96,21 @@ by `build-limits-supervisor --config PATH`. Every key is optional; a missing
 file yields the defaults. Unknown keys and wrongly typed values stop start-up
 with exit status 2, and nothing is half-applied.
 
-| Key                     | Default                                        | Meaning                                                                                          |
-| ----------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `device`                | `/dev/guild`                                   | The guildmaster token device                                                                     |
-| `slots`                 | `2`                                            | The pool's configured capacity, reported by status                                               |
-| `socket_path`           | `$XDG_RUNTIME_DIR/buildlimits/supervisor.sock` | Where the supervisor listens                                                                     |
-| `lock_path`             | `$XDG_RUNTIME_DIR/buildlimits/supervisor.lock` | The singleton lock                                                                               |
-| `compilers_slice`       | `buildlimits-compilers.slice`                  | The slice that holds every compiler scope; must end in `.slice`                                  |
-| `cancel_grace_seconds`  | `10.0`                                         | Seconds between `SIGTERM` and `SIGKILL` for a terminated group                                   |
-| `drain_timeout_seconds` | `120.0`                                        | The longest start-up waits for surviving groups to drain                                         |
-| `cache_mode`            | `sccache`                                      | `sccache` composes admitted compilers with the managed cache; `direct`                           |
-| `sccache_executable`    | `sccache`                                      | The sccache client used in `sccache` mode                                                        |
-| `sccache_unit`          | `buildlimits-sccache.service`                  | The managed cache's user unit                                                                    |
-| `sccache_socket`        | `$XDG_RUNTIME_DIR/buildlimits/sccache.sock`    | The managed cache's socket                                                                       |
-| `cache_recovery`        | `starved`                                      | `starved` or `manual`; see [Recover a retained managed cache](#recover-a-retained-managed-cache) |
-| `recovery_marker`       | `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`  | The restart barrier the managed cache unit honours                                               |
+| Key                     | Default                                        | Meaning                                                                                                                                    |
+| ----------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `device`                | `/dev/guild`                                   | The guildmaster token device                                                                                                               |
+| `slots`                 | `2`                                            | The pool's configured capacity, reported by status                                                                                         |
+| `socket_path`           | `$XDG_RUNTIME_DIR/buildlimits/supervisor.sock` | Where the supervisor listens                                                                                                               |
+| `lock_path`             | `$XDG_RUNTIME_DIR/buildlimits/supervisor.lock` | The singleton lock                                                                                                                         |
+| `compilers_slice`       | `buildlimits-compilers.slice`                  | The slice that holds every compiler scope; must end in `.slice`                                                                            |
+| `cancel_grace_seconds`  | `10.0`                                         | Seconds between `SIGTERM` and `SIGKILL` for a terminated group                                                                             |
+| `drain_timeout_seconds` | `120.0`                                        | The longest start-up waits for surviving groups to drain                                                                                   |
+| `cache_mode`            | `sccache`                                      | `sccache` composes admitted compilers with the managed cache; `direct` runs them without it, and recovery then answers `no-cache-recovery` |
+| `sccache_executable`    | `sccache`                                      | The sccache client used in `sccache` mode                                                                                                  |
+| `sccache_unit`          | `buildlimits-sccache.service`                  | The managed cache's user unit                                                                                                              |
+| `sccache_socket`        | `$XDG_RUNTIME_DIR/buildlimits/sccache.sock`    | The managed cache's socket                                                                                                                 |
+| `cache_recovery`        | `starved`                                      | `starved` or `manual`; see [Recover a retained managed cache](#recover-a-retained-managed-cache)                                           |
+| `recovery_marker`       | `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`  | The restart barrier the managed cache unit honours                                                                                         |
 
 _Table 2: Supervisor configuration keys._
 
@@ -259,7 +259,7 @@ yet the work is live, so admission keeps the token, the queue grows and held
 tokens never fall. `build-limits-status` reports the condition:
 
 ```plaintext
-capacity 2, held 2, UNHEALTHY, caching through sccache
+capacity 2, held 2, healthy, caching through sccache
 drain fault kind: live_work
 drain check failed; tokens retained: retained detached work: live sccache
 service may retain detached requests; visible compiler roots=0; operator

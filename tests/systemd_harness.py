@@ -268,6 +268,7 @@ class Harness:
             capture_output=True,
             text=True,
             check=False,
+            timeout=30,
         )
         return json.loads(result.stdout)
 
@@ -338,15 +339,16 @@ class Harness:
         """
         return journal(self.unit)
 
-    def held_tokens(self) -> int:
+    def free_tokens(self) -> int:
         """Read the pool without taking a token, as an observer would.
 
         Returns
         -------
         int
-            Bytes waiting in the FIFO. A token held by admission is missing
-            from this count, so a recovery can be checked for having released
-            exactly what it accounted for without disturbing the pool.
+            Bytes waiting in the FIFO, which are the free tokens. A token held
+            by admission is missing from this count, so a recovery can be
+            checked for having released exactly what it accounted for without
+            disturbing the pool.
         """
         if self._holder is None:
             return 0
