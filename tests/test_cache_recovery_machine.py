@@ -145,7 +145,7 @@ def test_a_clean_recovery_rests_only_briefly(tmp_path: Path) -> None:
     document = cache.machine.describe(3.0)
     assert document["phase"] == "idle", "the transaction has ended"
     assert not document["last_fault"], "the restart was accepted"
-    assert document["cooling_for"] == recovery_starvation.RECOVERY_SETTLE_SECONDS, (
+    assert document["cooling_for"] == pytest.approx(60.0), (
         "a clean ending rests only for the settle period"
     )
 
@@ -314,7 +314,7 @@ def test_a_failed_restart_reports_guidance_without_latching_recovery(
         machine.tick(last)
     cooling = machine.describe(last)["cooling_for"]
     assert isinstance(cooling, float), "the rest is reported in seconds"
-    assert cooling > recovery_starvation.RECOVERY_SETTLE_SECONDS, (
+    assert cooling > 60.0, (
         "a faulted ending rests for the long cooldown, not the brief settle"
     )
     assert machine.describe(9_999.0)["phase"] == "idle", (
