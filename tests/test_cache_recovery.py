@@ -13,13 +13,13 @@ from pathlib import Path
 from cache_recovery_barrier_helpers import unremovable_barrier
 from cache_recovery_harness import (
     harness_for,
+    hold_drain_beside_running_group,
     hold_drained_group,
     opened_recovery,
     queue_request,
 )
 
 from buildlimits import cache_recovery, recovery_starvation
-from buildlimits.admission import Group
 
 if typ.TYPE_CHECKING:
     import pytest
@@ -141,8 +141,7 @@ def test_a_request_under_a_running_compiler_waits_to_stop(
     """
     harness = harness_for(tmp_path, monkeypatch)
     supervisor = harness.supervisor
-    hold_drained_group(supervisor)
-    supervisor.admission.groups["g2"] = Group("g2", 2, b"+", True)
+    hold_drain_beside_running_group(supervisor)
 
     document = supervisor.recovery.request("manual", harness.now)
     assert not document["blocked"], "a running cached group does not refuse it"

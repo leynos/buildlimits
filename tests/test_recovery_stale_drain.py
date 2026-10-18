@@ -14,7 +14,13 @@ constant is a disagreement rather than a tidy update.
 
 import typing as typ
 
-from cache_recovery_harness import scripted_machine, tick_phase
+from cache_recovery_harness import (
+    harness_for,
+    hold_drain_beside_running_group,
+    queue_request,
+    scripted_machine,
+    tick_phase,
+)
 
 from buildlimits.admission_state import Counts
 from buildlimits.recovery_starvation import StarvationReading, starvation
@@ -220,4 +226,34 @@ def test_the_opening_is_journalled_with_the_retained_age(
     tick_phase(cache, STALE_LIMIT_SECONDS)
     assert "a cache drain has been retained for 300s" in capsys.readouterr().err, (
         "the journal line carries the reason, with the age"
+    )
+
+
+def test_the_supervisor_opens_the_automatic_transaction_on_a_stale_drain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The production supervisor wiring acts on age alone under ``starved``.
+
+    A cached group keeps running and a visible root defeats the prompt proof,
+    so only the retained age can open the transaction. The supervisor's own
+    polling order, admission counts and server watch supply every reading.
+    """
+    harness = harness_for(tmp_path, monkeypatch, mode="starved")
+    supervisor = harness.supervisor
+    hold_drain_beside_running_group(supervisor)
+    queue_request(supervisor)
+    supervisor.server.drain_fault_kind = "live_work"
+    # The probe's root count has no public setter; a visible root is what
+    # defeats the prompt proof.
+    monkeypatch.setattr(supervisor.server, "_fault_roots", 2)
+
+    harness.tick()
+    assert harness.described()["phase"] == "idle", "a fresh drain waits"
+    harness.advance(STALE_LIMIT_SECONDS - 1.0)
+    harness.tick()
+    assert harness.described()["phase"] == "idle", "one second short still waits"
+    harness.advance(1.0)
+    harness.tick()
+    assert harness.described()["phase"] == "quiescing", (
+        "the supervisor opens the transaction once the drain is stale"
     )

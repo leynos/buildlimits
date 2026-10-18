@@ -214,6 +214,12 @@ def hold_drained_group(supervisor: Supervisor, group_id: str = "g1") -> None:
     )
 
 
+def hold_drain_beside_running_group(supervisor: Supervisor) -> None:
+    """Retain one drained group while a cached group is still running."""
+    hold_drained_group(supervisor)
+    supervisor.admission.groups["g2"] = Group("g2", 2, b"+", cached=True)
+
+
 def queue_request(supervisor: Supervisor, request_id: int = 2) -> None:
     """Leave one unrelated requester waiting for a token.
 
