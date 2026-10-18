@@ -154,6 +154,32 @@ class RetainedDrainAge:
         return now - self.since
 
 
+def proof(reading: StarvationReading) -> str | None:
+    """Name the evidence that the retained work may be acted on, if any.
+
+    Parameters
+    ----------
+    reading : StarvationReading
+        The one instant the trigger is judged against.
+
+    Returns
+    -------
+    str | None
+        ``detached`` when the probe proved the work detached, ``stale`` when
+        only the drain's age justifies acting, otherwise ``None``.
+
+    Examples
+    --------
+    >>> proof.__name__
+    'proof'
+    """
+    if _the_probe_proved_detached_work(reading):
+        return "detached"
+    if reading.drain_age >= RECOVERY_STALE_DRAIN_SECONDS:
+        return "stale"
+    return None
+
+
 def starvation(reading: StarvationReading) -> str | None:
     """Decide whether live cache work is starving admission right now.
 
@@ -184,12 +210,13 @@ def starvation(reading: StarvationReading) -> str | None:
         return None
     if counts.server_drain == 0 or counts.queued == 0:
         return None
-    if _the_probe_proved_detached_work(reading):
-        cause = "live cache work is starving admission"
-    elif reading.drain_age >= RECOVERY_STALE_DRAIN_SECONDS:
-        cause = f"a cache drain has been retained for {reading.drain_age:.0f}s"
-    else:
-        return None
+    match proof(reading):
+        case "detached":
+            cause = "live cache work is starving admission"
+        case "stale":
+            cause = f"a cache drain has been retained for {reading.drain_age:.0f}s"
+        case _:
+            return None
     return (
         f"{cause}: {counts.server_drain} token(s) await server accounting, and "
         f"{counts.queued} request(s) are waiting"

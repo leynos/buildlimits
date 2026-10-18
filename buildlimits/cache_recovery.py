@@ -215,12 +215,8 @@ class CacheRecovery:
     def reclaim_after_accounting(self) -> None:
         """Retire the barrier a prior, interrupted transaction left behind.
 
-        The work itself is
-        :func:`buildlimits.recovery_reclaim.reclaim_after_accounting`, which
-        takes the barrier and cache it needs. This method only supplies the two
-        facts the machine already holds, so the supervisor's start-up keeps
-        reaching for its recovery handle rather than for a free function it
-        would have to be handed the barrier to call.
+        The work is :func:`buildlimits.recovery_reclaim.reclaim_after_accounting`;
+        this supplies the barrier and cache the machine already holds.
         """
         reclaim_after_accounting(
             cache_mode=self.cache_mode, barrier=self.barrier, cache=self.cache
@@ -239,17 +235,23 @@ class CacheRecovery:
             zero_visible_roots=self.zero_visible_roots(),
             drain_age=self._drain_age.observe(counts.server_drain, now=now),
         )
-        if recovery_starvation.starvation(reading) is not None:
-            self._begin("starved", now)
+        reason = recovery_starvation.starvation(reading)
+        if reason is not None:
+            self._begin("starved", now, reason)
+            if recovery_starvation.proof(reading) == "stale":
+                self.metrics.emit(
+                    "cache_recovery", phase=self._phase, recovery_stale_openings=1
+                )
 
-    def _begin(self, trigger: str, now: float) -> None:
-        """Open one transaction and announce it once."""
+    def _begin(self, trigger: str, now: float, reason: str = "") -> None:
+        """Open one transaction and announce it once, with the reason if known."""
         self._trigger = trigger
         self._advance("quiescing", now)
         with contextlib.suppress(OSError):
+            why = f" ({reason})" if reason else ""
             log(
-                f"{trigger} recovery of the managed cache: writing the restart "
-                f"barrier {self.barrier.path}"
+                f"{trigger} recovery of the managed cache{why}: writing the "
+                f"restart barrier {self.barrier.path}"
             )
 
     def _step(self, now: float) -> None:
@@ -306,7 +308,10 @@ class CacheRecovery:
         evidence of its own and can only wait.
         """
         self._next_action = now
-        if self.counts().server_drain == 0:
+        server_drain = self.counts().server_drain
+        # Retire the age here: a new drain may land before the next idle tick.
+        self._drain_age.observe(server_drain, now=now)
+        if server_drain == 0:
             self._advance("restarting", now)
 
     def _try_start(self, now: float) -> None:
@@ -317,15 +322,10 @@ class CacheRecovery:
         failed step like any other: it is retried with backoff, and the
         operator is told to restore the runtime directory the barrier lives in.
         """
-        # Released once the start has been accepted, not when it is decided. A
-        # refused start leaves the server stopped while the launch decision
-        # still holds the reading taken while it was healthy, and a compiler
-        # composed in that state starts a server of its own inside its own
-        # scope, where nothing can account for it. Keeping the denial is the
-        # safe direction: it withholds composition, it can never release a
-        # token, and the deadline the last tick set lapses on its own, so a
-        # transaction that gives up cannot deny the cache for longer than the
-        # retry bound.
+        # Released once the start has been accepted, not when it is decided: a
+        # refused start leaves the server stopped, and a compiler composed then
+        # would start an unaccountable server of its own. Keeping the denial is
+        # the safe direction, and its deadline lapses within the retry bound.
         try:
             self.barrier.clear()
             self.cache.start()

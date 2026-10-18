@@ -259,10 +259,11 @@ and the connection always closes.
 `status.describe` builds the status document from the supervisor's own state:
 capacity, held tokens, the queue, groups, health, the last `drain_fault` and its
 `drain_fault_kind` (`live_work`, `stopped_populated` or `manager`), the
-`descriptors` gauges and the `cache_recovery` transaction document. Only a
-`live_work` reading proven to hold zero visible compiler roots authorizes the
-automatic recovery trigger. `status_render.render` is a pure function of that
-document, pinned by Syrupy snapshots.
+`descriptors` gauges and the `cache_recovery` transaction document. The
+automatic recovery trigger requires a `live_work` fault and then accepts either
+the prompt zero-root proof or the retained-drain staleness proof described
+below. `status_render.render` is a pure function of that document, pinned by
+Syrupy snapshots.
 
 `cache_recovery.CacheRecovery` is a four-phase machine — `quiescing`,
 `stopping`, `accounting`, `restarting` — advancing at most one step per tick.
@@ -284,12 +285,18 @@ The automatic trigger accepts either of two proofs. The prompt proof is a
 zero-root reading with nothing cached moving. The staleness proof is a retained
 drain held without a break for `RECOVERY_STALE_DRAIN_SECONDS`. The machine
 measures that age itself with `recovery_starvation.RetainedDrainAge` on its
-idle ticks, because admission holds no clock. The age is sound because a
-`server-drain` token is released only by a verified stopped-and-empty cache.
-`recovery_starvation.refusal` decides whether a transaction may open at all,
-and refuses only on a faulted manager transport. `blocked` decides whether the
-stop must wait, and adds the cached-moving clause. Opening early is safe
-because the open transaction holds new compiles off the cache. `recover_cli`
+idle ticks and in its accounting phase, because admission holds no clock. The
+accounting observation retires the age when a transaction releases the drain,
+so a drain that returns before the next idle tick starts its own clock. The age
+is sound because a `server-drain` token is released only by a verified
+stopped-and-empty cache. `recovery_starvation.refusal` decides whether a
+transaction may open at all, and refuses only on a faulted manager transport.
+`blocked` decides whether the stop must wait, and adds the cached-moving
+clause. Opening early is safe because the open transaction holds new compiles
+off the cache. `recovery_starvation.proof` names which proof acted (`detached`
+or `stale`): the opening is journalled with its reason, which carries the
+retained age, and an age-opened transaction adds one to the
+`recovery_stale_openings` counter of the `cache_recovery` event. `recover_cli`
 polls under `--wait` and reports "unknown", never "complete", when a query
 fails part-way.
 

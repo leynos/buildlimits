@@ -22,6 +22,11 @@ from buildlimits.recovery_starvation import StarvationReading, starvation
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
+    from conftest import RecordingSink
+
+    from buildlimits.metrics import Metrics
+
 
 STALE_LIMIT_SECONDS = 300.0
 
@@ -129,4 +134,90 @@ def test_a_drain_that_clears_starts_its_age_again(tmp_path: Path) -> None:
     )
     assert tick_phase(cache, 250.0 + STALE_LIMIT_SECONDS) == "quiescing", (
         "the new retention opens recovery at its own limit"
+    )
+
+
+def test_a_drain_cleared_during_accounting_starts_its_age_again(
+    tmp_path: Path,
+) -> None:
+    """A recovery that ends the retention does not age the next drain.
+
+    The accounting phase, not the idle tick, is what observes the count reach
+    zero, so the age must be retired there. Otherwise a fresh drain that
+    appears before the next idle tick inherits the previous retention's start
+    and opens another recovery as soon as the cooldown allows.
+    """
+    cache = scripted_machine(tmp_path, [_busy()], roots=2)
+    tick_phase(cache, 0.0)
+    assert tick_phase(cache, STALE_LIMIT_SECONDS) == "quiescing", (
+        "the stale drain opens the transaction"
+    )
+
+    # The cached work ends and the stop is verified, which releases the drain.
+    cache.snapshot[0] = Counts(9, 3, 0, 0, 1, capacity=4, cached_moving=0)
+    cache.roots[0] = 0
+    now = STALE_LIMIT_SECONDS
+    cleared = Counts(9, 3, 0, 0, 0, capacity=4, cached_moving=0)
+    phase: object = "quiescing"
+    for _ in range(10):
+        now += 1.0
+        if cache.machine.describe(now)["phase"] == "accounting":
+            cache.snapshot[0] = cleared
+        phase = tick_phase(cache, now)
+        if phase == "idle":
+            break
+    # No further tick: an idle tick would observe the zero count itself and
+    # hide the missing reset this test exists to catch.
+    assert phase == "idle", "the recovery transaction ends"
+
+    cache.snapshot[0] = _busy()
+    cache.roots[0] = 2
+    later = now + 1_000.0
+    assert tick_phase(cache, later) == "idle", (
+        "a fresh drain on a busy host starts its own clock"
+    )
+    assert tick_phase(cache, later + STALE_LIMIT_SECONDS - 1.0) == "idle", (
+        "the fresh drain is not yet stale"
+    )
+
+
+def _sub(root: Path, name: str) -> Path:
+    """Make a separate fixture directory so two machines never share a marker."""
+    path = root / name
+    path.mkdir()
+    return path
+
+
+def _stale_openings(sink: RecordingSink) -> int:
+    """Sum the stale-opening counts the machine recorded."""
+    key = "BUILD_LIMITS_RECOVERY_STALE_OPENINGS"
+    return sum(int(record[key]) for record in sink.records if key in record)
+
+
+def test_only_an_age_opened_transaction_counts_a_stale_opening(
+    tmp_path: Path, metrics: Metrics, metric_sink: RecordingSink
+) -> None:
+    """The stale proof is told apart from the prompt proof in telemetry."""
+    prompt = scripted_machine(_sub(tmp_path, "prompt"), [_busy()], roots=0)
+    prompt.machine.metrics = metrics
+    prompt.snapshot[0] = Counts(9, 3, 0, 0, 1, capacity=4, cached_moving=0)
+    assert tick_phase(prompt, 0.0) == "quiescing", "the prompt proof opens at once"
+    assert _stale_openings(metric_sink) == 0, "a prompt opening is not a stale one"
+
+    stale = scripted_machine(_sub(tmp_path, "stale"), [_busy()], roots=2)
+    stale.machine.metrics = metrics
+    tick_phase(stale, 0.0)
+    assert tick_phase(stale, STALE_LIMIT_SECONDS) == "quiescing", "age opens it"
+    assert _stale_openings(metric_sink) == 1, "the age-opened transaction is counted"
+
+
+def test_the_opening_is_journalled_with_the_retained_age(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The operator can read why the automatic trigger acted from the journal."""
+    cache = scripted_machine(tmp_path, [_busy()], roots=2)
+    tick_phase(cache, 0.0)
+    tick_phase(cache, STALE_LIMIT_SECONDS)
+    assert "a cache drain has been retained for 300s" in capsys.readouterr().err, (
+        "the journal line carries the reason, with the age"
     )
