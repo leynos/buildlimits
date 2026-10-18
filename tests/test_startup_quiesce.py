@@ -9,6 +9,7 @@ the pool opens, which is what the recovery transaction does mid-run.
 """
 
 import os
+import signal
 import typing as typ
 from pathlib import PurePosixPath
 
@@ -66,10 +67,21 @@ def _supervisor(
 
 
 def _close(instance: Supervisor) -> None:
-    """Release the listener and selector a started supervisor opened."""
+    """Release everything a started supervisor opened, including its signal pipe.
+
+    ``start`` installs a wake-up descriptor for ``SIGCHLD``. Leaving its pipe
+    and handler behind would shift every later descriptor-baseline test in the
+    same worker, so both ends are closed and the handler is restored here.
+    """
     if instance.listener is not None:
         instance.listener.close()
     instance.selector.close()
+    if instance._signals_read >= 0:
+        write_end = signal.set_wakeup_fd(-1)
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+        os.close(instance._signals_read)
+        if write_end >= 0:
+            os.close(write_end)
 
 
 def test_a_live_idle_cache_is_stopped_under_the_barrier_then_restored(
