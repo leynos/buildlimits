@@ -312,3 +312,31 @@ def test_a_resting_trigger_reports_when_it_may_act_again() -> None:
     assert not any(
         line.startswith("cache recovery") for line in render(rested).splitlines()
     ), "a trigger free to act adds no recovery line"
+
+
+def test_a_refused_restart_stays_visible_after_the_transaction_ends() -> None:
+    """The fault a refused restart ended on outlives the transaction and its rest.
+
+    The operator command reads the same document, but the status summary is
+    what most people look at; a faulted ending must not read as a clean one.
+    """
+    ended = {
+        "phase": "idle",
+        "attempts": 0,
+        "last_fault": "cannot start cache.service: Job failed",
+        "retry_in": 0.0,
+        "cooling_for": 900.0,
+    }
+    state, _line = STATES["live-work-guidance"]
+    resting = render({**state, "cache_recovery": ended}).splitlines()
+    assert "cache recovery idle: automatic recovery may start in 900.0s" in resting, (
+        "the rest is shown"
+    )
+    assert (
+        "cache recovery last fault: cannot start cache.service: Job failed" in resting
+    ), "the fault is shown beside the rest"
+    rested = render({**state, "cache_recovery": {**ended, "cooling_for": 0.0}})
+    assert (
+        "cache recovery last fault: cannot start cache.service: Job failed"
+        in rested.splitlines()
+    ), "the fault is still shown once the rest has passed"

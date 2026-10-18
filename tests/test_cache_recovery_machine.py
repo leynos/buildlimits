@@ -308,14 +308,16 @@ def test_a_failed_restart_reports_guidance_without_latching_recovery(
     document = machine.describe(3.0)
     assert "start" in state.verbs, "the restart was attempted"
     assert document["last_fault"], "the failed restart is kept for the operator"
-    last = 0.0
+    ended = None
     for step in range(cache_recovery.RECOVERY_FAILURE_LIMIT + 2):
-        last = 1_000.0 + float(step) * cache_recovery.RECOVERY_MAX_RETRY_SECONDS
-        machine.tick(last)
-    cooling = machine.describe(last)["cooling_for"]
-    assert isinstance(cooling, float), "the rest is reported in seconds"
-    assert cooling > 60.0, (
-        "a faulted ending rests for the long cooldown, not the brief settle"
+        now = 1_000.0 + float(step) * cache_recovery.RECOVERY_MAX_RETRY_SECONDS
+        machine.tick(now)
+        if machine.describe(now)["phase"] == "idle":
+            ended = now
+            break
+    assert ended is not None, "the refused restart exhausts its attempts"
+    assert machine.describe(ended)["cooling_for"] == pytest.approx(900.0), (
+        "a faulted ending rests for the whole long cooldown"
     )
     assert machine.describe(9_999.0)["phase"] == "idle", (
         "a stalled restart cannot latch an accounting that already proved stopped"

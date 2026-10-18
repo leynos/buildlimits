@@ -301,8 +301,10 @@ attempts. While it rests, `build-limits-status` says so:
 cache recovery idle: automatic recovery may start in 42.5s
 ```
 
-Tokens retained beside that line are waiting for the trigger, not stuck. With
-`manual`, the supervisor waits for an operator:
+Tokens retained beside that line are waiting for the trigger, not stuck. A
+transaction that ended with its restart refused also keeps its
+`cache recovery last fault:` line, during the rest and after it, until the next
+transaction succeeds. With `manual`, the supervisor waits for an operator:
 
 ```bash
 build-limits-recover --wait --wait-timeout 300
