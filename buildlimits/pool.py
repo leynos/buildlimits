@@ -81,24 +81,36 @@ class TokenPool:
     """
 
     def __init__(self, path: Path) -> None:
-        """Open the device and start the reader thread."""
+        """Open the device and start the reader thread.
+
+        A failure part-way releases everything already acquired, because the
+        caller never receives an object to close.
+        """
         self.path = path
         self.fd = os.open(path, os.O_RDWR | os.O_CLOEXEC)
-        stat = os.fstat(self.fd)
-        self.identity = (stat.st_dev, stat.st_ino, stat.st_rdev)
-        self._events: queue.SimpleQueue[PoolEvent] = queue.SimpleQueue()
-        self._wake_read, self._wake_write = os.pipe2(os.O_CLOEXEC | os.O_NONBLOCK)
-        self._demand = threading.Semaphore(0)
-        # Each release asks the reader thread for one more token.
-        self.request: cabc.Callable[[], None] = self._demand.release
-        # Guards the close flag and the descriptors it releases, so the reader
-        # thread and :meth:`close` can never close one descriptor twice or
-        # write to a pipe whose number has been reused.
-        self._lifecycle = threading.Lock()
-        self._is_closing = False
-        self._is_device_open = True
-        self._reader = threading.Thread(target=self._read_forever, daemon=True)
-        self._reader.start()
+        self._wake_read = self._wake_write = -1
+        try:
+            stat = os.fstat(self.fd)
+            self.identity = (stat.st_dev, stat.st_ino, stat.st_rdev)
+            self._events: queue.SimpleQueue[PoolEvent] = queue.SimpleQueue()
+            self._wake_read, self._wake_write = os.pipe2(os.O_CLOEXEC | os.O_NONBLOCK)
+            self._demand = threading.Semaphore(0)
+            # Each release asks the reader thread for one more token.
+            self.request: cabc.Callable[[], None] = self._demand.release
+            # Guards the close flag and the descriptors it releases, so the
+            # reader thread and :meth:`close` can never close one descriptor
+            # twice or write to a pipe whose number has been reused.
+            self._lifecycle = threading.Lock()
+            self._is_closing = False
+            self._is_device_open = True
+            self._reader = threading.Thread(target=self._read_forever, daemon=True)
+            self._reader.start()
+        except BaseException:
+            for fd in (self.fd, self._wake_read, self._wake_write):
+                if fd >= 0:
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+            raise
 
     @property
     def wake_fd(self) -> int:

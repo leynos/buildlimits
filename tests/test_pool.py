@@ -5,6 +5,7 @@ import os
 import select
 import threading
 import typing as typ
+from unittest import mock
 
 import pytest
 from descriptor_helpers import still_open
@@ -230,3 +231,42 @@ def test_close_leaves_a_blocked_read_to_close_the_device_when_it_returns(
         os.close(writer)
     assert not pool._reader.is_alive(), "the returned read lets the reader finish"
     assert not still_open([device]), "the reader closed the device it was using"
+
+
+@pytest.mark.parametrize("failure", ["pipe", "thread"])
+def test_a_failed_construction_releases_what_it_had_opened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """The caller never gets an object to close, so the constructor must.
+
+    The device is opened first, then the wake pipe, then the reader thread
+    starts; a fault at either later step must return everything before it.
+    """
+    fifo = tmp_path / "guild"
+    os.mkfifo(fifo)
+    opened: list[int] = []
+    real_open, real_pipe = os.open, os.pipe2
+
+    def recording_open(device: Path, flags: int) -> int:
+        """Remember the device descriptor the pool opens."""
+        fd = real_open(device, flags)
+        opened.append(fd)
+        return fd
+
+    def recording_pipe(flags: int) -> tuple[int, int]:
+        """Remember the pipe, then fail or succeed as the case requires."""
+        if failure == "pipe":
+            raise OSError(24, "Too many open files")
+        ends = real_pipe(flags)
+        opened.extend(ends)
+        return ends
+
+    monkeypatch.setattr(pool_module.os, "open", recording_open)
+    monkeypatch.setattr(pool_module.os, "pipe2", recording_pipe)
+    if failure == "thread":
+        refusing_start = mock.Mock(side_effect=RuntimeError("can't start new thread"))
+        monkeypatch.setattr(threading.Thread, "start", refusing_start)
+    with pytest.raises((OSError, RuntimeError)):
+        TokenPool(fifo)
+    assert opened, "the constructor got as far as opening the device"
+    assert not still_open(opened), "a failed construction leaks nothing"
