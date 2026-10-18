@@ -14,6 +14,7 @@ import dataclasses as dc
 import time
 import typing as typ
 
+from buildlimits import cache_quiesce
 from buildlimits.admission import GroupState, ReturnToken
 from buildlimits.drain_metrics import DrainMetrics
 from buildlimits.journal import log
@@ -30,7 +31,9 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.admission import Admission, Effect
     from buildlimits.metrics import MetricsPort
+    from buildlimits.recovery_barrier import RecoveryBarrier
     from buildlimits.sccache import ManagedSccache
+    from buildlimits.timing import Clock
 
 
 DRAIN_FAILURE_LIMIT = 8
@@ -157,6 +160,33 @@ class ServerWatch:
             hold is outstanding.
         """
         return self.cache_mode == "sccache" and self.clock() >= self._cache_hold_until
+
+    def quiesce_live_cache(self, barrier: RecoveryBarrier, timing: Clock) -> None:
+        """Stop a live cache under the barrier so that start-up can account for it.
+
+        Parameters
+        ----------
+        barrier : RecoveryBarrier
+            The restart barrier the managed unit's condition reads.
+        timing : Clock
+            Monotonic time and sleep for the bounded wait.
+
+        Raises
+        ------
+        StartupAccountingError
+            If the live cache cannot be stopped and verified; see
+            :func:`buildlimits.cache_quiesce.quiesce_live_cache`.
+        """  # ruff: ignore[docstring-extraneous-exception] - cache_quiesce raises it.
+        if self.cache_mode == "sccache":
+            cache_quiesce.quiesce_and_report(
+                self.server, barrier, timing, self._report_quiesce
+            )
+
+    def _report_quiesce(self, outcome: str, seconds: float) -> None:
+        """Meter how a start-up stop of a live cache ended."""
+        self.metrics.emit(
+            "cache_quiesce", quiesce_outcome=outcome, quiesce_seconds=seconds
+        )
 
     def drain_orphans(self) -> None:
         """Require accounted server work before the admission pool opens.

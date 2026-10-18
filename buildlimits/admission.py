@@ -12,7 +12,9 @@ the RFC's invariants checkable without devices, sockets or processes:
 - a group composed with sccache that ends abnormally keeps its token until the
   managed server's live compilations fit within the server-drain tokens that
   remain after its return;
-- an unhealthy supervisor admits nothing and drains everything.
+- an unhealthy supervisor admits nothing and drains everything;
+- a closing supervisor launches nothing but lets running groups finish, then
+  refuses what waits so that its requesters can try again.
 
 Tokens are opaque single bytes. A token read from the pool is written back
 unchanged, as the jobserver protocol requires.
@@ -22,7 +24,7 @@ import collections
 import dataclasses as dc
 import typing as typ
 
-from buildlimits.admission_state import Counts, Group, GroupState
+from buildlimits.admission_state import Counts, Gauges, Group, GroupState
 from buildlimits.effects import (
     Effect,
     Exit,
@@ -59,7 +61,7 @@ __all__ = [
 
 
 @dc.dataclass(slots=True)
-class Admission:
+class Admission(Gauges):
     """The supervisor's admission state.
 
     Parameters
@@ -69,6 +71,9 @@ class Admission:
         supervisor updates this as the server's health changes.
     capacity : int
         Configured pool capacity reported by the gauge seam.
+    closing : bool
+        Whether the supervisor is winding down: it launches and terminates
+        nothing, and queues what arrives while a group still runs.
     cache_allowed : Callable[[], bool]
         Whether composition with the server is permitted at all right now.
         Defaults to always true, so an admission state that is not wired to a
@@ -99,13 +104,7 @@ class Admission:
     cacheable: dict[RequestId, bool] = dc.field(default_factory=dict)
     groups: dict[GroupId, Group] = dc.field(default_factory=dict)
     token_requested: bool = False
-    # The default authorizes caching, so an admission state that is not wired
-    # to a server keeps the plain reading of ``cached``. Inline rather than a
-    # named constant, matching the sibling defaults in ``cache_recovery``: any
-    # name here would count against the module ceiling too. Kept out of the
-    # repr because the permission is a live reading, not admission state to
-    # print, and the stable repr is what lets a test compare two states
-    # directly.
+    closing: bool = False
     cache_allowed: cabc.Callable[[], bool] = dc.field(default=lambda: True, repr=False)
     _next_group: int = 1
 
@@ -124,10 +123,12 @@ class Admission:
         -------
         list[Effect]
             A queue notification and, when needed, a token request; or a
-            refusal while unhealthy.
+            refusal while unhealthy or once a closing supervisor has no group.
         """
         if not self.healthy:
             return [Refuse(request_id, "unhealthy")]
+        if self.closing and not self.groups:
+            return [Refuse(request_id, "restarting")]
         self.queue.append(request_id)
         self.cacheable[request_id] = cacheable
         effects: list[Effect] = [NotifyQueued(request_id, len(self.queue) - 1)]
@@ -145,19 +146,15 @@ class Admission:
         -------
         list[Effect]
             A launch and any further token request, or the token's return
-            when nothing is waiting or the supervisor is unhealthy.
+            when nothing is waiting or the supervisor is unhealthy or closing.
         """
         self.token_requested = False
-        if not self.healthy or not self.queue:
+        if not self.admitting or not self.queue:
             return [ReturnToken(token)]
         request_id = self.queue.popleft()
         cached = self.cacheable.pop(request_id) and self.cached
-        # Read as late as the decision itself: a token that waited through a
-        # recovery must not be composed with a server that the transaction has
-        # since taken out of service. Two queries rather than one, because they
-        # answer different questions — whether the server is reachable, and
-        # whether composition is permitted — and only the second is this
-        # machine's to withhold.
+        # Read at the decision itself: a token that waited through a recovery
+        # must not be composed with a server the transaction has since stopped.
         cached = cached and self.cache_allowed()
         group_id = f"g{self._next_group}"
         self._next_group += 1
@@ -233,8 +230,7 @@ class Admission:
         group = self.groups[group_id]
         group.exit = exit_
         group.state = GroupState.DRAINING
-        # A compiler's children finish before it does; anything left is an
-        # orphan, such as an sccache server started inside the scope.
+        # Anything left after the leader is an orphan, such as an sccache server.
         return [Terminate(group_id)]
 
     def group_emptied(self, group_id: GroupId) -> list[Effect]:
@@ -311,48 +307,6 @@ class Admission:
                 effects.append(Terminate(group.group_id))
         return effects + self._maybe_shutdown()
 
-    def counts(self) -> Counts:
-        """Read gauges without exposing request or group identifiers.
-
-        Returns
-        -------
-        Counts
-            A frozen snapshot derived from the queue and group states.
-        """
-        states = collections.Counter(group.state for group in self.groups.values())
-        cached = collections.Counter(
-            group.state for group in self.groups.values() if group.cached
-        )
-        return Counts(
-            len(self.queue),
-            self.tokens_held(),
-            states[GroupState.RUNNING],
-            states[GroupState.DRAINING],
-            states[GroupState.SERVER_DRAIN],
-            self.capacity,
-            cached[GroupState.RUNNING] + cached[GroupState.DRAINING],
-        )
-
-    def cached_tokens_held(self) -> int:
-        """Count tokens held by groups composed with sccache.
-
-        Returns
-        -------
-        int
-            The number of cached groups holding a token.
-        """
-        return sum(1 for group in self.groups.values() if group.cached)
-
-    def tokens_held(self) -> int:
-        """Count tokens held by all groups.
-
-        Returns
-        -------
-        int
-            The number of groups holding a token.
-        """
-        return len(self.groups)
-
     def _wants_token(self) -> bool:
         """Report whether a request waits with no token already on its way.
 
@@ -361,8 +315,7 @@ class Admission:
         bool
             Whether the pool should be asked for a token.
         """
-        waiting = self.healthy and bool(self.queue)
-        return waiting and not self.token_requested
+        return self.admitting and bool(self.queue) and not self.token_requested
 
     def _demand(self) -> list[Effect]:
         """Request a token when requests wait and none is on its way.
@@ -387,14 +340,30 @@ class Admission:
         """
         return [NotifyQueued(rid, index) for index, rid in enumerate(self.queue)]
 
-    def _maybe_shutdown(self) -> list[Effect]:
-        """Signal shutdown once an unhealthy supervisor has drained.
+    def begin_closing(self) -> list[Effect]:
+        """Stop launching and let every running group finish; idempotent.
 
         Returns
         -------
         list[Effect]
-            A shutdown, or nothing.
+            Nothing while groups remain; otherwise the refusal of what waits.
         """
-        if not self.healthy and not self.groups:
-            return [Shutdown()]
-        return []
+        self.closing = True
+        return self._maybe_shutdown()
+
+    def _maybe_shutdown(self) -> list[Effect]:
+        """Signal shutdown once an unhealthy or closing supervisor has drained.
+
+        Returns
+        -------
+        list[Effect]
+            Nothing while groups remain or the supervisor is open; otherwise
+            what waits is refused as ``restarting`` (nothing ran for it, so its
+            requester may retry), then a shutdown.
+        """
+        if self.admitting or self.groups:
+            return []
+        refused: list[Effect] = [Refuse(rid, "restarting") for rid in self.queue]
+        self.queue.clear()
+        self.cacheable.clear()
+        return [*refused, Shutdown()]

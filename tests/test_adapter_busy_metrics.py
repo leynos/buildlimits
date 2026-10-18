@@ -99,13 +99,19 @@ def test_busy_expiry_does_not_count_a_request_that_never_started(
 def test_busy_retry_counter_caps_independently_of_socket_attempts(
     metric_sink: RecordingSink,
 ) -> None:
-    """Both independent counters saturate without crossing into each other."""
+    """The independent counters saturate without crossing into each other."""
     summary = AdapterMetrics(lambda: 1.0, 0.0, Metrics(metric_sink, source="adapter"))
     summary.busy_retries = MAX_COUNTER - 1
+    summary.restart_retries = MAX_COUNTER - 1
     summary.retry_busy()
     summary.retry_busy()
+    summary.retry_restart()
+    summary.retry_restart()
     summary.attempted()
     summary.finish()
     record = metric_sink.records[0]
     assert record["BUILD_LIMITS_BUSY_RETRIES"] == str(MAX_COUNTER), "retry count caps"
+    assert record["BUILD_LIMITS_RESTART_RETRIES"] == str(MAX_COUNTER), (
+        "the restart retry count caps independently"
+    )
     assert record["BUILD_LIMITS_CONNECTION_ATTEMPTS"] == "1", "socket count is separate"

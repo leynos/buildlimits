@@ -59,6 +59,7 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
         "capacity": settings.slots,
         "held": admission.tokens_held(),
         "healthy": admission.healthy,
+        "restarting": admission.winding_down,
         "health_reason": supervisor.health_reason,
         "drain_fault": supervisor.server.drain_fault,
         "drain_fault_kind": supervisor.server.drain_fault_kind,

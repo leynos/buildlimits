@@ -72,6 +72,18 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
         {"capacity": 4, "held": 0, "healthy": True, "caching": True},
         "capacity 4, held 0, healthy, caching through sccache",
     ),
+    "restarting": (
+        {
+            "capacity": 4,
+            "held": 2,
+            "healthy": True,
+            "restarting": True,
+            "caching": True,
+            "queued": [_WAITING],
+            "groups": [_RUNNING],
+        },
+        "healthy, restarting once running groups finish, caching through sccache",
+    ),
     "unreachable-cache": (
         {
             "capacity": 4,

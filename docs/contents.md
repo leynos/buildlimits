@@ -17,6 +17,12 @@
   lists what operators must change when moving from `build_limits` in
   dev-env-rocky to this repository's 0.1.0 release.
 
+## Decisions
+
+- [ADR 001: graceful supervisor restart](adr-001-graceful-supervisor-restart.md)
+  records why a plain `systemctl --user restart` drains running work, how the
+  adapters and start-up cooperate, and the options it rejected.
+
 ## Conventions
 
 - [Documentation style guide](documentation-style-guide.md) defines the

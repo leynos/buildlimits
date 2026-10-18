@@ -31,6 +31,13 @@
         'p90': 2.0,
         'p99': 2.0,
       }),
+      'restart_retries': dict({
+        'count': 0,
+        'maximum': None,
+        'p50': None,
+        'p90': None,
+        'p99': None,
+      }),
       'self_reported': True,
     }),
     'descriptors': dict({

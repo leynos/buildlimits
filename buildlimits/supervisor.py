@@ -73,6 +73,7 @@ class Supervisor:
         self.settings = settings
         self.manager = manager or UserManager()
         timing = as_clock(clock)
+        self.timing = timing
         self.clock = timing.now
         self.metrics = metrics if metrics is not None else Metrics()
 
@@ -120,6 +121,7 @@ class Supervisor:
         self.exit_status: int | None = None
         self._stopping = False
         self._stop_requested = False
+        self._graceful_stop_requested = False
         self._signals_read = -1
         self.loop = DrainLoop(
             sleep=timing.sleep,
@@ -149,6 +151,7 @@ class Supervisor:
         survivors = startup.drain_slice(slice_dir, self.settings.drain_timeout_seconds)
         log(f"restart barrier passed; terminated {survivors} surviving scope(s)")
         self.groups.slice_dir = slice_dir
+        self.server.quiesce_live_cache(self.recovery.barrier, self.timing)
         self.server.drain_orphans()
         self.recovery.reclaim_after_accounting()
         self.pool = TokenPool(self.settings.device)
@@ -187,11 +190,13 @@ class Supervisor:
             self._dispatch, self._tick, self._unhealthy, lambda: self.exit_status
         )
         result = self.loop.run(self.selector, effects, tick_seconds=TICK_SECONDS)
+        supervisor_shutdown.settle_token_request(self)
         self.requests.close_all()
         return result
 
     def _dispatch(self, tag: object) -> None:
         """Route one ready descriptor to its handler."""
+        supervisor_shutdown.honour_stop_request(self)
         match tag:
             case "listener":
                 self._accept()
@@ -292,12 +297,14 @@ class Supervisor:
     # beside its sibling ``supervisor_polling``. A bound method keeps the
     # name, the signature and the ``self`` binding every caller already uses.
     request_stop = supervisor_shutdown.request_stop
+    request_graceful_stop = supervisor_shutdown.request_graceful_stop
     stop = supervisor_shutdown.stop
     _shutdown = supervisor_shutdown.shutdown
 
     def _tick(self) -> None:
         """Advance draining groups, escalations and periodic checks."""
         supervisor_shutdown.honour_stop_request(self)
+        supervisor_shutdown.settle_graceful_stop(self)
         self.pressure.resume(self.listener)
         self._failed_replies()
         if self._signals_read >= 0:

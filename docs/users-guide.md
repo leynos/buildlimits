@@ -220,19 +220,28 @@ they do not prove that descriptors are leak-free.
 Before it opens the pool, the supervisor requires the managed sccache service
 to be stopped and its control group empty, because a live server with no
 visible compiler children may still hold accepted work waiting for a Cargo
-jobserver token. If that cannot be verified, start-up exits with status 2
-before the status socket opens, and `RestartPreventExitStatus=2` in the unit
-keeps the refusal sticky. `build-limits-status` cannot connect yet; read the
-unit instead:
+jobserver token. A live service does not stop start-up: the supervisor has by
+then terminated every compiler scope, so no admitted group can still use the
+cache, and it stops the service itself under the restart barrier (see
+[Restart the supervisor after an upgrade](#restart-the-supervisor-after-an-upgrade)).
+
+Start-up still exits with status 2 before the status socket opens when it
+cannot prove the service stopped and empty: the barrier cannot be written, the
+manager refuses the stop, the service does not stop within 45 seconds, it is
+stopped but its control group still holds processes, or the manager cannot be
+queried. `RestartPreventExitStatus=2` in the unit keeps the refusal sticky.
+`build-limits-status` cannot connect yet; read the unit instead:
 
 ```bash
 systemctl --user status buildlimits-supervisor.service
 journalctl --user --unit buildlimits-supervisor.service
 ```
 
-Restore manager connectivity if needed, coordinate a quiet stop of the cache,
-verify the stopped service and empty control group, leave sccache stopped, then
-start the supervisor explicitly. Do not interrupt unrelated builds.
+Restore manager connectivity if needed, wait for the cache's control group to
+empty or stop the surviving processes, leave sccache stopped, then start the
+supervisor explicitly. After a refused stop the restart barrier file is left in
+place, at `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`, so the cache cannot
+return unaccounted; the next accounted start-up retires it.
 
 ### Unhealthy supervisor and drain faults
 
@@ -250,6 +259,116 @@ the `SERVER_DRAIN` state while the supervisor stays healthy. That slot stays
 held until the cache service is verified stopped and empty; enough retained
 slots can pause new admission. The recovery transaction below is the supported
 way out.
+
+## Restart the supervisor after an upgrade
+
+After installing new supervisor code, one command starts it without failing a
+queued build, killing a running compiler group, or leaving the host needing
+operator action:
+
+```bash
+uv tool install --python 3.14 --reinstall git+https://github.com/leynos/buildlimits
+systemctl --user restart buildlimits-supervisor.service
+```
+
+There is no need to wait for an idle reading first, and the unit files need no
+change. The restart works as follows.
+
+1. `systemctl` sends `SIGTERM`. The supervisor stops launching and requesting
+   tokens but terminates nothing: every running compiler group runs to its own
+   end, and its token returns to the pool when its scope is empty.
+2. Builds that are waiting, and builds that arrive meanwhile, stay queued. They
+   see only a longer wait.
+3. When the last group has finished, the supervisor tells every waiting build
+   to try again and exits 0. Each adapter reconnects, up to the five minutes it
+   allows for an unreachable supervisor, and is queued by the new code. A build
+   already admitted is never retried; it finishes first.
+4. `systemd` starts the new code. It terminates any surviving scope, stops the
+   managed cache if it is still running, proves it stopped and empty, and only
+   then opens the pool and reports `READY=1`. The cache is started again behind
+   that notification, so it is back within seconds.
+
+`systemctl --user restart` does not return until the new supervisor is ready,
+which can be as long as the longest running compile. While it waits, from
+another terminal:
+
+```plaintext
+$ systemctl --user status buildlimits-supervisor.service
+● buildlimits-supervisor.service - Compile admission supervisor
+     Active: deactivating (stop-sigterm) since Sun 2026-10-18 21:33:18 CEST; 2s ago
+   Main PID: 3338429 (build-limits-su)
+     Status: "Stopping: waiting for running compiler groups to finish"
+$ build-limits-status
+capacity 4, held 2, healthy, restarting once running groups finish, caching through sccache
+no requests waiting
+g1 running (cached): cargo check in /home/owner/project, 2.3s
+g2 running (cached): cargo check in /home/owner/other, 41.0s
+```
+
+Waiting requests appear under `waiting` as usual. When the restart is done,
+`systemctl --user restart` exits 0 and the unit reads
+`Active: active (running)` with the new `Main PID` and
+`Status: "Compiler admission ready; managed cache may start"`. In the journal,
+the old instance logs `stopping: finishing running compiler groups before exit`
+and the new one logs
+`start-up found a live managed cache … stopping it under the restart barrier`
+followed by `admitting up to N compiler group(s)`. Until the next cache poll, a
+few seconds, groups the new supervisor admits compile without the cache, as
+after any cache restart.
+
+If the groups that remain are cached ones that ended by signal, their tokens
+return only once the cache is verified stopped and empty, so the stopping
+supervisor opens the recovery transaction described below by itself, and the
+restart continues when it completes. Only the graceful stop does this; the
+immediate stop below refuses the queue and cancels the groups instead.
+
+`systemctl --user stop` performs the same graceful stop, except that nothing
+starts the new code: waiting builds keep retrying for the five minutes their
+adapters allow for an unreachable supervisor, and then fail.
+
+If waiting is not acceptable, cancel the running groups instead. `SIGINT` is
+the immediate stop: the queue is refused as `unhealthy`, every running group is
+terminated, and `Restart=always` brings the supervisor back through the restart
+barrier.
+
+```bash
+systemctl --user kill --signal=SIGINT buildlimits-supervisor.service
+```
+
+Two limits apply. The first restart onto a release that contains this behaviour
+is performed by the previous release's `SIGTERM` handler, which still cancels
+running groups; make it at a quiet point. And a user-manager shutdown also sends
+`SIGTERM`: the manager's own timeout ends the wait, guildmaster returns the
+pool, and the next start-up terminates any surviving scope.
+
+### Units the restart relies on
+
+The restart needs no change to the provisioned units, but it relies on these
+directives in `buildlimits-supervisor.service`. They are the ones the role
+already ships, and a role that changes them changes the restart's safety.
+
+```ini
+[Service]
+Type=notify
+NotifyAccess=main
+Restart=always
+RestartPreventExitStatus=2
+TimeoutStopSec=infinity
+```
+
+`Type=notify` makes `systemctl restart` return when the new supervisor is ready.
+`TimeoutStopSec=infinity` stops systemd from killing a supervisor that is
+waiting for running groups. `Restart=always` with `RestartPreventExitStatus=2`
+brings the supervisor back after a health failure or `SIGINT`, but leaves a
+start-up that needs an operator down. The unit must carry no `ExecReload`, and
+`buildlimits-sccache.service` must not be bound to the supervisor with
+`PartOf=`, `BindsTo=` or `Requires=`, so that restarting the supervisor never
+stops or restarts the cache by itself. The cache's restart barrier stays:
+
+```ini
+[Unit]
+ConditionPathExists=!%t/buildlimits/cache-recovery
+```
 
 ## Recover a retained managed cache
 

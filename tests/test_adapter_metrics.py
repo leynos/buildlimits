@@ -126,11 +126,14 @@ def _connected_adapter(
 def test_adapter_failure_summaries(
     monkeypatch: pytest.MonkeyPatch, metric_sink: RecordingSink, ending: str
 ) -> None:
-    """Refusal, EOF and interruption each emit one silent terminal summary."""
+    """Refusal, loss after admission and interruption each emit one summary."""
     client, server = _connected_adapter(monkeypatch)
     match ending:
         case "refused":
             server.sendall(encode_reply(Refused("unhealthy", "existing refusal text")))
+        case "supervisor_lost":
+            # Lost after admission: before it the request would be resubmitted.
+            server.sendall(encode_reply(Admitted("g1", False)))
         case "interrupted":
 
             def interrupt(*_args: object, **_kwargs: object) -> typ.NoReturn:

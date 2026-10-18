@@ -21,6 +21,10 @@ class AdapterError(Exception):
     """The adapter cannot run the compiler."""
 
 
+class SupervisorClosedError(AdapterError):
+    """The supervisor closed the connection before the exchange finished."""
+
+
 def unix_socket() -> socket.socket:
     """Create an unconnected Unix stream socket.
 

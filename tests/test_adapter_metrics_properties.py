@@ -33,6 +33,7 @@ def _expected_record(
             min(MAX_COUNTER, initial_attempts + prefix.count("attempt"))
         ),
         "BUILD_LIMITS_BUSY_RETRIES": "0",
+        "BUILD_LIMITS_RESTART_RETRIES": "0",
         "BUILD_LIMITS_WAIT_SECONDS": f"{wait:.3f}",
         "BUILD_LIMITS_RUNTIME_SECONDS": f"{runtime:.3f}",
     }

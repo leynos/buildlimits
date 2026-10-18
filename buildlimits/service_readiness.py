@@ -4,6 +4,7 @@ Only Supervisor owns this boundary. The notification orders a new managed
 sccache server after admission's restart barrier without changing token state.
 """
 
+import contextlib
 import os
 import socket
 
@@ -14,6 +15,27 @@ def notify_ready() -> None:
     A supervisor invoked outside a notifying service has no notification socket
     and returns normally. Errors inside a notifying service prevent readiness;
     existing compiler work has already been checked before this call.
+    """
+    _notify(b"READY=1\nSTATUS=Compiler admission ready; managed cache may start")
+
+
+def notify_status(status: str) -> None:
+    """Tell ``systemctl status`` what a stopping supervisor is waiting for.
+
+    The text is advisory and never changes state, so a manager that cannot be
+    reached is not an error here: the supervisor must go on draining.
+
+    Parameters
+    ----------
+    status : str
+        One short line, without credentials or request identifiers.
+    """
+    with contextlib.suppress(OSError):
+        _notify(f"STATUS={status[:200]}".encode("ascii", "replace"))
+
+
+def _notify(message: bytes) -> None:
+    """Send one datagram to the manager's notification socket, if there is one.
 
     Raises
     ------
@@ -29,6 +51,4 @@ def notify_ready() -> None:
         socket.AF_UNIX, socket.SOCK_DGRAM | socket.SOCK_CLOEXEC
     ) as notification:
         notification.connect(address)
-        notification.sendall(
-            b"READY=1\nSTATUS=Compiler admission ready; managed cache may start"
-        )
+        notification.sendall(message)

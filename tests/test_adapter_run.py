@@ -105,10 +105,14 @@ def test_run_returns_the_exit_code_after_queued_and_admitted(
             AdapterError,
             "no slots left",
         ),
-        ([encode_reply(Queued(position=0))], AdapterError, "closed the connection"),
+        (
+            [encode_reply(Queued(0)), encode_reply(Admitted("g1", False))],
+            AdapterError,
+            "closed the connection",
+        ),
         ([encode_frame({"type": "nonsense"})], ProtocolError, "unknown reply type"),
     ],
-    ids=["refused", "closed-early", "malformed"],
+    ids=["refused", "closed-after-admission", "malformed"],
 )
 def test_run_fails_without_a_finished_reply(
     supervisor_end: socket.socket,
@@ -116,7 +120,7 @@ def test_run_fails_without_a_finished_reply(
     error: type[Exception],
     message: str,
 ) -> None:
-    """A refusal, an early close or a malformed reply each fail the exchange."""
+    """A refusal, a close after admission or a malformed reply each fail the exchange."""
     for frame in frames:
         supervisor_end.sendall(frame)
     supervisor_end.shutdown(socket.SHUT_WR)
