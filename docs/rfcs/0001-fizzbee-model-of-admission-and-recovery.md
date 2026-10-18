@@ -223,7 +223,7 @@ properties hold under F1 to F7. Table 3 lists them.
 | L1  | Retained drains accounted  | Under the `starved` policy, eventually always no token is in `SERVER_DRAIN`                                                                                             |
 | L2  | Queue progress             | The tracked request, unless cancelled or refused by a health failure, is eventually admitted                                                                            |
 | L3  | Transactions complete      | Every opened transaction eventually returns to idle                                                                                                                     |
-| L4  | Operator requests complete | An operator request not refused at once eventually ends in a completed transaction or accounted tokens                                                                  |
+| L4  | Operator requests complete | An operator request is refused at once only on a faulted manager transport; otherwise it eventually ends in a completed transaction or accounted tokens                 |
 | R1  | Proportionate rest         | After a clean ending the trigger is eligible within the settle units                                                                                                    |
 
 _Table 3: Safety (S), liveness (L) and bounded-response (R) properties._
@@ -238,17 +238,19 @@ submissions queue behind it. Given F5, no choice of selection is left to the
 environment, and a busy queue cannot admit others for ever while the tracked
 request waits. L4 treats a refusal at once as terminal too:
 `CacheRecovery.request` answers a faulted manager transport with a `blocked`
-reason and keeps no request pending[^8]. L4 therefore binds only a request the
-supervisor accepted. R1 captures a requirement that liveness cannot: only a
-faulted ending imposes the cooldown. Table 4 maps each incident to the property
-it violates and the counterexample predicted on its pre-fix behaviour.
+reason and keeps no request pending[^8]. L4 therefore allows an immediate
+refusal only on that fault. At `eba08ad` the request was also refused while a
+cached compile ran, which L4 forbids: it is the operator's half of incident 3.
+R1 captures a requirement that liveness cannot: only a faulted ending imposes
+the cooldown. Table 4 maps each incident to the property it violates and the
+counterexample predicted on its pre-fix behaviour.
 
-| Incident         | Pre-fix behaviour                             | Property | Predicted counterexample                           |
-| ---------------- | --------------------------------------------- | -------- | -------------------------------------------------- |
-| 1. Livelock      | Stop guard counts every moving group          | L3, L1   | Lasso: stop retried as uncached groups overlap     |
-| 2. Idle cooldown | Cooldown after every ending; no `cooling_for` | S8, R1   | Finite: clean ending, new drain, no reason shown   |
-| 3. Capacity loss | Trigger and request rules at `eba08ad`        | L1, L4   | Lasso: one slot retained, others cycle cached work |
-| 4. Hidden fault  | Idle transaction drops its last fault         | S9       | Finite: restart refused to the limit, then idle    |
+| Incident         | Pre-fix behaviour                             | Property | Predicted counterexample                                                                            |
+| ---------------- | --------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------- |
+| 1. Livelock      | Stop guard counts every moving group          | L3, L1   | Lasso: stop retried as uncached groups overlap                                                      |
+| 2. Idle cooldown | Cooldown after every ending; no `cooling_for` | S8, R1   | Finite: clean ending, new drain, no reason shown                                                    |
+| 3. Capacity loss | Trigger and request rules at `eba08ad`        | L1, L4   | L1 lasso: one slot retained, others cycle cached work; L4 finite: request refused under cached work |
+| 4. Hidden fault  | Idle transaction drops its last fault         | S9       | Finite: restart refused to the limit, then idle                                                     |
 
 _Table 4: Incidents as predicted counterexamples._
 
@@ -423,11 +425,11 @@ The thresholds below are proposals for approval before any trial runs.
   behaviours behind incidents 1 and 3.
 - **Prediction:** at capacity 3, incident 1's known-bad configuration (the
   stop guard counting uncached groups) yields a lasso to L3, and incident 3's
-  (the trigger and refusal at `eba08ad`) yields lassos to L1 and L4. The fixed
-  configurations (PR #9's guard, and the trigger, opening and stop at
-  `7445bf0`, from PRs #10 and #12) yield none. At capacity 2, incident 1's
-  counterexample appears under weak but not strong fairness of the recovery
-  step.
+  (the trigger and refusal at `eba08ad`) yields a lasso to L1 and a finite
+  counterexample to L4. The fixed configurations (PR #9's guard, and the
+  trigger, opening and stop at `7445bf0`, from PRs #10 and #12) yield none. At
+  capacity 2, incident 1's counterexample appears under weak but not strong
+  fairness of the recovery step.
 - **Comparator:** the Hypothesis recovery machine extended with uncached
   groups and a bounded-progress proxy: the stop is issued within N steps.
 - **Falsified if:** a known-bad configuration passes after the one permitted
@@ -465,11 +467,17 @@ The thresholds below are proposals for approval before any trial runs.
   visible-roots grace, so `7445bf0` stops without that proof once nothing
   cached is moving[^5].
 - **Prediction:** at `37d08e5`, L1 holds with F3 and fails without it, through
-  detached work that holds a visible root for ever; L4 holds without F3. At
-  `7445bf0`, L1 holds without F3, because the grace timer expires under F6.
-- **Falsified if:** `7445bf0` fails L1 without F3, or `37d08e5` satisfies L1
-  without F3. A grace that cannot expire, such as one broken by an unreadable
-  root count at every attempt, would also falsify it.
+  detached work that holds a visible root for ever, so the stop is never
+  queued; L4 holds without F3. At `7445bf0` the grace timer expires under F6
+  and queues the stop, which closes that route. L1 then still needs the
+  accepted stop to reach a verified stopped and empty service
+  (`ManagedSccache.accounted_drain`). The model states that as part of F4, a
+  completed stop job leaving an empty control group, or else keeps F3; it does
+  not assume it silently.
+- **Falsified if:** `37d08e5` satisfies L1 without F3; or `7445bf0` fails L1
+  with F1 to F7 and that reading of F4 in force. A grace that cannot expire,
+  such as one broken by an unreadable root count at every attempt, would also
+  falsify it.
 - **Decision:** none here. The model checks the merged fix; it does not design
   it. If the `37d08e5` prediction holds, that revision becomes a fifth
   known-bad configuration.

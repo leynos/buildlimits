@@ -78,9 +78,10 @@ and H1.
     refusal rules at `eba08ad`, beside the fixed configurations of PRs #9, #10
     and #12 (`7445bf0`).
   - Success: at capacity 3, incident 1 yields a lasso to L3 and incident 3
-    yields lassos to L1 and L4, and the fixed configurations yield none; at
-    capacity 2, incident 1's lasso appears under weak but not strong fairness.
-    A result that inverts either prediction is reported, not tuned away.
+    yields a lasso to L1 and a finite counterexample to L4, and the fixed
+    configurations yield none; at capacity 2, incident 1's lasso appears under
+    weak but not strong fairness. A result that inverts either prediction is
+    reported, not tuned away.
 - [ ] 1.1.6. Replay each counterexample through the production doubles.
   - Requires 1.1.5.
   - Drive `Admission`, `ServerWatch` and `CacheRecovery` with `FakePool` and
@@ -167,8 +168,9 @@ informs, through F3, whether an operating assumption is acceptable. See RFC
   - Model `recovery_roots.stop_verdict` with `RECOVERY_ROOTS_GRACE_SECONDS`
     counted in timer units, including that an unreadable root count neither
     starts nor completes the clock and that a blocked stop breaks it.
-  - Success: L1 holds without F3 at `7445bf0`, or the counterexample is
-    replayed through the production doubles and becomes a regression test. The
+  - Success: L1 holds at `7445bf0` without F3 when F4 includes a completed stop
+    job leaving an empty control group (H4), or the counterexample is replayed
+    through the production doubles and becomes a regression test. The
     model designs nothing in the fix.
 - [ ] 1.3.3. Decide whether start-up quiescence belongs in the model.
   - Requires 1.2.6.
