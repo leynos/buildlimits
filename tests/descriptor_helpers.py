@@ -17,6 +17,7 @@ True
 import contextlib
 import dataclasses as dc
 import errno
+import gc
 import json
 import os
 import resource
@@ -45,6 +46,11 @@ def open_fds() -> set[int]:
     """Return verified open descriptors, excluding the listing's descriptor.
 
     Directory enumeration needs a free descriptor and propagates its I/O errors.
+    Garbage is collected first: an earlier test in the same worker may have left
+    a descriptor-owning object in a reference cycle, and the collector closing it
+    between a baseline and a comparison would read as a descriptor that a test
+    released. Collecting at every reading makes both ends of that comparison see
+    the same set.
 
     Returns
     -------
@@ -52,6 +58,7 @@ def open_fds() -> set[int]:
         Descriptor numbers that remain open after enumeration.
 
     """
+    gc.collect()
     listed = [int(item.name) for item in Path("/proc/self/fd").iterdir()]
     found = set()
     for fd in listed:
