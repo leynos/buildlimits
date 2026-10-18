@@ -103,21 +103,41 @@ although every byte and the EOF are already queued. The EOF cases now use a 1 s
 hang guard; the deadline cases keep 10 ms, since expiry is what they test. The
 snapshots for the two EOF cases record the new limit.
 
-## Host-level interference that this change cannot remove
+## The in-flight descriptor limit (ETOOMANYREFS)
 
-While repeating the suite on the shared development host, one run failed two
-children of `isolated` with `DescriptorSendPressureError` (errno
-`ETOOMANYREFS`) although the same tests passed in the 13 other runs. The Linux
-rule (`too_many_unix_fds` in `net/unix/scm.c`) refuses an `SCM_RIGHTS` send
-when the sending user's count of descriptors in flight exceeds the sender's soft
-`RLIMIT_NOFILE`, and the isolated children run with a soft limit of 64. The
-count is per user, not per process, so another process of the same user holding
-more than 64 descriptors in flight at that moment, such as another agent
-running the same suite, fails the send. This is unverified, because the failing
-run's evidence was not captured, and it is not a leak: nothing in this suite
-can close descriptors it does not own. It is recorded as deferred work
-(serialize or retry-free isolate the in-flight-heavy tests); on a CI runner no
-other process shares the user.
+Most of the named flakes surface as `DescriptorSendPressureError`, which wraps
+`ETOOMANYREFS` from `socket.send_fds`. Linux refuses an `SCM_RIGHTS` send when
+the sending user's count of descriptors in flight (sent, not yet received, and
+the carrying socket not yet closed) exceeds the sender's soft `RLIMIT_NOFILE`
+(`too_many_unix_fds`, `net/unix/scm.c`). The isolated children run with a soft
+limit of 64, and the count is per user, so it is shared by every xdist worker
+and by any other process of the same user.
+
+Confirmed by experiment (scratch script, kernel 6.12): with 120 rights left in
+flight on one socketpair, a child at soft limit 64 fails to send one descriptor
+with `ETOOMANYREFS`; once the rights are received, the same send succeeds.
+
+Why it was intermittent in this suite: a test that sends rights and then leaves
+its socket (or the supervisor holding it) to the collector keeps those rights
+in flight until the collector runs, so the per-user count grows across tests
+and workers. Deterministic closing returns them when the test ends.
+
+Evidence, 12 full-suite runs each at `-n 6` on this host, identical load:
+
+| Tree                                                 | Runs failed | Failures                                                                                                                                                       |
+| ---------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `origin/main` (`a3fd138`, with #14's `gc.collect()`) | 5 of 12     | 4 runs with `DescriptorSendPressureError` in `test_frame_receive_ceiling_is_exact` and `test_post_registration_fault_rolls_back_every_owner[observe]`, 1 other |
+| this branch                                          | 0 of 12     | none                                                                                                                                                           |
+
+One earlier run on this branch, while a second agent's suite was running on the
+same user account, also failed two isolated children with the same error. That
+is the residual route: a process outside this repository holding more than 64
+rights in flight. Nothing in this suite can close descriptors it does not own,
+and a CI runner has no such neighbour.
+
+Per-test footprint is small (at most 8 rights per send; the 253-descriptor
+cases are refused before sending), so the in-suite contribution comes from
+lingering sockets, not from a single test's peak.
 
 ## Progress
 
@@ -129,7 +149,11 @@ other process shares the user.
   the `gc.collect()` symptom patch of #14) reports 29 teardown errors.
 - [x] Guard commit, developers' guide, rebased onto `ce7d080`, `gc.collect()`
       removed.
-- [ ] Gates, repeated runs, PR.
+- [x] Gates on `fe7957b`: `make all`, markdownlint, nixie, audit, validate
+  pass; 5 of 5 `make test` runs pass. `make test-systemd-user`: 21 of 22 pass;
+  `test_nested_cargo` hits its 30 s timeout while the shared compile queue is
+  saturated (capacity 4, held 4, 140 waiting), which is environmental.
+- [ ] PR, review loop.
 
 ## Surprises and discoveries
 
