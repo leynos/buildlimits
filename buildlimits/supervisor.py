@@ -196,6 +196,7 @@ class Supervisor:
 
     def _dispatch(self, tag: object) -> None:
         """Route one ready descriptor to its handler."""
+        supervisor_shutdown.honour_stop_request(self)
         match tag:
             case "listener":
                 self._accept()
@@ -303,6 +304,7 @@ class Supervisor:
     def _tick(self) -> None:
         """Advance draining groups, escalations and periodic checks."""
         supervisor_shutdown.honour_stop_request(self)
+        supervisor_shutdown.settle_graceful_stop(self)
         self.pressure.resume(self.listener)
         self._failed_replies()
         if self._signals_read >= 0:

@@ -215,7 +215,7 @@ def test_incomplete_truncation_does_not_supply_a_policy_body(
     """Incomplete frames preserve EOF/timeout errors rather than guessing policy."""
     result = isolated(lambda report: _incomplete_truncation(report, header, eof=eof))
     assert isinstance(result, dict), "the child reports incomplete receipt evidence"
-    assert result["error"] == ("ProtocolError" if eof else "TimeoutError"), (
+    assert result["error"] == ("TruncatedFrameError" if eof else "TimeoutError"), (
         "incomplete receipt must not become a complete-body truncation refusal"
     )
     assert result["baseline"], "all received rights return to the initial baseline"

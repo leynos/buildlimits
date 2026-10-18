@@ -210,9 +210,11 @@ opens the pool and listener, then sends `READY=1`.
 
 Signal handlers only record intent. `SIGTERM`, which `systemctl stop` and
 `restart` send, calls `request_graceful_stop()`; `SIGINT` calls
-`request_stop()`. The next tick honours the record, so every admission change
-stays on the event-loop path. A graceful stop calls `Admission.begin_closing()`
-and sends `STATUS=` to the manager; `settle_graceful_stop` opens the recovery
+`request_stop()`. The loop honours the record before it dispatches each ready
+descriptor and on every tick, so every admission change stays on the event-loop
+path and a token that is ready in the same cycle as the signal is returned
+rather than launched. A graceful stop calls `Admission.begin_closing()` and
+sends `STATUS=` to the manager; `settle_graceful_stop` opens the recovery
 transaction when only `SERVER_DRAIN` groups remain, and `settle_token_request`
 returns a token the pool reader took for a request nobody will launch before
 the process exits. An immediate stop still refuses the queue as `unhealthy` and
@@ -381,7 +383,8 @@ because the wait was spent queued; one that did not (`RestartingError`) leaves
 the original deadline in force, so a supervisor that only refuses stays
 bounded. A connection lost after `Admitted` is a plain `AdapterError`, because
 the compiler may have run. `adapter_replies` reads one reply and reports a
-closed or reset connection as `SupervisorClosedError`.
+closed or reset connection, or a reply cut off mid-frame
+(`framing.TruncatedFrameError`), as `SupervisorClosedError`.
 
 ## 11. Tests
 

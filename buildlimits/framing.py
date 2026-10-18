@@ -74,6 +74,10 @@ class DescriptorSendPressureError(ProtocolError):
     """The initial rights transfer was refused before any request bytes queued."""
 
 
+class TruncatedFrameError(ProtocolError):
+    """The stream ended inside a frame, as when the peer died mid-write."""
+
+
 def _send_initial(sock: socket.socket, frame: bytes, fds: cabc.Sequence[int]) -> int:
     """Transfer the first bytes, distinguishing untransferred rights pressure.
 
@@ -81,7 +85,6 @@ def _send_initial(sock: socket.socket, frame: bytes, fds: cabc.Sequence[int]) ->
     -------
     int
         Bytes transferred by the initial send.
-
     """
     if not fds:
         return sock.send(frame)
@@ -290,14 +293,14 @@ def _complete_receipt(data: bytes, size: int) -> bytes | None:
 
     Raises
     ------
-    ProtocolError
+    TruncatedFrameError
         If EOF interrupts a nonempty partially received frame.
     """
     if not data and size > 0:
         return None
     if len(data) < size:
         msg = "stream ended inside a frame"
-        raise ProtocolError(msg)
+        raise TruncatedFrameError(msg)
     return data
 
 
@@ -375,12 +378,12 @@ def _require_body(body: bytes | None) -> bytes:
 
     Raises
     ------
-    ProtocolError
+    TruncatedFrameError
         If the stream ended before the body began.
     """
     if body is None:
         msg = "stream ended inside a frame"
-        raise ProtocolError(msg)
+        raise TruncatedFrameError(msg)
     return body
 
 

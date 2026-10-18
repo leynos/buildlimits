@@ -172,3 +172,17 @@ def test_a_token_read_for_a_request_nobody_launches_goes_back_before_exit(
     settle_token_request(supervisor)
     assert pool.returned == [b"-"], "the reader's token went back to the pool"
     assert not supervisor.admission.token_requested, "nothing is left in flight"
+
+
+def test_a_token_ready_in_the_same_cycle_as_the_signal_launches_nothing(
+    running: tuple[Supervisor, RecordingGroups],
+) -> None:
+    """The stop is honoured before a ready descriptor is dispatched, not after."""
+    supervisor, _groups = running
+    pool = typ.cast("typ.Any", supervisor.pool)
+    pool.scripted.append(Token(b"-"))
+    supervisor.request_graceful_stop()
+    supervisor._dispatch("pool")
+    assert pool.returned == [b"-"], "the token went straight back to the pool"
+    assert list(supervisor.admission.groups) == ["g1"], "no group was launched"
+    assert list(supervisor.admission.queue) == [2], "the waiting build still waits"

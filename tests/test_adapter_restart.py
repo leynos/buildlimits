@@ -122,8 +122,13 @@ def test_a_restart_while_queued_is_retried_and_the_build_completes(
 
 @pytest.mark.parametrize(
     "first",
-    [[], [encode_reply(Queued(2))], None],
-    ids=["closed-before-any-reply", "closed-while-queued", "reset-while-sending"],
+    [[], [encode_reply(Queued(2))], [encode_reply(Queued(2))[:6]], None],
+    ids=[
+        "closed-before-any-reply",
+        "closed-while-queued",
+        "closed-inside-a-reply",
+        "reset-while-sending",
+    ],
 )
 def test_a_supervisor_lost_before_admission_is_retried(
     monkeypatch: pytest.MonkeyPatch, first: list[bytes] | None

@@ -139,7 +139,10 @@ def honour_stop_request(supervisor: Supervisor) -> None:
     """Begin the stop a signal handler asked for, on the event loop.
 
     The graceful request is honoured first, so that a graceful and an
-    immediate request that arrive together end as an immediate stop.
+    immediate request that arrive together end as an immediate stop. The loop
+    calls this before it dispatches each ready descriptor as well as on every
+    tick, so a token that arrives in the same cycle as the signal is returned
+    instead of launching a compiler the stop has already ruled out.
 
     Parameters
     ----------
@@ -152,7 +155,6 @@ def honour_stop_request(supervisor: Supervisor) -> None:
     if supervisor._stop_requested:
         supervisor._stop_requested = False
         stop(supervisor)
-    settle_graceful_stop(supervisor)
 
 
 def shutdown(supervisor: Supervisor) -> None:

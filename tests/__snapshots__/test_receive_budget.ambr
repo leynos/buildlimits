@@ -16,14 +16,14 @@
 # name: test_incomplete_truncation_does_not_supply_a_policy_body[eof-missing-body]
   dict({
     'baseline': True,
-    'error': 'ProtocolError',
+    'error': 'TruncatedFrameError',
     'timeout': 0.01,
   })
 # ---
 # name: test_incomplete_truncation_does_not_supply_a_policy_body[eof-partial-header]
   dict({
     'baseline': True,
-    'error': 'ProtocolError',
+    'error': 'TruncatedFrameError',
     'timeout': 0.01,
   })
 # ---

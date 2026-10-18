@@ -12,6 +12,7 @@ import select
 import typing as typ
 
 from buildlimits.adapter_connection import AdapterError, SupervisorClosedError
+from buildlimits.framing import TruncatedFrameError
 from buildlimits.heartbeat import write_line
 from buildlimits.protocol import decode_reply, recv_frame
 
@@ -79,7 +80,7 @@ def receive_reply(
                 raise AdapterError(msg)
             conn.settimeout(remaining)
         frame = recv_frame(conn)
-    except ConnectionError:
+    except ConnectionError, TruncatedFrameError:
         frame = None
     finally:
         conn.settimeout(original)
