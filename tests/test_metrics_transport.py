@@ -7,6 +7,7 @@ import os
 import selectors
 import subprocess
 import sys
+import time
 import unittest.mock as mock  # ruff: ignore[manual-from-import] - module alias required by .rules/python-typing.md.
 
 import pytest
@@ -63,7 +64,7 @@ def _assert_reaped(child: subprocess.Popen[bytes]) -> None:
 def _frozen_capture(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[mock.MagicMock, mock.Mock]:
-    """Freeze the transport's clock at 1.0 and hand it a selector double.
+    """Provide a clock frozen at 1.0 and a selector double.
 
     Returns
     -------
@@ -74,7 +75,6 @@ def _frozen_capture(
     selector.__enter__.return_value = selector
     selector.get_map.return_value = {1: object()}
     clock = mock.Mock(return_value=1.0)
-    monkeypatch.setattr(metrics_transport.time, "monotonic", clock)
     monkeypatch.setattr(
         metrics_transport.selectors, "DefaultSelector", lambda: selector
     )
@@ -165,7 +165,11 @@ def test_capture_requires_both_output_pipes(
         with pytest.raises(
             RuntimeError, match="journal query requires output pipes"
         ) as caught:
-            metrics_transport._capture(child, max_bytes=1, deadline=0, timeout=0)
+            metrics_transport._capture(
+                child,
+                max_bytes=1,
+                deadline=metrics_transport._Deadline(0, 0, time.monotonic),
+            )
         assert str(caught.value) == "journal query requires output pipes", (
             "exact missing-pipe error"
         )
@@ -200,7 +204,11 @@ def test_capture_expired_deadline_never_selects(
             spec=subprocess.Popen, args=["journalctl"], stdout=stdout, stderr=stderr
         )
         with pytest.raises(subprocess.TimeoutExpired) as caught:
-            metrics_transport._capture(child, max_bytes=4, deadline=deadline, timeout=3)
+            metrics_transport._capture(
+                child,
+                max_bytes=4,
+                deadline=metrics_transport._Deadline(deadline, 3, clock),
+            )
         assert caught.value.cmd == child.args, "timeout retains the owned command"
         assert caught.value.timeout == 3, "timeout retains the configured duration"
         selector.register.assert_has_calls([
@@ -220,7 +228,11 @@ def test_capture_nan_deadline_preserves_selector_validation(
     with io.BytesIO() as stdout, io.BytesIO() as stderr:
         child = mock.Mock(spec=subprocess.Popen, stdout=stdout, stderr=stderr)
         with pytest.raises(ValueError, match="non-finite timeout"):
-            metrics_transport._capture(child, max_bytes=4, deadline=math.nan, timeout=3)
+            metrics_transport._capture(
+                child,
+                max_bytes=4,
+                deadline=metrics_transport._Deadline(math.nan, 3, clock),
+            )
     assert selector.select.call_count == 1, "NaN is forwarded to the selector once"
     assert math.isnan(selector.select.call_args.args[0]), "the timeout remains NaN"
     clock.assert_called_once_with()

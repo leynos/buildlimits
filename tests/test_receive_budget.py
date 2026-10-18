@@ -2,7 +2,6 @@
 
 import fcntl
 import socket
-import time
 import typing as typ
 
 import pytest
@@ -92,7 +91,7 @@ def test_default_receipt_sets_close_on_exec() -> None:
 def _deadline(_report: int, *, truncated: bool = False) -> object:
     """Expire one shared frame deadline with intact or truncated rights."""
     sender, receiver = socket.socketpair()
-    with sender, receiver, pytest.MonkeyPatch.context() as patch:
+    with sender, receiver:
         receiver.settimeout(10)
         baseline = open_fds()
         framing.send_frame(
@@ -101,10 +100,11 @@ def _deadline(_report: int, *, truncated: bool = False) -> object:
             [sender.fileno()] * (1 + int(truncated)),
         )
         clock = iter([100.0, 104.0, 111.0])
-        patch.setattr(time, "monotonic", lambda: next(clock))
         try:
             frame = framing.recv_frame(
-                receiver, max_fds=1 if truncated else framing.MAX_FDS
+                receiver,
+                max_fds=1 if truncated else framing.MAX_FDS,
+                clock=lambda: next(clock),
             )
         except TimeoutError:
             outcome = {"error": "TimeoutError", "timeout": receiver.gettimeout()}

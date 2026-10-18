@@ -34,6 +34,7 @@ class _FrameReceipt:
 
     deadline: float | None
     max_fds: int
+    clock: cabc.Callable[[], float] = time.monotonic
     fds: list[int] = dc.field(default_factory=list)
     truncated: bool = False
 
@@ -147,7 +148,10 @@ def send_frame(sock: socket.socket, frame: bytes, fds: cabc.Sequence[int] = ()) 
 
 
 def recv_frame(
-    sock: socket.socket, *, max_fds: int = MAX_FDS
+    sock: socket.socket,
+    *,
+    max_fds: int = MAX_FDS,
+    clock: cabc.Callable[[], float] = time.monotonic,
 ) -> tuple[bytes, list[int]] | None:
     """Receive one frame and any descriptors sent with it.
 
@@ -157,6 +161,9 @@ def recv_frame(
         A connected Unix stream socket.
     max_fds : int
         Maximum rights accepted across the whole frame, bounded by MAX_FDS.
+    clock : Callable[[], float]
+        Monotonic clock, in seconds, that sets and checks the total receive
+        deadline; injectable so tests need not patch module-global time.
 
     Returns
     -------
@@ -178,8 +185,10 @@ def recv_frame(
         msg = "descriptor receive ceiling is outside the protocol limit"
         raise ValueError(msg)
     timeout = sock.gettimeout()
-    deadline = _frame_deadline(timeout)
-    receipt = _FrameReceipt(deadline, max_fds)
+    # One total deadline spans header and body of a blocking frame.
+    has_deadline = timeout is not None and timeout > 0
+    deadline = clock() + timeout if has_deadline else None
+    receipt = _FrameReceipt(deadline, max_fds, clock)
     try:
         header, _ = _recv_exact_with_fds(sock, _LENGTH.size, _receipt=receipt)
         if header is None:
@@ -198,17 +207,6 @@ def recv_frame(
     finally:
         with contextlib.suppress(OSError):
             sock.settimeout(timeout)
-
-
-def _frame_deadline(timeout: float | None) -> float | None:
-    """Use one total deadline for both header and body of a blocking frame.
-
-    Returns
-    -------
-    float | None
-        Absolute deadline, or no deadline for unlimited/nonblocking sockets.
-    """
-    return time.monotonic() + timeout if timeout is not None and timeout > 0 else None
 
 
 def _recv_exact_with_fds(
@@ -271,7 +269,7 @@ def _receive_bytes(
     received = 0
     while received < size:
         if receipt.deadline is not None:
-            sock.settimeout(_remaining_seconds(receipt.deadline))
+            sock.settimeout(_remaining_seconds(receipt.deadline, receipt.clock))
         ceiling = 0 if receipt.truncated else receipt.max_fds - len(receipt.fds)
         data, new_fds, truncated = _receive_chunk(sock, size - received, ceiling)
         receipt.collect(new_fds, truncated=truncated)
@@ -303,8 +301,15 @@ def _complete_receipt(data: bytes, size: int) -> bytes | None:
     return data
 
 
-def _remaining_seconds(deadline: float) -> float:
+def _remaining_seconds(deadline: float, clock: cabc.Callable[[], float]) -> float:
     """Require positive time remaining within the shared frame deadline.
+
+    Parameters
+    ----------
+    deadline : float
+        Absolute deadline on ``clock``'s timeline.
+    clock : Callable[[], float]
+        Monotonic clock that measures the remaining time.
 
     Returns
     -------
@@ -316,7 +321,7 @@ def _remaining_seconds(deadline: float) -> float:
     TimeoutError
         If the frame's total deadline has expired.
     """
-    remaining = deadline - time.monotonic()
+    remaining = deadline - clock()
     if remaining <= 0:
         msg = "frame receipt deadline expired"
         raise TimeoutError(msg)

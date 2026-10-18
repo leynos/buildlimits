@@ -1,5 +1,6 @@
 """Bounded streaming transport for the development-host journal query."""
 
+import dataclasses as dc
 import os
 import selectors
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed journal command, never a shell.
@@ -17,11 +18,41 @@ class JournalOutputError(subprocess.SubprocessError):
     """Journal output exceeded its byte budget or was not UTF-8."""
 
 
+@dc.dataclass(frozen=True, slots=True)
+class _Deadline:
+    """One query deadline on an injectable monotonic clock.
+
+    Parameters
+    ----------
+    at : float
+        Absolute expiry on ``clock``'s timeline.
+    timeout : float
+        The configured duration, reported if the deadline expires.
+    clock : Callable[[], float]
+        Monotonic clock, in seconds, that measures the remaining time.
+    """
+
+    at: float
+    timeout: float
+    clock: cabc.Callable[[], float]
+
+    def remaining(self) -> float:
+        """Return the seconds left, which is not positive once expired.
+
+        Returns
+        -------
+        float
+            Seconds until expiry; zero or negative after the deadline.
+        """
+        return self.at - self.clock()
+
+
 def run(
     argv: cabc.Sequence[str],
     *,
     max_bytes: int = MAX_QUERY_BYTES,
     timeout: float = QUERY_TIMEOUT_SECONDS,
+    clock: cabc.Callable[[], float] = time.monotonic,
 ) -> subprocess.CompletedProcess[str]:
     """Read both child pipes within one shared byte budget and deadline.
 
@@ -33,6 +64,9 @@ def run(
         Combined stdout and stderr byte limit; injectable for transport tests.
     timeout : float
         Maximum time to read and reap the query child.
+    clock : Callable[[], float]
+        Monotonic clock, in seconds, for the query deadline; injectable so
+        tests need not patch module-global time.
 
     Returns
     -------
@@ -46,15 +80,15 @@ def run(
     subprocess.TimeoutExpired
         If the query deadline expires.
     """  # ruff: ignore[docstring-extraneous-exception] - raised by _capture and child.wait.
-    deadline = time.monotonic() + timeout
+    deadline = _Deadline(clock() + timeout, timeout, clock)
     with subprocess.Popen(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed command and validated options from metrics_query.
         argv,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     ) as child:
         try:
-            stdout, stderr = _capture(child, max_bytes, deadline, timeout)
-            status = child.wait(timeout=max(0.0, deadline - time.monotonic()))
+            stdout, stderr = _capture(child, max_bytes, deadline)
+            status = child.wait(timeout=max(0.0, deadline.remaining()))
         except (
             BaseException
         ):  # Reap only this owned query child, including on interruption.
@@ -73,10 +107,18 @@ def run(
 def _capture(
     child: subprocess.Popen[bytes],
     max_bytes: int,
-    deadline: float,
-    timeout: float,
+    deadline: _Deadline,
 ) -> tuple[bytes, bytes]:
     """Drain both pipes without allocating beyond the shared byte budget.
+
+    Parameters
+    ----------
+    child : subprocess.Popen[bytes]
+        The owned query child whose pipes are drained.
+    max_bytes : int
+        Combined stdout and stderr byte limit.
+    deadline : _Deadline
+        Shared read deadline, carrying its clock and configured duration.
 
     Returns
     -------
@@ -96,9 +138,12 @@ def _capture(
     size = 0
     with selectors.DefaultSelector() as selector:
         _register_output_pipes(selector, child)
-        while selector.get_map() and not (
-            (remaining := deadline - time.monotonic()) <= 0
-        ):
+        while selector.get_map():
+            # Not ``> 0``: a NaN remainder must still reach the selector, which
+            # rejects it, rather than being mistaken for an expired deadline.
+            remaining = deadline.remaining()
+            if remaining <= 0:
+                break
             for key, _mask in selector.select(remaining):
                 block = _read_bounded(key.fd, max_bytes - size)
                 if not block:
@@ -107,7 +152,7 @@ def _capture(
                 size += len(block)
                 buffers[key.data].extend(block)
         if selector.get_map():
-            raise subprocess.TimeoutExpired(child.args, timeout)
+            raise subprocess.TimeoutExpired(child.args, deadline.timeout)
     return bytes(buffers[0]), bytes(buffers[1])
 
 
