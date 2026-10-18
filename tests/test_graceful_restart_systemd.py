@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from harness_processes import reap_and_close_pipes
 from harness_units import manager_env, unit_properties
 from systemd_harness import Harness, journal, kill_group, systemd_user_marks, wait_for
 
@@ -71,7 +72,9 @@ class RestartWorld:
             The ``systemctl restart`` process, blocking until the new
             supervisor is ready. The world closes its pipes at teardown.
         """
-        process = subprocess.Popen(
+        # The world owns the process and closes it in ``close``, so a ``with``
+        # block here would end the command the scenario still waits on.
+        process = subprocess.Popen(  # pylint: disable=consider-using-with
             ["/usr/bin/systemctl", "--user", "restart", harness.unit],
             env=manager_env(),
             stdout=subprocess.PIPE,
@@ -90,13 +93,7 @@ class RestartWorld:
             if process.poll() is None:
                 process.kill()
         for process in (*self.builds, *self.restarts):
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                process.wait(timeout=30)
-            # Reaping does not close the pipes the parent holds; leaving them
-            # to the collector hands their descriptors to a later test.
-            for stream in (process.stdin, process.stdout, process.stderr):
-                if stream is not None:
-                    stream.close()
+            reap_and_close_pipes(process)
         for descriptor in self.holders:
             with contextlib.suppress(OSError):
                 os.close(descriptor)

@@ -40,16 +40,15 @@ closed. A second run used `-X dev -W error::ResourceWarning` with
 
 Findings on `047d183` (single process, `-n0`):
 
-| Owner                                                     | Descriptor        | Tests                                                                                                             | Closed by                     |
-| --------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| `Supervisor` built by `harness_for` (selector)            | epoll             | 9 in `test_cache_recovery.py`, 5 in `test_cache_recovery_composition.py`, 2 in `test_cache_recovery_transport.py` | collector                     |
-| `Supervisor` built by `_restarted` (selector)             | epoll             | 7 in `test_cache_recovery_reclaim.py`                                                                             | collector                     |
-| Accepted request connection of the stalled-transport test | socket            | 1                                                                                                                 | collector                     |
-| `TokenPool`                                               | device, wake pipe | 5 in `test_pool.py`                                                                                               | nobody (raw integers)         |
-| Supervisor started by `_started` (signal self-pipe)       | 2 pipes           | 1 in `test_supervisor_startup.py`                                                                                 | nobody                        |
-| `Popen(stderr=PIPE)` of the fake sccache server           | pipe              | 2 in `test_fake_sccache.py`                                                                                       | collector (`ResourceWarning`) |
-
-| `systemctl restart` and build `Popen` pipes in `test_graceful_restart_systemd.py` | pipes | 5 (opt-in `systemd_user` scenarios) | collector (`ResourceWarning`) |
+| Owner                                                                             | Descriptor        | Tests                                                                                                             | Closed by                     |
+| --------------------------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| `Supervisor` built by `harness_for` (selector)                                    | epoll             | 9 in `test_cache_recovery.py`, 5 in `test_cache_recovery_composition.py`, 2 in `test_cache_recovery_transport.py` | collector                     |
+| `Supervisor` built by `_restarted` (selector)                                     | epoll             | 7 in `test_cache_recovery_reclaim.py`                                                                             | collector                     |
+| Accepted request connection of the stalled-transport test                         | socket            | 1                                                                                                                 | collector                     |
+| `TokenPool`                                                                       | device, wake pipe | 5 in `test_pool.py`                                                                                               | nobody (raw integers)         |
+| Supervisor started by `_started` (signal self-pipe)                               | 2 pipes           | 1 in `test_supervisor_startup.py`                                                                                 | nobody                        |
+| `Popen(stderr=PIPE)` of the fake sccache server                                   | pipe              | 2 in `test_fake_sccache.py`                                                                                       | collector (`ResourceWarning`) |
+| `systemctl restart` and build `Popen` pipes in `test_graceful_restart_systemd.py` | pipes             | 5 (opt-in `systemd_user` scenarios)                                                                               | collector (`ResourceWarning`) |
 
 The last row was not visible to the first two probes, because the scenarios are
 skipped without `BUILD_LIMITS_HOST_ACCEPTANCE=1`; the guard found it on the
@@ -103,6 +102,22 @@ which expires when a loaded worker is descheduled between header and body,
 although every byte and the EOF are already queued. The EOF cases now use a 1 s
 hang guard; the deadline cases keep 10 ms, since expiry is what they test. The
 snapshots for the two EOF cases record the new limit.
+
+## Host-level interference that this change cannot remove
+
+While repeating the suite on the shared development host, one run failed two
+children of `isolated` with `DescriptorSendPressureError` (errno
+`ETOOMANYREFS`) although the same tests passed in the 13 other runs. The Linux
+rule (`too_many_unix_fds` in `net/unix/scm.c`) refuses an `SCM_RIGHTS` send
+when the sending user's count of descriptors in flight exceeds the sender's soft
+`RLIMIT_NOFILE`, and the isolated children run with a soft limit of 64. The
+count is per user, not per process, so another process of the same user holding
+more than 64 descriptors in flight at that moment, such as another agent
+running the same suite, fails the send. This is unverified, because the failing
+run's evidence was not captured, and it is not a leak: nothing in this suite
+can close descriptors it does not own. It is recorded as deferred work
+(serialize or retry-free isolate the in-flight-heavy tests); on a CI runner no
+other process shares the user.
 
 ## Progress
 

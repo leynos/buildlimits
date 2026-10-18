@@ -18,6 +18,8 @@ import time
 import typing as typ
 from pathlib import Path
 
+from harness_processes import reap_and_close_pipes
+
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_sccache.py"
 
 
@@ -93,14 +95,9 @@ def _server(socket_path: Path) -> subprocess.Popen[bytes]:
 
 
 def _stop_server(process: subprocess.Popen[bytes]) -> None:
-    """Kill the fixture server, reap it and close its ``stderr`` pipe.
-
-    Entering the process as a context manager is what closes the pipe the
-    parent holds; ``kill`` and ``wait`` alone leave it to the collector.
-    """
+    """Kill the fixture server, reap it and close its ``stderr`` pipe."""
     process.kill()
-    with process:
-        process.wait(timeout=10)
+    reap_and_close_pipes(process, timeout=10)
 
 
 def _send(socket_path: Path, request: dict[str, object]) -> Reply:

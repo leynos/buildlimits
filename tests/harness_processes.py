@@ -5,6 +5,7 @@ import os
 import resource
 import signal
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed fixture argv, never a shell.
+import typing as typ
 from pathlib import Path
 
 from buildlimits.systemd import run
@@ -79,6 +80,29 @@ def kill_group(process: subprocess.Popen[bytes], number: int = signal.SIGKILL) -
     """
     with contextlib.suppress(ProcessLookupError):
         os.killpg(process.pid, number)
+
+
+def reap_and_close_pipes(
+    process: subprocess.Popen[typ.Any], timeout: float = 30.0
+) -> None:
+    """Wait for a killed or finished process, then close the pipes we hold.
+
+    Reaping does not close the pipes the parent holds; leaving them to the
+    collector hands their descriptors to a later test.
+
+    Parameters
+    ----------
+    process : subprocess.Popen
+        A process that has been killed or is expected to finish.
+    timeout : float
+        Seconds to wait for it to end. A process that outlives this still has
+        its pipes closed.
+    """
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=timeout)
+    for stream in (process.stdin, process.stdout, process.stderr):
+        if stream is not None:
+            stream.close()
 
 
 def manager_nofile_limit(requested: int = 524288) -> int:
