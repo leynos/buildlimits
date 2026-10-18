@@ -113,6 +113,9 @@ def test_an_immediate_stop_still_cancels_after_a_graceful_one(
     supervisor._tick()
     assert groups.terminated == ["g1"], "the immediate stop cancelled the group"
     assert not supervisor.admission.healthy, "and refused the queue"
+    assert supervisor.status()["restarting"] is False, (
+        "an immediate stop is not reported as waiting for the groups it cancels"
+    )
 
 
 def test_a_repeated_graceful_stop_changes_nothing(

@@ -13,7 +13,6 @@ import collections.abc as cabc
 import contextlib
 import os
 import subprocess
-import typing as typ
 from pathlib import Path
 
 import pytest
@@ -276,7 +275,7 @@ def test_sigint_remains_the_immediate_stop(world: RestartWorld) -> None:
     marker = started_marker(harness, "cancelled")
     build = world.build(harness, f"echo $$ > {marker}; sleep 60")
     assert wait_for(marker.exists), harness.journal()
-    typ.cast("typ.Any", subprocess).run(
+    subprocess.run(
         ["/usr/bin/systemctl", "--user", "kill", "--signal=SIGINT", harness.unit],
         env=manager_env(),
         check=True,

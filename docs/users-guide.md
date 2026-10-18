@@ -239,10 +239,9 @@ journalctl --user --unit buildlimits-supervisor.service
 
 Restore manager connectivity if needed, wait for the cache's control group to
 empty or stop the surviving processes, leave sccache stopped, then start the
-supervisor explicitly. The restart barrier,
-`$XDG_RUNTIME_DIR/buildlimits/ cache-recovery`, is left in place after a
-refused stop, so the cache cannot return unaccounted; the next accounted
-start-up retires it.
+supervisor explicitly. After a refused stop the restart barrier file is left in
+place, at `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`, so the cache cannot
+return unaccounted; the next accounted start-up retires it.
 
 ### Unhealthy supervisor and drain faults
 
@@ -317,6 +316,16 @@ followed by `admitting up to N compiler group(s)`. Until the next cache poll, a
 few seconds, groups the new supervisor admits compile without the cache, as
 after any cache restart.
 
+If the groups that remain are cached ones that ended by signal, their tokens
+return only once the cache is verified stopped and empty, so the stopping
+supervisor opens the recovery transaction described below by itself, and the
+restart continues when it completes. Only the graceful stop does this; the
+immediate stop below refuses the queue and cancels the groups instead.
+
+`systemctl --user stop` performs the same graceful stop, except that nothing
+starts the new code: waiting builds keep retrying for the five minutes their
+adapters allow for an unreachable supervisor, and then fail.
+
 If waiting is not acceptable, cancel the running groups instead. `SIGINT` is
 the immediate stop: the queue is refused as `unhealthy`, every running group is
 terminated, and `Restart=always` brings the supervisor back through the restart
@@ -325,15 +334,6 @@ barrier.
 ```bash
 systemctl --user kill --signal=SIGINT buildlimits-supervisor.service
 ```
-
-If the groups that remain are cached ones that ended by signal, their tokens
-return only once the cache is verified stopped and empty, so the stopping
-supervisor opens the recovery transaction described below by itself, and the
-restart continues when it completes.
-
-`systemctl --user stop` behaves the same way, except that nothing starts the
-new code: waiting builds keep retrying for the five minutes their adapters
-allow for an unreachable supervisor, and then fail.
 
 Two limits apply. The first restart onto a release that contains this behaviour
 is performed by the previous release's `SIGTERM` handler, which still cancels

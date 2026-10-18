@@ -80,12 +80,17 @@ dev-env-rocky copy is not graceful for builds in flight. On stop, it marks
 admission unhealthy, so queued compile requests are refused, and it terminates
 the compiler groups that are running. Builds that were waiting or compiling
 fail. The new supervisor's start-up also stops a managed cache that the old one
-left running, so the restart no longer ends in an operator-action exit.
+left running, so a live cache no longer ends the restart in an operator-action
+exit. A cache that is between automatic restarts at that moment still needs one
+`systemctl --user start` once it has settled.
 
-Restart only when `build-limits-status` reports `held 0` and
-`no requests waiting`. Otherwise, wait for the builds to finish, or accept that
-they will be cancelled. Once this release is running, later upgrades need no
-such care: the
+Pause new builds before the final status check, so that none can start between
+the check and the restart: restart only when `build-limits-status` reports
+`held 0` and `no requests waiting` and nothing is about to submit. This first
+restart cannot be made disruption-free while builds may start, because the old
+supervisor cancels whatever it holds. If builds cannot be paused, wait for the
+active ones to finish, or accept that those started in the gap will be
+cancelled. Once this release is running, later upgrades need no such care: the
 [user's guide](users-guide.md#restart-the-supervisor-after-an-upgrade)
 describes the restart that waits for running builds and requeues waiting ones.
 
