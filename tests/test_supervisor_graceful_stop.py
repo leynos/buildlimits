@@ -16,7 +16,9 @@ from request_helpers import crate_pending
 from buildlimits.admission import Group, GroupState
 from buildlimits.config import SupervisorConfig
 from buildlimits.effects import Exit
+from buildlimits.pool import Token
 from buildlimits.supervisor import Supervisor
+from buildlimits.supervisor_shutdown import settle_token_request
 from buildlimits.systemd import UserManager
 
 if typ.TYPE_CHECKING:
@@ -155,3 +157,18 @@ def test_the_status_text_says_the_supervisor_is_restarting(
     assert "healthy, restarting once running groups finish" in first_line, (
         "the summary says that the supervisor waits for its running groups"
     )
+
+
+def test_a_token_read_for_a_request_nobody_launches_goes_back_before_exit(
+    running: tuple[Supervisor, RecordingGroups],
+) -> None:
+    """The pool reader's in-flight token is returned, not left to the device."""
+    supervisor, _groups = running
+    pool = typ.cast("typ.Any", supervisor.pool)
+    supervisor.request_graceful_stop()
+    supervisor._tick()
+    assert supervisor.admission.token_requested, "a reader waits for a token"
+    pool.scripted.append(Token(b"-"))
+    settle_token_request(supervisor)
+    assert pool.returned == [b"-"], "the reader's token went back to the pool"
+    assert not supervisor.admission.token_requested, "nothing is left in flight"

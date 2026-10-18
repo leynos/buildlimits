@@ -21,10 +21,14 @@ from buildlimits.admission_state import GroupState
 from buildlimits.effects import Exit
 from buildlimits.journal import log
 from buildlimits.metrics import exit_outcome
+from buildlimits.service_readiness import notify_status
 
 if typ.TYPE_CHECKING:
     from buildlimits.supervisor import Supervisor
 
+TOKEN_SETTLE_POLLS = 30
+TOKEN_SETTLE_SECONDS = 0.01
+_STATUS = "Stopping: waiting for running compiler groups to finish"
 _GRACEFUL_STOP = "stopping: finishing running compiler groups before exit"
 
 
@@ -68,6 +72,7 @@ def graceful_stop(supervisor: Supervisor) -> None:
         return
     supervisor._stopping = True
     log(_GRACEFUL_STOP)
+    notify_status(_STATUS)
     supervisor._metric("health_changed", health="restarting")
     supervisor._apply(supervisor.admission.begin_closing())
 
@@ -106,6 +111,28 @@ def stop(supervisor: Supervisor) -> None:
         effects = supervisor.admission.health_failed()
         supervisor._metric("health_changed", health="stopping")
         supervisor._apply(effects)
+
+
+def settle_token_request(supervisor: Supervisor) -> None:
+    """Hand back a token the pool reader took for a request nobody will launch.
+
+    A request that waited when the stop began leaves the pool's reader thread
+    blocked on the device. The first token that returns satisfies it, and that
+    token must go back before the process exits: guildmaster returns it when
+    the handle closes, but a pool that does not account for its readers would
+    lose it. The wait is bounded because an empty pool never satisfies the
+    reader, and then the device's own accounting is all that remains.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        The supervisor that has just finished draining.
+    """
+    for _ in range(TOKEN_SETTLE_POLLS):
+        if not supervisor.admission.token_requested:
+            return
+        supervisor._pool_events()
+        supervisor.timing.sleep(TOKEN_SETTLE_SECONDS)
 
 
 def honour_stop_request(supervisor: Supervisor) -> None:

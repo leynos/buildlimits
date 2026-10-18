@@ -190,6 +190,7 @@ class Supervisor:
             self._dispatch, self._tick, self._unhealthy, lambda: self.exit_status
         )
         result = self.loop.run(self.selector, effects, tick_seconds=TICK_SECONDS)
+        supervisor_shutdown.settle_token_request(self)
         self.requests.close_all()
         return result
 
