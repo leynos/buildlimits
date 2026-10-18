@@ -29,7 +29,6 @@ import typing as typ
 
 if typ.TYPE_CHECKING:
     from buildlimits.admission_state import Counts
-    from buildlimits.recovery_barrier import RecoveryBarrier
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -67,7 +66,7 @@ class StarvationReading:
     zero_visible_roots: bool
 
 
-def starvation(reading: StarvationReading, barrier: RecoveryBarrier) -> str | None:
+def starvation(reading: StarvationReading) -> str | None:
     """Decide whether live cache work is starving admission right now.
 
     Every clause is evidence, not a heuristic: the drain probe must have
@@ -80,9 +79,6 @@ def starvation(reading: StarvationReading, barrier: RecoveryBarrier) -> str | No
     ----------
     reading : StarvationReading
         The one instant the trigger is judged against.
-    barrier : RecoveryBarrier
-        The restart barrier a transaction would write; its path names the
-        barrier in the returned reason.
 
     Returns
     -------
@@ -105,7 +101,7 @@ def starvation(reading: StarvationReading, barrier: RecoveryBarrier) -> str | No
         return None
     return (
         f"live cache work is starving admission: {counts.server_drain} token(s) "
-        f"await server accounting behind the barrier {barrier.path}, and "
+        f"await server accounting, and "
         f"{counts.queued} request(s) are waiting"
     )
 

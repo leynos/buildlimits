@@ -29,13 +29,11 @@ instead of a continuum of instants.
 import collections.abc as cabc
 import dataclasses as dc
 import itertools
-import pathlib
 import typing as typ
 
 import pytest
 
 from buildlimits.admission_state import Counts
-from buildlimits.recovery_barrier import RecoveryBarrier
 from buildlimits.recovery_starvation import StarvationReading, starvation
 
 # The finite categories, each named for the clause it exercises. They are
@@ -75,9 +73,6 @@ GAUGES: typ.Final[dict[str, Counts]] = {
     "group-draining": Counts(1, 2, 0, 1, 1, capacity=2, cached_moving=1),
     "uncached-moving": Counts(1, 2, 1, 0, 1, capacity=2, cached_moving=0),
 }
-
-BARRIER_PATH = "/run/user/1000/build-limits/cache-recovery"
-BARRIER = RecoveryBarrier(pathlib.Path(BARRIER_PATH))
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -220,7 +215,7 @@ def _expected(case: Case) -> str | None:
     counts = GAUGES[case.gauges]
     return (
         f"live cache work is starving admission: {counts.server_drain} token(s) "
-        f"await server accounting behind the barrier {BARRIER.path}, and "
+        "await server accounting, and "
         f"{counts.queued} request(s) are waiting"
     )
 
@@ -265,7 +260,7 @@ def test_every_combination_of_the_trigger_categories_decides_correctly(
     with the expectation here at every point rather than at the ones a
     selection happened to include.
     """
-    actual = starvation(case.reading, BARRIER)
+    actual = starvation(case.reading)
     expected = _expected(case)
 
     assert (actual is None) is (expected is None), (
@@ -363,9 +358,9 @@ def test_each_question_is_decided_by_cases_that_differ_only_in_that_question() -
         "without a witness would otherwise be a silent gap"
     )
     for question, (allowing, forbidding) in _QUESTIONS.items():
-        assert starvation(allowing.reading, BARRIER) is not None, (
+        assert starvation(allowing.reading) is not None, (
             f"{question}: the witness must be permitted"
         )
-        assert starvation(forbidding.reading, BARRIER) is None, (
+        assert starvation(forbidding.reading) is None, (
             f"{question}: the neighbour must be refused on this question alone"
         )

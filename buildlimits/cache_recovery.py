@@ -238,7 +238,7 @@ class CacheRecovery:
             fault_kind=self.fault_kind(),
             zero_visible_roots=self.zero_visible_roots(),
         )
-        if starvation(reading, self.barrier) is not None:
+        if starvation(reading) is not None:
             self._begin("starved", now)
 
     def _begin(self, trigger: str, now: float) -> None:

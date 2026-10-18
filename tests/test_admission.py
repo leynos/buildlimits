@@ -365,6 +365,11 @@ _WIRE = frozenset({"protocol", "replies", "framing", "wire"})
         ("attributes.py", _WIRE | {"requesters"}),
         # The shell's placement code tracks requests but speaks no protocol.
         ("groups.py", _WIRE),
+        # The recovery trigger is pure policy over one reading of the gauges.
+        (
+            "recovery_starvation.py",
+            _WIRE | {"requesters", "recovery_barrier", "sccache", "systemd", "journal"},
+        ),
     ],
 )
 def test_domain_modules_import_no_transport(
