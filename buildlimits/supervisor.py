@@ -73,6 +73,7 @@ class Supervisor:
         self.settings = settings
         self.manager = manager or UserManager()
         timing = as_clock(clock)
+        self.timing = timing
         self.clock = timing.now
         self.metrics = metrics if metrics is not None else Metrics()
 
@@ -149,6 +150,7 @@ class Supervisor:
         survivors = startup.drain_slice(slice_dir, self.settings.drain_timeout_seconds)
         log(f"restart barrier passed; terminated {survivors} surviving scope(s)")
         self.groups.slice_dir = slice_dir
+        self.server.quiesce_live_cache(self.recovery.barrier, self.timing)
         self.server.drain_orphans()
         self.recovery.reclaim_after_accounting()
         self.pool = TokenPool(self.settings.device)

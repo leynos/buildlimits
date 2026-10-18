@@ -1,10 +1,10 @@
 """Admission startup cannot infer completed cache work from an idle live server."""
 
-import subprocess
 import typing as typ
 from pathlib import PurePosixPath
 
 import pytest
+from cache_unit_fake import CacheUnit, FakeClock
 
 from buildlimits import startup
 from buildlimits import supervisor as supervisor_module
@@ -14,22 +14,25 @@ from buildlimits.supervisor import Supervisor
 from buildlimits.systemd import UserManager
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     from pathlib import Path
 
 
 @pytest.mark.parametrize("state", ["active", "activating", "deactivating"])
-def test_live_cache_startup_refuses_before_pool_or_listener(
+def test_a_cache_that_will_not_stop_refuses_before_pool_or_listener(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
 ) -> None:
-    """A potentially detached request remains covered before any new admission."""
-    opened: list[Path] = []
+    """A live cache that start-up cannot prove stopped keeps admission closed.
 
-    def runner(argv: cabc.Sequence[str]) -> subprocess.CompletedProcess[str]:
-        """Return a live or transitioning cache with no measured compiler children."""
-        return subprocess.CompletedProcess(
-            argv, 0, f"MainPID=4242\nControlGroup=\nActiveState={state}\n", ""
-        )
+    Start-up stops a live cache itself, so the refusal that remains is the one
+    where the stop is accepted but the unit never leaves its live state: the
+    potentially detached request is then still uncovered, and no pool opens.
+    """
+    opened: list[Path] = []
+    unit = CacheUnit(
+        barrier=tmp_path / "run" / "cache-recovery",
+        state=f"MainPID=4242\nControlGroup=\nActiveState={state}\n",
+        never_stops=True,
+    )
 
     def pool(path: Path) -> object:
         """Record an unsafe attempt to open admission before previous accounting."""
@@ -37,10 +40,14 @@ def test_live_cache_startup_refuses_before_pool_or_listener(
         msg = "pool must not open before cache accounting"
         raise AssertionError(msg)
 
+    clock = FakeClock()
     monkeypatch.setattr(startup, "drain_slice", lambda *_args: 0)
     monkeypatch.setattr(supervisor_module, "TokenPool", pool)
-    settings = SupervisorConfig(socket_path=tmp_path / "run" / "supervisor.sock")
-    instance = Supervisor(settings, UserManager(runner))
+    settings = SupervisorConfig(
+        socket_path=tmp_path / "run" / "supervisor.sock",
+        recovery_marker=unit.barrier,
+    )
+    instance = Supervisor(settings, UserManager(unit.runner), clock.timing())
     try:
         with pytest.raises(SccacheError, match="operator action"):
             instance.start(
@@ -51,6 +58,8 @@ def test_live_cache_startup_refuses_before_pool_or_listener(
         assert not opened, "previous unknown work prevents pool ownership"
         assert instance.listener is None, "no new request can enter admission"
         assert not instance.admission.groups, "refusal creates no compiler token"
+        assert unit.jobs == ["stop"], "the cache was asked to stop and never restored"
+        assert unit.barrier.exists(), "an unaccounted cache stays behind the barrier"
     finally:
         instance.selector.close()
 
