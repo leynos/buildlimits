@@ -354,3 +354,21 @@ def test_a_manager_fault_cannot_be_answered_by_stopping_the_cache(
     assert machine.describe(0.0)["phase"] == "idle", (
         "a raised stop leaves the machine idle"
     )
+
+
+def test_a_manual_request_is_refused_while_the_manager_transport_is_faulted(
+    tmp_path: Path,
+) -> None:
+    """The request path keeps the one refusal that protects an unreadable cache."""
+    machine, state = machine_for(
+        tmp_path,
+        snapshot=gauges(queued=1, server_drain=1),
+        reading=DrainReading(kind="manager"),
+    )
+    document = machine.request("manual", 0.0)
+    assert "user manager transport is faulted" in str(document["blocked"]), (
+        "the operator is told why recovery cannot open"
+    )
+    assert document["phase"] == "idle", "no transaction opens on a faulted transport"
+    assert not state.marker.exists(), "no barrier is written for a transport fault"
+    assert state.verbs == [], "no control verb is issued to an unreadable manager"

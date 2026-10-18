@@ -17,3 +17,16 @@ Feature: Shared compile admission recovers from cached work that outlived its re
     And the waiting build succeeds
     And the cache was restarted after its accounting
     And the cache refuses to start again while the restart barrier is present
+
+  Scenario: Recovery opens beside a running cached build and stops the cache later
+    Given a supervisor with 2 slots composing builds with sccache
+    And a fixture jobserver the managed cache waits on before it spawns a compiler
+    When two cached builds wait for a compiler slot before any compiler spawns
+    And one of the two builds is killed while it waits
+    Then the killed build's token stays held while the other build keeps running
+    When the operator asks for recovery without waiting
+    Then recovery opens but leaves the cache running under the live build
+    When the surviving build is killed
+    And the operator recovers the shared admission and waits for it
+    Then the recovery completes and frees both held tokens
+    And the cache was restarted after its accounting
