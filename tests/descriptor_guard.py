@@ -13,6 +13,9 @@ mid-test, so the comparison is deterministic rather than dependent on
 allocation timing. Objects freed by reference counting close at once and are
 caught by the ``ResourceWarning`` filter in ``pyproject.toml`` instead.
 
+The fixture at the foot of the module applies the guard to every test and
+doctest.
+
 Examples
 --------
 >>> import os
@@ -34,6 +37,8 @@ import contextlib
 import gc
 import typing as typ
 from pathlib import Path
+
+import pytest
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -124,3 +129,31 @@ def no_leaks() -> cabc.Iterator[None]:
             "context manager or a yield fixture, so no later test inherits it."
         )
         raise DescriptorLeakError(msg)
+
+
+@pytest.fixture(autouse=True)
+def descriptor_leak_guard() -> cabc.Iterator[None]:
+    """Fail the test that leaves a descriptor for the garbage collector.
+
+    Registered as a plugin (``-p descriptor_guard`` in ``pyproject.toml``)
+    rather than from a ``conftest.py``, so it covers the package's doctests as
+    well as ``tests/``. An autouse fixture is set up before the others of its
+    scope and so torn down after them: the guard brackets every function-scoped
+    fixture. Fixtures of a wider scope are set up before the baseline is taken
+    and torn down after the comparison, so their descriptors are outside it.
+
+    Yields
+    ------
+    None
+        Control to the test and its fixtures.
+    """
+    leak = None
+    try:
+        with no_leaks():
+            yield
+    except DescriptorLeakError as error:
+        leak = str(error)
+    # Failing outside the handler keeps pytest from printing the message twice,
+    # once as the cause of itself.
+    if leak is not None:
+        pytest.fail(leak, pytrace=False)

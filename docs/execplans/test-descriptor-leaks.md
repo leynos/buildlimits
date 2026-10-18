@@ -3,7 +3,7 @@
 This ExecPlan is a living document. Update Progress, Surprises and discoveries,
 Decision log and Outcomes and retrospective as work proceeds.
 
-Status: IN PROGRESS.
+Status: COMPLETE, awaiting review and merge.
 
 ## Purpose and big picture
 
@@ -68,8 +68,10 @@ listener, the signal self-pipe or the selector: it relied on process exit.
    descriptor number can never be read.
 2. Tests: `Harness` is a context manager; the `recovery_harnesses` factory
    fixture and a general `owned` `ExitStack` fixture unwind at teardown.
-3. Guard: `tests/descriptor_guard.py`, applied to every test by an autouse
-   fixture in `tests/conftest.py`, plus `filterwarnings` in `pyproject.toml`.
+3. Guard: `tests/descriptor_guard.py`, registered as a plugin
+   (`-p descriptor_guard`, with `pythonpath = ["tests"]`) so its autouse
+   fixture also covers the package doctests, plus `filterwarnings` in
+   `pyproject.toml`.
 
 ## Decision log
 
@@ -166,4 +168,19 @@ lingering sockets, not from a single test's peak.
 
 ## Outcomes and retrospective
 
-To be completed once the gates and repeated runs finish.
+- Every diagnosed owner now closes at teardown; production has
+  `TokenPool.close()` (with constructor rollback) and `Supervisor.close()`.
+- The guard failed 29 tests on the unfixed tree and fails none on the fixed one;
+  its own tests include an unclosed recovery harness and a leaking doctest run
+  through the real plugin registration.
+- Flake count: 12 full-suite runs at `-n 6` on this host failed 5 on
+  `origin/main` and 0 on this branch; scrutineer's repeated `make test` runs (5
+  per candidate across four candidates) showed 0 failures after the EOF
+  deadline fix, apart from one run that coincided with another agent's suite.
+- #14's `gc.collect()` is removed, not retained.
+- Review-driven corrections: the guard moved from a conftest fixture to a plugin
+  so doctests are covered; `TokenPool.__init__` rolls back; the developers'
+  guide no longer claims the guard sees wider-scoped fixtures.
+- Deferred: converting the older ad hoc `selector.close()` calls to
+  `Supervisor.close()`; the neighbour-process in-flight limit;
+  `test_nested_cargo`'s 30 s timeout under a saturated shared compile queue.

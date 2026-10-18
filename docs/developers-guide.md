@@ -522,9 +522,11 @@ comparison is local to one process, so each xdist worker checks only itself,
 and with the collector suspended the verdict does not depend on allocation
 timing. `pyproject.toml` also turns `ResourceWarning` and unraisable-exception
 warnings into errors, which catches objects freed unclosed by reference
-counting. A session- or module-scoped fixture that holds a descriptor shows up
-as a leak in the first test that uses it; give it function scope, or close it
-in the test that created it.
+counting. The guard is registered as a plugin (`-p descriptor_guard`), so it
+covers the package's doctests as well as `tests/`. It brackets function-scoped
+fixtures only: a session- or module-scoped fixture is set up before the
+baseline and torn down after the comparison, so its descriptors are outside the
+guard and must be closed by that fixture's own teardown.
 
 ## 12. Static-analysis exceptions
 
