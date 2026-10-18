@@ -45,6 +45,7 @@ class _FakeSupervisor:
         self.start_calls: list[PurePosixPath] = []
         self.serve_calls = 0
         self.stop_requested = False
+        self.graceful_stop_requested = False
         self.start_error: BaseException | None = None
         self.serve_status = 0
 
@@ -60,8 +61,12 @@ class _FakeSupervisor:
         return self.serve_status
 
     def request_stop(self) -> None:
-        """Record that an orderly shutdown was requested."""
+        """Record that an immediate shutdown was requested."""
         self.stop_requested = True
+
+    def request_graceful_stop(self) -> None:
+        """Record that a shutdown after running groups finish was requested."""
+        self.graceful_stop_requested = True
 
 
 def _install_fake_supervisor(
@@ -192,12 +197,12 @@ def test_a_successful_start_serves_and_closes_the_lock(
     capsys.readouterr()
 
 
-def test_a_successful_start_wires_sigterm_and_sigint_to_request_stop(
+def test_a_successful_start_wires_sigterm_to_a_graceful_stop_and_sigint_to_an_immediate_one(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """SIGTERM and SIGINT handlers both call the supervisor's request_stop."""
+    """SIGTERM, which systemctl sends, drains; only SIGINT cancels running groups."""
     config_path = _write_config(tmp_path)
     monkeypatch.setattr(cgroups, "own_path", lambda: OWN_CGROUP)
     created = _install_fake_supervisor(monkeypatch)
@@ -220,8 +225,8 @@ def test_a_successful_start_wires_sigterm_and_sigint_to_request_stop(
     assert not isinstance(int_handler, int), "a SIGINT handler was installed"
     assert not supervisor.stop_requested, "no stop was requested before a signal"
     term_handler(signal.SIGTERM, None)
-    assert supervisor.stop_requested, "SIGTERM is wired to request_stop"
-    supervisor.stop_requested = False
+    assert supervisor.graceful_stop_requested, "SIGTERM requests a graceful stop"
+    assert not supervisor.stop_requested, "SIGTERM never cancels running groups"
     int_handler(signal.SIGINT, None)
     assert supervisor.stop_requested, "SIGINT is wired to request_stop"
 

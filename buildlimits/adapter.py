@@ -10,7 +10,6 @@ Run ``python -m buildlimits.adapter <compiler> <arguments...>`` for diagnosis.
 
 import functools
 import os
-import select
 import signal as signal
 import sys
 import typing as typ
@@ -20,12 +19,16 @@ from buildlimits import attributes, cgroups, config, descriptors
 from buildlimits.adapter_connection import SYSTEM_DIALLER as SYSTEM_DIALLER
 from buildlimits.adapter_connection import AdapterError as AdapterError
 from buildlimits.adapter_connection import Dialler as Dialler
+from buildlimits.adapter_connection import SupervisorClosedError
 from buildlimits.adapter_connection import connect as connect
 from buildlimits.adapter_connection import unix_socket as unix_socket
-from buildlimits.adapter_invocation import AdmissionAttempt
+from buildlimits.adapter_invocation import AdmissionAttempt, Progress
 from buildlimits.adapter_invocation import BusyError as BusyError
+from buildlimits.adapter_invocation import RestartingError as RestartingError
+from buildlimits.adapter_invocation import refusal as _refusal
 from buildlimits.adapter_invocation import retry_request as _retry_request
 from buildlimits.adapter_metrics import AdapterMetrics
+from buildlimits.adapter_replies import next_reply as _next_reply
 from buildlimits.adapter_signals import _reproduce as _reproduce
 from buildlimits.adapter_signals import observe_signals
 from buildlimits.framing import DescriptorSendPressureError
@@ -43,9 +46,7 @@ from buildlimits.protocol import (
     ProtocolError,
     Queued,
     Refused,
-    decode_reply,
     encode_request,
-    recv_frame,
     send_frame,
 )
 from buildlimits.rustdoc import RustdocError, resolve_rustdoc
@@ -160,6 +161,8 @@ def _request_once(
         If descriptor capture and encoding exhaust the admission deadline.
     BusyError
         If the initial rights transfer is refused before any bytes are queued.
+    RestartingError
+        If the supervisor goes away before the request is admitted.
     """
     deadline, summary = attempt.deadline, attempt.summary
     env = dict(os.environ)
@@ -194,75 +197,12 @@ def _request_once(
             send_frame(conn, frame, fds)
         except DescriptorSendPressureError as error:
             raise BusyError(str(error)) from error
+        except ConnectionError as error:
+            msg = f"the build-limits supervisor went away: {error}"
+            raise RestartingError(msg) from error
         finally:
             conn.settimeout(None)
         return _await_result(conn, heartbeat, summary, deadline=deadline)
-
-
-def _next_reply(
-    conn: socket.socket, heartbeat: Heartbeat, *, deadline: float | None = None
-) -> Reply | None:
-    """Wait for one reply, writing a heartbeat line if one falls due.
-
-    Returns
-    -------
-    Reply | None
-        The reply, or ``None`` when the heartbeat interval passed first.
-
-    Raises
-    ------
-    AdapterError
-        If the supervisor closes the connection.
-    """
-    timeout = heartbeat.timeout()
-    if deadline is not None:
-        remaining = deadline - heartbeat.clock()
-        if remaining <= 0:
-            msg = (
-                "compile admission did not acknowledge the request before its deadline"
-            )
-            raise AdapterError(msg)
-        timeout = min(timeout, remaining)
-    ready, _writable, _errored = select.select([conn], [], [], timeout)
-    if not ready:
-        _stderr(heartbeat.tick())
-        return None
-    return _receive_reply(conn, heartbeat, deadline)
-
-
-def _receive_reply(
-    conn: socket.socket, heartbeat: Heartbeat, deadline: float | None
-) -> Reply:
-    """Decode a ready reply, reclaim stray fds and always restore its timeout.
-
-    Returns
-    -------
-    Reply
-        Decoded reply after reclaiming unsolicited descriptors.
-
-    Raises
-    ------
-    AdapterError
-        If the reply deadline expires or the supervisor closes the connection.
-    """
-    original = conn.gettimeout()
-    try:
-        if deadline is not None:
-            remaining = deadline - heartbeat.clock()
-            if remaining <= 0:
-                msg = "compile admission reply deadline expired"
-                raise AdapterError(msg)
-            conn.settimeout(remaining)
-        frame = recv_frame(conn)
-    finally:
-        conn.settimeout(original)
-    if frame is None:
-        msg = "the build-limits supervisor closed the connection"
-        raise AdapterError(msg)
-    body, stray = frame
-    for fd in stray:
-        os.close(fd)
-    return decode_reply(body)
 
 
 def _await_result(
@@ -285,24 +225,22 @@ def _await_result(
         If the supervisor refuses the request or replies out of turn.
     BusyError
         If descriptor pressure refuses a request before it is recorded.
-    """
-    recorded = False
+    RestartingError
+        If the supervisor restarts before the compiler was admitted.
+    """  # ruff: ignore[docstring-extraneous-exception] - raised via _refusal's result.
+    progress = Progress()
     while True:
-        reply = (
-            _next_reply(conn, heartbeat)
-            if deadline is None
-            else _next_reply(conn, heartbeat, deadline=deadline)
-        )
+        reply = _reply_or_restart(conn, heartbeat, deadline, progress)
         match reply:
             case None:
                 continue
             case Queued(position=position):
                 deadline = None
-                recorded = True
+                progress.recorded = True
                 heartbeat.ahead = position
             case Admitted(notice=notice):
                 deadline = None
-                recorded = True
+                progress.recorded = progress.admitted = True
                 heartbeat.admitted()
                 summary.admission(heartbeat.phase_started)
                 _stderr(
@@ -311,14 +249,47 @@ def _await_result(
             case Finished(exit=exit_):
                 summary.outcome = "completed"
                 return exit_
-            case Refused(reason="busy", message=message) if not recorded:
-                raise BusyError(message)
-            case Refused(message=message):
-                summary.outcome = "refused"
-                raise AdapterError(message)
+            case Refused():
+                error = _refusal(reply, progress)
+                if not isinstance(error, (BusyError, RestartingError)):
+                    summary.outcome = "refused"
+                raise error
             case other:
                 msg = f"unexpected reply {other!r}"
                 raise AdapterError(msg)
+
+
+def _reply_or_restart(
+    conn: socket.socket,
+    heartbeat: Heartbeat,
+    deadline: float | None,
+    progress: Progress,
+) -> Reply | None:
+    """Wait for one reply, treating a lost supervisor as a restart before admission.
+
+    Before admission nothing ran, so the request is safe to resubmit; after it
+    the compiler may have, and the build must fail.
+
+    Returns
+    -------
+    Reply | None
+        The reply, or ``None`` when a heartbeat fell due first.
+
+    Raises
+    ------
+    SupervisorClosedError
+        If the supervisor is lost after the compiler was admitted.
+    RestartingError
+        If the supervisor is lost before admission.
+    """  # ruff: ignore[docstring-extraneous-exception] - Progress builds it.
+    try:
+        if deadline is None:
+            return _next_reply(conn, heartbeat)
+        return _next_reply(conn, heartbeat, deadline=deadline)
+    except SupervisorClosedError as error:
+        if progress.admitted:
+            raise
+        raise progress.restart(str(error)) from error
 
 
 def _main(argv: list[str], *, cacheable: bool) -> int:

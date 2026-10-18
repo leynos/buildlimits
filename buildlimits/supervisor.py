@@ -121,6 +121,7 @@ class Supervisor:
         self.exit_status: int | None = None
         self._stopping = False
         self._stop_requested = False
+        self._graceful_stop_requested = False
         self._signals_read = -1
         self.loop = DrainLoop(
             sleep=timing.sleep,
@@ -294,6 +295,7 @@ class Supervisor:
     # beside its sibling ``supervisor_polling``. A bound method keeps the
     # name, the signature and the ``self`` binding every caller already uses.
     request_stop = supervisor_shutdown.request_stop
+    request_graceful_stop = supervisor_shutdown.request_graceful_stop
     stop = supervisor_shutdown.stop
     _shutdown = supervisor_shutdown.shutdown
 

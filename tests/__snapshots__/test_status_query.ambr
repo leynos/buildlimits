@@ -35,5 +35,6 @@
     'queued': list([
     ]),
     'recovery_action': None,
+    'restarting': False,
   })
 # ---

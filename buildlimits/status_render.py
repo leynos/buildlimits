@@ -33,6 +33,8 @@ def render(state: cabc.Mapping[str, object]) -> str:
     no compiler groups
     """
     health = "healthy" if state.get("healthy") else "UNHEALTHY"
+    if state.get("restarting"):
+        health += ", restarting once running groups finish"
     summary = (
         f"capacity {state.get('capacity')}, held {state.get('held')}, {health}, "
         f"{_cache_description(state)}"

@@ -413,6 +413,18 @@ reason = "The supervisor reaches these through typed collaborators (Groups, Mana
 
 
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.admission_state.Gauges.counts"]
+path = ["buildlimits/admission_state.py"]
+reason = "Admission inherits its gauge accessors from Gauges, and every caller reads them as Admission.counts through a typed collaborator, which Skylos resolves only on the class that defines a method. The status document, the recovery machine and the requester metrics all call it; tests/test_admission.py exercises it."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "function"
+full_name = ["buildlimits.admission_state.snapshot"]
+path = ["buildlimits/admission_state.py"]
+reason = "Gauges.counts, the declared entry point above, builds every snapshot through it; the doctest and test_admission.py exercise it."
+
 [tool.nose]
 version = "0.20.0"
 roots = ["."]
@@ -1153,3 +1165,15 @@ members = [
     "tests/test_nested_cargo_prerequisites.py",
 ]
 reason = "Unrelated one-line environment set-up: each test sets the one variable its own scenario needs, so the matching `monkeypatch.setenv` lines share only pytest's API, not logic."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_adapter_busy.py", "tests/test_adapter_restart.py", "tests/test_adapter_run.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_admission.py", "tests/test_admission_closing.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_supervisor_effects.py", "tests/test_supervisor_graceful_stop.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."

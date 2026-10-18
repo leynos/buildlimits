@@ -5,6 +5,10 @@ The provisioning role runs this as a systemd user service with
 previous-cache accounting faults,
 which a restart cannot fix, and 1 after a failed start or a health failure, so
 that systemd restarts it through the restart barrier.
+
+``SIGTERM`` stops it gracefully, so ``systemctl --user restart`` waits for
+running compiler groups instead of cancelling them, and exits 0 once they have
+finished. ``SIGINT`` stops it immediately, cancelling the queue and the groups.
 """
 
 import argparse
@@ -97,6 +101,8 @@ def _serve(supervisor: Supervisor, own: PurePosixPath) -> int:
     except (startup.StartupError, OSError, SystemdError, SccacheError) as error:
         log(f"start-up failed: {error}")
         return 1
-    signal.signal(signal.SIGTERM, lambda *_: supervisor.request_stop())
+    # SIGTERM is what ``systemctl stop`` and ``restart`` send, so it must not
+    # cancel work: running groups finish first. SIGINT is the explicit escape.
+    signal.signal(signal.SIGTERM, lambda *_: supervisor.request_graceful_stop())
     signal.signal(signal.SIGINT, lambda *_: supervisor.request_stop())
     return supervisor.serve()
