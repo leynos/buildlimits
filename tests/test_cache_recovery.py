@@ -8,14 +8,11 @@ idle CPU and no missing compiler process may stand in for that proof.
 """
 
 import typing as typ
-from pathlib import Path
 
 from cache_recovery_barrier_helpers import unremovable_barrier
 from cache_recovery_harness import (
-    harness_for,
     hold_drain_beside_running_group,
     hold_drained_group,
-    opened_recovery,
     queue_request,
 )
 
@@ -23,13 +20,14 @@ from buildlimits import cache_recovery, recovery_starvation
 
 if typ.TYPE_CHECKING:
     import pytest
+    from cache_recovery_harness import HarnessFactory
 
 
 def test_the_transaction_stops_accounts_and_restarts_the_managed_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory,
 ) -> None:
     """One transaction proves accounting before any token can return."""
-    harness = opened_recovery(tmp_path, monkeypatch, queued=(2,))
+    harness = recovery_harnesses.opened(queued=(2,))
     supervisor, pool = harness.supervisor, harness.pool
     assert harness.described()["phase"] == "quiescing", (
         "a manual request opens the transaction"
@@ -88,10 +86,10 @@ def test_the_transaction_stops_accounts_and_restarts_the_managed_cache(
 
 
 def test_duplicate_requests_join_the_running_transaction(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory,
 ) -> None:
     """A repeated request reports the transaction instead of restarting it."""
-    harness = harness_for(tmp_path, monkeypatch)
+    harness = recovery_harnesses.build()
     first = harness.supervisor.recovery.request("manual", harness.now)
     harness.advance(4)
     second = harness.supervisor.recovery.request("manual", harness.now)
@@ -99,10 +97,10 @@ def test_duplicate_requests_join_the_running_transaction(
 
 
 def test_failed_stops_keep_tokens_and_the_barrier_with_bounded_backoff(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory,
 ) -> None:
     """A refused stop retries with growing, bounded delays and keeps ownership."""
-    harness = opened_recovery(tmp_path, monkeypatch, refuse="stop")
+    harness = recovery_harnesses.opened(refuse="stop")
     supervisor = harness.supervisor
     harness.tick()
 
@@ -130,7 +128,7 @@ def test_failed_stops_keep_tokens_and_the_barrier_with_bounded_backoff(
 
 
 def test_a_request_under_a_running_compiler_waits_to_stop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory,
 ) -> None:
     """Recovery opens beside a running cached compiler but never stops under it.
 
@@ -139,7 +137,7 @@ def test_a_request_under_a_running_compiler_waits_to_stop(
     barrier and holds new compiles off the cache; the stop waits for the
     running group to finish.
     """
-    harness = harness_for(tmp_path, monkeypatch)
+    harness = recovery_harnesses.build()
     supervisor = harness.supervisor
     hold_drain_beside_running_group(supervisor)
 
@@ -162,10 +160,10 @@ def test_a_request_under_a_running_compiler_waits_to_stop(
 
 
 def test_a_queued_request_keeps_its_progress_and_cancellation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory,
 ) -> None:
     """Recovery never takes a waiting request's token or its replies away."""
-    harness = opened_recovery(tmp_path, monkeypatch, queued=(7,))
+    harness = recovery_harnesses.opened(queued=(7,))
     supervisor, pool = harness.supervisor, harness.pool
     harness.tick()
     harness.tick()
@@ -187,10 +185,10 @@ def test_a_queued_request_keeps_its_progress_and_cancellation(
 
 
 def test_a_repeated_cancellation_cannot_lose_a_token_or_overflow_capacity(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory,
 ) -> None:
     """A second drain group mid-recovery conserves every token and the capacity."""
-    harness = opened_recovery(tmp_path, monkeypatch, queued=(2,))
+    harness = recovery_harnesses.opened(queued=(2,))
     supervisor, pool = harness.supervisor, harness.pool
     harness.tick()
     harness.tick()
@@ -214,10 +212,10 @@ def test_a_repeated_cancellation_cannot_lose_a_token_or_overflow_capacity(
 
 
 def test_a_failed_recovery_cannot_return_a_token(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory,
 ) -> None:
     """A stop the manager refuses keeps every token, the barrier and the fault."""
-    harness = opened_recovery(tmp_path, monkeypatch, refuse="stop")
+    harness = recovery_harnesses.opened(refuse="stop")
     supervisor = harness.supervisor
     harness.tick()  # quiescing: the barrier is written
     for attempt in range(cache_recovery.RECOVERY_FAILURE_LIMIT):
@@ -240,10 +238,10 @@ def test_a_failed_recovery_cannot_return_a_token(
 
 
 def test_a_restart_the_manager_refuses_still_ends_the_accounted_transaction(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory,
 ) -> None:
     """Accounting that succeeded is not undone by a cache that cannot restart."""
-    harness = opened_recovery(tmp_path, monkeypatch, refuse="start")
+    harness = recovery_harnesses.opened(refuse="start")
     supervisor, pool = harness.supervisor, harness.pool
     harness.account()
     harness.tick()  # restarting: the start is refused
@@ -263,7 +261,7 @@ def test_a_restart_the_manager_refuses_still_ends_the_accounted_transaction(
 
 
 def test_a_barrier_that_cannot_be_removed_is_retried_not_reported_as_a_restart(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A start that the unit's own condition would skip is not a clean finish.
 
@@ -273,7 +271,7 @@ def test_a_barrier_that_cannot_be_removed_is_retried_not_reported_as_a_restart(
     into a cooldown the automatic trigger cannot cross, so the refusal must
     keep the transaction in its restart phase with the barrier intact.
     """
-    harness = opened_recovery(tmp_path, monkeypatch)
+    harness = recovery_harnesses.opened()
     pool = harness.pool
     harness.account()
     assert pool.returned == [b"+"], "the accounted token returns once"

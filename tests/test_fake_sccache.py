@@ -87,8 +87,20 @@ def _server(socket_path: Path) -> subprocess.Popen[bytes]:
         if socket_path.exists():
             return process
         time.sleep(0.02)
+    _stop_server(process)
     msg = "the fixture server never bound its socket"
     raise AssertionError(msg)
+
+
+def _stop_server(process: subprocess.Popen[bytes]) -> None:
+    """Kill the fixture server, reap it and close its ``stderr`` pipe.
+
+    Entering the process as a context manager is what closes the pipe the
+    parent holds; ``kill`` and ``wait`` alone leave it to the collector.
+    """
+    process.kill()
+    with process:
+        process.wait(timeout=10)
 
 
 def _send(socket_path: Path, request: dict[str, object]) -> Reply:
@@ -170,8 +182,7 @@ def test_accepted_work_survives_client_disconnect_and_waits_for_a_jobserver_slot
         assert "second" in reply["stdout"], "later requests still work"
     finally:
         os.close(holder)
-        server.kill()
-        server.wait(timeout=10)
+        _stop_server(server)
 
 
 def test_a_result_is_read_only_after_the_child_finishes_writing(
@@ -218,8 +229,7 @@ def test_a_result_is_read_only_after_the_child_finishes_writing(
         )
     finally:
         client.close()
-        server.kill()
-        server.wait(timeout=10)
+        _stop_server(server)
 
 
 def _children(pid: int) -> list[int]:

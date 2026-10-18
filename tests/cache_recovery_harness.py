@@ -16,6 +16,7 @@ Examples
 
 """
 
+import contextlib
 import dataclasses as dc
 import typing as typ
 
@@ -66,12 +67,36 @@ def _tmp_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @dc.dataclass(slots=True)
 class Harness:
-    """One supervisor, its scripted cache and a hand-driven clock."""
+    """One supervisor, its scripted cache and a hand-driven clock.
+
+    The supervisor's selector owns an epoll descriptor that only a close
+    releases, so a harness is a context manager and :meth:`close` is the one
+    way to give that descriptor back. Tests obtain harnesses from the
+    ``recovery_harnesses`` fixture, which closes each at teardown.
+    """
 
     supervisor: Supervisor
     cache: CacheState
     marker: Path
     now: float = 0.0
+
+    def close(self) -> None:
+        """Release every descriptor the supervisor holds; repeating is harmless."""
+        self.supervisor.close()
+
+    def __enter__(self) -> Harness:
+        """Hand the harness to a ``with`` block that closes it on exit.
+
+        Returns
+        -------
+        Harness
+            This harness.
+        """
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        """Close the harness, whether or not the block raised."""
+        self.close()
 
     def tick(self) -> None:
         """Run one due server poll through the production polling order."""
@@ -123,6 +148,9 @@ def harness_for(
 ) -> Harness:
     """Build a supervisor whose cache state is fully scripted.
 
+    The caller owns the result and must close it: use ``with`` or the
+    ``recovery_harnesses`` fixture, never a bare call.
+
     Parameters
     ----------
     tmp_path : Path
@@ -165,8 +193,7 @@ def harness_for(
 
 
 def opened_recovery(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+    harness: Harness,
     *,
     refuse: str | None = None,
     queued: tuple[int, ...] = (),
@@ -175,10 +202,8 @@ def opened_recovery(
 
     Parameters
     ----------
-    tmp_path : Path
-        The disposable fixture directory holding the marker and control group.
-    monkeypatch : pytest.MonkeyPatch
-        Fixture used to redirect the cache's control-group lookup.
+    harness : Harness
+        A freshly built harness, which the caller keeps ownership of.
     refuse : str or None
         The control verb the scripted manager refuses, or None for none.
     queued : tuple[int, ...]
@@ -187,15 +212,79 @@ def opened_recovery(
     Returns
     -------
     Harness
-        A harness whose transaction is open but has not yet ticked.
+        The same harness, with its transaction open but not yet ticked.
     """
-    harness = harness_for(tmp_path, monkeypatch)
     hold_drained_group(harness.supervisor)
     for request_id in queued:
         queue_request(harness.supervisor, request_id)
     harness.cache.refuse = refuse
     harness.supervisor.recovery.request("manual", harness.now)
     return harness
+
+
+class HarnessFactory:
+    """Build recovery harnesses that close themselves at the end of a test.
+
+    Obtain one from the ``recovery_harnesses`` fixture. Every harness it builds
+    is entered into one :class:`contextlib.ExitStack`, which the fixture
+    unwinds at teardown even when the test failed.
+
+    Parameters
+    ----------
+    tmp_path : Path
+        The disposable fixture directory holding the marker and control group.
+    monkeypatch : pytest.MonkeyPatch
+        Fixture used to redirect the cache's control-group lookup.
+    owned : contextlib.ExitStack
+        The stack that closes every harness built here.
+    """
+
+    def __init__(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        owned: contextlib.ExitStack,
+    ) -> None:
+        """Remember the fixtures every harness is built from."""
+        self._tmp_path = tmp_path
+        self._monkeypatch = monkeypatch
+        self._owned = owned
+
+    def build(self, *, mode: str = "starved") -> Harness:
+        """Build an owned harness over a fully scripted cache.
+
+        Parameters
+        ----------
+        mode : str
+            The configured recovery policy.
+
+        Returns
+        -------
+        Harness
+            A harness that is closed when the test ends.
+        """
+        return self._owned.enter_context(
+            harness_for(self._tmp_path, self._monkeypatch, mode=mode)
+        )
+
+    def opened(
+        self, *, refuse: str | None = None, queued: tuple[int, ...] = ()
+    ) -> Harness:
+        """Build an owned harness whose manual transaction is already open.
+
+        Parameters
+        ----------
+        refuse : str or None
+            The control verb the scripted manager refuses, or None for none.
+        queued : tuple[int, ...]
+            Requests left waiting before the transaction opens.
+
+        Returns
+        -------
+        Harness
+            A harness that is closed when the test ends.
+        """
+        return opened_recovery(self.build(), refuse=refuse, queued=queued)
 
 
 def hold_drained_group(supervisor: Supervisor, group_id: str = "g1") -> None:

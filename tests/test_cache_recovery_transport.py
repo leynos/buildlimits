@@ -17,7 +17,7 @@ import subprocess
 import typing as typ
 from pathlib import Path
 
-from cache_recovery_harness import Harness, harness_for, hold_drained_group
+from cache_recovery_harness import Harness, HarnessFactory, hold_drained_group
 from cache_recovery_helpers import CacheState, runner_for
 from request_helpers import compile_request
 
@@ -112,7 +112,7 @@ class StalledTransport:
 
 
 def _stalled_harness(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[Harness, StalledTransport]:
     """Build a manual-policy supervisor whose manager transport stalls.
 
@@ -121,8 +121,8 @@ def _stalled_harness(
 
     Parameters
     ----------
-    tmp_path : Path
-        The disposable fixture directory.
+    recovery_harnesses : HarnessFactory
+        Builds the harness and closes it when the test ends.
     monkeypatch : pytest.MonkeyPatch
         Fixture used to install the stalled transport.
 
@@ -131,7 +131,7 @@ def _stalled_harness(
     tuple[Harness, StalledTransport]
         The supervisor harness and the transport its manager now uses.
     """
-    harness = harness_for(tmp_path, monkeypatch, mode="manual")
+    harness = recovery_harnesses.build(mode="manual")
     transport = StalledTransport(harness.cache)
     monkeypatch.setattr(systemd.subprocess, "run", transport)
     # The recovery machine and the server watch share one manager port, so
@@ -150,7 +150,7 @@ def _serve(owned: contextlib.ExitStack, supervisor: Supervisor) -> Path:
     Parameters
     ----------
     owned : contextlib.ExitStack
-        Stack that closes the listener and the selector at the test's end.
+        Stack that closes the listener at the test's end.
     supervisor : Supervisor
         The supervisor whose requester path is under test.
 
@@ -159,7 +159,6 @@ def _serve(owned: contextlib.ExitStack, supervisor: Supervisor) -> Path:
     Path
         The socket path a requester connects to.
     """
-    owned.callback(supervisor.selector.close)
     path = Path(supervisor.settings.socket_path)
     supervisor.listener = owned.enter_context(listen(path))
     # The supervisor binds this port once it owns a managed cache; a test that
@@ -217,7 +216,7 @@ def _submit(supervisor: Supervisor, client: socket.socket) -> tuple[int, Reply]:
 
 
 def test_a_stalled_control_transport_faults_the_stop_within_the_short_bound(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A stop that never completes is bounded, faulted, and never accounted.
 
@@ -226,7 +225,7 @@ def test_a_stalled_control_transport_faults_the_stop_within_the_short_bound(
     transaction that read the stall as progress would release a token and drop
     the barrier; this one must keep both.
     """
-    harness, transport = _stalled_harness(tmp_path, monkeypatch)
+    harness, transport = _stalled_harness(recovery_harnesses, monkeypatch)
     supervisor = harness.supervisor
     hold_drained_group(supervisor)
     supervisor.recovery.request("manual", harness.now)
@@ -251,7 +250,7 @@ def test_a_stalled_control_transport_faults_the_stop_within_the_short_bound(
 
 
 def test_requesters_keep_their_replies_and_cancellation_through_a_stalled_transport(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    recovery_harnesses: HarnessFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Waiting requesters are still served, and still cancellable, over sockets.
 
@@ -261,7 +260,7 @@ def test_requesters_keep_their_replies_and_cancellation_through_a_stalled_transp
     exactly its request and renumbers the one that remains, and neither the
     stall nor the cancellation may move a token.
     """
-    harness, transport = _stalled_harness(tmp_path, monkeypatch)
+    harness, transport = _stalled_harness(recovery_harnesses, monkeypatch)
     supervisor = harness.supervisor
     hold_drained_group(supervisor)
 
