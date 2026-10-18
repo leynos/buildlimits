@@ -340,3 +340,22 @@ def test_a_refused_restart_stays_visible_after_the_transaction_ends() -> None:
         "cache recovery last fault: cannot start cache.service: Job failed"
         in rested.splitlines()
     ), "the fault is still shown once the rest has passed"
+
+
+def test_visible_roots_delaying_the_stop_are_reported() -> None:
+    """An operator can see that live roots are what delays the automatic stop."""
+    state, _line = STATES["live-work-guidance"]
+    stopping = {
+        "phase": "stopping",
+        "attempts": 2,
+        "last_fault": "the visible compiler roots proof lapsed before stopping",
+        "retry_in": 30.0,
+        "cooling_for": 0.0,
+        "roots_waited": 120.0,
+    }
+    lines = render({**state, "cache_recovery": stopping}).splitlines()
+    assert any("roots have delayed the stop for 120.0s" in line for line in lines), (
+        "the time roots have delayed the stop is shown"
+    )
+    quiet = render({**state, "cache_recovery": {**stopping, "roots_waited": 0.0}})
+    assert "roots have delayed" not in quiet, "no delay, no line"

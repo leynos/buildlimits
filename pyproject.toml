@@ -392,6 +392,12 @@ reason = "CacheRecovery._write_barrier writes the restart barrier through the Re
 
 [[tool.skylos.dead_code.entrypoints]]
 type = "method"
+full_name = ["buildlimits.recovery_roots.VisibleRootsGrace.reset"]
+path = ["buildlimits/recovery_roots.py"]
+reason = "CacheRecovery._try_stop, _begin and _finish break the grace clock through the VisibleRootsGrace the transaction holds in its _roots_grace field; they are callees of the declared recovery dispatch above, and the roots-deadline tests exercise each reset."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
 full_name = ["buildlimits.recovery_starvation.RetainedDrainAge.observe"]
 path = ["buildlimits/recovery_starvation.py"]
 reason = "CacheRecovery._starved measures the retained drain's age through the RetainedDrainAge the transaction holds in its _drain_age field; it is a callee of the declared recovery dispatch above, and the doctest and stale-drain tests exercise it."
@@ -444,6 +450,7 @@ ignore_names = [
     # The recovery search's Events counters are read by name through EVENTS
     # and getattr in test_cache_recovery_properties, never as attributes.
     "opened_stale",
+    "stopped_on_deadline",
 ]
 # pytest-bdd steps and Hypothesis state-machine rules are registered by their
 # decorators and dispatched by the framework, never called by name.
@@ -555,9 +562,10 @@ reason = "stop and start are the public, documented verbs of the managed-cache p
 [[tool.duplication_gate.allow]]
 members = [
     "buildlimits/cache_recovery.py",
+    "buildlimits/recovery_guidance.py",
     "buildlimits/supervisor.py",
 ]
-reason = "Two unrelated operator log lines share only the log-call shape."
+reason = "Three unrelated operator log lines share only the log-call shape."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -927,9 +935,17 @@ reason = "Single-purpose test doubles: each closure raises, records or answers t
 
 [[tool.duplication_gate.allow]]
 members = [
+    "tests/test_recovery_roots_deadline.py",
+    "tests/test_recovery_stale_drain.py",
+]
+reason = "Matching import lists: both modules drive the same scripted machine through the same harness and scene helpers, and sharing the import through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
     "tests/test_group_drain_metrics.py",
     "buildlimits/adapter_invocation.py",
     "tests/test_cache_recovery_telemetry.py",
+    "tests/test_recovery_roots_deadline.py",
 ]
 reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
 

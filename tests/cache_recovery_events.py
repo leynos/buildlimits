@@ -35,12 +35,41 @@ class Events:
     opened_stale : int
         Automatic openings taken on the drain's age alone, with a group moving
         or a root visible, which only the staleness proof can authorize.
+    stopped_on_deadline : int
+        Automatic stops issued with a root still visible, which only the
+        roots deadline can authorize.
     """
 
     opened: int = 0
     stopped: int = 0
     started: int = 0
     opened_stale: int = 0
+    stopped_on_deadline: int = 0
+
+
+@dc.dataclass(slots=True)
+class CalmClock:
+    """When nothing cached last began to be quiet, as the model sees it.
+
+    It starts no later than the production grace clock does (that waits for a
+    stopping attempt), so a stop taken on the roots deadline must have at
+    least the grace elapsed on it.
+
+    Attributes
+    ----------
+    since : float or None
+        The instant of the first tick after which nothing cached was moving and
+        the manager was readable, unbroken since.
+    """
+
+    since: float | None = None
+
+    def observe(self, *, is_calm: bool, now: float) -> None:
+        """Record one tick: break the run, or start it if none is running."""
+        if not is_calm:
+            self.since = None
+        elif self.since is None:
+            self.since = now
 
 
 @dc.dataclass(frozen=True, slots=True)

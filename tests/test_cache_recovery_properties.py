@@ -73,7 +73,7 @@ if typ.TYPE_CHECKING:
 # proof of it. Each is asserted non-zero below against the ledger the run
 # filled. It is a tuple rather than a set so the failure message names the
 # missing events in the order the contract introduces them.
-EVENTS = ("opened", "stopped", "started", "opened_stale")
+EVENTS = ("opened", "stopped", "started", "opened_stale", "stopped_on_deadline")
 
 
 def test_the_recovery_safety_contract_holds_for_any_interleaving(
@@ -170,6 +170,13 @@ def test_the_invariants_name_the_guards_they_protect() -> None:
 # that ending needs the refusal held across ``RECOVERY_FAILURE_LIMIT``
 # consecutive due steps. The ``restart_runs_out`` rule is what makes the
 # faulted half of the check reachable instead of dead.
+#
+#   * deleting the grace test from ``roots_verdict`` (so visible roots hold an
+#     automatic stop for ever) leaves ``stopped_on_deadline`` at zero, which the
+#     non-vacuity assertion rejects. A grace shortened to 400 seconds is *not*
+#     rejected here, because the model's calm clock starts a tick earlier than
+#     the production one and the 200-second step is coarse; the scripted
+#     boundary tests in :mod:`test_recovery_roots_deadline` pin the value.
 #
 # One mutation that the search does *not* reject is worth naming, because the
 # reason is a property of the design rather than a gap: deleting the manager

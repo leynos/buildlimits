@@ -8,20 +8,21 @@ module drives that intervention as a sequence of steps whose calls are
 bounded and whose retries are delayed: write the restart barrier, stop the
 cache, wait for the accounting, then clear the barrier and start the cache.
 
-Only the two middle steps can fail, and neither releases a token. This is
-not a deadline: a refused stop retries for ever and accounting waits for
-ever for proof, so only the drain probe's verified stopped-and-empty state
-returns a token; time, idle CPU or visible processes never do.
+Only the two middle steps can fail, and neither releases a token. Time
+authorizes one thing only: an automatic stop whose visible roots outlast
+``RECOVERY_ROOTS_GRACE_SECONDS`` with nothing cached moving. A refused stop
+retries for ever and accounting waits for ever for proof, so only the drain
+probe's verified stopped-and-empty state returns a token.
 """
 
 import contextlib
 import dataclasses as dc
 import typing as typ
 
-from buildlimits import recovery_starvation
+from buildlimits import recovery_roots, recovery_starvation
 from buildlimits.journal import log
 from buildlimits.metrics import Metrics, MetricsPort, gauge_fields
-from buildlimits.recovery_guidance import report_exhaustion
+from buildlimits.recovery_guidance import report_deadline_stop, report_exhaustion
 from buildlimits.recovery_reclaim import (
     new_barrier,
     reclaim_after_accounting,
@@ -60,31 +61,28 @@ class CacheRecovery:
         The restart barrier; the managed unit refuses to start while the
         file exists, so no cache returns before its work is accounted.
     counts : Callable[[], Counts]
-        Reads the admission gauges; the server-drain count is the accounting
-        evidence and is never advanced by this machine.
+        Reads the admission gauges; this machine never advances the count.
     fault_kind : Callable[[], str | None]
-        Classifies the drain probe's last fault, so a manager transport fault
-        is never answered by stopping or restarting the cache.
+        Classifies the drain probe's last fault; a manager fault never stops
+        or restarts the cache.
     zero_visible_roots : Callable[[], bool]
-        Reports whether the drain probe's live-work fault established zero
-        visible compiler roots. Corroborates the automatic trigger only: an
-        unproven reading answers False and never releases a token.
+        Reports whether the drain probe established zero visible compiler
+        roots; an unproven reading answers False and releases no token.
+    roots_are_visible : Callable[[], bool]
+        Reports whether the probe established at least one visible root; an
+        unknown count answers False, so it never starts the stop's grace.
     cache_mode : str
         Only ``sccache`` owns the barrier and the managed server.
     metrics : MetricsPort
         Failure-isolated port for recovery transitions.
     hold_cache : Callable[[float], None]
-        Denies cache composition for that many seconds, and nothing else. The
-        transaction has to close the window in which a token can arrive while
-        the server is between stop and restart, and only the admission state
-        knows when a token arrives; this port is how the machine asks for that
-        window to be closed. It carries no proof and releases nothing.
+        Denies cache composition for that many seconds, and nothing else, to
+        close the window in which a token can arrive between stop and restart.
+        It carries no proof and releases nothing.
     release_cache : Callable[[], None]
         Ends the hold once the restart has been accepted, re-deciding
-        composition on a fresh probe rather than the pre-stop reading: the
-        start is a queued job, so acceptance is not evidence the server is
-        back. A refused restart keeps the hold, because composing a group
-        with a server that did not come back leaves it unaccounted.
+        composition on a fresh probe. A refused restart keeps the hold, because
+        a group composed with a server that did not come back is unaccounted.
     """
 
     policy: str
@@ -93,6 +91,9 @@ class CacheRecovery:
     counts: cabc.Callable[[], Counts] = dc.field(kw_only=True)
     fault_kind: cabc.Callable[[], str | None] = dc.field(kw_only=True)
     zero_visible_roots: cabc.Callable[[], bool] = dc.field(
+        default=lambda: False, kw_only=True
+    )
+    roots_are_visible: cabc.Callable[[], bool] = dc.field(
         default=lambda: False, kw_only=True
     )
     cache_mode: str = dc.field(default="sccache", kw_only=True)
@@ -115,6 +116,9 @@ class CacheRecovery:
     _drain_age: recovery_starvation.RetainedDrainAge = dc.field(
         default_factory=recovery_starvation.RetainedDrainAge, init=False
     )
+    _roots_grace: recovery_roots.VisibleRootsGrace = dc.field(
+        default_factory=recovery_roots.VisibleRootsGrace, init=False
+    )
     # Derived from ``marker`` rather than passed, so every caller supplies the
     # one fact the managed unit's own condition also reads: the path.
     barrier: RecoveryBarrier = dc.field(init=False)
@@ -135,8 +139,9 @@ class CacheRecovery:
         -------
         dict[str, object]
             The phase, the consecutive failures of its last action, the last
-            fault text, the seconds until the next attempt, and the seconds
-            before the automatic trigger may open another transaction.
+            fault text, the seconds until the next attempt, the seconds before
+            the trigger may open another transaction, and the seconds visible
+            roots have delayed an automatic stop.
         """
         return {
             "phase": self._phase,
@@ -144,6 +149,7 @@ class CacheRecovery:
             "last_fault": self._last_fault,
             "retry_in": round(max(0.0, self._next_action - now), 3),
             "cooling_for": round(max(0.0, self._cooling - now), 3),
+            "roots_waited": round(self._roots_grace.elapsed(now), 3),
         }
 
     def request(self, trigger: str, now: float) -> dict[str, object]:
@@ -166,9 +172,8 @@ class CacheRecovery:
             return self.describe(now) | {"blocked": ""}
         reason = recovery_starvation.refusal(self.fault_kind())
         if not reason:
-            # The hold is taken here as well as on the first tick, because a
-            # token can arrive between this request and that tick, and a group
-            # composed in that gap would be running when the stop is queued.
+            # Held now as well as on the first tick: a group composed between
+            # the two would be running when the stop is queued.
             self.hold_cache(RECOVERY_MAX_RETRY_SECONDS)
             self._begin(trigger, now)
         return self.describe(now) | {"blocked": reason}
@@ -184,11 +189,8 @@ class CacheRecovery:
         if self._phase == "idle":
             self._starved(now)
             return
-        # Renewed on every tick, including the backoff ticks that take no step,
-        # so a retry sequence that has not yet issued its restart cannot let
-        # the window reopen underneath a request the supervisor is still
-        # deciding to admit. The bound is the same one that bounds the retry
-        # delay, so the denial outlasts any single bounded attempt.
+        # Renewed on every tick, backoff ticks included, so the window cannot
+        # reopen mid-retry; the bound matches the retry delay's.
         self.hold_cache(RECOVERY_MAX_RETRY_SECONDS)
         if now >= self._next_action:
             self._step(now)
@@ -223,7 +225,7 @@ class CacheRecovery:
         )
 
     def _starved(self, now: float) -> None:
-        """Open the automatic transaction only for starvation by live cache work."""
+        """Open the automatic transaction only for live-cache starvation."""
         counts = self.counts()
         reading = recovery_starvation.StarvationReading(
             cache_mode=self.cache_mode,
@@ -246,6 +248,7 @@ class CacheRecovery:
     def _begin(self, trigger: str, now: float, reason: str = "") -> None:
         """Open one transaction and announce it once, with the reason if known."""
         self._trigger = trigger
+        self._roots_grace.reset()
         self._advance("quiescing", now)
         with contextlib.suppress(OSError):
             why = f" ({reason})" if reason else ""
@@ -277,20 +280,19 @@ class CacheRecovery:
 
     def _try_stop(self, now: float) -> None:
         """Queue the stop, retrying without bound: abandoning strands the barrier."""
-        # Admission keeps granting tokens while the transaction runs, and a
-        # transaction may open with cached groups still running, so this is the
-        # check that keeps the stop from killing a cached compile. Groups the
-        # hold composed without the cache do not count.
+        # Spares cached compiles; groups composed without the cache don't count.
         if reason := recovery_starvation.blocked(self.counts(), self.fault_kind()):
+            self._roots_grace.reset()
             self._fail(now, reason)
             return
-        # The zero-root proof can lapse between the trigger and this stop — a
-        # root count is a diagnostic sample, not a held state. It re-arms the
-        # transaction instead of authorizing the stop, so an automatic stop is
-        # never issued on evidence that has gone stale. A manual request skips
-        # this: its evidence is the operator's own, and stalling would withhold
-        # the only remediation for a detached-work fault.
-        if self._trigger == "starved" and not self.zero_visible_roots():
+        # A manual stop is exempt: its evidence is the operator's own.
+        evidence = recovery_roots.RootsEvidence(
+            self._trigger == "starved",
+            self.zero_visible_roots(),
+            self.roots_are_visible(),
+        )
+        verdict = recovery_roots.stop_verdict(self._roots_grace, evidence, now)
+        if verdict == "waiting":
             self._fail(now, "the visible compiler roots proof lapsed before stopping")
             return
         try:
@@ -298,6 +300,9 @@ class CacheRecovery:
         except SystemdError as error:
             self._fail(now, str(error))
             return
+        if verdict == "deadline":
+            waited = self._roots_grace.elapsed(now)
+            report_deadline_stop(waited, self._phase, self.metrics)
         self._advance("accounting", now)
 
     def _account(self, now: float) -> None:
@@ -322,18 +327,13 @@ class CacheRecovery:
         failed step like any other: it is retried with backoff, and the
         operator is told to restore the runtime directory the barrier lives in.
         """
-        # Released once the start has been accepted, not when it is decided: a
-        # refused start leaves the server stopped, and a compiler composed then
-        # would start an unaccountable server of its own. Keeping the denial is
-        # the safe direction, and its deadline lapses within the retry bound.
+        # Released only once the start is accepted: a refused start leaves the
+        # server stopped, and a compiler composed then would start an
+        # unaccountable server of its own.
         try:
             self.barrier.clear()
             self.cache.start()
         except (OSError, SystemdError) as error:
-            # The phase and the counter are what make the last fault readable
-            # as "restart, not accounting": the operator sees which step gave
-            # up, and a completion that follows a refused start is its own
-            # terminal count rather than a silent absence of one.
             self._fail(now, restart_fault(error, self.barrier))
             if self._attempts >= RECOVERY_FAILURE_LIMIT:
                 self.metrics.emit(
@@ -342,9 +342,7 @@ class CacheRecovery:
                 self._finish(now)
             return
         self.release_cache()
-        # A fault from an earlier attempt of this same transaction is retired
-        # here, so an idle transaction's last fault can only mean the final
-        # transaction ended faulted — which is what the operator command reads.
+        # Retire earlier attempts' faults: an idle fault means the end failed.
         self._last_fault = None
         self._finish(now)
 
@@ -371,6 +369,7 @@ class CacheRecovery:
         self._phase = "idle"
         self._attempts = 0
         self._next_action = 0.0
+        self._roots_grace.reset()
         faulted = self._last_fault is not None
         self._cooling = now + recovery_starvation.cooldown_after(faulted=faulted)
         self.metrics.emit(
@@ -389,9 +388,8 @@ class CacheRecovery:
         self._next_action = now + min(
             RECOVERY_RETRY_SECONDS * self._attempts, RECOVERY_MAX_RETRY_SECONDS
         )
-        # One emission per failure rather than per distinct message: a retry
-        # that repeats its reason is the case an operator most needs counted,
-        # and the distinct-text rule still governs the journal line alone.
+        # Counted per failure, not per distinct message; only the journal line
+        # is deduplicated.
         self.metrics.emit("cache_recovery", phase=self._phase, recovery_attempts=1)
         if changed:
             with contextlib.suppress(OSError):

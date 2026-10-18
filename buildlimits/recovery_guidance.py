@@ -57,3 +57,26 @@ def report_exhaustion(phase: str, metrics: MetricsPort) -> None:
     with contextlib.suppress(OSError):
         log(f"cache recovery needs operator action: {GUIDANCE[phase]}")
     metrics.emit("cache_recovery", recovery_exhaustions=1, phase=phase)
+
+
+def report_deadline_stop(waited: float, phase: str, metrics: MetricsPort) -> None:
+    """Journal and count a stop taken on the roots deadline, not the proof.
+
+    The policy that decides the stop lives in :mod:`buildlimits.recovery_roots`
+    and knows nothing of the journal; this is the boundary that words it.
+
+    Parameters
+    ----------
+    waited : float
+        Seconds compiler roots stayed visible with no cached group moving.
+    phase : str
+        The transaction phase the count is reported under.
+    metrics : MetricsPort
+        Port for the bounded ``recovery_roots_deadline_stops`` counter.
+    """
+    with contextlib.suppress(OSError):
+        log(
+            "cache recovery: stopping the managed cache with compiler roots "
+            f"still visible after {waited:.0f}s with no cached group moving"
+        )
+    metrics.emit("cache_recovery", phase=phase, recovery_roots_deadline_stops=1)

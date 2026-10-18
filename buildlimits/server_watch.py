@@ -275,6 +275,20 @@ class ServerWatch:
         """
         return self.drain_fault_kind == "live_work" and self._fault_roots == 0
 
+    @property
+    def roots_are_visible(self) -> bool:
+        """Whether the current live-work fault established a visible root.
+
+        Returns
+        -------
+        bool
+            True only for a live-work fault whose root count was established
+            as positive; an unknown count answers False, as it does for the
+            zero-root proof, so neither proof is ever guessed.
+        """
+        roots = self._fault_roots
+        return self.drain_fault_kind == "live_work" and roots is not None and roots > 0
+
     def _clear_drain_fault(self) -> None:
         """End the query fault only after a successful check or no waiting work."""
         self.drain_fault = None

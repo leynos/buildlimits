@@ -14,13 +14,8 @@ constant is a disagreement rather than a tidy update.
 
 import typing as typ
 
-from cache_recovery_harness import (
-    harness_for,
-    hold_drain_beside_running_group,
-    queue_request,
-    scripted_machine,
-    tick_phase,
-)
+from cache_recovery_harness import scripted_machine, tick_phase
+from cache_recovery_scenarios import busy_supervisor, retained_counts
 
 from buildlimits.admission_state import Counts
 from buildlimits.recovery_starvation import StarvationReading, starvation
@@ -35,17 +30,6 @@ if typ.TYPE_CHECKING:
 
 
 STALE_LIMIT_SECONDS = 300.0
-
-
-def _busy() -> Counts:
-    """Name a busy host: one retained token and three cached compiles running.
-
-    Returns
-    -------
-    Counts
-        The snapshot in which the prompt proof never holds.
-    """
-    return Counts(9, 4, 3, 0, 1, capacity=4, cached_moving=3)
 
 
 def _reading(*, roots: int, cached_moving: int, drain_age: float) -> StarvationReading:
@@ -97,7 +81,7 @@ def test_each_proof_decides_the_trigger_on_its_own() -> None:
 
 def test_a_stale_drain_opens_recovery_despite_cached_work(tmp_path: Path) -> None:
     """A drain retained for 300 seconds opens a transaction on a busy host."""
-    cache = scripted_machine(tmp_path, [_busy()], roots=2)
+    cache = scripted_machine(tmp_path, [retained_counts(cached_moving=3)], roots=2)
     assert tick_phase(cache, 0.0) == "idle", "a fresh drain on a busy host waits"
     assert tick_phase(cache, STALE_LIMIT_SECONDS - 1.0) == "idle", (
         "a drain one second short of the limit still waits"
@@ -111,7 +95,7 @@ def test_the_stale_transaction_stops_only_once_cached_work_ends(
     tmp_path: Path,
 ) -> None:
     """Opening on age never stops the cache under a cached compile."""
-    cache = scripted_machine(tmp_path, [_busy()], roots=2)
+    cache = scripted_machine(tmp_path, [retained_counts(cached_moving=3)], roots=2)
     tick_phase(cache, 0.0)
     tick_phase(cache, STALE_LIMIT_SECONDS)
     for second in range(1, 4):
@@ -129,11 +113,11 @@ def test_the_stale_transaction_stops_only_once_cached_work_ends(
 
 def test_a_drain_that_clears_starts_its_age_again(tmp_path: Path) -> None:
     """The age measures one unbroken retention, not the total over many."""
-    cache = scripted_machine(tmp_path, [_busy()], roots=2)
+    cache = scripted_machine(tmp_path, [retained_counts(cached_moving=3)], roots=2)
     tick_phase(cache, 0.0)
     cache.snapshot[0] = Counts(9, 3, 3, 0, 0, capacity=4, cached_moving=3)
     tick_phase(cache, 200.0)
-    cache.snapshot[0] = _busy()
+    cache.snapshot[0] = retained_counts(cached_moving=3)
     tick_phase(cache, 250.0)
     assert tick_phase(cache, 250.0 + STALE_LIMIT_SECONDS - 1.0) == "idle", (
         "the earlier retention does not count towards the new one"
@@ -153,7 +137,7 @@ def test_a_drain_cleared_during_accounting_starts_its_age_again(
     appears before the next idle tick inherits the previous retention's start
     and opens another recovery as soon as the cooldown allows.
     """
-    cache = scripted_machine(tmp_path, [_busy()], roots=2)
+    cache = scripted_machine(tmp_path, [retained_counts(cached_moving=3)], roots=2)
     tick_phase(cache, 0.0)
     assert tick_phase(cache, STALE_LIMIT_SECONDS) == "quiescing", (
         "the stale drain opens the transaction"
@@ -176,7 +160,7 @@ def test_a_drain_cleared_during_accounting_starts_its_age_again(
     # hide the missing reset this test exists to catch.
     assert phase == "idle", "the recovery transaction ends"
 
-    cache.snapshot[0] = _busy()
+    cache.snapshot[0] = retained_counts(cached_moving=3)
     cache.roots[0] = 2
     later = now + 1_000.0
     assert tick_phase(cache, later) == "idle", (
@@ -204,13 +188,17 @@ def test_only_an_age_opened_transaction_counts_a_stale_opening(
     tmp_path: Path, metrics: Metrics, metric_sink: RecordingSink
 ) -> None:
     """The stale proof is told apart from the prompt proof in telemetry."""
-    prompt = scripted_machine(_sub(tmp_path, "prompt"), [_busy()], roots=0)
+    prompt = scripted_machine(
+        _sub(tmp_path, "prompt"), [retained_counts(cached_moving=3)], roots=0
+    )
     prompt.machine.metrics = metrics
     prompt.snapshot[0] = Counts(9, 3, 0, 0, 1, capacity=4, cached_moving=0)
     assert tick_phase(prompt, 0.0) == "quiescing", "the prompt proof opens at once"
     assert _stale_openings(metric_sink) == 0, "a prompt opening is not a stale one"
 
-    stale = scripted_machine(_sub(tmp_path, "stale"), [_busy()], roots=2)
+    stale = scripted_machine(
+        _sub(tmp_path, "stale"), [retained_counts(cached_moving=3)], roots=2
+    )
     stale.machine.metrics = metrics
     tick_phase(stale, 0.0)
     assert tick_phase(stale, STALE_LIMIT_SECONDS) == "quiescing", "age opens it"
@@ -221,7 +209,7 @@ def test_the_opening_is_journalled_with_the_retained_age(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The operator can read why the automatic trigger acted from the journal."""
-    cache = scripted_machine(tmp_path, [_busy()], roots=2)
+    cache = scripted_machine(tmp_path, [retained_counts(cached_moving=3)], roots=2)
     tick_phase(cache, 0.0)
     tick_phase(cache, STALE_LIMIT_SECONDS)
     assert "a cache drain has been retained for 300s" in capsys.readouterr().err, (
@@ -238,22 +226,14 @@ def test_the_supervisor_opens_the_automatic_transaction_on_a_stale_drain(
     so only the retained age can open the transaction. The supervisor's own
     polling order, admission counts and server watch supply every reading.
     """
-    harness = harness_for(tmp_path, monkeypatch, mode="starved")
-    supervisor = harness.supervisor
-    hold_drain_beside_running_group(supervisor)
-    queue_request(supervisor)
-    supervisor.server.drain_fault_kind = "live_work"
-    # The probe's root count has no public setter; a visible root is what
-    # defeats the prompt proof.
-    monkeypatch.setattr(supervisor.server, "_fault_roots", 2)
-
-    harness.tick()
-    assert harness.described()["phase"] == "idle", "a fresh drain waits"
-    harness.advance(STALE_LIMIT_SECONDS - 1.0)
-    harness.tick()
-    assert harness.described()["phase"] == "idle", "one second short still waits"
-    harness.advance(1.0)
-    harness.tick()
-    assert harness.described()["phase"] == "quiescing", (
-        "the supervisor opens the transaction once the drain is stale"
-    )
+    with busy_supervisor(tmp_path, monkeypatch) as harness:
+        harness.tick()
+        assert harness.described()["phase"] == "idle", "a fresh drain waits"
+        harness.advance(STALE_LIMIT_SECONDS - 1.0)
+        harness.tick()
+        assert harness.described()["phase"] == "idle", "one second short still waits"
+        harness.advance(1.0)
+        harness.tick()
+        assert harness.described()["phase"] == "quiescing", (
+            "the supervisor opens the transaction once the drain is stale"
+        )

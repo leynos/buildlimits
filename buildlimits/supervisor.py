@@ -109,6 +109,7 @@ class Supervisor:
             # Read live: recovery asks on every step, not once per fault.
             fault_kind=lambda: self.server.drain_fault_kind,
             zero_visible_roots=lambda: self.server.zero_visible_roots,
+            roots_are_visible=lambda: self.server.roots_are_visible,
             cache_mode=settings.cache_mode,
             metrics=self.metrics,
             hold_cache=self.server.hold_cache,

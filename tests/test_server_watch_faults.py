@@ -108,6 +108,23 @@ def test_only_a_proven_zero_root_count_answers_the_trigger() -> None:
         assert watch.zero_visible_roots is expected, f"{error!r} must answer {expected}"
 
 
+def test_only_an_established_positive_count_shows_visible_roots() -> None:
+    """Visible roots are true for an established positive count and nothing else.
+
+    An unknown count is neither the zero proof nor visible roots, so the
+    recovery deadline can never be started by a reading that saw nothing.
+    """
+    for error, expected in [
+        (_ZERO_ROOTS, False),
+        (_POSITIVE_ROOTS, True),
+        (_UNKNOWN_ROOTS, False),
+        (SccacheError("injected transport refusal"), False),
+    ]:
+        watch = _watch(FakeServer(load=error), _draining(b"a"))
+        watch.drained_tokens()
+        assert watch.roots_are_visible is expected, f"{error!r} must answer {expected}"
+
+
 def test_a_cleared_fault_clears_the_root_proof() -> None:
     """The proof cannot outlive the fault whose reading produced it."""
     server = FakeServer(load=_ZERO_ROOTS, stopped=True)

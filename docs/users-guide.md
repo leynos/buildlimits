@@ -300,8 +300,22 @@ on either of two kinds of evidence:
   cost the host a slot until every slot was retained.
 
 Either way the transaction holds new compiles off the cache while it runs, and
-it stops the cache only once no cached compile is running and the cache shows
-no visible compiler roots.
+it stops the cache only once no cached compile is running. An automatic stop
+also wants the cache to show no visible compiler roots, but it will not wait
+for them for ever. Once no cached compile is running, a root still visible in
+the cache serves no admitted request, because every request admitted since the
+barrier was written compiles without the cache. If such roots are seen without
+a break for 600 seconds, for example because a compile inside the cache has
+hung, the automatic stop proceeds anyway, writes a journal line beginning
+`cache recovery: stopping the managed cache with compiler roots` and adds one
+to the `recovery_roots_deadline_stops` count of the `cache_recovery` metrics
+event. The 600 seconds restart from nothing whenever a cached compile starts
+moving again or a probe cannot count the roots, and each transaction measures
+its own. A count the probe could not read is never treated as a visible root.
+While the roots delay the stop, `build-limits-status` shows
+`cache recovery: visible compiler roots have delayed the stop for ...`. A manual
+`build-limits-recover` never waits for roots, and a faulted user manager still
+refuses every stop.
 
 After each transaction the automatic trigger rests before it may act again: 60
 seconds after a clean recovery, and 900 seconds after one whose restart was
@@ -335,9 +349,11 @@ in `direct` cache mode manages no cache and answers with `no-cache-recovery`.
 seconds (300 by default). A failed step is retried after 30 seconds, then 60,
 and so on in 30-second steps up to 120 seconds apart; the eighth consecutive
 failure logs guidance for the phase. None of these numbers is a deadline for
-the accounting: a refused stop is retried for as long as the fault persists,
-and accounting waits for as long as the drain probe needs. Only the restart
-gives up: after eight failed attempts the transaction goes idle with the tokens
+the accounting (the roots grace above only decides when an automatic stop may
+be issued, and the verified stopped-and-empty service still releases every
+token): a refused stop is retried for as long as the fault persists, and
+accounting waits for as long as the drain probe needs. Only the restart gives
+up: after eight failed attempts the transaction goes idle with the tokens
 already released and the last fault reported.
 
 | Exit status | Meaning                                                                        |
