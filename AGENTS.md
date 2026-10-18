@@ -88,14 +88,14 @@
       hidden action directories. The base Pylint sweep covers
       `$(PYLINT_TARGETS)` using the interpreter selected for the baseline:
       uv-managed CPython 3.14.
-      The minimum Python baseline is 3.12. DF12 Python Lints is pinned to
+      The minimum Python baseline is 3.14. DF12 Python Lints is pinned to
       v0.4.0; it and Ambrleaks, Skylos, Vulture, and the duplication detector
       run as isolated tools on Python 3.14. Ambrleaks checks `tests/`, Skylos
       checks the repository, and Vulture checks test helpers. The strict
       Skylos and Vulture dead-code checks, shared Nose duplication gate, and
       action validation are also part of `make lint`.
     - `make typecheck` runs `ty check $(PYTHON_TARGETS)`.
-      `ty` 0.0.56 and Ruff 0.16.8 run in isolated Python 3.14 tools.
+      `ty` 0.0.74 and Ruff 0.16.8 run in isolated Python 3.14 tools.
       `make lint-actions` validates workflows and actions with actionlint,
       action-validator, yamllint 1.38.0, and shellcheck.
     - `make test` runs `pytest -v -n $(PYTEST_XDIST_WORKERS)` and honours

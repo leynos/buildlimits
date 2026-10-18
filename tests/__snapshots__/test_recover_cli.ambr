@@ -1,0 +1,63 @@
+# serializer version: 1
+# name: test_the_json_output_is_the_document_an_operator_scripts_against[blocked]
+  '''
+  {
+    "phase": "idle",
+    "blocked": "2 compiler group(s) are still running"
+  }
+  
+  '''
+# ---
+# name: test_the_json_output_is_the_document_an_operator_scripts_against[retained]
+  '''
+  {
+    "phase": "idle",
+    "blocked": "",
+    "last_fault": null,
+    "retained": true
+  }
+  
+  '''
+# ---
+# name: test_the_json_output_is_the_document_an_operator_scripts_against[working]
+  '''
+  {
+    "phase": "restarting",
+    "attempts": 2,
+    "retry_in": 60.0,
+    "last_fault": "cannot start cache.service: Job failed",
+    "retained": false
+  }
+  
+  '''
+# ---
+# name: test_the_operator_text_reports_each_outcome[blocked]
+  '''
+  build-limits-recover: recovery cannot start: 2 compiler group(s) are still running
+  
+  '''
+# ---
+# name: test_the_operator_text_reports_each_outcome[faulted]
+  '''
+  cache recovery idle; last fault: cannot clear the recovery barrier
+  
+  '''
+# ---
+# name: test_the_operator_text_reports_each_outcome[idle]
+  '''
+  cache recovery idle
+  
+  '''
+# ---
+# name: test_the_operator_text_reports_each_outcome[retained]
+  '''
+  cache recovery idle; tokens are held until the cache is verified stopped and empty
+  
+  '''
+# ---
+# name: test_the_operator_text_reports_each_outcome[working]
+  '''
+  cache recovery restarting: attempts 2, next attempt in 60.0s; last fault: cannot start cache.service: Job failed
+  
+  '''
+# ---

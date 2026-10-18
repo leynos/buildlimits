@@ -1,0 +1,400 @@
+"""The admission state machine: queueing, token accounting and draining.
+
+This core performs no I/O: each event updates state and returns effects the caller
+must carry out, in order. The supervisor executes those effects against the
+token pool, systemd and client connections. Keeping the decisions here makes
+the RFC's invariants checkable without devices, sockets or processes:
+
+- at most one token is held per compiler group, and a waiting request holds
+  none;
+- a token returns only after its group's control group is empty, and exactly
+  once;
+- a group composed with sccache that ends abnormally keeps its token until the
+  managed server's live compilations fit within the server-drain tokens that
+  remain after its return;
+- an unhealthy supervisor admits nothing and drains everything.
+
+Tokens are opaque single bytes. A token read from the pool is written back
+unchanged, as the jobserver protocol requires.
+"""
+
+import collections
+import dataclasses as dc
+import typing as typ
+
+from buildlimits.admission_state import Counts, Group, GroupState
+from buildlimits.effects import (
+    Effect,
+    Exit,
+    GroupId,
+    Launch,
+    NotifyFinished,
+    NotifyQueued,
+    Refuse,
+    RequestId,
+    RequestToken,
+    ReturnToken,
+    Shutdown,
+    Terminate,
+)
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+__all__ = [
+    "Admission",
+    "Counts",
+    "Effect",
+    "Group",
+    "GroupState",
+    "Launch",
+    "NotifyFinished",
+    "NotifyQueued",
+    "Refuse",
+    "RequestToken",
+    "ReturnToken",
+    "Shutdown",
+    "Terminate",
+]
+
+
+@dc.dataclass(slots=True)
+class Admission:
+    """The supervisor's admission state.
+
+    Parameters
+    ----------
+    cached : bool
+        Whether new groups run through the managed sccache server. The
+        supervisor updates this as the server's health changes.
+    capacity : int
+        Configured pool capacity reported by the gauge seam.
+    cache_allowed : Callable[[], bool]
+        Whether composition with the server is permitted at all right now.
+        Defaults to always true, so an admission state that is not wired to a
+        server keeps the plain reading of ``cached``; the supervisor installs
+        its watch's predicate so that a recovery which has taken the cache out
+        of service cannot be raced by a launch composed from a stale
+        ``cached`` value. It is consulted where the launch decision is made
+        rather than where the token is requested, because that is the last
+        point at which the answer is still current.
+
+    Examples
+    --------
+    >>> admission = Admission()
+    >>> admission.submit(1)
+    [NotifyQueued(request_id=1, position=0), RequestToken()]
+    >>> admission.token_arrived(b"+")
+    [Launch(request_id=1, group_id='g1', cached=False)]
+    >>> admission.leader_exited("g1", Exit(code=0))
+    [Terminate(group_id='g1')]
+    >>> admission.group_emptied("g1")[0]
+    ReturnToken(token=b'+')
+    """
+
+    cached: bool = False
+    capacity: int = 0
+    healthy: bool = True
+    queue: collections.deque[RequestId] = dc.field(default_factory=collections.deque)
+    cacheable: dict[RequestId, bool] = dc.field(default_factory=dict)
+    groups: dict[GroupId, Group] = dc.field(default_factory=dict)
+    token_requested: bool = False
+    # The default authorizes caching, so an admission state that is not wired
+    # to a server keeps the plain reading of ``cached``. Inline rather than a
+    # named constant, matching the sibling defaults in ``cache_recovery``: any
+    # name here would count against the module ceiling too. Kept out of the
+    # repr because the permission is a live reading, not admission state to
+    # print, and the stable repr is what lets a test compare two states
+    # directly.
+    cache_allowed: cabc.Callable[[], bool] = dc.field(default=lambda: True, repr=False)
+    _next_group: int = 1
+
+    def submit(self, request_id: RequestId, *, cacheable: bool = True) -> list[Effect]:
+        """Queue a new request.
+
+        Parameters
+        ----------
+        request_id : RequestId
+            A request identifier unique for the supervisor's lifetime.
+        cacheable : bool
+            Whether the request may run through the managed sccache server.
+            Rustdoc invocations are not cacheable.
+
+        Returns
+        -------
+        list[Effect]
+            A queue notification and, when needed, a token request; or a
+            refusal while unhealthy.
+        """
+        if not self.healthy:
+            return [Refuse(request_id, "unhealthy")]
+        self.queue.append(request_id)
+        self.cacheable[request_id] = cacheable
+        effects: list[Effect] = [NotifyQueued(request_id, len(self.queue) - 1)]
+        return effects + self._demand()
+
+    def token_arrived(self, token: bytes) -> list[Effect]:
+        """Admit the oldest waiting request with a token read from the pool.
+
+        Parameters
+        ----------
+        token : bytes
+            The single-byte token the pool supplied.
+
+        Returns
+        -------
+        list[Effect]
+            A launch and any further token request, or the token's return
+            when nothing is waiting or the supervisor is unhealthy.
+        """
+        self.token_requested = False
+        if not self.healthy or not self.queue:
+            return [ReturnToken(token)]
+        request_id = self.queue.popleft()
+        cached = self.cacheable.pop(request_id) and self.cached
+        # Read as late as the decision itself: a token that waited through a
+        # recovery must not be composed with a server that the transaction has
+        # since taken out of service. Two queries rather than one, because they
+        # answer different questions — whether the server is reachable, and
+        # whether composition is permitted — and only the second is this
+        # machine's to withhold.
+        cached = cached and self.cache_allowed()
+        group_id = f"g{self._next_group}"
+        self._next_group += 1
+        self.groups[group_id] = Group(group_id, request_id, token, cached=cached)
+        effects: list[Effect] = [Launch(request_id, group_id, cached=cached)]
+        effects.extend(self._positions())
+        return effects + self._demand()
+
+    def launch_failed(self, group_id: GroupId) -> list[Effect]:
+        """Account for a group whose compiler never started.
+
+        The caller has already killed the held child and confirmed that no
+        process of the group runs.
+
+        Parameters
+        ----------
+        group_id : GroupId
+            The group whose launch failed.
+
+        Returns
+        -------
+        list[Effect]
+            The token's return and the request's refusal.
+        """
+        group = self.groups.pop(group_id)
+        return [
+            ReturnToken(group.token),
+            Refuse(group.request_id, "launch-failed"),
+            *self._maybe_shutdown(),
+        ]
+
+    def cancel(self, request_id: RequestId) -> list[Effect]:
+        """Cancel a request whose requester disconnected.
+
+        Parameters
+        ----------
+        request_id : RequestId
+            The cancelled request.
+
+        Returns
+        -------
+        list[Effect]
+            Nothing for a waiting request, which is simply removed; a
+            termination for a running group, which keeps its token until
+            it drains.
+        """
+        if request_id in self.queue:
+            self.queue.remove(request_id)
+            del self.cacheable[request_id]
+            return self._positions()
+        for group in self.groups.values():
+            if group.request_id == request_id and not group.cancelled:
+                group.cancelled = True
+                if group.state is GroupState.RUNNING:
+                    return [Terminate(group.group_id)]
+        return []
+
+    def leader_exited(self, group_id: GroupId, exit_: Exit) -> list[Effect]:
+        """Record that a group's leading process ended.
+
+        Parameters
+        ----------
+        group_id : GroupId
+            The group whose leader ended.
+        exit_ : Exit
+            How it ended.
+
+        Returns
+        -------
+        list[Effect]
+            A termination of any leftover processes in the group.
+        """
+        group = self.groups[group_id]
+        group.exit = exit_
+        group.state = GroupState.DRAINING
+        # A compiler's children finish before it does; anything left is an
+        # orphan, such as an sccache server started inside the scope.
+        return [Terminate(group_id)]
+
+    def group_emptied(self, group_id: GroupId) -> list[Effect]:
+        """Account for a group whose control group is now empty.
+
+        Parameters
+        ----------
+        group_id : GroupId
+            The group that has no processes left.
+
+        Returns
+        -------
+        list[Effect]
+            The requester's result, and the token's return unless the group
+            may have left a compilation running in the sccache server.
+        """
+        group = self.groups[group_id]
+        # A group can empty before its leader's exit is reaped; report that
+        # as an unknown ending rather than inventing a status.
+        exit_ = group.exit if group.exit is not None else Exit()
+        effects: list[Effect] = [NotifyFinished(group.request_id, exit_)]
+        if group.cached and group.may_orphan_server_work:
+            group.state = GroupState.SERVER_DRAIN
+            return effects
+        del self.groups[group_id]
+        return [ReturnToken(group.token), *effects, *self._maybe_shutdown()]
+
+    def server_activity(self, active_compiles: int) -> list[Effect]:
+        """Release server-drain tokens that the server's load no longer needs.
+
+        Oldest first, a token returns only if the server's live compilations
+        still fit within the server-drain tokens that remain. Running and
+        draining cached tokens never count: ``group_emptied`` returns them
+        without another poll.
+
+        Parameters
+        ----------
+        active_compiles : int
+            Compilations currently running in the managed sccache server.
+
+        Returns
+        -------
+        list[Effect]
+            The returns of every token that can now be released.
+        """
+        draining = [
+            group
+            for group in self.groups.values()
+            if group.state is GroupState.SERVER_DRAIN
+        ]
+        releasable = max(0, len(draining) - active_compiles)
+        effects: list[Effect] = []
+        for group in draining[:releasable]:
+            del self.groups[group.group_id]
+            effects.append(ReturnToken(group.token))
+        return effects + self._maybe_shutdown()
+
+    def health_failed(self) -> list[Effect]:
+        """Stop admitting, refuse the queue, and drain every group.
+
+        Returns
+        -------
+        list[Effect]
+            Refusals for waiting requests, terminations for running groups,
+            and a shutdown when nothing remains.
+        """
+        self.healthy = False
+        effects: list[Effect] = [Refuse(rid, "unhealthy") for rid in self.queue]
+        self.queue.clear()
+        self.cacheable.clear()
+        for group in self.groups.values():
+            if group.state is GroupState.RUNNING:
+                group.cancelled = True
+                effects.append(Terminate(group.group_id))
+        return effects + self._maybe_shutdown()
+
+    def counts(self) -> Counts:
+        """Read gauges without exposing request or group identifiers.
+
+        Returns
+        -------
+        Counts
+            A frozen snapshot derived from the queue and group states.
+        """
+        states = collections.Counter(group.state for group in self.groups.values())
+        cached = collections.Counter(
+            group.state for group in self.groups.values() if group.cached
+        )
+        return Counts(
+            len(self.queue),
+            self.tokens_held(),
+            states[GroupState.RUNNING],
+            states[GroupState.DRAINING],
+            states[GroupState.SERVER_DRAIN],
+            self.capacity,
+            cached[GroupState.RUNNING] + cached[GroupState.DRAINING],
+        )
+
+    def cached_tokens_held(self) -> int:
+        """Count tokens held by groups composed with sccache.
+
+        Returns
+        -------
+        int
+            The number of cached groups holding a token.
+        """
+        return sum(1 for group in self.groups.values() if group.cached)
+
+    def tokens_held(self) -> int:
+        """Count tokens held by all groups.
+
+        Returns
+        -------
+        int
+            The number of groups holding a token.
+        """
+        return len(self.groups)
+
+    def _wants_token(self) -> bool:
+        """Report whether a request waits with no token already on its way.
+
+        Returns
+        -------
+        bool
+            Whether the pool should be asked for a token.
+        """
+        waiting = self.healthy and bool(self.queue)
+        return waiting and not self.token_requested
+
+    def _demand(self) -> list[Effect]:
+        """Request a token when requests wait and none is on its way.
+
+        Returns
+        -------
+        list[Effect]
+            A token request, or nothing.
+        """
+        if self._wants_token():
+            self.token_requested = True
+            return [RequestToken()]
+        return []
+
+    def _positions(self) -> list[Effect]:
+        """Tell every waiting request its new position.
+
+        Returns
+        -------
+        list[Effect]
+            One queue notification per waiting request.
+        """
+        return [NotifyQueued(rid, index) for index, rid in enumerate(self.queue)]
+
+    def _maybe_shutdown(self) -> list[Effect]:
+        """Signal shutdown once an unhealthy supervisor has drained.
+
+        Returns
+        -------
+        list[Effect]
+            A shutdown, or nothing.
+        """
+        if not self.healthy and not self.groups:
+            return [Shutdown()]
+        return []

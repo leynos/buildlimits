@@ -1,0 +1,100 @@
+# serializer version: 1
+# name: test_pressure_report
+  dict({
+    'accept': dict({
+      'completed_pause_seconds': dict({
+        'count': 1,
+        'maximum': 12.0,
+        'p50': 12.0,
+        'p90': 12.0,
+        'p99': 12.0,
+      }),
+      'errnos': dict({
+        'emfile': 1,
+        'enfile': 1,
+        'none': 2,
+      }),
+      'latest_observed_paused': False,
+      'resume_failed_elapsed_seconds_maximum': 8.0,
+      'states': dict({
+        'paused': 1,
+        'resume_failed': 2,
+        'resumed': 1,
+      }),
+      'window_observations': 4,
+    }),
+    'adapters': dict({
+      'busy_retries': dict({
+        'count': 2,
+        'maximum': 2.0,
+        'p50': 0.0,
+        'p90': 2.0,
+        'p99': 2.0,
+      }),
+      'self_reported': True,
+    }),
+    'descriptors': dict({
+      'latest_observed': dict({
+        'budget': 0,
+        'budget_known': False,
+        'retained': 0,
+      }),
+      'maximum_observed_lifetime_high_water': 25,
+    }),
+    'drain': dict({
+      'operations': dict({
+        'accounted_cache': dict({
+          'maximum_observed_lifetime_counters': dict({
+            'attempts': 4,
+            'failures': 0,
+            'recoveries': 0,
+          }),
+          'reasons': dict({
+            'live_work': 1,
+          }),
+          'states': dict({
+            'pending': 1,
+          }),
+          'window_observations': 1,
+        }),
+        'empty_check': dict({
+          'maximum_observed_lifetime_counters': dict({
+            'attempts': 12,
+            'failures': 3,
+            'recoveries': 2,
+          }),
+          'reasons': dict({
+            'live_work': 2,
+            'none': 2,
+            'os_error': 1,
+          }),
+          'states': dict({
+            'completed': 1,
+            'failed': 1,
+            'pending': 2,
+            'recovered': 1,
+          }),
+          'window_observations': 5,
+        }),
+        'terminate': dict({
+          'maximum_observed_lifetime_counters': dict({
+            'attempts': 5,
+            'failures': 1,
+            'recoveries': 0,
+          }),
+          'reasons': dict({
+            'control_error': 1,
+          }),
+          'states': dict({
+            'failed': 1,
+          }),
+          'window_observations': 1,
+        }),
+      }),
+      'window_observations': 7,
+    }),
+    'queue': dict({
+      'maximum_observed_lifetime_high_water': 12,
+    }),
+  })
+# ---

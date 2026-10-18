@@ -25,7 +25,7 @@ PYTEST_XDIST_WORKERS ?= auto
 PYTHON_TARGETS_FROM_GIT := $(if $(filter undefined,$(origin PYTHON_TARGETS)),1,0)
 PYTHON_TARGETS ?=
 RUFF_VERSION ?= 0.16.8
-TY_VERSION ?= 0.0.56
+TY_VERSION ?= 0.0.74
 LINT_PYTHON ?= 3.14
 RUFF = $(UV_ENV) $(UV) tool run --python $(LINT_PYTHON) --from 'ruff==$(RUFF_VERSION)' ruff
 TY = $(UV_ENV) $(UV) tool run --python $(LINT_PYTHON) --from 'ty==$(TY_VERSION)' ty
@@ -46,7 +46,7 @@ PYLINT = $(UV_ENV) $(UV) tool run --managed-python --python $(PYLINT_PYTHON) --f
 
 .PHONY: help all audit clean build build-release lint lint-python fmt check-fmt \
         check-python-sources \
-        markdownlint nixie spelling test typecheck dead-code duplication install-nose lint-actions validate $(TOOLS) $(VENV_TOOLS)
+        markdownlint nixie spelling test test-systemd-user typecheck dead-code duplication install-nose lint-actions validate $(TOOLS) $(VENV_TOOLS)
 
 .DEFAULT_GOAL := all
 # Shared build caches require sequential gates even when make receives -j.
@@ -145,7 +145,7 @@ lint-python: check-python-sources build ## Run Python linters
 
 typecheck: check-python-sources build ## Run typechecking
 	$(TY) --version
-	$(TY) check $(PYTHON_TARGETS)
+	$(TY) check --python .venv $(PYTHON_TARGETS)
 
 audit: build ## Audit dependencies for known vulnerabilities
 	$(UV_ENV) $(UV) run pip-audit
@@ -164,6 +164,11 @@ nixie: ## Validate Mermaid diagrams
 
 test: build $(VENV_TOOLS) ## Run tests
 	$(UV_ENV) $(ACT_TEST_ENV) $(UV) run pytest -v -n $(PYTEST_XDIST_WORKERS)
+
+# Host acceptance drives the developer's own systemd user manager with
+# uniquely named units, so it runs only when asked for and never under xdist.
+test-systemd-user: build $(VENV_TOOLS) ## Run host acceptance against the systemd user manager
+	BUILD_LIMITS_HOST_ACCEPTANCE=1 $(UV_ENV) $(UV) run pytest -v -m systemd_user tests
 
 
 validate: ## Validate the Makefile

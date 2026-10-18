@@ -1,135 +1,413 @@
-# Developer guide
+# buildlimits developer's guide
 
-This guide explains the contributor workflow for the generated project.
+This guide is for maintainers and contributors. It is the operating manual for
+working on buildlimits as it exists: the local quality gates, the supervisor's
+internal interfaces and their invariants, the test suite and its helpers, and
+the static-analysis exceptions the repository carries. Operator behaviour is in
+the [user's guide](users-guide.md).
 
-## Local workflow
+## 1. Normative references
 
-The public entrypoint for formatting, linting, typechecking, tests, and
-spelling is `make all`. Narrower Make targets may be invoked when investigating
-a specific failure, and changes should be reconciled with the aggregate gate
-before being considered complete.
+These documents take precedence over this guide when they disagree with it:
 
-`make lint` checks tracked and untracked Python sources discovered by Git,
-including sources under hidden action directories. It runs Ruff 0.16.8,
-Interrogate for 100% docstring coverage, Pylint, the DF12 Python lint plugin,
-Ambrleaks on `tests/`, the strict Skylos gate and Vulture on test helpers, the
-shared Nose duplication gate, and workflow/action validation. Pylint's base
-sweep runs on PyPy 3.12 when the selected Python baseline is exactly 3.12; for
-a newer baseline it runs on CPython at that baseline. The baseline is the
-selected `python_version`, with 3.12 as the minimum supported version. The DF12
-Python Lints v0.4.0, Ambrleaks, Skylos, Vulture, and duplication tools run as
-isolated tools on Python 3.14.
+- The design, the cache composition rules and the metrics schema are recorded
+  upstream in dev-env-rocky: the [concurrent build limits RFC][rfc],
+  [ADR 011][adr-011] on sccache under compile admission, [ADR 012][adr-012] on
+  the provisioning collection and [ADR 013][adr-013] on compile-admission
+  metrics.
+- The [repository layout](repository-layout.md) names every path and its
+  responsibility.
+- The [documentation style guide](documentation-style-guide.md) governs all
+  prose, and the [scripting standards](scripting-standards.md) govern helper
+  scripts.
 
-With default Git source discovery, `fmt`, `check-fmt`, `lint-python`, and
-`typecheck` stop with a diagnostic before running tools if Git or repository
-metadata is unavailable. GNU Make 4.2 or newer captures one Git result and
-checks its `.SHELLSTATUS` immediately; the tools share that captured source
-list. `help` and `build` do not depend on source discovery; initialize the
-generated project with `git init` before its first quality-gate run.
+The provisioning code — the `devhost.buildlimits` Ansible collection and its
+Molecule scenarios — stays in dev-env-rocky. This repository owns the Python
+package, its tests and the console scripts the collection installs.
 
-Rust-enabled projects declare only the PyO3 module initializer as a runtime
-entrypoint. The native import tests exercise that boundary, and unused sibling
-functions remain blocking.
+## 2. Local workflow and quality gates
 
-`make typecheck` runs `ty`, pinned at `0.0.56`: unpinned installations broke
-repositories when ty 0.0.56 landed. Bump the pin deliberately — update the
-version and fix any new diagnostics in the same pull request.
+`make all` is the aggregate gate. It runs, in order and never in parallel,
+`build`, `check-fmt`, `lint`, `typecheck`, `test` and `spelling`. Run
+`make markdownlint` and `make nixie` after documentation changes, and
+`make audit` for the dependency vulnerability check. Narrower targets are for
+investigating a specific failure; reconcile with `make all` before committing.
 
-Ruff and `ty` run from isolated tools on Python 3.14; their versions are pinned
-to Ruff 0.16.8 and `ty` 0.0.56. `make check-fmt` and `make fmt` also check or
-apply Markdown table formatting with mdtablefix 0.6.1.
+| Target                   | What it runs                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| `make build`             | `uv sync --group dev` into `.venv`                                                                |
+| `make check-fmt`         | Ruff 0.16.8 format check and mdtablefix 0.6.1 table check                                         |
+| `make fmt`               | Applies Ruff formatting, import sorting and Markdown table fixes                                  |
+| `make lint`              | Ruff, Interrogate (100%), Pylint and DF12 lints, Ambrleaks, Skylos, Vulture, duplication, actions |
+| `make typecheck`         | `ty` 0.0.74 against the project interpreter (`--python .venv`)                                    |
+| `make test`              | pytest under xdist over `tests/` and the package's doctests                                       |
+| `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
+| `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
 
-`make lint-actions` validates YAML under `.github/` with yamllint 1.38.0,
-workflow syntax with actionlint, composite actions with action-validator, and
-shell scripts with shellcheck. `make markdownlint` runs markdownlint-cli2 and
-the spelling gate. Spelling uses `typos-config-builder` with scope `all`.
+_Table 1: Make targets and the gates behind them._
 
-Run `make audit` as the dependency vulnerability gate. It runs `pip-audit` for
-Python dependencies, and Rust-enabled projects also run `cargo audit` from the
-`rust_extension` crate directory.
+Python sources are discovered through Git, tracked and untracked, so `git init`
+must have run before the first gate. The tool pins live in the `Makefile`; bump
+one deliberately, updating the pin and fixing any new diagnostics in the same
+change. `ty` runs as an isolated tool, so the `typecheck` target passes
+`--python .venv` to resolve imports from the project environment rather than
+from the tool's own.
 
-## Automation scripts
+### 2.1. The Python 3.14 baseline
 
-The [Scripting standards](scripting-standards.md) document provides guidance
-for adding or updating helper scripts. New and updated scripts are expected to
-use `Cyclopts` for command-line interfaces, `cuprum` for typed and
-catalogue-bound external command execution, `pathlib` for filesystem paths, and
-`cmd-mox` for tests that mock external executables.
+The package requires Python 3.14. Annotations are therefore evaluated lazily
+(PEP 649), and the DF12 lint `redundant-future-annotations` rejects
+`from __future__ import annotations`. Two consequences matter in this codebase:
 
-Script changes should update the scripting guide when they introduce a new
-convention, command catalogue, testing pattern, or operational expectation that
-future contributors need to follow.
+- `dataclasses.fields()` reports a field's type as the type object, not its
+  source text. `config._CONVERTERS` is keyed by type for that reason.
+- `inspect.signature` evaluates annotations eagerly, so a name imported only
+  under `typ.TYPE_CHECKING` raises `NameError` when something introspects a
+  signature. `mock.Mock(spec=SomeClass)` does exactly that; spec a mock by
+  attribute names (`spec=dir(SomeClass)`) instead.
 
-## GitHub Actions
+## 3. Architecture overview
 
-The generated repository includes GitHub Actions workflows and local composite
-actions under `.github/`.
+The supervisor is a functional core with an imperative shell. Decisions live in
+`admission`, which performs no input or output and returns a list of effects;
+the shell carries those effects out.
 
-- `.github/workflows/ci.yml` runs on pushes to `main` and on pull requests. It
-  sets up the selected `python_version` baseline (at least 3.12), installs
-  `uv`, validates the generated `Makefile` with `mbake`, installs CLI tools,
-  then runs `make build`, `make check-fmt`, `make lint`, `make typecheck`,
-  `make markdownlint`, and `make audit` except for Dependabot pull requests via
-  `if: github.actor != 'dependabot[bot]'`. The Markdown target includes
-  repository-wide spelling. CI provisions Go and Rust/Cargo toolchains for
-  installing CLI tools, then delegates coverage generation to the shared
-  coverage action. Rust lint and test tools are installed and
-  `rust_extension/Cargo.toml` is passed to coverage only when the Rust
-  extension is enabled.
-- `.github/workflows/audit.yml` runs `make audit` against the default branch
-  weekly as the compensating control for the Dependabot CI bypass.
-- `.github/workflows/act-validation.yml` runs rendered workflow validation in a
-  separate workflow. It installs `act`, checks Docker availability, and runs
-  `make test WITH_ACT=1` outside the coverage path.
-- `.github/workflows/release.yml` publishes wheels when a `v*.*.*` tag is
-  pushed. It builds a pure Python wheel, creates a GitHub release with
-  generated release notes, downloads wheel artefacts, and uploads them to the
-  tag release.
-- `.github/workflows/build-wheels.yml` is a reusable workflow for extension
-  builds. It accepts a Python version and builds wheels across Linux, Windows,
-  and macOS architectures via `.github/actions/build-wheels`.
-- `.github/workflows/get-codescene-sha.yml` is manually dispatched. It fetches
-  the CodeScene coverage CLI installer, computes its SHA-256 digest, and writes
-  the result to the `CODESCENE_CLI_SHA256` repository variable.
+For screen readers: the following sequence diagram shows one compile request,
+from Cargo's call to the adapter through admission, scope placement and the
+return of the token.
 
-- `.github/workflows/mutation-testing.yml` runs daily at 09:30 UTC and supports
-  manual dispatch. It delegates to reusable workflows from
-  `leynos/shared-actions`; stagger the generated cron schedule before adopting
-  it alongside other repositories.
+```mermaid
+sequenceDiagram
+    participant Cargo
+    participant Adapter as build-limits-rustc
+    participant Supervisor
+    participant Pool as /dev/guild
+    participant Scope as compiler scope
+    Cargo->>Adapter: rustc arguments
+    Adapter->>Supervisor: compile request and passed descriptors
+    Supervisor->>Pool: read one token
+    Supervisor->>Scope: fork held child, start transient scope
+    Supervisor->>Scope: release child once placed
+    Scope-->>Supervisor: scope empties
+    Supervisor->>Pool: return token
+    Supervisor-->>Adapter: finished with exit status
+    Adapter-->>Cargo: same exit status or signal
+```
 
-  The mutmut job is generated only when the minimum Python version is 3.13 or
-  newer because the shared workflow helpers require Python 3.13 or newer.
+_Figure 1: The life of one admitted compile request._
 
-- `.github/actions/build-wheels` wraps `cibuildwheel` with `uvx` and uploads
-  architecture-specific wheel artefacts.
-- `.github/actions/pure-python-wheel` builds a pure Python wheel with
-  `uv build --wheel` and uploads the resulting artefact.
-- `.github/dependabot.yml` enables dependency update pull requests for GitHub
-  Actions and Python packages. Rust-enabled projects also receive Cargo updates.
+Cargo runs `build-limits-rustc <compiler> <arguments...>` as `RUSTC_WRAPPER`, or
+`build-limits-rustdoc <arguments...>` as `RUSTDOC`. The adapter connects to
+`$XDG_RUNTIME_DIR/buildlimits/supervisor.sock`, sends a compile request
+carrying its inheritable descriptors, and relays the result. The supervisor
+queues the request, reads one token for it, forks a held launch child, moves
+that child into a new transient scope under `buildlimits-compilers.slice`, and
+releases it to execute the compiler. It returns the token once the scope has no
+processes left. An adapter that finds itself inside an admitted scope runs the
+compiler directly, so nested tools never ask for a second token.
 
-CI provisions Go 1.27 before installing Actionlint 1.7.12, whose minimum is Go
-1.25; module caching is disabled because the project has no Go module. It also
-provisions stable Rust/Cargo for the `mdtablefix` `cargo-binstall` installer in
-both pure-Python and Rust-enabled projects. These prerequisites do not change
-the selected `python_version` application baseline. In Rust-enabled projects,
-the Rust lint and test cache uses the `rust_extension -> target` workspace
-while retaining the tool-cache directories; Rust-specific cache configuration
-and tools remain conditional on the extension.
+## 4. Package modules
 
-The `CS_ACCESS_TOKEN` secret must be configured when CodeScene coverage upload
-is required. The `CODESCENE_CLI_SHA256` variable should be populated using the
-refresh workflow, so CI can verify the downloaded CodeScene installer before
-upload.
+Each module owns one decision. This table is the single module inventory.
 
-## Shared spelling configuration
+| Module                                                    | Responsibility                                                                                  |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `admission`, `effects`                                    | Pure state machine: queue, tokens, draining                                                     |
+| `admission_state`                                         | Frozen, identifier-free admission gauge snapshot                                                |
+| `supervisor`                                              | Event loop that carries out admission's effects                                                 |
+| `supervisor_polling`                                      | Poll cadence and ordered server, pool and cache checks; no token-release decisions              |
+| `supervisor_signals`, `supervisor_shutdown`               | `SIGCHLD` self-pipe wake-up; stop sequencing and its deadline                                   |
+| `supervisor_observability`                                | Wires cached pressure and drain observers into existing owners                                  |
+| `effect_dispatch`                                         | Effect handlers and their metric and health mappings                                            |
+| `requesters`, `pending_request`                           | Connections, queued requests and replies; recorded request data                                 |
+| `request_connections`                                     | Unrecorded sockets, received rights and refusals                                                |
+| `request_validation`, `requester_metrics`                 | Pure validation over explicit context; terminal metric fields                                   |
+| `request_state`                                           | Compatibility re-export of `pending_request.Pending`                                            |
+| `descriptor_policy`, `descriptor_budget`                  | Pure budget arithmetic; OS sampling, retention accounting and status                            |
+| `listener_pressure`                                       | Listener backpressure after accept-time exhaustion                                              |
+| `groups`, `group_drain`, `group_recovery`                 | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                   |
+| `launch`, `launch_setup`                                  | Held launch child and bounded setup diagnostics                                                 |
+| `relocation`, `descriptors`                               | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution              |
+| `attributes`                                              | The caller's umask, niceness and resource limits                                                |
+| `pool`                                                    | The token device, read on a thread of its own                                                   |
+| `sccache`, `server_watch`                                 | The managed cache's reachability and accounting; start-up and `SERVER_DRAIN` release            |
+| `cache_recovery`, `recovery_*`                            | The recovery transaction, its barrier, reclamation, trigger and guidance                        |
+| `bus_properties`, `systemd`                               | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl` |
+| `cgroups`, `startup`, `proc_trees`                        | Control-group reads, the restart barrier and diagnostic process-tree counts                     |
+| `protocol`, `replies`, `framing`, `frame_payload`, `wire` | Versioned JSON frames with passed descriptors                                                   |
+| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`  | Cargo-facing entry points, retries, signal handling, progress lines and rustdoc lookup          |
+| `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` notification and settings                                 |
+| `status`, `status_client`, `status_render`, `status_cli`  | The status document, its transport, rendering and command                                       |
+| `recover_client`, `recover_cli`                           | The recovery request and the `build-limits-recover` command                                     |
+| `metrics*`, `journal`, `journal_native`                   | Metric vocabulary, native journal datagrams, journal queries and reports                        |
+| `drain_loop`, `drain_metrics`                             | Paces drain-fault retries; observes drain progress without exit authority                       |
 
-Run `make spelling` to enforce en-GB-oxendict spelling. The shared
-`typos-config-builder` gate regenerates `typos.toml` from the live estate
-dictionary in `leynos/agent-helper-scripts` and the `typos.local.toml` overlay
-on every run, then checks tracked Markdown. A word added to the shared
-dictionary therefore needs no change here, and `typos.toml` must never be drift
-checked in continuous integration. `typos.toml` is generated output, but it is
-tracked: commit the regenerated file after a `make spelling` run changes it.
-The local cache that keeps the gate usable when the authority is temporarily
-unreachable is ignored by Git. Add only narrow project-specific terms and
-exclusions to `typos.local.toml`; never edit generated `typos.toml` by hand.
+_Table 2: Package modules._
+
+## 5. Admission core
+
+`Admission` holds the queue, the admitted `Group` records and the flags
+`cached` and `healthy`. Each event method updates the state and returns effects
+in the order the caller must carry them out:
+
+- `submit(request_id, *, cacheable=True)` queues a request.
+- `token_arrived(token)` admits the head of the queue, or returns the token if
+  nobody waits. `ServerWatch.cache_allowed` is read at that point, so a token
+  that waited through a recovery is never composed with a stopped cache.
+- `launch_failed`, `cancel`, `leader_exited` and `group_emptied` move a group
+  through `RUNNING`, `DRAINING` and, for a cached group that ended abnormally,
+  `SERVER_DRAIN`.
+- `server_activity(active_compiles)` releases `SERVER_DRAIN` tokens, oldest
+  first, while the server's live work fits within the tokens that remain.
+- `health_failed()` refuses queued requests, terminates running groups and
+  emits `Shutdown` once they have drained.
+
+`Admission.counts()` returns a frozen `Counts` snapshot without identifiers.
+`tests/test_admission.py` drives the core with a Hypothesis
+`RuleBasedStateMachine` against a model pool and a model server, checking token
+conservation, that waiting requests hold nothing, that tokens return only after
+emptiness, that server work never exceeds cached tokens, and that nothing
+launches while unhealthy. The same module pins the import boundary: `admission`,
+`effects` and `attributes` import no wire, framing, reply or request module.
+
+## 6. Supervisor shell
+
+`Supervisor.serve` runs one `selectors` loop. Registered descriptors carry a
+tag that `_dispatch` matches: `"listener"`, `"pool"`, `("conn", request_id)`,
+`("errors", group_id)` and `"signals"`. Each tick escalates overdue
+terminations, notices emptied scopes, polls the cache while any group is in
+`SERVER_DRAIN`, checks that `/dev/guild` is still the device it opened, and
+refreshes the cache's reachability.
+
+Start-up takes a singleton lock and passes the restart barrier:
+`startup.drain_slice` terminates every scope under the compilers slice and
+waits for it to empty, because a crashed supervisor's tokens return to the pool
+while its compilers may still run. `ServerWatch.drain_orphans` then requires
+the managed cache to be accounted stopped and empty, or raises
+`StartupAccountingError`, which `service.main` turns into exit status 2. On
+success the supervisor opens the pool and listener, then sends `READY=1`.
+
+Signal handlers only call `Supervisor.request_stop()`; the next tick calls
+`stop()`, so every admission change stays on the event-loop path. Children end
+through `SIGCHLD` delivered by `signal.set_wakeup_fd`, and `Groups.reap`
+collects them with `waitpid(WNOHANG)`. `cgroups.is_populated()` reports an
+empty group only for `ENOENT` or `ENODEV`; any other read error raises, so an
+unreadable scope is never taken as drained.
+
+## 7. Launching a compiler
+
+`Groups.place` builds a `launch.LaunchSpec` and calls `launch.spawn_held`,
+which forks a child that waits on a barrier pipe. The supervisor starts a
+transient scope for the child's PID and waits until `/proc/PID/cgroup` names
+it, because `StartTransientUnit` returns before the move. Only then does
+`Groups.release` let the child continue. In the child,
+`launch._become_compiler` disables the inherited wake-up descriptor, closes
+unrelated inherited descriptors, applies the relocation plan within the
+reachable hard `RLIMIT_NOFILE`, then applies the caller's attributes.
+
+`relocation.relocation_plan` is pure: it validates the source-to-target
+mapping, places descriptors directly, and parks at most one cycle source in the
+lowest free non-target slot (`_park`). Setup failures travel through a
+close-on-exec error writer as a bounded ASCII message naming the stage, errno
+and descriptor counts, never argument or environment values.
+`attributes.plan_attributes` refuses a request that needs higher priority or a
+soft limit beyond the supervisor's hard limit; the child never falls back to
+the supervisor's own attributes.
+
+## 8. Wire protocol
+
+Frames are a four-byte big-endian length followed by UTF-8 JSON with `version`
+set to `1`. Descriptors travel as `SCM_RIGHTS` on the same `sendmsg` as their
+frame. A frame may be at most 8 MiB and carry at most 253 descriptors. `wire`
+converts decoded values without coercion, so a boolean is never accepted as an
+integer.
+
+| Direction             | Message      | Fields                                                                               |
+| --------------------- | ------------ | ------------------------------------------------------------------------------------ |
+| adapter → supervisor  | `compile`    | `argv`, `cwd`, `env`, `umask`, `nice`, `rlimits`, `fd_targets`, `label`, `cacheable` |
+| client → supervisor   | `status`     | none                                                                                 |
+| operator → supervisor | `recover`    | none                                                                                 |
+| supervisor → adapter  | `queued`     | `position`                                                                           |
+| supervisor → adapter  | `admitted`   | `group`, `cached`, `notice`                                                          |
+| supervisor → adapter  | `finished`   | `code`, `signal`                                                                     |
+| supervisor → client   | `refused`    | `reason`, `message`                                                                  |
+| supervisor → client   | `status`     | `state`, the status document                                                         |
+| supervisor → operator | `recovering` | `state`, the recovery transaction document                                           |
+
+_Table 3: Protocol messages._
+
+`framing` receives with `recvmsg`, an exact `CMSG_LEN` ancillary buffer and
+`MSG_CMSG_CLOEXEC`. One five-second deadline covers the whole frame. On
+`MSG_CTRUNC`, every right received so far closes immediately while the reader
+consumes the rest of the frame under the same deadline. Only an initial send
+refused with `ETOOMANYREFS`, before any bytes transfer, is retryable
+(`DescriptorSendPressureError`); a failure after transfer is final, which
+avoids a duplicate admission. The supervisor accepts connections only from its
+own user (`SO_PEERCRED`) and treats a readable connection with no data as a
+cancellation.
+
+`status_client.exchange` is the shared request-and-reply round trip for the
+status and recovery clients: it owns the connection, closes any passed
+descriptors, and returns `None` when the supervisor closes without replying.
+Each client maps its failures to its own error type.
+`request_connections._answer_once` is the matching server-side rule for
+unrecorded connections: received rights are released before the reply is built,
+and the connection always closes.
+
+## 9. Status, recovery and metrics interfaces
+
+`status.describe` builds the status document from the supervisor's own state:
+capacity, held tokens, the queue, groups, health, the last `drain_fault` and its
+`drain_fault_kind` (`live_work`, `stopped_populated` or `manager`), the
+`descriptors` gauges and the `cache_recovery` transaction document. Only a
+`live_work` reading proven to hold zero visible compiler roots authorizes the
+automatic recovery trigger. `status_render.render` is a pure function of that
+document, pinned by Syrupy snapshots.
+
+`cache_recovery.CacheRecovery` is a four-phase machine — `quiescing`,
+`stopping`, `accounting`, `restarting` — advancing at most one step per tick.
+Its calls are bounded and its retries delayed, but no path ends a transaction
+by releasing an unaccounted token: only `ManagedSccache.accounted_drain`
+releases, and only on a verified stopped-and-empty service. Both the automatic
+trigger and the stop guard in `recovery_starvation` read
+`Counts.cached_moving`, the running and draining groups composed with sccache,
+rather than every moving group. The transaction denies cache composition while
+it runs, so the groups it admits cannot be interrupted by the stop; counting
+them let a busy queue refill each free slot before every retried stop and hold
+the retained tokens indefinitely. `recovery_starvation.cooldown_after` sets the
+rest after each transaction: `RECOVERY_SETTLE_SECONDS` after a clean ending and
+`RECOVERY_COOLDOWN_SECONDS`, which outlasts the whole bounded retry sequence,
+after one that ended with its restart refused. The transaction document reports
+the remainder as `cooling_for`. `recover_cli` polls under `--wait` and reports
+"unknown", never "complete", when a query fails part-way.
+
+The supervisor and adapters emit bounded, identifier-free native journal fields
+through `metrics.Metrics` over a `JournalSink`; emission failures are isolated
+from admission and build results. `metrics_query` owns the capped `journalctl`
+query, `metrics_records` validates records and source trust (`present_samples`
+and `of_event` select report inputs), and `metrics_report` and
+`metrics_pressure_report` aggregate. High-water values are producer-lifetime
+maxima; drain counters are cumulative snapshots and are never summed.
+
+## 10. Adapters
+
+`rustc_main` passes its arguments through unchanged. `rustdoc_main` resolves
+the real rustdoc with `rustdoc.resolve_rustdoc`, which runs
+`rustup which rustdoc` through an injectable runner and refuses to resolve to
+itself; every failure becomes `RustdocError`. `adapter.connect` dials through a
+`Dialler` of injectable socket and sleep ports. `adapter.run` waits without
+limit once queued, but gives up after `BUILD_LIMITS_UNAVAILABLE_SECS` when no
+supervisor answers; a pre-recording `busy` refusal is retried with jittered
+backoff under that deadline, through `timing.RetryWait`.
+
+## 11. Tests
+
+### 11.1. Layout and conventions
+
+All tests live in `tests/`; pytest also collects the package's doctests through
+`--doctest-modules`. Test modules are named `test_*.py`. Shared support modules
+sit beside them and are linted like production code, so they raise
+`AssertionError` or `TypeError` explicitly rather than using bare `assert`. BDD
+scenarios live in `tests/features` with `pytest-bdd` step modules; Syrupy
+snapshots live in `tests/__snapshots__`; journal fixtures and the fake sccache
+live in `tests/fixtures`.
+
+### 11.2. Shared helpers
+
+Use these before writing a new arrange step; extend one rather than copying it.
+
+| Module                      | Provides                                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------------------------- |
+| `conftest.py`               | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures |
+| `request_helpers.py`        | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
+| `pool_helpers.py`           | `FakePool` and `attach_pool`                                                                        |
+| `descriptor_helpers.py`     | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
+| `launch_helpers.py`         | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
+| `adapter_doubles.py`        | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
+| `journal_fixtures.py`       | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
+| `listener_helpers.py`       | `watched_listener`, a listener under `ListenerPressure` control                                     |
+| `cache_recovery_helpers.py` | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
+| `cache_recovery_harness.py` | `Harness`, `harness_for`, `opened_recovery`, `machine_for`, `metered_machine`, `scripted_machine`   |
+| `systemd_harness.py`        | Host acceptance `Harness`, `systemd_user_marks` and `wait_for`                                      |
+| `harness_units.py`          | Transient unit control and `unit_properties` over the public user bus                               |
+
+_Table 4: Shared test helper modules._
+
+### 11.3. Verification beyond examples
+
+Hypothesis state machines check the admission core (`tests/test_admission.py`)
+and the recovery transaction (`tests/cache_recovery_state_machine.py`, driven by
+`tests/test_cache_recovery_properties.py`). The recovery search asserts that
+it reached every control event, so a run that never opened, stopped or
+restarted the cache fails rather than passing vacuously. That reachability
+assertion failed once under xdist load during the import and has not recurred;
+treat a repeat as a signal to raise the search budget, not to delete the
+assertion. CrossHair proves the contracts in `tests/crosshair_contracts.py`.
+Snapshot tests pin rendered status, recovery and metrics output; pair any new
+snapshot with semantic assertions for the behaviour it represents.
+
+### 11.4. Host acceptance
+
+Scenarios marked `systemd_user` run the real supervisor under the developer's
+own user manager, in uniquely named slices and units, and never open
+`/dev/guild`: `systemd_harness.Harness` primes a FIFO with tokens instead. They
+are opt-in. `make test-systemd-user` sets `BUILD_LIMITS_HOST_ACCEPTANCE=1`;
+without it, collection never contacts the manager and the scenarios skip. They
+also skip where no user manager runs.
+
+## 12. Static-analysis exceptions
+
+Every exception is recorded in `pyproject.toml` with its reason; review the
+reason when the code it names changes.
+
+- **Skylos entry points.** The supervisor reaches several members through typed
+  collaborators and dataclass-held owners that a static call graph cannot
+  resolve. Each is named by its full dotted path under
+  `[[tool.skylos.dead_code.entrypoints]]`, with the call path that keeps it
+  alive.
+- **Vulture.** Only `tests/` is scanned, so attributes that tests set and
+  production code reads, mock configuration, runner doubles' `__call__` and the
+  CrossHair contracts are listed in `ignore_names`; pytest-bdd steps and
+  Hypothesis rules are exempted through `ignore_decorators`.
+- **Duplication.** The shared Nose gate blocks every duplicated family. Real
+  duplication is extracted into a helper (see §11.2); the remaining families
+  are matching import lists, single-purpose fault doubles and short steps that
+  recur across parallel scenarios. Each is listed under
+  `[[tool.duplication_gate.allow]]` naming every location, so a further copy
+  still blocks. Prefer a `path::name` key; a bare path key covers every unnamed
+  fragment in that file, so add one only when no name is available.
+
+## 13. Repository automation
+
+The `.github/workflows` directory carries the CI, audit, coverage, mutation
+testing and release workflows, and `.github/actions` holds the wheel-building
+composite actions.
+
+- `ci.yml` runs on pushes to `main` and on pull requests. It sets up Python
+  3.14 and `uv`, validates the `Makefile` with `mbake`, then runs `make build`,
+  `make check-fmt`, `make lint`, `make typecheck`, `make markdownlint`,
+  `make audit` (skipped for Dependabot) and coverage through the shared
+  coverage action.
+- `audit.yml` runs `make audit` weekly as the compensating control for the
+  Dependabot bypass.
+- `act-validation.yml` runs `make test WITH_ACT=1` to exercise the workflows
+  locally under `act`.
+- `mutation-testing.yml` runs mutmut over `buildlimits/` daily at 09:30 UTC.
+- `release.yml` builds the pure-Python wheel when a `v*.*.*` tag is pushed and
+  attaches it to the release.
+
+Helper scripts follow the [scripting standards](scripting-standards.md):
+Cyclopts for command-line interfaces, `cuprum` for external commands, `pathlib`
+for paths and `cmd-mox` for tests that mock executables.
+
+## 14. Spelling
+
+`make spelling` regenerates `typos.toml` from the shared en-GB-oxendict
+dictionary and `typos.local.toml`, then checks every tracked file. Never edit
+`typos.toml` by hand; commit it when the gate regenerates it. Put narrow
+repository-specific exceptions in `typos.local.toml`.
+
+[rfc]: https://github.com/leynos/dev-env-rocky/blob/main/docs/rfc-concurrent-build-limits.md
+[adr-011]: https://github.com/leynos/dev-env-rocky/blob/main/docs/adr-011-sccache-under-compile-admission.md
+[adr-012]: https://github.com/leynos/dev-env-rocky/blob/main/docs/adr-012-compile-admission-collection.md
+[adr-013]: https://github.com/leynos/dev-env-rocky/blob/main/docs/adr-013-compile-admission-metrics.md
