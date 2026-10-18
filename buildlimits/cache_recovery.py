@@ -22,7 +22,7 @@ import typing as typ
 from buildlimits import recovery_roots, recovery_starvation
 from buildlimits.journal import log
 from buildlimits.metrics import Metrics, MetricsPort, gauge_fields
-from buildlimits.recovery_guidance import report_exhaustion
+from buildlimits.recovery_guidance import report_deadline_stop, report_exhaustion
 from buildlimits.recovery_reclaim import (
     new_barrier,
     reclaim_after_accounting,
@@ -68,6 +68,9 @@ class CacheRecovery:
     zero_visible_roots : Callable[[], bool]
         Reports whether the drain probe established zero visible compiler
         roots; an unproven reading answers False and releases no token.
+    roots_are_visible : Callable[[], bool]
+        Reports whether the probe established at least one visible root; an
+        unknown count answers False, so it never starts the stop's grace.
     cache_mode : str
         Only ``sccache`` owns the barrier and the managed server.
     metrics : MetricsPort
@@ -88,6 +91,9 @@ class CacheRecovery:
     counts: cabc.Callable[[], Counts] = dc.field(kw_only=True)
     fault_kind: cabc.Callable[[], str | None] = dc.field(kw_only=True)
     zero_visible_roots: cabc.Callable[[], bool] = dc.field(
+        default=lambda: False, kw_only=True
+    )
+    roots_are_visible: cabc.Callable[[], bool] = dc.field(
         default=lambda: False, kw_only=True
     )
     cache_mode: str = dc.field(default="sccache", kw_only=True)
@@ -133,9 +139,9 @@ class CacheRecovery:
         -------
         dict[str, object]
             The phase, the consecutive failures of its last action, the last
-            fault text, the seconds until the next attempt, and the seconds
-            before the automatic trigger may open another transaction, and the
-            seconds visible roots have delayed an automatic stop.
+            fault text, the seconds until the next attempt, the seconds before
+            the trigger may open another transaction, and the seconds visible
+            roots have delayed an automatic stop.
         """
         return {
             "phase": self._phase,
@@ -274,19 +280,18 @@ class CacheRecovery:
 
     def _try_stop(self, now: float) -> None:
         """Queue the stop, retrying without bound: abandoning strands the barrier."""
-        # Keeps the stop from killing a cached compile; groups the hold
-        # composed without the cache do not count.
+        # Spares cached compiles; groups composed without the cache don't count.
         if reason := recovery_starvation.blocked(self.counts(), self.fault_kind()):
             self._roots_grace.reset()
             self._fail(now, reason)
             return
         # A manual stop is exempt: its evidence is the operator's own.
-        verdict = recovery_roots.stop_verdict(
-            self._roots_grace,
-            is_automatic=self._trigger == "starved",
-            zero_visible_roots=self.zero_visible_roots(),
-            now=now,
+        evidence = recovery_roots.RootsEvidence(
+            self._trigger == "starved",
+            self.zero_visible_roots(),
+            self.roots_are_visible(),
         )
+        verdict = recovery_roots.stop_verdict(self._roots_grace, evidence, now)
         if verdict == "waiting":
             self._fail(now, "the visible compiler roots proof lapsed before stopping")
             return
@@ -296,16 +301,9 @@ class CacheRecovery:
             self._fail(now, str(error))
             return
         if verdict == "deadline":
-            self._note_deadline_stop(now)
+            waited = self._roots_grace.elapsed(now)
+            report_deadline_stop(waited, self._phase, self.metrics)
         self._advance("accounting", now)
-
-    def _note_deadline_stop(self, now: float) -> None:
-        """Journal and count a stop taken on the roots deadline."""
-        with contextlib.suppress(OSError):
-            log(recovery_roots.deadline_stop_message(self._roots_grace, now))
-        self.metrics.emit(
-            "cache_recovery", phase=self._phase, recovery_roots_deadline_stops=1
-        )
 
     def _account(self, now: float) -> None:
         """Wait until no token still waits on the cache's accounting.

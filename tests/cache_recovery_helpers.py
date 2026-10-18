@@ -85,6 +85,18 @@ class DrainReading:
         """
         return self.kind == "live_work" and self.roots == 0
 
+    @property
+    def shows_visible_roots(self) -> bool:
+        """Whether this reading established that a root is visible.
+
+        Returns
+        -------
+        bool
+            True only for a live-work fault whose count was established as
+            positive; an unknown count shows nothing.
+        """
+        return self.kind == "live_work" and (self.roots or 0) > 0
+
 
 # The reading a fixture takes when it does not script one: the live-work fault
 # with a proven zero root count, which is the one the automatic trigger acts

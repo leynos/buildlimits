@@ -85,9 +85,8 @@ class Harness:
     def account(self) -> None:
         """Drive an opened transaction through its verified accounting.
 
-        The first tick writes the barrier and the second has the stop
-        accepted; the cache then goes quiet, so the third tick's accounting
-        proof returns the drained tokens.
+        The first tick writes the barrier, the second has the stop accepted,
+        and the third's accounting proof returns the drained tokens.
         """
         for _phase in ("quiescing", "stopping"):
             self.tick()
@@ -273,6 +272,7 @@ def machine_for(
         counts=lambda: snapshot if snapshot is not None else gauges(),
         fault_kind=lambda: reading.kind,
         zero_visible_roots=lambda: reading.proves_zero_roots,
+        roots_are_visible=lambda: reading.shows_visible_roots,
     )
     return machine, state
 
@@ -374,6 +374,9 @@ def scripted_machine(
         counts=lambda: snapshot[0],
         fault_kind=lambda: kind_cell[0],
         zero_visible_roots=lambda: roots_cell[0] == 0,
+        roots_are_visible=lambda: (
+            (roots_cell[0] or 0) > 0 and kind_cell[0] == "live_work"
+        ),
     )
     return ScriptedCache(machine, state, snapshot, roots_cell, kind_cell)
 

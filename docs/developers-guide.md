@@ -308,12 +308,15 @@ attempt and backs off as before. The clock is
 `recovery_roots.VisibleRootsGrace`. It starts at the first stop attempt of an
 automatic transaction that finds nothing cached moving and a root visible, and
 it is reset when `blocked` refuses the stop (a cached group moves again, or the
-manager faults), when the roots clear, when a transaction opens and when it
-ends, so no later transaction inherits a start, which is the sibling of the
-retained-age bug fixed by retiring the drain age at accounting. It never weakens
-`blocked`: `cached_moving == 0` is still required. A stop taken on the
-deadline is journalled with the elapsed time and adds one to the
-`recovery_roots_deadline_stops` counter once the stop is accepted; the
+manager faults), when the roots clear or cannot be counted, when a transaction
+opens and when it ends, so no later transaction inherits a start, which is the
+sibling of the retained-age bug fixed by retiring the drain age at accounting.
+Only a probe that established a positive count
+(`ServerWatch.roots_are_visible`) accrues grace: an unknown count is neither
+the zero proof nor a visible root, so it answers `waiting` and breaks the run.
+The deadline never weakens `blocked`: `cached_moving == 0` is still required. A
+stop taken on the deadline is journalled with the elapsed time and adds one to
+the `recovery_roots_deadline_stops` counter once the stop is accepted; the
 transaction document reports the running clock as `roots_waited` and
 `build-limits-status` renders it. The logic lives in `recovery_roots` rather
 than `recovery_starvation` only to keep both modules inside the size ceiling.

@@ -155,6 +155,28 @@ def test_a_manual_request_never_starts_the_clock(tmp_path: Path) -> None:
     assert _waited(cache, 1.0) == pytest.approx(0.0), "no clock ran"
 
 
+def test_an_unknown_root_count_never_reaches_the_deadline(tmp_path: Path) -> None:
+    """A count the diagnostic could not read is no evidence of a visible root."""
+    cache = scripted_machine(tmp_path, [BUSY], roots=None)
+    first = _stopping_with_a_hung_root(cache)
+    _tick_each_second(cache, first, int(FIRST_ATTEMPT_AT_GRACE) + 600)
+    assert cache.cache.verbs == [], "no root was ever seen, so none delayed the stop"
+    assert _waited(cache, first + 1_000.0) == pytest.approx(0.0), "no clock ran"
+
+
+def test_a_reading_that_loses_the_count_breaks_the_run(tmp_path: Path) -> None:
+    """A run of visible roots is broken by a reading that cannot see them."""
+    cache = scripted_machine(tmp_path, [BUSY], roots=2)
+    first = _stopping_with_a_hung_root(cache)
+    now = _tick_each_second(cache, first, 400)
+    cache.roots[0] = None
+    now = _tick_each_second(cache, now, 100)
+    assert _waited(cache, now) == pytest.approx(0.0), "the unknown reading broke it"
+    cache.roots[0] = 2
+    _tick_each_second(cache, now, int(FIRST_ATTEMPT_AT_GRACE) - 100)
+    assert cache.cache.verbs == [], "the earlier run does not count"
+
+
 def test_a_faulted_manager_still_refuses_the_deadline_stop(tmp_path: Path) -> None:
     """The deadline never overrides the manager-fault refusal."""
     cache = scripted_machine(tmp_path, [BUSY], roots=2)
@@ -240,9 +262,10 @@ def test_the_supervisor_stops_on_the_roots_deadline(
         supervisor = harness.supervisor
         # The scripted cache runs no compiler, so every probe would read zero roots;
         # a hung compile is what keeps the proof from ever being established.
-        monkeypatch.setattr(
-            type(supervisor.server), "zero_visible_roots", property(lambda _: False)
-        )
+        for name, value in (("zero_visible_roots", False), ("roots_are_visible", True)):
+            monkeypatch.setattr(
+                type(supervisor.server), name, property(lambda _, v=value: v)
+            )
         harness.tick()
         harness.advance(STALE_SECONDS)
         harness.tick()

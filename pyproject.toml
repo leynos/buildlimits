@@ -562,9 +562,10 @@ reason = "stop and start are the public, documented verbs of the managed-cache p
 [[tool.duplication_gate.allow]]
 members = [
     "buildlimits/cache_recovery.py",
+    "buildlimits/recovery_guidance.py",
     "buildlimits/supervisor.py",
 ]
-reason = "Two unrelated operator log lines share only the log-call shape."
+reason = "Three unrelated operator log lines share only the log-call shape."
 
 [[tool.duplication_gate.allow]]
 members = [

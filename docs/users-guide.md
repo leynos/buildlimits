@@ -304,14 +304,14 @@ it stops the cache only once no cached compile is running. An automatic stop
 also wants the cache to show no visible compiler roots, but it will not wait
 for them for ever. Once no cached compile is running, a root still visible in
 the cache serves no admitted request, because every request admitted since the
-barrier was written compiles without the cache. If such roots stay visible for
-600 seconds, for example because a compile inside the cache has hung, the
-automatic stop proceeds anyway, writes a journal line
-(`cache recovery: stopping the managed cache with compiler roots still
-visible after …`)
-and adds one to the `recovery_roots_deadline_stops` count of the
-`cache_recovery` metrics event. The 600 seconds restart from nothing whenever a
-cached compile starts moving again, and each transaction measures its own.
+barrier was written compiles without the cache. If such roots are seen without
+a break for 600 seconds, for example because a compile inside the cache has
+hung, the automatic stop proceeds anyway, writes a journal line beginning
+`cache recovery: stopping the managed cache with compiler roots` and adds one
+to the `recovery_roots_deadline_stops` count of the `cache_recovery` metrics
+event. The 600 seconds restart from nothing whenever a cached compile starts
+moving again or a probe cannot count the roots, and each transaction measures
+its own. A count the probe could not read is never treated as a visible root.
 While the roots delay the stop, `build-limits-status` shows
 `cache recovery: visible compiler roots have delayed the stop for ...`. A manual
 `build-limits-recover` never waits for roots, and a faulted user manager still

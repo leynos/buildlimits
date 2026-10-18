@@ -119,23 +119,36 @@ def roots_verdict(
     return "deadline" if waited >= RECOVERY_ROOTS_GRACE_SECONDS else "waiting"
 
 
-def stop_verdict(
-    grace: VisibleRootsGrace,
-    *,
-    is_automatic: bool,
-    zero_visible_roots: bool,
-    now: float,
-) -> str:
+@dataclasses.dataclass(frozen=True, slots=True)
+class RootsEvidence:
+    """What one stop attempt knows about the compiler roots in the server.
+
+    Attributes
+    ----------
+    is_automatic : bool
+        Whether the transaction was opened by the automatic policy.
+    is_zero : bool
+        Whether the probe established zero visible compiler roots.
+    is_visible : bool
+        Whether the probe established that at least one root is visible. An
+        unknown count is neither this nor the zero proof, so it never accrues
+        grace and breaks a running clock.
+    """
+
+    is_automatic: bool
+    is_zero: bool
+    is_visible: bool
+
+
+def stop_verdict(grace: VisibleRootsGrace, evidence: RootsEvidence, now: float) -> str:
     """Time the visible roots at one stop attempt and judge them.
 
     Parameters
     ----------
     grace : VisibleRootsGrace
         The transaction's clock, updated by this attempt.
-    is_automatic : bool
-        Whether the transaction was opened by the automatic policy.
-    zero_visible_roots : bool
-        Whether the probe established zero visible compiler roots.
+    evidence : RootsEvidence
+        What the attempt knows about the roots.
     now : float
         Current monotonic time.
 
@@ -143,25 +156,13 @@ def stop_verdict(
     -------
     str
         The :func:`roots_verdict` for this attempt. The clock runs only while
-        an automatic stop lacks the zero-root proof.
+        an automatic stop has established that roots are visible.
     """
-    is_visible = is_automatic and not zero_visible_roots
-    return roots_verdict(
-        is_automatic=is_automatic,
-        zero_visible_roots=not is_visible,
-        waited=grace.observe(is_visible=is_visible, now=now),
+    waited = grace.observe(
+        is_visible=evidence.is_automatic and evidence.is_visible, now=now
     )
-
-
-def deadline_stop_message(grace: VisibleRootsGrace, now: float) -> str:
-    """Word the journal line for a stop taken on the roots deadline.
-
-    Returns
-    -------
-    str
-        The line, carrying how long the roots delayed the stop.
-    """
-    return (
-        "cache recovery: stopping the managed cache with compiler roots still "
-        f"visible after {grace.elapsed(now):.0f}s with no cached group moving"
+    return roots_verdict(
+        is_automatic=evidence.is_automatic,
+        zero_visible_roots=evidence.is_zero,
+        waited=waited,
     )
