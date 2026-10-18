@@ -236,24 +236,24 @@ def test_the_supervisor_stops_on_the_roots_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The production wiring stops a stale transaction whose root never clears."""
-    harness = busy_supervisor(tmp_path, monkeypatch)
-    supervisor = harness.supervisor
-    # The scripted cache runs no compiler, so every probe would read zero roots;
-    # a hung compile is what keeps the proof from ever being established.
-    monkeypatch.setattr(
-        type(supervisor.server), "zero_visible_roots", property(lambda _: False)
-    )
-    harness.tick()
-    harness.advance(STALE_SECONDS)
-    harness.tick()
-    assert harness.described()["phase"] == "quiescing", "age opens the transaction"
-
-    # The cached group ends; the hung root stays visible in the server.
-    del supervisor.admission.groups["g2"]
-    for _ in range(int(FIRST_ATTEMPT_AT_GRACE) + 60):
-        harness.advance(1.0)
+    with busy_supervisor(tmp_path, monkeypatch) as harness:
+        supervisor = harness.supervisor
+        # The scripted cache runs no compiler, so every probe would read zero roots;
+        # a hung compile is what keeps the proof from ever being established.
+        monkeypatch.setattr(
+            type(supervisor.server), "zero_visible_roots", property(lambda _: False)
+        )
         harness.tick()
-        if "stop" in harness.cache.verbs:
-            break
-    assert harness.cache.verbs == ["stop"], "the stop went on the deadline"
-    assert harness.now >= STALE_SECONDS + GRACE_SECONDS, "and not before the grace"
+        harness.advance(STALE_SECONDS)
+        harness.tick()
+        assert harness.described()["phase"] == "quiescing", "age opens the transaction"
+
+        # The cached group ends; the hung root stays visible in the server.
+        del supervisor.admission.groups["g2"]
+        for _ in range(int(FIRST_ATTEMPT_AT_GRACE) + 60):
+            harness.advance(1.0)
+            harness.tick()
+            if "stop" in harness.cache.verbs:
+                break
+        assert harness.cache.verbs == ["stop"], "the stop went on the deadline"
+        assert harness.now >= STALE_SECONDS + GRACE_SECONDS, "and not before the grace"

@@ -6,6 +6,7 @@ wiring, so the scenes live here once. It is an unnumbered helper module, named
 like its siblings so pytest collects nothing from it.
 """
 
+import contextlib
 import typing as typ
 
 from cache_recovery_harness import (
@@ -17,6 +18,7 @@ from cache_recovery_harness import (
 from buildlimits.admission_state import Counts
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
     import pytest
@@ -41,15 +43,22 @@ def retained_counts(*, cached_moving: int) -> Counts:
     return Counts(9, 3 + min(cached_moving, 1), cached_moving, 0, 1, 4, cached_moving)
 
 
-def busy_supervisor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Harness:
+@contextlib.contextmanager
+def busy_supervisor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> cabc.Iterator[Harness]:
     """Build the production supervisor over a busy host with a visible root.
 
     A cached group keeps running and a visible root defeats the prompt proof,
     so only the retained age can open the transaction. The probe's root count
     has no public setter; a visible root is what defeats the prompt proof.
 
-    Returns
-    -------
+    The supervisor's selector owns an epoll descriptor that only a close
+    releases; left to the collector it would be closed during some later test
+    and disturb that test's descriptor accounting.
+
+    Yields
+    ------
     Harness
         The harness, before its first tick.
     """
@@ -59,4 +68,7 @@ def busy_supervisor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Harness:
     queue_request(supervisor)
     supervisor.server.drain_fault_kind = "live_work"
     monkeypatch.setattr(supervisor.server, "_fault_roots", 2)
-    return harness
+    try:
+        yield harness
+    finally:
+        supervisor.selector.close()

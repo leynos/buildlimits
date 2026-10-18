@@ -226,15 +226,14 @@ def test_the_supervisor_opens_the_automatic_transaction_on_a_stale_drain(
     so only the retained age can open the transaction. The supervisor's own
     polling order, admission counts and server watch supply every reading.
     """
-    harness = busy_supervisor(tmp_path, monkeypatch)
-
-    harness.tick()
-    assert harness.described()["phase"] == "idle", "a fresh drain waits"
-    harness.advance(STALE_LIMIT_SECONDS - 1.0)
-    harness.tick()
-    assert harness.described()["phase"] == "idle", "one second short still waits"
-    harness.advance(1.0)
-    harness.tick()
-    assert harness.described()["phase"] == "quiescing", (
-        "the supervisor opens the transaction once the drain is stale"
-    )
+    with busy_supervisor(tmp_path, monkeypatch) as harness:
+        harness.tick()
+        assert harness.described()["phase"] == "idle", "a fresh drain waits"
+        harness.advance(STALE_LIMIT_SECONDS - 1.0)
+        harness.tick()
+        assert harness.described()["phase"] == "idle", "one second short still waits"
+        harness.advance(1.0)
+        harness.tick()
+        assert harness.described()["phase"] == "quiescing", (
+            "the supervisor opens the transaction once the drain is stale"
+        )
