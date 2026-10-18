@@ -65,13 +65,13 @@ cached compile ran, so the operator could not intervene either. Incidents 2 and
 
 PR #10 fixed both halves of incident 3. The trigger now also accepts a retained
 drain held without a break for `RECOVERY_STALE_DRAIN_SECONDS = 300`
-(`recovery_starvation.proof` names it `stale`, the other proof `detached`)[^7].
+(`recovery_starvation.proof` names it `stale`, the other proof `detached`)[^3].
 `recovery_starvation.refusal` refuses to open a transaction only when the user
 manager transport is faulted, so `build-limits-recover` and the automatic
 trigger open while cached work runs. The stop itself still waits for that work
-through `recovery_starvation.blocked`[^8]. A stale-opened transaction does not
+through `recovery_starvation.blocked`[^4]. A stale-opened transaction does not
 stop the cache on age alone: `CacheRecovery._try_stop` re-arms an automatic
-transaction until the drain probe again proves zero visible roots[^9]. Visible
+transaction until the drain probe again proves zero visible roots[^5]. Visible
 roots that never clear therefore hold the stop off, which is the gap
 `stale-root-deadline` closes.
 
@@ -148,14 +148,15 @@ is, which keeps the state space small and matches the metrics:
 
 - the pool's free tokens, and the tokens other users' supervisors hold;
 - the queue as counts of cacheable and uncached requests, `token_requested`,
-  and one distinguished _tracked request_ for per-request liveness;
+  and one distinguished _tracked request_ for per-request liveness, kept with
+  the number of requests ahead of it because the queue is served in order[^6];
 - groups by lifecycle (`RUNNING`, `DRAINING`, `SERVER_DRAIN`), composition
   and ending, so that `Group.may_orphan_server_work` is computable;
 - the last reachability reading, and whether a recovery hold is in force;
 - the drain probe's fault kind, whether it proved zero visible roots, and
   the retained-drain age, which `RetainedDrainAge` measures on idle ticks and
   retires at the accounting observation, with the staleness limit as a timer
-  class[^7];
+  class[^3];
 - the transaction's phase, attempts (abstracted to a small limit), trigger,
   last fault and rest timer; the barrier; an operator request; health.
 
@@ -211,7 +212,7 @@ properties hold under F1 to F7. Table 3 lists them.
 | S3  | Accounted release          | A `SERVER_DRAIN` token is released only on a reading of a stopped, empty service                                                                                        |
 | S4  | Barrier ordering           | A start is issued only with the barrier absent; the barrier stands from stop to restart                                                                                 |
 | S5  | Composition                | No group is composed with the cache under a hold or after a negative reachability reading                                                                               |
-| S6  | Server work coverage       | Live server work never exceeds the tokens held by cached groups (ADR 011[^3])                                                                                           |
+| S6  | Server work coverage       | Live server work never exceeds the tokens held by cached groups (ADR 011[^7])                                                                                           |
 | S7  | Unhealthy quiescence       | Nothing launches while the supervisor is unhealthy                                                                                                                      |
 | S8  | Explainable retention      | A retained token with a waiting request and no transaction always has a reason in status                                                                                |
 | S9  | Fault persistence          | A refused restart's fault stays in status until a later transaction ends cleanly                                                                                        |
@@ -226,13 +227,17 @@ _Table 3: Safety (S), liveness (L) and bounded-response (R) properties._
 S8's reasons are a positive `cooling_for`, the drain fault with its guidance,
 or the `manual` policy. A health failure refuses every queued request
 (`Admission.health_failed`), so L2 treats that refusal as a terminal outcome,
-and S7 keeps the supervisor quiescent afterwards. L4 treats a refusal at once
-as terminal too: `CacheRecovery.request` answers a faulted manager transport
-with a `blocked` reason and keeps no request pending[^10]. L4 therefore binds
-only a request the supervisor accepted. R1 captures a requirement that liveness
-cannot: only a faulted ending imposes the cooldown. Table 4 maps each incident
-to the property it violates and the counterexample predicted on its pre-fix
-behaviour.
+and S7 keeps the supervisor quiescent afterwards. L2 also depends on the
+queue's order: `Admission` serves it first in, first out, so the tracked
+request waits behind at most the requests queued when it arrived, and later
+submissions queue behind it. Given F5, no choice of selection is left to the
+environment, and a busy queue cannot admit others for ever while the tracked
+request waits. L4 treats a refusal at once as terminal too:
+`CacheRecovery.request` answers a faulted manager transport with a `blocked`
+reason and keeps no request pending[^8]. L4 therefore binds only a request the
+supervisor accepted. R1 captures a requirement that liveness cannot: only a
+faulted ending imposes the cooldown. Table 4 maps each incident to the property
+it violates and the counterexample predicted on its pre-fix behaviour.
 
 | Incident         | Pre-fix behaviour                             | Property | Predicted counterexample                           |
 | ---------------- | --------------------------------------------- | -------- | -------------------------------------------------- |
@@ -316,10 +321,10 @@ actions, `require` guards, `oneof` choice, `always`, `always eventually` and
 `eventually always` assertions, and `transition` assertions over `before` and
 `after`[^2]. Its documentation warns that copying shared state into a local can
 introduce an interleaving point, and that some function calls must stand as
-separate statements[^4]. The sketch therefore states the stop's guard with
+separate statements[^9]. The sketch therefore states the stop's guard with
 `require` and reads state in place rather than through an assigned local: an
 assignment enables an action even when the condition it computes is false, and
-control flow alone does not disable one[^11]. A guard written as a local plus an
+control flow alone does not disable one[^10]. A guard written as a local plus an
 `if` would leave the action enabled in every state, which would let strong
 fairness be met by a no-op and hide the capacity-2 counterexample. W1 must
 still check the interleaving points this style leaves.
@@ -452,7 +457,7 @@ The thresholds below are proposals for approval before any trial runs.
 - **Question:** does L1 hold for the automatic stop at `37d08e5`, and for the
   fix on the `stale-root-deadline` branch, and under what assumption? At
   `37d08e5` a stale-opened transaction still needs the zero-root proof to stop,
-  which a manual request skips[^9].
+  which a manual request skips[^5].
 - **Prediction:** at `37d08e5`, L1 holds with F3 and fails without it, through
   detached work that holds a visible root for ever; L4 holds without F3. With
   the `stale-root-deadline` fix, L1 holds without F3.
@@ -491,7 +496,7 @@ W3 may add journal trace checking as an optional tool.
 | False confidence         | Every report names its fairness assumptions and conformance limits         |
 | Generous fairness        | F1 is weak, not strong; F2 to F5 reviewed against systemd and sccache      |
 | Spurious counterexamples | Replay before triage; one correction round per trace                       |
-| Tool immaturity          | Pinned version; workarounds recorded in W1[^4]; TLA+ fallback              |
+| Tool immaturity          | Pinned version; workarounds recorded in W1[^9]; TLA+ fallback              |
 | Lost model knowledge     | Python-like notation, correspondence comments, developer's guide section   |
 
 _Table 7: Risks and their mitigations._
@@ -567,11 +572,11 @@ These are to be settled by evidence, mostly in W1, rather than assumed:
 4. Packaging of the Linux release: runtime dependencies, checksums or
    signatures, and pinning. Prebuilt Linux binaries are documented[^2].
 5. The licence of the pinned release. The repository page listed Apache-2.0
-   when read[^5]; confirm it for the pinned release before adoption.
+   when read[^11]; confirm it for the pinned release before adoption.
 6. Performance at H2's bounds, and whether symmetry or partial-order
    reduction is available.
 7. Whether FizzBee's model-based testing tool, whose quick start targets
-   Go[^6], can drive Python; if not, W3's replay stays bespoke.
+   Go[^12], can drive Python; if not, W3's replay stays bespoke.
 8. The exact pre-fix revisions for incidents 1, 2 and 4, which predate the
    import into this repository. Known-bad configurations must transcribe those
    revisions, not a recollection of them.
@@ -609,34 +614,37 @@ evidence settles them. Delivery is tracked in phase 1 of
 [^2]: FizzBee, "Getting Started", retrieved 2026-10-18:
       <https://fizzbee.io/design/tutorials/getting-started/>
 
-[^3]: ADR 011, dev-env-rocky:
-      <https://github.com/leynos/dev-env-rocky/blob/main/docs/adr-011-sccache-under-compile-admission.md>
-
-[^4]: FizzBee, "Current Limitations", retrieved 2026-10-18:
-      <https://fizzbee.io/design/tutorials/limitations/>
-
-[^5]: FizzBee repository, retrieved 2026-10-18:
-      <https://github.com/fizzbee-io/fizzbee>
-
-[^6]: FizzBee, "Quick Start" (testing), retrieved 2026-10-18:
-      <https://fizzbee.io/testing/tutorials/quick-start/>
-
-[^7]: `buildlimits/recovery_starvation.py`: `RECOVERY_STALE_DRAIN_SECONDS`,
+[^3]: `buildlimits/recovery_starvation.py`: `RECOVERY_STALE_DRAIN_SECONDS`,
       `RetainedDrainAge` and `proof`, at `37d08e5`.
 
-[^8]: `buildlimits/recovery_starvation.py`: `refusal` and `blocked`;
+[^4]: `buildlimits/recovery_starvation.py`: `refusal` and `blocked`;
       `CacheRecovery.request` calls `refusal`, and `CacheRecovery._try_stop`
       calls `blocked`, at `37d08e5`.
 
-[^9]: `buildlimits/cache_recovery.py`: `_try_stop` fails a `starved`
+[^5]: `buildlimits/cache_recovery.py`: `_try_stop` fails a `starved`
       transaction with "the visible compiler roots proof lapsed before
       stopping" unless `zero_visible_roots()` holds, at `37d08e5`.
 
-[^10]: `buildlimits/cache_recovery.py`: `CacheRecovery.request` returns
+[^6]: `buildlimits/admission.py`: `Admission.queue` is a `collections.deque`;
+       `submit` appends and `token_arrived` takes `popleft`, at `37d08e5`.
+
+[^7]: ADR 011, dev-env-rocky:
+      <https://github.com/leynos/dev-env-rocky/blob/main/docs/adr-011-sccache-under-compile-admission.md>
+
+[^8]: `buildlimits/cache_recovery.py`: `CacheRecovery.request` returns
        `describe(now) | {"blocked": reason}` without opening a transaction
        when `recovery_starvation.refusal` gives a reason, at `37d08e5`;
        `buildlimits/admission.py`: `Admission.health_failed` refuses the whole
        queue.
 
-[^11]: FizzBee, "Actions" (action enabling semantics), retrieved 2026-10-18:
+[^9]: FizzBee, "Current Limitations", retrieved 2026-10-18:
+      <https://fizzbee.io/design/tutorials/limitations/>
+
+[^10]: FizzBee, "Actions" (action enabling semantics), retrieved 2026-10-18:
        <https://fizzbee.io/reference/language/actions/>
+
+[^11]: FizzBee repository, retrieved 2026-10-18:
+      <https://github.com/fizzbee-io/fizzbee>
+
+[^12]: FizzBee, "Quick Start" (testing), retrieved 2026-10-18:
+      <https://fizzbee.io/testing/tutorials/quick-start/>
