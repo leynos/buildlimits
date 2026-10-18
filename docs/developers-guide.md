@@ -345,8 +345,14 @@ recording it, so describing the machine between ticks moves nothing.
 for a document without the key. `ServerWatch` receives
 `automatic_recovery_pending` from the supervisor and derives `recovery_action`
 live from `drain_guidance`: the mandatory text, or the fallback text for a
-live-work fault while recovery is pending. The `DrainLoop` internal-error
-action involves no cache recovery and stays mandatory. Deferred: shortening
+live-work fault while recovery is pending.
+`recovery_stop.request_stop(cache, fault_kind)` owns the one refusal that
+stands between a transaction and a stop: it raises `SystemdError` without
+stopping the cache when the last drain fault was a `manager` transport fault,
+because a cache whose state cannot be read must not be stopped, and otherwise
+queues the stop. `CacheRecovery.request_stop` delegates to it and `_try_stop`
+calls that method. The `DrainLoop` internal-error action involves no cache
+recovery and stays mandatory. Deferred: shortening
 `RECOVERY_STALE_DRAIN_SECONDS` when retention covers most of the pool.
 
 The automatic stop has a second, longer deadline. `_try_stop` first applies
