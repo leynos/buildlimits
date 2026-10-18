@@ -26,6 +26,10 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
 
+# How long :meth:`TokenPool.close` waits for an idle reader thread to notice.
+_CLOSE_JOIN_SECONDS = 0.5
+
+
 @dc.dataclass(frozen=True, slots=True)
 class Token:
     """A token read from the pool.
@@ -87,6 +91,12 @@ class TokenPool:
         self._demand = threading.Semaphore(0)
         # Each release asks the reader thread for one more token.
         self.request: cabc.Callable[[], None] = self._demand.release
+        # Guards the close flag and the descriptors it releases, so the reader
+        # thread and :meth:`close` can never close one descriptor twice or
+        # write to a pipe whose number has been reused.
+        self._lifecycle = threading.Lock()
+        self._is_closing = False
+        self._is_device_open = True
         self._reader = threading.Thread(target=self._read_forever, daemon=True)
         self._reader.start()
 
@@ -137,6 +147,46 @@ class TokenPool:
             msg = "short write returning a token"
             raise OSError(msg)
 
+    def close(self) -> None:
+        """Release every descriptor the pool owns; calling again does nothing.
+
+        The wake pipe closes at once. The device closes here when the reader
+        thread is idle or has ended. A thread blocked in a read cannot be
+        interrupted, and closing its descriptor underneath it could let the
+        number be reused before the thread reads again, so the thread closes
+        the device itself as soon as that read returns. The process is
+        normally exiting by then; the descriptor is never closed while the
+        thread can still use it.
+
+        Examples
+        --------
+        >>> import tempfile, pathlib
+        >>> with tempfile.TemporaryDirectory() as directory:
+        ...     device = pathlib.Path(directory) / "guild"
+        ...     os.mkfifo(device)
+        ...     pool = TokenPool(device)
+        ...     pool.close()
+        ...     pool.close()
+        """
+        with self._lifecycle:
+            if not self._is_closing:
+                self._is_closing = True
+                for fd in (self._wake_read, self._wake_write):
+                    with contextlib.suppress(OSError):
+                        os.close(fd)
+        self._demand.release()
+        self._reader.join(_CLOSE_JOIN_SECONDS)
+        if not self._reader.is_alive():
+            self._release_device()
+
+    def _release_device(self) -> None:
+        """Close the device once, and only after :meth:`close` has begun."""
+        with self._lifecycle:
+            if self._is_closing and self._is_device_open:
+                self._is_device_open = False
+                with contextlib.suppress(OSError):
+                    os.close(self.fd)
+
     def is_same_device(self) -> bool:
         """Check that the device path still names the opened device.
 
@@ -155,24 +205,43 @@ class TokenPool:
         return (stat.st_dev, stat.st_ino, stat.st_rdev) == self.identity
 
     def _read_forever(self) -> None:
-        """Serve token requests until the pool fails."""
-        while True:
-            # The semaphore counts requested tokens; it guards no region, so a
-            # ``with`` block would wrongly release it.
-            self._demand.acquire()  # pylint: disable=consider-using-with
-            try:
-                data = os.read(self.fd, 1)
-            except OSError as error:
-                self._emit(PoolFailure(f"reading a token failed: {error}"))
-                return
-            if not data:
-                self._emit(PoolFailure("the token device reported end of file"))
-                return
-            self._emit(Token(data))
+        """Serve token requests until the pool fails or is closed."""
+        try:
+            while self._serve_one_request():
+                pass
+        finally:
+            self._release_device()
+
+    def _serve_one_request(self) -> bool:
+        """Read one token for one request.
+
+        Returns
+        -------
+        bool
+            Whether the reader should wait for another request.
+        """
+        # The semaphore counts requested tokens; it guards no region, so a
+        # ``with`` block would wrongly release it.
+        self._demand.acquire()  # pylint: disable=consider-using-with
+        if self._is_closing:
+            return False
+        try:
+            data = os.read(self.fd, 1)
+        except OSError as error:
+            self._emit(PoolFailure(f"reading a token failed: {error}"))
+            return False
+        if not data:
+            self._emit(PoolFailure("the token device reported end of file"))
+            return False
+        self._emit(Token(data))
+        return True
 
     def _emit(self, event: PoolEvent) -> None:
-        """Queue an event and wake the event loop."""
-        self._events.put(event)
-        # A full pipe means the loop is already awake.
-        with contextlib.suppress(BlockingIOError):
-            os.write(self._wake_write, b"!")
+        """Queue an event and wake the event loop, unless the pool is closed."""
+        with self._lifecycle:
+            if self._is_closing:
+                return
+            self._events.put(event)
+            # A full pipe means the loop is already awake.
+            with contextlib.suppress(BlockingIOError):
+                os.write(self._wake_write, b"!")

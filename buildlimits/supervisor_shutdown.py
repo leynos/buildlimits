@@ -17,6 +17,7 @@ still takes effect on the tick that follows.
 
 import typing as typ
 
+from buildlimits import supervisor_signals
 from buildlimits.admission_state import GroupState
 from buildlimits.effects import Exit
 from buildlimits.journal import log
@@ -177,3 +178,39 @@ def shutdown(supervisor: Supervisor) -> None:
     supervisor._metric(
         "supervisor_stopped", outcome=exit_outcome(Exit(code=supervisor.exit_status))
     )
+
+
+def close(supervisor: Supervisor) -> None:
+    """Release every descriptor the supervisor owns; calling again is harmless.
+
+    A stopped supervisor leaves its selector, listener, token pool, signal
+    self-pipe and request connections open for process exit to reap. A process
+    that outlives the supervisor, such as a test runner, must close them, so
+    this is the one place that does. It does not stop or drain: call it after
+    :meth:`~buildlimits.supervisor.Supervisor.serve` returns, or on a
+    supervisor that never started.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        The supervisor whose descriptors are released.
+
+    Examples
+    --------
+    >>> from buildlimits.config import SupervisorConfig
+    >>> from buildlimits.supervisor import Supervisor
+    >>> supervisor = Supervisor(SupervisorConfig())
+    >>> supervisor.close()
+    >>> supervisor.close()
+    """
+    supervisor.requests.close_all()
+    for running in supervisor.groups.running.values():
+        running.child.close()
+    supervisor_signals.release_signals(supervisor)
+    if supervisor.listener is not None:
+        supervisor.listener.close()
+        supervisor.listener = None
+    if supervisor.pool is not None:
+        supervisor.pool.close()
+        supervisor.pool = None
+    supervisor.selector.close()

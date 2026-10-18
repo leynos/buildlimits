@@ -52,6 +52,11 @@ class FakePool:
     capacity: int = 0
     outstanding: int = 0
     max_held: int = 0
+    is_closed: bool = False
+
+    def close(self) -> None:
+        """Record that the owner released the pool; the double holds nothing."""
+        self.is_closed = True
 
     def events(self) -> list[PoolEvent]:
         """Return and clear the scripted events.

@@ -79,7 +79,10 @@ def _supervise(settings: config.SupervisorConfig) -> int:
     sink = JournalSink(identifier="build-limits-supervisor")
     try:
         supervisor = Supervisor(settings, metrics=Metrics(sink, warn=log))
-        return _serve(supervisor, own)
+        try:
+            return _serve(supervisor, own)
+        finally:
+            supervisor.close()
     finally:
         with contextlib.suppress(Exception):
             sink.close()

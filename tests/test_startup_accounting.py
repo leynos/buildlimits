@@ -86,6 +86,9 @@ def test_service_distinguishes_operator_accounting_from_retryable_startup(
             msg = "temporary manager fault"
             raise SccacheError(msg)
 
+        def close(self) -> None:
+            """Hold no descriptors, but accept the service's release call."""
+
     monkeypatch.setattr(service, "Supervisor", FailedSupervisor)
     monkeypatch.setattr(service.cgroups, "own_path", lambda: PurePosixPath("/fixture"))
     settings = SupervisorConfig(socket_path=tmp_path / "supervisor.sock")

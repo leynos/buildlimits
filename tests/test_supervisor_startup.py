@@ -2,12 +2,14 @@
 
 import dataclasses as dc
 import os
+import signal
 import socket
 import subprocess
 import typing as typ
 from pathlib import PurePosixPath
 
 import pytest
+from descriptor_helpers import still_open
 from pool_helpers import FakePool
 
 from buildlimits import cgroups, startup
@@ -70,13 +72,8 @@ class _Started:
         ]
 
     def close(self) -> None:
-        """Reclaim the listener, selector, pending requests and pipes."""
-        for request_id in tuple(self.supervisor.requests.pending):
-            self.supervisor.requests.forget(request_id)
-        self.supervisor.requests.close_all()
-        if self.supervisor.listener is not None:
-            self.supervisor.listener.close()
-        self.supervisor.selector.close()
+        """Release the supervisor's descriptors, then the pipes this test made."""
+        self.supervisor.close()
         for fd in self.pipes:
             os.close(fd)
 
@@ -215,3 +212,42 @@ def test_the_refusal_of_a_recovery_request_names_the_mode(
             ), "only the mode that owns the cache controls the unit"
         finally:
             started.close()
+
+
+def test_closing_a_started_supervisor_releases_every_descriptor_it_owns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Close returns the selector, listener, signal pipe and pool, and is repeatable.
+
+    The signal wakeup descriptor and the ``SIGCHLD`` handler are process-wide, so
+    a supervisor that left them installed would write into whichever unrelated
+    descriptor later reuses the pipe's number.
+    """
+    started = _started("sccache", tmp_path, monkeypatch)
+    supervisor = started.supervisor
+    try:
+        listener = supervisor.listener
+        pool = typ.cast("FakePool", supervisor.pool)
+        assert listener is not None, "start-up opened the requester listener"
+        held = [
+            supervisor.selector.fileno(),
+            listener.fileno(),
+            supervisor._signals_read,
+            supervisor._signals_write,
+        ]
+        assert still_open(held) == held, "the started supervisor holds all four"
+
+        supervisor.close()
+
+        assert still_open(held) == [], "close returns every descriptor"
+        assert pool.is_closed, "close releases the token pool"
+        assert supervisor.pool is None, "a released pool is not left to be reused"
+        assert signal.set_wakeup_fd(-1) == -1, (
+            "the signal wakeup descriptor is withdrawn"
+        )
+        assert signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL, (
+            "the SIGCHLD handler is withdrawn with it"
+        )
+        supervisor.close()
+    finally:
+        started.close()

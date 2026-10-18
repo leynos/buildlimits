@@ -32,10 +32,35 @@ def watch_signals(supervisor: Supervisor) -> None:
     """
     read_end, write_end = os.pipe2(os.O_CLOEXEC | os.O_NONBLOCK)
     supervisor._signals_read = read_end
+    supervisor._signals_write = write_end
     signal.set_wakeup_fd(write_end, warn_on_full_buffer=False)
     # A handler must be installed for the wakeup descriptor to be written.
     signal.signal(signal.SIGCHLD, lambda *_: None)
     supervisor.selector.register(read_end, selectors.EVENT_READ, SIGNALS_TAG)
+
+
+def release_signals(supervisor: Supervisor) -> None:
+    """Stop waking the event loop and close both ends of the self-pipe.
+
+    The wakeup descriptor and the ``SIGCHLD`` handler are process-wide, so they
+    are withdrawn before the pipe closes; otherwise a later signal would write
+    to a descriptor number that something else may now own. Calling this
+    again, or before :func:`watch_signals`, does nothing.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        Owner of the self-pipe.
+    """
+    if supervisor._signals_read < 0:
+        return
+    signal.set_wakeup_fd(-1)
+    signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    for fd in (supervisor._signals_read, supervisor._signals_write):
+        with contextlib.suppress(OSError):
+            os.close(fd)
+    supervisor._signals_read = -1
+    supervisor._signals_write = -1
 
 
 def reap_leaders(supervisor: Supervisor) -> None:
