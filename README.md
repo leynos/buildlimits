@@ -41,7 +41,9 @@ uv tool install --python 3.14 git+https://github.com/leynos/buildlimits
 
 On managed hosts, the `devhost.buildlimits` collection in
 [dev-env-rocky](https://github.com/leynos/dev-env-rocky) provisions the pool,
-the user units and the wrapper handover for you.
+the user units and the wrapper handover for you. If you ran the earlier copy
+from dev-env-rocky, see
+[Migrating from the dev-env-rocky copy](docs/migrating-from-dev-env-rocky.md).
 
 ### Basic usage
 

@@ -13,6 +13,9 @@
   repository's static-analysis exceptions.
 - [Repository layout](repository-layout.md) maps every major path to its
   responsibility and conventions.
+- [Migrating from the dev-env-rocky copy](migrating-from-dev-env-rocky.md)
+  lists what operators must change when moving from `build_limits` in
+  dev-env-rocky to this repository's 0.1.0 release.
 
 ## Conventions
 
