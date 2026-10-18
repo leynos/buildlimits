@@ -10,6 +10,7 @@ interval honours its ``RUSTC_HEARTBEAT_SECS`` unless
 """
 
 import contextlib
+import math
 import sys
 import time
 import typing as typ
@@ -47,6 +48,44 @@ def crate_label(argv: cabc.Sequence[str]) -> str:
     return Path(argv[0]).name
 
 
+def positive_seconds(
+    env: cabc.Mapping[str, str], names: cabc.Iterable[str], default: float
+) -> float:
+    """Read the first finite, positive duration among several variables.
+
+    An adapter runs inside someone else's build, so a malformed setting must
+    not end it with a traceback: an unparsable, non-finite or non-positive
+    value is skipped, exactly as if the variable were unset.
+
+    Parameters
+    ----------
+    env : Mapping[str, str]
+        The environment.
+    names : Iterable[str]
+        The variables to try, in order of precedence.
+    default : float
+        The duration used when no variable holds a valid value.
+
+    Returns
+    -------
+    float
+        The first valid value, or ``default``.
+
+    Examples
+    --------
+    >>> positive_seconds({"A": "inf", "B": "2.5"}, ("A", "B"), 9.0)
+    2.5
+    >>> positive_seconds({"A": "5m"}, ("A",), 9.0)
+    9.0
+    """
+    for name in names:
+        with contextlib.suppress(KeyError, ValueError):
+            value = float(env[name])
+            if math.isfinite(value) and value > 0:
+                return value
+    return default
+
+
 def heartbeat_seconds(env: cabc.Mapping[str, str]) -> float:
     """Read the heartbeat interval.
 
@@ -59,14 +98,14 @@ def heartbeat_seconds(env: cabc.Mapping[str, str]) -> float:
     -------
     float
         ``BUILD_LIMITS_HEARTBEAT_SECS``, then ``RUSTC_HEARTBEAT_SECS``, then
-        the default; invalid or non-positive values fall back to the default.
+        the default; invalid, non-finite or non-positive values fall back to
+        the default.
     """
-    for name in ("BUILD_LIMITS_HEARTBEAT_SECS", "RUSTC_HEARTBEAT_SECS"):
-        with contextlib.suppress(KeyError, ValueError):
-            value = float(env[name])
-            if value > 0:
-                return value
-    return DEFAULT_HEARTBEAT_SECONDS
+    return positive_seconds(
+        env,
+        ("BUILD_LIMITS_HEARTBEAT_SECS", "RUSTC_HEARTBEAT_SECS"),
+        DEFAULT_HEARTBEAT_SECONDS,
+    )
 
 
 class Heartbeat:

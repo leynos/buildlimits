@@ -220,15 +220,27 @@ def terminate(group_dir: Path, *, force: bool) -> None:
         The group's directory.
     force : bool
         Send ``SIGKILL`` through ``cgroup.kill`` instead of ``SIGTERM`` to
-        each member.
+        each member. Where ``cgroup.kill`` cannot be written, as on kernels
+        before 5.14, each member is sent ``SIGKILL`` directly instead.
     """
     if force:
-        with contextlib.suppress(OSError):
+        try:
             (group_dir / "cgroup.kill").write_text("1", encoding="ascii")
+        except OSError:
+            # A vanished group also lands here; its member list is then empty.
+            # Signalling members one by one can miss a child forked between
+            # the listing and its parent's death, which the kernel's atomic
+            # cgroup.kill cannot, so it remains the preferred path.
+            _signal_members(group_dir, signal.SIGKILL)
         return
+    _signal_members(group_dir, signal.SIGTERM)
+
+
+def _signal_members(group_dir: Path, number: signal.Signals) -> None:
+    """Send one signal to every process in a group and its descendants."""
     for pid in member_pids(group_dir):
         with contextlib.suppress(ProcessLookupError):
-            os.kill(pid, signal.SIGTERM)
+            os.kill(pid, number)
 
 
 def wait_for_membership(

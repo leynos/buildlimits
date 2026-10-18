@@ -664,10 +664,6 @@ unit = "tests/test_journal_lifecycle.py"
 reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
 
 [[tool.duplication_gate.allow]]
-unit = "tests/test_adapter_metrics.py"
-reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
-
-[[tool.duplication_gate.allow]]
 unit = "tests/test_launch.py"
 reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
 
@@ -1133,3 +1129,10 @@ reason = "Recurring short test steps: these fragments arrange or check the same 
 [[tool.duplication_gate.allow]]
 unit = "tests/test_admission_on_systemd_behaviour.py"
 reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_adapter_metrics.py",
+    "tests/test_nested_cargo_prerequisites.py",
+]
+reason = "Unrelated one-line environment set-up: each test sets the one variable its own scenario needs, so the matching `monkeypatch.setenv` lines share only pytest's API, not logic."

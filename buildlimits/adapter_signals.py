@@ -71,7 +71,10 @@ def _reproduce(exit_: Exit) -> int:
         The status to exit with, unless a signal ends the process first.
     """
     if exit_.signal is not None:
-        signal.signal(exit_.signal, signal.SIG_DFL)
+        # SIGKILL and SIGSTOP cannot have their disposition changed, so the
+        # reset raises; their default action is already the one reproduced.
+        with contextlib.suppress(OSError, ValueError):
+            signal.signal(exit_.signal, signal.SIG_DFL)
         os.kill(os.getpid(), exit_.signal)
         return 128 + exit_.signal
     if exit_.code is None:

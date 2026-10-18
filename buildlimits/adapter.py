@@ -29,7 +29,12 @@ from buildlimits.adapter_metrics import AdapterMetrics
 from buildlimits.adapter_signals import _reproduce as _reproduce
 from buildlimits.adapter_signals import observe_signals
 from buildlimits.framing import DescriptorSendPressureError
-from buildlimits.heartbeat import Heartbeat, crate_label, heartbeat_seconds
+from buildlimits.heartbeat import (
+    Heartbeat,
+    crate_label,
+    heartbeat_seconds,
+    positive_seconds,
+)
 from buildlimits.heartbeat import write_line as _stderr
 from buildlimits.protocol import (
     Admitted,
@@ -115,8 +120,8 @@ def run(
     env = dict(os.environ)
     clock = retry.clock.now
     heartbeat = Heartbeat(crate_label(argv), heartbeat_seconds(env), clock=clock)
-    unavailable = float(
-        env.get("BUILD_LIMITS_UNAVAILABLE_SECS", DEFAULT_UNAVAILABLE_SECONDS)
+    unavailable = positive_seconds(
+        env, ("BUILD_LIMITS_UNAVAILABLE_SECS",), DEFAULT_UNAVAILABLE_SECONDS
     )
     summary = AdapterMetrics(clock, heartbeat.phase_started, metrics)
     try:

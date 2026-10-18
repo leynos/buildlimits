@@ -286,13 +286,37 @@ def test_heartbeat_output_is_unchanged(
     assert record["BUILD_LIMITS_RUNTIME_SECONDS"] == "2.000", "completion boundary"
 
 
-def test_malformed_timeout_is_not_a_supervisor_outcome(
-    monkeypatch: pytest.MonkeyPatch, metric_sink: RecordingSink
+class _DeadlineSeenError(Exception):
+    """Stops an adapter run once its admission deadline has been read."""
+
+
+@pytest.mark.parametrize("value", ["invalid", "5m", "inf", "nan", "-1", "0"])
+def test_malformed_timeout_falls_back_to_the_default(
+    monkeypatch: pytest.MonkeyPatch, metric_sink: RecordingSink, value: str
 ) -> None:
-    """Invalid local configuration preserves its error without blaming the supervisor."""
-    monkeypatch.setenv("BUILD_LIMITS_UNAVAILABLE_SECS", "invalid")
-    with pytest.raises(ValueError, match="could not convert string to float"):
+    """An unusable unavailability timeout is ignored rather than failing the build."""
+    monkeypatch.setenv("BUILD_LIMITS_UNAVAILABLE_SECS", value)
+    deadlines: list[float] = []
+
+    def capture(deadline: float, _summary: object) -> typ.NoReturn:
+        """Record the admission deadline and stop before any connection.
+
+        Raises
+        ------
+        _DeadlineSeenError
+            Always, once the deadline has been recorded.
+        """
+        deadlines.append(deadline)
+        raise _DeadlineSeenError
+
+    monkeypatch.setattr(adapter, "AdmissionAttempt", capture)
+    with pytest.raises(_DeadlineSeenError):
         adapter.run(
-            ["rustc"], cacheable=True, metrics=Metrics(metric_sink, source="adapter")
+            ["rustc"],
+            cacheable=True,
+            retry=RetryWait(clock=Clock(now=lambda: 0.0)),
+            metrics=Metrics(metric_sink, source="adapter"),
         )
-    assert metric_sink.records == [], "configuration failure is not supervisor loss"
+    assert deadlines == [adapter.DEFAULT_UNAVAILABLE_SECONDS], (
+        "the default deadline replaces the unusable value"
+    )

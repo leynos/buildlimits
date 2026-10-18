@@ -14,7 +14,7 @@ def log(message: str) -> None:
 
 
 def admitted_line(entry: Pending, *, cached: bool) -> str:
-    """Describe an admission without recording the compiler's arguments.
+    """Describe an admission without its compiler arguments or directory.
 
     Parameters
     ----------
@@ -31,6 +31,6 @@ def admitted_line(entry: Pending, *, cached: bool) -> str:
     waited = (entry.admitted or entry.arrived) - entry.arrived
     return (
         f"admitted request {entry.request_id} as {entry.group_id} after "
-        f"{waited:.1f}s: {Path(entry.request.argv[0]).name} in "
-        f"{entry.request.cwd}{' via sccache' if cached else ''}"
+        f"{waited:.1f}s: {Path(entry.request.argv[0]).name}"
+        f"{' via sccache' if cached else ''}"
     )

@@ -43,6 +43,8 @@ def test_waiting_for_the_supervisor_says_so() -> None:
         ({"BUILD_LIMITS_HEARTBEAT_SECS": "5", "RUSTC_HEARTBEAT_SECS": "30"}, 5.0),
         ({"BUILD_LIMITS_HEARTBEAT_SECS": "nonsense"}, 45.0),
         ({"BUILD_LIMITS_HEARTBEAT_SECS": "0"}, 45.0),
+        ({"BUILD_LIMITS_HEARTBEAT_SECS": "inf", "RUSTC_HEARTBEAT_SECS": "30"}, 30.0),
+        ({"BUILD_LIMITS_HEARTBEAT_SECS": "nan"}, 45.0),
     ],
 )
 def test_heartbeat_interval(env: dict[str, str], expected: float) -> None:

@@ -263,9 +263,10 @@ def _pending(*, group_id: str = "g0", admitted: float | None = 1.5) -> Pending:
 def test_admitted_line_describes_the_admission_without_arguments(
     *, cached: bool, suffix: str
 ) -> None:
-    """The line names the request, group, program and directory, never argv."""
+    """The line names the request, group and program, never argv or a path."""
     line = journal.admitted_line(_pending(), cached=cached)
-    assert line == (
-        f"admitted request 7 as g0 after 1.5s: rustc in /home/build/widget{suffix}"
-    ), "the admission is described"
+    assert line == f"admitted request 7 as g0 after 1.5s: rustc{suffix}", (
+        "the admission is described"
+    )
     assert "--crate-name" not in line, "compiler arguments must not be logged"
+    assert "/home/build" not in line, "the requester's directory must not be logged"

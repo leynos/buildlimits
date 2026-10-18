@@ -4,6 +4,7 @@ The request/reply exchange, ``_main`` and the two entry points live in
 ``test_adapter_run.py`` to keep each file under the house line-count limit.
 """
 
+import errno
 import signal
 import typing as typ
 from pathlib import Path, PurePosixPath
@@ -215,6 +216,29 @@ def test_reproduce_kills_itself_with_the_same_signal(
         ("signal", signal.SIGKILL, signal.SIG_DFL),
         ("kill", adapter.os.getpid(), signal.SIGKILL),
     ], "the default disposition is restored before killing this process"
+
+
+def test_reproduce_still_kills_when_the_disposition_cannot_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SIGKILL's fixed disposition does not stop the signal being reproduced."""
+    killed: list[int] = []
+
+    def refuse(number: int, _handler: object) -> typ.NoReturn:
+        """Fail as the kernel does for a signal that cannot be caught.
+
+        Raises
+        ------
+        OSError
+            Always, as ``sigaction`` refuses SIGKILL and SIGSTOP.
+        """
+        raise OSError(errno.EINVAL, "Invalid argument", number)
+
+    monkeypatch.setattr(adapter.signal, "signal", refuse)
+    monkeypatch.setattr(adapter.os, "kill", lambda _pid, number: killed.append(number))
+    result = adapter._reproduce(Exit(signal=signal.SIGKILL))
+    assert killed == [signal.SIGKILL], "the signal is still sent to this process"
+    assert result == 128 + signal.SIGKILL, "the fallback status reflects the signal"
 
 
 # --- _cancel_on_signal -----------------------------------------------------------

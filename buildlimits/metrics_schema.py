@@ -44,6 +44,7 @@ REASONS = frozenset({
     "none",
     "bad_request",
     "attributes",
+    "descriptors",
     "unhealthy",
     "launch_failed",
     "exec_failed",

@@ -70,6 +70,7 @@ def test_exit_classification(exit_: Exit, expected: str) -> None:
         ("launch-failed", "launch_failed"),
         ("bad-request", "bad_request"),
         ("attributes", "attributes"),
+        ("descriptors", "descriptors"),
         ("/secret/error", "other"),
     ],
 )

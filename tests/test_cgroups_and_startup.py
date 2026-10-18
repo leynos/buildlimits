@@ -2,6 +2,7 @@
 
 import itertools
 import os
+import signal
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -101,6 +102,23 @@ def test_forced_termination_writes_cgroup_kill(tmp_path: Path) -> None:
         "forced termination writes cgroup.kill"
     )
     cgroups.terminate(tmp_path / "gone.scope", force=True)
+
+
+def test_forced_termination_kills_members_without_cgroup_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A kernel without cgroup.kill still has every member killed."""
+    group = _fake_group(tmp_path, "a.scope", populated=True, pids=[10, 11])
+    # A directory in its place makes the write fail as an absent file would.
+    (group / "cgroup.kill").mkdir()
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(
+        cgroups.os, "kill", lambda pid, number: sent.append((pid, number))
+    )
+    cgroups.terminate(group, force=True)
+    assert sent == [(10, signal.SIGKILL), (11, signal.SIGKILL)], (
+        "each member is sent SIGKILL directly"
+    )
 
 
 def test_membership_waits_until_the_process_moves(tmp_path: Path) -> None:

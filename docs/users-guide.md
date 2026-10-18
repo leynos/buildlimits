@@ -139,6 +139,10 @@ agents and shells alike.
 
 _Table 3: Adapter environment variables._
 
+The two duration variables take seconds. A value that does not parse, or is not
+a finite positive number, is ignored as if it were unset, so a mistyped setting
+falls back to the default instead of failing the build.
+
 ## What a build sees
 
 A build that waits for a slot prints one line to standard error, repeated at
