@@ -14,6 +14,7 @@ from cache_recovery_harness import machine_for, scripted_machine
 from cache_recovery_helpers import DrainReading, TriggerCase, gauges
 
 from buildlimits import cache_recovery
+from buildlimits.admission import Counts
 from buildlimits.systemd import SystemdError
 
 
@@ -41,6 +42,12 @@ from buildlimits.systemd import SystemdError
             gauges(queued=1, draining=1, server_drain=1),
             False,
         ),
+        TriggerCase(
+            "starved",
+            "live_work",
+            Counts(1, 2, 1, 0, 1, capacity=2, cached_moving=0),
+            True,
+        ),
         TriggerCase("starved", "live_work", gauges(server_drain=1), False),
         TriggerCase("starved", "live_work", gauges(queued=1), False),
         TriggerCase("starved", None, gauges(queued=1, server_drain=1), False),
@@ -66,6 +73,7 @@ from buildlimits.systemd import SystemdError
         "stopped-populated",
         "running-group",
         "draining-group",
+        "uncached-running-group",
         "empty-queue",
         "nothing-held",
         "no-fault",
@@ -135,6 +143,30 @@ def test_a_draining_group_is_refused_with_its_own_reason(tmp_path: Path) -> None
     )
     assert document["phase"] == "idle", "the refused request opens nothing"
     assert "stop" not in cache.cache.verbs, "no stop follows the refusal"
+
+
+def test_only_cached_groups_hold_the_stop(tmp_path: Path) -> None:
+    """An uncached running group lets the stop through; a cached one does not.
+
+    Stopping the managed cache can only interrupt a group composed with it. A
+    transaction composes every group it admits without the cache, so counting
+    those as moving would let a busy queue hold the stop off indefinitely.
+    """
+    uncached = Counts(1, 2, 1, 0, 1, capacity=2, cached_moving=0)
+    cache = scripted_machine(tmp_path, [uncached])
+    document = cache.machine.request("manual", 0.0)
+    assert not document["blocked"], "an uncached running group blocks nothing"
+    cache.machine.tick(0.0)
+    cache.machine.tick(1.0)
+    assert cache.cache.verbs == ["stop"], "the stop is issued past it"
+
+    cached = scripted_machine(
+        tmp_path / "cached", [Counts(1, 2, 1, 0, 1, capacity=2, cached_moving=1)]
+    )
+    refused = cached.machine.request("manual", 0.0)
+    assert "1 cached compiler group(s) are still moving" in str(refused["blocked"]), (
+        "a cached running group still blocks the stop"
+    )
 
 
 def test_a_lapsed_root_proof_holds_the_automatic_stop(tmp_path: Path) -> None:

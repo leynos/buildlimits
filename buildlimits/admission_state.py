@@ -37,6 +37,10 @@ class Counts:
         Empty groups retaining a token for server work.
     capacity : int
         Configured capacity of the shared pool.
+    cached_moving : int
+        Running or draining groups composed with sccache. Only these can be
+        interrupted by stopping the managed cache: a group composed without it
+        never talks to the server, so recovery must not wait for it.
     """
 
     queued: int
@@ -45,6 +49,7 @@ class Counts:
     draining: int
     server_drain: int
     capacity: int
+    cached_moving: int
 
 
 @dc.dataclass(slots=True)

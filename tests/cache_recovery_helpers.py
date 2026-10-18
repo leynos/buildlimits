@@ -307,7 +307,15 @@ def gauges(
         The identifier-free admission snapshot.
     """
     held = running + draining + server_drain
-    return Counts(queued, held, running, draining, server_drain, capacity=2)
+    return Counts(
+        queued,
+        held,
+        running,
+        draining,
+        server_drain,
+        capacity=2,
+        cached_moving=running + draining,
+    )
 
 
 # The backoff between retries is 30 s times the attempt count, so a step well

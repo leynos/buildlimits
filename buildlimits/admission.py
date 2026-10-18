@@ -320,6 +320,9 @@ class Admission:
             A frozen snapshot derived from the queue and group states.
         """
         states = collections.Counter(group.state for group in self.groups.values())
+        cached = collections.Counter(
+            group.state for group in self.groups.values() if group.cached
+        )
         return Counts(
             len(self.queue),
             self.tokens_held(),
@@ -327,6 +330,7 @@ class Admission:
             states[GroupState.DRAINING],
             states[GroupState.SERVER_DRAIN],
             self.capacity,
+            cached[GroupState.RUNNING] + cached[GroupState.DRAINING],
         )
 
     def cached_tokens_held(self) -> int:

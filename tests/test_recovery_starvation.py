@@ -58,33 +58,22 @@ READINGS: typ.Final[tuple[tuple[str | None, int | None], ...]] = (
     (None, None),
 )
 # The gauge shapes that decide the remaining two clauses. Each is named for
-# what it makes of ``held == server_drain > 0`` and ``queued > 0``:
+# what it makes of ``server_drain > 0 and cached_moving == 0`` and
+# ``queued > 0``:
 #
 #   starving       one token awaiting the server, one request behind it
 #   no-queue       nothing waiting, so the cache cannot be starving anything
 #   nothing-held   nothing retained, so there is no server work to account for
-#   group-moving   a running group holds a token the server is not draining
-#   group-draining a draining group holds one, and may still have children
-#   short-held     two held, one awaiting the server: the equality fails
+#   group-moving   a cached running group the stop would interrupt
+#   group-draining a cached draining group, which may still have children
+#   uncached-moving an uncached running group, which the stop cannot touch
 GAUGES: typ.Final[dict[str, Counts]] = {
-    "starving": Counts(
-        queued=1, held=1, running=0, draining=0, server_drain=1, capacity=2
-    ),
-    "no-queue": Counts(
-        queued=0, held=1, running=0, draining=0, server_drain=1, capacity=2
-    ),
-    "nothing-held": Counts(
-        queued=1, held=0, running=0, draining=0, server_drain=0, capacity=2
-    ),
-    "group-moving": Counts(
-        queued=1, held=2, running=1, draining=0, server_drain=1, capacity=2
-    ),
-    "group-draining": Counts(
-        queued=1, held=2, running=0, draining=1, server_drain=1, capacity=2
-    ),
-    "short-held": Counts(
-        queued=1, held=2, running=1, draining=0, server_drain=1, capacity=2
-    ),
+    "starving": Counts(1, 1, 0, 0, 1, capacity=2, cached_moving=0),
+    "no-queue": Counts(0, 1, 0, 0, 1, capacity=2, cached_moving=0),
+    "nothing-held": Counts(1, 0, 0, 0, 0, capacity=2, cached_moving=0),
+    "group-moving": Counts(1, 2, 1, 0, 1, capacity=2, cached_moving=1),
+    "group-draining": Counts(1, 2, 0, 1, 1, capacity=2, cached_moving=1),
+    "uncached-moving": Counts(1, 2, 1, 0, 1, capacity=2, cached_moving=0),
 }
 
 BARRIER_PATH = "/run/user/1000/build-limits/cache-recovery"
@@ -185,10 +174,10 @@ def _permits_no_root(case: Case) -> bool:
     return case.roots == 0
 
 
-def _permits_all_awaiting(case: Case) -> bool:
-    """Require every held token to await the server, with something held."""
+def _permits_server_alone(case: Case) -> bool:
+    """Require a token awaiting the server and no cached group moving."""
     counts = GAUGES[case.gauges]
-    return counts.server_drain > 0 and counts.held == counts.server_drain
+    return counts.server_drain > 0 and counts.cached_moving == 0
 
 
 def _permits_queue(case: Case) -> bool:
@@ -202,7 +191,7 @@ _CLAUSES: typ.Final[tuple[tuple[str, cabc.Callable[[Case], bool]], ...]] = (
     ("the cooldown has elapsed", _permits_cooling),
     ("the probe faulted on live work", _permits_live_work),
     ("the probe proved no visible root", _permits_no_root),
-    ("every held token awaits the server", _permits_all_awaiting),
+    ("only the server holds cached work", _permits_server_alone),
     ("a request is waiting behind them", _permits_queue),
 )
 
@@ -339,7 +328,7 @@ _QUESTIONS: typ.Final[dict[str, tuple[Case, Case]]] = {
         _PERMITTING,
         dc.replace(_PERMITTING, roots=2),
     ),
-    "every held token awaits the server": (
+    "only the server holds cached work": (
         _PERMITTING,
         dc.replace(_PERMITTING, gauges="group-moving"),
     ),

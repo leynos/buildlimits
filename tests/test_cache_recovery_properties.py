@@ -150,6 +150,9 @@ def test_the_invariants_name_the_guards_they_protect() -> None:
 #     ``no_start_is_queued_behind_a_live_barrier``;
 #   * removing the ``_blocked`` guard from ``_try_stop`` outright is rejected by
 #     the two stop assertions in ``tick``;
+#   * deleting the ``cached_moving`` clause from ``blocked`` alone is rejected
+#     by the same assertions, because nothing else stops a manual transaction
+#     while a modelled group is moving;
 #   * clearing ``_last_fault`` in ``_finish`` (so an exhausted ending loses the
 #     fault it gave up over) is rejected by the ``restart_runs_out`` rule
 #     reaching the ending with the refusal still scripted;
@@ -165,12 +168,8 @@ def test_the_invariants_name_the_guards_they_protect() -> None:
 # faulted half of the check reachable instead of dead.
 #
 # One mutation that the search does *not* reject is worth naming, because the
-# reason is a property of the design rather than a gap: deleting either
-# individual clause from ``_blocked`` still leaves the stop blocked by the
-# remaining clauses — ``held == server_drain`` already implies no group is
-# moving, and ``request_stop`` re-reads the manager fault itself before issuing
-# the verb. The guards are therefore defence in depth, and the search's
-# sensitivity is asserted at the choke point (``_try_stop``) rather than at each
-# redundant clause. A future change that makes those clauses load-bearing would
-# be caught by the scripted tests in :mod:`test_cache_recovery_machine`, which
-# pin each refusal's own reason text.
+# reason is a property of the design rather than a gap: deleting the manager
+# clause from ``blocked`` still leaves the stop refused, because
+# ``request_stop`` re-reads the manager fault itself before issuing the verb.
+# That clause is therefore defence in depth, and its own reason text is pinned
+# by the scripted tests in :mod:`test_cache_recovery_machine` instead.

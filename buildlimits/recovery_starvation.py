@@ -6,11 +6,17 @@ admission; either way the transaction may only open when the evidence permits
 it, and those are the two questions this module answers.
 
 The automatic evidence is narrow: the drain probe must have faulted on *live*
-work, it must have established that no compiler root is visible, every held
-token must be waiting on the server rather than on a group that is still
-moving, and a request must be waiting behind them. An unproven reading is not a
+work, it must have established that no compiler root is visible, some token
+must be waiting on the server with no cached group still moving, and a request
+must be waiting behind them. An unproven reading is not a
 weaker reason to act — it is no reason, which is why every clause is a separate
 question with a name rather than a term in one long conjunction.
+
+Only cached groups are counted as moving. A transaction denies cache
+composition from the moment it opens, so the requests admitted while it runs
+compile without the server, and stopping the server cannot interrupt them.
+Counting those groups too would let a busy queue refill the free slots faster
+than the stop is retried, which held the retained tokens indefinitely.
 
 Both belong beside the transaction they authorize rather than beside the
 start-up reclamation that once shared this code's module: that module retires a
@@ -66,8 +72,8 @@ def starvation(reading: StarvationReading, barrier: RecoveryBarrier) -> str | No
 
     Every clause is evidence, not a heuristic: the drain probe must have
     faulted on live work *and* established that no compiler root is visible,
-    every held token must be waiting on the server rather than on a moving
-    group, and a request must be waiting. An unproven reading is not a weaker
+    some token must be waiting on the server with no cached group moving, and
+    a request must be waiting. An unproven reading is not a weaker
     reason to act — it is no reason.
 
     Parameters
@@ -93,7 +99,7 @@ def starvation(reading: StarvationReading, barrier: RecoveryBarrier) -> str | No
         return None
     if not _the_probe_proved_detached_work(reading):
         return None
-    if not _every_held_token_awaits_the_server(counts):
+    if not _the_server_alone_holds_cached_work(counts):
         return None
     if counts.queued == 0:
         return None
@@ -107,9 +113,11 @@ def starvation(reading: StarvationReading, barrier: RecoveryBarrier) -> str | No
 def blocked(counts: Counts, fault_kind: str | None) -> str:
     """Explain why a transaction must not start.
 
-    ``held == server_drain > 0`` is exactly "every held group is waiting on
-    the server": a running group and a draining group each fail it, and a
-    draining group's leader may still have live children.
+    A cached running group and a cached draining group each block the stop,
+    because the cache serves them and a draining group's leader may still have
+    live children. A group composed without the cache does not: stopping the
+    server cannot interrupt it, and the transaction itself composes every
+    group admitted while it runs that way.
 
     Parameters
     ----------
@@ -123,22 +131,15 @@ def blocked(counts: Counts, fault_kind: str | None) -> str:
     str
         The reason it cannot start, or an empty string when it can.
     """
-    if counts.running or counts.draining:
-        moving = counts.running + counts.draining
+    if counts.cached_moving:
         return (
-            f"{moving} compiler group(s) are still moving; "
+            f"{counts.cached_moving} cached compiler group(s) are still moving; "
             "stopping the cache would interrupt them"
         )
     if fault_kind == "manager":
         return (
             "the user manager transport is faulted; restore it before "
             "stopping the managed cache"
-        )
-    if counts.held != counts.server_drain:
-        return (
-            f"{counts.held} token(s) are held but only "
-            f"{counts.server_drain} await server accounting; stopping the "
-            "cache cannot answer for the others"
         )
     return ""
 
@@ -173,18 +174,18 @@ def _the_probe_proved_detached_work(reading: StarvationReading) -> bool:
     return reading.fault_kind == "live_work" and reading.zero_visible_roots
 
 
-def _every_held_token_awaits_the_server(counts: Counts) -> bool:
-    """Report whether every held token waits on the server, not on a group.
+def _the_server_alone_holds_cached_work(counts: Counts) -> bool:
+    """Report whether the server holds tokens and no cached group is moving.
 
-    Equality cannot hold with nothing held, so the positive count is part of
-    the same claim: a running group and a draining group each fail it, and a
-    draining group's leader may still have live children.
+    A cached running or draining group fails it, since stopping the cache
+    would interrupt that group. An uncached group does not: it never reached
+    the server, so the stop cannot harm it.
 
     Returns
     -------
     bool
-        Whether something is held and all of it awaits the server.
+        Whether a token awaits the server and no cached group is moving.
     """
     if counts.server_drain == 0:
         return False
-    return counts.held == counts.server_drain
+    return counts.cached_moving == 0

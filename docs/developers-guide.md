@@ -268,9 +268,14 @@ document, pinned by Syrupy snapshots.
 `stopping`, `accounting`, `restarting` — advancing at most one step per tick.
 Its calls are bounded and its retries delayed, but no path ends a transaction
 by releasing an unaccounted token: only `ManagedSccache.accounted_drain`
-releases, and only on a verified stopped-and-empty service. `recover_cli` polls
-under `--wait` and reports "unknown", never "complete", when a query fails
-part-way.
+releases, and only on a verified stopped-and-empty service. Both the automatic
+trigger and the stop guard in `recovery_starvation` read
+`Counts.cached_moving`, the running and draining groups composed with sccache,
+rather than every moving group. The transaction denies cache composition while
+it runs, so the groups it admits cannot be interrupted by the stop; counting
+them let a busy queue refill each free slot before every retried stop and hold
+the retained tokens indefinitely. `recover_cli` polls under `--wait` and
+reports "unknown", never "complete", when a query fails part-way.
 
 The supervisor and adapters emit bounded, identifier-free native journal fields
 through `metrics.Metrics` over a `JournalSink`; emission failures are isolated

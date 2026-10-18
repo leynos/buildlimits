@@ -292,11 +292,13 @@ cache holds no visible compiler roots. With `manual`, it waits for an operator:
 build-limits-recover --wait --wait-timeout 300
 ```
 
-The command refuses to start under a running compiler group, because stopping
-the cache would interrupt it, and while the user manager's transport is
-faulted, because a service whose state cannot be read must not be stopped. A
-supervisor in `direct` cache mode manages no cache and answers with
-`no-cache-recovery`.
+The command refuses to start under a running or draining compiler group that
+uses the managed cache, because stopping the cache would interrupt it. Groups
+composed without the cache do not block it; every request admitted while a
+transaction runs is composed that way, so a busy queue cannot hold the stop
+off. It also refuses while the user manager's transport is faulted, because a
+service whose state cannot be read must not be stopped. A supervisor in
+`direct` cache mode manages no cache and answers with `no-cache-recovery`.
 
 `--wait` polls the status document every 2 seconds for up to `--wait-timeout`
 seconds (300 by default). A failed step is retried after 30 seconds, then 60,

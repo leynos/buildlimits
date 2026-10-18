@@ -91,4 +91,7 @@ class Model:
             self.draining,
             self.server_drain,
             capacity=MAX_GROUPS,
+            # Every modelled group is cached: the guard the search judges is
+            # the one that protects work the stop could interrupt.
+            cached_moving=self.moving,
         )

@@ -391,4 +391,4 @@ def test_counts_cover_all_group_states() -> None:
     admission.groups["g3"].state = GroupState.SERVER_DRAIN
     admission.submit(4)
     counts = admission.counts()
-    assert counts == Counts(1, 3, 1, 1, 1, 4), "gauges measure each lifecycle state"
+    assert counts == Counts(1, 3, 1, 1, 1, 4, 2), "gauges measure each lifecycle state"

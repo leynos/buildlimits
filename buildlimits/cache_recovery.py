@@ -274,10 +274,12 @@ class CacheRecovery:
 
     def _try_stop(self, now: float) -> None:
         """Queue the stop, retrying without bound: abandoning strands the barrier."""
-        # Admission keeps granting tokens while the transaction runs, so a
-        # request that was already waiting can become a running group between
-        # the request and this stop. The check must be here, not only in
-        # ``request``: stopping the cache would kill that compile.
+        # Admission keeps granting tokens while the transaction runs. An
+        # automatic transaction holds the cache only from its first tick, so a
+        # waiting request can become a cached running group before this stop.
+        # The check must be here, not only in ``request``: stopping the cache
+        # would kill that compile. Groups the hold composed without the cache
+        # do not count, or a busy queue would refuse this stop indefinitely.
         if reason := blocked(self.counts(), self.fault_kind()):
             self._fail(now, reason)
             return

@@ -350,3 +350,37 @@ def test_an_admission_mid_failure_keeps_the_cache_out_of_composition(
         launch, recorded = _admitted(supervisor)
         assert launch.cached is False, "a stopped cache composes no group"
         assert recorded is False, "the group's own record agrees with the launch"
+
+
+def test_a_group_admitted_without_the_cache_does_not_block_the_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stop proceeds past a group the transaction composed without the cache.
+
+    The barrier is written on one tick and the stop is queued on the next, and
+    admission keeps granting tokens in between. A busy queue fills every free
+    slot in that gap, and the transaction itself composes each such group
+    without the cache, so stopping the cache cannot interrupt it. Counting it as
+    moving work refused the stop on every retry while the retained tokens stayed
+    held, which is the livelock this guards against.
+    """
+    harness = _waiting(tmp_path, monkeypatch)
+    supervisor = harness.supervisor
+
+    with _serving_server(tmp_path / SOCKET_PATH):
+        _open(harness)
+        harness.tick()  # quiescing: the barrier is written
+        assert harness.described()["phase"] == "stopping", "the barrier is down"
+
+        launch, recorded = _admitted(supervisor)
+        assert (launch.cached, recorded) == (False, False), (
+            "the transaction composes the waiting request without the cache"
+        )
+
+        harness.tick()  # stopping: the uncached group is still running
+        assert harness.cache.verbs == ["stop"], (
+            "an uncached running group does not hold the stop"
+        )
+        assert harness.described()["phase"] == "accounting", (
+            "the transaction moves on to accounting"
+        )
