@@ -5,6 +5,12 @@ over scripted gauges and a scripted manager; :func:`scripted_machine` also lets
 a test rewrite those gauges mid-transaction, and :func:`tick_phase` ticks one
 and reads the phase back. None of them owns a descriptor. The supervisor-level
 harness lives in :mod:`cache_recovery_harness`.
+
+Examples
+--------
+>>> gauges(queued=1, server_drain=1).server_drain
+1
+
 """
 
 import dataclasses as dc

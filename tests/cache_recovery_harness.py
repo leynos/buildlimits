@@ -7,12 +7,6 @@ cadence. :func:`harness_for` builds one over a disposable fixture directory;
 :func:`hold_drained_group` and :func:`queue_request` seed the admission state a
 recovery has to preserve. The machine-only builders are in
 :mod:`cache_recovery_machines`.
-
-Examples
---------
->>> gauges(queued=1, server_drain=1).server_drain
-1
-
 """
 
 import dataclasses as dc
