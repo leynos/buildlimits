@@ -35,10 +35,11 @@ if typ.TYPE_CHECKING:
     from buildlimits.sccache import ManagedSccache
     from buildlimits.timing import Clock
 
-# Bounded below the supervisor unit's TimeoutStartSec so that a cache which
-# will not stop fails start-up with the operator guidance, not with a timeout
-# that systemd reports without saying why.
-QUIESCE_TIMEOUT_SECONDS = 60.0
+# Bounded so that it and the 120-second scope drain still fit inside the
+# supervisor unit's 180-second TimeoutStartSec: a cache which will not stop then
+# fails start-up with the operator guidance, not with a timeout that systemd
+# reports without saying why.
+QUIESCE_TIMEOUT_SECONDS = 45.0
 QUIESCE_POLL_SECONDS = 0.2
 _STOPPING = (
     "start-up found a live managed cache with no admitted group left to use it; "

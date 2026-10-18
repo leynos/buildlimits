@@ -135,7 +135,7 @@ old supervisor has finished its running groups and the new one has reported
   group can use the cache. It writes the restart barrier, queues the stop, and
   waits for the unchanged strict accounting check to pass; the existing
   reclamation then retires the barrier and starts the cache. Failure to write
-  the barrier, to stop the cache, or to prove it stopped and empty within 60
+  the barrier, to stop the cache, or to prove it stopped and empty within 45
   seconds still exits 2, as do a stopped cache that holds processes and a user
   manager that cannot be read.
 - `SIGINT` keeps the former behaviour as the explicit escape hatch: the queue
@@ -154,6 +154,12 @@ old supervisor has finished its running groups and the new one has reported
   start-up terminates any surviving scope.
 - Until the next cache poll, groups the new supervisor admits compile without
   the cache, as after any other cache restart.
+- A cache that is between automatic restarts, with a start job pending and no
+  main process, is neither live nor stopped. Start-up leaves it to the strict
+  check, which refuses it, so a restart that lands in that window of a few
+  seconds needs `systemctl --user start` once the cache has settled.
+- `systemctl stop` is graceful too: waiting builds retry until the five-minute
+  window of their adapters ends, and then fail.
 
 ## Architectural rationale
 

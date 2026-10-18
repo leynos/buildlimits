@@ -227,7 +227,7 @@ cache, and it stops the service itself under the restart barrier (see
 
 Start-up still exits with status 2 before the status socket opens when it
 cannot prove the service stopped and empty: the barrier cannot be written, the
-manager refuses the stop, the service does not stop within 60 seconds, it is
+manager refuses the stop, the service does not stop within 45 seconds, it is
 stopped but its control group still holds processes, or the manager cannot be
 queried. `RestartPreventExitStatus=2` in the unit keeps the refusal sticky.
 `build-limits-status` cannot connect yet; read the unit instead:
@@ -330,6 +330,10 @@ If the groups that remain are cached ones that ended by signal, their tokens
 return only once the cache is verified stopped and empty, so the stopping
 supervisor opens the recovery transaction described below by itself, and the
 restart continues when it completes.
+
+`systemctl --user stop` behaves the same way, except that nothing starts the
+new code: waiting builds keep retrying for the five minutes their adapters
+allow for an unreachable supervisor, and then fail.
 
 Two limits apply. The first restart onto a release that contains this behaviour
 is performed by the previous release's `SIGTERM` handler, which still cancels

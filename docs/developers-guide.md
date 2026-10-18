@@ -201,7 +201,7 @@ the managed cache to be accounted stopped and empty, or raises
 before that, `cache_quiesce.quiesce_live_cache` stops a cache the manager
 reports live: start-up holds the singleton lock and has terminated every
 compiler scope, so no admitted group can use it. It writes the barrier, queues
-the stop and polls `accounted_drain` for up to 60 seconds; it never reads a
+the stop and polls `accounted_drain` for up to 45 seconds; it never reads a
 count or an idle CPU as proof, and it leaves the barrier for
 `reclaim_after_accounting` to retire. A stopped cache that holds processes, a
 state the manager cannot report and a stop that does not complete all still
