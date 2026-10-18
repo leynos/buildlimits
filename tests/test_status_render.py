@@ -282,3 +282,33 @@ def test_a_live_work_fault_on_a_healthy_supervisor_reports_it_healthy() -> None:
         "the summary keeps the supervisor's own health"
     )
     assert "drain fault kind: live_work" in lines, "the fault is still reported"
+
+
+def test_a_resting_trigger_reports_when_it_may_act_again() -> None:
+    """An idle transaction still inside its cooldown says when it may act.
+
+    Without the line, tokens retained beside an idle transaction read as a
+    trigger that never fires, and the waiting builds cannot tell the two apart.
+    """
+    state, _line = STATES["live-work-guidance"]
+    resting = {
+        **state,
+        "cache_recovery": {
+            "phase": "idle",
+            "attempts": 0,
+            "last_fault": None,
+            "retry_in": 0.0,
+            "cooling_for": 42.5,
+        },
+    }
+    lines = render(resting).splitlines()
+    assert "cache recovery idle: automatic recovery may start in 42.5s" in lines, (
+        "the remaining cooldown is shown"
+    )
+    rested = {
+        **resting,
+        "cache_recovery": {**resting["cache_recovery"], "cooling_for": 0.0},
+    }
+    assert not any(
+        line.startswith("cache recovery") for line in render(rested).splitlines()
+    ), "a trigger free to act adds no recovery line"

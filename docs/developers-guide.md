@@ -274,8 +274,12 @@ trigger and the stop guard in `recovery_starvation` read
 rather than every moving group. The transaction denies cache composition while
 it runs, so the groups it admits cannot be interrupted by the stop; counting
 them let a busy queue refill each free slot before every retried stop and hold
-the retained tokens indefinitely. `recover_cli` polls under `--wait` and
-reports "unknown", never "complete", when a query fails part-way.
+the retained tokens indefinitely. `recovery_starvation.cooldown_after` sets the
+rest after each transaction: `RECOVERY_SETTLE_SECONDS` after a clean ending and
+`RECOVERY_COOLDOWN_SECONDS`, which outlasts the whole bounded retry sequence,
+after one that ended with its restart refused. The transaction document reports
+the remainder as `cooling_for`. `recover_cli` polls under `--wait` and reports
+"unknown", never "complete", when a query fails part-way.
 
 The supervisor and adapters emit bounded, identifier-free native journal fields
 through `metrics.Metrics` over a `JournalSink`; emission failures are isolated

@@ -30,6 +30,38 @@ import typing as typ
 if typ.TYPE_CHECKING:
     from buildlimits.admission_state import Counts
 
+# A transaction that ended faulted waits out more than the whole bounded retry
+# sequence (780 s for the transaction's bounds) before another may start, so a
+# cache that is merely slow to restart cannot exhaust its attempts exactly as
+# recovery becomes available again.
+RECOVERY_COOLDOWN_SECONDS = 900.0
+# A clean transaction proved the cache stopped, empty and restarted, so the
+# only reason to wait is to let that restart settle. Holding the faulted
+# cooldown here left freshly retained tokens idle for a quarter of an hour
+# while a queue waited behind them.
+RECOVERY_SETTLE_SECONDS = 60.0
+
+
+def cooldown_after(*, faulted: bool) -> float:
+    """Choose how long the automatic trigger rests after a transaction ends.
+
+    Parameters
+    ----------
+    faulted : bool
+        Whether the transaction ended with its restart still refused.
+
+    Returns
+    -------
+    float
+        Seconds before the trigger may open another transaction.
+
+    Examples
+    --------
+    >>> cooldown_after(faulted=False) < cooldown_after(faulted=True)
+    True
+    """
+    return RECOVERY_COOLDOWN_SECONDS if faulted else RECOVERY_SETTLE_SECONDS
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class StarvationReading:

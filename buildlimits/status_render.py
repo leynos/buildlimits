@@ -136,14 +136,20 @@ def _recovery_lines(state: cabc.Mapping[str, object]) -> list[str]:
     -------
     list[str]
         The phase and its retry, the fault that stopped its last action, and
-        any operator action still needed. A completed transaction adds
-        nothing, so a healthy document renders as it always did.
+        any operator action still needed. A completed transaction adds only
+        the time before the automatic trigger may act again, and nothing once
+        that has passed, so a healthy document renders as it always did.
     """
     transaction = _section(state, "cache_recovery")
     if transaction is None:
         return []
     phase = transaction.get("phase")
     if phase == "idle":
+        # A resting trigger is otherwise invisible: retained tokens beside an
+        # idle transaction would read as a trigger that never fires.
+        cooling = transaction.get("cooling_for")
+        if isinstance(cooling, (int, float)) and cooling > 0:
+            return [f"cache recovery idle: automatic recovery may start in {cooling}s"]
         return []
     lines = [
         (

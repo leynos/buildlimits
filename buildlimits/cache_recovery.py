@@ -18,6 +18,7 @@ import contextlib
 import dataclasses as dc
 import typing as typ
 
+from buildlimits import recovery_starvation
 from buildlimits.journal import log
 from buildlimits.metrics import Metrics, MetricsPort, gauge_fields
 from buildlimits.recovery_guidance import report_exhaustion
@@ -40,10 +41,6 @@ if typ.TYPE_CHECKING:
 RECOVERY_RETRY_SECONDS = 30.0
 RECOVERY_MAX_RETRY_SECONDS = 120.0
 RECOVERY_FAILURE_LIMIT = 8
-# The cooldown outlasts the whole bounded retry sequence (780 s for the values
-# above), so a cache that is merely slow to restart cannot exhaust its attempts
-# exactly as recovery becomes available again.
-RECOVERY_COOLDOWN_SECONDS = 900.0
 
 type Phase = typ.Literal["idle", "quiescing", "stopping", "accounting", "restarting"]
 
@@ -136,13 +133,15 @@ class CacheRecovery:
         -------
         dict[str, object]
             The phase, the consecutive failures of its last action, the last
-            fault text, and the seconds until the next attempt.
+            fault text, the seconds until the next attempt, and the seconds
+            before the automatic trigger may open another transaction.
         """
         return {
             "phase": self._phase,
             "attempts": self._attempts,
             "last_fault": self._last_fault,
             "retry_in": round(max(0.0, self._next_action - now), 3),
+            "cooling_for": round(max(0.0, self._cooling - now), 3),
         }
 
     def request(self, trigger: str, now: float) -> dict[str, object]:
@@ -372,7 +371,8 @@ class CacheRecovery:
         self._phase = "idle"
         self._attempts = 0
         self._next_action = 0.0
-        self._cooling = now + RECOVERY_COOLDOWN_SECONDS
+        faulted = self._last_fault is not None
+        self._cooling = now + recovery_starvation.cooldown_after(faulted=faulted)
         self.metrics.emit(
             "cache_recovery",
             **gauge_fields(self.counts()),

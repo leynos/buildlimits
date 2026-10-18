@@ -290,7 +290,19 @@ that accounting in four phases, at most one per supervisor tick:
 
 With the default `cache_recovery = "starved"` policy, the supervisor opens a
 transaction by itself when a retained drain is starving waiting work and the
-cache holds no visible compiler roots. With `manual`, it waits for an operator:
+cache holds no visible compiler roots.
+
+After each transaction the automatic trigger rests before it may act again: 60
+seconds after a clean recovery, and 900 seconds after one whose restart was
+still refused, so that a cache slow to come back cannot exhaust a second set of
+attempts. While it rests, `build-limits-status` says so:
+
+```plaintext
+cache recovery idle: automatic recovery may start in 42.5s
+```
+
+Tokens retained beside that line are waiting for the trigger, not stuck. With
+`manual`, the supervisor waits for an operator:
 
 ```bash
 build-limits-recover --wait --wait-timeout 300

@@ -18,7 +18,7 @@ from cache_recovery_harness import (
     queue_request,
 )
 
-from buildlimits import cache_recovery
+from buildlimits import cache_recovery, recovery_starvation
 from buildlimits.admission import Group
 
 if typ.TYPE_CHECKING:
@@ -80,7 +80,7 @@ def test_the_transaction_stops_accounts_and_restarts_the_managed_cache(
         "a finished transaction does nothing"
     )
 
-    harness.advance(cache_recovery.RECOVERY_COOLDOWN_SECONDS)
+    harness.advance(recovery_starvation.RECOVERY_COOLDOWN_SECONDS)
     harness.tick()
     assert harness.described()["phase"] == "idle", (
         "a healed admission does not re-enter"

@@ -4,6 +4,7 @@
     'cache_mode': 'sccache',
     'cache_recovery': dict({
       'attempts': 0,
+      'cooling_for': 0.0,
       'last_fault': None,
       'phase': 'idle',
       'retry_in': 0.0,

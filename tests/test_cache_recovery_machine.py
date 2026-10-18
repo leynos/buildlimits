@@ -13,7 +13,7 @@ import pytest
 from cache_recovery_harness import machine_for, scripted_machine
 from cache_recovery_helpers import DrainReading, TriggerCase, gauges
 
-from buildlimits import cache_recovery
+from buildlimits import cache_recovery, recovery_starvation
 from buildlimits.admission import Counts
 from buildlimits.systemd import SystemdError
 
@@ -125,6 +125,29 @@ def test_accounting_waits_for_every_server_drained_group(tmp_path: Path) -> None
     cache.machine.tick(3.0)
     cache.machine.tick(4.0)
     assert "start" in cache.cache.verbs, "the cache restarts once nothing waits on it"
+
+
+def test_a_clean_recovery_rests_only_briefly(tmp_path: Path) -> None:
+    """A transaction that restarted the cache rests for the settle, not 15 min.
+
+    Detached work can be retained again moments after a clean recovery. The
+    long cooldown exists to outlast a refused restart's retries; applied to a
+    clean ending it kept fresh retained tokens idle while the queue waited.
+    """
+    cache = scripted_machine(tmp_path, [gauges(queued=1, server_drain=1)])
+    cache.machine.request("manual", 0.0)
+    cache.machine.tick(0.0)
+    cache.machine.tick(1.0)
+    cache.snapshot[0] = gauges(queued=1)
+    # One tick to observe the accounting proof, one to issue the restart.
+    cache.machine.tick(2.0)
+    cache.machine.tick(3.0)
+    document = cache.machine.describe(3.0)
+    assert document["phase"] == "idle", "the transaction has ended"
+    assert not document["last_fault"], "the restart was accepted"
+    assert document["cooling_for"] == recovery_starvation.RECOVERY_SETTLE_SECONDS, (
+        "a clean ending rests only for the settle period"
+    )
 
 
 def test_a_draining_group_is_refused_with_its_own_reason(tmp_path: Path) -> None:
@@ -255,7 +278,7 @@ def test_the_recovery_limits_leave_room_for_the_restart_to_be_attempted() -> Non
     Each attempt still outlasts the first retry delay, so the backoff has room
     to grow past its first step.
     """
-    assert cache_recovery.RECOVERY_COOLDOWN_SECONDS > (
+    assert recovery_starvation.RECOVERY_COOLDOWN_SECONDS > (
         cache_recovery.RECOVERY_MAX_RETRY_SECONDS
     ), "the bounds are ordered, so a bounded backoff cannot outlast its cooldown"
     sequence = [
@@ -265,7 +288,7 @@ def test_the_recovery_limits_leave_room_for_the_restart_to_be_attempted() -> Non
         )
         for attempt in range(1, cache_recovery.RECOVERY_FAILURE_LIMIT + 1)
     ]
-    assert sum(sequence) < cache_recovery.RECOVERY_COOLDOWN_SECONDS, (
+    assert sum(sequence) < recovery_starvation.RECOVERY_COOLDOWN_SECONDS, (
         "the bounded retries finish inside one cooldown"
     )
     assert sequence[-1] > sequence[0], "the backoff has room to grow"
@@ -285,8 +308,15 @@ def test_a_failed_restart_reports_guidance_without_latching_recovery(
     document = machine.describe(3.0)
     assert "start" in state.verbs, "the restart was attempted"
     assert document["last_fault"], "the failed restart is kept for the operator"
+    last = 0.0
     for step in range(cache_recovery.RECOVERY_FAILURE_LIMIT + 2):
-        machine.tick(1_000.0 + float(step) * cache_recovery.RECOVERY_MAX_RETRY_SECONDS)
+        last = 1_000.0 + float(step) * cache_recovery.RECOVERY_MAX_RETRY_SECONDS
+        machine.tick(last)
+    cooling = machine.describe(last)["cooling_for"]
+    assert isinstance(cooling, float), "the rest is reported in seconds"
+    assert cooling > recovery_starvation.RECOVERY_SETTLE_SECONDS, (
+        "a faulted ending rests for the long cooldown, not the brief settle"
+    )
     assert machine.describe(9_999.0)["phase"] == "idle", (
         "a stalled restart cannot latch an accounting that already proved stopped"
     )
