@@ -30,6 +30,7 @@ from buildlimits.recovery_reclaim import (
 )
 from buildlimits.recovery_stop import request_stop as stop_cache
 from buildlimits.systemd import SystemdError
+from buildlimits.timing import seconds_since
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -141,11 +142,10 @@ class CacheRecovery:
         -------
         dict[str, object]
             The phase, failures, last fault, retry and cooldown times, the
-            seconds roots delayed the stop, and the fields of
-            :class:`buildlimits.recovery_outlook.Outlook`.
+            roots delay, and the :class:`~buildlimits.recovery_outlook.Outlook`.
         """
         outlook = recovery_outlook.outlook(
-            self._reading(now, self._drain_age.age(now)),
+            self._reading(now, seconds_since(self._drain_age.since, now)),
             is_idle=self._phase == "idle",
             has_attempts_left=self._attempts < RECOVERY_FAILURE_LIMIT,
         )

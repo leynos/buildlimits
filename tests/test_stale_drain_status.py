@@ -11,7 +11,12 @@ literal so a change to the production constant is a disagreement.
 import typing as typ
 
 import pytest
-from cache_recovery_scenarios import busy_supervisor
+from cache_recovery_scenarios import (
+    busy_supervisor,
+    idle_lines,
+    status_lines,
+    status_recovery,
+)
 
 from buildlimits import status
 from buildlimits.status_render import render
@@ -23,17 +28,6 @@ if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
 COUNTDOWN = "cache recovery idle: automatic recovery may start in {}s"
-
-
-def _lines(harness: Harness) -> list[str]:
-    """Render the supervisor's status as an operator reads it.
-
-    Returns
-    -------
-    list[str]
-        The plain-text lines.
-    """
-    return render(status.describe(harness.supervisor)).splitlines()
 
 
 def _exhaust_drain_retries(harness: Harness) -> None:
@@ -51,13 +45,12 @@ def test_a_busy_host_with_a_retained_drain_shows_the_countdown(
         harness.tick()
         harness.advance(100.0)
         harness.tick()
-        document = status.describe(harness.supervisor)
-        recovery = typ.cast("dict[str, object]", document["cache_recovery"])
+        recovery = status_recovery(harness)
         assert recovery["opens_in"] == pytest.approx(200.0), (
             "300 less the 100 seconds held"
         )
         assert recovery["pending"] is True, "automatic recovery is pending"
-        assert COUNTDOWN.format(200.0) in _lines(harness), (
+        assert COUNTDOWN.format(200.0) in status_lines(harness), (
             "status says the trigger is merely waiting"
         )
 
@@ -91,11 +84,13 @@ def test_the_recovery_action_says_recovery_is_automatic(
         assert "pending" in action, action
         assert "fallback" in action, action
         assert document["recovery_action_is_fallback"] is True, "the label follows"
-        lines = _lines(harness)
+        lines = status_lines(harness)
         assert not any(line.startswith("required recovery action") for line in lines), (
             "a recovery that will happen on its own is not required of the operator"
         )
-        assert any(line.startswith("fallback recovery action: ") for line in lines)
+        assert any(line.startswith("fallback recovery action: ") for line in lines), (
+            "the action line is labelled a fallback"
+        )
 
 
 def test_a_manual_policy_keeps_the_mandatory_action(
@@ -106,18 +101,16 @@ def test_a_manual_policy_keeps_the_mandatory_action(
         harness.supervisor.recovery.policy = "manual"
         _exhaust_drain_retries(harness)
         document = status.describe(harness.supervisor)
-        recovery = typ.cast("dict[str, object]", document["cache_recovery"])
+        recovery = status_recovery(harness)
         assert recovery["opens_in"] is None, "no countdown without the policy"
         assert recovery["automatic"] is False, "the document says why"
-        assert "pending" not in str(document["recovery_action"])
-        assert document["recovery_action_is_fallback"] is False
+        assert "pending" not in str(document["recovery_action"]), "mandatory text"
+        assert document["recovery_action_is_fallback"] is False, "not a fallback"
         assert any(
             line.startswith("required recovery action: Run build-limits-recover")
-            for line in _lines(harness)
+            for line in status_lines(harness)
         ), "the mandatory wording stays"
-        assert not any(
-            line.startswith("cache recovery idle") for line in _lines(harness)
-        )
+        assert not idle_lines(harness), "no countdown without the policy"
 
 
 def test_exhausted_attempts_keep_the_mandatory_action(
@@ -131,10 +124,10 @@ def test_exhausted_attempts_keep_the_mandatory_action(
         harness.supervisor.recovery.request("manual", harness.now)
         harness.exhaust_retries()
         document = status.describe(harness.supervisor)
-        recovery = typ.cast("dict[str, object]", document["cache_recovery"])
+        recovery = status_recovery(harness)
         assert recovery["pending"] is False, "no attempts are left"
-        assert document["recovery_action_is_fallback"] is False
-        assert "pending" not in str(document["recovery_action"])
+        assert document["recovery_action_is_fallback"] is False, "not a fallback"
+        assert "pending" not in str(document["recovery_action"]), "mandatory text"
 
 
 def test_a_resting_manual_policy_does_not_promise_an_automatic_start(
@@ -143,10 +136,8 @@ def test_a_resting_manual_policy_does_not_promise_an_automatic_start(
     """The cooldown line is hidden when the trigger can never act."""
     with busy_supervisor(tmp_path, monkeypatch) as harness:
         harness.supervisor.recovery.policy = "manual"
-        harness.supervisor.recovery._cooling = harness.now + 42.5
-        assert not any(
-            line.startswith("cache recovery idle") for line in _lines(harness)
-        ), "a manual policy never starts a recovery by itself"
+        monkeypatch.setattr(harness.supervisor.recovery, "_cooling", harness.now + 42.5)
+        assert not idle_lines(harness), "a manual policy never starts a recovery"
 
 
 def test_the_cooldown_extends_the_countdown(
@@ -156,12 +147,12 @@ def test_the_cooldown_extends_the_countdown(
     with busy_supervisor(tmp_path, monkeypatch) as harness:
         harness.tick()
         harness.advance(299.0)
-        harness.supervisor.recovery._cooling = harness.now + 42.5
+        monkeypatch.setattr(harness.supervisor.recovery, "_cooling", harness.now + 42.5)
         harness.tick()
         assert harness.described()["opens_in"] == pytest.approx(42.5), (
             "the cooldown is later"
         )
-        assert COUNTDOWN.format(42.5) in _lines(harness)
+        assert COUNTDOWN.format(42.5) in status_lines(harness), "cooldown shown"
 
 
 def test_the_journal_calls_a_pending_recovery_a_fallback(
@@ -187,7 +178,7 @@ def test_the_pending_status_line_is_stable(
         harness.tick()
         lines = [
             line
-            for line in _lines(harness)
+            for line in status_lines(harness)
             if line.startswith(("cache recovery", "fallback", "required", "drain"))
         ]
     assert lines == snapshot, "the pending-recovery lines changed"

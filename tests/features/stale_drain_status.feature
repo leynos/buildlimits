@@ -8,13 +8,13 @@ Feature: Status while a stale drain waits for automatic recovery
   Scenario: The automatic policy counts down to the stale proof
     When 100 seconds pass
     Then status says automatic recovery may start in 200.0s
-    And the recovery action is only a fallback
+    And the recovery action is labelled fallback recovery action
 
   Scenario: The manual policy asks the operator to act
     Given the recovery policy is manual
     When 100 seconds pass
     Then status shows no recovery countdown
-    And the recovery action is required of the operator
+    And the recovery action is labelled required recovery action
 
   Scenario: The stale proof opens the recovery
     When 300 seconds pass

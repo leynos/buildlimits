@@ -36,4 +36,4 @@ def request_stop(cache: ManagedSccache, fault_kind: str | None) -> None:
             "faulted; restore it and the cache's state is readable again"
         )
         raise SystemdError(msg)
-    cache.stop()
+    return cache.stop()

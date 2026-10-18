@@ -15,7 +15,9 @@ from cache_recovery_harness import (
     queue_request,
 )
 
+from buildlimits import status
 from buildlimits.admission_state import Counts
+from buildlimits.status_render import render
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -72,3 +74,39 @@ def busy_supervisor(
         yield harness
     finally:
         supervisor.selector.close()
+
+
+def status_lines(harness: Harness) -> list[str]:
+    """Render the supervisor's status as an operator reads it.
+
+    Returns
+    -------
+    list[str]
+        The plain-text lines.
+    """
+    return render(status.describe(harness.supervisor)).splitlines()
+
+
+def status_recovery(harness: Harness) -> dict[str, object]:
+    """Read the ``cache_recovery`` section of the supervisor's status document.
+
+    Returns
+    -------
+    dict[str, object]
+        The transaction document, as ``build-limits-status --json`` reports it.
+    """
+    document = status.describe(harness.supervisor)
+    return typ.cast("dict[str, object]", document["cache_recovery"])
+
+
+def idle_lines(harness: Harness) -> list[str]:
+    """Pick the status lines that promise an automatic start.
+
+    Returns
+    -------
+    list[str]
+        The ``cache recovery idle`` lines, if any.
+    """
+    return [
+        line for line in status_lines(harness) if line.startswith("cache recovery idle")
+    ]

@@ -21,34 +21,43 @@ from buildlimits.recovery_starvation import StarvationReading, starvation
 NOW = 1_000.0
 
 
-def _reading(
-    *,
-    drain_age: float,
-    roots: int = 2,
-    cached_moving: int = 3,
-    queued: int = 1,
-    server_drain: int = 1,
-    fault_kind: str | None = "live_work",
-    policy: str = "starved",
-    cache_mode: str = "sccache",
-    cooling: float = 0.0,
-) -> StarvationReading:
-    """Build a reading of one retained drain; by default only age is missing.
+@dc.dataclass(frozen=True, slots=True)
+class Scene:
+    """The clauses of one busy-host reading; by default only the age is missing.
+
+    The visible root and the moving cached groups defeat the prompt proof, so
+    the stale proof is the only evidence that can open the trigger.
+    """
+
+    drain_age: float
+    roots: int = 2
+    cached_moving: int = 3
+    queued: int = 1
+    server_drain: int = 1
+    fault_kind: str | None = "live_work"
+    policy: str = "starved"
+    cache_mode: str = "sccache"
+    cooling: float = 0.0
+
+
+def _reading(scene: Scene) -> StarvationReading:
+    """Build the reading a scene describes at the fixed clock.
 
     Returns
     -------
     StarvationReading
-        A busy-host reading with a visible root, so the prompt proof fails.
+        The reading.
     """
+    moving = scene.cached_moving
     return StarvationReading(
-        cache_mode=cache_mode,
-        policy=policy,
-        cooling=cooling,
+        cache_mode=scene.cache_mode,
+        policy=scene.policy,
+        cooling=scene.cooling,
         now=NOW,
-        counts=Counts(queued, 4, cached_moving, 0, server_drain, 4, cached_moving),
-        fault_kind=fault_kind,
-        zero_visible_roots=roots == 0,
-        drain_age=drain_age,
+        counts=Counts(scene.queued, 4, moving, 0, scene.server_drain, 4, moving),
+        fault_kind=scene.fault_kind,
+        zero_visible_roots=scene.roots == 0,
+        drain_age=scene.drain_age,
     )
 
 
@@ -73,20 +82,22 @@ def test_the_countdown_runs_to_the_three_hundred_second_limit(
     drain_age: float, expected: float
 ) -> None:
     """The stale proof holds at 300 seconds, so 299 seconds still has 1 to go."""
-    assert recovery_outlook.opens_in(_reading(drain_age=drain_age)) == expected, (
-        "the wait is the 300 second limit less the drain's age"
-    )
+    assert (
+        recovery_outlook.opens_in(_reading(Scene(drain_age=drain_age))) == expected
+    ), "the wait is the 300 second limit less the drain's age"
 
 
 def test_the_boundary_agrees_with_the_trigger() -> None:
     """One second short the trigger waits; at the limit it acts."""
-    assert starvation(_reading(drain_age=299.0)) is None, "299 seconds is too young"
-    assert starvation(_reading(drain_age=300.0)) is not None, "300 seconds acts"
+    assert starvation(_reading(Scene(drain_age=299.0))) is None, (
+        "299 seconds is too young"
+    )
+    assert starvation(_reading(Scene(drain_age=300.0))) is not None, "300 seconds acts"
 
 
 def test_a_provably_detached_drain_has_nothing_to_wait_for() -> None:
     """The prompt proof opens at once, however young the drain."""
-    reading = _reading(drain_age=1.0, roots=0, cached_moving=0)
+    reading = _reading(Scene(drain_age=1.0, roots=0, cached_moving=0))
     assert recovery_outlook.opens_in(reading) == pytest.approx(0.0), (
         "the trigger acts now"
     )
@@ -108,32 +119,27 @@ def test_a_provably_detached_drain_has_nothing_to_wait_for() -> None:
 )
 def test_a_failed_clause_shows_no_countdown(clause: dict[str, object]) -> None:
     """Time cannot open a trigger whose other clauses refuse it."""
-    reading = _reading(drain_age=10.0, **clause)  # type: ignore[arg-type]
+    reading = _reading(dc.replace(Scene(drain_age=10.0), **clause))
     assert recovery_outlook.opens_in(reading) is None, (
         "no countdown is promised for a recovery that will not come"
     )
 
 
-def test_the_cooldown_delays_the_countdown() -> None:
+@pytest.mark.parametrize(
+    ("drain_age", "cooldown", "expected"),
+    [(250.0, 80.0, 80.0), (100.0, 80.0, 200.0), (900.0, 42.5, 42.5)],
+    ids=["cooldown-later", "limit-later", "stale-already"],
+)
+def test_the_countdown_ends_at_the_later_of_cooldown_and_limit(
+    drain_age: float, cooldown: float, expected: float
+) -> None:
     """A resting trigger opens at the later of its cooldown and the limit."""
-    resting = _reading(drain_age=250.0, cooling=NOW + 80.0)
-    assert recovery_outlook.opens_in(resting) == pytest.approx(80.0), (
-        "the cooldown is later"
+    reading = _reading(Scene(drain_age=drain_age, cooling=NOW + cooldown))
+    assert recovery_outlook.opens_in(reading) == pytest.approx(expected), (
+        "the later of the two instants"
     )
-    young = _reading(drain_age=100.0, cooling=NOW + 80.0)
-    assert recovery_outlook.opens_in(young) == pytest.approx(200.0), (
-        "the limit is later"
-    )
-    assert starvation(_later(resting, 79.0)) is None, "still cooling at 79 seconds"
-    assert starvation(_later(resting, 80.0)) is not None, "acts as it cools"
-
-
-def test_a_cooldown_alone_counts_down_for_a_stale_drain() -> None:
-    """A drain already stale waits only for the cooldown."""
-    reading = _reading(drain_age=900.0, cooling=NOW + 42.5)
-    assert recovery_outlook.opens_in(reading) == pytest.approx(42.5), (
-        "only cooling remains"
-    )
+    assert starvation(_later(reading, expected - 0.5)) is None, "not yet"
+    assert starvation(_later(reading, expected)) is not None, "acts as it ends"
 
 
 def _grid(upper: int) -> st.SearchStrategy[float]:
@@ -157,17 +163,21 @@ def readings(draw: st.DrawFn) -> StarvationReading:
         An arbitrary reading with an exact-arithmetic clock.
     """
     return _reading(
-        drain_age=draw(_grid(800)),
-        roots=draw(st.sampled_from([0, 2])),
-        cached_moving=draw(st.integers(0, 3)),
-        queued=draw(st.integers(0, 2)),
-        server_drain=draw(st.integers(0, 2)),
-        fault_kind=draw(
-            st.sampled_from(["live_work"] * 4 + ["manager", "stopped_populated", None])
-        ),
-        policy=draw(st.sampled_from(["starved"] * 4 + ["manual"])),
-        cache_mode=draw(st.sampled_from(["sccache"] * 4 + ["direct"])),
-        cooling=NOW + draw(_grid(400)) - 100.0,
+        Scene(
+            drain_age=draw(_grid(800)),
+            roots=draw(st.sampled_from([0, 2])),
+            cached_moving=draw(st.integers(0, 3)),
+            queued=draw(st.integers(0, 2)),
+            server_drain=draw(st.integers(0, 2)),
+            fault_kind=draw(
+                st.sampled_from(
+                    ["live_work"] * 4 + ["manager", "stopped_populated", None]
+                )
+            ),
+            policy=draw(st.sampled_from(["starved"] * 4 + ["manual"])),
+            cache_mode=draw(st.sampled_from(["sccache"] * 4 + ["direct"])),
+            cooling=NOW + draw(_grid(400)) - 100.0,
+        )
     )
 
 

@@ -235,9 +235,13 @@ def test_a_pending_automatic_recovery_makes_the_command_a_fallback(
     """The guidance follows whether the supervisor will recover by itself."""
     pending = [True]
     now = [0.0]
-    watch = _watch(FakeServer(load=_ZERO_ROOTS), _draining(b"a"))
+    watch = ServerWatch(
+        typ.cast("ManagedSccache", FakeServer(load=_ZERO_ROOTS)),
+        _draining(b"a"),
+        "sccache",
+        automatic_recovery_pending=lambda: pending[0],
+    )
     watch.clock = lambda: now[0]
-    watch.automatic_recovery_pending = lambda: pending[0]
     _spend_the_fault_budget(watch)
     assert watch.recovery_action_is_fallback, "recovery is pending"
     assert "pending" in (watch.recovery_action or ""), "the text says so"
@@ -257,8 +261,12 @@ def test_a_pending_automatic_recovery_makes_the_command_a_fallback(
 
 def test_a_manager_fault_is_never_a_fallback() -> None:
     """Only a live-work fault can be cured by the automatic recovery."""
-    watch = _watch(FakeServer(load=SccacheError("manager down")), _draining(b"a"))
-    watch.automatic_recovery_pending = lambda: True
+    watch = ServerWatch(
+        typ.cast("ManagedSccache", FakeServer(load=SccacheError("manager down"))),
+        _draining(b"a"),
+        "sccache",
+        automatic_recovery_pending=lambda: True,
+    )
     _spend_the_fault_budget(watch)
     assert not watch.recovery_action_is_fallback, "the manager must be restored"
     assert "do not stop" in (watch.recovery_action or ""), "mandatory guidance"

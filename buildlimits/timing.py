@@ -28,6 +28,29 @@ class Clock:
 SYSTEM_CLOCK = Clock()
 
 
+def seconds_since(start: float | None, now: float) -> float:
+    """Measure an interval that may not have begun.
+
+    Parameters
+    ----------
+    start : float | None
+        Monotonic time at which the interval began, or ``None`` before it has.
+    now : float
+        Current monotonic time.
+
+    Returns
+    -------
+    float
+        Seconds since ``start``, or zero when there is no start.
+
+    Examples
+    --------
+    >>> seconds_since(None, 5.0), seconds_since(2.0, 5.0)
+    (0.0, 3.0)
+    """
+    return 0.0 if start is None else now - start
+
+
 @dc.dataclass(frozen=True, slots=True)
 class RetryWait:
     """Time and jitter effects for bounded descriptor-pressure retries.

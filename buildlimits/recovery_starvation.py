@@ -153,25 +153,6 @@ class RetainedDrainAge:
 
     since: float | None = None
 
-    def age(self, now: float) -> float:
-        """Read the age without recording anything.
-
-        Status reads the age between ticks, so it must not start, move or end
-        the measurement that only the machine's own ticks may change.
-
-        Parameters
-        ----------
-        now : float
-            Current monotonic time.
-
-        Returns
-        -------
-        float
-            Seconds since the count last rose from zero, or zero when nothing
-            has been observed retained.
-        """
-        return 0.0 if self.since is None else now - self.since
-
     def observe(self, server_drain: int, *, now: float) -> float:
         """Record one reading of the retained count and return the age.
 

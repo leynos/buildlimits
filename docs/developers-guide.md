@@ -337,16 +337,16 @@ one of those refuses, `0.0` when `starvation` acts on that reading, and
 otherwise the later of the cooldown and the stale remainder. `starvation` and
 `opens_in` share the helper so a countdown cannot promise an opening the
 trigger would not perform; `blocked` gates the stop, not the opening, and so
-has no part in it. `RetainedDrainAge.age` reads the age without recording, so
-describing the machine between ticks moves nothing. `CacheRecovery.describe`
-adds `automatic`, `opens_in` and `pending` from `recovery_outlook.outlook`, and
-`status_render` prefers `opens_in` over `cooling_for` for the idle line.
-`ServerWatch` receives `automatic_recovery_pending` from the supervisor and
-derives `recovery_action` live from `drain_guidance`: the mandatory text, or
-the fallback text for a live-work fault while recovery is pending. The
-`DrainLoop` internal-error action involves no cache recovery and stays
-mandatory. Deferred: shortening `RECOVERY_STALE_DRAIN_SECONDS` when retention
-covers most of the pool.
+has no part in it. `timing.seconds_since` reads the drain's start without
+recording it, so describing the machine between ticks moves nothing.
+`CacheRecovery.describe` adds `automatic`, `opens_in` and `pending` from
+`recovery_outlook.outlook`, and `status_render` prefers `opens_in` over
+`cooling_for` for the idle line. `ServerWatch` receives
+`automatic_recovery_pending` from the supervisor and derives `recovery_action`
+live from `drain_guidance`: the mandatory text, or the fallback text for a
+live-work fault while recovery is pending. The `DrainLoop` internal-error
+action involves no cache recovery and stays mandatory. Deferred: shortening
+`RECOVERY_STALE_DRAIN_SECONDS` when retention covers most of the pool.
 
 The automatic stop has a second, longer deadline. `_try_stop` first applies
 `blocked`, then asks `recovery_roots.stop_verdict` whether the roots evidence

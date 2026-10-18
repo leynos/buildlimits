@@ -69,9 +69,8 @@ def _action_label(state: cabc.Mapping[str, object]) -> str:
         ``fallback`` when automatic recovery is pending and the operator
         command is only a fallback, otherwise the mandatory label.
     """
-    if state.get("recovery_action_is_fallback"):
-        return "fallback recovery action"
-    return "required recovery action"
+    is_fallback = bool(state.get("recovery_action_is_fallback"))
+    return "fallback recovery action" if is_fallback else "required recovery action"
 
 
 def _section(
