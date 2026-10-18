@@ -383,10 +383,12 @@ drain fault kind: live_work
 drain check failed; tokens retained: retained detached work: live sccache
 service may retain detached requests; visible compiler roots=0; operator
 accounting required
-required recovery action: Run build-limits-recover to stop the managed sccache
-service under the admission barrier, verify it is stopped and empty, and
-release the retained tokens; tokens remain held until that verification
-succeeds.
+fallback recovery action: Automatic recovery of the managed sccache service is
+pending and needs no operator action yet. As a fallback only, if it does not
+start or complete, run build-limits-recover to stop the service under the
+admission barrier, verify it is stopped and empty, and release the retained
+tokens; tokens remain held until that verification succeeds.
+cache recovery idle: automatic recovery may start in 212.0s
 waiting 9.0s: cargo check in /home/owner/project
 g1 server-drain (cached): cargo check in /home/owner/project, 42.0s
 ```
@@ -445,8 +447,13 @@ attempts. While it rests, `build-limits-status` says so:
 cache recovery idle: automatic recovery may start in 42.5s
 ```
 
-Tokens retained beside that line are waiting for the trigger, not stuck. A
-transaction that ended with its restart refused also keeps its
+Tokens retained beside that line are waiting for the trigger, not stuck. The
+same line counts down to the stale proof: while a drain is retained with
+requests waiting, and only the 300 seconds are missing, it shows the time left
+(300 seconds less the drain's age, or the cooldown when that is later). A drain
+that clears, a queue that empties, a `manual` policy, a faulted user manager or
+a non-`sccache` cache mode removes the line, because then waiting will not open
+the trigger. A transaction that ended with its restart refused also keeps its
 `cache recovery last fault:` line, during the rest and after it, until the next
 transaction succeeds. With `manual`, the supervisor waits for an operator:
 
@@ -488,6 +495,41 @@ Verify the outcome from the supervisor, not from elapsed time:
 ```bash
 build-limits-status --json | jq '{held, drain_fault, drain_fault_kind, caching}'
 ```
+
+### What to do when status shows a retained drain
+
+Read the `cache recovery` line and the label of the action line first.
+
+- `cache recovery idle: automatic recovery may start in Ns` with a
+  `fallback recovery action:` line means the supervisor will open the recovery
+  itself in at most `N` seconds. Keep waiting; do not escalate and do not run
+  `build-limits-recover` yet. Escalate only if the line disappears with the
+  drain still retained and requests still waiting, or the countdown reaches
+  zero without a `cache recovery quiescing` line appearing.
+- `cache recovery quiescing`, `stopping`, `accounting` or `restarting` is the
+  recovery under way. Keep waiting while its attempts stay below eight.
+- `required recovery action:` is a real instruction. It appears when waiting
+  cannot help: the `manual` policy, a faulted user manager, a stopped cache
+  that is not empty, or a transaction that used its eight attempts. A refused
+  restart keeps its `cache recovery last fault:` line.
+
+The `--json` document backs the lines. Under `cache_recovery`, `automatic` says
+whether the cache mode and policy let the trigger act, `opens_in` is the
+seconds the idle trigger still waits on time alone (`null` when waiting will
+not open it, or a transaction is running), and `pending` says a recovery is due
+or under way without an operator. At the top level
+`recovery_action_is_fallback` is true when the text of `recovery_action` calls
+the command a fallback. The journal says
+`drain recovery is pending automatically; operator action is only a fallback`
+in that case, and `drain requires operator action` otherwise.
+
+Operators upgrading from a supervisor that printed
+`required recovery action: Run build-limits-recover …` for every live-work
+fault should expect the label and text above for the automatic policy. The
+countdown line itself is unchanged, so instructions that tell agents to keep
+waiting on it need no edit; instructions that escalate on a live-work fault
+with no `cache recovery` line are now rarely triggered, since that picture only
+remains for faults that waiting will not cure.
 
 Success is `drain_fault: null` and `drain_fault_kind: null`. A waiting request
 can take a released token at once, so `held` may settle above zero; that is the
