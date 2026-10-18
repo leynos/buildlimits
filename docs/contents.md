@@ -39,4 +39,5 @@
 
 - [RFC 0001: FizzBee model of compile admission and cache recovery](rfcs/0001-fizzbee-model-of-admission-and-recovery.md)
   proposes a formal model of admission and recovery, its safety and liveness
-  properties, conformance checks and a gated adoption plan.
+  properties, conformance checks and a gated adoption plan. Accepted
+  2026-10-18.

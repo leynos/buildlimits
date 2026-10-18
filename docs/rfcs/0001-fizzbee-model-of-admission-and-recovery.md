@@ -3,8 +3,9 @@
 ## Preamble
 
 - **RFC number:** 0001
-- **Status:** Proposed
+- **Status:** Accepted
 - **Created:** 2026-10-18
+- **Accepted:** 2026-10-18; see [Acceptance](#acceptance)
 - **Baseline:** `main` at `37d08e5` (PR #10), which carries the fixes for
   incidents 1, 2 and 4 (PR #9) and for incident 3 (PR #10)[^1]. One gap in
   incident 3's fix remains: the automatic stop still waits for zero visible
@@ -568,6 +569,13 @@ explicit fairness in a notation close to the code. The spike tests that claim
 cheaply and decisively. If FizzBee cannot rediscover incidents 1 and 3 on their
 pre-fix behaviour, the RFC should be withdrawn or redirected to TLA+ or to
 extending Hypothesis, and that result recorded.
+
+## Acceptance
+
+Accepted on 2026-10-18. Acceptance approves the recommendation above: W1 goes
+ahead now, with the H1 to H4 thresholds as written, and W2 to W4 proceed only
+as each gate, G1 to G4, decides. The open questions stay open until the
+evidence settles them.
 
 [^1]: Commits `eba08ad` (PR #9) and `37d08e5` (PR #10), as read on
       2026-10-18.
