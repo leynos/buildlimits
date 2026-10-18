@@ -178,7 +178,15 @@ class ServerWatch:
             :func:`buildlimits.cache_quiesce.quiesce_live_cache`.
         """  # ruff: ignore[docstring-extraneous-exception] - cache_quiesce raises it.
         if self.cache_mode == "sccache":
-            cache_quiesce.quiesce_live_cache(self.server, barrier, timing)
+            cache_quiesce.quiesce_and_report(
+                self.server, barrier, timing, self._report_quiesce
+            )
+
+    def _report_quiesce(self, outcome: str, seconds: float) -> None:
+        """Meter how a start-up stop of a live cache ended."""
+        self.metrics.emit(
+            "cache_quiesce", quiesce_outcome=outcome, quiesce_seconds=seconds
+        )
 
     def drain_orphans(self) -> None:
         """Require accounted server work before the admission pool opens.

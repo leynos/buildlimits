@@ -115,6 +115,13 @@
   no compiler groups
   '''
 # ---
+# name: test_the_summary_describes_each_state[restarting]
+  '''
+  capacity 4, held 2, healthy, restarting once running groups finish, caching through sccache
+  waiting 12.5s: serde in <project>
+  g3 running (cached): tokio in <project>, 40.0s
+  '''
+# ---
 # name: test_the_summary_describes_each_state[unavailable-descriptors]
   '''
   capacity None, held None, healthy, compiling directly

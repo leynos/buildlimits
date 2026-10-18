@@ -21,6 +21,7 @@ from buildlimits.adapter_invocation import (
     retry_request,
 )
 from buildlimits.heartbeat import Heartbeat
+from buildlimits.metrics import Metrics
 from buildlimits.protocol import (
     Admitted,
     Exit,
@@ -34,7 +35,10 @@ from buildlimits.timing import RetryWait
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from conftest import RecordingSink
+
     from buildlimits.adapter_metrics import AdapterMetrics
+
 
 RESTARTING = Refused("restarting", "the supervisor refused: restarting")
 DONE = Exit(code=0)
@@ -59,6 +63,14 @@ class _Summary:
     """Stands in for the metric summary, which only records an outcome."""
 
     outcome = "supervisor_lost"
+
+    def __init__(self) -> None:
+        """Start with no restart retried."""
+        self.restart_retries = 0
+
+    def retry_restart(self) -> None:
+        """Count one retry after a restart, as the real summary does."""
+        self.restart_retries += 1
 
 
 def _script(
@@ -217,3 +229,27 @@ def test_a_supervisor_that_only_refuses_stays_bounded_by_the_first_deadline() ->
     assert 5.0 <= rig.clock.time < 10.0, (
         "the loop ran to the deadline and stopped there"
     )
+
+
+def test_a_restart_retry_is_counted_in_the_invocation_summary(
+    monkeypatch: pytest.MonkeyPatch, metric_sink: RecordingSink
+) -> None:
+    """The adapter's one summary carries how often it had to ask again."""
+    with contextlib.ExitStack() as owned:
+        _script(
+            owned,
+            monkeypatch,
+            [[encode_reply(RESTARTING)], [], ADMITTED_AND_DONE],
+        )
+        adapter.run(
+            ["rustc"],
+            cacheable=False,
+            retry=immediate_retry(),
+            metrics=Metrics(metric_sink, source="adapter"),
+        )
+    assert len(metric_sink.records) == 1, "one terminal summary per invocation"
+    record = metric_sink.records[0]
+    assert record["BUILD_LIMITS_RESTART_RETRIES"] == "2", (
+        "a refusal and a lost connection each cost one fresh attempt"
+    )
+    assert record["BUILD_LIMITS_BUSY_RETRIES"] == "0", "restarts are not pressure"

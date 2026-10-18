@@ -50,6 +50,7 @@ class AdapterMetrics:
         self.outcome = "supervisor_lost"
         self.attempts = 0
         self.busy_retries = 0
+        self.restart_retries = 0
         self.admitted: float | None = None
         self._finished = False
 
@@ -60,6 +61,10 @@ class AdapterMetrics:
     def retry_busy(self) -> None:
         """Count a fresh admission attempt after a bounded busy refusal."""
         self.busy_retries = min(MAX_COUNTER, self.busy_retries + 1)
+
+    def retry_restart(self) -> None:
+        """Count a fresh admission attempt after the supervisor went away."""
+        self.restart_retries = min(MAX_COUNTER, self.restart_retries + 1)
 
     def admission(self, timestamp: float) -> None:
         """Record the first admission boundary.
@@ -92,6 +97,7 @@ class AdapterMetrics:
                     outcome=self.outcome,
                     connection_attempts=self.attempts,
                     busy_retries=self.busy_retries,
+                    restart_retries=self.restart_retries,
                     wait_seconds=(now if admitted is None else admitted) - self.started,
                     runtime_seconds=0.0 if admitted is None else now - admitted,
                 )

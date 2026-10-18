@@ -24,6 +24,7 @@ PRESSURE_FIELDS = frozenset({
     "accept_paused",
     "accept_pause_seconds",
     "busy_retries",
+    "restart_retries",
     "drain_attempts",
     "drain_failures",
     "drain_recoveries",
@@ -82,6 +83,9 @@ def pressure_sections(
             "adapters": {
                 "self_reported": True,
                 "busy_retries": summarize(present_samples(adapters, "busy_retries")),
+                "restart_retries": summarize(
+                    present_samples(adapters, "restart_retries")
+                ),
             },
         }
     }

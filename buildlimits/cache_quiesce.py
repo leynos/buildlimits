@@ -31,6 +31,8 @@ from buildlimits.sccache import (
 from buildlimits.systemd import SystemdError
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from buildlimits.recovery_barrier import RecoveryBarrier
     from buildlimits.sccache import ManagedSccache
     from buildlimits.timing import Clock
@@ -45,6 +47,50 @@ _STOPPING = (
     "start-up found a live managed cache with no admitted group left to use it; "
     "stopping it under the restart barrier"
 )
+
+
+class QuiesceTimeoutError(StartupAccountingError):
+    """The stopped cache was not verified stopped and empty in time."""
+
+
+def quiesce_and_report(
+    cache: ManagedSccache,
+    barrier: RecoveryBarrier,
+    clock: Clock,
+    report: cabc.Callable[[str, float], None],
+) -> None:
+    """Run :func:`quiesce_live_cache` and report how it ended, once, if it acted.
+
+    Parameters
+    ----------
+    cache : ManagedSccache
+        The managed server.
+    barrier : RecoveryBarrier
+        The restart barrier the unit's own condition reads.
+    clock : Clock
+        Monotonic time and sleep; injectable for tests.
+    report : Callable[[str, float], None]
+        Receives the outcome token (``stopped``, ``refused`` or ``timed_out``)
+        and the seconds spent. Nothing is reported when the cache was not live.
+
+    Raises
+    ------
+    QuiesceTimeoutError
+        If the stopped cache was not verified in time, after reporting it.
+    StartupAccountingError
+        As :func:`quiesce_live_cache`, after the outcome has been reported.
+    """
+    started = clock.now()
+    try:
+        acted = quiesce_live_cache(cache, barrier, clock)
+    except QuiesceTimeoutError:
+        report("timed_out", clock.now() - started)
+        raise
+    except StartupAccountingError:
+        report("refused", clock.now() - started)
+        raise
+    if acted:
+        report("stopped", clock.now() - started)
 
 
 def quiesce_live_cache(
@@ -119,7 +165,7 @@ def _await_stopped(cache: ManagedSccache, clock: Clock, timeout: float) -> None:
 
     Raises
     ------
-    StartupAccountingError
+    QuiesceTimeoutError
         If the service is not verified stopped and empty in time. The last
         reading is reported, because it says whether the unit was still
         stopping, held surviving processes, or could not be read.
@@ -139,5 +185,5 @@ def _await_stopped(cache: ManagedSccache, clock: Clock, timeout: float) -> None:
                 "inspect the cache's control group, wait for it to empty, then "
                 "start the supervisor"
             )
-            raise StartupAccountingError(msg) from last
+            raise QuiesceTimeoutError(msg) from last
         clock.sleep(QUIESCE_POLL_SECONDS)

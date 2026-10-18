@@ -27,6 +27,7 @@ EVENTS = frozenset({
     "accept_pressure",
     "drain_progress",
     "cache_recovery",
+    "cache_quiesce",
 })
 OUTCOMES = frozenset({
     "completed",
@@ -72,8 +73,15 @@ VOCABULARIES = {
     "drain_reason": frozenset({"none", "live_work", "os_error", "control_error"}),
     # Mirrors ``cache_recovery.Phase`` so a stuck transaction appears in telemetry.
     "phase": frozenset({"idle", "quiescing", "stopping", "accounting", "restarting"}),
+    # How a start-up stop of a live cache ended; see ``cache_quiesce``.
+    "quiesce_outcome": frozenset({"stopped", "refused", "timed_out"}),
 }
-DURATIONS = frozenset({"wait_seconds", "runtime_seconds", "accept_pause_seconds"})
+DURATIONS = frozenset({
+    "wait_seconds",
+    "runtime_seconds",
+    "accept_pause_seconds",
+    "quiesce_seconds",
+})
 COUNTERS = frozenset({
     "queued",
     "held",
@@ -89,6 +97,7 @@ COUNTERS = frozenset({
     "fd_high_water",
     "queued_high_water",
     "busy_retries",
+    "restart_retries",
     "drain_attempts",
     "drain_failures",
     "drain_recoveries",

@@ -215,6 +215,7 @@ def retry_request(
             return request()
         except RestartingError as error:
             attempt.wait_out_restart(error, heartbeat, retry, window)
+            attempt.summary.retry_restart()
             last_refusal = None
         except BusyError as error:
             last_refusal = error

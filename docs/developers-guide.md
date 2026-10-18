@@ -363,6 +363,17 @@ and `of_event` select report inputs), and `metrics_report` and
 `metrics_pressure_report` aggregate. High-water values are producer-lifetime
 maxima; drain counters are cumulative snapshots and are never summed.
 
+The restart path adds three bounded observations. The adapter's one
+`adapter_finished` summary carries `restart_retries`, the attempts spent
+because the supervisor refused as `restarting` or went away before admission,
+and the pressure report summarizes it beside `busy_retries`. The
+`health_changed` event takes the token `restarting` when a graceful stop
+begins, and `supervisor_stopped` ends it, so the journal timestamps bracket the
+drain without a separate duration field. A start-up stop of a live cache emits
+one `cache_quiesce` event whose `quiesce_outcome` is `stopped`, `refused` or
+`timed_out`, with `quiesce_seconds`; nothing is emitted when the cache was not
+live. No tracing spans exist in this package, so none are added.
+
 ## 10. Adapters
 
 `rustc_main` passes its arguments through unchanged. `rustdoc_main` resolves

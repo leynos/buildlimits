@@ -11,6 +11,7 @@ the pool opens, which is what the recovery transaction does mid-run.
 import os
 import signal
 import typing as typ
+from contextlib import nullcontext
 from pathlib import PurePosixPath
 
 import pytest
@@ -21,15 +22,24 @@ from pool_helpers import FakePool
 
 from buildlimits import cgroups, startup
 from buildlimits import supervisor as supervisor_module
-from buildlimits.cache_quiesce import quiesce_live_cache
+from buildlimits.admission import Admission
+from buildlimits.cache_quiesce import (
+    QuiesceTimeoutError,
+    quiesce_and_report,
+    quiesce_live_cache,
+)
 from buildlimits.config import SupervisorConfig
+from buildlimits.metrics import Metrics
 from buildlimits.recovery_barrier import RecoveryBarrier
 from buildlimits.sccache import ManagedSccache, SccacheError, StartupAccountingError
+from buildlimits.server_watch import ServerWatch
 from buildlimits.supervisor import Supervisor
 from buildlimits.systemd import UserManager
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
+
+    from conftest import RecordingSink
 
 OWN_CGROUP = PurePosixPath(
     "/user.slice/user-1000.slice/user@1000.service/app.slice/s.service"
@@ -214,3 +224,71 @@ def test_admission_opens_only_after_a_verified_stop(
     assert stopped, "a live cache that quiesced was stopped"
     assert unit.barrier_at_job["stop"], "the barrier preceded the stop"
     assert unit.state == STOPPED, "success means the strict check passed"
+
+
+@pytest.mark.parametrize(
+    ("refuses_stop", "never_stops", "outcome"),
+    [
+        (False, False, "stopped"),
+        (True, False, "refused"),
+        (False, True, "timed_out"),
+    ],
+    ids=["stopped", "refused", "timed-out"],
+)
+def test_the_start_up_stop_reports_how_it_ended_once(
+    tmp_path: Path, outcome: str, *, refuses_stop: bool, never_stops: bool
+) -> None:
+    """A stop of a live cache is metered with its outcome and bounded duration."""
+    unit = CacheUnit(
+        barrier=tmp_path / "run" / "cache-recovery",
+        refuses_stop=refuses_stop,
+        never_stops=never_stops,
+    )
+    clock = FakeClock()
+    cache = ManagedSccache("c.service", tmp_path / "c.sock", UserManager(unit.runner))
+    reports: list[tuple[str, float]] = []
+    outcomes = {
+        "stopped": nullcontext(),
+        "refused": pytest.raises(StartupAccountingError),
+        "timed_out": pytest.raises(QuiesceTimeoutError),
+    }
+    with outcomes[outcome]:
+        quiesce_and_report(
+            cache,
+            RecoveryBarrier(unit.barrier),
+            clock.timing(),
+            lambda name, seconds: reports.append((name, seconds)),
+        )
+    assert [name for name, _seconds in reports] == [outcome], "reported exactly once"
+    assert 0.0 <= reports[0][1] <= 46.0, "the duration is bounded by the timeout"
+
+
+def test_a_cache_that_was_not_live_reports_nothing(tmp_path: Path) -> None:
+    """Only a start-up that acted on a live cache is metered."""
+    unit = CacheUnit(barrier=tmp_path / "run" / "cache-recovery", state=STOPPED)
+    cache = ManagedSccache("c.service", tmp_path / "c.sock", UserManager(unit.runner))
+    reports: list[tuple[str, float]] = []
+    quiesce_and_report(
+        cache,
+        RecoveryBarrier(unit.barrier),
+        FakeClock().timing(),
+        lambda name, seconds: reports.append((name, seconds)),
+    )
+    assert not reports, "a stopped cache is neither a success nor a failure"
+
+
+def test_the_watch_emits_the_quiesce_event_with_bounded_fields(
+    tmp_path: Path, metric_sink: RecordingSink
+) -> None:
+    """The supervisor's own metrics port receives the validated record."""
+    unit = CacheUnit(barrier=tmp_path / "run" / "cache-recovery")
+    manager = UserManager(unit.runner)
+    server = ManagedSccache("c.service", tmp_path / "c.sock", manager)
+    watch = ServerWatch(server, Admission(), "sccache", metrics=Metrics(metric_sink))
+    watch.quiesce_live_cache(RecoveryBarrier(unit.barrier), FakeClock().timing())
+    assert metric_sink.records[0]["BUILD_LIMITS_EVENT"] == "cache_quiesce", (
+        "the event is the cache_quiesce record"
+    )
+    assert metric_sink.records[0]["BUILD_LIMITS_QUIESCE_OUTCOME"] == "stopped", (
+        "the outcome is a token from the closed vocabulary"
+    )

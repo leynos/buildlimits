@@ -454,6 +454,7 @@ ignore_names = [
     "ahead",
     "baseline_known",
     "busy_retries",
+    "restart_retries",
     "high_water",
     "next_due",
     "slice_dir",
