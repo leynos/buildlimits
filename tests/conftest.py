@@ -6,6 +6,7 @@ import typing as typ
 
 import pytest
 from cache_recovery_harness import HarnessFactory
+from descriptor_guard import DescriptorLeakError, no_leaks
 
 from buildlimits.metrics import Metrics
 
@@ -150,3 +151,23 @@ def owned() -> cabc.Iterator[contextlib.ExitStack]:
     with contextlib.ExitStack() as stack:
         yield stack
 
+
+@pytest.fixture(autouse=True)
+def descriptor_leak_guard() -> cabc.Iterator[None]:
+    """Fail the test that leaves a descriptor for the garbage collector.
+
+    An autouse fixture is set up before the others in its scope and so torn
+    down after them, which means every fixture's own cleanup has run by the
+    time the descriptors are compared. See :mod:`descriptor_guard` for why the
+    collector is suspended meanwhile.
+
+    Yields
+    ------
+    None
+        Control to the test and its fixtures.
+    """
+    try:
+        with no_leaks():
+            yield
+    except DescriptorLeakError as leak:
+        pytest.fail(str(leak), pytrace=False)
