@@ -340,8 +340,9 @@ trigger would not perform; `blocked` gates the stop, not the opening, and so
 has no part in it. `timing.seconds_since` reads the drain's start without
 recording it, so describing the machine between ticks moves nothing.
 `CacheRecovery.describe` adds `automatic`, `opens_in` and `pending` from
-`recovery_outlook.outlook`, and `status_render` prefers `opens_in` over
-`cooling_for` for the idle line. `ServerWatch` receives
+`recovery_outlook.outlook`, and `status_render` prints the idle line from
+`opens_in`, honouring an explicit `null`, and falls back to `cooling_for` only
+for a document without the key. `ServerWatch` receives
 `automatic_recovery_pending` from the supervisor and derives `recovery_action`
 live from `drain_guidance`: the mandatory text, or the fallback text for a
 live-work fault while recovery is pending. The `DrainLoop` internal-error

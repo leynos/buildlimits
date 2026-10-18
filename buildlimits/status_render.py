@@ -195,17 +195,21 @@ def _idle_wait(transaction: cabc.Mapping[str, object]) -> float | None:
     """Pick the seconds an idle trigger still has to wait, if it is waiting.
 
     The shared query's ``opens_in`` covers the cooldown and the stale proof
-    together. A document without it falls back to the cooldown alone, which
-    is hidden when the document says the trigger can never act.
+    together, and an explicit ``null`` means that waiting will not open the
+    trigger, so it is honoured. Only a legacy document without the key falls
+    back to the cooldown alone, and not when it says the trigger can never act.
 
     Returns
     -------
     float | None
         A positive wait, or ``None`` when the trigger is not waiting.
     """
-    wait = transaction.get("opens_in")
-    if wait is None and transaction.get("automatic") is not False:
+    if "opens_in" in transaction:
+        wait = transaction["opens_in"]
+    elif transaction.get("automatic") is not False:
         wait = transaction.get("cooling_for")
+    else:
+        wait = None
     if isinstance(wait, (int, float)) and wait > 0:
         return float(wait) if isinstance(wait, int) else wait
     return None

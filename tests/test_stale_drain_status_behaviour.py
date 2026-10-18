@@ -30,7 +30,7 @@ def harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> cabc.Iterator[Ha
 
 @given("a busy host retaining one drained token while a build waits")
 def _busy(harness: Harness) -> None:
-    """Take the first poll, which starts the drain's age."""
+    """Poll until the drain retries are spent, starting the drain's age."""
     for _ in range(8):
         harness.tick()
 

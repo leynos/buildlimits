@@ -378,7 +378,7 @@ yet the work is live, so admission keeps the token, the queue grows and held
 tokens never fall. `build-limits-status` reports the condition:
 
 ```plaintext
-capacity 2, held 2, healthy, caching through sccache
+capacity 4, held 2, healthy, caching through sccache
 drain fault kind: live_work
 drain check failed; tokens retained: retained detached work: live sccache
 service may retain detached requests; visible compiler roots=0; operator
@@ -390,8 +390,12 @@ admission barrier, verify it is stopped and empty, and release the retained
 tokens; tokens remain held until that verification succeeds.
 cache recovery idle: automatic recovery may start in 212.0s
 waiting 9.0s: cargo check in /home/owner/project
-g1 server-drain (cached): cargo check in /home/owner/project, 42.0s
+g1 server-drain (cached): cargo check in /home/owner/project, 88.0s
+g2 running (cached): cargo build in /home/owner/other, 30.0s
 ```
+
+Here a cached compile is still running, which defeats the prompt proof, so only
+the retained drain's age can open the recovery.
 
 Each prefix is one rendered line; the fault and guidance lines are wrapped here
 to fit the page.
@@ -441,21 +445,24 @@ refuses every stop.
 After each transaction the automatic trigger rests before it may act again: 60
 seconds after a clean recovery, and 900 seconds after one whose restart was
 still refused, so that a cache slow to come back cannot exhaust a second set of
-attempts. While it rests, `build-limits-status` says so:
+attempts. While a retained drain waits behind that rest, or behind the stale
+proof, `build-limits-status` says so:
 
 ```plaintext
 cache recovery idle: automatic recovery may start in 42.5s
 ```
 
 Tokens retained beside that line are waiting for the trigger, not stuck. The
-same line counts down to the stale proof: while a drain is retained with
-requests waiting, and only the 300 seconds are missing, it shows the time left
-(300 seconds less the drain's age, or the cooldown when that is later). A drain
-that clears, a queue that empties, a `manual` policy, a faulted user manager or
-a non-`sccache` cache mode removes the line, because then waiting will not open
-the trigger. A transaction that ended with its restart refused also keeps its
-`cache recovery last fault:` line, during the rest and after it, until the next
-transaction succeeds. With `manual`, the supervisor waits for an operator:
+line counts down to the instant the trigger can open: while a drain is retained
+with requests waiting, it shows the later of the cooldown and the time left to
+the stale proof (300 seconds less the drain's age). It appears only while
+waiting will open the trigger. A drain that clears, a queue that empties, a
+`manual` policy, a faulted user manager or a non-`sccache` cache mode removes
+it, and so does a `starved` policy with nothing retained, even during the
+cooldown; the `cooling_for` field still reports the rest. A transaction that
+ended with its restart refused also keeps its `cache recovery last fault:`
+line, during the rest and after it, until the next transaction succeeds. With
+`manual`, the supervisor waits for an operator:
 
 ```bash
 build-limits-recover --wait --wait-timeout 300
@@ -539,11 +546,11 @@ found no server; a cache that stays down costs cache hits, not correctness.
 Read the fault kind before acting, because stopping the cache is the right
 answer to only one of them:
 
-| `drain_fault_kind`  | Meaning                                                     | Action                                                                                     |
-| ------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `live_work`         | A live cache may retain detached work                       | Run `build-limits-recover`; it stops the cache and proves it empty before releasing tokens |
-| `stopped_populated` | The cache is stopped but its control group still holds work | Inspect the surviving processes and wait for them to exit; tokens stay held until then     |
-| `manager`           | The cache's state could not be read at all                  | Restore the systemd user-manager transport. Do not stop or restart the cache               |
+| `drain_fault_kind`  | Meaning                                                     | Action                                                                                                                                                                                |
+| ------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `live_work`         | A live cache may retain detached work                       | Under `starved`, wait while a countdown or `fallback recovery action:` shows; otherwise run `build-limits-recover`, which stops the cache and proves it empty before releasing tokens |
+| `stopped_populated` | The cache is stopped but its control group still holds work | Inspect the surviving processes and wait for them to exit; tokens stay held until then                                                                                                |
+| `manager`           | The cache's state could not be read at all                  | Restore the systemd user-manager transport. Do not stop or restart the cache                                                                                                          |
 
 _Table 6: Drain fault kinds and their remedies._
 

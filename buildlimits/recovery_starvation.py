@@ -305,6 +305,11 @@ def permits_but_for_time(reading: StarvationReading) -> bool:
     cooldown and the stale proof are left out because they are the two that
     elapsing time satisfies; see :mod:`buildlimits.recovery_outlook`.
 
+    Parameters
+    ----------
+    reading : StarvationReading
+        The one instant the trigger is judged against.
+
     Returns
     -------
     bool

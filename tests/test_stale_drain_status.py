@@ -210,7 +210,7 @@ def _document(**recovery: object) -> dict[str, object]:
     [
         ({"opens_in": 200.0}, COUNTDOWN.format(200.0)),
         ({"opens_in": 200.0, "cooling_for": 30.0}, COUNTDOWN.format(200.0)),
-        ({"opens_in": None, "cooling_for": 30.0}, COUNTDOWN.format(30.0)),
+        ({"opens_in": None, "cooling_for": 30.0}, None),
         ({"automatic": True, "cooling_for": 30.0}, COUNTDOWN.format(30.0)),
         ({"opens_in": None, "cooling_for": 0.0}, None),
         ({"opens_in": 0.0}, None),
@@ -236,3 +236,18 @@ def test_the_loop_action_is_never_called_a_fallback() -> None:
     assert "required recovery action: Restore" in render(document), (
         "only the cache-recovery text can be a fallback"
     )
+
+
+def test_a_manager_fault_during_the_cooldown_shows_no_countdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rest that the trigger cannot end is not announced as a wait."""
+    with busy_supervisor(tmp_path, monkeypatch) as harness:
+        harness.tick()
+        monkeypatch.setattr(harness.supervisor.recovery, "_cooling", harness.now + 60.0)
+        assert idle_lines(harness), "a healthy retained drain counts down the cooldown"
+        harness.supervisor.server.drain_fault_kind = "manager"
+        assert status_recovery(harness)["cooling_for"] == pytest.approx(60.0), (
+            "the cooldown itself is still reported"
+        )
+        assert not idle_lines(harness), "a faulted manager transport blocks the start"

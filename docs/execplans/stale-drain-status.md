@@ -22,8 +22,9 @@ recovery is pending and the operator command is a fallback.
   when retention covers most of the pool is deferred (see Outcomes).
 - Do not edit `tests/descriptor_helpers.py` or the harness descriptor teardown.
 - Status must not promise a recovery the trigger will not perform: the
-  countdown comes from the same clauses `starvation()`, `refusal()` and
-  `blocked()` use, via one shared query.
+  countdown comes from the same clauses `starvation()` and `refusal()` use, via
+  one shared query. `blocked()` gates the stop that follows an opening, not the
+  opening itself, so it is excluded.
 - No host installs, no `build-limits-recover`, no service control.
 
 ## Design
@@ -32,9 +33,8 @@ Conformance basis: no Terms of Reference exist; governing documents are
 `docs/users-guide.md`, `docs/developers-guide.md` section 9, and ADR 001 for
 the status document conventions.
 
-1. `buildlimits/recovery_starvation.py` gains
-   `recovery_outlook.opens_in(reading)` (with
-   `recovery_starvation.permits_but_for_time`): seconds until the automatic
+1. `buildlimits/recovery_outlook.py` gains `opens_in(reading)`, built on
+   `recovery_starvation.permits_but_for_time`: seconds until the automatic
    trigger could open, `0.0` when it would open now, and `None` when time alone
    will not open it (not `sccache`, not `starved`, fault is not `live_work`,
    `refusal()` non-empty, no server-drain token, or no waiting request).
@@ -42,18 +42,23 @@ the status document conventions.
    `starvation(r) is not None` exactly when `opens_in(r) == 0`. The value is
    `max(stale remainder, cooling remainder)`; the stale remainder is `0` when
    the prompt proof already holds. `blocked()` gates the stop, not the opening,
-   so it is deliberately not part of the countdown. `RetainedDrainAge` gains a
-   non-mutating `age(now)` for status.
+   so it is deliberately not part of the countdown. Status reads the drain's
+   start (`RetainedDrainAge.since`) through `timing.seconds_since`, which
+   records nothing.
 2. `CacheRecovery.describe` adds `automatic` (mode and policy permit the
    trigger), `opens_in` (idle transactions only) and `pending` (an automatic
    recovery is due or under way and has attempts left). The idle line shows
-   `opens_in` when positive, otherwise the old `cooling_for` line, which is now
-   suppressed when `automatic` is false.
+   `opens_in` when positive and honours an explicit `null` as "no countdown";
+   only a legacy document without the key falls back to `cooling_for`, which is
+   suppressed when `automatic` is false. A resting trigger with nothing
+   retained therefore no longer prints a line (review finding on PR #15: it
+   would also print beside a faulted manager).
 3. Wording lives in `buildlimits/drain_guidance.py`. `ServerWatch` takes an
    `automatic_recovery_pending` callable. Its `recovery_action` becomes a live
    property: the mandatory text, or, for `live_work` while recovery is pending,
    a fallback text. The journal line for the pending case reads
-   `drain recovery pending automatically; operator action is only a fallback: …`,
+   `drain recovery is pending automatically; operator action is only a
+   fallback: …`,
    and the mandatory case keeps `drain requires operator action: …`. The
    `DrainLoop` internal-error path never involves cache recovery and keeps its
    mandatory wording.
