@@ -16,6 +16,14 @@ import typing as typ
 
 from buildlimits import cache_quiesce
 from buildlimits.admission import GroupState, ReturnToken
+from buildlimits.drain_guidance import (
+    FAULT_PREFIXES,
+    MANDATORY_ACTIONS,
+    PENDING_LIVE_WORK_ACTION,
+    FaultKind,
+    classify,
+    journal_prefix,
+)
 from buildlimits.drain_metrics import DrainMetrics
 from buildlimits.journal import log
 from buildlimits.metrics import Metrics, gauge_fields
@@ -23,7 +31,6 @@ from buildlimits.sccache import (
     LiveCacheWorkError,
     SccacheError,
     StartupAccountingError,
-    StoppedPopulatedCacheError,
 )
 
 if typ.TYPE_CHECKING:
@@ -38,38 +45,6 @@ if typ.TYPE_CHECKING:
 
 DRAIN_FAILURE_LIMIT = 8
 DRAIN_RETRY_SECONDS = 30.0
-
-type FaultKind = typ.Literal["live_work", "stopped_populated", "manager"]
-
-# Each fault kind carries one journal prefix and one piece of operator
-# guidance, so a new kind cannot silently reuse another's advice.
-_FAULT_PREFIXES: dict[FaultKind, str] = {
-    "live_work": "holding tokens for ",
-    "stopped_populated": "holding tokens while the stopped cache is not empty: ",
-    "manager": "cannot read the sccache server's load; holding tokens: ",
-}
-
-# Operator guidance is chosen by what the failed check actually proved:
-# live work needs a coordinated recovery, a stopped populated service needs
-# its cgroup inspected, and a transport fault needs the manager restored.
-_RECOVERY_ACTIONS: dict[FaultKind, str] = {
-    "live_work": (
-        "Run build-limits-recover to stop the managed sccache service under the "
-        "admission barrier, verify it is stopped and empty, and release the "
-        "retained tokens; tokens remain held until that verification succeeds."
-    ),
-    "stopped_populated": (
-        "The managed sccache service is stopped but its control group still "
-        "holds work. Inspect the surviving processes and wait for them to "
-        "exit; tokens remain held until the group is empty."
-    ),
-    "manager": (
-        "Restore the systemd user-manager transport and re-read the managed "
-        "sccache service state; do not stop or restart sccache for this fault, "
-        "and do not release tokens until the service is verified stopped and "
-        "empty."
-    ),
-}
 
 
 @dc.dataclass(slots=True)
@@ -89,6 +64,9 @@ class ServerWatch:
         Failure-isolated port for cache and server-drain transitions.
     clock : Callable[[], float]
         Monotonic clock bounding drain-query retries.
+    automatic_recovery_pending : Callable[[], bool]
+        Reports whether the supervisor's own recovery is due or under way, so a
+        live-work fault is not presented as needing an operator while it is.
     drain_metrics : DrainMetrics
         Shared operation observer; never changes cache-accounting authority.
     """
@@ -104,7 +82,9 @@ class ServerWatch:
     drain_fault: str | None = None
     drain_fault_kind: FaultKind | None = None
     drain_attempts: int = 0
-    recovery_action: str | None = None
+    automatic_recovery_pending: cabc.Callable[[], bool] = lambda: False
+    _action_kind: FaultKind | None = None
+    _journaled_action: str | None = None
     _next_drain: float = 0.0
     _fault_roots: int | None = None
     drain_metrics: DrainMetrics = dc.field(default_factory=DrainMetrics)
@@ -272,7 +252,7 @@ class ServerWatch:
 
     def _record_drain_fault(self, error: SccacheError) -> None:
         """Keep unknown work accounted for and deduplicate drain diagnostics."""
-        kind = _fault_kind(error)
+        kind = classify(error)
         retained = kind == "live_work"
         detail = ascii(str(error)[:400])[1:-1]
         fault = f"retained detached work: {detail}" if retained else detail
@@ -284,13 +264,54 @@ class ServerWatch:
         self._fault_roots = error.roots if is_live else None
         if changed:
             with contextlib.suppress(OSError):
-                log(f"{_FAULT_PREFIXES[kind]}{fault}")
+                log(f"{FAULT_PREFIXES[kind]}{fault}")
         if self.drain_attempts >= DRAIN_FAILURE_LIMIT:
             self._next_drain = self.clock() + DRAIN_RETRY_SECONDS
-            if self.recovery_action != _RECOVERY_ACTIONS[kind]:
-                self.recovery_action = _RECOVERY_ACTIONS[kind]
-                with contextlib.suppress(OSError):
-                    log(f"drain requires operator action: {self.recovery_action}")
+            self._action_kind = kind
+            self._journal_recovery_action()
+
+    @property
+    def recovery_action(self) -> str | None:
+        """The guidance for the current fault, once its retries are exhausted.
+
+        Read live rather than stored, because whether the operator is needed
+        changes while the fault stands: a live-work fault is the supervisor's
+        to recover while its own recovery is pending, and the operator's once
+        that cannot happen.
+
+        Returns
+        -------
+        str | None
+            The guidance, or ``None`` before the retries are exhausted.
+        """
+        if self._action_kind is None:
+            return None
+        if self.recovery_action_is_fallback:
+            return PENDING_LIVE_WORK_ACTION
+        return MANDATORY_ACTIONS[self._action_kind]
+
+    @property
+    def recovery_action_is_fallback(self) -> bool:
+        """Whether the operator command is only a fallback for the supervisor.
+
+        Returns
+        -------
+        bool
+            True only for a live-work fault whose automatic recovery is
+            pending. A manager or stopped-populated fault, the manual policy
+            and exhausted attempts all answer False.
+        """
+        return self._action_kind == "live_work" and self.automatic_recovery_pending()
+
+    def _journal_recovery_action(self) -> None:
+        """Journal the guidance once per wording, not once per retry."""
+        action = self.recovery_action
+        if action is None or action == self._journaled_action:
+            return
+        self._journaled_action = action
+        prefix = journal_prefix(is_fallback=self.recovery_action_is_fallback)
+        with contextlib.suppress(OSError):
+            log(f"{prefix}: {action}")
 
     @property
     def zero_visible_roots(self) -> bool:
@@ -324,7 +345,8 @@ class ServerWatch:
         self.drain_fault = None
         self.drain_fault_kind = None
         self.drain_attempts = 0
-        self.recovery_action = None
+        self._action_kind = None
+        self._journaled_action = None
         self._next_drain = 0.0
         self._fault_roots = None
 
@@ -368,22 +390,3 @@ class ServerWatch:
                 **gauge_fields(self.admission.counts()),
                 load_unknown=unknown,
             )
-
-
-def _fault_kind(error: SccacheError) -> FaultKind:
-    """Classify a drain-check failure for guidance and automatic recovery.
-
-    Returns
-    -------
-    FaultKind
-        ``live_work`` for a live service that may hold detached requests,
-        ``stopped_populated`` for a stopped service that still contains work,
-        or ``manager`` for any fault reading the service state.
-    """
-    match error:
-        case LiveCacheWorkError():
-            return "live_work"
-        case StoppedPopulatedCacheError():
-            return "stopped_populated"
-        case _:
-            return "manager"

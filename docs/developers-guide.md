@@ -330,6 +330,31 @@ or `stale`): the opening is journalled with its reason, which carries the
 retained age, and an age-opened transaction adds one to the
 `recovery_stale_openings` counter of the `cache_recovery` event.
 
+Status reads the same clauses through
+`recovery_starvation.permits_but_for_time`, which asks everything the cooldown
+and the staleness proof do not: `recovery_outlook.opens_in` returns `None` when
+one of those refuses, `0.0` when `starvation` acts on that reading, and
+otherwise the later of the cooldown and the stale remainder. `starvation` and
+`opens_in` share the helper so a countdown cannot promise an opening the
+trigger would not perform; `blocked` gates the stop, not the opening, and so
+has no part in it. `timing.seconds_since` reads the drain's start without
+recording it, so describing the machine between ticks moves nothing.
+`CacheRecovery.describe` adds `automatic`, `opens_in` and `pending` from
+`recovery_outlook.outlook`, and `status_render` prints the idle line from
+`opens_in`, honouring an explicit `null`, and falls back to `cooling_for` only
+for a document without the key. `ServerWatch` receives
+`automatic_recovery_pending` from the supervisor and derives `recovery_action`
+live from `drain_guidance`: the mandatory text, or the fallback text for a
+live-work fault while recovery is pending.
+`recovery_stop.request_stop(cache, fault_kind)` owns the one refusal that
+stands between a transaction and a stop: it raises `SystemdError` without
+stopping the cache when the last drain fault was a `manager` transport fault,
+because a cache whose state cannot be read must not be stopped, and otherwise
+queues the stop. `CacheRecovery.request_stop` delegates to it and `_try_stop`
+calls that method. The `DrainLoop` internal-error action involves no cache
+recovery and stays mandatory. Deferred: shortening
+`RECOVERY_STALE_DRAIN_SECONDS` when retention covers most of the pool.
+
 The automatic stop has a second, longer deadline. `_try_stop` first applies
 `blocked`, then asks `recovery_roots.stop_verdict` whether the roots evidence
 suffices. The pure `roots_verdict` answers `exempt` for a manual transaction,

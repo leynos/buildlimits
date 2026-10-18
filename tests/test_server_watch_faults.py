@@ -227,3 +227,46 @@ def test_the_real_reader_withdraws_the_proof_for_a_visible_child(
     assert watch.zero_visible_roots is False, (
         "a visible compiler child withdraws the zero-root proof"
     )
+
+
+def test_a_pending_automatic_recovery_makes_the_command_a_fallback(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The guidance follows whether the supervisor will recover by itself."""
+    pending = [True]
+    now = [0.0]
+    watch = ServerWatch(
+        typ.cast("ManagedSccache", FakeServer(load=_ZERO_ROOTS)),
+        _draining(b"a"),
+        "sccache",
+        automatic_recovery_pending=lambda: pending[0],
+    )
+    watch.clock = lambda: now[0]
+    _spend_the_fault_budget(watch)
+    assert watch.recovery_action_is_fallback, "recovery is pending"
+    assert "pending" in (watch.recovery_action or ""), "the text says so"
+    journal = capsys.readouterr().err
+    assert "drain requires operator action" not in journal, journal
+    assert "only a fallback" in journal, journal
+
+    pending[0] = False
+    assert not watch.recovery_action_is_fallback, "recovery can no longer happen"
+    assert "pending" not in (watch.recovery_action or ""), "the order is back"
+    now[0] = 30.0
+    watch.drained_tokens()
+    assert "drain requires operator action" in capsys.readouterr().err, (
+        "the journal gives the mandatory wording once the fallback ends"
+    )
+
+
+def test_a_manager_fault_is_never_a_fallback() -> None:
+    """Only a live-work fault can be cured by the automatic recovery."""
+    watch = ServerWatch(
+        typ.cast("ManagedSccache", FakeServer(load=SccacheError("manager down"))),
+        _draining(b"a"),
+        "sccache",
+        automatic_recovery_pending=lambda: True,
+    )
+    _spend_the_fault_budget(watch)
+    assert not watch.recovery_action_is_fallback, "the manager must be restored"
+    assert "do not stop" in (watch.recovery_action or ""), "mandatory guidance"

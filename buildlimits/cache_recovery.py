@@ -19,7 +19,7 @@ import contextlib
 import dataclasses as dc
 import typing as typ
 
-from buildlimits import recovery_roots, recovery_starvation
+from buildlimits import recovery_outlook, recovery_roots, recovery_starvation
 from buildlimits.journal import log
 from buildlimits.metrics import Metrics, MetricsPort, gauge_fields
 from buildlimits.recovery_guidance import report_deadline_stop, report_exhaustion
@@ -28,7 +28,9 @@ from buildlimits.recovery_reclaim import (
     reclaim_after_accounting,
     restart_fault,
 )
+from buildlimits.recovery_stop import request_stop as stop_cache
 from buildlimits.systemd import SystemdError
+from buildlimits.timing import seconds_since
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -36,6 +38,7 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.admission_state import Counts
     from buildlimits.recovery_barrier import RecoveryBarrier
+    from buildlimits.recovery_starvation import StarvationReading
     from buildlimits.sccache import ManagedSccache
 
 RECOVERY_RETRY_SECONDS = 30.0
@@ -138,11 +141,14 @@ class CacheRecovery:
         Returns
         -------
         dict[str, object]
-            The phase, the consecutive failures of its last action, the last
-            fault text, the seconds until the next attempt, the seconds before
-            the trigger may open another transaction, and the seconds visible
-            roots have delayed an automatic stop.
+            The phase, failures, last fault, retry and cooldown times, the
+            roots delay, and the :class:`~buildlimits.recovery_outlook.Outlook`.
         """
+        outlook = recovery_outlook.outlook(
+            self._reading(now, seconds_since(self._drain_age.since, now)),
+            is_idle=self._phase == "idle",
+            has_attempts_left=self._attempts < RECOVERY_FAILURE_LIMIT,
+        )
         return {
             "phase": self._phase,
             "attempts": self._attempts,
@@ -150,6 +156,9 @@ class CacheRecovery:
             "retry_in": round(max(0.0, self._next_action - now), 3),
             "cooling_for": round(max(0.0, self._cooling - now), 3),
             "roots_waited": round(self._roots_grace.elapsed(now), 3),
+            "automatic": outlook.automatic,
+            "opens_in": outlook.rounded_opens_in(),
+            "pending": outlook.pending,
         }
 
     def request(self, trigger: str, now: float) -> dict[str, object]:
@@ -189,8 +198,7 @@ class CacheRecovery:
         if self._phase == "idle":
             self._starved(now)
             return
-        # Renewed on every tick, backoff ticks included, so the window cannot
-        # reopen mid-retry; the bound matches the retry delay's.
+        # Renewed on every tick, backoff included, so the window stays shut.
         self.hold_cache(RECOVERY_MAX_RETRY_SECONDS)
         if now >= self._next_action:
             self._step(now)
@@ -198,45 +206,43 @@ class CacheRecovery:
     def request_stop(self) -> None:
         """Ask the manager to stop the managed cache under the barrier.
 
-        Raises
-        ------
-        SystemdError
-            If the manager refuses the job, cannot be reached, or last failed
-            a drain query for transport reasons. A cache whose state cannot be
-            read must not be stopped: the stop would be a guess, and the
-            manager that is meant to perform it is the part that is broken.
+        A cache whose state cannot be read is refused with a ``SystemdError``;
+        see :func:`buildlimits.recovery_stop.request_stop`.
         """
-        if self.fault_kind() == "manager":
-            msg = (
-                f"cannot stop {self.cache.unit}: the user manager transport is "
-                "faulted; restore it and the cache's state is readable again"
-            )
-            raise SystemdError(msg)
-        self.cache.stop()
+        stop_cache(self.cache, self.fault_kind())
 
     def reclaim_after_accounting(self) -> None:
         """Retire the barrier a prior, interrupted transaction left behind.
 
-        The work is :func:`buildlimits.recovery_reclaim.reclaim_after_accounting`;
-        this supplies the barrier and cache the machine already holds.
+        Delegates to :func:`buildlimits.recovery_reclaim.reclaim_after_accounting`.
         """
         reclaim_after_accounting(
             cache_mode=self.cache_mode, barrier=self.barrier, cache=self.cache
         )
 
-    def _starved(self, now: float) -> None:
-        """Open the automatic transaction only for live-cache starvation."""
-        counts = self.counts()
-        reading = recovery_starvation.StarvationReading(
+    def _reading(self, now: float, drain_age: float) -> StarvationReading:
+        """Read every input of the automatic trigger at one instant.
+
+        Returns
+        -------
+        StarvationReading
+            The reading the trigger acts on and status describes.
+        """
+        return recovery_starvation.StarvationReading(
             cache_mode=self.cache_mode,
             policy=self.policy,
             cooling=self._cooling,
             now=now,
-            counts=counts,
+            counts=self.counts(),
             fault_kind=self.fault_kind(),
             zero_visible_roots=self.zero_visible_roots(),
-            drain_age=self._drain_age.observe(counts.server_drain, now=now),
+            drain_age=drain_age,
         )
+
+    def _starved(self, now: float) -> None:
+        """Open the automatic transaction only for live-cache starvation."""
+        age = self._drain_age.observe(self.counts().server_drain, now=now)
+        reading = self._reading(now, age)
         reason = recovery_starvation.starvation(reading)
         if reason is not None:
             self._begin("starved", now, reason)
@@ -322,10 +328,8 @@ class CacheRecovery:
     def _try_start(self, now: float) -> None:
         """Clear the barrier, restart the cache, and give up after the limit.
 
-        A start queued behind a barrier that is still there reaches a unit
-        whose own condition skips it, so a barrier that cannot be removed is a
-        failed step like any other: it is retried with backoff, and the
-        operator is told to restore the runtime directory the barrier lives in.
+        A barrier that cannot be removed would leave the start skipped by the
+        unit's own condition, so it is a failed step like any other.
         """
         # Released only once the start is accepted: a refused start leaves the
         # server stopped, and a compiler composed then would start an
@@ -361,10 +365,8 @@ class CacheRecovery:
         accounting is complete and its tokens have already returned, so
         withholding progress further would only hide the fault.
 
-        ``recovery_completions`` counts the transactions that ended; the
-        faults taken on the way there are counted at the checkpoint below, so
-        a coherent recovery and a faulted one are told apart by whether a
-        ``recovery_failures`` record shares its transaction.
+        ``recovery_completions`` counts the transactions that ended; a faulted
+        one shares its transaction with a ``recovery_failures`` record.
         """
         self._phase = "idle"
         self._attempts = 0

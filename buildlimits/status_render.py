@@ -50,7 +50,7 @@ def render(state: cabc.Mapping[str, object]) -> str:
                 ("health_reason", "unhealthy reason"),
                 ("drain_fault_kind", "drain fault kind"),
                 ("drain_fault", "drain check failed; tokens retained"),
-                ("recovery_action", "required recovery action"),
+                ("recovery_action", _action_label(state)),
             )
             if state.get(key)
         ],
@@ -58,6 +58,19 @@ def render(state: cabc.Mapping[str, object]) -> str:
         *([_waiting_line(item) for item in queued] or ["no requests waiting"]),
         *([_group_line(item) for item in groups] or ["no compiler groups"]),
     ])
+
+
+def _action_label(state: cabc.Mapping[str, object]) -> str:
+    """Say whether the operator must act or the supervisor will recover alone.
+
+    Returns
+    -------
+    str
+        ``fallback`` when automatic recovery is pending and the operator
+        command is only a fallback, otherwise the mandatory label.
+    """
+    is_fallback = bool(state.get("recovery_action_is_fallback"))
+    return "fallback recovery action" if is_fallback else "required recovery action"
 
 
 def _section(
@@ -150,11 +163,10 @@ def _recovery_lines(state: cabc.Mapping[str, object]) -> list[str]:
     if phase == "idle":
         # A resting trigger is otherwise invisible: retained tokens beside an
         # idle transaction would read as a trigger that never fires.
-        cooling = transaction.get("cooling_for")
-        is_resting = isinstance(cooling, (int, float)) and cooling > 0
+        wait = _idle_wait(transaction)
         lines = (
-            [f"cache recovery idle: automatic recovery may start in {cooling}s"]
-            if is_resting
+            [f"cache recovery idle: automatic recovery may start in {wait}s"]
+            if wait is not None
             else []
         )
     else:
@@ -177,6 +189,30 @@ def _recovery_lines(state: cabc.Mapping[str, object]) -> list[str]:
     if last_fault:
         lines.append(f"cache recovery last fault: {last_fault}")
     return lines
+
+
+def _idle_wait(transaction: cabc.Mapping[str, object]) -> float | None:
+    """Pick the seconds an idle trigger still has to wait, if it is waiting.
+
+    The shared query's ``opens_in`` covers the cooldown and the stale proof
+    together, and an explicit ``null`` means that waiting will not open the
+    trigger, so it is honoured. Only a legacy document without the key falls
+    back to the cooldown alone, and not when it says the trigger can never act.
+
+    Returns
+    -------
+    float | None
+        A positive wait, or ``None`` when the trigger is not waiting.
+    """
+    if "opens_in" in transaction:
+        wait = transaction["opens_in"]
+    elif transaction.get("automatic") is not False:
+        wait = transaction.get("cooling_for")
+    else:
+        wait = None
+    if isinstance(wait, (int, float)) and wait > 0:
+        return float(wait) if isinstance(wait, int) else wait
+    return None
 
 
 def _entries(state: cabc.Mapping[str, object], key: str) -> list[dict[str, object]]:

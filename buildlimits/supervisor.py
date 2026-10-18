@@ -95,6 +95,11 @@ class Supervisor:
             settings.cache_mode,
             clock=self.clock,
             metrics=self.metrics,
+            # Read live, and resolved late: the recovery machine is built from
+            # this watch's readings, so it cannot be named until both exist.
+            automatic_recovery_pending=lambda: bool(
+                self.recovery.describe(self.clock())["pending"]
+            ),
         )
         # Installed once the watch exists, because the permission it answers
         # for cannot be read before then. A bound method rather than a closure

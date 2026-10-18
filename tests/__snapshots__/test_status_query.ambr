@@ -4,8 +4,11 @@
     'cache_mode': 'sccache',
     'cache_recovery': dict({
       'attempts': 0,
+      'automatic': True,
       'cooling_for': 0.0,
       'last_fault': None,
+      'opens_in': None,
+      'pending': False,
       'phase': 'idle',
       'retry_in': 0.0,
       'roots_waited': 0.0,
@@ -35,6 +38,7 @@
     'queued': list([
     ]),
     'recovery_action': None,
+    'recovery_action_is_fallback': False,
     'restarting': False,
   })
 # ---
