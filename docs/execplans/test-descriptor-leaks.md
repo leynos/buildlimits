@@ -79,6 +79,10 @@ listener, the signal self-pipe or the selector: it relied on process exit.
   `error::pytest.PytestUnraisableExceptionWarning`) remain as the second net
   for objects freed by reference counting.
 - Descriptors compared as (number, link target) so a reused number is seen.
+- PR #14's `gc.collect()` in `open_fds` is removed. It masked leaks by closing
+  them mid-test, which the guard now reports; with the owners closing at
+  teardown the baseline comparison no longer needs it. Full suite passes
+  without it (`1644 passed`).
 - Existing ad hoc `selector.close()` calls in other tests are left as they are:
   they already close deterministically and the guard covers regressions.
   Converting them to `Supervisor.close()` is optional follow-up.
@@ -91,7 +95,9 @@ listener, the signal self-pipe or the selector: it relied on process exit.
 - [x] Test teardown for harnesses, pools and fake sccache.
 - [x] Red evidence: guard applied to unfixed `ce7d080` (which already carries
   the `gc.collect()` symptom patch of #14) reports 29 teardown errors.
-- [ ] Guard commit, developers' guide, rebase, gates, repeated runs, PR.
+- [x] Guard commit, developers' guide, rebased onto `ce7d080`, `gc.collect()`
+      removed.
+- [ ] Gates, repeated runs, PR.
 
 ## Surprises and discoveries
 
