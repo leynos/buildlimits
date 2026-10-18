@@ -288,7 +288,8 @@ and the connection always closes.
 ## 9. Status, recovery and metrics interfaces
 
 `status.describe` builds the status document from the supervisor's own state:
-capacity, held tokens, the queue, groups, health, the last `drain_fault` and its
+capacity, held tokens, the queue, groups, health, whether the supervisor is
+`restarting` (closing for a graceful stop), the last `drain_fault` and its
 `drain_fault_kind` (`live_work`, `stopped_populated` or `manager`), the
 `descriptors` gauges and the `cache_recovery` transaction document. The
 automatic recovery trigger requires a `live_work` fault and then accepts either
