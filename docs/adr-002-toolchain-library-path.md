@@ -171,10 +171,14 @@ by environment. The forwarded environment reaches the server's `rustc` probes
 
 - Recognition depends on the `bin/` and `lib/` layout that rustup installs. A
   differently laid-out toolchain is left alone, which is the safe failure.
-- The helper fails open. A directory that cannot be searched, listed or opened
-  counts as "not a toolchain" or "entry not present" and the environment is
-  returned unchanged, because raising from a defensive repair would stop a
-  build that works today. The compiler's own error remains the diagnostic.
+- The helper fails open, and each kind of filesystem trouble is read as the
+  answer that does the least harm. Failed toolchain recognition leaves the
+  environment unchanged. A `PATH` directory that cannot be searched is skipped,
+  and a later match is repaired as usual. A loader-path entry that does not
+  open does not count as `<root>/lib`, so a recognized toolchain still gets the
+  prefix unless another entry identifies it. Raising from a defensive repair
+  would stop a build that works today, and the compiler's own error remains the
+  diagnostic.
 - A toolchain directory whose path contains `:` cannot be expressed in the
   variable and is left alone.
 - The version boundaries of the upstream behaviour are not stated here: only

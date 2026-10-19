@@ -66,12 +66,20 @@ def toolchain_environment(
 
     Notes
     -----
-    This function does not raise for filesystem trouble. It fails open: a path
-    that cannot be searched, read or opened counts as "not a toolchain" or
-    "entry not present", and the environment comes back unchanged. The helper
-    only repairs a lookup that is already broken, so raising here would turn a
-    harmless no-op into a stopped build; the compiler's own error is the
-    diagnostic if the lookup really is broken.
+    This function does not raise for filesystem trouble. It fails open, and
+    each kind of trouble is read as the answer that does the least harm:
+
+    - Failed toolchain recognition (the command, its layout or the driver
+      cannot be found or read) returns the environment unchanged.
+    - A ``PATH`` directory that cannot be searched is skipped; the search goes
+      on, and a later match is repaired as usual.
+    - A ``LD_LIBRARY_PATH`` entry that does not open does not count as
+      ``<root>/lib``, so a recognized toolchain still gets ``<root>/lib``
+      prefixed unless another entry identifies it.
+
+    The helper only repairs a lookup that is already broken, so raising here
+    would turn a harmless no-op into a stopped build; the compiler's own error
+    is the diagnostic if the lookup really is broken.
 
     Examples
     --------
