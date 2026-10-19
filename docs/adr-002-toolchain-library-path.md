@@ -123,9 +123,10 @@ the `CompileRequest` carry the same environment.
   rustup proxy resolves to `rustup`, so it is not recognized; nor is
   `clippy-driver`, an unresolvable name or a layout without a driver.
 - For a recognized compiler it prefixes `<root>/lib:` to a non-empty
-  `LD_LIBRARY_PATH` that does not already list `<root>/lib` (compared by real
-  path). The original value follows verbatim. An unset or empty variable stays
-  as it is. Applying the function twice equals applying it once.
+  `LD_LIBRARY_PATH` that does not already list `<root>/lib` (an entry counts
+  only if it opens as that directory). The original value follows verbatim. An
+  unset or empty variable stays as it is. Applying the function twice equals
+  applying it once.
 - It never runs the compiler and never changes `argv`.
 
 ### What it mirrors, and where it differs

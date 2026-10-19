@@ -146,7 +146,7 @@ def _has_driver(library_dir: Path) -> bool:
 
 
 def _names(search_path: str, library_dir: Path, cwd: str) -> bool:
-    """Report whether a search path already lists a directory, by real path.
+    """Report whether a search path already lists a directory, by file identity.
 
     rustup skips its prepend when the directory appears anywhere in the
     variable, because the loader finds ``libLLVM`` wherever it is listed.
@@ -158,7 +158,25 @@ def _names(search_path: str, library_dir: Path, cwd: str) -> bool:
         ``True`` when any entry resolves to ``library_dir``.
     """
     return any(
-        Path(cwd, entry).resolve() == library_dir
+        _is_directory(Path(cwd, entry), library_dir)
         for entry in search_path.split(":")
         if entry
     )
+
+
+def _is_directory(entry: Path, library_dir: Path) -> bool:
+    """Report whether a search-path entry opens as the given directory.
+
+    The kernel looks the entry up, so a missing component before ``..`` fails
+    here as it does for the loader. Collapsing the entry lexically would count
+    ``<root>/lib/missing/..`` as present although the loader cannot use it.
+
+    Returns
+    -------
+    bool
+        ``True`` when the entry exists and is ``library_dir``.
+    """
+    try:
+        return entry.samefile(library_dir)
+    except OSError:
+        return False

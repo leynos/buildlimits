@@ -135,8 +135,11 @@ rustup's and sccache's behaviour is as read from the cited sources.
   fifth parameter, which the repository's four-argument lint limit forbids; its
   `env` defaults to an `os.environ` snapshot, so there is no second snapshot.
   Sixteen test call sites changed mechanically.
-- Presence is judged by real path, which is wider than rustup's exact
-  comparison and safe because the loader resolves entries the same way.
+- Presence is judged by file identity (`samefile`), which is wider than rustup's
+  exact comparison and safe because the loader opens entries the same way. An
+  entry that does not open, such as `<root>/lib/missing/..`, counts as absent:
+  CodeRabbit's completeness assessment found that lexical resolution counted it
+  as present, and a regression test now covers it.
 
 ## Conformance basis
 

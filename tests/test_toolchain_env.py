@@ -209,6 +209,18 @@ def test_a_relative_entry_is_resolved_in_the_request_directory(
     assert result[POISONED] == f"{tree.rustlib}:{relative}", "already listed"
 
 
+def test_an_entry_that_cannot_be_looked_up_does_not_count_as_present(
+    tmp_path: Path,
+) -> None:
+    """A missing component before ``..`` leaves the entry unusable to the loader."""
+    tree = make_toolchain(tmp_path)
+    path = f"{tree.rustlib}:{tree.lib}/missing/.."
+    result = toolchain_environment([str(tree.rustc)], _env(path), CWD)
+    assert result[POISONED] == f"{tree.lib}:{path}", (
+        "lexically collapsing the entry would hide that the loader cannot open it"
+    )
+
+
 @pytest.mark.parametrize("argument", ["--version", "-vV"])
 def test_the_input_mapping_and_argv_are_not_modified(
     tmp_path: Path, argument: str
