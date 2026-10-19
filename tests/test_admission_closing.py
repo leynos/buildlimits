@@ -6,7 +6,7 @@ group has emptied tells whatever still waits to try again. Nothing is ever
 terminated, so nothing admitted is lost.
 """
 
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from buildlimits.admission import (
@@ -118,6 +118,29 @@ def test_a_server_drain_token_keeps_a_closing_admission_open() -> None:
     )
 
 
+def test_a_launch_that_fails_while_closing_is_refused_as_restarting() -> None:
+    """Nothing ran for the request, so its adapter is told to retry it."""
+    admission = Admission()
+    _running(admission, 1)
+    admission.begin_closing()
+    assert admission.launch_failed("g1") == [
+        ReturnToken(b"+"),
+        Refuse(1, "restarting"),
+        Shutdown(),
+    ], "the token returns, the request retries, and the drained supervisor exits"
+    assert not admission.groups, "the failed group is gone"
+
+
+def test_a_launch_that_fails_with_no_stop_stays_a_launch_failure() -> None:
+    """Only a stop in progress turns a failed launch into a retry."""
+    admission = Admission()
+    _running(admission, 1)
+    assert admission.launch_failed("g1") == [
+        ReturnToken(b"+"),
+        Refuse(1, "launch-failed"),
+    ], "a genuine launch failure is still reported as one"
+
+
 def _step(admission: Admission, operation: str, request_id: int) -> list[Effect]:
     """Apply one scripted operation, doing nothing if it does not apply.
 
@@ -142,13 +165,26 @@ def _step(admission: Admission, operation: str, request_id: int) -> list[Effect]
             effects = admission.cancel(admission.queue[0])
         case "close":
             effects = admission.begin_closing()
+        case "fail" if running:
+            effects = admission.launch_failed(running)
     return effects
 
 
 @settings(max_examples=200, deadline=None)
+# Witnesses, so the failed-launch clause is exercised both while closing and not.
+@example(operations=["submit", "token", "close", "fail"])
+@example(operations=["submit", "token", "fail", "close"])
 @given(
     operations=st.lists(
-        st.sampled_from(["submit", "token", "exit", "empty", "close", "cancel"]),
+        st.sampled_from([
+            "submit",
+            "token",
+            "exit",
+            "empty",
+            "close",
+            "cancel",
+            "fail",
+        ]),
         max_size=40,
     )
 )
@@ -165,7 +201,19 @@ def test_closing_never_launches_terminates_or_exits_early(
     shutdowns = 0
     for request_id, operation in enumerate(operations, start=1):
         was_closed = admission.closing
+        target = _first(admission, GroupState.RUNNING)
+        owner = -1 if target is None else admission.groups[target].request_id
+        winding = admission.winding_down
         effects = _step(admission, operation, request_id)
+        if operation == "fail" and target is not None:
+            expected = "restarting" if winding else "launch-failed"
+            assert Refuse(owner, expected) in effects, (
+                "a failed launch retries exactly while a graceful stop is under way"
+            )
+            assert sum(isinstance(e, ReturnToken) for e in effects) == 1, (
+                "the failed group's token returns exactly once"
+            )
+            assert target not in admission.groups, "the failed group is forgotten"
         if was_closed:
             assert not any(isinstance(e, (Launch, RequestToken)) for e in effects), (
                 "a closing admission launches nothing and requests no token"

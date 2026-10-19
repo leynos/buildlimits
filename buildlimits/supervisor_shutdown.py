@@ -26,6 +26,7 @@ from buildlimits.metrics import exit_outcome
 from buildlimits.service_readiness import notify_status
 
 if typ.TYPE_CHECKING:
+    from buildlimits.pending_request import Pending
     from buildlimits.supervisor import Supervisor
 
 TOKEN_SETTLE_POLLS = 30
@@ -77,6 +78,47 @@ def graceful_stop(supervisor: Supervisor) -> None:
     notify_status(_STATUS)
     supervisor._metric("health_changed", health="restarting")
     supervisor._apply(supervisor.admission.begin_closing())
+
+
+def honour_graceful_request(supervisor: Supervisor) -> None:
+    """Begin the graceful stop a signal handler asked for, if one is pending.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        The supervisor whose pending graceful request is honoured.
+    """
+    if supervisor._graceful_stop_requested:
+        supervisor._graceful_stop_requested = False
+        graceful_stop(supervisor)
+
+
+def fail_placement(supervisor: Supervisor, entry: Pending, group_id: str) -> None:
+    """Account for a group that could not be placed, retrying it if a stop did it.
+
+    The signal handler only records a graceful stop, so a placement that the
+    stop broke (``systemctl stop`` signals the ``busctl`` that creates the scope
+    when the unit's kill mode is ``control-group``) is seen before admission is
+    closing. Honouring the pending request first makes the refusal
+    ``restarting``, which the adapter retries within its deadline, instead of a
+    launch failure. The cause stays in the journal, where
+    :meth:`Groups.place` logged it; the requester is not told of a launch error,
+    because nothing ran. With no graceful stop, the failure is reported as it
+    always was.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        The supervisor whose request could not be placed.
+    entry : Pending
+        The request whose compiler group could not be placed.
+    group_id : str
+        The admission group that was never launched.
+    """
+    honour_graceful_request(supervisor)
+    if supervisor.admission.winding_down:
+        entry.exec_error = None
+    supervisor._apply(supervisor.admission.launch_failed(group_id))
 
 
 def settle_graceful_stop(supervisor: Supervisor) -> None:
@@ -151,9 +193,7 @@ def honour_stop_request(supervisor: Supervisor) -> None:
     supervisor : Supervisor
         The supervisor whose pending stop request is honoured.
     """
-    if supervisor._graceful_stop_requested:
-        supervisor._graceful_stop_requested = False
-        graceful_stop(supervisor)
+    honour_graceful_request(supervisor)
     if supervisor._stop_requested:
         supervisor._stop_requested = False
         stop(supervisor)

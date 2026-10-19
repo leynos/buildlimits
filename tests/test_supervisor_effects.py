@@ -152,6 +152,60 @@ def test_launch_failure_refuses_the_request_and_returns_its_token(
     assert "g1" not in supervisor.admission.groups, "the failed group was dropped"
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("none", "launch-failed", True),
+        ("closing", "restarting", False),
+        ("requested", "restarting", False),
+        ("immediate", "launch-failed", True),
+    ],
+)
+def test_a_failed_placement_is_retried_only_during_a_graceful_stop(
+    supervisor: Supervisor,
+    monkeypatch: pytest.MonkeyPatch,
+    case: tuple[str, str, bool],
+) -> None:
+    """A stop that broke the placement must not cost the request its build.
+
+    The ``requested`` case is the incident's: the signal handler has only
+    recorded the stop when the failed placement is seen, so admission is not yet
+    closing.
+    """
+    stop, reason, keeps_cause = case
+    pool = attach_pool(supervisor)
+    supervisor.groups = typ.cast("Groups", FakeGroups(order=[], running=None))
+    supervisor.admission.groups["g1"] = Group(
+        "g1", request_id=1, token=b"a", cached=False, state=GroupState.RUNNING
+    )
+    entry = crate_pending(1)
+    entry.exec_error = "cannot create x.scope: "
+    supervisor.requests.pending[1] = entry
+    refusals: list[tuple[int, str, str | None]] = []
+    monkeypatch.setattr(
+        supervisor.requests,
+        "refuse",
+        lambda request_id, why: refusals.append((request_id, why, entry.exec_error)),
+    )
+    match stop:
+        case "closing":
+            supervisor.admission.begin_closing()
+        case "requested":
+            supervisor.request_graceful_stop()
+        case "immediate":
+            supervisor.request_stop()
+
+    supervisor._launch(1, "g1", cached=False)
+
+    cause = "cannot create x.scope: " if keeps_cause else None
+    assert refusals == [(1, reason, cause)], "the refusal says whether to retry"
+    assert pool.returned == [b"a"], "the held token returned exactly once"
+    assert "g1" not in supervisor.admission.groups, "the failed group was dropped"
+    assert supervisor.admission.closing == (stop in {"closing", "requested"}), (
+        "a requested graceful stop is honoured by the time the refusal is made"
+    )
+
+
 def test_launch_success_notifies_before_releasing_the_group(
     supervisor: Supervisor,
     monkeypatch: pytest.MonkeyPatch,

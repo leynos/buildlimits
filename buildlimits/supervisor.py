@@ -368,7 +368,7 @@ class Supervisor:
         entry = self.requests.pending[request_id]
         running = self.groups.place(entry, group_id, cached=cached)
         if running is None:
-            self._apply(self.admission.launch_failed(group_id))
+            supervisor_shutdown.fail_placement(self, entry, group_id)
             return
         # The requester learns of admission before the compiler can write.
         notice = self.groups.cache_notice(entry, cached=cached)

@@ -106,9 +106,6 @@ def test_a_restart_during_placement_signals_only_the_supervisor(
     assert "cannot create" not in outcome.journal, outcome.journal
 
 
-@pytest.mark.xfail(
-    strict=True, reason="red: a placement broken by a stop is lost (later commit)"
-)
 def test_a_control_group_stop_during_placement_is_retried_not_lost(
     world: RestartWorld, tmp_path: Path
 ) -> None:
