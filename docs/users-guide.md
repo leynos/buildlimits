@@ -187,6 +187,71 @@ its kernel backlog stay in place, so new arrivals wait while existing requests
 and compiler groups continue. This backpressure does not mark admission
 unhealthy.
 
+### A real compiler that cannot find libLLVM
+
+A toolchain that ships `rustc-dev` keeps a second `librustc_driver` in
+`lib/rustlib/<triple>/lib`. Cargo puts that directory on `LD_LIBRARY_PATH` for
+build scripts. If the real `rustc` is run with that value, the loader binds the
+duplicate driver, whose `$ORIGIN/../lib` has no `libLLVM`, and the compiler
+exits with status 127 before it prints anything. Kani 0.67.0 drives such a
+toolchain, `nightly-2025-11-21`. [ADR 002](adr-002-toolchain-library-path.md)
+records the cause and the decision.
+
+**Recognize the symptom.** A build script such as `rustversion`'s reads only
+standard output, so the failure appears as an empty version rather than as a
+missing library:
+
+```plaintext
+Error: unexpected output from `rustc --version`: ""
+
+Please file an issue in https://github.com/dtolnay/rustversion
+```
+
+**Probe the toolchain Kani drives**, not the repository's own pin, which has no
+duplicate and always passes. The probe loads the compiler and compiles nothing,
+so it does not need a compile slot:
+
+```bash
+KT=$HOME/.rustup/toolchains/nightly-2025-11-21-x86_64-unknown-linux-gnu
+RL=$KT/lib/rustlib/x86_64-unknown-linux-gnu/lib
+ls "$KT"/lib/librustc_driver-*.so "$RL"/librustc_driver-*.so   # two copies?
+ls "$RL"/libLLVM* 2>/dev/null || echo "no libLLVM beside the duplicate"
+LD_LIBRARY_PATH=$RL "$KT/bin/rustc" --version; echo "rc=$?"          # 127 if affected
+LD_LIBRARY_PATH=$RL:$KT/lib "$KT/bin/rustc" --version; echo "rc=$?"  # 0
+```
+
+A duplicate alone does not prove the failure: several `rustc-dev` toolchains
+also keep a `libLLVM` in the rustlib directory and start normally. Only a
+`rc=127` from the first probe line does.
+
+**What the adapters do.** When `build-limits-rustc` or `build-limits-rustdoc`
+runs a real toolchain `rustc` or `rustdoc` (`<root>/bin/rustc` with a
+`librustc_driver-*.so` in `<root>/lib`), it prefixes `<root>/lib` to a non-empty
+`LD_LIBRARY_PATH` that does not already list it, as the rustup proxy does.
+This applies to a compiler admitted by the supervisor and to one the adapter
+runs directly inside an admitted scope. Arguments are never changed, and the
+proxy, `clippy-driver` and unrecognized compilers see the environment
+unchanged. No operator action is needed. Processes that were already running
+keep their old environment.
+
+**What they cannot do.** A build script that Cargo runs, and anything else that
+starts a real `rustc` without these adapters, still inherits the poisoned path.
+For a Kani-gated suite, put the Kani toolchain's `lib` directory on the path
+before running it:
+
+```bash
+KT=$HOME/.rustup/toolchains/nightly-2025-11-21-x86_64-unknown-linux-gnu
+export LD_LIBRARY_PATH="$KT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+make test
+```
+
+The entry works because Cargo appends the inherited value to the rustlib
+directory, and the loader finds `libLLVM` through any listed directory. The
+workaround belongs to one toolchain, so repeat the probe and change `KT` when a
+Kani upgrade changes the pinned toolchain. Test guards that look only for
+`error while loading shared libraries`, such as the one in `theoremc`, do not
+match this failure.
+
 ## Status
 
 ```bash
