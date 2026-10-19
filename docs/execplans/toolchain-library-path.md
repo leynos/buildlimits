@@ -3,9 +3,10 @@
 This ExecPlan is a living document. Update Progress, Surprises and discoveries,
 Decision log and Outcomes and retrospective as work proceeds.
 
-Status: IN PROGRESS. The supervising session approved the scope in the
-assignment for [leynos/dev-env-rocky#312][issue-312]; the pull request is not
-to be merged until that session says so.
+Status: IN PROGRESS (implementation complete; in review). The supervising
+session approved the scope in the assignment for
+[leynos/dev-env-rocky#312][issue-312]; the pull request is not to be merged
+until that session says so.
 
 ## Purpose and big picture
 
@@ -106,7 +107,10 @@ rustup's and sccache's behaviour is as read from the cited sources.
 - [x] (2026-10-19) Green: `buildlimits/toolchain_env.py` and the `adapter._main`
   wiring; unit, property and real-toolchain tests.
 - [x] (2026-10-19) ADR 002, user's guide, developer's guide, contents.
-- [ ] Gates through scrutineer on each candidate and on the final head.
+- [x] (2026-10-19) Gates through scrutineer. Round 1 (800bc6a) found five lint
+  findings; round 2 (6b96af1) found a duplicated test fixture and a spelling
+  error; round 3 on 89505f1 passed all nine gates (`make test` 1738 passed, 22
+  skipped; `make test-systemd-user` 22 passed).
 - [ ] Pull request, review loop, mergeable.
 
 ## Surprises and discoveries
