@@ -112,7 +112,12 @@ rustup's and sccache's behaviour is as read from the cited sources.
   skipped; `make test-systemd-user` 22 passed).
 - [x] (2026-10-19) Pull request 20 opened as a draft; completeness assessment
   found and cleared one defect.
-- [ ] Ready for review, formal review loop, mergeable.
+- [x] (2026-10-19) Marked ready; CodeRabbit's formal review of the ready head
+  made no inline findings. Its pre-merge checks raised one error (the helper's
+  filesystem-error contract was undocumented; documented as fail-open and
+  tested) and two warnings (an n+1 migration document and loader-path
+  telemetry; both declined with evidence and closed by CodeRabbit). The pull
+  request is mergeable and awaits the supervising session's review.
 
 ## Surprises and discoveries
 
@@ -122,6 +127,10 @@ rustup's and sccache's behaviour is as read from the cited sources.
 - The failure is reachable through the adapter, contrary to the first
   assessment that reachability was unresolved: the wrapped `--version` in the
   build script is an admitted launch with the poisoned environment.
+- CodeRabbit's pre-merge Observability warning asks for a journal field for the
+  loader-path decision. That is a schema change governed by upstream ADR 013,
+  and the already-admitted exec path emits no adapter summary, so it is
+  recorded as a possible follow-up rather than done here.
 - The fix is adapter-side only, so it works against the already-running
   supervisor: no restart is needed to benefit.
 
