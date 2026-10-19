@@ -131,11 +131,14 @@ Evidence, 12 full-suite runs each at `-n 6` on this host, identical load:
 | `origin/main` (`a3fd138`, with #14's `gc.collect()`) | 5 of 12     | 4 runs with `DescriptorSendPressureError` in `test_frame_receive_ceiling_is_exact` and `test_post_registration_fault_rolls_back_every_owner[observe]`, 1 other |
 | this branch                                          | 0 of 12     | none                                                                                                                                                           |
 
-One earlier run on this branch, while a second agent's suite was running on the
-same user account, also failed two isolated children with the same error. That
-is the residual route: a process outside this repository holding more than 64
-rights in flight. Nothing in this suite can close descriptors it does not own,
-and a CI runner has no such neighbour.
+Two runs on this branch, while other agents' builds and suites were running on
+the same user account (the shared compile queue showed capacity 4, held 4 and
+about 30 waiting), also failed isolated children with the same error: one in an
+early local run and one in the `make all` run `r8` of the final candidate. The
+immediate re-run (`r9`), under the same queue state, passed, as did all of the
+other repeated runs. That is the residual route: a process outside this
+repository holding more than 64 rights in flight. Nothing in this suite can
+close descriptors it does not own, and a CI runner has no such neighbour.
 
 Per-test footprint is small (at most 8 rights per send; the 253-descriptor
 cases are refused before sending), so the in-suite contribution comes from
