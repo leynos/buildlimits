@@ -151,11 +151,24 @@ lingering sockets, not from a single test's peak.
   the `gc.collect()` symptom patch of #14) reports 29 teardown errors.
 - [x] Guard commit, developers' guide, rebased onto `ce7d080`, `gc.collect()`
       removed.
-- [x] Gates on `fe7957b`: `make all`, markdownlint, nixie, audit, validate
-  pass; 5 of 5 `make test` runs pass. `make test-systemd-user`: 21 of 22 pass;
-  `test_nested_cargo` hits its 30 s timeout while the shared compile queue is
-  saturated (capacity 4, held 4, 140 waiting), which is environmental.
-- [ ] PR, review loop.
+- [x] Gates on the rebased head (`make all`, markdownlint, nixie, audit,
+  validate pass; 5 of 5 `make test` runs pass); `make test-systemd-user`: 21 of
+  22 pass, and `test_nested_cargo` hits its 30 s timeout while the shared
+  compile queue is saturated (capacity 4, held 4, about 140 waiting), which is
+  environmental. Re-run for each later candidate, last recorded in the review
+  round below.
+- [x] Published as PR 16; hosted CI green; ExecPlan completeness assessment
+  clear (second round, after the guard became a plugin and `TokenPool.__init__`
+  gained rollback).
+- [x] Review round 1 (CodeRabbit, Codex): `TokenPool.close()` now decides from
+      an
+  `_is_reading` flag set under the lifecycle lock, not from a timed `join`;
+  `Supervisor.close()` runs every release through an `ExitStack`; the signal
+  state a host owned is restored rather than reset; the service logs a failed
+  release instead of changing its exit status; added a `Supervisor.close()`
+  integration test, a Hypothesis state machine for the pool, and the
+  `cache_recovery_machines` helper inventory.
+- [ ] Review convergence.
 
 ## Surprises and discoveries
 

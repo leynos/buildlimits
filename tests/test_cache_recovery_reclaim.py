@@ -32,9 +32,6 @@ from buildlimits.config import SupervisorConfig
 from buildlimits.supervisor import Supervisor
 from buildlimits.systemd import UserManager
 
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
 
 def test_the_barrier_survives_a_failed_startup_accounting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -57,10 +54,18 @@ def test_the_barrier_survives_a_failed_startup_accounting(
 type _Restarted = tuple[Supervisor, CacheState, Path]
 
 
+class _RestartedBuilder(typ.Protocol):
+    """Build one supervisor over a stopped, empty managed cache."""
+
+    def __call__(
+        self, *, mode: str = ..., present: bool = ..., refuse: str | None = ...
+    ) -> _Restarted:
+        """Return the supervisor, its scripted cache and the barrier's path."""
+        ...
+
+
 @pytest.fixture
-def restarted(
-    owned: contextlib.ExitStack, tmp_path: Path
-) -> cabc.Callable[..., _Restarted]:
+def restarted(owned: contextlib.ExitStack, tmp_path: Path) -> _RestartedBuilder:
     """Provide a builder of supervisors restarting over a stopped, empty cache.
 
     The builder's supervisors are closed when the test ends.
@@ -104,7 +109,7 @@ def restarted(
     ids=["interrupted", "absent", "direct-mode"],
 )
 def test_an_accounted_startup_reclaims_only_its_own_barrier(
-    restarted: cabc.Callable[..., _Restarted],
+    restarted: _RestartedBuilder,
     mode: str,
     present: bool,
     fate: BarrierFate,
@@ -117,7 +122,7 @@ def test_an_accounted_startup_reclaims_only_its_own_barrier(
 
 
 def test_a_refused_reclaim_restart_is_reported_without_reblocking_the_cache(
-    restarted: cabc.Callable[..., _Restarted],
+    restarted: _RestartedBuilder,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A cache that will not start is announced, and stays free to start.
@@ -138,7 +143,7 @@ def test_a_refused_reclaim_restart_is_reported_without_reblocking_the_cache(
 
 
 def test_a_barrier_that_cannot_be_cleared_keeps_a_reclaimed_cache_from_starting(
-    restarted: cabc.Callable[..., _Restarted],
+    restarted: _RestartedBuilder,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -162,7 +167,7 @@ def test_a_barrier_that_cannot_be_cleared_keeps_a_reclaimed_cache_from_starting(
 
 
 def test_a_barrier_that_cannot_be_inspected_is_left_alone(
-    restarted: cabc.Callable[..., _Restarted],
+    restarted: _RestartedBuilder,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -192,7 +197,7 @@ def test_a_barrier_that_cannot_be_inspected_is_left_alone(
 
 
 def test_an_unreadable_barrier_is_reported_even_where_exists_reports_absent(
-    restarted: cabc.Callable[..., _Restarted],
+    restarted: _RestartedBuilder,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

@@ -1,4 +1,13 @@
-"""Reusable recording transport for compile-admission metric tests."""
+"""Shared fixtures: a recording metric transport and teardown for owned resources.
+
+The recording fixtures (``metric_sink``, ``metrics``, ``telemetry``) give
+compile-admission metric tests a transport that keeps bounded native records.
+``socket_pair`` yields a connected stream pair. The teardown fixtures keep a
+test from leaving descriptors to the garbage collector: ``recovery_harnesses``
+builds recovery supervisors and closes each one's resources, and ``owned``
+unwinds whatever a test enters into it, such as sockets, pools and
+``contextlib.closing`` supervisors, in reverse order after the test.
+"""
 
 import contextlib
 import socket
