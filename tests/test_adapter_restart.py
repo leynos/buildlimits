@@ -105,7 +105,9 @@ def _run() -> int:
     int
         The adapter's exit status.
     """
-    return adapter.run(["rustc"], cacheable=True, retry=immediate_retry())
+    return adapter.run(
+        adapter.Invocation(["rustc"], cacheable=True), retry=immediate_retry()
+    )
 
 
 def test_a_restart_while_queued_is_retried_and_the_build_completes(
@@ -242,8 +244,7 @@ def test_a_restart_retry_is_counted_in_the_invocation_summary(
             [[encode_reply(RESTARTING)], [], ADMITTED_AND_DONE],
         )
         adapter.run(
-            ["rustc"],
-            cacheable=False,
+            adapter.Invocation(["rustc"], cacheable=False),
             retry=immediate_retry(),
             metrics=Metrics(metric_sink, source="adapter"),
         )

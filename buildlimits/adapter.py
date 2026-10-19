@@ -22,7 +22,7 @@ from buildlimits.adapter_connection import Dialler as Dialler
 from buildlimits.adapter_connection import SupervisorClosedError
 from buildlimits.adapter_connection import connect as connect
 from buildlimits.adapter_connection import unix_socket as unix_socket
-from buildlimits.adapter_invocation import AdmissionAttempt, Progress
+from buildlimits.adapter_invocation import AdmissionAttempt, Invocation, Progress
 from buildlimits.adapter_invocation import BusyError as BusyError
 from buildlimits.adapter_invocation import RestartingError as RestartingError
 from buildlimits.adapter_invocation import refusal as _refusal
@@ -51,6 +51,7 @@ from buildlimits.protocol import (
 )
 from buildlimits.rustdoc import RustdocError, resolve_rustdoc
 from buildlimits.timing import SYSTEM_RETRY_WAIT, RetryWait
+from buildlimits.toolchain_env import toolchain_environment
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -86,9 +87,8 @@ def in_admitted_scope(env: cabc.Mapping[str, str]) -> bool:
 
 
 def run(
-    argv: cabc.Sequence[str],
+    invocation: Invocation,
     *,
-    cacheable: bool,
     retry: RetryWait = SYSTEM_RETRY_WAIT,
     metrics: MetricsPort | None = None,
 ) -> int:
@@ -96,10 +96,9 @@ def run(
 
     Parameters
     ----------
-    argv : Sequence[str]
-        The real compiler's argument vector.
-    cacheable : bool
-        Whether the supervisor may compose the compiler with sccache.
+    invocation : Invocation
+        The compiler's argument vector, whether it may be cached, and the
+        environment to send and to read the adapter settings from.
     retry : RetryWait
         Monotonic time, sleeper and jitter for descriptor-pressure retries.
     metrics : MetricsPort | None
@@ -118,9 +117,11 @@ def run(
     KeyboardInterrupt
         If the interpreter interrupts the invocation.
     """  # ruff: ignore[docstring-extraneous-exception] - AdapterError propagates from admission helpers.
-    env = dict(os.environ)
+    env = invocation.env
     clock = retry.clock.now
-    heartbeat = Heartbeat(crate_label(argv), heartbeat_seconds(env), clock=clock)
+    heartbeat = Heartbeat(
+        crate_label(invocation.argv), heartbeat_seconds(env), clock=clock
+    )
     unavailable = positive_seconds(
         env, ("BUILD_LIMITS_UNAVAILABLE_SECS",), DEFAULT_UNAVAILABLE_SECONDS
     )
@@ -128,9 +129,7 @@ def run(
     try:
         with observe_signals(summary.interrupted):
             attempt = AdmissionAttempt(heartbeat.clock() + unavailable, summary)
-            request = functools.partial(
-                _request_once, argv, heartbeat, attempt, cacheable=cacheable
-            )
+            request = functools.partial(_request_once, invocation, heartbeat, attempt)
             exit_ = _retry_request(request, heartbeat, attempt, retry)
             summary.finish()
             return _reproduce(exit_)
@@ -142,11 +141,7 @@ def run(
 
 
 def _request_once(
-    argv: cabc.Sequence[str],
-    heartbeat: Heartbeat,
-    attempt: AdmissionAttempt,
-    *,
-    cacheable: bool,
+    invocation: Invocation, heartbeat: Heartbeat, attempt: AdmissionAttempt
 ) -> Exit:
     """Recapture caller descriptors for one bounded admission attempt.
 
@@ -165,7 +160,7 @@ def _request_once(
         If the supervisor goes away before the request is admitted.
     """
     deadline, summary = attempt.deadline, attempt.summary
-    env = dict(os.environ)
+    env = dict(invocation.env)
     try:
         conn = connect(
             config.supervisor_socket(env),
@@ -179,13 +174,13 @@ def _request_once(
     with conn:
         fds = descriptors.inheritable_descriptors(exclude={conn.fileno()})
         request = CompileRequest(
-            argv=tuple(argv),
+            argv=tuple(invocation.argv),
             cwd=str(Path.cwd()),
             env=env,
             attributes=attributes.capture(),
             fd_targets=tuple(fds),
             label=heartbeat.label,
-            cacheable=cacheable,
+            cacheable=invocation.cacheable,
         )
         frame = encode_request(request)
         remaining = deadline - heartbeat.clock()
@@ -304,9 +299,12 @@ def _main(argv: list[str], *, cacheable: bool) -> int:
         _stderr("build-limits: no compiler given")
         return USAGE_STATUS
     try:
-        if in_admitted_scope(os.environ):
-            os.execvp(argv[0], argv)  # ruff: ignore[start-process-with-no-shell] - already admitted; become the compiler.
-        return run(argv, cacheable=cacheable)
+        # One effective environment serves both paths, so a launch under
+        # admission and a direct exec see the same compiler lookup.
+        env = toolchain_environment(argv, os.environ, str(Path.cwd()))
+        if in_admitted_scope(env):
+            os.execvpe(argv[0], argv, env)  # ruff: ignore[start-process-with-no-shell] - already admitted; become the compiler.
+        return run(Invocation(argv, cacheable, env))
     except (
         AdapterError,
         attributes.AttributeCaptureError,

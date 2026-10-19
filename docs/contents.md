@@ -22,6 +22,10 @@
 - [ADR 001: graceful supervisor restart](adr-001-graceful-supervisor-restart.md)
   records why a plain `systemctl --user restart` drains running work, how the
   adapters and start-up cooperate, and the options it rejected.
+- [ADR 002: keep a real toolchain compiler's library directory on the loader path](adr-002-toolchain-library-path.md)
+  records why the adapters prefix a real `rustc` or `rustdoc`'s own `lib`
+  directory to `LD_LIBRARY_PATH`, how it mirrors rustup, and what stays outside
+  the mitigation.
 
 ## Conventions
 

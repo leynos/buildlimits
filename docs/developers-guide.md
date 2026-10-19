@@ -140,6 +140,7 @@ Each module owns one decision. This table is the single module inventory.
 | `cgroups`, `startup`, `proc_trees`                        | Control-group reads, the restart barrier and diagnostic process-tree counts                     |
 | `protocol`, `replies`, `framing`, `frame_payload`, `wire` | Versioned JSON frames with passed descriptors                                                   |
 | `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`  | Cargo-facing entry points, retries, restart handling, signal handling, progress and rustdoc     |
+| `toolchain_env`                                           | Pure, filesystem-only recognition of a real toolchain compiler and its loader-path prefix       |
 | `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                 |
 | `status`, `status_client`, `status_render`, `status_cli`  | The status document, its transport, rendering and command                                       |
 | `recover_client`, `recover_cli`                           | The recovery request and the `build-limits-recover` command                                     |
@@ -423,6 +424,34 @@ the compiler may have run. `adapter_replies` reads one reply and reports a
 closed or reset connection, or a reply cut off mid-frame
 (`framing.TruncatedFrameError`), as `SupervisorClosedError`.
 
+### 10.1. The adapter's environment contract
+
+The adapter forwards the caller's environment verbatim, with one exception.
+`toolchain_env.toolchain_environment(argv, env, cwd)` returns a new mapping in
+which `<root>/lib` leads a non-empty `LD_LIBRARY_PATH` when the command, after
+leading `sccache` layers, resolves to a real `<root>/bin/rustc` or
+`<root>/bin/rustdoc` with a `librustc_driver-*.so` in `<root>/lib`. It mirrors
+rustup's `set_ldpath` and differs only by leaving an unset or empty variable
+alone; [ADR 002](adr-002-toolchain-library-path.md) records why and cites the
+rustup source.
+
+Keep these rules when changing it:
+
+- `adapter._main` computes the effective environment once and passes it to both
+  the already-admitted `os.execvpe` and
+  `run(Invocation(argv, cacheable, env))`, so the two launch paths cannot
+  disagree. `Invocation` defaults its `env` to a snapshot of `os.environ`;
+  `_request_once` copies the mapping it is given and does not read `os.environ`.
+- The helper must not run the compiler or rustup, because the compiler is what
+  fails under the poisoned path, and it must not change `argv`.
+- The supervisor, `groups.launch_spec` and `launch` stay unaware of it: they
+  forward the request's environment, and sccache's hash ignores
+  `LD_LIBRARY_PATH`.
+- Tests build fake toolchain trees with `tests/toolchain_trees.py`. The one test
+  that runs a real compiler, `test_toolchain_library_path_real.py`, only asks
+  for `--version` and skips when no installed toolchain fails to start under
+  its rustlib path.
+
 ## 11. Tests
 
 ### 11.1. Layout and conventions
@@ -448,6 +477,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `descriptor_guard.py`        | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                          |
 | `launch_helpers.py`          | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
 | `adapter_doubles.py`         | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
+| `toolchain_trees.py`         | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler   |
 | `journal_fixtures.py`        | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
 | `listener_helpers.py`        | `watched_listener`, a listener under `ListenerPressure` control                                     |
 | `cache_recovery_helpers.py`  | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
