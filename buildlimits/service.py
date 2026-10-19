@@ -82,10 +82,23 @@ def _supervise(settings: config.SupervisorConfig) -> int:
         try:
             return _serve(supervisor, own)
         finally:
-            supervisor.close()
+            _release(supervisor)
     finally:
         with contextlib.suppress(Exception):
             sink.close()
+
+
+def _release(supervisor: Supervisor) -> None:
+    """Release the supervisor's descriptors without changing the exit status.
+
+    The process is ending, so a failed release cannot be retried or acted on;
+    letting it escape would only replace the status the service has already
+    settled with a traceback, so it is logged instead.
+    """
+    try:
+        supervisor.close()
+    except Exception as error:  # ruff: ignore[blind-except] - exit status must survive a failed release.
+        log(f"releasing the supervisor's descriptors failed: {type(error).__name__}")
 
 
 def _serve(supervisor: Supervisor, own: PurePosixPath) -> int:

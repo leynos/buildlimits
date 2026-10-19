@@ -15,6 +15,7 @@ The loop asks after every tick, so a stop that was requested while it was busy
 still takes effect on the tick that follows.
 """
 
+import contextlib
 import typing as typ
 
 from buildlimits import supervisor_signals
@@ -203,14 +204,18 @@ def close(supervisor: Supervisor) -> None:
     >>> supervisor.close()
     >>> supervisor.close()
     """
-    supervisor.requests.close_all()
-    for running in supervisor.groups.running.values():
-        running.child.close()
-    supervisor_signals.release_signals(supervisor)
-    if supervisor.listener is not None:
-        supervisor.listener.close()
-        supervisor.listener = None
-    if supervisor.pool is not None:
-        supervisor.pool.close()
-        supervisor.pool = None
-    supervisor.selector.close()
+    listener, supervisor.listener = supervisor.listener, None
+    pool, supervisor.pool = supervisor.pool, None
+    # Callbacks run last-in first-out, and each runs even if an earlier one
+    # raised, so one failing release cannot strand the descriptors after it.
+    # The first error still propagates once every release has been tried.
+    with contextlib.ExitStack() as release:
+        release.callback(supervisor.selector.close)
+        if pool is not None:
+            release.callback(pool.close)
+        if listener is not None:
+            release.callback(listener.close)
+        release.callback(supervisor_signals.release_signals, supervisor)
+        for running in supervisor.groups.running.values():
+            release.callback(running.child.close)
+        release.callback(supervisor.requests.close_all)
