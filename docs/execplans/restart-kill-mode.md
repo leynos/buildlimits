@@ -205,7 +205,12 @@ experiment above); Python signal handlers survive `fork`.
   `build-limits: the supervisor refused: launch-failed`.
 - [x] Fix 1 commit (`KillMode=mixed`): the first scenario passes.
 - [x] Fix 2 commit (restarting refusal): the second scenario passes.
-- [ ] Gates on the final head, PR, review loop.
+- [x] Gates on head `df13251` through scrutineer: `make check-fmt`, `make lint`,
+  `make typecheck`, `make markdownlint`, `make nixie`, `make test` (1748
+  passed) and `make test-systemd-user` (24 passed).
+- [x] PR 21 opened as a draft; hosted CI green; completeness assessment
+  (`killmode-completeness-1`) answered with one documentation correction.
+- [ ] Review loop to a mergeable state.
 
 ## Surprises & discoveries
 
