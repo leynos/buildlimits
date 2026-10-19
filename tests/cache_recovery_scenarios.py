@@ -55,25 +55,21 @@ def busy_supervisor(
     so only the retained age can open the transaction. The probe's root count
     has no public setter; a visible root is what defeats the prompt proof.
 
-    The supervisor's selector owns an epoll descriptor that only a close
-    releases; left to the collector it would be closed during some later test
-    and disturb that test's descriptor accounting.
+    The harness is closed on exit, which gives back the epoll descriptor the
+    supervisor's selector owns.
 
     Yields
     ------
     Harness
         The harness, before its first tick.
     """
-    harness = harness_for(tmp_path, monkeypatch, mode="starved")
-    supervisor = harness.supervisor
-    hold_drain_beside_running_group(supervisor)
-    queue_request(supervisor)
-    supervisor.server.drain_fault_kind = "live_work"
-    monkeypatch.setattr(supervisor.server, "_fault_roots", 2)
-    try:
+    with harness_for(tmp_path, monkeypatch, mode="starved") as harness:
+        supervisor = harness.supervisor
+        hold_drain_beside_running_group(supervisor)
+        queue_request(supervisor)
+        supervisor.server.drain_fault_kind = "live_work"
+        monkeypatch.setattr(supervisor.server, "_fault_roots", 2)
         yield harness
-    finally:
-        supervisor.selector.close()
 
 
 def status_lines(harness: Harness) -> list[str]:

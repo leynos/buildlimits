@@ -16,6 +16,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from harness_processes import reap_and_close_pipes
 from harness_units import manager_env, unit_properties
 from systemd_harness import Harness, journal, kill_group, systemd_user_marks, wait_for
 
@@ -32,6 +33,7 @@ class RestartWorld:
         """Create no harness, build or restart yet."""
         self.harnesses: list[Harness] = []
         self.builds: list[subprocess.Popen[bytes]] = []
+        self.restarts: list[subprocess.Popen[str]] = []
         self.holders: list[int] = []
 
     def supervisor(self, slots: int, *, recovery: str = "starved") -> Harness:
@@ -61,13 +63,37 @@ class RestartWorld:
         self.builds.append(process)
         return process
 
+    def restart(self, harness: Harness) -> subprocess.Popen[str]:
+        """Run the operator's one documented command, without waiting for it.
+
+        Returns
+        -------
+        subprocess.Popen[str]
+            The ``systemctl restart`` process, blocking until the new
+            supervisor is ready. The world closes its pipes at teardown.
+        """
+        # The world owns the process and closes it in ``close``, so a ``with``
+        # block here would end the command the scenario still waits on.
+        process = subprocess.Popen(  # pylint: disable=consider-using-with
+            ["/usr/bin/systemctl", "--user", "restart", harness.unit],
+            env=manager_env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.restarts.append(process)
+        return process
+
     def close(self) -> None:
-        """Reap builds, release held FIFOs and stop owned units."""
+        """Reap processes, close their pipes, release FIFOs and stop units."""
         for process in self.builds:
             if process.poll() is None:
                 kill_group(process)
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                process.wait(timeout=30)
+        for process in self.restarts:
+            if process.poll() is None:
+                process.kill()
+        for process in (*self.builds, *self.restarts):
+            reap_and_close_pipes(process)
         for descriptor in self.holders:
             with contextlib.suppress(OSError):
                 os.close(descriptor)
@@ -83,24 +109,6 @@ def world() -> cabc.Iterator[RestartWorld]:
         yield state
     finally:
         state.close()
-
-
-def restart(harness: Harness) -> subprocess.Popen[str]:
-    """Run the operator's one documented command, without waiting for it.
-
-    Returns
-    -------
-    subprocess.Popen[str]
-        The ``systemctl restart`` process, blocking until the new supervisor is
-        ready.
-    """
-    return subprocess.Popen(
-        ["/usr/bin/systemctl", "--user", "restart", harness.unit],
-        env=manager_env(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
 
 
 def stopping(harness: Harness) -> bool:
@@ -181,7 +189,7 @@ def test_a_restart_waits_for_a_running_cached_build(world: RestartWorld) -> None
     group = harness.status()["groups"][0]
     assert group["cached"], "the build runs composed with the managed cache"
 
-    command = restart(harness)
+    command = world.restart(harness)
     assert wait_for(lambda: stopping(harness), timeout=15), harness.journal()
     assert build.poll() is None, "the admitted compile outlives the restart request"
     assert command.poll() is None, "the restart waits rather than cancelling"
@@ -207,7 +215,7 @@ def test_a_restart_requeues_a_waiting_build(world: RestartWorld) -> None:
         harness.journal()
     )
 
-    command = restart(harness)
+    command = world.restart(harness)
     assert wait_for(lambda: stopping(harness), timeout=15), harness.journal()
     assert waiting.poll() is None, "the waiting build is not refused outright"
 
@@ -232,7 +240,7 @@ def test_a_restart_with_an_idle_live_cache_needs_no_operator(
     before = unit_properties(cache, "MainPID")["MainPID"]
     assert before != "0", "the cache is live before the restart"
 
-    command = restart(harness)
+    command = world.restart(harness)
     assert command.wait(timeout=90) == 0, command.stderr
     assert_whole_again(harness)
     assert unit_properties(harness.unit, "ActiveState")["ActiveState"] == "active", (
@@ -261,7 +269,7 @@ def test_a_restart_releases_a_token_only_a_stopped_cache_can(
         harness.journal()
     )
 
-    command = restart(harness)
+    command = world.restart(harness)
     assert command.wait(timeout=150) == 0, (command.stderr, harness.journal())
     assert_whole_again(harness)
     assert "manual recovery of the managed cache" in full_journal(harness), (

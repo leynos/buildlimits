@@ -441,10 +441,14 @@ exclude = [".venv/**", ".uv-cache/**", ".uv-tools/**", ".tools/**", ".git/**"]
 # The remaining names are read outside the scanned test tree: production code
 # reads the attributes tests set on real objects, mocks read their configured
 # results, callers dispatch ``__call__`` on runner doubles, and CrossHair
-# loads its contracts by name.
+# loads its contracts by name, and pytest runs the autouse leak guard without
+# any test naming it.
 ignore_names = [
     "test_*",
     "pytestmark",
+    "pytest_plugins",
+    "teardown",
+    "descriptor_leak_guard",
     "__call__",
     "return_value",
     "side_effect",
@@ -492,7 +496,18 @@ timeout = 30
 # Module doctests are part of the contract, so collection covers the package
 # as well as the test tree.
 testpaths = ["tests", "buildlimits"]
-addopts = ["--doctest-modules"]
+# ``descriptor_guard`` is a plugin, not a conftest fixture, so its autouse leak
+# guard also covers the package's doctests (see tests/descriptor_guard.py).
+pythonpath = ["tests"]
+addopts = ["--doctest-modules", "-p", "descriptor_guard"]
+# A descriptor-owning object that is dropped unclosed is a test defect, not
+# noise: the collector closes it during some later test, whose descriptor
+# accounting then fails. tests/descriptor_guard.py catches the objects a
+# reference cycle keeps alive; these filters catch the rest as they are freed.
+filterwarnings = [
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
 markers = [
     "systemd_user: needs a running systemd user manager and busctl",
 ]

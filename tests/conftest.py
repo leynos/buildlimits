@@ -1,14 +1,26 @@
-"""Reusable recording transport for compile-admission metric tests."""
+"""Shared fixtures: a recording metric transport and teardown for owned resources.
 
+The recording fixtures (``metric_sink``, ``metrics``, ``telemetry``) give
+compile-admission metric tests a transport that keeps bounded native records.
+``socket_pair`` yields a connected stream pair. The teardown fixtures keep a
+test from leaving descriptors to the garbage collector: ``recovery_harnesses``
+builds recovery supervisors and closes each one's resources, and ``owned``
+unwinds whatever a test enters into it, such as sockets, pools and
+``contextlib.closing`` supervisors, in reverse order after the test.
+"""
+
+import contextlib
 import socket
 import typing as typ
 
 import pytest
+from cache_recovery_harness import HarnessFactory
 
 from buildlimits.metrics import Metrics
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    from pathlib import Path
 
 
 class RecordingSink:
@@ -113,3 +125,36 @@ def socket_pair() -> cabc.Iterator[tuple[socket.socket, socket.socket]]:
     yield client, server
     client.close()
     server.close()
+
+
+@pytest.fixture
+def recovery_harnesses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> cabc.Iterator[HarnessFactory]:
+    """Provide a factory whose supervisors are closed after the test.
+
+    Yields
+    ------
+    HarnessFactory
+        Builds recovery harnesses; the fixture closes every one at teardown,
+        so no supervisor leaves its selector's descriptor to the collector.
+    """
+    with contextlib.ExitStack() as owned:
+        yield HarnessFactory(tmp_path, monkeypatch, owned)
+
+
+@pytest.fixture
+def owned() -> cabc.Iterator[contextlib.ExitStack]:
+    """Provide a stack that closes whatever a test enters into it.
+
+    Enter a ``contextlib.closing`` supervisor, a socket or any other
+    descriptor owner here rather than leaving it to the garbage collector,
+    whose timing decides which later test sees the descriptor.
+
+    Yields
+    ------
+    contextlib.ExitStack
+        Unwound in reverse order at teardown, even after a failed test.
+    """
+    with contextlib.ExitStack() as stack:
+        yield stack

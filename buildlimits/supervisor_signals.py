@@ -17,9 +17,14 @@ import typing as typ
 from buildlimits import group_recovery
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+    import types
+
     from buildlimits.supervisor import Supervisor
 
 SIGNALS_TAG = "signals"
+
+type _Handler = cabc.Callable[[int, types.FrameType | None], object] | int | None
 
 
 def watch_signals(supervisor: Supervisor) -> None:
@@ -32,10 +37,49 @@ def watch_signals(supervisor: Supervisor) -> None:
     """
     read_end, write_end = os.pipe2(os.O_CLOEXEC | os.O_NONBLOCK)
     supervisor._signals_read = read_end
-    signal.set_wakeup_fd(write_end, warn_on_full_buffer=False)
+    supervisor._signals_write = write_end
+    previous_wakeup = signal.set_wakeup_fd(write_end, warn_on_full_buffer=False)
     # A handler must be installed for the wakeup descriptor to be written.
-    signal.signal(signal.SIGCHLD, lambda *_: None)
+    previous_handler = signal.signal(signal.SIGCHLD, lambda *_: None)
+    supervisor._signals_previous = (previous_wakeup, previous_handler)
     supervisor.selector.register(read_end, selectors.EVENT_READ, SIGNALS_TAG)
+
+
+def release_signals(supervisor: Supervisor) -> None:
+    """Stop waking the event loop and close both ends of the self-pipe.
+
+    The wakeup descriptor and the ``SIGCHLD`` handler are process-wide, so the
+    ones that :func:`watch_signals` displaced are restored before the pipe
+    closes; otherwise a later signal would write to a descriptor number that
+    something else may now own, and a host that owned them would lose them.
+    Calling this again, or before :func:`watch_signals`, does nothing.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        Owner of the self-pipe.
+    """
+    if supervisor._signals_read < 0:
+        return
+    previous_wakeup, previous_handler = supervisor._signals_previous
+    # ``signal.signal`` returns None for a handler Python did not install.
+    handler = typ.cast("_Handler", previous_handler)
+    if handler is None:
+        handler = signal.SIG_DFL
+    try:
+        signal.set_wakeup_fd(previous_wakeup)
+        signal.signal(signal.SIGCHLD, handler)
+    finally:
+        _close_pipe(supervisor)
+
+
+def _close_pipe(supervisor: Supervisor) -> None:
+    """Close both ends of the self-pipe and mark it released."""
+    for fd in (supervisor._signals_read, supervisor._signals_write):
+        with contextlib.suppress(OSError):
+            os.close(fd)
+    supervisor._signals_read = -1
+    supervisor._signals_write = -1
 
 
 def reap_leaders(supervisor: Supervisor) -> None:

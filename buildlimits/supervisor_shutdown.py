@@ -15,8 +15,10 @@ The loop asks after every tick, so a stop that was requested while it was busy
 still takes effect on the tick that follows.
 """
 
+import contextlib
 import typing as typ
 
+from buildlimits import supervisor_signals
 from buildlimits.admission_state import GroupState
 from buildlimits.effects import Exit
 from buildlimits.journal import log
@@ -177,3 +179,43 @@ def shutdown(supervisor: Supervisor) -> None:
     supervisor._metric(
         "supervisor_stopped", outcome=exit_outcome(Exit(code=supervisor.exit_status))
     )
+
+
+def close(supervisor: Supervisor) -> None:
+    """Release every descriptor the supervisor owns; calling again is harmless.
+
+    A stopped supervisor leaves its selector, listener, token pool, signal
+    self-pipe and request connections open for process exit to reap. A process
+    that outlives the supervisor, such as a test runner, must close them, so
+    this is the one place that does. It does not stop or drain: call it after
+    :meth:`~buildlimits.supervisor.Supervisor.serve` returns, or on a
+    supervisor that never started.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        The supervisor whose descriptors are released.
+
+    Examples
+    --------
+    >>> from buildlimits.config import SupervisorConfig
+    >>> from buildlimits.supervisor import Supervisor
+    >>> supervisor = Supervisor(SupervisorConfig())
+    >>> supervisor.close()
+    >>> supervisor.close()
+    """
+    listener, supervisor.listener = supervisor.listener, None
+    pool, supervisor.pool = supervisor.pool, None
+    # Callbacks run last-in first-out, and each runs even if an earlier one
+    # raised, so one failing release cannot strand the descriptors after it.
+    # The first error still propagates once every release has been tried.
+    with contextlib.ExitStack() as release:
+        release.callback(supervisor.selector.close)
+        if pool is not None:
+            release.callback(pool.close)
+        if listener is not None:
+            release.callback(listener.close)
+        release.callback(supervisor_signals.release_signals, supervisor)
+        for running in supervisor.groups.running.values():
+            release.callback(running.child.close)
+        release.callback(supervisor.requests.close_all)

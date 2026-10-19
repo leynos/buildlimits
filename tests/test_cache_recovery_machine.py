@@ -10,8 +10,8 @@ supervisor. The transaction as the supervisor actually runs it is covered in
 from pathlib import Path
 
 import pytest
-from cache_recovery_harness import machine_for, scripted_machine
 from cache_recovery_helpers import DrainReading, TriggerCase, gauges
+from cache_recovery_machines import machine_for, scripted_machine
 
 from buildlimits import cache_recovery, recovery_starvation
 from buildlimits.admission import Counts

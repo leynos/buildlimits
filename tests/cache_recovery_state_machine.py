@@ -2,7 +2,7 @@
 
 :class:`RecoveryMachine` drives the real
 :class:`~buildlimits.cache_recovery.CacheRecovery` over the scripted cache
-from :mod:`cache_recovery_harness` and the model from
+from :mod:`cache_recovery_machines` and the model from
 :mod:`cache_recovery_model`. It lives beside its test rather than inside it for
 the same reason the machine under test lives in its own module: the search
 carries the contract, the ledger and the recorded refusals, and a reader
@@ -21,7 +21,7 @@ import typing as typ
 
 import pytest
 from cache_recovery_events import CalmClock, Events, Moment
-from cache_recovery_harness import scripted_machine
+from cache_recovery_machines import scripted_machine
 from cache_recovery_model import MAX_GROUPS, Model
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, invariant, precondition, rule

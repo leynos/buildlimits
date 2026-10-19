@@ -44,6 +44,7 @@ class _FakeSupervisor:
         self.settings = settings
         self.start_calls: list[PurePosixPath] = []
         self.serve_calls = 0
+        self.close_calls = 0
         self.stop_requested = False
         self.graceful_stop_requested = False
         self.start_error: BaseException | None = None
@@ -63,6 +64,10 @@ class _FakeSupervisor:
     def request_stop(self) -> None:
         """Record that an immediate shutdown was requested."""
         self.stop_requested = True
+
+    def close(self) -> None:
+        """Record that the service released the supervisor's descriptors."""
+        self.close_calls += 1
 
     def request_graceful_stop(self) -> None:
         """Record that a shutdown after running groups finish was requested."""
@@ -156,11 +161,12 @@ def test_a_failed_start_exits_one(
     """Every error start() can raise fails start-up with exit status 1."""
     config_path = _write_config(tmp_path)
     monkeypatch.setattr(cgroups, "own_path", lambda: OWN_CGROUP)
-    _install_fake_supervisor(monkeypatch, start_error=error)
+    created = _install_fake_supervisor(monkeypatch, start_error=error)
 
     status = service.main(["--config", str(config_path)])
 
     assert status == 1, "a failed start is restartable"
+    assert created[0].close_calls == 1, "a failed start still releases what it opened"
     err = capsys.readouterr().err
     assert "start-up failed" in err, err
     assert str(error) in err, err
@@ -193,6 +199,7 @@ def test_a_successful_start_serves_and_closes_the_lock(
     supervisor = created[0]
     assert supervisor.start_calls == [OWN_CGROUP], "start was called with own cgroup"
     assert supervisor.serve_calls == 1, "serve was called exactly once"
+    assert supervisor.close_calls == 1, "the service released the supervisor once"
     assert len(closed_fds) == 1, "the lock descriptor was closed exactly once"
     capsys.readouterr()
 

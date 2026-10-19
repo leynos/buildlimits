@@ -17,14 +17,14 @@
   dict({
     'baseline': True,
     'error': 'TruncatedFrameError',
-    'timeout': 0.01,
+    'timeout': 1.0,
   })
 # ---
 # name: test_incomplete_truncation_does_not_supply_a_policy_body[eof-partial-header]
   dict({
     'baseline': True,
     'error': 'TruncatedFrameError',
-    'timeout': 0.01,
+    'timeout': 1.0,
   })
 # ---
 # name: test_truncation_retains_only_complete_body_and_closes_rights_immediately

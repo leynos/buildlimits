@@ -32,7 +32,7 @@ from pathlib import Path
 
 from cache_recovery_harness import (
     Harness,
-    harness_for,
+    HarnessFactory,
     hold_drained_group,
     queue_request,
 )
@@ -41,8 +41,6 @@ from buildlimits.effects import Launch
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-
-    import pytest
 
     from buildlimits.supervisor import Supervisor
 
@@ -141,7 +139,7 @@ def _admitted(supervisor: Supervisor) -> tuple[Launch, bool]:
 
 
 def _waiting(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, refuse: str | None = None
+    recovery_harnesses: HarnessFactory, *, refuse: str | None = None
 ) -> Harness:
     """Hold one drained group with one request waiting behind it.
 
@@ -150,10 +148,8 @@ def _waiting(
 
     Parameters
     ----------
-    tmp_path : Path
-        The disposable fixture directory.
-    monkeypatch : pytest.MonkeyPatch
-        Fixture used to redirect the cache's control-group lookup.
+    recovery_harnesses : HarnessFactory
+        Builds the harness and closes it when the test ends.
     refuse : str or None
         The control verb the scripted manager refuses, or None for none.
 
@@ -162,7 +158,7 @@ def _waiting(
     Harness
         The harness, ready for the healthy reading and the manual request.
     """
-    harness = harness_for(tmp_path, monkeypatch)
+    harness = recovery_harnesses.build()
     hold_drained_group(harness.supervisor)
     queue_request(harness.supervisor)
     harness.cache.refuse = refuse
@@ -208,7 +204,7 @@ def _account_as_the_server_stops(
 
 
 def test_a_token_arriving_mid_transaction_is_admitted_without_the_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, recovery_harnesses: HarnessFactory
 ) -> None:
     """A server between stop and restart never composes a group.
 
@@ -218,7 +214,7 @@ def test_a_token_arriving_mid_transaction_is_admitted_without_the_cache(
     granted a token during it would otherwise be composed from a stale reading
     of a server the transaction has already told to stop.
     """
-    harness = _waiting(tmp_path, monkeypatch)
+    harness = _waiting(recovery_harnesses)
     supervisor = harness.supervisor
 
     with _serving_server(tmp_path / SOCKET_PATH):
@@ -237,7 +233,7 @@ def test_a_token_arriving_mid_transaction_is_admitted_without_the_cache(
 
 
 def test_a_request_waiting_through_the_whole_transaction_is_cached_again(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, recovery_harnesses: HarnessFactory
 ) -> None:
     """The denial ends with the restart; the next token composes the cache.
 
@@ -246,7 +242,7 @@ def test_a_request_waiting_through_the_whole_transaction_is_cached_again(
     transaction must compose with the cache the transaction restored, or the
     recovery would have denied caching for ever.
     """
-    harness = _waiting(tmp_path, monkeypatch)
+    harness = _waiting(recovery_harnesses)
     supervisor = harness.supervisor
     socket_path = tmp_path / SOCKET_PATH
     listener = _listen(socket_path)
@@ -275,7 +271,7 @@ def test_a_request_waiting_through_the_whole_transaction_is_cached_again(
 
 
 def test_a_restart_that_is_only_accepted_composes_no_cached_group(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, recovery_harnesses: HarnessFactory
 ) -> None:
     """An unobserved restart keeps the cache out of composition.
 
@@ -288,7 +284,7 @@ def test_a_restart_that_is_only_accepted_composes_no_cached_group(
     where nothing accounts for it, which is the same failure the stop window is
     held against.
     """
-    harness = _waiting(tmp_path, monkeypatch)
+    harness = _waiting(recovery_harnesses)
     supervisor = harness.supervisor
     socket_path = tmp_path / SOCKET_PATH
     listener = _listen(socket_path)
@@ -323,7 +319,7 @@ def test_a_restart_that_is_only_accepted_composes_no_cached_group(
 
 
 def test_an_admission_mid_failure_keeps_the_cache_out_of_composition(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, recovery_harnesses: HarnessFactory
 ) -> None:
     """A request admitted amid failing retries never composes the stopped cache.
 
@@ -333,7 +329,7 @@ def test_an_admission_mid_failure_keeps_the_cache_out_of_composition(
     nothing can account for it; the request must be admitted without the cache
     instead.
     """
-    harness = _waiting(tmp_path, monkeypatch, refuse="start")
+    harness = _waiting(recovery_harnesses, refuse="start")
     supervisor = harness.supervisor
 
     with _serving_server(tmp_path / SOCKET_PATH):
@@ -353,7 +349,7 @@ def test_an_admission_mid_failure_keeps_the_cache_out_of_composition(
 
 
 def test_a_group_admitted_without_the_cache_does_not_block_the_stop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, recovery_harnesses: HarnessFactory
 ) -> None:
     """The stop proceeds past a group the transaction composed without the cache.
 
@@ -364,7 +360,7 @@ def test_a_group_admitted_without_the_cache_does_not_block_the_stop(
     moving work refused the stop on every retry while the retained tokens stayed
     held, which is the livelock this guards against.
     """
-    harness = _waiting(tmp_path, monkeypatch)
+    harness = _waiting(recovery_harnesses)
     supervisor = harness.supervisor
 
     with _serving_server(tmp_path / SOCKET_PATH):

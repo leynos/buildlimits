@@ -439,20 +439,22 @@ live in `tests/fixtures`.
 
 Use these before writing a new arrange step; extend one rather than copying it.
 
-| Module                      | Provides                                                                                            |
-| --------------------------- | --------------------------------------------------------------------------------------------------- |
-| `conftest.py`               | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures |
-| `request_helpers.py`        | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
-| `pool_helpers.py`           | `FakePool` and `attach_pool`                                                                        |
-| `descriptor_helpers.py`     | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
-| `launch_helpers.py`         | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
-| `adapter_doubles.py`        | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
-| `journal_fixtures.py`       | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
-| `listener_helpers.py`       | `watched_listener`, a listener under `ListenerPressure` control                                     |
-| `cache_recovery_helpers.py` | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
-| `cache_recovery_harness.py` | `Harness`, `harness_for`, `opened_recovery`, `machine_for`, `metered_machine`, `scripted_machine`   |
-| `systemd_harness.py`        | Host acceptance `Harness`, `systemd_user_marks` and `wait_for`                                      |
-| `harness_units.py`          | Transient unit control and `unit_properties` over the public user bus                               |
+| Module                       | Provides                                                                                            |
+| ---------------------------- | --------------------------------------------------------------------------------------------------- |
+| `conftest.py`                | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures |
+| `request_helpers.py`         | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
+| `pool_helpers.py`            | `FakePool` and `attach_pool`                                                                        |
+| `descriptor_helpers.py`      | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
+| `descriptor_guard.py`        | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                          |
+| `launch_helpers.py`          | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
+| `adapter_doubles.py`         | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
+| `journal_fixtures.py`        | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
+| `listener_helpers.py`        | `watched_listener`, a listener under `ListenerPressure` control                                     |
+| `cache_recovery_helpers.py`  | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
+| `cache_recovery_harness.py`  | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
+| `cache_recovery_machines.py` | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
+| `systemd_harness.py`         | Host acceptance `Harness`, `systemd_user_marks` and `wait_for`                                      |
+| `harness_units.py`           | Transient unit control and `unit_properties` over the public user bus                               |
 
 _Table 4: Shared test helper modules._
 
@@ -489,6 +491,44 @@ against both the fixture and the user's guide. The unit-file edits a role needs
 for a new behaviour must change the guide, the fixture and that test together.
 `tests/cache_unit_fake.py` plays a cache unit through its states for unit tests
 that need the order of the barrier, stop and start.
+
+### 11.5. Closing what a test opens
+
+A test that opens a descriptor closes it before it ends. Leaving the object to
+the garbage collector is a defect, not a style choice: the collector runs
+during whichever test the xdist worker is executing, so the next test finds
+descriptors that are not its own and fails its descriptor baseline although it
+did nothing wrong.
+
+- **Own it with a context manager or a yield fixture.** Enter sockets, pipes,
+  pools and supervisors into the `owned` fixture (a `contextlib.ExitStack`
+  unwound at teardown), wrapping objects that only have `close()` in
+  `contextlib.closing`. Obtain recovery supervisors from `recovery_harnesses`,
+  which closes each harness it builds. A bare `harness_for(...)` call is for
+  `with` blocks only.
+- **Release a supervisor with `Supervisor.close()`.** A `Supervisor` holds
+  reference cycles, so its selector outlives the test that built it. `close()`
+  releases the selector, listener, token pool, signal self-pipe and request
+  connections, and withdraws the process-wide `SIGCHLD` handler and wakeup
+  descriptor. It is idempotent.
+- **Close subprocess pipes.** Enter a `Popen` as a context manager, or close
+  its `stdout` and `stderr`, after killing and reaping it.
+- **Do not call `gc.collect()` to tidy up.** It hides which test leaked.
+
+The autouse fixture in the `descriptor_guard` plugin enforces this.
+`descriptor_guard.no_leaks` suspends the cyclic collector for the length of one
+test and compares `/proc/self/fd`, as (number, target) pairs, taken before any
+function-scoped fixture is set up and after every one has torn down. A leak
+fails that test at teardown and lists the descriptors. The comparison is local
+to one process, so each xdist worker checks only itself, and with the collector
+suspended the verdict does not depend on allocation timing. `pyproject.toml`
+also turns `ResourceWarning` and unraisable-exception warnings into errors,
+which catches objects freed unclosed by reference counting. The guard is
+registered as a plugin (`-p descriptor_guard`), so it covers the package's
+doctests as well as `tests/`. It brackets function-scoped fixtures only: a
+session- or module-scoped fixture is set up before the baseline and torn down
+after the comparison, so its descriptors are outside the guard and must be
+closed by that fixture's own teardown.
 
 ## 12. Static-analysis exceptions
 

@@ -22,8 +22,8 @@ import typing as typ
 from pathlib import Path
 
 from cache_recovery_barrier_helpers import unremovable_barrier
-from cache_recovery_harness import metered_machine
 from cache_recovery_helpers import MACHINE_STEP_SECONDS, gauges, settle_transaction
+from cache_recovery_machines import metered_machine
 
 from buildlimits import cache_recovery
 

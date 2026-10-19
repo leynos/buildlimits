@@ -128,6 +128,8 @@ class Supervisor:
         self._stop_requested = False
         self._graceful_stop_requested = False
         self._signals_read = -1
+        self._signals_write = -1
+        self._signals_previous: tuple[int, object] = (-1, None)  # restored on close
         self.loop = DrainLoop(
             sleep=timing.sleep,
             failure_observer=lambda failures: self._metric(
@@ -305,6 +307,7 @@ class Supervisor:
     request_graceful_stop = supervisor_shutdown.request_graceful_stop
     stop = supervisor_shutdown.stop
     _shutdown = supervisor_shutdown.shutdown
+    close = supervisor_shutdown.close
 
     def _tick(self) -> None:
         """Advance draining groups, escalations and periodic checks."""
