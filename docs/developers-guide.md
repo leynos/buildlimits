@@ -519,6 +519,17 @@ status. `tests/cached_unit_files.py` renders the fixture units from
 `tests/test_unit_file_contract.py` pins the directives the restart relies on
 against both the fixture and the user's guide. The unit-file edits a role needs
 for a new behaviour must change the guide, the fixture and that test together.
+`tests/restart_world.py` holds the world these scenarios share (and the `world`
+fixture lives in `conftest.py`).
+`tests/test_restart_during_placement_systemd.py` restarts the supervisor while
+a scope placement is in flight, using `tests/busctl_shim.py`: a `busctl`
+stand-in, put ahead of the supervisor's `PATH` through `Harness.path_prefix`,
+that holds `StartTransientUnit` until the test releases it and records whether
+the stop signalled it and what shared its control group. `Harness.kill_mode`
+renders a different `KillMode` into the fixture unit, so one scenario proves
+the unit contract (`mixed`: only the supervisor is signalled) and the other
+proves the supervisor's own defence under the legacy `control-group` mode (the
+request is refused as `restarting` and retried, never `launch-failed`).
 `tests/cache_unit_fake.py` plays a cache unit through its states for unit tests
 that need the order of the barrier, stop and start.
 

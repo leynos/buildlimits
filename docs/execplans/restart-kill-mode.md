@@ -1,6 +1,6 @@
 # Keep a graceful restart from breaking a scope placement
 
-This ExecPlan is a living document. Status: IN PROGRESS.
+This ExecPlan is a living document. Status: IN REVIEW.
 
 ## Purpose
 
@@ -95,15 +95,15 @@ within its deadline (`adapter_invocation.py`), instead of `launch-failed`. The
 stop is "in progress" when admission is closing or a graceful stop has been
 requested but not yet honoured, because the signal handler only records intent
 and the failed placement is observed before the next tick honours it (the
-incident's own log order). `Supervisor._launch` therefore honours a pending
-stop request before accounting for the failed launch, and
-`Admission.launch_failed` refuses as `restarting` exactly when it is
-`winding_down`. The log line that names the real cause is kept;
-`entry.exec_error` is cleared so that `Requesters.refuse` does not rewrite the
-reason to `exec-failed`. With no stop in progress the behaviour is unchanged.
-The token returns through the existing `ReturnToken`, the held child is already
-abandoned by `Groups.place`, and the request's descriptors close when the
-refusal forgets it.
+incident's own log order). `Supervisor._launch` therefore calls
+`supervisor_shutdown.fail_placement`, which honours a pending stop request
+before accounting for the failed launch, and `Admission.launch_failed` refuses
+as `restarting` exactly when it is `winding_down`. The log line that names the
+real cause is kept; `entry.exec_error` is cleared so that `Requesters.refuse`
+does not rewrite the reason to `exec-failed`. With no stop in progress the
+behaviour is unchanged. The token returns through the existing `ReturnToken`,
+the held child is already abandoned by `Groups.place`, and the request's
+descriptors close when the refusal forgets it.
 
 Alternatives rejected for Fix 2: retrying the placement in process. The held
 child may be unusable, a partially created scope of the same name would make a
@@ -143,6 +143,11 @@ only one in flight at the stop is affected. After Fix 1 none is signalled.
 7. `journalctl` (`metrics_transport`) and `rustdoc` probes run in the status and
    adapter processes, outside the supervisor's control group.
 8. `ExecStartPre=rm -f` of the cache unit runs in the cache's group at start.
+9. `systemctl kill --signal=SIGINT` (the documented immediate stop) signals the
+   whole control group whatever the kill mode, because `--kill-whom` defaults to
+   `all`. An immediate stop refuses the queue and cancels groups anyway, so a
+   placement lost to it is not a gap; the guide notes it and `--kill-whom=main`
+   is left to the operator.
 
 ## Milestones
 
@@ -192,11 +197,15 @@ experiment above); Python signal handlers survive `fork`.
 - [x] Worktree `fix/restart-kill-mode` from `origin/main` at `cfa70a7`.
 - [x] Hypothesis tested with a real-systemd reproduction.
 - [x] ExecPlan written.
-- [ ] Refactor commit.
-- [ ] Red commit.
-- [ ] Fix 1 commit.
-- [ ] Fix 2 commit.
-- [ ] Gates, PR, review loop.
+- [x] Refactor commit (shared restart world).
+- [x] Red commit: both scenarios strict `xfail` on the unfixed fixture unit.
+  Red output of the first scenario: `assert not outcome.signalled` failed with
+  the shim's census showing the supervisor, the held child (`S`) and the shim;
+  of the second: `assert 1 == 7` with stderr
+  `build-limits: the supervisor refused: launch-failed`.
+- [x] Fix 1 commit (`KillMode=mixed`): the first scenario passes.
+- [x] Fix 2 commit (restarting refusal): the second scenario passes.
+- [ ] Gates on the final head, PR, review loop.
 
 ## Surprises & discoveries
 
@@ -216,4 +225,19 @@ experiment above); Python signal handlers survive `fork`.
 
 ## Outcomes & retrospective
 
-To be completed.
+Delivered: `KillMode=mixed` in the unit contract (fixture, contract test,
+guide, ADR 001 amendment, migration note), and the supervisor now refuses a
+placement that fails during a graceful stop, requested or begun, as
+`restarting`.
+
+Notes for the reviewer:
+
+- An experiment to confirm that `daemon-reload` alone makes a rewritten unit's
+  new kill mode apply to the next stop was denied by the harness (it needed a
+  write under `/run/user/1000/systemd/user`) and was not retried. The guide
+  tells operators to reload and then read `KillMode` back with
+  `systemctl --user show`, which does not depend on that claim.
+- The first red commit's shim lacked an `import os`; it was found when Fix 1 was
+  gated and folded back into the red commit.
+- Deferred: the held launch child could reset its inherited signal handlers
+  before the barrier; it is harmless today and out of scope.
