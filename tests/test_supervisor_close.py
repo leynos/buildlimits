@@ -32,7 +32,7 @@ def supervisor(owned: contextlib.ExitStack) -> Supervisor:
     )
 
 
-def test_close_releases_a_pending_request_and_a_running_childs_pipes(
+def test_close_releases_a_pending_request_and_the_pipes_of_a_running_child(
     supervisor: Supervisor, tmp_path: Path, owned: contextlib.ExitStack
 ) -> None:
     """Each cleanup branch is exercised: removing one leaves a descriptor open.
