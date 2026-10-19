@@ -15,12 +15,29 @@ import typing as typ
 
 import pytest
 from cache_recovery_harness import HarnessFactory
+from restart_world import RestartWorld
 
 from buildlimits.metrics import Metrics
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     from pathlib import Path
+
+
+@pytest.fixture
+def world() -> cabc.Iterator[RestartWorld]:
+    """Provide a real-systemd restart scenario's world; release all it owned.
+
+    Yields
+    ------
+    RestartWorld
+        The world, whose supervisors, builds and restarts close at teardown.
+    """
+    state = RestartWorld()
+    try:
+        yield state
+    finally:
+        state.close()
 
 
 class RecordingSink:
