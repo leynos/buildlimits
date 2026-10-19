@@ -1,9 +1,16 @@
 """Scripted token-pool double shared by supervisor pressure tests."""
 
 import dataclasses as dc
+import os
 import typing as typ
 
+from buildlimits import pool as pool_module
+
 if typ.TYPE_CHECKING:
+    import threading
+
+    import pytest
+
     from buildlimits.pool import PoolEvent, TokenPool
 
 
@@ -127,3 +134,38 @@ def attach_pool(owner: _PoolOwner) -> FakePool:
     pool = FakePool(wake_fd=-1)
     owner.pool = typ.cast("TokenPool", pool)
     return pool
+
+
+def announce_reads(
+    patch: pytest.MonkeyPatch, device: int, entered: threading.Event
+) -> None:
+    """Set ``entered`` when the pool's reader thread calls ``os.read`` on ``device``.
+
+    The reader announces a read only after it has passed its closing check, so a
+    test that waits on the event knows the thread is inside, or about to enter,
+    the blocking call rather than guessing at thread timing.
+
+    Parameters
+    ----------
+    patch : pytest.MonkeyPatch
+        Installs the wrapper and removes it at the end of the test.
+    device : int
+        The pool's device descriptor; reads on other descriptors are untouched.
+    entered : threading.Event
+        Set on the first read of ``device``.
+    """
+    real_read = os.read
+
+    def announcing_read(fd: int, length: int) -> bytes:
+        """Tell the test the reader is past its closing check, then really read.
+
+        Returns
+        -------
+        bytes
+            What the real read returned.
+        """
+        if fd == device:
+            entered.set()
+        return real_read(fd, length)
+
+    patch.setattr(pool_module.os, "read", announcing_read)

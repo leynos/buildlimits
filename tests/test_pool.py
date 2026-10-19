@@ -9,6 +9,7 @@ from unittest import mock
 
 import pytest
 from descriptor_helpers import still_open
+from pool_helpers import announce_reads
 
 from buildlimits import pool as pool_module
 from buildlimits.pool import PoolFailure, Token, TokenPool
@@ -209,15 +210,7 @@ def test_close_leaves_a_blocked_read_to_close_the_device_when_it_returns(
     pool = TokenPool(fifo)
     device, wake_read, wake_write = _pool_descriptors(pool)
     inside_read = threading.Event()
-    real_read = os.read
-
-    def announcing_read(fd: int, length: int) -> bytes:
-        """Tell the test the reader is past its closing check, then really read."""
-        if fd == device:
-            inside_read.set()
-        return real_read(fd, length)
-
-    monkeypatch.setattr(pool_module.os, "read", announcing_read)
+    announce_reads(monkeypatch, device, inside_read)
     pool.request()  # the FIFO is empty, so the reader blocks inside read
     assert inside_read.wait(5.0), "the reader reached its blocking read"
     pool.close()

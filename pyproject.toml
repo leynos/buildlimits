@@ -447,6 +447,7 @@ ignore_names = [
     "test_*",
     "pytestmark",
     "pytest_plugins",
+    "teardown",
     "descriptor_leak_guard",
     "__call__",
     "return_value",

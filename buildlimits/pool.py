@@ -26,8 +26,8 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
 
-# How long :meth:`TokenPool.close` waits for an idle reader thread to notice.
-_CLOSE_JOIN_SECONDS = 0.5
+# How long :meth:`TokenPool.close` waits for an idle reader thread to end.
+_CLOSE_JOIN_SECONDS = 0.1
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -103,6 +103,7 @@ class TokenPool:
             self._lifecycle = threading.Lock()
             self._is_closing = False
             self._is_device_open = True
+            self._is_reading = False
             self._reader = threading.Thread(target=self._read_forever, daemon=True)
             self._reader.start()
         except BaseException:
@@ -162,13 +163,15 @@ class TokenPool:
     def close(self) -> None:
         """Release every descriptor the pool owns; calling again does nothing.
 
-        The wake pipe closes at once. The device closes here when the reader
-        thread is idle or has ended. A thread blocked in a read cannot be
+        The wake pipe closes at once, and so does the device unless the reader
+        thread is inside a read. A thread blocked in a read cannot be
         interrupted, and closing its descriptor underneath it could let the
         number be reused before the thread reads again, so the thread closes
-        the device itself as soon as that read returns. The process is
-        normally exiting by then; the descriptor is never closed while the
-        thread can still use it.
+        the device itself as soon as that read returns. The reader announces
+        a read, and checks for closure, under one lock, so "about to read"
+        cannot be mistaken for "inside a read" and the decision never depends
+        on how quickly an idle thread wakes. The process is normally exiting
+        by the time a blocked read returns.
 
         Examples
         --------
@@ -186,18 +189,21 @@ class TokenPool:
                 for fd in (self._wake_read, self._wake_write):
                     with contextlib.suppress(OSError):
                         os.close(fd)
+            self._close_device_if_idle()
         self._demand.release()
+        # Waiting is only for tidiness: the device no longer depends on it.
         self._reader.join(_CLOSE_JOIN_SECONDS)
-        if not self._reader.is_alive():
-            self._release_device()
 
-    def _release_device(self) -> None:
-        """Close the device once, and only after :meth:`close` has begun."""
-        with self._lifecycle:
-            if self._is_closing and self._is_device_open:
-                self._is_device_open = False
-                with contextlib.suppress(OSError):
-                    os.close(self.fd)
+    def _close_device_if_idle(self) -> None:
+        """Close the device once, if closing has begun and no read is under way.
+
+        The caller must hold :attr:`_lifecycle`.
+        """
+        is_releasable = self._is_closing and not self._is_reading
+        if is_releasable and self._is_device_open:
+            self._is_device_open = False
+            with contextlib.suppress(OSError):
+                os.close(self.fd)
 
     def is_same_device(self) -> bool:
         """Check that the device path still names the opened device.
@@ -222,7 +228,8 @@ class TokenPool:
             while self._serve_one_request():
                 pass
         finally:
-            self._release_device()
+            with self._lifecycle:
+                self._close_device_if_idle()
 
     def _serve_one_request(self) -> bool:
         """Read one token for one request.
@@ -235,18 +242,28 @@ class TokenPool:
         # The semaphore counts requested tokens; it guards no region, so a
         # ``with`` block would wrongly release it.
         self._demand.acquire()  # pylint: disable=consider-using-with
-        if self._is_closing:
-            return False
+        with self._lifecycle:
+            if self._is_closing:
+                return False
+            self._is_reading = True
         try:
             data = os.read(self.fd, 1)
         except OSError as error:
+            self._finish_read()
             self._emit(PoolFailure(f"reading a token failed: {error}"))
             return False
+        self._finish_read()
         if not data:
             self._emit(PoolFailure("the token device reported end of file"))
             return False
         self._emit(Token(data))
         return True
+
+    def _finish_read(self) -> None:
+        """Record that the read returned, then let a pending close take effect."""
+        with self._lifecycle:
+            self._is_reading = False
+            self._close_device_if_idle()
 
     def _emit(self, event: PoolEvent) -> None:
         """Queue an event and wake the event loop, unless the pool is closed."""
