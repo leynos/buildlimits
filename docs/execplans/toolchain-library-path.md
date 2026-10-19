@@ -3,10 +3,9 @@
 This ExecPlan is a living document. Update Progress, Surprises and discoveries,
 Decision log and Outcomes and retrospective as work proceeds.
 
-Status: IN PROGRESS (implementation complete; in review). The supervising
-session approved the scope in the assignment for
-[leynos/dev-env-rocky#312][issue-312]; the pull request is not to be merged
-until that session says so.
+Status: COMPLETE, awaiting review and merge. The supervising session approved
+the scope in the assignment for [leynos/dev-env-rocky#312][issue-312]; the pull
+request is not to be merged until that session says so.
 
 ## Purpose and big picture
 
@@ -111,7 +110,9 @@ rustup's and sccache's behaviour is as read from the cited sources.
   findings; round 2 (6b96af1) found a duplicated test fixture and a spelling
   error; round 3 on 89505f1 passed all nine gates (`make test` 1738 passed, 22
   skipped; `make test-systemd-user` 22 passed).
-- [ ] Pull request, review loop, mergeable.
+- [x] (2026-10-19) Pull request 20 opened as a draft; completeness assessment
+  found and cleared one defect (ba05ac0).
+- [ ] Ready for review, formal review loop, mergeable.
 
 ## Surprises and discoveries
 
@@ -149,6 +150,25 @@ No Terms of Reference or technical design applies. Governing records: ADR 002
 
 ## Outcomes and retrospective
 
-To be completed when the pull request is mergeable.
+The adapters now keep a real toolchain compiler's own `lib` directory on a
+non-empty `LD_LIBRARY_PATH`, for both the direct exec and the admitted request,
+and the user's guide lets an agent recognize the symptom and apply the
+workaround for callers outside admission. A one-crate build through the new
+adapter returns `RC=Some(0)` where the installed adapter returned 127.
+
+CodeRabbit's completeness assessment found one real defect in the first
+implementation: a lexically resolved entry such as `<root>/lib/missing/..`
+counted as present. It is fixed by comparing file identity, with a regression
+test that failed first. The assessment of the final head found no remaining
+in-scope defect.
+
+Lessons: probe before trusting a table (only one of seven duplicate-driver
+toolchains fails); a four-argument lint limit pushed the environment into an
+`Invocation` value, which is a better shape anyway; and the duplication gate
+runs after ruff in `make lint`, so a first red lint run can hide it.
+
+Remaining: the pull request awaits the supervising session's review and merge
+decision. dev-env-rocky may want its docs and agent prompts to point at the
+user's guide section and to correct the issue's affected-toolchain table.
 
 [issue-312]: https://github.com/leynos/dev-env-rocky/issues/312
