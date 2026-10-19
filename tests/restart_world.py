@@ -18,6 +18,8 @@ from systemd_harness import Harness, journal, kill_group, wait_for
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
+    from busctl_shim import SlowBusctl
+
 
 class RestartWorld:
     """Isolated supervisors, and the builds and restarts run against them."""
@@ -29,8 +31,27 @@ class RestartWorld:
         self.restarts: list[subprocess.Popen[str]] = []
         self.holders: list[int] = []
 
-    def supervisor(self, slots: int, *, recovery: str = "starved") -> Harness:
+    def supervisor(
+        self,
+        slots: int,
+        *,
+        recovery: str = "starved",
+        slow_busctl: SlowBusctl | None = None,
+        kill_mode: str | None = None,
+    ) -> Harness:
         """Start an isolated cached supervisor and wait until it composes.
+
+        Parameters
+        ----------
+        slots : int
+            The pool's capacity.
+        recovery : str
+            The supervisor's cache recovery policy.
+        slow_busctl : SlowBusctl | None
+            A shim to put ahead of the supervisor's ``PATH``, so that a
+            scenario controls how long a scope placement takes.
+        kill_mode : str | None
+            A ``KillMode`` to render in place of the fixture unit's own.
 
         Returns
         -------
@@ -38,6 +59,9 @@ class RestartWorld:
             The started harness.
         """
         harness = Harness(slots, cached=True, cache_recovery=recovery)
+        if slow_busctl is not None:
+            harness.path_prefix = slow_busctl.directory
+        harness.kill_mode = kill_mode
         self.harnesses.append(harness)
         harness.start()
         return harness
