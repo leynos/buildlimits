@@ -64,6 +64,15 @@ def toolchain_environment(
     dict[str, str]
         A new mapping; ``env`` is never modified.
 
+    Notes
+    -----
+    This function does not raise for filesystem trouble. It fails open: a path
+    that cannot be searched, read or opened counts as "not a toolchain" or
+    "entry not present", and the environment comes back unchanged. The helper
+    only repairs a lookup that is already broken, so raising here would turn a
+    harmless no-op into a stopped build; the compiler's own error is the
+    diagnostic if the lookup really is broken.
+
     Examples
     --------
     >>> toolchain_environment(["rustc"], {"LD_LIBRARY_PATH": "/x"}, "/")
@@ -133,6 +142,9 @@ def _locate(name: str, env: cabc.Mapping[str, str], cwd: str) -> str | None:
 
 def _has_driver(library_dir: Path) -> bool:
     """Report whether a directory holds the compiler driver.
+
+    An unreadable or missing directory holds none; see the fail-open note on
+    :func:`toolchain_environment`.
 
     Returns
     -------

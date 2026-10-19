@@ -221,6 +221,38 @@ def test_an_entry_that_cannot_be_looked_up_does_not_count_as_present(
     )
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+def test_an_unreadable_toolchain_fails_open_without_raising(tmp_path: Path) -> None:
+    """A lib directory that cannot be listed leaves the environment unchanged."""
+    tree = make_toolchain(tmp_path)
+    path = str(tree.rustlib)
+    tree.lib.chmod(0o000)
+    try:
+        result = toolchain_environment([str(tree.rustc)], _env(path), CWD)
+    finally:
+        tree.lib.chmod(0o755)
+    assert result[POISONED] == path, "an unreadable layout is not recognized"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+def test_an_unsearchable_path_directory_fails_open_without_raising(
+    tmp_path: Path,
+) -> None:
+    """A ``PATH`` directory that cannot be searched is skipped, not fatal."""
+    tree = make_toolchain(tmp_path)
+    closed = tmp_path / "closed"
+    closed.mkdir()
+    closed.chmod(0o000)
+    env = _env(str(tree.rustlib), PATH=f"{closed}:{tree.rustc.parent}")
+    try:
+        result = toolchain_environment(["rustc"], env, CWD)
+    finally:
+        closed.chmod(0o755)
+    assert result[POISONED] == f"{tree.lib}:{tree.rustlib}", (
+        "the search continues past the closed directory"
+    )
+
+
 @pytest.mark.parametrize("argument", ["--version", "-vV"])
 def test_the_input_mapping_and_argv_are_not_modified(
     tmp_path: Path, argument: str
