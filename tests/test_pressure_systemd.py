@@ -33,7 +33,7 @@ while not Path(os.environ["PRESSURE_RELEASE"]).exists():
     time.sleep(0.01)
 """
 _CALLER = """import os, resource, sys
-from buildlimits.adapter import run
+from buildlimits.adapter import Invocation, run
 soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
 resource.setrlimit(resource.RLIMIT_NOFILE, (max(256, soft), hard))
 source = os.open("/dev/null", os.O_RDWR)
@@ -41,7 +41,9 @@ os.dup2(source, 255, inheritable=True)
 for _ in range(18):
     os.set_inheritable(os.open("/dev/null", os.O_RDWR), True)
 resource.setrlimit(resource.RLIMIT_NOFILE, (64, hard))
-sys.exit(run([sys.executable, "-c", os.environ["PRESSURE_COMPILER"]], cacheable=False))
+sys.exit(
+    run(Invocation([sys.executable, "-c", os.environ["PRESSURE_COMPILER"]], cacheable=False))
+)
 """
 
 

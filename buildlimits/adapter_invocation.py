@@ -1,6 +1,7 @@
 """Bounded admission retries share one invocation deadline and metric summary."""
 
 import dataclasses
+import os
 import typing as typ
 
 from buildlimits.adapter_connection import AdapterError
@@ -45,6 +46,28 @@ class QueuedRestartError(RestartingError):
     """A restart that interrupted a request which had been queued."""
 
     recorded = True
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Invocation:
+    """What one adapter invocation asks the supervisor to run.
+
+    Attributes
+    ----------
+    argv : Sequence[str]
+        The real compiler's argument vector.
+    cacheable : bool
+        Whether the supervisor may compose the compiler with sccache.
+    env : Mapping[str, str]
+        The environment to send and to read the adapter settings from; a
+        snapshot of this process's own unless the caller computed another.
+    """
+
+    argv: cabc.Sequence[str]
+    cacheable: bool
+    env: cabc.Mapping[str, str] = dataclasses.field(
+        default_factory=lambda: dict(os.environ)
+    )
 
 
 @dataclasses.dataclass(slots=True)

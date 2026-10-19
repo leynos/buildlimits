@@ -47,7 +47,10 @@ def test_busy_retries_recapture_requests_and_preserve_final_status(
         retry = immediate_retry()
         assert (
             adapter.run(
-                ["rustc", "--crate-name", "pressure"], cacheable=False, retry=retry
+                adapter.Invocation(
+                    ["rustc", "--crate-name", "pressure"], cacheable=False
+                ),
+                retry=retry,
             )
             == 17
         ), "busy retries preserve the admitted compiler exit status"
@@ -84,7 +87,7 @@ def test_busy_retry_exhaustion_is_bounded(monkeypatch: pytest.MonkeyPatch) -> No
 
     retry = RetryWait(clock=Clock(now=lambda: clock[0], sleep=sleep), jitter=jitter)
     with pytest.raises(adapter.AdapterError, match="retry deadline expired"):
-        adapter.run(["rustc"], cacheable=False, retry=retry)
+        adapter.run(adapter.Invocation(["rustc"], cacheable=False), retry=retry)
     assert jitter_bounds and all(bounds == (0.5, 1.0) for bounds in jitter_bounds), (
         "every retry uses the injected bounded jitter dependency"
     )
@@ -131,7 +134,7 @@ def test_real_request_deadline_preserves_prior_refusal(
         monkeypatch.setattr(adapter.descriptors, "inheritable_descriptors", capture)
         message = "retry deadline expired" if busy else "request deadline expired"
         with pytest.raises(adapter.AdapterError, match=message) as caught:
-            adapter.run(["rustc"], cacheable=False, retry=retry)
+            adapter.run(adapter.Invocation(["rustc"], cacheable=False), retry=retry)
         if busy:
             assert "last refusal: descriptor table full" in str(caught.value), (
                 "deadline exhaustion must retain the preceding pressure refusal"
@@ -161,7 +164,9 @@ def test_busy_after_recording_never_retries(
             adapter.descriptors, "inheritable_descriptors", lambda **_kwargs: []
         )
         with pytest.raises(adapter.AdapterError, match="late refusal") as caught:
-            adapter.run(["rustc"], cacheable=False)
+            adapter.run(
+                adapter.Invocation(["rustc"], cacheable=False),
+            )
         assert not isinstance(caught.value, adapter.BusyError), (
             "a recorded refusal is final"
         )

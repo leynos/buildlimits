@@ -4,6 +4,7 @@ Scope detection, rustup lookup, connection waiting, exit reproduction and
 signal cancellation are covered in ``test_adapter.py``.
 """
 
+import os
 import socket
 import typing as typ
 
@@ -31,7 +32,7 @@ if typ.TYPE_CHECKING:
 
 
 class _ExecedError(Exception):
-    """Raised by a faked ``os.execvp`` instead of replacing the process."""
+    """Raised by a faked ``os.execvpe`` instead of replacing the process."""
 
 
 def _no_fds(exclude: cabc.Collection[int]) -> list[int]:
@@ -80,8 +81,7 @@ def test_run_returns_the_exit_code_after_queued_and_admitted(
     )
     supervisor_end.sendall(encode_reply(Finished(exit=Exit(code=17))))
     exit_code = adapter.run(
-        ["rustc", "--crate-name", "demo", "x.rs"],
-        cacheable=True,
+        adapter.Invocation(["rustc", "--crate-name", "demo", "x.rs"], cacheable=True),
         metrics=Metrics(metric_sink, source="adapter"),
         retry=RetryWait(clock=Clock(now=lambda: 1.0)),
     )
@@ -125,7 +125,9 @@ def test_run_fails_without_a_finished_reply(
         supervisor_end.sendall(frame)
     supervisor_end.shutdown(socket.SHUT_WR)
     with pytest.raises(error, match=message):
-        adapter.run(["rustc", "x.rs"], cacheable=True)
+        adapter.run(
+            adapter.Invocation(["rustc", "x.rs"], cacheable=True),
+        )
 
 
 # --- _main --------------------------------------------------------------------
@@ -144,11 +146,12 @@ def test_main_rejects_an_empty_argument_vector(
 
 
 def _admitted_with_exec(
-    monkeypatch: pytest.MonkeyPatch, execvp: cabc.Callable[[str, list[str]], None]
+    monkeypatch: pytest.MonkeyPatch,
+    execvpe: cabc.Callable[[str, list[str], dict[str, str]], None],
 ) -> None:
     """Run ``_main`` as if already admitted, with ``run`` forbidden."""
     monkeypatch.setattr(adapter, "in_admitted_scope", lambda env: True)
-    monkeypatch.setattr(adapter.os, "execvp", execvp)
+    monkeypatch.setattr(adapter.os, "execvpe", execvpe)
 
     def fail_run(*_a: object, **_kw: object) -> int:
         """Fail the test if the request/reply exchange is reached."""
@@ -163,22 +166,24 @@ def test_main_executes_directly_when_already_admitted(
 ) -> None:
     """Inside an admitted scope, the compiler runs directly, bypassing run()."""
 
-    def fake_execvp(cmd: str, args: list[str]) -> typ.NoReturn:
+    def fake_execvpe(cmd: str, args: list[str], env: dict[str, str]) -> typ.NoReturn:
         """Stand in for process replacement by raising a marker exception."""
-        raise _ExecedError((cmd, tuple(args)))
+        raise _ExecedError((cmd, tuple(args), env))
 
     monkeypatch.setattr(
         adapter_metrics,
         "Metrics",
         lambda *_args, **_kwargs: Metrics(metric_sink, source="adapter"),
     )
-    _admitted_with_exec(monkeypatch, fake_execvp)
+    _admitted_with_exec(monkeypatch, fake_execvpe)
     with pytest.raises(_ExecedError) as caught:
         adapter._main(["rustc", "a.rs"], cacheable=True)
     assert metric_sink.records == [], "nested exec emits no adapter summary"
-    assert caught.value.args[0] == ("rustc", ("rustc", "a.rs")), (
+    command, args, env = caught.value.args[0]
+    assert (command, args) == ("rustc", ("rustc", "a.rs")), (
         "the compiler is exec'd with its own argument vector"
     )
+    assert env == dict(os.environ), "an unrecognized compiler keeps the caller's env"
 
 
 def test_main_reports_a_compiler_that_cannot_be_executed(
@@ -186,7 +191,7 @@ def test_main_reports_a_compiler_that_cannot_be_executed(
 ) -> None:
     """A failed direct exec inside an admitted scope is an adapter failure."""
 
-    def missing(cmd: str, args: list[str]) -> typ.NoReturn:
+    def missing(cmd: str, args: list[str], env: dict[str, str]) -> typ.NoReturn:
         """Fail as exec does for a compiler that is not installed."""
         raise FileNotFoundError(2, "No such file or directory", cmd)
 

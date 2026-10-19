@@ -43,8 +43,7 @@ def test_busy_retries_count_only_fresh_request_attempts(
     retry = RetryWait(clock=Clock(sleep=lambda _seconds: None))
     assert (
         adapter.run(
-            ["rustc"],
-            cacheable=False,
+            adapter.Invocation(["rustc"], cacheable=False),
             retry=retry,
             metrics=Metrics(metric_sink, source="adapter"),
         )
@@ -82,8 +81,7 @@ def test_busy_expiry_does_not_count_a_request_that_never_started(
     retry = RetryWait(clock=Clock(now=lambda: now[0], sleep=sleep))
     with pytest.raises(adapter.AdapterError, match="retry deadline expired") as caught:
         adapter.run(
-            ["rustc"],
-            cacheable=False,
+            adapter.Invocation(["rustc"], cacheable=False),
             retry=retry,
             metrics=Metrics(metric_sink, source="adapter"),
         )

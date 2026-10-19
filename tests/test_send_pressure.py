@@ -98,9 +98,10 @@ def test_first_send_pressure_retries_without_transferring_or_duplicating_request
         monkeypatch.setattr(socket, "send_fds", send)
         script_adapter(monkeypatch, connections, capture)
         retry = immediate_retry()
-        assert adapter.run(["rustc"], cacheable=False, retry=retry) == 31, (
-            "only completion ends retry"
-        )
+        assert (
+            adapter.run(adapter.Invocation(["rustc"], cacheable=False), retry=retry)
+            == 31
+        ), "only completion ends retry"
         record = journal.recv(8192)
         assert b"BUILD_LIMITS_EVENT=adapter_finished\n" in record, (
             "the invocation emits one native summary after all retries"

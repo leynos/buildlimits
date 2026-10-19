@@ -1,0 +1,164 @@
+"""Keep a real toolchain compiler's own library directory on the loader path.
+
+``rustc-dev`` installs a second copy of ``librustc_driver`` in
+``<root>/lib/rustlib/<triple>/lib``. Cargo puts that directory on
+``LD_LIBRARY_PATH`` for build scripts, so the loader binds the copy there, and
+its ``RUNPATH`` of ``$ORIGIN/../lib`` then misses ``libLLVM``. The real
+``rustc`` exits with status 127 and no output, and ``rustversion`` reports
+``unexpected output from `rustc --version`: ""``.
+
+The rustup proxy is immune because it prepends ``<root>/lib`` before it runs
+the real compiler (``Toolchain::set_ldpath``, rustup 1.29.1 ``src/toolchain.rs``,
+through ``env_var::insert_path``). :func:`toolchain_environment` does the same
+for an adapter that runs a real ``rustc`` or ``rustdoc`` itself. It is
+defensive, not causal: the adapter does not set the poisoned value, and a
+build script that Cargo runs without this adapter is outside its reach. See
+``docs/adr-002-toolchain-library-path.md``.
+
+It differs from rustup in one deliberate way. rustup also sets the variable
+when it is unset; here an unset or empty variable stays as it is, because
+nothing can shadow ``RUNPATH`` then, and a request environment is otherwise
+forwarded verbatim.
+
+The helper only inspects the filesystem. It never runs the compiler, which is
+what fails under the poisoned path, and it never changes ``argv``.
+"""
+
+import os
+import typing as typ
+from pathlib import Path
+
+from buildlimits.groups import compiler_argv
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+LIBRARY_PATH_VARIABLE = "LD_LIBRARY_PATH"
+REAL_COMPILERS = frozenset({"rustc", "rustdoc"})
+DRIVER_PATTERN = "librustc_driver-*.so"
+
+
+def toolchain_environment(
+    argv: cabc.Sequence[str], env: cabc.Mapping[str, str], cwd: str
+) -> dict[str, str]:
+    """Return the environment to run a compiler in.
+
+    The result is ``env`` with ``<root>/lib`` prefixed to a non-empty
+    ``LD_LIBRARY_PATH`` when ``argv`` runs a real toolchain ``rustc`` or
+    ``rustdoc`` rooted at ``<root>`` and the path does not already name that
+    directory. Everything else is returned as an unchanged copy: the rustup
+    proxy, ``clippy-driver``, an unresolvable name, a layout without a
+    compiler driver, and an unset or empty variable.
+
+    Parameters
+    ----------
+    argv : Sequence[str]
+        The compiler's argument vector; a leading ``sccache`` layer is ignored.
+    env : Mapping[str, str]
+        The caller's environment, which supplies ``PATH`` and the loader path.
+    cwd : str
+        The directory that relative executables and path entries resolve in.
+
+    Returns
+    -------
+    dict[str, str]
+        A new mapping; ``env`` is never modified.
+
+    Examples
+    --------
+    >>> toolchain_environment(["rustc"], {"LD_LIBRARY_PATH": "/x"}, "/")
+    {'LD_LIBRARY_PATH': '/x'}
+    """
+    result = dict(env)
+    library_dir = toolchain_library_dir(argv, env, cwd)
+    current = env.get(LIBRARY_PATH_VARIABLE)
+    if library_dir is None or not current:
+        return result
+    if not _names(current, library_dir, cwd):
+        result[LIBRARY_PATH_VARIABLE] = f"{library_dir}:{current}"
+    return result
+
+
+def toolchain_library_dir(
+    argv: cabc.Sequence[str], env: cabc.Mapping[str, str], cwd: str
+) -> Path | None:
+    """Find the ``lib`` directory of the real toolchain that ``argv`` runs.
+
+    Parameters
+    ----------
+    argv : Sequence[str]
+        The compiler's argument vector.
+    env : Mapping[str, str]
+        The caller's environment; only ``PATH`` is read.
+    cwd : str
+        The directory that a relative executable resolves in.
+
+    Returns
+    -------
+    Path | None
+        ``<root>/lib`` for ``<root>/bin/rustc`` or ``<root>/bin/rustdoc`` with
+        a compiler driver beside it, otherwise ``None``. Symbolic links are
+        followed, so the rustup proxy, which resolves to ``rustup``, is
+        never recognized.
+    """
+    compiler = compiler_argv(tuple(argv))
+    found = _locate(compiler[0], env, cwd) if compiler else None
+    if found is None:
+        return None
+    binary = Path(found).resolve()
+    library_dir = binary.parent.parent / "lib"
+    if binary.name not in REAL_COMPILERS or binary.parent.name != "bin":
+        return None
+    if ":" in str(library_dir) or not _has_driver(library_dir):
+        return None
+    return library_dir
+
+
+def _locate(name: str, env: cabc.Mapping[str, str], cwd: str) -> str | None:
+    """Resolve an executable as ``execvpe`` would, in the caller's directory.
+
+    Returns
+    -------
+    str | None
+        The first executable file, or ``None`` when there is none.
+    """
+    if "/" in name:
+        return str(Path(cwd, name))
+    for directory in os.get_exec_path(dict(env)):
+        candidate = Path(cwd, directory, name)
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def _has_driver(library_dir: Path) -> bool:
+    """Report whether a directory holds the compiler driver.
+
+    Returns
+    -------
+    bool
+        ``True`` when a ``librustc_driver-*.so`` file is present.
+    """
+    try:
+        return any(library_dir.glob(DRIVER_PATTERN))
+    except OSError:
+        return False
+
+
+def _names(search_path: str, library_dir: Path, cwd: str) -> bool:
+    """Report whether a search path already lists a directory, by real path.
+
+    rustup skips its prepend when the directory appears anywhere in the
+    variable, because the loader finds ``libLLVM`` wherever it is listed.
+    Empty entries mean the working directory and are ignored.
+
+    Returns
+    -------
+    bool
+        ``True`` when any entry resolves to ``library_dir``.
+    """
+    return any(
+        Path(cwd, entry).resolve() == library_dir
+        for entry in search_path.split(":")
+        if entry
+    )

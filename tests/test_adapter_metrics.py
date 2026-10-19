@@ -146,8 +146,7 @@ def test_adapter_failure_summaries(
         error = KeyboardInterrupt if ending == "interrupted" else adapter.AdapterError
         with pytest.raises(error):
             adapter.run(
-                ["rustc"],
-                cacheable=True,
+                adapter.Invocation(["rustc"], cacheable=True),
                 metrics=Metrics(metric_sink, source="adapter"),
             )
     finally:
@@ -175,7 +174,8 @@ def test_connection_deadline_summary(
     monkeypatch.setattr(adapter, "connect", unavailable)
     with pytest.raises(adapter.AdapterError, match="existing unavailable diagnostic"):
         adapter.run(
-            ["rustc"], cacheable=True, metrics=Metrics(metric_sink, source="adapter")
+            adapter.Invocation(["rustc"], cacheable=True),
+            metrics=Metrics(metric_sink, source="adapter"),
         )
     record = metric_sink.records[0]
     assert record["BUILD_LIMITS_OUTCOME"] == "connect_timeout", "deadline classified"
@@ -200,9 +200,12 @@ def test_metric_failure_preserves_result_and_streams(
     server.sendall(encode_reply(Admitted("g", False, "existing fallback notice")))
     server.sendall(encode_reply(Finished(Exit(code=17))))
     try:
-        assert adapter.run(["rustc"], cacheable=True, metrics=BrokenMetrics()) == 17, (
-            "compiler exit status survives metric failure"
-        )
+        assert (
+            adapter.run(
+                adapter.Invocation(["rustc"], cacheable=True), metrics=BrokenMetrics()
+            )
+            == 17
+        ), "compiler exit status survives metric failure"
     finally:
         client.close()
         server.close()
@@ -270,8 +273,7 @@ def test_heartbeat_output_is_unchanged(
     try:
         assert (
             adapter.run(
-                ["rustc"],
-                cacheable=True,
+                adapter.Invocation(["rustc"], cacheable=True),
                 retry=RetryWait(clock=Clock(now=lambda: now[0])),
                 metrics=Metrics(metric_sink, source="adapter"),
             )
@@ -315,8 +317,7 @@ def test_malformed_timeout_falls_back_to_the_default(
     monkeypatch.setattr(adapter, "AdmissionAttempt", capture)
     with pytest.raises(_DeadlineSeenError):
         adapter.run(
-            ["rustc"],
-            cacheable=True,
+            adapter.Invocation(["rustc"], cacheable=True),
             retry=RetryWait(clock=Clock(now=lambda: 0.0)),
             metrics=Metrics(metric_sink, source="adapter"),
         )
