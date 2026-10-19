@@ -111,7 +111,7 @@ rustup's and sccache's behaviour is as read from the cited sources.
   error; round 3 on 89505f1 passed all nine gates (`make test` 1738 passed, 22
   skipped; `make test-systemd-user` 22 passed).
 - [x] (2026-10-19) Pull request 20 opened as a draft; completeness assessment
-  found and cleared one defect (ba05ac0).
+  found and cleared one defect.
 - [ ] Ready for review, formal review loop, mergeable.
 
 ## Surprises and discoveries
