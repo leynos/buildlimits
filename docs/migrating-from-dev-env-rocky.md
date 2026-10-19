@@ -70,8 +70,12 @@ These are unchanged:
 
 5. Verify the result, as described in [Verification](#verification).
 
-No change to `supervisor.toml`, the Cargo configuration or the unit files is
-needed for this step.
+No change to `supervisor.toml` or the Cargo configuration is needed for this
+step. The supervisor unit should also carry `KillMode=mixed`, which the role
+must render; see
+[Units the restart relies on](users-guide.md#units-the-restart-relies-on).
+Until it does, a restart that lands while a build is being placed is retried
+rather than lost, but the unit still signals the supervisor's helper commands.
 
 ## Restart safely
 

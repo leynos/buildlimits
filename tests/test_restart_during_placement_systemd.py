@@ -94,9 +94,6 @@ def restart_during_placement(
     )
 
 
-@pytest.mark.xfail(
-    strict=True, reason="red: the unit contract lacks KillMode=mixed (next commit)"
-)
 def test_a_restart_during_placement_signals_only_the_supervisor(
     world: RestartWorld, tmp_path: Path
 ) -> None:

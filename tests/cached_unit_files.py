@@ -59,7 +59,9 @@ def supervisor_unit_text(
     The directives the graceful restart relies on are the role's own and must
     not be varied here: ``Type=notify`` so ``systemctl restart`` returns when
     the new supervisor is ready, ``TimeoutStopSec=infinity`` so that systemd
-    never kills a supervisor that is waiting for running groups, and
+    never kills a supervisor that is waiting for running groups,
+    ``KillMode=mixed`` so that a stop signals only the supervisor and never the
+    ``busctl`` or ``systemctl`` helper it is running at that moment, and
     ``Restart=always`` with ``RestartPreventExitStatus=2`` so only a refusal that
     needs an operator stays down. Only the timeouts that bound start-up are
     shortened for the fixture.
@@ -72,7 +74,7 @@ def supervisor_unit_text(
     return (
         f"[Unit]\nDescription=Isolated admission supervisor\n"
         f"Wants={sccache_unit}\nBefore={sccache_unit}\n"
-        f"[Service]\nType=notify\nNotifyAccess=main\nSlice={parent_slice}\n"
+        f"[Service]\nKillMode=mixed\nType=notify\nNotifyAccess=main\nSlice={parent_slice}\n"
         f"Restart=always\nRestartPreventExitStatus=2\nRestartSec=1\n"
         f"TimeoutStartSec=30\nTimeoutStopSec=infinity\n"
         f"ExecStart={exec_start}\n{limits}"

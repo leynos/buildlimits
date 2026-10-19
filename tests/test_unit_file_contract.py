@@ -89,6 +89,10 @@ def test_the_guide_documents_a_service_block_and_a_barrier_block() -> None:
     assert service["Service"]["TimeoutStopSec"] == ["infinity"], (
         "the guide requires that systemd waits as long as running groups take"
     )
+    assert service["Service"]["KillMode"] == ["mixed"], (
+        "the guide requires that a stop signals only the supervisor, so a helper "
+        "process of a scope placement is not killed mid-call"
+    )
     assert set(barrier) == {"Unit"}, "the second block is the cache's barrier"
 
 
@@ -109,6 +113,14 @@ def test_the_documented_barrier_is_the_fixture_caches_condition(cache: Unit) -> 
     expected = [value.replace("%t", str(RUNTIME)) for value in documented]
     assert cache["Unit"]["ConditionPathExists"] == expected, (
         "the guide's barrier path is the one the fixture cache honours"
+    )
+
+
+def test_the_cache_unit_keeps_the_default_kill_mode(cache: Unit) -> None:
+    """The cache's stop is the recovery's stop, which wants its group emptied."""
+    assert "KillMode" not in cache.get("Service", {}), (
+        "control-group signals the server and its detached compile children "
+        "together, which is what the stopped-and-empty proof relies on"
     )
 
 

@@ -336,8 +336,11 @@ uv tool install --python 3.14 --reinstall git+https://github.com/leynos/buildlim
 systemctl --user restart buildlimits-supervisor.service
 ```
 
-There is no need to wait for an idle reading first, and the unit files need no
-change. The restart works as follows.
+There is no need to wait for an idle reading first. The supervisor unit must
+carry `KillMode=mixed`, described under
+[Units the restart relies on](#units-the-restart-relies-on); without it a
+restart that lands while a build is being placed can lose that build. The
+restart works as follows.
 
 1. `systemctl` sends `SIGTERM`. The supervisor stops launching and requesting
    tokens but terminates nothing: every running compiler group runs to its own
@@ -408,18 +411,52 @@ pool, and the next start-up terminates any surviving scope.
 
 ### Units the restart relies on
 
-The restart needs no change to the provisioned units, but it relies on these
-directives in `buildlimits-supervisor.service`. They are the ones the role
-already ships, and a role that changes them changes the restart's safety.
+The restart relies on these directives in `buildlimits-supervisor.service`. All
+but `KillMode=mixed` are the ones the role has always shipped; a role that
+changes any of them changes the restart's safety.
 
 ```ini
 [Service]
+KillMode=mixed
 Type=notify
 NotifyAccess=main
 Restart=always
 RestartPreventExitStatus=2
 TimeoutStopSec=infinity
 ```
+
+`KillMode=mixed` makes a stop send `SIGTERM` to the supervisor's main process
+only. The default, `KillMode=control-group`, sends it to every process in the
+unit's control group, including the `busctl` that the supervisor is running at
+that moment to place a newly admitted compiler in its transient scope. A
+restart that landed in that window killed the `busctl`, and the build was lost
+with the journal line `cannot create buildlimits-<pid>-<group>.scope:` and
+nothing after the colon. With `mixed`, systemd sends `SIGKILL` to whatever is
+left in the control group only after the supervisor has exited, so a stray
+process can no longer hold a stop open under `TimeoutStopSec=infinity`. Running
+compilers are unaffected either way: they live in their own scopes under the
+compilers slice, outside the supervisor's control group.
+`buildlimits-sccache.service` keeps the default kill mode, because its stop is
+the recovery transaction's stop and must leave its control group empty.
+
+A host provisioned before this directive existed still runs the default. To
+check, and after the role has rewritten the unit and
+`systemctl --user daemon-reload` has run, read the loaded value:
+
+```bash
+systemctl --user show buildlimits-supervisor.service -p KillMode
+```
+
+```plaintext
+KillMode=mixed
+```
+
+Until it reads `mixed`, a restart that lands during a placement is still
+survivable, because the supervisor refuses such a request as `restarting` and
+its adapter retries it, but a stop also signals the supervisor's other helper
+commands (cache probes and stop jobs), which the supervisor then has to retry.
+The immediate stop is unaffected by the kill mode: `systemctl kill` signals the
+whole control group unless `--kill-whom=main` is given.
 
 `Type=notify` makes `systemctl restart` return when the new supervisor is ready.
 `TimeoutStopSec=infinity` stops systemd from killing a supervisor that is
