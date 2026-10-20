@@ -448,10 +448,25 @@ experiment above); Python signal handlers survive `fork`.
   [6291733244](https://github.com/leynos/buildlimits/pull/21#issuecomment-6291733244)
   and bounded proof
   [6291772272](https://github.com/leynos/buildlimits/pull/21#issuecomment-6291772272).
-- [ ] Renew both assessments for the head produced by this plan update. Then
-  await its formal review, reconcile every finding and pre-merge row, and merge
-  PR 21. The managed resume request `fe8242cc` was queued for an earlier head;
-  verify whether it covers this candidate before relying on it.
+- [x] Published review-fix head `2a8f45f` passed all eight sequential local
+  gates. Unit tests reported 1,762 passed and 25 skipped; systemd-user tests
+  reported 24 passed, including both restart-during-placement cases and nested
+  Cargo; audit found no known vulnerabilities. The audit's `certifi` finding
+  (`GHSA-6q48-6c7w-9gw2`) was fixed by locking `certifi` to `2026.10.19`.
+  `buildlimits 0.1.0` remains unaudited because it is not on PyPI. Logs use the
+  `-57.out` suffix under `/tmp` for session
+  `ecd20a52-58e4-42d8-8324-6e18a28122f7`.
+- [x] Hosted Actions on `2a8f45f` passed: CI
+  [39488539175](https://github.com/leynos/buildlimits/actions/runs/39488539175)
+  and Act Validation
+  [39488539243](https://github.com/leynos/buildlimits/actions/runs/39488539243).
+- [x] Completeness assessment on `2a8f45f` found no remaining in-scope
+  correctness defect or unmet requirement. It requested that this exact-head
+  gate evidence be added before closing the plan:
+  [6300330753](https://github.com/leynos/buildlimits/pull/21#issuecomment-6300330753).
+- [ ] Renew completeness, bounded-proof, and Observability assessments for the
+  next published head; then await its formal review, reconcile every finding
+  and pre-merge row, and merge PR 21.
 
 ## Surprises & discoveries
 
