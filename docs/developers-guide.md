@@ -417,10 +417,13 @@ live. OpenTelemetry tracing adds one `scope_placement` span per supervisor
 placement and an `adapter_restart_retry` span only when admission encounters a
 restart. Both carry elapsed milliseconds, a bounded outcome and failure
 category, the known stop mode, and a capped retry count. The adapter imports
-the SDK only after its first restart. A small exporter writes fixed-vocabulary
-span fields through the same non-blocking journal socket; it drops telemetry on
-failure and never records request data, paths, credentials or raw errors.
-Generated trace and span identifiers are fixed-width hexadecimal values. See
+the SDK only after its first restart. The runtime dependency
+`opentelemetry-sdk>=1.45.1,<2` is declared in `pyproject.toml` and installed
+with the project by `make build` (`uv sync --group dev`).
+`tracing_sdk_export.JournalSpanExporter` writes fixed-vocabulary span fields
+through the same non-blocking journal socket; it drops telemetry on failure and
+never records request data, paths, credentials or raw errors. Generated trace
+and span identifiers are fixed-width hexadecimal values. See
 [ADR 003](adr-003-bounded-restart-tracing.md) for the exporter and schema
 decision. Within `tracing_sdk_export`, the module-private `_TraceSinkPort`
 requires only `emit_trace(record)`, which the production `JournalSink`

@@ -482,9 +482,25 @@ experiment above); Python signal handlers survive `fork`.
   PyPI). The nested Cargo case queued on the shared package-cache lock before
   passing; build admission remained healthy. Logs use the `-60.out` suffix under
   `/tmp` for session `ecd20a52-58e4-42d8-8324-6e18a28122f7`.
-- [ ] Renew completeness, bounded-proof, and Observability assessments for the
-  next published head; then await its formal review, reconcile every finding
-  and pre-merge row, and merge PR 21.
+- [x] On `d792556`, CodeRabbit accepted completeness
+  [6301397897](https://github.com/leynos/buildlimits/pull/21#issuecomment-6301397897),
+  accepted the bounded property evidence
+  [6301437521](https://github.com/leynos/buildlimits/pull/21#issuecomment-6301437521),
+  and marked Observability satisfied
+  [6301467887](https://github.com/leynos/buildlimits/pull/21#issuecomment-6301467887).
+  The hosted CI and Act Validation runs also passed on that head:
+  [39495788642](https://github.com/leynos/buildlimits/actions/runs/39495788642)
+  and
+  [39495788631](https://github.com/leynos/buildlimits/actions/runs/39495788631).
+- [x] The walkthrough reconciliation
+  [6301514837](https://github.com/leynos/buildlimits/pull/21#issuecomment-6301514837)
+  accepts Unit Architecture as Passed and narrows Developer Documentation to
+  an explicit runtime-dependency sentence. Add that sentence and pass
+  `make check-fmt`, `make markdownlint`, and `make nixie` on the docs diff.
+- [ ] Commit and publish the docs follow-up, then ask CodeRabbit to refresh the
+  Developer Documentation row against the new head.
+- [ ] Await current-head formal review, reconcile any remaining finding or
+  pre-merge row, and merge PR 21.
 
 ## Surprises & discoveries
 
