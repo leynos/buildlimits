@@ -104,6 +104,10 @@ def test_a_restart_during_placement_signals_only_the_supervisor(
     assert outcome.restart_status == 0, "the restart command succeeded"
     assert len(outcome.marker_lines) == 1, "the compiler ran exactly once"
     assert "cannot create" not in outcome.journal, outcome.journal
+    assert (
+        "build-limits trace operation=scope_placement outcome=admitted "
+        "failure_category=none stop_mode=graceful"
+    ) in outcome.journal, "the completed placement span records the graceful stop"
 
 
 def test_a_control_group_stop_during_placement_is_retried_not_lost(
@@ -116,3 +120,7 @@ def test_a_control_group_stop_during_placement_is_retried_not_lost(
     assert outcome.restart_status == 0, "the restart command succeeded"
     assert len(outcome.marker_lines) == 1, "the compiler ran once, after the retry"
     assert "the supervisor is restarting" in outcome.stderr, outcome.stderr
+    assert (
+        "build-limits trace operation=scope_placement outcome=restarting "
+        "failure_category=scope_placement stop_mode=graceful"
+    ) in outcome.journal, "the broken legacy placement is classified for retry"

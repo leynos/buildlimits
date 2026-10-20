@@ -5,9 +5,10 @@ description = "Machine-wide admission for concurrent Cargo compilation through g
 readme = "README.md"
 requires-python = ">=3.14"
 license = { text = "ISC" }
-# The compiler adapters run once per rustc invocation, so the package has no
-# runtime dependencies: every import is from the standard library.
-dependencies = []
+# The supervisor traces placements; adapters load the SDK only after a restart.
+dependencies = [
+    "opentelemetry-sdk>=1.45.1",
+]
 
 [project.scripts]
 build-limits-rustc = "buildlimits.adapter:rustc_main"

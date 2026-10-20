@@ -1,6 +1,7 @@
 """Feed OS events to Admission on one selector thread; pool reads use another."""
 
 import contextlib
+import dataclasses
 import errno
 import selectors
 import time
@@ -15,6 +16,7 @@ from buildlimits import (
     startup,
     status,
     supervisor_observability,
+    supervisor_placement,
     supervisor_polling,
     supervisor_shutdown,
     supervisor_signals,
@@ -23,10 +25,9 @@ from buildlimits.admission import Admission, GroupState
 from buildlimits.drain_loop import MAX_INTERNAL_FAILURES as MAX_INTERNAL_FAILURES
 from buildlimits.drain_loop import DrainLoop, LoopEffects
 from buildlimits.groups import Groups
-from buildlimits.journal import admitted_line, log
-from buildlimits.metrics import Metrics, gauge_fields
+from buildlimits.journal import log
+from buildlimits.metrics import Metrics, MetricsPort, gauge_fields
 from buildlimits.pool import PoolFailure, Token, TokenPool
-from buildlimits.protocol import Admitted
 from buildlimits.requesters import Requests, listen
 from buildlimits.sccache import ManagedSccache
 from buildlimits.server_watch import ServerWatch
@@ -40,10 +41,24 @@ if typ.TYPE_CHECKING:
     from pathlib import PurePosixPath
 
     from buildlimits.admission import Effect
-    from buildlimits.metrics import MetricsPort
-
-
+    from buildlimits.tracing import JournalTracer
 TICK_SECONDS = 0.1
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SupervisorTelemetry:
+    """Observation ports shared by one supervisor instance.
+
+    Attributes
+    ----------
+    metrics : MetricsPort | None
+        Event metrics; absent selects the no-op-safe default transport.
+    tracer : JournalTracer | None
+        Operation spans; absent disables tracing for embedded use and tests.
+    """
+
+    metrics: MetricsPort | None = None
+    tracer: JournalTracer | None = None
 
 
 class Supervisor:
@@ -57,8 +72,8 @@ class Supervisor:
         The user manager port.
     clock : Callable[[], float] | Clock
         Monotonic time; a Clock also supplies control-fault retry sleep.
-    metrics : MetricsPort | None
-        Failure-isolated emitter; defaults to a no-op transport.
+    telemetry : SupervisorTelemetry | None
+        Failure-isolated metrics and operation spans; defaults to no tracing.
     """
 
     def __init__(
@@ -67,7 +82,7 @@ class Supervisor:
         manager: UserManager | None = None,
         clock: cabc.Callable[[], float] | Clock = time.monotonic,
         *,
-        metrics: MetricsPort | None = None,
+        telemetry: SupervisorTelemetry | None = None,
     ) -> None:
         """Assemble the supervisor; :meth:`start` does the work of starting."""
         self.settings = settings
@@ -75,7 +90,11 @@ class Supervisor:
         timing = as_clock(clock)
         self.timing = timing
         self.clock = timing.now
-        self.metrics = metrics if metrics is not None else Metrics()
+        observations = telemetry if telemetry is not None else SupervisorTelemetry()
+        self.metrics = (
+            observations.metrics if observations.metrics is not None else Metrics()
+        )
+        self.tracer = observations.tracer
 
         self.admission = Admission(cached=False, capacity=settings.slots)
         self.selector = selectors.DefaultSelector()
@@ -283,21 +302,16 @@ class Supervisor:
                     self._metric("pool_failure", operation="read")
                     self._unhealthy(reason)
 
-    def _exec_outcome(self, group_id: str) -> None:
-        """Record why a released child could not execute its compiler."""
-        outcome = self.groups.exec_outcome(group_id)
-        if outcome is None:
-            return
-        request_id, message = outcome
-        entry = self.requests.pending.get(request_id)
-        if entry is not None:
-            entry.exec_error = message
-
     def _watch_signals(self) -> None:
         """Wake the event loop on SIGCHLD through a self-pipe."""
         supervisor_signals.watch_signals(self)
 
     _reap_leaders = supervisor_signals.reap_leaders
+    _exec_outcome = supervisor_placement.exec_outcome
+
+    def _launch(self, request_id: int, group_id: str, *, cached: bool) -> None:
+        """Delegate scope placement to its focused workflow module."""
+        supervisor_placement.launch(self, request_id, group_id, cached=cached)
 
     # The public stop API and the loop's shutdown seam are bound here rather
     # than defined, so the policy they share lives in ``supervisor_shutdown``
@@ -362,28 +376,6 @@ class Supervisor:
         except OSError as error:
             self._metric("pool_failure", operation="return")
             self._unhealthy(f"returning a token failed: {error}")
-
-    def _launch(self, request_id: int, group_id: str, *, cached: bool) -> None:
-        """Start an admitted request's compiler inside a new scope."""
-        entry = self.requests.pending[request_id]
-        running = self.groups.place(entry, group_id, cached=cached)
-        if running is None:
-            supervisor_shutdown.fail_placement(self, entry, group_id)
-            return
-        # The requester learns of admission before the compiler can write.
-        notice = self.groups.cache_notice(entry, cached=cached)
-        effect_dispatch.record_admitted(self, entry, cached=cached)
-        self.requests.notify(request_id, Admitted(group_id, cached, notice))
-        if entry.conn is None:
-            self.groups.abandon_held(running)
-            entry.exec_error = running.exec_error
-            self._apply(self.admission.launch_failed(group_id))
-            return
-        if self.groups.release(running) is False:
-            entry.exec_error = running.exec_error
-            self._apply(self.admission.launch_failed(group_id))
-            return
-        log(admitted_line(entry, cached=cached))
 
     def _metric(self, event: str, **fields: object) -> None:
         """Attach the current gauge snapshot to one dispatch observation."""

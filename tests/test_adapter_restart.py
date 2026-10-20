@@ -6,21 +6,13 @@ the compiler may have run, and losing the supervisor must still fail the build.
 """
 
 import contextlib
-import dataclasses as dc
 import socket
 import typing as typ
 
 import pytest
 from adapter_doubles import immediate_retry, script_adapter
-from cache_unit_fake import FakeClock
 
 from buildlimits import adapter
-from buildlimits.adapter_invocation import (
-    AdmissionAttempt,
-    QueuedRestartError,
-    retry_request,
-)
-from buildlimits.heartbeat import Heartbeat
 from buildlimits.metrics import Metrics
 from buildlimits.protocol import (
     Admitted,
@@ -30,14 +22,9 @@ from buildlimits.protocol import (
     Refused,
     encode_reply,
 )
-from buildlimits.timing import RetryWait
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
     from conftest import RecordingSink
-
-    from buildlimits.adapter_metrics import AdapterMetrics
 
 
 RESTARTING = Refused("restarting", "the supervisor refused: restarting")
@@ -46,31 +33,6 @@ ADMITTED_AND_DONE = [
     encode_reply(Admitted("g1", False)),
     encode_reply(Finished(DONE)),
 ]
-
-
-def _restart_error(*, queued: bool) -> adapter.RestartingError:
-    """Build the restart that a supervisor's reply or loss would raise.
-
-    Returns
-    -------
-    RestartingError
-        Marked queued when the request had been acknowledged first.
-    """
-    return (QueuedRestartError if queued else adapter.RestartingError)("restarting")
-
-
-class _Summary:
-    """Stands in for the metric summary, which only records an outcome."""
-
-    outcome = "supervisor_lost"
-
-    def __init__(self) -> None:
-        """Start with no restart retried."""
-        self.restart_retries = 0
-
-    def retry_restart(self) -> None:
-        """Count one retry after a restart, as the real summary does."""
-        self.restart_retries += 1
 
 
 def _script(
@@ -167,69 +129,6 @@ def test_losing_the_supervisor_after_admission_still_fails_the_build(
             _run()
     assert not isinstance(lost.value, adapter.RestartingError), (
         "an admitted request is not a restart"
-    )
-
-
-@dc.dataclass(slots=True)
-class _Rig:
-    """A hand-driven clock around one ``retry_request`` call."""
-
-    first_deadline: float
-    clock: FakeClock = dc.field(default_factory=FakeClock)
-    deadlines: list[float] = dc.field(default_factory=list)
-
-    def run(self, request: cabc.Callable[[], Exit]) -> Exit:
-        """Retry ``request`` on this clock, whose sleep only advances it.
-
-        Returns
-        -------
-        Exit
-            The request's eventual result.
-        """
-        attempt = AdmissionAttempt(
-            self.first_deadline, typ.cast("AdapterMetrics", _Summary())
-        )
-        timing = self.clock.timing()
-        retry = RetryWait(clock=timing, jitter=lambda _low, high: high)
-        heartbeat = Heartbeat("crate", 600.0, clock=timing.now)
-
-        def observed() -> Exit:
-            """Record the deadline each attempt starts under, then delegate."""
-            self.deadlines.append(attempt.deadline)
-            return request()
-
-        return retry_request(observed, heartbeat, attempt, retry)
-
-
-def test_a_wait_in_the_queue_does_not_spend_the_restart_window() -> None:
-    """After a long queued wait, the next supervisor still gets a full window."""
-    rig = _Rig(first_deadline=300.0)
-
-    def request() -> Exit:
-        """Queue for ten minutes, be told to retry, then finish."""
-        if len(rig.deadlines) == 1:
-            rig.clock.advance(600.0)
-            raise _restart_error(queued=True)
-        return DONE
-
-    assert rig.run(request) == DONE, (
-        "the build finishes once the next supervisor admits it"
-    )
-    assert rig.deadlines[1] > 600.0 + 290.0, "the window restarted after the wait"
-
-
-def test_a_supervisor_that_only_refuses_stays_bounded_by_the_first_deadline() -> None:
-    """Unqueued restarting refusals never extend the original deadline."""
-    rig = _Rig(first_deadline=5.0)
-
-    def request() -> Exit:
-        """Refuse as restarting without ever having queued the request."""
-        raise _restart_error(queued=False)
-
-    with pytest.raises(adapter.RestartingError):
-        rig.run(request)
-    assert 5.0 <= rig.clock.time < 10.0, (
-        "the loop ran to the deadline and stopped there"
     )
 
 

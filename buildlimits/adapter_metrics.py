@@ -42,6 +42,7 @@ class AdapterMetrics:
         self._sink = (
             JournalSink(identifier="build-limits-adapter") if metrics is None else None
         )
+        self.trace_sink = self._sink
         self.metrics = (
             metrics
             if metrics is not None

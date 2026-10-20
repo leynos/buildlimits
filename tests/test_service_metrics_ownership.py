@@ -11,12 +11,10 @@ from descriptor_helpers import open_fds
 
 from buildlimits import cgroups, service
 from buildlimits.journal_native import MAX_DATAGRAM_BYTES, JournalSink
-from buildlimits.supervisor import Supervisor
+from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
-
-    from buildlimits.metrics import Metrics
 
 
 def _controlled_supervisor(phase: str, error: OSError) -> mock.Mock:
@@ -55,7 +53,7 @@ def test_service_native_metrics_ownership_on_every_exit(
         error = OSError("controlled service failure")
         supervisor = _controlled_supervisor(phase, error)
 
-        def factory(_settings: object, *, metrics: Metrics) -> mock.Mock:
+        def factory(_settings: object, *, telemetry: SupervisorTelemetry) -> mock.Mock:
             """Allocate a real metric socket before the controlled supervisor result.
 
             Returns
@@ -67,7 +65,10 @@ def test_service_native_metrics_ownership_on_every_exit(
             -----
             The constructor-failure case raises the supplied controlled error.
             """
-            metrics.emit("supervisor_started")
+            if telemetry.metrics is None:
+                msg = "service must provide metrics to the supervisor"
+                raise AssertionError(msg)
+            telemetry.metrics.emit("supervisor_started")
             if phase == "construct":
                 raise error
             return supervisor

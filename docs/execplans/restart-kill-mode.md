@@ -119,6 +119,19 @@ Limit: only placement failure (before `Admitted`) is converted. A failed
 release after `Admitted` keeps its behaviour, because the adapter treats
 anything after `Admitted` as possibly run.
 
+### Review follow-up: bounded tracing
+
+The configured PR observability check requires spans at process boundaries. Add
+OpenTelemetry spans for supervisor scope placement and adapter admission retry.
+The adapter initializes its SDK only after the first restart; the supervisor
+records placement spans through the same non-blocking journal transport as
+metrics. The exporter allows only fixed operation, outcome, failure-category
+and stop-mode vocabularies, a capped retry count, bounded elapsed milliseconds
+and fixed-width generated trace identifiers. It excludes compiler payloads,
+paths, credentials and raw exceptions, and drops telemetry failures without
+changing admission or compiler results. The real-systemd scenarios assert the
+mixed-mode placement and the legacy `control-group` restart-refusal spans.
+
 ## Helper subprocess inventory
 
 Under `KillMode=control-group`, one `SIGTERM` reaches every process alive in
@@ -280,6 +293,117 @@ experiment above); Python signal handlers survive `fork`.
   logs use the `-14.out` suffix under `/tmp`.
 - [x] The mutation control above rejected the forced `launch-failed` result at
   the named graceful witness.
+- [x] Add bounded OpenTelemetry spans at scope placement and adapter restart
+  retry, with exporter failure isolation and tests for both systemd kill modes.
+- [x] Refactor the tracing follow-up after its first lint run: split the retry
+  state and scope-placement work into focused modules, group supervisor
+  observation ports, classify trace failures without retaining exception data,
+  and complete the affected docstrings.
+- [ ] Run the sequential candidate gates after the latest lint remediation.
+  An earlier tracing candidate's `make check-fmt` passed; `make lint` stopped
+  on 29 findings
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-16.out`).
+  The next candidate passed `make check-fmt`, then lint stopped on 11 findings
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-17.out`).
+  After fixing those findings, candidate 18 passed `make check-fmt` but lint
+  reported two issues in `retry_request`: branch complexity and a named re-raise
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-18.out`).
+  The loop now continues explicitly after retryable failures and uses a bare
+  re-raise. Candidate 19 passed `make check-fmt`, then the 400-line file cap
+  flagged `tracing.py` (403 lines) and `test_adapter_restart.py` (407 lines)
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-19.out`).
+  The journal exporter/schema and retry-tracing tests now live in focused
+  modules. Candidate 20 passed `make check-fmt`; lint reported type-check
+  suppressions, redundant future annotations, test assertion clarity findings,
+  and a dispatch style finding
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-20.out`).
+  The tracing adapter now uses explicit SDK protocols, tests assert each
+  bounded field with a reason, and the retry test double updates its state
+  directly. Candidate 21 passed `make check-fmt`; lint found two
+  `collections.abc` imports that must be hidden from runtime imports
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-21.out`).
+  Candidate 22 passed `make check-fmt`, then lint rejected `typing.Mapping` and
+  `typing.Sequence` as banned generics
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-22.out`).
+  Candidate 23 restores the project-standard `collections.abc` aliases inside
+  `TYPE_CHECKING` blocks. Ruff and Pylint passed, then Skylos reported callback
+  methods and collaborator calls that the repository's graph does not resolve,
+  plus the unused `_placement_stop_mode` alias
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-23.out`).
+  The retry and placement transitions now live in their owning modules, and
+  the unused alias is removed. Candidate 24 reduced the strict Skylos findings
+  to four cross-module method calls (`/tmp/skylos-pr21-candidate24.out`).
+  Candidate 25 makes those calls explicit on the concrete internal classes
+  while retaining the journal transport's `_emit` override seam; the strict
+  Skylos 4.33.2 scan passes (`/tmp/skylos-pr21-candidate25.out`). The full
+  candidate's `make check-fmt` passed, while lint found a missing return
+  description and two imports used only as types
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-24.out`).
+  Candidate 26 records those return semantics and moves the imports into
+  `TYPE_CHECKING`. Its check-format gate passed; Vulture then reported the test
+  sinks' `_emit` overrides as unused
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-25.out`).
+  Candidate 27 records trace fields through the same real Unix datagram
+  transport used by the service and uses a regular file as an invalid socket
+  path for failure coverage, removing unreferenced test overrides without
+  suppressions. Its `make check-fmt` passed; lint then found an escaped newline
+  in the helper's doctest and a blank line after one test docstring
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-26.out`).
+  Candidate 28 marks the doctest as a raw string and removes the extra blank
+  line. Its check-format gate passed, then lint stopped at seven duplication
+  families
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-27.out`).
+  Candidate 29 shares the two metrics-test supervisor fixtures, consolidates
+  repeated retry-test requests and retry-wait cleanup, and factors
+  tracing-local identifier validation and failure-count increments. It also
+  asserts the completed trace for an immediate-stop placement. Formatting and
+  the full sequential gates remain pending. The first check-format pass
+  succeeded; lint found stale interrupt exception documentation, missing
+  return/yield descriptions, a complex identifier predicate, and fixture
+  imports that Ruff treats as redefinitions
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-28.out`).
+  Candidate 30 documents interruption propagation at the shared cleanup
+  boundary, spells out return/yield contracts, uses an early-return identifier
+  validator, and moves the observing supervisor fixture into `conftest.py`. The
+  candidate has been formatted; all gates must restart at check-format. Its
+  check-format gate passed, then lint found a trivial span attribute wrapper
+  and requested structural pattern matching for identifier validation
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-29.out`).
+  Candidate 31 moves the bounded update logic into the span's `set` method and
+  handles booleans before integer identifiers in a `match`. Its check-format
+  gate passed and lint cleared those findings, then duplication detected two
+  families: repeated type-only import scaffolding around standard library
+  annotations, and matching placement-failure bookkeeping
+  (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-30.out`).
+  Candidate 32 keeps test annotation imports available at runtime, as allowed
+  by the test lint policy, and consolidates shared failed-placement handling.
+  Its check-format and lint gates passed; typecheck then caught a stale test
+  import left behind when `retry_request` moved to `adapter_retry`
+  (`/tmp/typecheck-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-31.out`).
+  Candidate 33 imports the retry API from its owning module. All gates must
+  restart at check-format. Candidate 33 passed check-format, lint, typecheck,
+  Markdown and Mermaid validation; the unit suite found 13 failures in the
+  journal doctest/message, telemetry-aware service factories, and the
+  supervisor effects group double
+  (`/tmp/test-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-32.out`).
+  Candidate 34 corrects the journal example and message contract, updates the
+  service doubles for `SupervisorTelemetry`, and gives the groups double the
+  configuration required by its real `cache_notice` path. All gates must
+  restart at check-format. The first five gates passed; the unit suite found
+  one success-notification expectation that now observes a fallback notice from
+  the fake's default `sccache` mode
+  (`/tmp/test-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-33.out`).
+  Candidate 35 configures that test's fake for direct mode, the scenario it
+  intends to exercise. Its complete gate sequence passed on `4a4bbe4`:
+  check-format, lint, typecheck, Markdown lint, Mermaid validation, unit tests
+  (1757 passed, 25 skipped), systemd-user tests (24 passed), and audit (no
+  known vulnerabilities; the local `buildlimits` package was not found on PyPI
+  and could not be audited). The systemd-user gate took 876.88 seconds while
+  its nested Cargo work queued normally behind healthy shared compile
+  admission. Logs use the `-34.out` suffix under `/tmp` for session
+  `ecd20a52-58e4-42d8-8324-6e18a28122f7`.
+- [ ] Renew the assessments for the reviewed head, reconcile the configured
+  Observability row, and merge PR 21.
 - [x] Hosted Actions runs on `dee4ed9` passed: Act Validation
   [39428388369](https://github.com/leynos/buildlimits/actions/runs/39428388369)
   and CI
@@ -290,8 +414,8 @@ experiment above); Python signal handlers survive `fork`.
   [6291772272](https://github.com/leynos/buildlimits/pull/21#issuecomment-6291772272).
 - [ ] Renew both assessments for the head produced by this plan update. Then
   await its formal review, reconcile every finding and pre-merge row, and merge
-  PR 21. The managed resume request `fe8242cc` is queued; verify the head it
-  actually covers.
+  PR 21. The managed resume request `fe8242cc` was queued for an earlier head;
+  verify whether it covers this candidate before relying on it.
 
 ## Surprises & discoveries
 
@@ -317,9 +441,10 @@ experiment above); Python signal handlers survive `fork`.
 ## Outcomes & retrospective
 
 Delivered: `KillMode=mixed` in the unit contract (fixture, contract test,
-guide, ADR 001 amendment, migration note), and the supervisor now refuses a
+guide, ADR 001 amendment, migration note), the supervisor now refuses a
 placement that fails during a graceful stop, requested or begun, as
-`restarting`.
+`restarting`, and bounded restart and placement spans record their outcomes
+through the journal.
 
 Notes for the reviewer:
 
@@ -335,8 +460,7 @@ Notes for the reviewer:
 
 ## Revision note
 
-2026-10-20: Record the `dee4ed9` sequential gate and hosted CI results, the
-clear candidate-specific completeness and bounded proof assessments, and the
-managed formal-review resume request. This plan update creates a new PR head,
-so renew both assessments for that head and verify which commit the queued
-resume review inspects before merging.
+2026-10-20: Record the typing-import, dead-code, and tracing follow-up lint
+findings and their remediation. Candidate 35 passed every local gate on
+`4a4bbe4`; renew both assessments for the resulting PR head and verify which
+commit the queued resume review inspects before merging.

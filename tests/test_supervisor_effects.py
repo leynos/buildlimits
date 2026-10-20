@@ -8,24 +8,27 @@ accounting, exit-status semantics and launch outcomes are exercised
 deterministically.
 """
 
+import collections.abc as cabc
 import dataclasses as dc
 import socket
 import subprocess
 import typing as typ
+from pathlib import Path
 
 import pytest
+from journal_fixtures import journal_fields, journal_receiver
 from pool_helpers import FakePool, attach_pool
 from request_helpers import crate_pending
 
 from buildlimits.admission import Group, GroupState
 from buildlimits.config import SupervisorConfig
+from buildlimits.journal_native import MAX_DATAGRAM_BYTES, JournalSink
 from buildlimits.replies import Admitted
 from buildlimits.supervisor import Supervisor
 from buildlimits.systemd import UserManager
+from buildlimits.tracing import JournalTracer
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
     from buildlimits.groups import Groups
     from buildlimits.pool import TokenPool
     from buildlimits.requesters import Pending
@@ -37,7 +40,7 @@ class FakeGroups:
 
     order: list[str]
     running: object | None
-    notice: str = ""
+    settings: SupervisorConfig = dc.field(default_factory=SupervisorConfig)
     terminate: cabc.Callable[[str], None] = dc.field(default=lambda _group_id: None)
 
     def place(self, entry: Pending, group_id: str, *, cached: bool) -> object | None:
@@ -46,11 +49,6 @@ class FakeGroups:
         if self.running is not None:
             entry.group_id = group_id
         return self.running
-
-    def cache_notice(self, entry: Pending, *, cached: bool) -> str:
-        """Report the scripted cache notice."""
-        del entry, cached
-        return self.notice
 
     def release(self, running: object) -> None:
         """Record that the group was released."""
@@ -210,6 +208,7 @@ def test_a_failed_placement_is_retried_only_during_a_graceful_stop(
 def test_an_immediate_stop_preempts_retry_after_a_failed_placement(
     supervisor: Supervisor,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A pending SIGINT prevents a failed placement from being retried."""
     pool = attach_pool(supervisor)
@@ -233,7 +232,15 @@ def test_an_immediate_stop_preempts_retry_after_a_failed_placement(
     supervisor.request_graceful_stop()
     supervisor.request_stop()
 
-    supervisor._launch(1, "g1", cached=False)
+    trace_path = tmp_path / "journal.sock"
+    sink = JournalSink(trace_path)
+    supervisor.tracer = JournalTracer("supervisor", sink)
+    with journal_receiver(trace_path) as receiver:
+        try:
+            supervisor._launch(1, "g1", cached=False)
+            record = journal_fields(receiver.recv(MAX_DATAGRAM_BYTES))
+        finally:
+            sink.close()
 
     assert refusals == [(2, "unhealthy"), (1, "launch-failed")], (
         "the immediate stop refuses queued and failed placements without retry"
@@ -242,6 +249,15 @@ def test_an_immediate_stop_preempts_retry_after_a_failed_placement(
     assert pool.returned == [b"a"], "the failed placement returns its token once"
     assert not supervisor.admission.healthy, "SIGINT transitions admission to unhealthy"
     assert supervisor.exit_status == 0, "the immediate stop reaches shutdown"
+    assert record["BUILD_LIMITS_TRACE_OUTCOME"] == "launch_failed", (
+        "an immediate stop retains the failed placement result"
+    )
+    assert record["BUILD_LIMITS_TRACE_FAILURE_CATEGORY"] == "scope_placement", (
+        "the trace classifies the placement failure"
+    )
+    assert record["BUILD_LIMITS_TRACE_STOP_MODE"] == "immediate", (
+        "the finished span records the stop that preempted retry"
+    )
 
 
 def test_launch_success_notifies_before_releasing_the_group(
@@ -252,7 +268,12 @@ def test_launch_success_notifies_before_releasing_the_group(
     """A placed group is announced to its requester before it may run."""
     order: list[str] = []
     running = object()
-    supervisor.groups = typ.cast("Groups", FakeGroups(order=order, running=running))
+    groups = FakeGroups(
+        order=order,
+        running=running,
+        settings=SupervisorConfig(cache_mode="direct"),
+    )
+    supervisor.groups = typ.cast("Groups", groups)
     supervisor.requests.pending[1] = crate_pending(1)
     notified: list[tuple[int, object]] = []
 

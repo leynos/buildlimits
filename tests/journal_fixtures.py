@@ -46,6 +46,29 @@ def journal_runner(output: str) -> JournalRunner:
     return lambda argv: subprocess.CompletedProcess(argv, 0, output, "")
 
 
+def journal_fields(payload: bytes) -> dict[str, str]:
+    r"""Decode one text-only native journal datagram.
+
+    Parameters
+    ----------
+    payload : bytes
+        A datagram received from ``systemd-journald``.
+
+    Returns
+    -------
+    dict[str, str]
+        The journal fields, split at their first equals sign.
+
+    Examples
+    --------
+    >>> journal_fields(b"MESSAGE=build-limits trace\nPRIORITY=6")
+    {'MESSAGE': 'build-limits trace', 'PRIORITY': '6'}
+    """
+    return dict(
+        line.split("=", maxsplit=1) for line in payload.decode("ascii").splitlines()
+    )
+
+
 def fixture_query(
     fixture: Path,
 ) -> cabc.Callable[[str, int, str], metrics_query.Window]:

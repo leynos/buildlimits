@@ -129,6 +129,7 @@ Each module owns one decision. This table is the single module inventory.
 | `descriptor_policy`, `descriptor_budget`                  | Pure budget arithmetic; OS sampling, retention accounting and status                            |
 | `listener_pressure`                                       | Listener backpressure after accept-time exhaustion                                              |
 | `groups`, `group_drain`, `group_recovery`                 | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                   |
+| `supervisor_placement`                                    | Admitted compiler placement, terminal scope outcome and stop-mode classification                |
 | `launch`, `launch_setup`                                  | Held launch child and bounded setup diagnostics                                                 |
 | `relocation`, `descriptors`                               | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution              |
 | `attributes`                                              | The caller's umask, niceness and resource limits                                                |
@@ -139,7 +140,9 @@ Each module owns one decision. This table is the single module inventory.
 | `bus_properties`, `systemd`                               | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl` |
 | `cgroups`, `startup`, `proc_trees`                        | Control-group reads, the restart barrier and diagnostic process-tree counts                     |
 | `protocol`, `replies`, `framing`, `frame_payload`, `wire` | Versioned JSON frames with passed descriptors                                                   |
-| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`  | Cargo-facing entry points, retries, restart handling, signal handling, progress and rustdoc     |
+| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`  | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc              |
+| `adapter_invocation`, `adapter_retry`                     | Invocation state and deadline-preserving busy and restart retries                               |
+| `tracing`, `tracing_export`                               | Bounded restart spans and synchronous native-journal export                                     |
 | `toolchain_env`                                           | Pure, filesystem-only recognition of a real toolchain compiler and its loader-path prefix       |
 | `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                 |
 | `status`, `status_client`, `status_render`, `status_cli`  | The status document, its transport, rendering and command                                       |
@@ -393,11 +396,13 @@ when a query fails part-way.
 
 The supervisor and adapters emit bounded, identifier-free native journal fields
 through `metrics.Metrics` over a `JournalSink`; emission failures are isolated
-from admission and build results. `metrics_query` owns the capped `journalctl`
-query, `metrics_records` validates records and source trust (`present_samples`
-and `of_event` select report inputs), and `metrics_report` and
-`metrics_pressure_report` aggregate. High-water values are producer-lifetime
-maxima; drain counters are cumulative snapshots and are never summed.
+from admission and build results. `SupervisorTelemetry` groups the supervisor's
+optional metrics and span ports without coupling their output contracts.
+`metrics_query` owns the capped `journalctl` query, `metrics_records` validates
+records and source trust (`present_samples` and `of_event` select report
+inputs), and `metrics_report` and `metrics_pressure_report` aggregate.
+High-water values are producer-lifetime maxima; drain counters are cumulative
+snapshots and are never summed.
 
 The restart path adds three bounded observations. The adapter's one
 `adapter_finished` summary carries `restart_retries`, the attempts spent
@@ -408,7 +413,17 @@ begins, and `supervisor_stopped` ends it, so the journal timestamps bracket the
 drain without a separate duration field. A start-up stop of a live cache emits
 one `cache_quiesce` event whose `quiesce_outcome` is `stopped`, `refused` or
 `timed_out`, with `quiesce_seconds`; nothing is emitted when the cache was not
-live. No tracing spans exist in this package, so none are added.
+live. OpenTelemetry tracing adds one `scope_placement` span per supervisor
+placement and an `adapter_restart_retry` span only when admission encounters a
+restart. Both carry elapsed milliseconds, a bounded outcome and failure
+category, the known stop mode, and a capped retry count. The adapter imports
+the SDK only after its first restart. A small exporter writes fixed-vocabulary
+span fields through the same non-blocking journal socket; it drops telemetry on
+failure and never records request data, paths, credentials or raw errors.
+Generated trace and span identifiers are fixed-width hexadecimal values. See
+[ADR 003](adr-003-bounded-restart-tracing.md) for the exporter and schema
+decision. Schema validation and capped failure-count helpers stay inside the
+tracing transport; metric counters keep their separate owners and limits.
 
 ## 10. Adapters
 

@@ -5,19 +5,13 @@ import os
 import typing as typ
 
 from buildlimits.adapter_connection import AdapterError
-from buildlimits.heartbeat import write_line
 from buildlimits.protocol import Refused
+from buildlimits.tracing import JournalTracer, _OtelSpan
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.adapter_metrics import AdapterMetrics
-    from buildlimits.heartbeat import Heartbeat
-    from buildlimits.protocol import Exit
-    from buildlimits.timing import RetryWait
-
-
-RESTART_RETRY_SECONDS = 0.5
 
 
 class BusyError(AdapterError):
@@ -40,6 +34,18 @@ class RestartingError(AdapterError):
     """
 
     recorded = False
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_category: str = "supervisor_unavailable",
+        stop_mode: str = "unknown",
+    ) -> None:
+        """Retain only fixed categories for the retry span."""
+        super().__init__(message)
+        self.failure_category = failure_category
+        self.stop_mode = stop_mode
 
 
 class QueuedRestartError(RestartingError):
@@ -85,20 +91,34 @@ class Progress:
     recorded: bool = False
     admitted: bool = False
 
-    def restart(self, reason: str) -> RestartingError:
+    def restart(
+        self,
+        reason: str,
+        *,
+        failure_category: str = "supervisor_unavailable",
+        stop_mode: str = "unknown",
+    ) -> RestartingError:
         """Describe a supervisor lost before the compiler was admitted.
 
         Parameters
         ----------
         reason : str
             The refusal or connection fault.
+        failure_category : str
+            Fixed category for the trace summary.
+        stop_mode : str
+            Fixed stop mode when the supervisor reported one.
 
         Returns
         -------
         RestartingError
             The restart, marked queued when the request had been acknowledged.
         """
-        return (QueuedRestartError if self.recorded else RestartingError)(reason)
+        return (QueuedRestartError if self.recorded else RestartingError)(
+            reason,
+            failure_category=failure_category,
+            stop_mode=stop_mode,
+        )
 
 
 @dataclasses.dataclass(slots=True)
@@ -112,56 +132,40 @@ class AdmissionAttempt:
         Only a restart moves it, to a fresh unavailability window.
     summary : AdapterMetrics
         One terminal observer shared by every physical admission attempt.
+    tracer : JournalTracer | None
+        Optional tracer, initialized lazily from the first restart otherwise.
     """
 
     deadline: float
     summary: AdapterMetrics
     restart_announced: bool = False
+    tracer: JournalTracer | None = None
+    restart_span: _OtelSpan | None = None
+    restart_attempts: int = 0
+    restart_failure_category: str = "unknown"
+    restart_stop_mode: str = "unknown"
 
-    def wait_out_restart(
+    def admitted(self) -> None:
+        """End a restart span at admission, before the compiler starts."""
+        self.finish_restart("admitted")
+
+    def finish_restart(
         self,
-        error: RestartingError,
-        heartbeat: Heartbeat,
-        retry: RetryWait,
-        window: float,
+        outcome: str,
+        *,
+        failure_category: str | None = None,
     ) -> None:
-        """Pause before asking again, with a fresh window after a queued wait.
-
-        The wait that preceded a restart was spent queued, not unavailable, so
-        the new supervisor gets the whole window the invocation began with. A
-        request that was never queued renews nothing, which keeps a supervisor
-        that only ever refuses bounded by the original deadline.
-
-        Parameters
-        ----------
-        error : RestartingError
-            The restart the request ran into.
-        heartbeat : Heartbeat
-            Supplies the shared monotonic clock.
-        retry : RetryWait
-            Sleeper and jitter for the pause between attempts.
-        window : float
-            The unavailability window the invocation began with, in seconds.
-
-        Raises
-        ------
-        RestartingError
-            The same refusal, once the deadline has passed.
-        """  # ruff: ignore[docstring-extraneous-exception] - the argument is re-raised.
-        if not self.restart_announced:
-            self.restart_announced = True
-            write_line(
-                "[build-limits] the supervisor is restarting; retrying admission"
-            )
-        now = heartbeat.clock()
-        if error.recorded:
-            self.deadline = max(self.deadline, now + window)
-        remaining = self.deadline - now
-        if remaining <= 0:
-            self.summary.outcome = "refused"
-            raise error
-        nap = RESTART_RETRY_SECONDS * retry.jitter(0.5, 1.0)
-        retry.clock.sleep(min(remaining, nap))
+        """End a pending retry span once with bounded terminal attributes."""
+        span, self.restart_span = self.restart_span, None
+        if span is None:
+            return
+        _OtelSpan.finish(
+            span,
+            outcome=outcome,
+            failure_category=failure_category or self.restart_failure_category,
+            stop_mode=self.restart_stop_mode,
+            retry_attempt=self.restart_attempts,
+        )
 
 
 def refusal(reply: Refused, progress: Progress) -> AdapterError:
@@ -182,79 +186,12 @@ def refusal(reply: Refused, progress: Progress) -> AdapterError:
     """
     match reply:
         case Refused(reason="restarting", message=message):
-            return progress.restart(message)
+            return progress.restart(
+                message,
+                failure_category="restart_refusal",
+                stop_mode="graceful",
+            )
         case Refused(reason="busy", message=message) if not progress.recorded:
             return BusyError(message)
         case _:
             return AdapterError(reply.message)
-
-
-def retry_request(
-    request: cabc.Callable[[], Exit],
-    heartbeat: Heartbeat,
-    attempt: AdmissionAttempt,
-    retry: RetryWait,
-) -> Exit:
-    """Retry busy and restarting requests within their admission deadline.
-
-    Parameters
-    ----------
-    request : Callable[[], Exit]
-        Recaptures descriptors and performs one admission exchange.
-    heartbeat : Heartbeat
-        Supplies the shared monotonic clock and caller-facing progress.
-    attempt : AdmissionAttempt
-        Invocation deadline and its terminal observer.
-    retry : RetryWait
-        Sleeper and bounded jitter policy for exponential backoff.
-
-    Returns
-    -------
-    Exit
-        The recorded compiler's terminal result.
-
-    Raises
-    ------
-    AdapterError
-        If repeated busy refusals exhaust the original admission deadline.
-    RestartingError
-        If the supervisor keeps going away until the deadline has passed.
-    """  # ruff: ignore[docstring-extraneous-exception] - the attempt re-raises it.
-    delay = 0.05
-    announced = False
-    window = attempt.deadline - heartbeat.clock()
-    last_refusal: BusyError | None = None
-    while True:
-        if last_refusal is not None and heartbeat.clock() >= attempt.deadline:
-            msg = (
-                "compile admission remains busy: "
-                "descriptor pressure retry deadline expired; "
-                f"last refusal: {ascii(str(last_refusal)[:240])[1:-1]}"
-            )
-            attempt.summary.outcome = "refused"
-            raise AdapterError(msg) from last_refusal
-        _observe_busy_retry(attempt, last_refusal)
-        try:
-            return request()
-        except RestartingError as error:
-            attempt.wait_out_restart(error, heartbeat, retry, window)
-            attempt.summary.retry_restart()
-            last_refusal = None
-        except BusyError as error:
-            last_refusal = error
-            remaining = attempt.deadline - heartbeat.clock()
-            if remaining <= 0:
-                continue
-            if not announced:
-                announced = True
-                write_line(
-                    "[build-limits] waiting for descriptor headroom; retrying admission"
-                )
-            retry.clock.sleep(min(remaining, delay * retry.jitter(0.5, 1.0)))
-            delay = min(5.0, delay * 2)
-
-
-def _observe_busy_retry(attempt: AdmissionAttempt, previous: BusyError | None) -> None:
-    """Observe a fresh retry only when an earlier request was refused as busy."""
-    if previous is not None:
-        attempt.summary.retry_busy()

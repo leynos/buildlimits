@@ -17,7 +17,9 @@ import pytest
 from cache_recovery_harness import HarnessFactory
 from restart_world import RestartWorld
 
+from buildlimits.config import SupervisorConfig
 from buildlimits.metrics import Metrics
+from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -127,6 +129,24 @@ def telemetry(metric_sink: RecordingSink) -> tuple[Metrics, RecordingSink]:
         The emitter and sink for one lifecycle test.
     """
     return Metrics(metric_sink), metric_sink
+
+
+@pytest.fixture
+def observed_supervisor(metrics: Metrics) -> cabc.Iterator[Supervisor]:
+    """Provide one metrics-enabled supervisor at a fixed monotonic time.
+
+    Yields
+    ------
+    Supervisor
+        A supervisor that owns the test's metrics emitter and selector.
+    """
+    instance = Supervisor(
+        SupervisorConfig(),
+        clock=lambda: 3.0,
+        telemetry=SupervisorTelemetry(metrics=metrics),
+    )
+    yield instance
+    instance.selector.close()
 
 
 @pytest.fixture

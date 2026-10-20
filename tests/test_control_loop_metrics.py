@@ -8,7 +8,7 @@ from pool_helpers import FakePool, attach_pool
 from buildlimits.admission import Group, GroupState
 from buildlimits.config import SupervisorConfig
 from buildlimits.drain_loop import LoopEffects
-from buildlimits.supervisor import Supervisor
+from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 from buildlimits.timing import Clock
 
 if typ.TYPE_CHECKING:
@@ -79,7 +79,7 @@ def test_control_fault_fallback_and_real_recovery_keep_tokens_accounted(
     instance = Supervisor(
         SupervisorConfig(),
         clock=Clock(now=lambda: 0.0, sleep=sleeps.append),
-        metrics=metrics,
+        telemetry=SupervisorTelemetry(metrics=metrics),
     )
     pool = _hold_server_drain(instance)
     selector = ScriptedSelector([OSError(errno.EMFILE, "secret selector"), None, None])
@@ -115,7 +115,9 @@ def test_healthy_control_cycles_emit_no_progress(
     metrics: Metrics, metric_sink: RecordingSink
 ) -> None:
     """Normal selector and tick cycles do not produce ten-per-second records."""
-    instance = Supervisor(SupervisorConfig(), metrics=metrics)
+    instance = Supervisor(
+        SupervisorConfig(), telemetry=SupervisorTelemetry(metrics=metrics)
+    )
     selector = ScriptedSelector([None, None, None])
     ticks = 0
 
@@ -149,7 +151,7 @@ def test_control_metric_failure_preserves_held_token_recovery() -> None:
     instance = Supervisor(
         SupervisorConfig(),
         clock=Clock(now=lambda: 0.0, sleep=lambda _seconds: None),
-        metrics=BrokenMetrics(),
+        telemetry=SupervisorTelemetry(metrics=BrokenMetrics()),
     )
     pool = _hold_server_drain(instance)
     selector = ScriptedSelector([OSError(errno.EIO, "fault"), None])

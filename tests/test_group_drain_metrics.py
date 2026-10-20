@@ -10,7 +10,7 @@ from buildlimits import cgroups
 from buildlimits.admission import Group, GroupState
 from buildlimits.config import SupervisorConfig
 from buildlimits.groups import Running
-from buildlimits.supervisor import Supervisor
+from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -32,7 +32,9 @@ def now() -> list[float]:
 def supervisor(metrics: Metrics, now: list[float]) -> cabc.Iterator[Supervisor]:
     """Provide one real admitted draining group over inert child ownership."""
     instance = Supervisor(
-        SupervisorConfig(cache_mode="direct"), clock=lambda: now[0], metrics=metrics
+        SupervisorConfig(cache_mode="direct"),
+        clock=lambda: now[0],
+        telemetry=SupervisorTelemetry(metrics=metrics),
     )
     instance.admission.groups["g1"] = Group(
         "g1", 1, b"a", False, state=GroupState.DRAINING
