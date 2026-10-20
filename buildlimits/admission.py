@@ -353,6 +353,8 @@ class Admission(Gauges):
         list[Effect]
             Nothing while groups remain; otherwise the refusal of what waits.
         """
+        if self.closing:
+            return []
         self.closing = True
         return self._maybe_shutdown()
 

@@ -180,15 +180,34 @@ the main process and the build completes with its own status, once. Method: the
 real-systemd scenario with the `busctl` shim. It fails on the old fixture unit
 (red run below). The shim's census is the negative control.
 
-Invariant I3: for every operation sequence, a launch that fails while the
-admission is winding down is refused as `restarting` and otherwise as
-`launch-failed`; the token is returned exactly once either way and no group or
-queue entry is left. A simultaneous immediate stop is honoured before a
-graceful retry can be emitted. Method: a hypothesis property over the
-`Admission` state machine beside `tests/test_admission_closing.py`, plus unit
-tests of `Supervisor._launch` for graceful, immediate and combined stop
-requests. Non-vacuity: the generator must reach a closing admission with a
-group in flight; a mutation that always returns `launch-failed` fails it.
+Invariant I3: in sampled healthy, uncached `Admission` histories, a failed
+placement is refused as `restarting` after graceful closing and otherwise as
+`launch-failed`. The property checks the failed request's exact refusal, its
+own token's exact return, and that unrelated groups remain unchanged. The first
+close transition and later transitions launch or request no token; only a
+leader exit or a requester cancellation can terminate a group. On drain, each
+queued request is refused once before one `Shutdown`, with no queue entry left.
+Repeated closing is a no-op. A simultaneous immediate stop is handled before a
+graceful retry can be emitted by separate supervisor unit tests.
+
+Method: `test_graceful_close_preserves_admission_invariants` in
+`tests/test_admission_closing_properties.py` samples up to 40 operations per
+history and runs 200 examples with Hypothesis 6.170.1. Its operations are
+submit, token, leader exit, group empty, close, queued-request cancellation,
+running-group requester cancellation and placement failure. Named examples
+exercise both failure classifications, repeated close, multiple groups with
+queued requests, early group emptiness, and requester cancellation during
+closing. The expectation for graceful closing is tracked independently from
+`Admission.closing`.
+
+This is bounded admission-state testing. It keeps admission healthy and
+uncached, treats `fail` as a placement failure before a compiler starts, and
+does not model cache-server drain, health failure, stop-signal flags, child
+execution, or systemd process effects. The real-systemd scenarios cover the
+systemd boundary; supervisor unit tests cover simultaneous stop requests. The
+finite property does not establish unbounded liveness or formal proof. A
+mutation that forces failed placements to `launch-failed` must fail the
+graceful witness.
 
 Invariant I4: with the legacy kill mode, the second real-systemd scenario shows
 the busctl was signalled and the build still completes once after a retry.
@@ -217,6 +236,14 @@ experiment above); Python signal handlers survive `fork`.
   (1748 passed, 25 skipped) and `make test-systemd-user` (24 passed).
 - [x] PR 21 opened as a draft; hosted CI green; completeness assessment
   (`killmode-completeness-1`) answered with one documentation correction.
+- [x] Review follow-up: the current completeness assessment is clear, the three
+  inline findings are resolved, and the developer-documentation warning is
+  reconciled. The proof assessment identified assertion gaps; the expanded
+  property exposed repeated `Shutdown` effects from an already-closed admission.
+  `Admission.begin_closing()` now returns no effects after its first close.
+  The focused closing tests pass (12 passed).
+- [ ] Re-run all candidate gates, record the mutation control against the
+  committed candidate, and renew the head-specific proof assessment.
 - [ ] Review loop to a mergeable state.
 
 ## Surprises & discoveries

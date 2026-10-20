@@ -6,13 +6,9 @@ group has emptied tells whatever still waits to try again. Nothing is ever
 terminated, so nothing admitted is lost.
 """
 
-from hypothesis import example, given, settings
-from hypothesis import strategies as st
-
 from buildlimits.admission import (
     Admission,
     GroupState,
-    Launch,
     NotifyFinished,
     Refuse,
     RequestToken,
@@ -20,7 +16,7 @@ from buildlimits.admission import (
     Shutdown,
     Terminate,
 )
-from buildlimits.effects import Effect, Exit
+from buildlimits.effects import Exit
 
 
 def _running(admission: Admission, *request_ids: int) -> None:
@@ -30,11 +26,13 @@ def _running(admission: Admission, *request_ids: int) -> None:
         admission.token_arrived(b"+")
 
 
-def test_closing_an_idle_admission_shuts_down_at_once() -> None:
-    """With no group to wait for, closing refuses nothing and exits."""
-    assert Admission().begin_closing() == [Shutdown()], (
+def test_closing_an_idle_admission_shuts_down_once() -> None:
+    """An idle admission emits shutdown once, even when closed again."""
+    admission = Admission()
+    assert admission.begin_closing() == [Shutdown()], (
         "nothing runs, so nothing is left to wait for"
     )
+    assert admission.begin_closing() == [], "a repeated close has no new effects"
 
 
 def test_closing_keeps_running_groups_and_waits_for_them() -> None:
@@ -103,6 +101,38 @@ def test_the_last_group_to_empty_refuses_the_queue_then_shuts_down() -> None:
     assert not admission.queue, "a refused request is not queued twice"
 
 
+def test_a_closing_group_can_empty_before_its_leader_exit_is_reaped() -> None:
+    """An early empty scope returns its token before refusing queued work."""
+    admission = Admission()
+    _running(admission, 1)
+    admission.submit(2)
+    admission.begin_closing()
+
+    effects = admission.group_emptied("g1")
+    expected = [
+        ReturnToken(b"+"),
+        NotifyFinished(1, Exit()),
+        Refuse(2, "restarting"),
+        Shutdown(),
+    ]
+    assert effects == expected, (
+        "the empty scope is accounted without waiting for a reaped leader"
+    )
+    assert not admission.groups, "the empty group no longer holds its token"
+
+
+def test_requester_cancellation_during_closing_still_terminates_its_group() -> None:
+    """A caller disconnect can terminate its group while graceful close waits."""
+    admission = Admission()
+    _running(admission, 1)
+    admission.begin_closing()
+
+    assert admission.cancel(1) == [Terminate("g1")], (
+        "requester cancellation, rather than closing, terminates the group"
+    )
+    assert admission.groups["g1"].cancelled, "the group records its cancellation"
+
+
 def test_a_server_drain_token_keeps_a_closing_admission_open() -> None:
     """A token awaiting cache accounting is not released by closing."""
     admission = Admission(cached=True)
@@ -139,106 +169,3 @@ def test_a_launch_that_fails_with_no_stop_stays_a_launch_failure() -> None:
         ReturnToken(b"+"),
         Refuse(1, "launch-failed"),
     ], "a genuine launch failure is still reported as one"
-
-
-def _step(admission: Admission, operation: str, request_id: int) -> list[Effect]:
-    """Apply one scripted operation, doing nothing if it does not apply.
-
-    Returns
-    -------
-    list[Effect]
-        The effects the operation produced.
-    """
-    running = _first(admission, GroupState.RUNNING)
-    draining = _first(admission, GroupState.DRAINING)
-    effects: list[Effect] = []
-    match operation:
-        case "submit":
-            effects = admission.submit(request_id)
-        case "token" if admission.token_requested:
-            effects = admission.token_arrived(b"+")
-        case "exit" if running:
-            effects = admission.leader_exited(running, Exit(code=0))
-        case "empty" if draining:
-            effects = admission.group_emptied(draining)
-        case "cancel" if admission.queue:
-            effects = admission.cancel(admission.queue[0])
-        case "close":
-            effects = admission.begin_closing()
-        case "fail" if running:
-            effects = admission.launch_failed(running)
-    return effects
-
-
-@settings(max_examples=200, deadline=None)
-# Witnesses, so the failed-launch clause is exercised both while closing and not.
-@example(operations=["submit", "token", "close", "fail"])
-@example(operations=["submit", "token", "fail", "close"])
-@given(
-    operations=st.lists(
-        st.sampled_from([
-            "submit",
-            "token",
-            "exit",
-            "empty",
-            "close",
-            "cancel",
-            "fail",
-        ]),
-        max_size=40,
-    )
-)
-def test_closing_never_launches_terminates_or_exits_early(
-    operations: list[str],
-) -> None:
-    """Whatever happens around it, a closed admission only winds down.
-
-    After closing begins no launch, token request or termination of a running
-    group is ever produced, and the shutdown comes exactly when the last group
-    is gone, with nothing left in the queue.
-    """
-    admission = Admission()
-    shutdowns = 0
-    for request_id, operation in enumerate(operations, start=1):
-        was_closed = admission.closing
-        target = _first(admission, GroupState.RUNNING)
-        owner = -1 if target is None else admission.groups[target].request_id
-        winding = admission.winding_down
-        effects = _step(admission, operation, request_id)
-        if operation == "fail" and target is not None:
-            expected = "restarting" if winding else "launch-failed"
-            assert Refuse(owner, expected) in effects, (
-                "a failed launch retries exactly while a graceful stop is under way"
-            )
-            assert sum(isinstance(e, ReturnToken) for e in effects) == 1, (
-                "the failed group's token returns exactly once"
-            )
-            assert target not in admission.groups, "the failed group is forgotten"
-        if was_closed:
-            assert not any(isinstance(e, (Launch, RequestToken)) for e in effects), (
-                "a closing admission launches nothing and requests no token"
-            )
-            assert all(
-                not isinstance(e, Terminate) or operation == "exit" for e in effects
-            ), "only a leader's own exit terminates leftovers; closing cancels nothing"
-        shutdowns += sum(isinstance(effect, Shutdown) for effect in effects)
-        assert (shutdowns >= 1) == (admission.closing and not admission.groups), (
-            "shutdown is signalled exactly when closing has nothing left to wait for"
-        )
-        assert not (admission.closing and not admission.groups and admission.queue), (
-            "the queue is refused before the supervisor exits"
-        )
-
-
-def _first(admission: Admission, state: GroupState) -> str | None:
-    """Pick the oldest group in ``state``, if any.
-
-    Returns
-    -------
-    str | None
-        Its identifier, or None when no group is in that state.
-    """
-    return next(
-        (group.group_id for group in admission.groups.values() if group.state is state),
-        None,
-    )
