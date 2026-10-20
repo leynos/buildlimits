@@ -96,14 +96,17 @@ stop is "in progress" when admission is closing or a graceful stop has been
 requested but not yet honoured, because the signal handler only records intent
 and the failed placement is observed before the next tick honours it (the
 incident's own log order). `Supervisor._launch` therefore calls
-`supervisor_shutdown.fail_placement`, which honours a pending stop request
-before accounting for the failed launch, and `Admission.launch_failed` refuses
-as `restarting` exactly when it is `winding_down`. The log line that names the
+`supervisor_shutdown.fail_placement`, which honours pending stop requests
+before accounting for the failed launch. If an immediate stop is also pending,
+it takes effect after the graceful request but before `Admission.launch_failed`
+can emit `Shutdown`; the queue is refused as `unhealthy`, so no adapter retries
+the failed placement. Otherwise `Admission.launch_failed` refuses as
+`restarting` exactly when it is `winding_down`. The log line that names the
 real cause is kept; `entry.exec_error` is cleared so that `Requesters.refuse`
-does not rewrite the reason to `exec-failed`. With no stop in progress the
-behaviour is unchanged. The token returns through the existing `ReturnToken`,
-the held child is already abandoned by `Groups.place`, and the request's
-descriptors close when the refusal forgets it.
+does not rewrite the graceful retry reason to `exec-failed`. With no stop in
+progress the behaviour is unchanged. The token returns through the existing
+`ReturnToken`, the held child is already abandoned by `Groups.place`, and the
+request's descriptors close when the refusal forgets it.
 
 Alternatives rejected for Fix 2: retrying the placement in process. The held
 child may be unusable, a partially created scope of the same name would make a
@@ -180,11 +183,12 @@ real-systemd scenario with the `busctl` shim. It fails on the old fixture unit
 Invariant I3: for every operation sequence, a launch that fails while the
 admission is winding down is refused as `restarting` and otherwise as
 `launch-failed`; the token is returned exactly once either way and no group or
-queue entry is left. Method: a hypothesis property over the `Admission` state
-machine beside `tests/test_admission_closing.py`, plus unit tests of
-`Supervisor._launch` for the requested-but-not-honoured stop. Non-vacuity: the
-generator must reach a closing admission with a group in flight; a mutation
-that always returns `launch-failed` fails it.
+queue entry is left. A simultaneous immediate stop is honoured before a
+graceful retry can be emitted. Method: a hypothesis property over the
+`Admission` state machine beside `tests/test_admission_closing.py`, plus unit
+tests of `Supervisor._launch` for graceful, immediate and combined stop
+requests. Non-vacuity: the generator must reach a closing admission with a
+group in flight; a mutation that always returns `launch-failed` fails it.
 
 Invariant I4: with the legacy kill mode, the second real-systemd scenario shows
 the busctl was signalled and the build still completes once after a retry.
@@ -208,6 +212,9 @@ experiment above); Python signal handlers survive `fork`.
 - [x] Gates on head `df13251` through scrutineer: `make check-fmt`, `make lint`,
   `make typecheck`, `make markdownlint`, `make nixie`, `make test` (1748
   passed) and `make test-systemd-user` (24 passed).
+- [x] Review-fix candidate gates through scrutineer: `make check-fmt`,
+  `make lint`, `make typecheck`, `make markdownlint`, `make nixie`, `make test`
+  (1748 passed, 25 skipped) and `make test-systemd-user` (24 passed).
 - [x] PR 21 opened as a draft; hosted CI green; completeness assessment
   (`killmode-completeness-1`) answered with one documentation correction.
 - [ ] Review loop to a mergeable state.
@@ -227,6 +234,11 @@ experiment above); Python signal handlers survive `fork`.
 - 2026-10-19: refuse as `restarting` rather than retry the placement (see
   Design).
 - 2026-10-19: leave the cache unit's kill mode alone (see Design).
+- 2026-10-20: honour a pending immediate stop before a failed placement can
+  trigger a graceful-restart shutdown and cause adapters to retry.
+- 2026-10-20: give the nested Cargo acceptance test the same 1800-second
+  timeout as its subprocess wait; healthy shared compile admission can queue
+  this test beyond the suite's 30-second default.
 
 ## Outcomes & retrospective
 

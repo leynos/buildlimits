@@ -341,9 +341,9 @@ carry `KillMode=mixed`, described under
 [Units the restart relies on](#units-the-restart-relies-on). A supervisor older
 than the 2026-10-19 amendment to ADR 001 loses a build when a restart lands
 while that build is being placed in its scope and the unit lacks the directive;
-this supervisor retries such a build, but `KillMode=mixed` remains required
-because it also keeps the stop away from the supervisor's other helper
-commands. The restart works as follows.
+the adapter retries the request, but `KillMode=mixed` remains required because
+it also keeps the stop away from the supervisor's other helper commands. The
+restart works as follows.
 
 1. `systemctl` sends `SIGTERM`. The supervisor stops launching and requesting
    tokens but terminates nothing: every running compiler group runs to its own

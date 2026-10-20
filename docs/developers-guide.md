@@ -226,6 +226,15 @@ delivered by `signal.set_wakeup_fd`, and `Groups.reap` collects them with
 `ENOENT` or `ENODEV`; any other read error raises, so an unreadable scope is
 never taken as drained.
 
+If `Groups.place()` fails, `supervisor_shutdown.fail_placement()` honours
+pending stop requests before applying the admission failure effects. A graceful
+stop makes `Admission.launch_failed()` refuse the request as `restarting`; the
+handler clears `entry.exec_error` so `Requesters.refuse()` preserves that retry
+reason, and the token returns once. This ordering also consumes a pending
+immediate stop before the failure can emit `Shutdown`: `SIGINT` refuses queued
+requests as `unhealthy` and prevents adapters from retrying the failed
+placement.
+
 ## 7. Launching a compiler
 
 `Groups.place` builds a `launch.LaunchSpec` and calls `launch.spawn_held`,

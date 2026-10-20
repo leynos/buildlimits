@@ -94,17 +94,18 @@ def honour_graceful_request(supervisor: Supervisor) -> None:
 
 
 def fail_placement(supervisor: Supervisor, entry: Pending, group_id: str) -> None:
-    """Account for a group that could not be placed, retrying it if a stop did it.
+    """Account for an unplaced group after honouring every pending stop.
 
     The signal handler only records a graceful stop, so a placement that the
     stop broke (``systemctl stop`` signals the ``busctl`` that creates the scope
     when the unit's kill mode is ``control-group``) is seen before admission is
-    closing. Honouring the pending request first makes the refusal
-    ``restarting``, which the adapter retries within its deadline, instead of a
-    launch failure. The cause stays in the journal, where
-    :meth:`Groups.place` logged it; the requester is not told of a launch error,
-    because nothing ran. With no graceful stop, the failure is reported as it
-    always was.
+    closing. Honouring stop requests before launch-failure effects means a
+    pending immediate stop cannot be skipped by a ``Shutdown`` from the failed
+    placement. A graceful stop makes the refusal ``restarting``, which the
+    adapter retries within its deadline, instead of a launch failure. The cause
+    stays in the journal, where :meth:`Groups.place` logged it; the requester is
+    not told of a launch error, because nothing ran. With no stop in progress,
+    the failure is reported as it always was.
 
     Parameters
     ----------
@@ -115,7 +116,7 @@ def fail_placement(supervisor: Supervisor, entry: Pending, group_id: str) -> Non
     group_id : str
         The admission group that was never launched.
     """
-    honour_graceful_request(supervisor)
+    honour_stop_request(supervisor)
     if supervisor.admission.winding_down:
         entry.exec_error = None
     supervisor._apply(supervisor.admission.launch_failed(group_id))

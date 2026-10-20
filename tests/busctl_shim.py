@@ -42,7 +42,10 @@ def census() -> str:
     own = Path("/proc/self/cgroup").read_text().split("::")[1].strip().lstrip("/")
     rows = []
     for pid in (Path("/sys/fs/cgroup") / own / "cgroup.procs").read_text().split():
-        fields = Path(f"/proc/{{pid}}/stat").read_text().rsplit(")", 1)
+        try:
+            fields = Path(f"/proc/{{pid}}/stat").read_text().rsplit(")", 1)
+        except OSError:
+            continue  # the process exited after the cgroup listing
         comm = fields[0].split("(", 1)[1]
         rows.append(f"{{pid}} {{comm}} {{fields[1].split()[0]}}")
     return "\\n".join(rows)
@@ -50,8 +53,10 @@ def census() -> str:
 
 def on_term(_signum, _frame):
     time.sleep(0.3)
-    (here / "terminated").write_text(census())
-    os._exit(143)
+    try:
+        (here / "terminated").write_text(census())
+    finally:
+        os._exit(143)
 
 
 if "StartTransientUnit" in sys.argv and (here / "hold").exists():

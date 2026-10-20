@@ -38,6 +38,7 @@ class FakeGroups:
     order: list[str]
     running: object | None
     notice: str = ""
+    terminate: cabc.Callable[[str], None] = dc.field(default=lambda _group_id: None)
 
     def place(self, entry: Pending, group_id: str, *, cached: bool) -> object | None:
         """Report the scripted placement outcome, admitting ``entry`` on success."""
@@ -204,6 +205,43 @@ def test_a_failed_placement_is_retried_only_during_a_graceful_stop(
     assert supervisor.admission.closing == (stop in {"closing", "requested"}), (
         "a requested graceful stop is honoured by the time the refusal is made"
     )
+
+
+def test_an_immediate_stop_preempts_retry_after_a_failed_placement(
+    supervisor: Supervisor,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pending SIGINT prevents a failed placement from being retried."""
+    pool = attach_pool(supervisor)
+    termination_calls: list[str] = []
+    groups = FakeGroups(order=[], running=None, terminate=termination_calls.append)
+    supervisor.groups = typ.cast("Groups", groups)
+    supervisor.admission.groups["g1"] = Group(
+        "g1", request_id=1, token=b"a", cached=False, state=GroupState.RUNNING
+    )
+    supervisor.admission.queue.append(2)
+    supervisor.admission.cacheable[2] = False
+    entry = crate_pending(1)
+    entry.exec_error = "cannot create x.scope: "
+    supervisor.requests.pending.update({1: entry, 2: crate_pending(2)})
+    refusals: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        supervisor.requests,
+        "refuse",
+        lambda request_id, why: refusals.append((request_id, why)),
+    )
+    supervisor.request_graceful_stop()
+    supervisor.request_stop()
+
+    supervisor._launch(1, "g1", cached=False)
+
+    assert refusals == [(2, "unhealthy"), (1, "launch-failed")], (
+        "the immediate stop refuses queued and failed placements without retry"
+    )
+    assert termination_calls == ["g1"], "immediate shutdown reaches the failed group"
+    assert pool.returned == [b"a"], "the failed placement returns its token once"
+    assert not supervisor.admission.healthy, "SIGINT transitions admission to unhealthy"
+    assert supervisor.exit_status == 0, "the immediate stop reaches shutdown"
 
 
 def test_launch_success_notifies_before_releasing_the_group(
