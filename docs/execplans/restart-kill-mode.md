@@ -497,10 +497,19 @@ experiment above); Python signal handlers survive `fork`.
   accepts Unit Architecture as Passed and narrows Developer Documentation to
   an explicit runtime-dependency sentence. Add that sentence and pass
   `make check-fmt`, `make markdownlint`, and `make nixie` on the docs diff.
-- [ ] Commit and publish the docs follow-up, then ask CodeRabbit to refresh the
-  Developer Documentation row against the new head.
-- [ ] Await current-head formal review, reconcile any remaining finding or
-  pre-merge row, and merge PR 21.
+- [x] Publish the documentation follow-up as `14607d5`. On the exact head,
+  `make check-fmt`, `make markdownlint`, and `make nixie` passed; hosted CI
+  [39498592602](https://github.com/leynos/buildlimits/actions/runs/39498592602)
+  and Act Validation
+  [39498592791](https://github.com/leynos/buildlimits/actions/runs/39498592791)
+  also passed. CodeRabbit confirms Developer Documentation as Passed and
+  reconciles the walkthrough to 0 errors, 0 warnings, and 15 passed checks
+  [6301704387](https://github.com/leynos/buildlimits/pull/21#issuecomment-6301704387).
+  The generated walkthrough itself remains stale at 1 error, 1 warning, and 13
+  passed checks; individual row updates are unavailable.
+- [ ] Renew the completeness assessment against the final published head, await
+  current-head formal review, reconcile any remaining finding or pre-merge row,
+  and merge PR 21.
 
 ## Surprises & discoveries
 
