@@ -1,6 +1,7 @@
 """Retry spans describe restarts without changing adapter behaviour."""
 
 import dataclasses as dc
+import socket
 import typing as typ
 from pathlib import Path
 
@@ -10,10 +11,10 @@ from journal_fixtures import journal_fields, journal_receiver
 
 from buildlimits import adapter
 from buildlimits.adapter_invocation import AdmissionAttempt, QueuedRestartError
-from buildlimits.adapter_retry import retry_request
+from buildlimits.adapter_retry import _RetryState, retry_request
 from buildlimits.heartbeat import Heartbeat
 from buildlimits.journal_native import MAX_DATAGRAM_BYTES, JournalSink
-from buildlimits.protocol import Exit
+from buildlimits.protocol import Admitted, Exit, Finished, encode_reply
 from buildlimits.timing import Clock, RetryWait
 from buildlimits.tracing import JournalTracer
 
@@ -85,6 +86,9 @@ class _Summary:
         """Count one retry after a restart, as the real summary does."""
         self.restart_retries += 1
 
+    def admission(self, _phase_started: float) -> None:
+        """Accept the adapter's admission observation without metric effects."""
+
 
 @dc.dataclass(slots=True)
 class _Rig:
@@ -155,28 +159,58 @@ def test_a_supervisor_that_only_refuses_stays_bounded_by_the_first_deadline() ->
     )
 
 
-def test_restart_span_ends_when_the_next_supervisor_admits_the_build(
-    tmp_path: Path,
+def test_restart_span_ends_at_admitted_before_finished_reply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The span covers the restart retries but ends at admission."""
+    """An admitted reply ends retry tracing before the compiler finishes."""
     rig = _Rig(first_deadline=30.0)
     path = tmp_path / "journal.sock"
     sink = JournalSink(path)
     tracer = JournalTracer("adapter", sink)
-    request = _restart_once(
+    attempt = AdmissionAttempt(
+        30.0,
+        typ.cast("AdapterMetrics", _Summary()),
+        tracer=tracer,
+    )
+    timing = rig.clock.timing()
+    heartbeat = Heartbeat("crate", 30.0, clock=timing.now)
+    retry = RetryWait(clock=timing, jitter=lambda _low, high: high)
+    retry_state = _RetryState(attempt, heartbeat, retry)
+    assert retry_state.after_restart(
         adapter.RestartingError(
             "raw reason stays out of telemetry",
             failure_category="restart_refusal",
             stop_mode="graceful",
         )
-    )
+    ), "the restart leaves one bounded retry in progress"
 
+    records: list[dict[str, str]] = []
     with journal_receiver(path) as receiver:
-        try:
-            assert rig.run(request, tracer=tracer) == DONE, "admission retry completes"
-            record = journal_fields(receiver.recv(MAX_DATAGRAM_BYTES))
-        finally:
-            sink.close()
+        client, supervisor = socket.socketpair()
+        with client, supervisor:
+            original_admitted = heartbeat.admitted
+
+            def deliver_finished_after_observing_admission() -> None:
+                """Hold the result until the retry span is already exported."""
+                records.append(journal_fields(receiver.recv(MAX_DATAGRAM_BYTES)))
+                assert records[0]["BUILD_LIMITS_TRACE_OUTCOME"] == "admitted", (
+                    "the retry span has ended before the result is sent"
+                )
+                original_admitted()
+                supervisor.sendall(encode_reply(Finished(DONE)))
+
+            monkeypatch.setattr(
+                heartbeat, "admitted", deliver_finished_after_observing_admission
+            )
+            try:
+                supervisor.sendall(encode_reply(Admitted("g1", False)))
+                assert adapter._await_result(client, heartbeat, attempt) == DONE, (
+                    "the adapter receives the result only after admission"
+                )
+            finally:
+                sink.close()
+    assert len(records) == 1, "the retry episode emits one completed span"
+    record = records[0]
     assert record["BUILD_LIMITS_TRACE_OPERATION"] == "adapter_restart_retry", (
         "the record names the traced retry episode"
     )

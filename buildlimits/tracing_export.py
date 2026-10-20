@@ -101,7 +101,7 @@ def _bounded_attributes(attributes: cabc.Mapping[str, object]) -> dict[str, str 
     Returns
     -------
     dict[str, str | int]
-        Recognised values, with arbitrary attributes omitted.
+        Recognized values, with arbitrary attributes omitted.
     """
     bounded: dict[str, str | int] = {}
     vocabularies = {

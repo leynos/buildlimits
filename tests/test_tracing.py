@@ -1,7 +1,9 @@
 """Bounded OpenTelemetry spans stay observational and safe to export."""
 
+import unittest.mock as mock  # ruff: ignore[manual-from-import] - module alias required by .rules/python-typing.md.
 from pathlib import Path
 
+import pytest
 from journal_fixtures import journal_fields, journal_receiver
 
 from buildlimits.journal_native import MAX_DATAGRAM_BYTES, JournalSink
@@ -90,3 +92,54 @@ def test_journal_export_failure_does_not_escape_span_completion(
         "sdk": 0,
     }, "the failure is classified without retaining the exception"
     sink.close()
+
+
+def test_sdk_initialization_failure_does_not_escape_span_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed SDK setup is counted and leaves tracing optional."""
+    tracer = JournalTracer("adapter")
+    monkeypatch.setattr(
+        tracer,
+        "_get_tracer",
+        mock.Mock(side_effect=RuntimeError("private SDK detail")),
+    )
+
+    assert tracer.start("adapter_restart_retry") is None, (
+        "SDK setup failure disables this span without reaching the caller"
+    )
+    assert tracer.dropped_spans == 1, "the failed span is counted"
+    assert tracer.failure_counts == {
+        "transport": 0,
+        "invalid_record": 0,
+        "sdk": 1,
+    }, "only a bounded SDK failure count is retained"
+
+
+@pytest.mark.parametrize(
+    "failed_method",
+    ["set_attributes", "end"],
+    ids=["attribute-update", "span-end"],
+)
+def test_span_sdk_failure_does_not_escape_completion(
+    monkeypatch: pytest.MonkeyPatch, failed_method: str
+) -> None:
+    """Attribute-update and end failures remain isolated from the caller."""
+    tracer = JournalTracer("adapter")
+    sdk_span = mock.Mock()
+    getattr(sdk_span, failed_method).side_effect = RuntimeError("private SDK detail")
+    sdk_tracer = mock.Mock()
+    sdk_tracer.start_span.return_value = sdk_span
+    monkeypatch.setattr(tracer, "_get_tracer", mock.Mock(return_value=sdk_tracer))
+    span = tracer.start("adapter_restart_retry")
+    assert span is not None, "the controlled SDK span starts"
+
+    span.finish(outcome="admitted", failure_category="none")
+
+    sdk_span.end.assert_called_once_with()
+    assert tracer.dropped_spans == 1, "the SDK failure is counted"
+    assert tracer.failure_counts == {
+        "transport": 0,
+        "invalid_record": 0,
+        "sdk": 1,
+    }, "the SDK failure text is not retained"

@@ -394,14 +394,30 @@ experiment above); Python signal handlers survive `fork`.
   the fake's default `sccache` mode
   (`/tmp/test-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-33.out`).
   Candidate 35 configures that test's fake for direct mode, the scenario it
-  intends to exercise. Its complete gate sequence passed on `4a4bbe4`:
-  check-format, lint, typecheck, Markdown lint, Mermaid validation, unit tests
-  (1757 passed, 25 skipped), systemd-user tests (24 passed), and audit (no
-  known vulnerabilities; the local `buildlimits` package was not found on PyPI
-  and could not be audited). The systemd-user gate took 876.88 seconds while
-  its nested Cargo work queued normally behind healthy shared compile
-  admission. Logs use the `-34.out` suffix under `/tmp` for session
-  `ecd20a52-58e4-42d8-8324-6e18a28122f7`.
+  intends to exercise. Its 37-path dirty worktree, based on commit `4a4bbe4`,
+  passed check-format, lint, typecheck, Markdown lint, Mermaid validation, unit
+  tests (1757 passed, 25 skipped), systemd-user tests (24 passed), and audit
+  (no known vulnerabilities; the local `buildlimits` package was not found on
+  PyPI and could not be audited). These gates did not run against the clean
+  `4a4bbe4` commit. The tested worktree was later published as `a9883dd`.
+  Systemd-user tests took 876.88 seconds while nested Cargo work queued
+  normally behind healthy shared compile admission. Logs use the `-34.out`
+  suffix under `/tmp` for session `ecd20a52-58e4-42d8-8324-6e18a28122f7`.
+- Hosted CI on `a9883dd` failed at the Markdown spelling gate because
+  `buildlimits/tracing_export.py` used `Recognised`; later CI steps were
+  skipped. Act Validation passed. The spelling is corrected in the current
+  worktree; hosted validation for the final candidate remains pending.
+- The integrated four-path worktree based on `a9883dd` passed the complete
+  sequential local gate set. Its dirty-diff SHA256 is
+  `11d188be4b2cf5dc1021e67d2574ac1be4b1f352a4e91594ff7e1ad767b8a757`.
+  Formatting, lint, typecheck, Markdown lint, and Mermaid validation passed;
+  unit tests passed (1760 passed, 25 skipped), systemd-user tests passed (24
+  passed), and audit reported no known vulnerabilities. The package itself was
+  not found on PyPI and could not be audited. Logs use the `-41.out` suffix
+  under `/tmp` for session `ecd20a52-58e4-42d8-8324-6e18a28122f7`.
+- Review follow-up coverage now holds `Finished` until the retry span is
+  exported during the adapter's `Admitted` reply handling. Controlled SDK
+  failures cover initialization, attribute updates, and span completion.
 - [ ] Renew the assessments for the reviewed head, reconcile the configured
   Observability row, and merge PR 21.
 - [x] Hosted Actions runs on `dee4ed9` passed: Act Validation
