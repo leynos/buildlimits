@@ -4,8 +4,9 @@
 
 Accepted. A plain `systemctl --user restart buildlimits-supervisor.service`
 becomes the non-disruptive restart. `SIGTERM` drains instead of cancelling, and
-start-up stops a live managed cache itself instead of refusing it. No unit-file
-change is needed.
+start-up stops a live managed cache itself instead of refusing it. As first
+accepted on 2026-10-18 no unit-file change was needed; the amendment dated
+2026-10-19 below adds one directive, `KillMode=mixed`.
 
 ## Date
 
@@ -167,3 +168,68 @@ The change keeps the barrier ordering and the single authority for releasing a
 token. It adds no state that outlives a process and no trust boundary, and it
 moves the cache stop to the one place that already knows no admitted group can
 use the cache.
+
+## Amendment, 2026-10-19: the stop must signal only the main process
+
+### Incident
+
+On host `rohga`, installed at `de73710`, a graceful restart under load logged
+`group g141702: cannot create buildlimits-3952476-g141702.scope:` with nothing
+after the colon, then
+`stopping: finishing running compiler groups before exit`. That request's build
+failed as `launch-failed` instead of being retried as `restarting`, which
+contradicted this ADR's promise that a restart fails no build.
+
+### Cause
+
+The unit has the default `KillMode=control-group`. On stop, systemd sends
+`SIGTERM` to every process in the supervisor's control group. The supervisor
+places each admitted request's held launch child in a transient scope by running
+`busctl` synchronously (`UserManager.start_scope`), and until that returns the
+`busctl` is in the supervisor's control group. The stop killed it, the
+placement failed with empty stderr, and `Groups.place` could not distinguish
+that from an ordinary scope failure. The log order is explained by the signal
+handler: it only records intent, so the failed placement is seen on the event
+loop before the graceful stop is honoured. The held launch child survives the
+signal, because the forked child inherits the supervisor's handler and resets
+signals only after its barrier. A real-systemd reproduction with a slow
+`busctl` shim (`tests/test_restart_during_placement_systemd.py`) reproduces the
+journal line for line.
+
+### Decision
+
+1. The supervisor unit carries `KillMode=mixed`. `SIGTERM` goes to the main
+   process only. When the main process has exited, systemd sends `SIGKILL` to
+   anything left in the control group, whatever `TimeoutStopSec` says: with
+   `TimeoutStopSec=infinity` a service whose main process exits on `SIGTERM`
+   but whose orphan ignores it stops in milliseconds under `mixed`, and hangs
+   indefinitely under `control-group`. Running compilers are in their own
+   scopes, outside the supervisor's control group, and are never touched. A
+   held launch child left in the group has executed nothing and is correctly
+   killed. This one directive covers every helper the supervisor runs
+   synchronously: scope placement, `systemctl show`, and the `systemctl` and
+   `busctl` stop and start jobs of the cache transaction.
+2. As defence in depth, a placement that fails while a graceful stop is in
+   progress, requested or begun, is refused as `restarting` and retried by the
+   adapter, not refused as `launch-failed`. The log line naming the cause is
+   kept, the token returns through the existing path, and a failure with no
+   stop in progress is unchanged. Retrying the placement in the supervisor was
+   rejected: the held child may be unusable, a partly created scope of the same
+   name would fail a second `StartTransientUnit`, and a retry would hold a
+   token and delay the drain, while the adapter's bounded retry already reaches
+   the new supervisor.
+3. The cache unit is unchanged. A supervisor restart never stops it, so its kill
+   mode is not on the incident's path, and its own stop is the recovery
+   transaction's stop, whose purpose is a control group verified empty;
+   `control-group` signals the server and its detached compile children
+   together, which is what that proof relies on.
+
+### Consequences
+
+The role that provisions the unit must render `KillMode=mixed`; the users'
+guide lists it with the other directives the restart relies on, and the fixture
+units and `tests/test_unit_file_contract.py` pin it. A host that still has the
+default is protected for the placement window by the second change but not for
+the cache transaction's helper calls, which already retry. `systemctl kill`
+signals the whole control group by default regardless of the kill mode, so the
+immediate stop (`SIGINT`) is unchanged.

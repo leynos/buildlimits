@@ -145,6 +145,11 @@ class Harness:
         self.cache_recovery = cache_recovery
         self.placement = Placement(self.parent_slice, nofile)
         self.cached_units: CachedUnits | None = None
+        # Test seams for the cached supervisor unit: a directory of command
+        # shims ahead of its PATH, and a KillMode override (None keeps the
+        # fixture unit's own).
+        self.path_prefix: Path | None = None
+        self.kill_mode: str | None = None
         self.pool = self.runtime / "pool"
         os.mkfifo(self.pool)
         self._holder: int | None = os.open(self.pool, os.O_RDWR | os.O_CLOEXEC)

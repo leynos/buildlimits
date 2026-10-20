@@ -75,7 +75,7 @@ def test_service_distinguishes_operator_accounting_from_retryable_startup(
     class FailedSupervisor:
         """Expose only the startup boundary; no service or pool is opened."""
 
-        def __init__(self, _settings: SupervisorConfig, *, metrics: object) -> None:
+        def __init__(self, _settings: SupervisorConfig, *, telemetry: object) -> None:
             """Keep this fault fixture independent of real admission resources."""
 
         def start(self, _own: PurePosixPath) -> None:

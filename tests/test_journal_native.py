@@ -146,7 +146,7 @@ def test_datagram_size_boundary(tmp_path: Path, extra_bytes: int) -> None:
         try:
             if extra_bytes:
                 with pytest.raises(
-                    OSError, match=r"^native journal metric exceeds datagram limit$"
+                    OSError, match=r"^native journal record exceeds datagram limit$"
                 ):
                     sink.emit(record)
                 with pytest.raises(TimeoutError):

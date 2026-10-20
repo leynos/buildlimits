@@ -74,7 +74,6 @@ def test_admission_reply_failure_abandons_before_release(
                 return running
 
             monkeypatch.setattr(Groups, "place", place)
-            monkeypatch.setattr(Groups, "cache_notice", lambda *_args, **_kwargs: None)
             supervisor._apply(supervisor.admission.token_arrived(b"a"))
             assert not child.released, (
                 "an acknowledgement failure cannot run the compiler"

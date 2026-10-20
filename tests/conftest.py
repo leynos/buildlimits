@@ -15,12 +15,31 @@ import typing as typ
 
 import pytest
 from cache_recovery_harness import HarnessFactory
+from restart_world import RestartWorld
 
+from buildlimits.config import SupervisorConfig
 from buildlimits.metrics import Metrics
+from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     from pathlib import Path
+
+
+@pytest.fixture
+def world() -> cabc.Iterator[RestartWorld]:
+    """Provide a real-systemd restart scenario's world; release all it owned.
+
+    Yields
+    ------
+    RestartWorld
+        The world, whose supervisors, builds and restarts close at teardown.
+    """
+    state = RestartWorld()
+    try:
+        yield state
+    finally:
+        state.close()
 
 
 class RecordingSink:
@@ -110,6 +129,24 @@ def telemetry(metric_sink: RecordingSink) -> tuple[Metrics, RecordingSink]:
         The emitter and sink for one lifecycle test.
     """
     return Metrics(metric_sink), metric_sink
+
+
+@pytest.fixture
+def observed_supervisor(metrics: Metrics) -> cabc.Iterator[Supervisor]:
+    """Provide one metrics-enabled supervisor at a fixed monotonic time.
+
+    Yields
+    ------
+    Supervisor
+        A supervisor that owns the test's metrics emitter and selector.
+    """
+    instance = Supervisor(
+        SupervisorConfig(),
+        clock=lambda: 3.0,
+        telemetry=SupervisorTelemetry(metrics=metrics),
+    )
+    yield instance
+    instance.selector.close()
 
 
 @pytest.fixture

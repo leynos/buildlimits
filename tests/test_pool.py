@@ -124,7 +124,7 @@ def test_pool_read_failure_is_one_dispatch_metric(metrics, metric_sink) -> None:
 
     from buildlimits.config import SupervisorConfig
     from buildlimits.pool import PoolFailure
-    from buildlimits.supervisor import Supervisor
+    from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 
     class FailedPool:
         """Expose one read failure through the real supervisor boundary."""
@@ -133,7 +133,9 @@ def test_pool_read_failure_is_one_dispatch_metric(metrics, metric_sink) -> None:
             """Return the read failure."""
             return [PoolFailure("secret device error")]
 
-    supervisor = Supervisor(SupervisorConfig(), metrics=metrics)
+    supervisor = Supervisor(
+        SupervisorConfig(), telemetry=SupervisorTelemetry(metrics=metrics)
+    )
     try:
         supervisor.pool = typ.cast("TokenPool", FailedPool())
         supervisor._pool_events()

@@ -26,9 +26,9 @@ from buildlimits.adapter_invocation import AdmissionAttempt, Invocation, Progres
 from buildlimits.adapter_invocation import BusyError as BusyError
 from buildlimits.adapter_invocation import RestartingError as RestartingError
 from buildlimits.adapter_invocation import refusal as _refusal
-from buildlimits.adapter_invocation import retry_request as _retry_request
 from buildlimits.adapter_metrics import AdapterMetrics
 from buildlimits.adapter_replies import next_reply as _next_reply
+from buildlimits.adapter_retry import retry_request as _retry_request
 from buildlimits.adapter_signals import _reproduce as _reproduce
 from buildlimits.adapter_signals import observe_signals
 from buildlimits.framing import DescriptorSendPressureError
@@ -197,13 +197,13 @@ def _request_once(
             raise RestartingError(msg) from error
         finally:
             conn.settimeout(None)
-        return _await_result(conn, heartbeat, summary, deadline=deadline)
+        return _await_result(conn, heartbeat, attempt, deadline=deadline)
 
 
 def _await_result(
     conn: socket.socket,
     heartbeat: Heartbeat,
-    summary: AdapterMetrics,
+    attempt: AdmissionAttempt,
     *,
     deadline: float | None = None,
 ) -> Exit:
@@ -223,6 +223,7 @@ def _await_result(
     RestartingError
         If the supervisor restarts before the compiler was admitted.
     """  # ruff: ignore[docstring-extraneous-exception] - raised via _refusal's result.
+    summary = attempt.summary
     progress = Progress()
     while True:
         reply = _reply_or_restart(conn, heartbeat, deadline, progress)
@@ -236,6 +237,7 @@ def _await_result(
             case Admitted(notice=notice):
                 deadline = None
                 progress.recorded = progress.admitted = True
+                attempt.admitted()
                 heartbeat.admitted()
                 summary.admission(heartbeat.phase_started)
                 _stderr(

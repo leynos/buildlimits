@@ -23,8 +23,9 @@ from buildlimits.journal import log
 from buildlimits.journal_native import JournalSink
 from buildlimits.metrics import Metrics
 from buildlimits.sccache import SccacheError, StartupAccountingError
-from buildlimits.supervisor import Supervisor
+from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 from buildlimits.systemd import SystemdError
+from buildlimits.tracing import JournalTracer
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -78,7 +79,13 @@ def _supervise(settings: config.SupervisorConfig) -> int:
         return 2
     sink = JournalSink(identifier="build-limits-supervisor")
     try:
-        supervisor = Supervisor(settings, metrics=Metrics(sink, warn=log))
+        supervisor = Supervisor(
+            settings,
+            telemetry=SupervisorTelemetry(
+                metrics=Metrics(sink, warn=log),
+                tracer=JournalTracer("supervisor", sink),
+            ),
+        )
         try:
             return _serve(supervisor, own)
         finally:

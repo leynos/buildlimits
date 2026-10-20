@@ -9,7 +9,7 @@ import pytest
 from buildlimits import attributes, launch
 from buildlimits.attributes import ProcessAttributes
 from buildlimits.config import SupervisorConfig
-from buildlimits.groups import Groups
+from buildlimits.groups import Groups, Running
 from buildlimits.protocol import CompileRequest
 from buildlimits.requesters import Pending
 from buildlimits.systemd import SystemdError
@@ -17,6 +17,7 @@ from buildlimits.systemd import SystemdError
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from buildlimits.launch import HeldChild
     from buildlimits.systemd import UserManager
 
 
@@ -137,6 +138,21 @@ def _placing_groups(selector: selectors.BaseSelector, manager: object) -> Groups
     )
     groups.slice_dir = Path("/sys/fs/cgroup/compilers.slice")
     return groups
+
+
+def test_abandon_held_stops_and_forgets_the_group(
+    selector: selectors.BaseSelector,
+) -> None:
+    """An unreleased child is stopped before its group is forgotten."""
+    child = _Child()
+    groups = _placing_groups(selector, object())
+    running = Running("g1", 1, Path("/scope"), typ.cast("HeldChild", child))
+    groups.running["g1"] = running
+
+    groups.abandon_held(running)
+
+    assert child.abandoned, "the held child was stopped"
+    assert "g1" not in groups.running, "the abandoned group was forgotten"
 
 
 def test_a_child_that_cannot_start_fails_the_launch(

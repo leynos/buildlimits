@@ -161,13 +161,18 @@ def test_close_closes_remaining_descriptors(tmp_path: Path) -> None:
     """Close releases the supervisor's descriptors once the child has exited."""
     spec = _spec(("/bin/true",), tmp_path)
     child = launch.spawn_held(spec)
-    child.release()
-    wait_reaped(child)
-    errors_fd = child.errors
-    assert errors_fd is not None, "the error pipe is still open before close"
-    assert errors_fd in _open_fds(), "the error descriptor is open"
-    child.close()
-    assert errors_fd not in _open_fds(), "close closes the error descriptor"
+    try:
+        child.release()
+        wait_reaped(child, timeout=10)
+        errors_fd = child.errors
+        assert errors_fd is not None, "the error pipe is still open before close"
+        assert errors_fd in _open_fds(), "the error descriptor is open"
+        child.close()
+        assert errors_fd not in _open_fds(), "close closes the error descriptor"
+    finally:
+        if not child.reaped:
+            child.abandon()
+        child.close()
     assert child.errors is None, "close forgets the descriptor"
 
 

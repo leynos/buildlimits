@@ -8,25 +8,29 @@ accounting, exit-status semantics and launch outcomes are exercised
 deterministically.
 """
 
+import collections.abc as cabc
 import dataclasses as dc
 import socket
 import subprocess
+import types
 import typing as typ
+from pathlib import Path
 
 import pytest
+from journal_fixtures import journal_fields, journal_receiver
 from pool_helpers import FakePool, attach_pool
 from request_helpers import crate_pending
 
 from buildlimits.admission import Group, GroupState
 from buildlimits.config import SupervisorConfig
+from buildlimits.journal_native import MAX_DATAGRAM_BYTES, JournalSink
 from buildlimits.replies import Admitted
 from buildlimits.supervisor import Supervisor
 from buildlimits.systemd import UserManager
+from buildlimits.tracing import JournalTracer
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
-    from buildlimits.groups import Groups
+    from buildlimits.groups import Groups, Running
     from buildlimits.pool import TokenPool
     from buildlimits.requesters import Pending
 
@@ -37,7 +41,7 @@ class FakeGroups:
 
     order: list[str]
     running: object | None
-    notice: str = ""
+    terminate: cabc.Callable[[str], None] = dc.field(default=lambda _group_id: None)
 
     def place(self, entry: Pending, group_id: str, *, cached: bool) -> object | None:
         """Report the scripted placement outcome, admitting ``entry`` on success."""
@@ -47,9 +51,15 @@ class FakeGroups:
         return self.running
 
     def cache_notice(self, entry: Pending, *, cached: bool) -> str:
-        """Report the scripted cache notice."""
+        """Record the cache-notice effect for direct-cache scenarios."""
         del entry, cached
-        return self.notice
+        self.order.append("cache_notice")
+        return ""
+
+    def abandon_held(self, running: Running) -> None:
+        """Record that a placed child was abandoned before release."""
+        running.exec_error = None
+        self.order.append("abandon")
 
     def release(self, running: object) -> None:
         """Record that the group was released."""
@@ -152,16 +162,133 @@ def test_launch_failure_refuses_the_request_and_returns_its_token(
     assert "g1" not in supervisor.admission.groups, "the failed group was dropped"
 
 
-def test_launch_success_notifies_before_releasing_the_group(
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("none", "launch-failed", True),
+        ("closing", "restarting", False),
+        ("requested", "restarting", False),
+        ("immediate", "launch-failed", True),
+    ],
+)
+def test_a_failed_placement_is_retried_only_during_a_graceful_stop(
+    supervisor: Supervisor,
+    monkeypatch: pytest.MonkeyPatch,
+    case: tuple[str, str, bool],
+) -> None:
+    """A stop that broke the placement must not cost the request its build.
+
+    The ``requested`` case is the incident's: the signal handler has only
+    recorded the stop when the failed placement is seen, so admission is not yet
+    closing.
+    """
+    stop, reason, keeps_cause = case
+    pool = attach_pool(supervisor)
+    supervisor.groups = typ.cast("Groups", FakeGroups(order=[], running=None))
+    supervisor.admission.groups["g1"] = Group(
+        "g1", request_id=1, token=b"a", cached=False, state=GroupState.RUNNING
+    )
+    entry = crate_pending(1)
+    entry.exec_error = "cannot create x.scope: "
+    supervisor.requests.pending[1] = entry
+    refusals: list[tuple[int, str, str | None]] = []
+    monkeypatch.setattr(
+        supervisor.requests,
+        "refuse",
+        lambda request_id, why: refusals.append((request_id, why, entry.exec_error)),
+    )
+    match stop:
+        case "closing":
+            supervisor.admission.begin_closing()
+        case "requested":
+            supervisor.request_graceful_stop()
+        case "immediate":
+            supervisor.request_stop()
+
+    supervisor._launch(1, "g1", cached=False)
+
+    cause = "cannot create x.scope: " if keeps_cause else None
+    assert refusals == [(1, reason, cause)], "the refusal says whether to retry"
+    assert pool.returned == [b"a"], "the held token returned exactly once"
+    assert "g1" not in supervisor.admission.groups, "the failed group was dropped"
+    assert supervisor.admission.closing == (stop in {"closing", "requested"}), (
+        "a requested graceful stop is honoured by the time the refusal is made"
+    )
+
+
+def test_an_immediate_stop_preempts_retry_after_a_failed_placement(
+    supervisor: Supervisor,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A pending SIGINT prevents a failed placement from being retried."""
+    pool = attach_pool(supervisor)
+    termination_calls: list[str] = []
+    groups = FakeGroups(order=[], running=None, terminate=termination_calls.append)
+    supervisor.groups = typ.cast("Groups", groups)
+    supervisor.admission.groups["g1"] = Group(
+        "g1", request_id=1, token=b"a", cached=False, state=GroupState.RUNNING
+    )
+    supervisor.admission.queue.append(2)
+    supervisor.admission.cacheable[2] = False
+    entry = crate_pending(1)
+    entry.exec_error = "cannot create x.scope: "
+    supervisor.requests.pending.update({1: entry, 2: crate_pending(2)})
+    refusals: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        supervisor.requests,
+        "refuse",
+        lambda request_id, why: refusals.append((request_id, why)),
+    )
+    supervisor.request_graceful_stop()
+    supervisor.request_stop()
+
+    trace_path = tmp_path / "journal.sock"
+    sink = JournalSink(trace_path)
+    supervisor.tracer = JournalTracer("supervisor", sink)
+    with journal_receiver(trace_path) as receiver:
+        try:
+            supervisor._launch(1, "g1", cached=False)
+            record = journal_fields(receiver.recv(MAX_DATAGRAM_BYTES))
+        finally:
+            sink.close()
+
+    assert refusals == [(2, "unhealthy"), (1, "launch-failed")], (
+        "the immediate stop refuses queued and failed placements without retry"
+    )
+    assert termination_calls == ["g1"], "immediate shutdown reaches the failed group"
+    assert pool.returned == [b"a"], "the failed placement returns its token once"
+    assert not supervisor.admission.healthy, "SIGINT transitions admission to unhealthy"
+    assert supervisor.exit_status == 0, "the immediate stop reaches shutdown"
+    assert record["BUILD_LIMITS_TRACE_OUTCOME"] == "launch_failed", (
+        "an immediate stop retains the failed placement result"
+    )
+    assert record["BUILD_LIMITS_TRACE_FAILURE_CATEGORY"] == "scope_placement", (
+        "the trace classifies the placement failure"
+    )
+    assert record["BUILD_LIMITS_TRACE_STOP_MODE"] == "immediate", (
+        "the finished span records the stop that preempted retry"
+    )
+
+
+@pytest.mark.parametrize("requester_present", [True, False])
+def test_launch_notifies_before_release_or_abandons_disconnected_group(
     supervisor: Supervisor,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    requester_present: bool,
 ) -> None:
-    """A placed group is announced to its requester before it may run."""
+    """A placement is announced before release or abandoned if its requester left."""
     order: list[str] = []
-    running = object()
-    supervisor.groups = typ.cast("Groups", FakeGroups(order=order, running=running))
+    running = types.SimpleNamespace(exec_error=None)
+    groups = FakeGroups(
+        order=order,
+        running=running,
+    )
+    supervisor.groups = typ.cast("Groups", groups)
     supervisor.requests.pending[1] = crate_pending(1)
+    supervisor.admission.groups["g1"] = Group("g1", 1, b"a", cached=False)
+    pool = attach_pool(supervisor)
     notified: list[tuple[int, object]] = []
 
     def _notify(request_id: int, reply: object) -> None:
@@ -170,21 +297,20 @@ def test_launch_success_notifies_before_releasing_the_group(
         notified.append((request_id, reply))
 
     monkeypatch.setattr(supervisor.requests, "notify", _notify)
-
     client, connection = socket.socketpair()
     with client, connection:
-        supervisor.requests.pending[1].conn = connection
+        if requester_present:
+            supervisor.requests.pending[1].conn = connection
         supervisor._launch(1, "g1", cached=False)
 
-    assert order == ["notify", "release"], (
-        "the requester learns of admission before the group may write"
+    assert order[:2] == ["cache_notice", "notify"], "notice precedes notification"
+    assert order[-1] == ("release" if requester_present else "abandon"), "wrong action"
+    assert notified == [(1, Admitted("g1", False, ""))], "one admission reply"
+    assert pool.returned == ([] if requester_present else [b"a"]), (
+        "a disconnected requester returns the group token once"
     )
-    assert notified == [(1, Admitted("g1", False, ""))], (
-        "the requester was told which group admitted it"
-    )
-    assert "admitted request 1 as g1" in capsys.readouterr().err, (
-        "the admission was logged"
-    )
+    if requester_present:
+        assert "admitted request 1 as g1" in capsys.readouterr().err, "admission logged"
 
 
 def test_metrics_admission_and_failure_boundaries(

@@ -28,7 +28,7 @@ from buildlimits.protocol import (
     send_frame,
 )
 from buildlimits.requesters import Requests, listen
-from buildlimits.supervisor import Supervisor
+from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 
 if typ.TYPE_CHECKING:
     from buildlimits.pending_request import Pending
@@ -53,7 +53,7 @@ def _accept_exhaustion(report: int, path: str) -> object:
     supervisor = Supervisor(
         SupervisorConfig(cache_mode="direct"),
         clock=lambda: now[0],
-        metrics=Metrics(sink),
+        telemetry=SupervisorTelemetry(metrics=Metrics(sink)),
     )
     clients = []
     filler = []

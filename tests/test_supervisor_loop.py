@@ -6,10 +6,11 @@ small fakes so that dispatch, pool events, health checks, the ``serve`` loop
 and effect handling can be exercised deterministically.
 """
 
+import collections.abc as cabc
 import os
 import subprocess
 import typing as typ
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 import pytest
 from pool_helpers import FakePool
@@ -19,15 +20,12 @@ from buildlimits import supervisor as supervisor_module
 from buildlimits.admission import Admission
 from buildlimits.config import SupervisorConfig
 from buildlimits.pool import PoolFailure, Token
-from buildlimits.supervisor import Supervisor
+from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 from buildlimits.supervisor_polling import HEALTH_POLL_SECONDS
 from buildlimits.systemd import UserManager
 from buildlimits.timing import Clock
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-    from pathlib import Path
-
     from conftest import RecordingSink
 
     from buildlimits.metrics import Metrics
@@ -87,7 +85,10 @@ def test_start_opens_the_pool_and_registers_the_listener(
         cache_mode="sccache",
     )
     instance = Supervisor(
-        settings, UserManager(_empty_runner), clock=lambda: 0.0, metrics=metrics
+        settings,
+        UserManager(_empty_runner),
+        clock=lambda: 0.0,
+        telemetry=SupervisorTelemetry(metrics=metrics),
     )
     try:
         instance.start(OWN_CGROUP)

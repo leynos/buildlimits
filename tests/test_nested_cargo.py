@@ -81,6 +81,7 @@ def _require_managed_admission() -> None:
         pytest.skip("production admission socket unavailable; not acceptance evidence")
 
 
+@pytest.mark.timeout(1800)
 @pytest.mark.systemd_user
 def test_offline_nested_cargo_preserves_admission_and_recovers_baseline() -> None:
     """Real nested Cargo succeeds with one slot and leaves no tokens or queued FDs."""

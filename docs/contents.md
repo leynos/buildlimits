@@ -26,6 +26,9 @@
   records why the adapters prefix a real `rustc` or `rustdoc`'s own `lib`
   directory to `LD_LIBRARY_PATH`, how it mirrors rustup, and what stays outside
   the mitigation.
+- [ADR 003: bounded restart tracing](adr-003-bounded-restart-tracing.md)
+  records the local OpenTelemetry spans, bounded journal schema and failure
+  isolation used at process boundaries.
 
 ## Conventions
 

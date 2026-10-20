@@ -10,7 +10,7 @@ from buildlimits.admission import Group, GroupState
 from buildlimits.config import SupervisorConfig
 from buildlimits.drain_loop import DrainLoop, LoopEffects
 from buildlimits.effects import Exit
-from buildlimits.supervisor import Supervisor
+from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 from buildlimits.timing import Clock
 
 if typ.TYPE_CHECKING:
@@ -28,7 +28,7 @@ def supervisor(metrics: Metrics) -> cabc.Iterator[Supervisor]:
     instance = Supervisor(
         SupervisorConfig(),
         clock=Clock(now=lambda: 0.0, sleep=lambda _seconds: None),
-        metrics=metrics,
+        telemetry=SupervisorTelemetry(metrics=metrics),
     )
     yield instance
     instance.selector.close()

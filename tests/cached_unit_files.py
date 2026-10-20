@@ -27,11 +27,25 @@ def _exec_path(path: Path) -> str:
     return f'"{escaped}"'
 
 
-def _wrapper(path: Path, argv: list[str], environment: dict[str, str]) -> None:
-    """Write a fixture launcher using Python argv, without a shell expansion."""
+def _wrapper(
+    path: Path,
+    argv: list[str],
+    environment: dict[str, str],
+    path_prefix: Path | None = None,
+) -> None:
+    """Write a fixture launcher using Python argv, without a shell expansion.
+
+    ``path_prefix`` puts a directory of shims ahead of the unit's own ``PATH``,
+    so a scenario can stand in for a command the supervisor looks up by name.
+    """
+    prefix = (
+        ""
+        if path_prefix is None
+        else f"os.environ['PATH'] = {str(path_prefix)!r} + ':' + os.environ['PATH']\n"
+    )
     path.write_text(
         f"#!{sys.executable}\nimport os\n"
-        f"os.environ.update({environment!r})\n"
+        f"os.environ.update({environment!r})\n{prefix}"
         f"os.execv({sys.executable!r}, {argv!r})\n"
     )
     path.chmod(0o700)
@@ -45,7 +59,9 @@ def supervisor_unit_text(
     The directives the graceful restart relies on are the role's own and must
     not be varied here: ``Type=notify`` so ``systemctl restart`` returns when
     the new supervisor is ready, ``TimeoutStopSec=infinity`` so that systemd
-    never kills a supervisor that is waiting for running groups, and
+    never kills a supervisor that is waiting for running groups,
+    ``KillMode=mixed`` so that a stop signals only the supervisor and never the
+    ``busctl`` or ``systemctl`` helper it is running at that moment, and
     ``Restart=always`` with ``RestartPreventExitStatus=2`` so only a refusal that
     needs an operator stays down. Only the timeouts that bound start-up are
     shortened for the fixture.
@@ -58,7 +74,7 @@ def supervisor_unit_text(
     return (
         f"[Unit]\nDescription=Isolated admission supervisor\n"
         f"Wants={sccache_unit}\nBefore={sccache_unit}\n"
-        f"[Service]\nType=notify\nNotifyAccess=main\nSlice={parent_slice}\n"
+        f"[Service]\nKillMode=mixed\nType=notify\nNotifyAccess=main\nSlice={parent_slice}\n"
         f"Restart=always\nRestartPreventExitStatus=2\nRestartSec=1\n"
         f"TimeoutStartSec=30\nTimeoutStopSec=infinity\n"
         f"ExecStart={exec_start}\n{limits}"
@@ -149,7 +165,7 @@ class CachedUnits:
         python_path = {"PYTHONPATH": os.environ.get("PYTHONPATH", "")}
         ready = harness.runtime / "supervisor-launch.py"
         cache = harness.runtime / "cache-launch.py"
-        _wrapper(ready, supervisor, python_path)
+        _wrapper(ready, supervisor, python_path, harness.path_prefix)
         _wrapper(
             cache,
             server,
@@ -167,6 +183,10 @@ class CachedUnits:
             harness.parent_slice,
             "[Unit]\nDescription=Isolated admission fixture\n[Slice]\n",
         )
+        # A later assignment wins in a unit file, so a scenario can stand in for a
+        # host whose unit carries a different kill mode than the contract's.
+        if harness.kill_mode is not None:
+            limits += f"KillMode={harness.kill_mode}\n"
         self._install_file(
             harness.unit,
             supervisor_unit_text(

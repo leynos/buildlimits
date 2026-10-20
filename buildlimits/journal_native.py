@@ -46,14 +46,52 @@ class JournalSink:
         record : Mapping[str, str]
             Validated prefixed fields, without journal-owned names.
 
+        Notes
+        -----
+        The native transport can raise ``OSError`` for serialization, size
+        validation or sending failures. It performs no blocking retry.
+        """
+        self._emit(
+            record,
+            message=f"build-limits metric {record.get('BUILD_LIMITS_EVENT', '')}",
+        )
+
+    def emit_trace(self, record: cabc.Mapping[str, str]) -> None:
+        """Send one validated trace span through the same non-blocking socket.
+
+        Parameters
+        ----------
+        record : Mapping[str, str]
+            Bounded trace fields, without journal-owned names.
+        """
+        message = "build-limits trace " + " ".join(
+            f"{field}={record.get(name, 'unknown')}"
+            for name, field in (
+                ("BUILD_LIMITS_TRACE_OPERATION", "operation"),
+                ("BUILD_LIMITS_TRACE_OUTCOME", "outcome"),
+                ("BUILD_LIMITS_TRACE_FAILURE_CATEGORY", "failure_category"),
+                ("BUILD_LIMITS_TRACE_STOP_MODE", "stop_mode"),
+                ("BUILD_LIMITS_TRACE_RETRY_ATTEMPT", "retry_attempt"),
+            )
+        )
+        self._emit(record, message=message)
+
+    def close(self) -> None:
+        """Release the lazy socket, allowing the next record to reopen it."""
+        conn, self._socket = self._socket, None
+        if conn is not None:
+            conn.close()
+
+    def _emit(self, record: cabc.Mapping[str, str], *, message: str) -> None:
+        """Send one bounded record and reconnect after socket errors.
+
         Raises
         ------
         OSError
-            If serialization, size validation or sending fails. The emitter
-            catches this failure; no blocking retry is performed.
+            If serialization, connection or sending fails.
         """
         try:
-            payload = self._serialize(record)
+            payload = self._serialize_message(record, message)
             if self._socket is None:
                 if not self.path.exists():
                     self._null.emit(record)
@@ -66,27 +104,21 @@ class JournalSink:
             self.close()
             raise
 
-    def close(self) -> None:
-        """Release the lazy socket, allowing the next record to reopen it."""
-        conn, self._socket = self._socket, None
-        if conn is not None:
-            conn.close()
-
-    def _serialize(self, record: cabc.Mapping[str, str]) -> bytes:
-        """Encode text-only native fields or reject the whole datagram.
+    def _serialize_message(self, record: cabc.Mapping[str, str], message: str) -> bytes:
+        """Encode validated fields with the supplied bounded journal message.
 
         Returns
         -------
         bytes
-            One bounded ASCII datagram.
+            A bounded native journal datagram.
 
         Raises
         ------
         OSError
-            If names, values or the datagram size are invalid.
+            If a field name or value fails validation.
         """
         fields = {
-            "MESSAGE": f"build-limits metric {record.get('BUILD_LIMITS_EVENT', '')}",
+            "MESSAGE": message,
             "PRIORITY": "6",
         }
         if self.identifier is not None:
@@ -118,13 +150,13 @@ def _encode_fields(fields: cabc.Mapping[str, str]) -> bytes:
         "ascii"
     )
     if len(payload) > MAX_DATAGRAM_BYTES:
-        msg = "native journal metric exceeds datagram limit"
+        msg = "native journal record exceeds datagram limit"
         raise OSError(msg)
     return payload
 
 
 def _valid_key(key: str) -> bool:
-    """Allow only authored uppercase ASCII metric field names.
+    """Allow only authored uppercase ASCII buildlimits field names.
 
     Returns
     -------

@@ -167,7 +167,11 @@ class Admission(Gauges):
         """Account for a group whose compiler never started.
 
         The caller has already killed the held child and confirmed that no
-        process of the group runs.
+        process of the group runs, so nothing ran for the request. While a
+        graceful stop is under way the request is therefore refused as
+        ``restarting``, which its adapter retries, rather than as a launch
+        failure: a stop can itself break the placement, for instance by
+        signalling the ``busctl`` that creates the scope.
 
         Parameters
         ----------
@@ -180,9 +184,10 @@ class Admission(Gauges):
             The token's return and the request's refusal.
         """
         group = self.groups.pop(group_id)
+        reason = "restarting" if self.winding_down else "launch-failed"
         return [
             ReturnToken(group.token),
-            Refuse(group.request_id, "launch-failed"),
+            Refuse(group.request_id, reason),
             *self._maybe_shutdown(),
         ]
 
@@ -348,6 +353,8 @@ class Admission(Gauges):
         list[Effect]
             Nothing while groups remain; otherwise the refusal of what waits.
         """
+        if self.closing:
+            return []
         self.closing = True
         return self._maybe_shutdown()
 
