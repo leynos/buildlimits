@@ -207,7 +207,37 @@ execution, or systemd process effects. The real-systemd scenarios cover the
 systemd boundary; supervisor unit tests cover simultaneous stop requests. The
 finite property does not establish unbounded liveness or formal proof. A
 mutation that forces failed placements to `launch-failed` must fail the
-graceful witness.
+graceful witness. Mutation control on commit `db02b38` temporarily changed
+`Admission.launch_failed` to rewrite every `Refuse` reason to `launch-failed`,
+then ran the property below. The expected outcome is pytest exit 1 at the named
+graceful witness, asserting the exact `restarting` refusal; the mutation was
+rejected there. Log:
+`/tmp/mutation-control-buildlimits-fix-restart-kill-mode-review-feedback-final.out`.
+The command was `uv run python - <<'PY'` with this mutation harness; pytest's
+exit 1 is the expected outcome.
+
+```python
+import pytest
+import buildlimits.admission as admission_module
+import buildlimits.effects as effects
+
+original = admission_module.Admission.launch_failed
+
+def always_report_launch_failed(self, group_id):
+    returned = original(self, group_id)
+    return [
+        effects.Refuse(effect.request_id, "launch-failed")
+        if isinstance(effect, effects.Refuse)
+        else effect
+        for effect in returned
+    ]
+
+admission_module.Admission.launch_failed = always_report_launch_failed
+raise SystemExit(pytest.main([
+    "-q",
+    "tests/test_admission_closing_properties.py::test_graceful_close_preserves_admission_invariants",
+]))
+```
 
 Invariant I4: with the legacy kill mode, the second real-systemd scenario shows
 the busctl was signalled and the build still completes once after a retry.
@@ -242,8 +272,15 @@ experiment above); Python signal handlers survive `fork`.
   property exposed repeated `Shutdown` effects from an already-closed admission.
   `Admission.begin_closing()` now returns no effects after its first close.
   The focused closing tests pass (12 passed).
-- [ ] Re-run all candidate gates, record the mutation control against the
-  committed candidate, and renew the head-specific proof assessment.
+- [x] Candidate `db02b38` passed the sequential gates before commit:
+  `make check-fmt`, `make lint`, `make typecheck`, `make markdownlint`,
+  `make nixie`, `make test` (1750 passed, 25 skipped) and
+  `make test-systemd-user` (24 passed, both restart-during-placement scenarios
+  passed). Logs use the `-13.out` suffix under `/tmp`.
+- [x] The mutation control above rejected the forced `launch-failed` result at
+  the named graceful witness.
+- [ ] Run the final exact-head gates, renew the proof assessment on the pushed
+  head, then continue the review loop to merge.
 - [ ] Review loop to a mergeable state.
 
 ## Surprises & discoveries
