@@ -299,7 +299,7 @@ experiment above); Python signal handlers survive `fork`.
   state and scope-placement work into focused modules, group supervisor
   observation ports, classify trace failures without retaining exception data,
   and complete the affected docstrings.
-- [ ] Run the sequential candidate gates after the latest lint remediation.
+- [x] Run the sequential candidate gates after the latest lint remediation.
   An earlier tracing candidate's `make check-fmt` passed; `make lint` stopped
   on 29 findings
   (`/tmp/lint-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode-16.out`).
@@ -416,8 +416,25 @@ experiment above); Python signal handlers survive `fork`.
   not found on PyPI and could not be audited. Logs use the `-41.out` suffix
   under `/tmp` for session `ecd20a52-58e4-42d8-8324-6e18a28122f7`.
 - Review follow-up coverage now holds `Finished` until the retry span is
-  exported during the adapter's `Admitted` reply handling. Controlled SDK
-  failures cover initialization, attribute updates, and span completion.
+  exported during the adapter's `Admitted` reply handling. The test also runs
+  through `retry_request` and checks that the post-admission fallback does not
+  emit a duplicate span. Controlled SDK failures cover initialization,
+  attribute updates, and span completion.
+- The first complete-gate rerun passed formatting, lint, and typecheck, then
+  stopped in `make test`: `test_close_closes_remaining_descriptors` exceeded
+  the one-second child-reap deadline under the parallel suite and leaked its
+  error descriptor during failure cleanup. The test now allows ten seconds,
+  matching the other bounded child-collection helper, and always abandons an
+  unreaped child and closes its descriptors.
+- The next complete sequential run passed all eight gates on the candidate
+  tree: formatting, lint, typecheck, Markdown lint, Mermaid validation, unit
+  tests (1760 passed, 25 skipped), systemd-user tests (24 passed), and audit
+  (no known vulnerabilities; `buildlimits` was not found on PyPI). The nested
+  Cargo case queued for shared compile admission for about 21 minutes, then
+  passed; admission remained healthy throughout. Logs use the `-45.out` suffix
+  under `/tmp` for session `ecd20a52-58e4-42d8-8324-6e18a28122f7`.
+- [x] Re-run the complete sequential gates after the exact-once retry-span
+  assertion, child-reap cleanup, and corrected gate-attribution note.
 - [ ] Renew the assessments for the reviewed head, reconcile the configured
   Observability row, and merge PR 21.
 - [x] Hosted Actions runs on `dee4ed9` passed: Act Validation
@@ -477,6 +494,6 @@ Notes for the reviewer:
 ## Revision note
 
 2026-10-20: Record the typing-import, dead-code, and tracing follow-up lint
-findings and their remediation. Candidate 35 passed every local gate on
-`4a4bbe4`; renew both assessments for the resulting PR head and verify which
-commit the queued resume review inspects before merging.
+findings and their remediation. Candidate 35 was a 37-path dirty worktree based
+on `4a4bbe4`, later published as `a9883dd`; its gates ran on the dirty
+candidate. See Progress for the later integrated gate results.

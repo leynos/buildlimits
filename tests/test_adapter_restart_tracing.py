@@ -11,7 +11,7 @@ from journal_fixtures import journal_fields, journal_receiver
 
 from buildlimits import adapter
 from buildlimits.adapter_invocation import AdmissionAttempt, QueuedRestartError
-from buildlimits.adapter_retry import _RetryState, retry_request
+from buildlimits.adapter_retry import retry_request
 from buildlimits.heartbeat import Heartbeat
 from buildlimits.journal_native import MAX_DATAGRAM_BYTES, JournalSink
 from buildlimits.protocol import Admitted, Exit, Finished, encode_reply
@@ -175,20 +175,27 @@ def test_restart_span_ends_at_admitted_before_finished_reply(
     timing = rig.clock.timing()
     heartbeat = Heartbeat("crate", 30.0, clock=timing.now)
     retry = RetryWait(clock=timing, jitter=lambda _low, high: high)
-    retry_state = _RetryState(attempt, heartbeat, retry)
-    assert retry_state.after_restart(
-        adapter.RestartingError(
-            "raw reason stays out of telemetry",
-            failure_category="restart_refusal",
-            stop_mode="graceful",
-        )
-    ), "the restart leaves one bounded retry in progress"
+    restart = adapter.RestartingError(
+        "raw reason stays out of telemetry",
+        failure_category="restart_refusal",
+        stop_mode="graceful",
+    )
 
     records: list[dict[str, str]] = []
     with journal_receiver(path) as receiver:
         client, supervisor = socket.socketpair()
         with client, supervisor:
+            has_restarted = False
             original_admitted = heartbeat.admitted
+
+            def request() -> Exit:
+                """Restart once, then hold the compiler result until admitted."""
+                nonlocal has_restarted
+                if not has_restarted:
+                    has_restarted = True
+                    raise restart
+                supervisor.sendall(encode_reply(Admitted("g1", False)))
+                return adapter._await_result(client, heartbeat, attempt)
 
             def deliver_finished_after_observing_admission() -> None:
                 """Hold the result until the retry span is already exported."""
@@ -203,10 +210,12 @@ def test_restart_span_ends_at_admitted_before_finished_reply(
                 heartbeat, "admitted", deliver_finished_after_observing_admission
             )
             try:
-                supervisor.sendall(encode_reply(Admitted("g1", False)))
-                assert adapter._await_result(client, heartbeat, attempt) == DONE, (
+                assert retry_request(request, heartbeat, attempt, retry) == DONE, (
                     "the adapter receives the result only after admission"
                 )
+                receiver.settimeout(0.01)
+                with pytest.raises(socket.timeout):
+                    receiver.recv(MAX_DATAGRAM_BYTES)
             finally:
                 sink.close()
     assert len(records) == 1, "the retry episode emits one completed span"
