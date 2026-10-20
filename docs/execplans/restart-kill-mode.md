@@ -272,16 +272,26 @@ experiment above); Python signal handlers survive `fork`.
   property exposed repeated `Shutdown` effects from an already-closed admission.
   `Admission.begin_closing()` now returns no effects after its first close.
   The focused closing tests pass (12 passed).
-- [x] Candidate `db02b38` passed the sequential gates before commit:
-  `make check-fmt`, `make lint`, `make typecheck`, `make markdownlint`,
+- [x] The tree committed as `dee4ed9` passed the sequential gates before
+  commit: `make check-fmt`, `make lint`, `make typecheck`, `make markdownlint`,
   `make nixie`, `make test` (1750 passed, 25 skipped) and
   `make test-systemd-user` (24 passed, both restart-during-placement scenarios
-  passed). Logs use the `-13.out` suffix under `/tmp`.
+  passed). The gate run included the ExecPlan evidence committed in `dee4ed9`;
+  logs use the `-14.out` suffix under `/tmp`.
 - [x] The mutation control above rejected the forced `launch-failed` result at
   the named graceful witness.
-- [ ] Run the final exact-head gates, renew the proof assessment on the pushed
-  head, then continue the review loop to merge.
-- [ ] Review loop to a mergeable state.
+- [x] Hosted Actions runs on `dee4ed9` passed: Act Validation
+  [39428388369](https://github.com/leynos/buildlimits/actions/runs/39428388369)
+  and CI
+  [39428388335](https://github.com/leynos/buildlimits/actions/runs/39428388335).
+- [x] Assessments on `dee4ed9` are clear: completeness
+  [6291733244](https://github.com/leynos/buildlimits/pull/21#issuecomment-6291733244)
+  and bounded proof
+  [6291772272](https://github.com/leynos/buildlimits/pull/21#issuecomment-6291772272).
+- [ ] Renew both assessments for the head produced by this plan update. Then
+  await its formal review, reconcile every finding and pre-merge row, and merge
+  PR 21. The managed resume request `fe8242cc` is queued; verify the head it
+  actually covers.
 
 ## Surprises & discoveries
 
@@ -322,3 +332,11 @@ Notes for the reviewer:
   gated and folded back into the red commit.
 - Deferred: the held launch child could reset its inherited signal handlers
   before the barrier; it is harmless today and out of scope.
+
+## Revision note
+
+2026-10-20: Record the `dee4ed9` sequential gate and hosted CI results, the
+clear candidate-specific completeness and bounded proof assessments, and the
+managed formal-review resume request. This plan update creates a new PR head,
+so renew both assessments for that head and verify which commit the queued
+resume review inspects before merging.
