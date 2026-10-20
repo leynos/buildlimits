@@ -464,6 +464,24 @@ experiment above); Python signal handlers survive `fork`.
   correctness defect or unmet requirement. It requested that this exact-head
   gate evidence be added before closing the plan:
   [6300330753](https://github.com/leynos/buildlimits/pull/21#issuecomment-6300330753).
+- [x] CodeRabbit's Unit Architecture error in the older walkthrough
+  [6269410130](https://github.com/leynos/buildlimits/pull/21#issuecomment-6269410130)
+  remains valid at `0de0e9f`: the exporter called `JournalSink.emit_trace`
+  through the class, bypassing an injected instance override. The new focused
+  regression failed at the expected assertion on that head; its log is
+  `/tmp/focused-test-ecd20a52-58e4-42d8-8324-6e18a28122f7-fix-restart-kill-mode.out`.
+- [x] The first full candidate run passed format checking but Vulture treated a
+  test subclass override as unused. Replace that fixture with an instance
+  method mock so the regression exercises the same dispatch seam without a
+  dead-code exception or suppression.
+- [x] The exporter now dispatches through a module-private `_TraceSinkPort`,
+  and the focused injected-sink regression passes. All eight sequential gates
+  passed on the candidate diff based on `0de0e9f`: unit tests (1,763 passed, 25
+  skipped), systemd-user tests (24 passed, 1,727 deselected), and audit (no
+  known vulnerabilities; the local `buildlimits` package was not found on
+  PyPI). The nested Cargo case queued on the shared package-cache lock before
+  passing; build admission remained healthy. Logs use the `-60.out` suffix under
+  `/tmp` for session `ecd20a52-58e4-42d8-8324-6e18a28122f7`.
 - [ ] Renew completeness, bounded-proof, and Observability assessments for the
   next published head; then await its formal review, reconcile every finding
   and pre-merge row, and merge PR 21.

@@ -422,8 +422,12 @@ span fields through the same non-blocking journal socket; it drops telemetry on
 failure and never records request data, paths, credentials or raw errors.
 Generated trace and span identifiers are fixed-width hexadecimal values. See
 [ADR 003](adr-003-bounded-restart-tracing.md) for the exporter and schema
-decision. Schema validation and capped failure-count helpers stay inside the
-tracing transport; metric counters keep their separate owners and limits.
+decision. Within `tracing_sdk_export`, the module-private `_TraceSinkPort`
+requires only `emit_trace(record)`, which the production `JournalSink`
+implements. Keep this port scoped to span export rather than treating it as a
+general journal or metrics API. Schema validation and capped failure-count
+helpers stay inside the tracing transport; metric counters keep their separate
+owners and limits.
 
 ## 10. Adapters
 

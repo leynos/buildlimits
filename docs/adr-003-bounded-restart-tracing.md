@@ -65,6 +65,12 @@ value such as `always_off` cannot silently erase local journal records.
 produce no-op spans without treating deliberate disablement as an export
 failure, as defined by the [SDK environment variables specification].
 
+The SDK exporter depends on a module-private `_TraceSinkPort` with only an
+`emit_trace(record)` operation. The production `JournalSink` implements this
+port. Export dispatches through the injected instance so a recording or wrapped
+sink keeps its own behaviour. Keep this port local to span export; it is not a
+general journal or metrics interface.
+
 Trace records use `BUILD_LIMITS_TRACE_*` fields and are queried directly with
 `journalctl`; `build-limits-metrics` continues to read metric events only.
 
@@ -91,9 +97,9 @@ Trace records use `BUILD_LIMITS_TRACE_*` fields and are queried directly with
 ## Architectural rationale
 
 The SDK supplies standard span lifecycle and identifiers, while the exporter
-uses the existing non-blocking output boundary. Fixed attributes keep the trace
-schema separate from request state and let exporter failures remain outside
-admission and compiler result handling.
+uses the existing non-blocking output boundary through the narrow injected sink
+port. Fixed attributes keep the trace schema separate from request state and
+let exporter failures remain outside admission and compiler result handling.
 
 [OpenTelemetry Python instrumentation guide]: https://opentelemetry.io/docs/languages/python/instrumentation/
 [exporter guide]: https://opentelemetry.io/docs/languages/python/exporters/

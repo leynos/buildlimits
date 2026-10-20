@@ -70,6 +70,33 @@ def test_export_contains_only_bounded_attributes_and_fixed_width_trace_ids(
     ), "unknown and sensitive attributes are omitted"
 
 
+def test_export_dispatches_through_the_injected_sink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sink override receives the record produced by the exporter."""
+    sink = JournalSink(tmp_path / "journal.sock")
+    emit_trace = mock.Mock()
+    monkeypatch.setattr(sink, "emit_trace", emit_trace)
+    tracer = JournalTracer("supervisor", sink)
+    span = tracer.start("scope_placement")
+    assert span is not None, "the known operation starts a span"
+
+    span.finish(
+        outcome="admitted",
+        failure_category="none",
+        stop_mode="graceful",
+    )
+
+    assert emit_trace.call_count == 1, "export uses the injected instance method"
+    record = emit_trace.call_args.args[0]
+    assert record["BUILD_LIMITS_TRACE_OPERATION"] == "scope_placement", (
+        "the override receives the fixed operation name"
+    )
+    assert record["BUILD_LIMITS_TRACE_OUTCOME"] == "admitted", (
+        "the override receives the bounded span outcome"
+    )
+
+
 def test_journal_export_failure_does_not_escape_span_completion(
     tmp_path: Path,
 ) -> None:

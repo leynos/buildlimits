@@ -4,7 +4,6 @@ import typing as typ
 
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
-from buildlimits.journal_native import JournalSink
 from buildlimits.tracing_export import (
     TRACE_FAILURE_KINDS,
     TRACE_FAILURES,
@@ -19,10 +18,23 @@ if typ.TYPE_CHECKING:
     from opentelemetry.sdk.trace import ReadableSpan
 
 
+class _TraceSinkPort(typ.Protocol):
+    """The one journal operation used by the span exporter."""
+
+    def emit_trace(self, record: cabc.Mapping[str, str]) -> None:
+        """Write one bounded trace record.
+
+        Example
+        -------
+        A recording sink can implement this method and retain ``record`` for
+        an assertion without opening a journal socket.
+        """
+
+
 class JournalSpanExporter(SpanExporter):
     """Export completed SDK spans as bounded native journal records."""
 
-    def __init__(self, sink: JournalSink | None, source: str) -> None:
+    def __init__(self, sink: _TraceSinkPort | None, source: str) -> None:
         """Bind a fixed producer and its optional journal transport."""
         self.sink = sink
         self.source = source
@@ -43,7 +55,7 @@ class JournalSpanExporter(SpanExporter):
         for span in spans:
             try:
                 record = _record(span, self.source)
-                JournalSink.emit_trace(self.sink, record)
+                self.sink.emit_trace(record)
             except TRACE_FAILURES as error:
                 failed = True
                 category = _failure_kind(error)
