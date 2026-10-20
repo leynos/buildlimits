@@ -134,10 +134,13 @@ class JournalTracer:
             return self._tracer
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 
         from buildlimits.tracing_sdk_export import JournalSpanExporter
 
-        provider = TracerProvider()
+        # Local journal spans must not disappear under an exporter-only
+        # sampler setting; OTEL_SDK_DISABLED remains the explicit opt-out.
+        provider = TracerProvider(sampler=ALWAYS_ON)
         self._exporter = JournalSpanExporter(self.sink, self.source)
         provider.add_span_processor(SimpleSpanProcessor(self._exporter))
         self._tracer = provider.get_tracer("buildlimits")

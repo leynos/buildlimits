@@ -1,5 +1,6 @@
 """Bounded OpenTelemetry spans stay observational and safe to export."""
 
+import os
 import unittest.mock as mock  # ruff: ignore[manual-from-import] - module alias required by .rules/python-typing.md.
 from pathlib import Path
 
@@ -11,9 +12,10 @@ from buildlimits.tracing import JournalTracer
 
 
 def test_export_contains_only_bounded_attributes_and_fixed_width_trace_ids(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Sensitive and unknown span data never crosses the journal boundary."""
+    """Known spans export despite sampler settings and stay bounded."""
+    monkeypatch.setitem(os.environ, "OTEL_TRACES_SAMPLER", "always_off")
     path = tmp_path / "journal.sock"
     sink = JournalSink(path)
     with journal_receiver(path) as receiver:

@@ -12,6 +12,7 @@ import collections.abc as cabc
 import dataclasses as dc
 import socket
 import subprocess
+import types
 import typing as typ
 from pathlib import Path
 
@@ -29,7 +30,7 @@ from buildlimits.systemd import UserManager
 from buildlimits.tracing import JournalTracer
 
 if typ.TYPE_CHECKING:
-    from buildlimits.groups import Groups
+    from buildlimits.groups import Groups, Running
     from buildlimits.pool import TokenPool
     from buildlimits.requesters import Pending
 
@@ -40,7 +41,6 @@ class FakeGroups:
 
     order: list[str]
     running: object | None
-    settings: SupervisorConfig = dc.field(default_factory=SupervisorConfig)
     terminate: cabc.Callable[[str], None] = dc.field(default=lambda _group_id: None)
 
     def place(self, entry: Pending, group_id: str, *, cached: bool) -> object | None:
@@ -49,6 +49,17 @@ class FakeGroups:
         if self.running is not None:
             entry.group_id = group_id
         return self.running
+
+    def cache_notice(self, entry: Pending, *, cached: bool) -> str:
+        """Record the cache-notice effect for direct-cache scenarios."""
+        del entry, cached
+        self.order.append("cache_notice")
+        return ""
+
+    def abandon_held(self, running: Running) -> None:
+        """Record that a placed child was abandoned before release."""
+        running.exec_error = None
+        self.order.append("abandon")
 
     def release(self, running: object) -> None:
         """Record that the group was released."""
@@ -260,21 +271,24 @@ def test_an_immediate_stop_preempts_retry_after_a_failed_placement(
     )
 
 
-def test_launch_success_notifies_before_releasing_the_group(
+@pytest.mark.parametrize("requester_present", [True, False])
+def test_launch_notifies_before_release_or_abandons_disconnected_group(
     supervisor: Supervisor,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    requester_present: bool,
 ) -> None:
-    """A placed group is announced to its requester before it may run."""
+    """A placement is announced before release or abandoned if its requester left."""
     order: list[str] = []
-    running = object()
+    running = types.SimpleNamespace(exec_error=None)
     groups = FakeGroups(
         order=order,
         running=running,
-        settings=SupervisorConfig(cache_mode="direct"),
     )
     supervisor.groups = typ.cast("Groups", groups)
     supervisor.requests.pending[1] = crate_pending(1)
+    supervisor.admission.groups["g1"] = Group("g1", 1, b"a", cached=False)
+    pool = attach_pool(supervisor)
     notified: list[tuple[int, object]] = []
 
     def _notify(request_id: int, reply: object) -> None:
@@ -283,21 +297,20 @@ def test_launch_success_notifies_before_releasing_the_group(
         notified.append((request_id, reply))
 
     monkeypatch.setattr(supervisor.requests, "notify", _notify)
-
     client, connection = socket.socketpair()
     with client, connection:
-        supervisor.requests.pending[1].conn = connection
+        if requester_present:
+            supervisor.requests.pending[1].conn = connection
         supervisor._launch(1, "g1", cached=False)
 
-    assert order == ["notify", "release"], (
-        "the requester learns of admission before the group may write"
+    assert order[:2] == ["cache_notice", "notify"], "notice precedes notification"
+    assert order[-1] == ("release" if requester_present else "abandon"), "wrong action"
+    assert notified == [(1, Admitted("g1", False, ""))], "one admission reply"
+    assert pool.returned == ([] if requester_present else [b"a"]), (
+        "a disconnected requester returns the group token once"
     )
-    assert notified == [(1, Admitted("g1", False, ""))], (
-        "the requester was told which group admitted it"
-    )
-    assert "admitted request 1 as g1" in capsys.readouterr().err, (
-        "the admission was logged"
-    )
+    if requester_present:
+        assert "admitted request 1 as g1" in capsys.readouterr().err, "admission logged"
 
 
 def test_metrics_admission_and_failure_boundaries(

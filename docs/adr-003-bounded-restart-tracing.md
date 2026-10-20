@@ -24,6 +24,8 @@ local to the host, avoid request data, and never change compiler admission.
 - Exclude compiler payloads, paths, credentials, raw errors and user-provided
   identifiers.
 - Make SDK and exporter failures observational only.
+- Keep local spans enabled under exporter-only sampler settings, while
+  retaining the SDK's explicit `OTEL_SDK_DISABLED=true` opt-out.
 
 ## Options considered
 
@@ -57,6 +59,11 @@ adapter initializes the SDK lazily. The exporter records operation, elapsed
 milliseconds, outcome, failure category, stop mode, retry attempt and generated
 fixed-width trace identifiers. It accepts only fixed vocabularies and capped
 numeric values, and drops telemetry failures without affecting the operation.
+The private provider uses the `ALWAYS_ON` sampler, so an `OTEL_TRACES_SAMPLER`
+value such as `always_off` cannot silently erase local journal records.
+`OTEL_SDK_DISABLED=true` remains an explicit opt-out and makes the provider
+produce no-op spans without treating deliberate disablement as an export
+failure, as defined by the [SDK environment variables specification].
 
 Trace records use `BUILD_LIMITS_TRACE_*` fields and are queried directly with
 `journalctl`; `build-limits-metrics` continues to read metric events only.
@@ -90,3 +97,4 @@ admission and compiler result handling.
 
 [OpenTelemetry Python instrumentation guide]: https://opentelemetry.io/docs/languages/python/instrumentation/
 [exporter guide]: https://opentelemetry.io/docs/languages/python/exporters/
+[SDK environment variables specification]: https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/

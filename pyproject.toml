@@ -7,7 +7,7 @@ requires-python = ">=3.14"
 license = { text = "ISC" }
 # The supervisor traces placements; adapters load the SDK only after a restart.
 dependencies = [
-    "opentelemetry-sdk>=1.45.1",
+    "opentelemetry-sdk>=1.45.1,<2",
 ]
 
 [project.scripts]
@@ -407,10 +407,12 @@ reason = "CacheRecovery._starved measures the retained drain's age through the R
 type = "method"
 full_name = [
     "buildlimits.launch.HeldChild.reap",
+    "buildlimits.groups.Groups.abandon_held",
+    "buildlimits.groups.Groups.cache_notice",
     "buildlimits.sccache.ManagedSccache.stop",
     "buildlimits.systemd.UserManager.control_unit",
 ]
-reason = "The supervisor reaches these through typed collaborators (Groups, ManagedSccache and CacheRecovery), which a static call graph cannot resolve. CacheRecovery selects its control verb dynamically, so no call edge reaches the queued-unit-job method the user manager exposes."
+reason = "Supervisor placement dispatches abandon_held and cache_notice on the Groups instance held by Supervisor.groups; test_unreleased_disconnect.py exercises the acknowledgement-failure path. The supervisor also reaches HeldChild, ManagedSccache and CacheRecovery through typed collaborators a static call graph cannot resolve. CacheRecovery selects its control verb dynamically, so no call edge reaches the queued-unit-job method the user manager exposes."
 
 
 

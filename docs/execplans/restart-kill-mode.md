@@ -403,11 +403,14 @@ experiment above); Python signal handlers survive `fork`.
   Systemd-user tests took 876.88 seconds while nested Cargo work queued
   normally behind healthy shared compile admission. Logs use the `-34.out`
   suffix under `/tmp` for session `ecd20a52-58e4-42d8-8324-6e18a28122f7`.
-- Hosted CI on `a9883dd` failed at the Markdown spelling gate because
+- [x] Hosted CI on `a9883dd` failed at the Markdown spelling gate because
   `buildlimits/tracing_export.py` used `Recognised`; later CI steps were
   skipped. Act Validation passed. The spelling is corrected in the current
-  worktree; hosted validation for the final candidate remains pending.
-- The integrated four-path worktree based on `a9883dd` passed the complete
+  worktree. On reviewed head `63a4b2d`, hosted
+  [CI](https://github.com/leynos/buildlimits/actions/runs/39472151952) and
+  [Act Validation](https://github.com/leynos/buildlimits/actions/runs/39472151597)
+  both passed.
+- [x] The integrated four-path worktree based on `a9883dd` passed the complete
   sequential local gate set. Its dirty-diff SHA256 is
   `11d188be4b2cf5dc1021e67d2574ac1be4b1f352a4e91594ff7e1ad767b8a757`.
   Formatting, lint, typecheck, Markdown lint, and Mermaid validation passed;
@@ -415,18 +418,18 @@ experiment above); Python signal handlers survive `fork`.
   passed), and audit reported no known vulnerabilities. The package itself was
   not found on PyPI and could not be audited. Logs use the `-41.out` suffix
   under `/tmp` for session `ecd20a52-58e4-42d8-8324-6e18a28122f7`.
-- Review follow-up coverage now holds `Finished` until the retry span is
+- [x] Review follow-up coverage now holds `Finished` until the retry span is
   exported during the adapter's `Admitted` reply handling. The test also runs
   through `retry_request` and checks that the post-admission fallback does not
   emit a duplicate span. Controlled SDK failures cover initialization,
   attribute updates, and span completion.
-- The first complete-gate rerun passed formatting, lint, and typecheck, then
+- [x] The first complete-gate rerun passed formatting, lint, and typecheck, then
   stopped in `make test`: `test_close_closes_remaining_descriptors` exceeded
   the one-second child-reap deadline under the parallel suite and leaked its
   error descriptor during failure cleanup. The test now allows ten seconds,
   matching the other bounded child-collection helper, and always abandons an
   unreaped child and closes its descriptors.
-- The next complete sequential run passed all eight gates on the candidate
+- [x] The next complete sequential run passed all eight gates on the candidate
   tree: formatting, lint, typecheck, Markdown lint, Mermaid validation, unit
   tests (1760 passed, 25 skipped), systemd-user tests (24 passed), and audit
   (no known vulnerabilities; `buildlimits` was not found on PyPI). The nested

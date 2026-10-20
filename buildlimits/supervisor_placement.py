@@ -3,7 +3,6 @@
 import typing as typ
 
 from buildlimits import effect_dispatch, supervisor_shutdown
-from buildlimits.groups import Groups
 from buildlimits.journal import admitted_line, log
 from buildlimits.protocol import Admitted
 
@@ -34,11 +33,11 @@ def launch(
             failure_category = "scope_placement"
             return
         # The requester learns of admission before the compiler can write.
-        notice = Groups.cache_notice(supervisor.groups, entry, cached=cached)
+        notice = supervisor.groups.cache_notice(entry, cached=cached)
         effect_dispatch.record_admitted(supervisor, entry, cached=cached)
         supervisor.requests.notify(request_id, Admitted(group_id, cached, notice))
         if entry.conn is None:
-            Groups.abandon_held(supervisor.groups, running)
+            supervisor.groups.abandon_held(running)
             outcome = "requester_gone"
             failure_category = "requester_unavailable"
         elif supervisor.groups.release(running) is False:
