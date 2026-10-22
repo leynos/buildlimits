@@ -365,17 +365,26 @@ otherwise names why the reading produced no label: `timeout`, `read_error`,
 deadline elapsing and `read_error` is any other failure of the query itself — a
 launch failure, a socket error or a transport read — so a query that never
 returns statistics is named rather than sharing the timeout's token or falling
-through unnamed. It is a second closed vocabulary beside the new-event token
-set, because the schema's existing `reason` field already carries admission
-refusals (`metrics_schema.VOCABULARIES`); widening the event without a distinct
+through unnamed. `outcome_reason` covers the reading alone: it is a second
+closed vocabulary beside the new-event token set, because the schema's existing
+`reason` field already carries admission refusals
+(`metrics_schema.VOCABULARIES`), and widening the event without a distinct
 field would make a rejected window indistinguishable from a refusal in the
-journal. No reason carries a key, a path or an argument. The boundaries the
-proposal crosses are recorded as bounded `JournalTracer` spans —
-`statistics_read`, `outcome_store_load`, `outcome_store_save` and
-`prediction_evaluate` — with fixed operation names, bounded attributes and
-elapsed milliseconds, exported through the existing injected sink and dropped
-on failure without affecting the operation (ADR 003). `build-limits-metrics`
-reports outcome counts, attributed coverage and a count per reason.
+journal. The evaluation surface has its own vocabulary (Layer 2) rather than
+reusing this one, so a reading that failed and a request that could not be
+classified are never confused in the journal. No reason carries a key, a path
+or an argument. The boundaries the proposal crosses are recorded as bounded
+`JournalTracer` spans — `statistics_read`, `outcome_store_load`,
+`outcome_store_save`, `prediction_evaluate` and `admission_selection` — with
+fixed operation names, bounded attributes and elapsed milliseconds, exported
+through the existing injected sink and dropped on failure without affecting the
+operation (ADR 003). Both span vocabularies are closed and must be extended by
+the release that adds these: `JournalTracer.start` refuses an operation absent
+from `tracing_export.OPERATIONS`, and `_bounded_attributes` keeps only
+attributes with a registered vocabulary, so an unregistered operation is
+dropped by design and an unregistered attribute is omitted rather than exported
+as free text. `build-limits-metrics` reports outcome counts, attributed
+coverage and a count per reason.
 
 **Test strategy.** Unit tests cover statistics parsing across empty, partial
 and malformed documents, and an exhaustive truth table of the attribution rules
@@ -530,9 +539,16 @@ The prediction is advisory and must never weaken safety accounting.
 **Observability.** `request_admitted` and `cache_outcome` gain a `prediction`
 token and a `confidence_pct` counter, so the journal alone yields a confusion
 matrix and a calibration curve by origin. The store reports `store_reason` when
-it loads, saves or discards, and the evaluation reports `outcome_reason` when
-it cannot classify a request, so `uncertain` and `no history` are never the
-only explanation a reader gets.
+it loads, saves or discards, and the evaluation reports its own
+`evaluation_reason` — a third closed vocabulary, distinct from the reading's
+`outcome_reason` and the store's `store_reason` — when it cannot classify a
+request: `none` when a class was produced, `key_unavailable` when the request
+could not be keyed, `store_unavailable` when the history could not be read,
+which carries the store's own reason alongside it, and `ineligible` when the
+request is not cacheable under C4. Each token is a fixed identifier carrying no
+key, path or argument, so a reader can tell a failed reading, a failed store
+and a request that could not be classified apart, and `uncertain` and
+`no history` are never the only explanation a reader gets.
 
 **Test strategy.** Unit tests cover normalization of registry, git and path
 origins, a non-default `CARGO_HOME` and missing variables. Hypothesis checks
@@ -547,7 +563,10 @@ covers the whole vocabulary rather than only the load paths: a store that fails
 on one path and not another is caught by the reason rather than by the fallback
 alone, and the same test set must provoke `save_failed` on a refused write and
 `expired` on the aging bound, so neither can be added to the vocabulary without
-a test that observes it.
+a test that observes it. Each `evaluation_reason` token is provoked the same
+way, and a test asserts that a request the evaluation could not key is still
+admitted unchanged — the isolation P2 requires — so a classification failure
+costs a class and never a token.
 
 **Privacy.** Crate names and registry versions are public metadata. Local paths
 are stored only as digests salted with a per-host random value, kept in a file
@@ -635,9 +654,20 @@ which keeps the model's discriminating power checked.
 
 **Observability, privacy and measurement.** `request_admitted` gains a
 `promoted` boolean, and `would_promote` in shadow mode; status shows each
-waiting request's bypass count. Layer 3 stores nothing beyond layer 2. Before
-anything is enabled, shadow mode's observed p50 and p90 waits for each class
-are compared with those the replay predicted.
+waiting request's bypass count. The selection itself is recorded as an
+`admission_selection` `JournalTracer` span with fixed attributes and elapsed
+milliseconds, in the same bounded shape as the Layer 1 spans (ADR 003): the
+chosen request's class, whether the choice was a promotion or the head of the
+queue, the bypass count the winner carried, and `stop_mode` when a hold forced
+first-in, first-out. Those attributes reach the journal only if the release
+registers them, as Layer 1 requires of its spans: `admission_selection` joins
+`tracing_export.OPERATIONS`, and `selection_choice`, carrying `promotion`,
+`head` or `hold`, joins the bounded attribute vocabularies rather than relying
+on the existing `outcome`, `failure_category`, `stop_mode` and `retry_attempt`
+entries. The span therefore carries no key and no argument, and one that cannot
+be exported is dropped without affecting the admission decision. Layer 3 stores
+nothing beyond layer 2. Before anything is enabled, shadow mode's observed p50
+and p90 waits for each class are compared with those the replay predicted.
 
 **Test strategy.** The admission state machine in `tests/test_admission.py`
 gains predicted classes, adversarial true outcomes and a bypass counter, and
@@ -645,7 +675,10 @@ checks token conservation, S6, the bypass bound and first-in, first-out order
 under a hold; with every class `uncertain`, effects must equal today's. A
 CrossHair contract covers the pure selection function. `systemd_user` scenarios
 cover shadow and enabled modes, and a recovery stop that completes while
-promoted hits keep arriving.
+promoted hits keep arriving. Each `selection_choice` value is provoked and
+asserted in the same style as the Layer 1 and Layer 2 reasons, so a promotion,
+a head-of-queue choice and a hold forcing first-in, first-out are each observed
+rather than inferred from the admission order alone.
 
 ## Hypotheses and decision gates
 
@@ -750,12 +783,12 @@ the release that adds the event. The record store is new and disposable, and
 turning a key off is a complete rollback: layer 1 does not delete it, because
 running the `W2` replay is the point of recording. An sccache upgrade repeats
 W1's host check before recording resumes, because C1 to C6 were read from
-0.14.0. The `outcome_reason` and `store_reason` vocabularies are new schema
-entries, so they carry open question 6's compatibility check with them, and
-each is additive: a reader that ignores an unknown token still reads the event.
-The user's guide sections "Status" and "Metrics", and §§4, 5 and 9 of the
-developer's guide, change with each layer. Enabling 3B or 3D needs an ADR, and
-3A or 3C would need ADR 011 revised.
+0.14.0. The `outcome_reason`, `store_reason` and `evaluation_reason`
+vocabularies are new schema entries, so they carry open question 6's
+compatibility check with them, and each is additive: a reader that ignores an
+unknown token still reads the event. The user's guide sections "Status" and
+"Metrics", and §§4, 5 and 9 of the developer's guide, change with each layer.
+Enabling 3B or 3D needs an ADR, and 3A or 3C would need ADR 011 revised.
 
 ## Alternatives considered
 
