@@ -348,14 +348,31 @@ arrival and its launch.
 - I3. Failures are isolated as metrics failures are: a timeout, a parse error
   or empty statistics yields `unattributed`, never an unhealthy supervisor, and
   a stalled query never delays admission, which the test strategy pins by
-  counting loop iterations across a deliberately stalled reading.
+  counting loop iterations across a deliberately stalled reading. Each of those
+  failures is also _named_: `outcome_reason` distinguishes them, so a stretch
+  of sustained read failures is visible in the journal rather than appearing as
+  low coverage.
 - I4. An attributed label is never inferred. Any class from H2's clues is
   reported separately as `inferred`.
 
 **Observability.** A new `cache_outcome` event carries the tokens
-`cache_result`, `attribution` (`solo`, `unanimous`, `inferred` or `none`) and
-`origin` (`registry`, `git`, `path` or `unknown`), with `runtime_seconds`.
-`build-limits-metrics` reports outcome counts and attributed coverage.
+`cache_result`, `attribution` (`solo`, `unanimous`, `inferred` or `none`),
+`origin` (`registry`, `git`, `path` or `unknown`) and `outcome_reason`, with
+`runtime_seconds`. `outcome_reason` is `none` for an attributed window and
+otherwise names why the reading produced no label: `timeout`, `parse_error`,
+`empty_stats`, `generation_changed`, `counter_decreased`, `count_mismatch`,
+`ineligible_window` or `no_quiet_point`. It is a second closed vocabulary
+beside the new-event token set, because the schema's existing `reason` field
+already carries admission refusals (`metrics_schema.VOCABULARIES`); widening
+the event without a distinct field would make a rejected window
+indistinguishable from a refusal in the journal. No reason carries a key, a
+path or an argument. The boundaries the proposal crosses are recorded as bounded
+`JournalTracer` spans — `statistics_read`, `outcome_store_load`,
+`outcome_store_save` and `prediction_evaluate` — with fixed operation names,
+bounded attributes and elapsed milliseconds, exported through the existing
+injected sink and dropped on failure without affecting the operation (ADR 003).
+`build-limits-metrics` reports outcome counts, attributed coverage and a count
+per reason.
 
 **Test strategy.** Unit tests cover statistics parsing across empty, partial
 and malformed documents, and an exhaustive truth table of the attribution rules
@@ -382,9 +399,12 @@ outcomes, and show that labels match the script and that no query runs while
 the restart barrier exists. A stalled statistics command with a slow scripted
 answer must leave the loop admitting: the test counts iterations, accepts a
 request and returns a token while the query is outstanding, which is the
-regression check for the contract above. An opt-in host check with the real
-0.14.0 binary builds one small registry crate cold and then warm, confirming
-C2, C4 and C5.
+regression check for the contract above. Each `outcome_reason` token has a test
+that provokes it and asserts the reason, so the vocabulary cannot rot into a
+single catch-all, and a test asserts that a recording sink which raises leaves
+the reading's own result and the loop unchanged, which is the isolation ADR 003
+requires of telemetry. An opt-in host check with the real 0.14.0 binary builds
+one small registry crate cold and then warm, confirming C2, C4 and C5.
 
 **Privacy.** Records use the normalized key of §2 and stay on the host; child
 arguments are compared in memory and never stored; the journal receives only
@@ -463,7 +483,11 @@ tag no longer matches is dropped rather than asked to explain a toolchain
 change the identity records. The drop is limited to changes the tag actually
 detects: a change that leaves the identity's inputs alone is invisible to this
 test, so the record survives it and the confounder reaches the estimate rather
-than being filtered out. A corrupt file is discarded.
+than being filtered out. A corrupt file is discarded, and the discard is named:
+`store_reason` distinguishes `corrupt`, `unreadable`, `version_mismatch` and
+`tag_dropped`, so a store that is silently unreadable on every start is visible
+rather than merely making prediction look unauthoritative. A save that fails
+names itself the same way and does not disturb the running estimate.
 
 The status document gains an optional `prediction` object per queued request,
 with `class`, `p_hit` and `observations`, which the renderer appends:
@@ -488,7 +512,10 @@ The prediction is advisory and must never weaken safety accounting.
 
 **Observability.** `request_admitted` and `cache_outcome` gain a `prediction`
 token and a `confidence_pct` counter, so the journal alone yields a confusion
-matrix and a calibration curve by origin.
+matrix and a calibration curve by origin. The store reports `store_reason` when
+it loads, saves or discards, and the evaluation reports `outcome_reason` when
+it cannot classify a request, so `uncertain` and `no history` are never the
+only explanation a reader gets.
 
 **Test strategy.** Unit tests cover normalization of registry, git and path
 origins, a non-default `CARGO_HOME` and missing variables. Hypothesis checks
@@ -498,7 +525,9 @@ is added, with a CrossHair contract on its bounds; a differential machine shows
 identical admission effects with and without predictions. Snapshots, paired
 with semantic assertions, pin status with and without predictions, and a
 `systemd_user` scenario shows predictions appearing after warm-up against the
-scripted fake server.
+scripted fake server. Each `store_reason` token is provoked and asserted, so a
+store that fails on one path and not another is caught by the reason rather
+than by the fallback alone.
 
 **Privacy.** Crate names and registry versions are public metadata. Local paths
 are stored only as digests salted with a per-host random value, kept in a file
@@ -687,9 +716,12 @@ readers reject a new event must be checked (open question 6). The record store
 is new and disposable, and turning a key off is a complete rollback: layer 1
 does not delete it, because running the `W2` replay is the point of recording.
 An sccache upgrade repeats W1's host check before recording resumes, because C1
-to C6 were read from 0.14.0. The user's guide sections "Status" and "Metrics",
-and §§4, 5 and 9 of the developer's guide, change with each layer. Enabling 3B
-or 3D needs an ADR, and 3A or 3C would need ADR 011 revised.
+to C6 were read from 0.14.0. The `outcome_reason` and `store_reason`
+vocabularies are new schema entries, so they carry open question 6's
+compatibility check with them, and each is additive: a reader that ignores an
+unknown token still reads the event. The user's guide sections "Status" and
+"Metrics", and §§4, 5 and 9 of the developer's guide, change with each layer.
+Enabling 3B or 3D needs an ADR, and 3A or 3C would need ADR 011 revised.
 
 ## Alternatives considered
 
