@@ -386,6 +386,44 @@ dropped by design and an unregistered attribute is omitted rather than exported
 as free text. `build-limits-metrics` reports outcome counts, attributed
 coverage and a count per reason.
 
+**Ports.** Everything this layer reads or writes that is not its own memory is
+reached through a narrow injected port, so the reads and writes have declared
+shapes, their failures stay isolable, and a test can drive the layer without a
+clock, a socket or a file system. Four ports carry it, and no more, which keeps
+the count independent of the retry and scoring work layer 2 adds later:
+
+- a clock port offering monotonic and wall-clock readings separately, because
+  the deadline is measured against the monotonic reading while a record stores
+  the wall-clock one, and only the second may move when the host's time does;
+- a statistics port returning one bounded document for the managed socket, the
+  command it runs being the port's own business
+  (`--show-stats --stats-format json`, never `--zero-stats` or `--dist-status`,
+  per I2);
+- an outcome-store port offering a bounded load and an atomic save, with the
+  store's path, its 10,000-record bound and its 30-day aging behind it; and
+- a salt port offering one per-host random value, which is the only source the
+  path digest draws on.
+
+Each port declares its failures as explicit outcomes rather than raising a
+shared exception, so the reasons above stay the caller's to attach: the
+statistics port reports `timeout` or `read_error` as the reading's result, the
+store port reports `corrupt`, `unreadable`, `version_mismatch`, `save_failed` or
+`expired`, and the salt port reports a failure to obtain its value. Every
+token such a failure carries is one of the reasons already named above, so a
+port failure adds no vocabulary of its own. Nothing in the design requires a
+port for what the layer does not call: the pure parts below are given values,
+not ports. Attribution, the counter arithmetic, the record shape and the
+classification run on the values they are handed, so they hold no port and
+touch no clock, socket or file. The reading path composes: it asks the clock
+for a deadline, the statistics port for a document, and the store port for
+history, and returns the attributed records beside the reasons in place of the
+current side effects that emit a span or save a file. The caller writes the
+spans and the records, so the pure functions cannot emit telemetry or persist
+by accident, and a port that fails costs the reading rather than the supervisor
+(I3). `JournalSink`, `MetricsPort` and `rustdoc.run_rustup` are the existing
+ports this follows; the store and salt ports are new, and the clock and
+statistics ports replace direct reads the layer would otherwise make.
+
 **Test strategy.** Unit tests cover statistics parsing across empty, partial
 and malformed documents, and an exhaustive truth table of the attribution rules
 over small deltas, in the style of `tests/test_recovery_starvation.py`: one row
@@ -416,10 +454,17 @@ that provokes it and asserts the reason, so the vocabulary cannot rot into a
 single catch-all. The `timeout` test provokes the deadline, and the
 `read_error` test a query that fails before it can time out — a launch failure,
 a socket error or a transport read — so the two are distinguished rather than
-both claimed by one test. A test asserts that a recording sink which raises
-leaves the reading's own result and the loop unchanged, which is the isolation
-ADR 003 requires of telemetry. An opt-in host check with the real 0.14.0 binary
-builds one small registry crate cold and then warm, confirming C2, C4 and C5.
+both claimed by one test. The ports make each of those failures a fake's return
+rather than a real timeout, socket or file: a fake statistics port answers from
+a script, a fake store port fails a load or a save on demand, and a fake clock
+moves the deadline. Boundary tests assert the separation the ports exist for —
+that a reading writes no file and emits no telemetry, that a save writes only
+the store, that a store or salt failure leaves the attributed records the same
+as a successful close, and that a raising sink leaves the reading's own result
+and the loop unchanged — which is the isolation ADR 003 requires of telemetry
+and the reason the pure functions return their events instead of emitting them.
+An opt-in host check with the real 0.14.0 binary builds one small registry
+crate cold and then warm, confirming C2, C4 and C5.
 
 **Privacy.** Records use the normalized key of §2 and stay on the host; child
 arguments are compared in memory and never stored; the journal receives only
