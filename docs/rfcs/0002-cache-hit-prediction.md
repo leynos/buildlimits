@@ -97,16 +97,23 @@ behaves as its source reads.
   `CompileResult` (`Error`, `CacheHit`, `CacheMiss`, `NotCached`,
   `NotCacheable`, `CompileFailed`), which feeds the global `ServerStats`[^4].
 - **C3. The key needs a dep-info pass.** `generate_hash_key` hashes the cache
-  version, the compiler's shared-library digests, the command line without `-L`,
-  `--extern`, `--out-dir` and `--diagnostic-width` (with `--extern`, `-L` and
-  `--cfg` sorted), every source file named in the dep-info, extern rlib and
-  staticlib digests, target JSON content, and environment variables: those in
-  rustc's dep-info plus every `CARGO_*` variable except `CARGO_MAKEFLAGS`,
-  `CARGO_REGISTRIES_*` and `CARGO_BUILD_JOBS`[^5]. A source comment notes that
-  absolute paths remain in the arguments, and `CARGO_MANIFEST_DIR` is absolute,
-  so one crate in two worktrees has two keys. Registry crates under
-  `~/.cargo/registry/src` have identical paths across worktrees. The source
-  list comes from `get_source_files_and_env_deps`, which runs the compiler with
+  version (`CACHE_VERSION`, a hand-maintained constant), the compiler's
+  shared-library digests, the compiler's `-vV` version string, the command line
+  without `-L`, `--extern`, `--check-cfg`, `--out-dir` and `--diagnostic-width`
+  (with `--cfg` sorted, `--extern` pre-sorted at parse time), every source file
+  named in the dep-info, extern rlib and staticlib digests, target JSON
+  content, and environment variables: those in rustc's dep-info plus every
+  `CARGO_*` variable except `CARGO_MAKEFLAGS`, `CARGO_REGISTRIES_*` and
+  `CARGO_BUILD_JOBS`[^5]. The five-flag exclusion set is matched on the flag
+  token alone, so a _path-valued_ `--target` is dropped only when the value
+  names a `.json` file: the file's content is hashed instead, while a
+  name-valued `--target` (`--target x86_64-unknown-linux-gnu`) stays in the
+  hashed string. The executable's own path is never hashed, and neither the
+  `host:` triple nor the sysroot. A source comment notes that absolute paths
+  remain in the arguments, and `CARGO_MANIFEST_DIR` is absolute, so one crate
+  in two worktrees has two keys. Registry crates under `~/.cargo/registry/src`
+  have identical paths across worktrees. The source list comes from
+  `get_source_files_and_env_deps`, which runs the compiler with
   `--emit=dep-info` as a child of the server for every request, hit or miss.
 - **C4. Some requests are never cached.** `parse_arguments` refuses
   incremental compilation, unsupported crate types and several input files
@@ -123,7 +130,24 @@ behaves as its source reads.
   be attributed to one request while compiles overlap. `--show-stats` uses
   `connect_to_server` and reports empty statistics when it cannot connect,
   whereas `--zero-stats` and `--dist-status` use `connect_or_start_server` and
-  would start a server (C4's client source).
+  would start a server (C4's client source). Every counter is a plain number:
+  the struct holds no PID, start time or instance id, so a client cannot tell a
+  restarted server from a continuing one, and a fresh server, a client-driven
+  `--zero-stats` and _no server at all_ are all zero to a reader.
+- **C7. A successful compile need not be cached.** `CompileResult` has a
+  `NotCached` variant, produced when `SCCACHE_NO_CACHE` is set. The flag is
+  read from the environment _forwarded with the request_, not the server's own,
+  so it is a per-request decision that the forwarding side makes. This
+  supervisor forwards the requester's environment for every cached launch and
+  adds only `SCCACHE_SERVER_UDS` and `SCCACHE_IGNORE_SERVER_IO_ERROR`
+  (`groups.compiler_argv`), so a requester that sets `SCCACHE_NO_CACHE` reaches
+  the server with it. `NotCached` increments `compilations` and
+  `compiler_write_duration` and nothing else: not `cache_misses`, not
+  `non_cacheable_compilations`. It is answered with a normal success
+  `CompileFinished`, so the client cannot distinguish the result from a hit or
+  a miss. The `not_cached` field in `ServerStats` is unrelated: it is a
+  reason-keyed histogram populated from `CannotCache`, not from this variant,
+  and it counts _requests_, not compilations.
 - **C6. The debug log cannot attribute hits.** With `SCCACHE_LOG=debug`, a
   miss logs `[<output>]: compile result: cache miss`, but a hit logs only
   `compile result: cache hit`, naming no request (C2's source).
@@ -202,14 +226,40 @@ consecutive readings:
 - A window is eligible only if every cached group launched in it ended with a
   known exit, uncancelled and unsignalled (`not may_orphan_server_work`), and
   no counter decreased, which would mean a restarted server.
+- Each reading carries a _server generation_: the `InvocationID` systemd gives
+  the sccache unit's current invocation, read as one more property name on the
+  `manager.show` call the supervisor already makes to inspect the unit, so no
+  extra process is spawned and the transport's existing three-second bound
+  still applies. The unit restarts the server its own way after a failure (ADR
+  011), so that id is the server's identity, and a window whose two readings
+  differ is rejected however the counters moved. This closes the case the
+  decrease test cannot see: a restart from an all-zero baseline, or one
+  followed by enough work to exceed the old values, would otherwise attribute
+  post-restart deltas to the previous server's launches. While no invocation is
+  running the generation is _no server_, and a window with an absent server at
+  either end is rejected — which the cache-reachability precondition already
+  implies, but which the generation check now makes explicit rather than
+  inferred. C5 still holds: the marker comes from the unit, not from
+  `ServerStats`, so an unmanaged or out-of-unit server stays indistinguishable
+  and the decrease test remains the backstop for it.
 - The change in `compile_requests` must equal the number of cached groups
   launched in the window, and the outcome counters, including
   `requests_not_compile` for Cargo's `-vV` probes, must account for exactly
   that many requests.
+- The outcome moved is read from the counters, since the reply carries none
+  (C2). One `compilations` increase with no `cache_misses` movement is a hit;
+  with no `non_cacheable_compilations` movement it is a C7 `not_cached`; with
+  `non_cacheable_compilations` it is `not_cacheable`; and a `compile_fails`
+  increase is `failed`. Because a hit moves neither `compilations` nor any miss
+  counter, and a C7 compile moves `compilations` while leaving every miss
+  counter still, neither is visible as a change of its own, so both are derived
+  by subtraction rather than read. The one-request-per-group count check above
+  is what makes the subtraction sound: it fixes the number of compiles the
+  window contains, so each compile's outcome is determined rather than guessed.
 - A _solo_ window, one group, takes that request's single outcome. A
-  _unanimous_ window, with several groups that all hit, all missed or were all
-  not cacheable, gives each group that outcome. Every other window is
-  `unattributed`.
+  _unanimous_ window, with several groups that all hit, all missed, were all
+  not cacheable or were all not cached, gives each group that outcome. Every
+  other window is `unattributed`.
 
 A reading must not stop the loop. `Supervisor.serve` runs a single
 single-threaded selector (`supervisor.Supervisor`), so a query awaited in place
@@ -221,17 +271,28 @@ a stalled query must cost only the reading it abandoned. A query that misses
 its deadline is abandoned and its process reaped; the tick records
 `unattributed` and the next tick starts a fresh query rather than waiting on
 the previous one. A reading that arrives late still defines the window it
-actually covers, and the count check below rejects that window if a launch
+actually covers, and the count check above rejects that window if a launch
 slipped into it. Lateness therefore costs coverage, never soundness, and a
 persistently stalling `--show-stats` degrades coverage rather than admission.
 
-Outcomes are `hit`, `miss`, `not_cacheable`, `failed`, `error` and
-`unattributed`. Each record carries the request's normalized key (§2), wall
-time, origin class and, where a tick saw one, whether a full-emit child with its
-`-C metadata` was present, so that W2 can evaluate predictors and H2 offline.
-The query is `sccache --show-stats --stats-format json` against the managed
-socket, with a proposed two-second timeout, at most once per tick and never
-between a token's arrival and its launch.
+Outcomes are `hit`, `miss`, `not_cacheable`, `not_cached`, `failed`, `error` and
+`unattributed`. `not_cached` is the C7 result: a successful compile the
+requester's forwarded `SCCACHE_NO_CACHE` kept out of the cache. It is recorded
+so that a site which sets the flag can tell "nothing was stored because nobody
+asked" from "a cold cache", and it is deliberately excluded from the estimate:
+it enters neither a key's hit rate, nor its origin's base rate, nor the
+observation count the classification threshold reads. A disabled cache is not
+evidence about the cache, so counting it as a miss would report a hit rate the
+cache never had, while counting it as an observation would let a site that
+always sets the flag promote a key to `likely miss` on records that measured
+nothing. The key stays `uncertain` until real cache outcomes arrive, and the
+excluded count is reported beside the rates so the omission is visible. Each
+record carries the request's normalized key (§2), wall time, origin class and,
+where a tick saw one, whether a full-emit child with its `-C metadata` was
+present, so that W2 can evaluate predictors and H2 offline. The query is
+`sccache --show-stats --stats-format json` against the managed socket, with a
+proposed two-second timeout, at most once per tick and never between a token's
+arrival and its launch.
 
 **Safety invariants.**
 
@@ -256,20 +317,25 @@ between a token's arrival and its launch.
 
 **Test strategy.** Unit tests cover statistics parsing across empty, partial
 and malformed documents, and an exhaustive truth table of the attribution rules
-over small deltas, in the style of `tests/test_recovery_starvation.py`. A
-Hypothesis state machine drives overlapping cached and uncached groups,
-abnormal endings and server restarts against a model server that knows each
-true outcome: every attributed label must equal the truth, no mixed window may
-be attributed, and the search must reach a solo and a unanimous window, so it
-cannot pass vacuously. `systemd_user` scenarios (`make test-systemd-user`)
-extend `tests/fixtures/fake_sccache.py` with a statistics command and scripted
-outcomes, and show that labels match the script and that no query runs while
-the restart barrier exists. A stalled statistics command with a slow scripted
-answer must leave the loop admitting: the test counts iterations, accepts a
-request and returns a token while the query is outstanding, which is the
-regression check for the contract above. An opt-in host check with the real
-0.14.0 binary builds one small registry crate cold and then warm, confirming
-C2, C4 and C5.
+over small deltas, in the style of `tests/test_recovery_starvation.py`: one row
+per outcome class the derivation above can produce, including the `not_cached`
+delta that moves `compilations` alone, and rows for a window whose two readings
+carry different server generations, which must be `unattributed` even when
+every counter rose and the count check would otherwise pass. A Hypothesis state
+machine drives overlapping cached and uncached groups, abnormal endings and
+server restarts — one restart placing the new generation's counters above the
+old, so the decrease test alone would accept it — against a model server that
+knows each true outcome: every attributed label must equal the truth, no mixed
+window may be attributed, and the search must reach a solo and a unanimous
+window, so it cannot pass vacuously. `systemd_user` scenarios
+(`make test-systemd-user`) extend `tests/fixtures/fake_sccache.py` with a
+statistics command and scripted outcomes, and show that labels match the script
+and that no query runs while the restart barrier exists. A stalled statistics
+command with a slow scripted answer must leave the loop admitting: the test
+counts iterations, accepts a request and returns a token while the query is
+outstanding, which is the regression check for the contract above. An opt-in
+host check with the real 0.14.0 binary builds one small registry crate cold and
+then warm, confirming C2, C4 and C5.
 
 **Privacy.** Records use the normalized key of §2 and stay on the host; child
 arguments are compared in memory and never stored; the journal receives only
@@ -308,9 +374,16 @@ that hits can be foreseen into something the journal can check.
   `git:<name>@<rev>`, and any other directory becomes `path:<salted digest>`,
   which is per worktree, as sccache's key is (C3);
 - the target, from `--target`, or `host`;
-- a toolchain identity: a digest of the compiler path together with the
-  compiler's version, since `generate_hash_key` folds the version and the
-  shared-library digests into every key (C3);
+- a toolchain identity, which must cover every _shared_ input
+  `generate_hash_key` folds into a key (C3): the compiler path, its `-vV`
+  version string, and the `CACHE_VERSION` constant. The shared-library digests
+  are deliberately _excluded_, because they digest every file in the rustc
+  sysroot's `lib/` (C3) and cost a full sysroot hash per server start for no
+  requirement here. The omission is safe in one direction only, so it is
+  stated: an in-place sysroot change puts two true keys under one identity and
+  mislabels history, which H4 and H5 measure, but one key can never be split
+  across two identities. The identity errs the same way for the per-request
+  hash inputs, which the argument digest covers by construction;
 - an argument digest: SHA-256 over the argument vector after sccache's own
   removals and sorting (C3), with the `CARGO_*` variables that sccache hashes.
 
