@@ -404,25 +404,70 @@ the count independent of the retry and scoring work layer 2 adds later:
 - a salt port offering one per-host random value, which is the only source the
   path digest draws on.
 
-Each port declares its failures as explicit outcomes rather than raising a
-shared exception, so the reasons above stay the caller's to attach: the
-statistics port reports `timeout` or `read_error` as the reading's result, the
-store port reports `corrupt`, `unreadable`, `version_mismatch`, `save_failed` or
-`expired`, and the salt port reports a failure to obtain its value. Every
-token such a failure carries is one of the reasons already named above, so a
-port failure adds no vocabulary of its own. Nothing in the design requires a
-port for what the layer does not call: the pure parts below are given values,
-not ports. Attribution, the counter arithmetic, the record shape and the
-classification run on the values they are handed, so they hold no port and
-touch no clock, socket or file. The reading path composes: it asks the clock
-for a deadline, the statistics port for a document, and the store port for
-history, and returns the attributed records beside the reasons in place of the
-current side effects that emit a span or save a file. The caller writes the
-spans and the records, so the pure functions cannot emit telemetry or persist
-by accident, and a port that fails costs the reading rather than the supervisor
-(I3). `JournalSink`, `MetricsPort` and `rustdoc.run_rustup` are the existing
-ports this follows; the store and salt ports are new, and the clock and
-statistics ports replace direct reads the layer would otherwise make.
+Each port declares its success and failure alternatives explicitly rather than
+raising a shared exception, so the reasons above stay the caller's to attach.
+Table 2 gives the alternatives each operation returns and the reason token its
+failure carries.
+
+| Port       | Operation          | Success               | Failure reason                              |
+| ---------- | ------------------ | --------------------- | ------------------------------------------- |
+| clock      | monotonic reading  | seconds, total        | none: the read cannot fail                  |
+| clock      | wall-clock reading | seconds, total        | none: the read cannot fail                  |
+| statistics | read one document  | bounded document      | `timeout`, `read_error`                     |
+| store      | load history       | bounded records       | `corrupt`, `unreadable`, `version_mismatch` |
+| store      | save history       | saved                 | `save_failed`                               |
+| salt       | acquire the value  | per-host random value | `salt_unavailable`                          |
+
+_Table 2: Port operations and the reason each failure carries._
+
+The reason column names the vocabulary each failure is reported through. Three
+of the four failing rows draw on vocabularies defined above — `timeout` and
+`read_error` are `outcome_reason` tokens, and `corrupt`, `unreadable`,
+`version_mismatch` and `save_failed` are `store_reason` tokens.
+`salt_unavailable` is a new `store_reason`, because the salt lives in a file
+the store owns (§2 privacy), so the vocabulary that already names "the
+persistent state could not be read or written" is the one that should name this
+fault too. The layer adds one reason token and no new vocabulary, so the closed
+sets a reader must know stay at three: `outcome_reason`, `store_reason` and
+`evaluation_reason`.
+
+Both clock reads are total: the two readings are the OS's, and neither can fail
+in a way the layer must handle, so a clock port has no failure alternative and
+its fake exists to move the deadline, not to fail. `expired` and `tag_dropped`
+are outcomes of the store's _contents_, not of a load or a save, so they are
+carried by the record set a load returns and by the store's own reporting
+rather than by an operation's failure alternative. Like every other token,
+`salt_unavailable` is a fixed identifier carrying no path or value.
+
+A missing salt is not a degraded path to a raw path. The digest is the only
+representation of a path this layer may persist or compare, so when the salt
+cannot be obtained the layer returns no digest: the compile's toolchain
+identity and any `path:` origin are unkeyable, `key_unavailable` and
+`store_unavailable` follow for layer 2, and no record is written for that
+compile. Attribution itself is unaffected, because the counters never needed
+the digest. The attributed label and its `cache_outcome` event are the same
+whether or not the salt was available — that event carries no key, no digest
+and no toolchain identity — so the reading is still named and still counted in
+the coverage the journal reports; what is lost is the keyed record in the
+store, not the attribution. "Unchanged attribution" and "unchanged persisted
+records" are therefore different claims, and it is the first that holds here.
+The raw path is never substituted and an unsalted digest is never written,
+which is the same ban §2's privacy bound states, applied at the point where the
+choice could otherwise be made.
+
+Nothing in the design requires a port for what the layer does not call: the
+pure parts below are given values, not ports. Attribution, the counter
+arithmetic, the record shape and the classification run on the values they are
+handed, so they hold no port and touch no clock, socket or file. The reading
+path composes: it asks the clock for a deadline, the statistics port for a
+document, and the store port for history, and returns the attributed records
+beside the reasons in place of the current side effects that emit a span or
+save a file. The caller writes the spans and the records, so the pure functions
+cannot emit telemetry or persist by accident, and a port that fails costs the
+reading rather than the supervisor (I3). `JournalSink`, `MetricsPort` and
+`rustdoc.run_rustup` are the existing ports this follows; the store and salt
+ports are new, and the clock and statistics ports replace direct reads the
+layer would otherwise make.
 
 **Test strategy.** Unit tests cover statistics parsing across empty, partial
 and malformed documents, and an exhaustive truth table of the attribution rules
@@ -456,15 +501,25 @@ single catch-all. The `timeout` test provokes the deadline, and the
 a socket error or a transport read — so the two are distinguished rather than
 both claimed by one test. The ports make each of those failures a fake's return
 rather than a real timeout, socket or file: a fake statistics port answers from
-a script, a fake store port fails a load or a save on demand, and a fake clock
-moves the deadline. Boundary tests assert the separation the ports exist for —
-that a reading writes no file and emits no telemetry, that a save writes only
-the store, that a store or salt failure leaves the attributed records the same
+a script, a fake store port fails a load or a save on demand, a fake clock
+moves the deadline, and a fake salt port refuses on demand. Each failure in
+Table 2 is provoked and its declared reason asserted, so a port contract cannot
+be added without a test that observes it: a refused save yields `save_failed`,
+a load over an unreadable file yields `unreadable` where a permission-denied
+read makes the file unreadable rather than corrupt, and a refused salt yields
+`salt_unavailable`. The salt tests assert the whole declared behaviour rather
+than the reason alone — that no record is written for the affected compile,
+that no raw path and no unsalted digest reaches the store or a comparison, that
+the attribution and its `cache_outcome` event are nevertheless unchanged, and
+that admission is unchanged — which is the pair of claims the salt paragraph
+separates. Boundary tests assert the rest of the separation the ports exist
+for: that a reading writes no file and emits no telemetry, that a save writes
+only the store, that a timed-out reading leaves the attributed records the same
 as a successful close, and that a raising sink leaves the reading's own result
-and the loop unchanged — which is the isolation ADR 003 requires of telemetry
-and the reason the pure functions return their events instead of emitting them.
-An opt-in host check with the real 0.14.0 binary builds one small registry
-crate cold and then warm, confirming C2, C4 and C5.
+and the loop unchanged. Together those are the isolation ADR 003 requires of
+telemetry and the reason the pure functions return their events instead of
+emitting them. An opt-in host check with the real 0.14.0 binary builds one
+small registry crate cold and then warm, confirming C2, C4 and C5.
 
 **Privacy.** Records use the normalized key of §2 and stay on the host; child
 arguments are compared in memory and never stored; the journal receives only
@@ -556,15 +611,16 @@ change the identity records. The drop is limited to changes the tag actually
 detects: a change that leaves the identity's inputs alone is invisible to this
 test, so the record survives it and the confounder reaches the estimate rather
 than being filtered out. A corrupt file is discarded, and the discard is named:
-`store_reason` distinguishes `corrupt`, `unreadable`, `version_mismatch` and
-`tag_dropped`, so a store that is silently unreadable on every start is visible
-rather than merely making prediction look unauthoritative. The vocabulary names
-every path the store can take, not only the read paths: `save_failed` covers a
-save that could not be written, and `expired` covers the records the 30-day
-aging bound drops, so a save failing on every stop or an aging bound discarding
-more than expected is visible rather than merely making prediction look
-unauthoritative, which is the same job the load reasons do. A failed save names
-itself and does not disturb the running estimate.
+`store_reason` distinguishes `corrupt`, `unreadable`, `version_mismatch`,
+`tag_dropped` and `salt_unavailable` — the last naming the salt file it also
+owns (§1 ports) — so a store that is silently unreadable on every start is
+visible rather than merely making prediction look unauthoritative. The
+vocabulary names every path the store can take, not only the read paths:
+`save_failed` covers a save that could not be written, and `expired` covers the
+records the 30-day aging bound drops, so a save failing on every stop or an
+aging bound discarding more than expected is visible rather than merely making
+prediction look unauthoritative, which is the same job the load reasons do. A
+failed save names itself and does not disturb the running estimate.
 
 The status document gains an optional `prediction` object per queued request,
 with `class`, `p_hit` and `observations`, which the renderer appends:
@@ -671,7 +727,7 @@ wait. This is the riskiest layer. Five facts constrain every option:
 | 3C. Short lane, full slot on a miss                | A miss is known only after it starts, so it runs uncovered in between          | Rejected for sccache 0.14.0        |
 | 3D. Compose provably uncacheable requests directly | No prediction; such requests never use the server (C4)                         | Candidate, gated on H3 only        |
 
-_Table 2: Options for cheaper admission._
+_Table 3: Options for cheaper admission._
 
 3C could be reconsidered only if sccache gained a hook before the compile
 starts, or if the server's wait for a jobserver slot before spawning drew from
@@ -799,7 +855,7 @@ that its sample may not represent busy, mixed traffic.
 
 ## Workstreams
 
-Table 3 proposes the workstreams in dependency order. The dependencies are
+Table 4 proposes the workstreams in dependency order. The dependencies are
 acyclic, and the identifiers are proposals.
 
 | ID  | Outcome                                                      | Requires              | Exit evidence                         | Gate                             |
@@ -811,7 +867,7 @@ acyclic, and the identifiers are proposals.
 | W5  | Shadow mode, then opt-in priority                            | W4 at G4              | Shadow waits agree with the replay    | G5: owner decides on the default |
 | W6  | Design review of direct composition for uncacheable requests | W1 with H3 surviving  | Accepted or rejected ADR              | Parent decision                  |
 
-_Table 3: Proposed workstreams, their evidence and the decisions they enable._
+_Table 4: Proposed workstreams, their evidence and the decisions they enable._
 
 ## Compatibility and migration
 
