@@ -5,9 +5,9 @@
 - **RFC number:** 0002
 - **Status:** Proposed
 - **Created:** 2026-10-18
-- **Baseline:** `main` at `37d08e5`, with sccache 0.14.0 on the host. RFC
-  0001, the FizzBee model of admission and recovery, is under review in PR #11
-  and is cited here as proposed, not accepted[^1].
+- **Baseline:** `main` at `32e2105`, with sccache 0.14.0 on the host. RFC
+  0001, the FizzBee model of admission and recovery, has since been accepted
+  and is on `main`[^1].
 - **Scope:** observation and advisory prediction first. Any change to the
   order or cost of admission is gated behind recorded evidence and a model
   check, and none is proposed for immediate implementation.
@@ -211,16 +211,27 @@ consecutive readings:
   not cacheable, gives each group that outcome. Every other window is
   `unattributed`.
 
-Readings run on the event loop, so no group launches during one. An outcome
-counted late fails the count check in both windows it touches, so lateness
-costs coverage, never soundness. Outcomes are `hit`, `miss`, `not_cacheable`,
-`failed`, `error` and `unattributed`. Each record carries the request's
-normalized key (§2), wall time, origin class and, where a tick saw one, whether
-a full-emit child with its `-C metadata` was present, so that W2 can evaluate
-predictors and H2 offline. The query is
-`sccache --show-stats --stats-format json` against the managed socket, with a
-proposed two-second timeout, at most once per tick and never between a token's
-arrival and its launch.
+A reading must not stop the loop. `Supervisor.serve` runs a single
+single-threaded selector (`supervisor.Supervisor`), so a query awaited in place
+would suspend request acceptance, pool-token arrival and group reaping for as
+long as `--show-stats` takes, on every tick. The reading is therefore a
+contract rather than a call site: whatever mechanism carries it, the loop must
+keep serving those three duties for the whole two seconds a query may last, and
+a stalled query must cost only the reading it abandoned. A query that misses
+its deadline is abandoned and its process reaped; the tick records
+`unattributed` and the next tick starts a fresh query rather than waiting on
+the previous one. A reading that arrives late still defines the window it
+actually covers, and the count check below rejects that window if a launch
+slipped into it. Lateness therefore costs coverage, never soundness, and a
+persistently stalling `--show-stats` degrades coverage rather than admission.
+
+Outcomes are `hit`, `miss`, `not_cacheable`, `failed`, `error` and
+`unattributed`. Each record carries the request's normalized key (§2), wall
+time, origin class and, where a tick saw one, whether a full-emit child with its
+`-C metadata` was present, so that W2 can evaluate predictors and H2 offline.
+The query is `sccache --show-stats --stats-format json` against the managed
+socket, with a proposed two-second timeout, at most once per tick and never
+between a token's arrival and its launch.
 
 **Safety invariants.**
 
@@ -232,7 +243,9 @@ arrival and its launch.
   (C5), never `--zero-stats` or `--dist-status`, and never queries under a hold
   or while the cache is unreachable.
 - I3. Failures are isolated as metrics failures are: a timeout, a parse error
-  or empty statistics yields `unattributed`, never an unhealthy supervisor.
+  or empty statistics yields `unattributed`, never an unhealthy supervisor, and
+  a stalled query never delays admission, which the test strategy pins by
+  counting loop iterations across a deliberately stalled reading.
 - I4. An attributed label is never inferred. Any class from H2's clues is
   reported separately as `inferred`.
 
@@ -251,16 +264,33 @@ be attributed, and the search must reach a solo and a unanimous window, so it
 cannot pass vacuously. `systemd_user` scenarios (`make test-systemd-user`)
 extend `tests/fixtures/fake_sccache.py` with a statistics command and scripted
 outcomes, and show that labels match the script and that no query runs while
-the restart barrier exists. An opt-in host check with the real 0.14.0 binary
-builds one small registry crate cold and then warm, confirming C2, C4 and C5.
+the restart barrier exists. A stalled statistics command with a slow scripted
+answer must leave the loop admitting: the test counts iterations, accepts a
+request and returns a token while the query is outstanding, which is the
+regression check for the contract above. An opt-in host check with the real
+0.14.0 binary builds one small registry crate cold and then warm, confirming
+C2, C4 and C5.
 
 **Privacy.** Records use the normalized key of §2 and stay on the host; child
 arguments are compared in memory and never stored; the journal receives only
 closed-vocabulary tokens.
 
+**Storage.** G2 must be decided from layer 1's own records, so the keyed
+records are written in layer 1, not layer 2: the same append-only,
+atomically-written local file §2 describes, at
+`$XDG_STATE_HOME/buildlimits/cache-outcomes.json`, holding key, outcome,
+origin, wall time, toolchain identity and timestamp per attributed record. The
+journal keeps only the closed-vocabulary event; the file is the only place a
+key is written to disk, it never leaves the host, and it is read by `W2`'s
+offline replay and by nothing in `admission`. Its bounds, aging and atomicity
+are §2's, and deleting it costs only the replay. Layer 2 reuses this store
+rather than introducing a second one, so a `W2` that decides against prediction
+leaves one removable file behind and no other trace.
+
 **Measurement for the next layer.** After at least 2,000 attributed outcomes (a
 proposal), compute coverage by origin, the outcome mix, and an offline replay
-of candidate predictors against the base-rate predictor (H1 to H5). This
+of candidate predictors against the base-rate predictor (H1 to H5), grouping
+the stored records by key and comparing each key's consecutive outcomes. This
 decides layer 2 without building it.
 
 ### 2. Layer 2: predict from history
@@ -278,9 +308,11 @@ that hits can be foreseen into something the journal can check.
   `git:<name>@<rev>`, and any other directory becomes `path:<salted digest>`,
   which is per worktree, as sccache's key is (C3);
 - the target, from `--target`, or `host`;
+- a toolchain identity: a digest of the compiler path together with the
+  compiler's version, since `generate_hash_key` folds the version and the
+  shared-library digests into every key (C3);
 - an argument digest: SHA-256 over the argument vector after sccache's own
-  removals and sorting (C3), with the `CARGO_*` variables that sccache hashes
-  and a digest of the compiler path for toolchain identity.
+  removals and sorting (C3), with the `CARGO_*` variables that sccache hashes.
 
 The digest cannot see sccache's source and extern rlib digests, so a changed
 source or dependency is a confounder that H4 and H5 measure. A request whose
@@ -291,9 +323,13 @@ classes are `likely hit` for at least 0.8 with three or more observations,
 `likely miss` for at most 0.2 with three or more, `uncertain` otherwise, and
 `no history` for a new key. The class is computed once, at submission.
 
-History lives in memory, bounded to 10,000 keys with least-recently-used
-eviction (a proposal), and is saved atomically, on a timer and at stop, to
-`$XDG_STATE_HOME/buildlimits/cache-history.json`. A corrupt file is discarded.
+History lives in memory, bounded to the 10,000 most recent records (a
+proposal), and is saved atomically, on a timer and at stop, to the same
+`$XDG_STATE_HOME/buildlimits/cache-outcomes.json` that layer 1 fills, each
+record tagged with the toolchain identity it was taken under, so a record whose
+tag no longer matches is dropped rather than asked to explain an in-place
+toolchain change. A corrupt file is discarded.
+
 The status document gains an optional `prediction` object per queued request,
 with `class`, `p_hit` and `observations`, which the renderer appends:
 
@@ -333,10 +369,12 @@ scripted fake server.
 are stored only as digests salted with a per-host random value, kept in a file
 of mode 0600 beside the history in a directory of mode 0700, so a digest cannot
 be checked against a guessed path elsewhere. History is never journalled or
-exported, deleting it resets prediction, and keys unused for 30 days are
+exported, deleting it resets prediction, and records untouched for 30 days are
 dropped (a proposal). Status already shows the working directory, only to the
 same user (`SO_PEERCRED`, developer's guide §8), so the display discloses
-nothing new.
+nothing new. These bounds are layer 1's as well, because layer 1 writes the
+same file: the salt, the modes, the 30-day aging and the ban on export all
+apply from the moment recording starts.
 
 **Measurement for the next layer.** Online accuracy and calibration (H6), and a
 trace replay of recorded arrivals, predictions and runtimes under first-in,
@@ -352,7 +390,7 @@ wait. This is the riskiest layer. Five facts constrain every option:
 
 1. A mispredicted hit is a full compile in the server's control group, outside
    any scope. It cannot be detected before it starts (C1, C2), or moved or
-   pre-empted alone, so a pool token must cover it from launch: ADR 011's
+   preempted alone, so a pool token must cover it from launch: ADR 011's
    coverage rule, and property S6 of RFC 0001. Even a true hit runs a dep-info
    pass there (C3).
 2. A cached group that ends abnormally must keep a token in `SERVER_DRAIN`
@@ -457,7 +495,10 @@ The thresholds below are proposals, to be approved before any data is read.
 - **H5. The digest is adequate.** _Prediction:_ at most 5% of consecutive
   outcome pairs within one key flip without a toolchain change. _Falsified if:_
   above 10%, meaning the key merges requests that sccache distinguishes.
-  _Decision:_ revise once, then report the key as inadequate.
+  _Decision:_ revise once, then report the key as inadequate. Every pair's
+  toolchain identity is compared before the pair is counted, so a compiler
+  replaced in place under the same path is excluded rather than charged to the
+  digest.
 - **H6. Online calibration and lift.** _Prediction:_ over at least 1,000
   predictions, `likely hit` hits at least 90% of the time, calibration is
   within 5 points per decile, and the Brier score beats the base-rate predictor
@@ -502,12 +543,13 @@ Unknown keys stop start-up (user's guide, "Supervisor settings"), so the
 dev-env-rocky collection may set a key only after the release that introduces
 it. The status document and the metric schema change additively;
 `metrics.decode_native_fields` ignores unknown fields, but whether older
-readers reject a new event must be checked (open question 6). The history file
-is new and disposable, and turning a key off is a complete rollback. An sccache
-upgrade repeats W1's host check before recording resumes, because C1 to C6 were
-read from 0.14.0. The user's guide sections "Status" and "Metrics", and §§4, 5
-and 9 of the developer's guide, change with each layer. Enabling 3B or 3D needs
-an ADR, and 3A or 3C would need ADR 011 revised.
+readers reject a new event must be checked (open question 6). The record store
+is new and disposable, and turning a key off is a complete rollback: layer 1
+does not delete it, because running the `W2` replay is the point of recording.
+An sccache upgrade repeats W1's host check before recording resumes, because C1
+to C6 were read from 0.14.0. The user's guide sections "Status" and "Metrics",
+and §§4, 5 and 9 of the developer's guide, change with each layer. Enabling 3B
+or 3D needs an ADR, and 3A or 3C would need ADR 011 revised.
 
 ## Alternatives considered
 
@@ -543,8 +585,9 @@ so wall time is tested only as a supplement (H2).
    with `clippy-driver` before `rustc` (`groups.compiler_argv`)?
 4. How long does the dep-info pass take on the largest crates on this host;
    is a hit always short (H2)?
-5. Should history persist across supervisor restarts, or stay in memory, and
-   should a finished group's status line show its recorded outcome?
+5. Should prediction history persist across supervisor restarts, or stay in
+   memory, and should a finished group's status line show its recorded outcome?
+   Layer 1's records persist either way, since the replay needs them.
 6. Do older `build-limits-metrics` readers reject records with an unknown
    event (`metrics_records`)?
 7. Should W6 be decided as a composition-policy ADR independently of this RFC?
@@ -561,7 +604,7 @@ and the trace replay both pass. W6 deserves its own decision once H3 has
 survived.
 
 [^1]: RFC 0001, `docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md`,
-      on the `rfc-fizzbee-model` branch, PR #11, as read on 2026-10-18.
+      accepted 2026-10-18 and present on `main`.
 
 [^2]: ADR 011, dev-env-rocky:
       <https://github.com/leynos/dev-env-rocky/blob/main/docs/adr-011-sccache-under-compile-admission.md>
