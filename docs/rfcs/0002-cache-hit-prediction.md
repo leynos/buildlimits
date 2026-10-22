@@ -108,13 +108,16 @@ behaves as its source reads.
   token alone, so a _path-valued_ `--target` is dropped only when the value
   names a `.json` file: the file's content is hashed instead, while a
   name-valued `--target` (`--target x86_64-unknown-linux-gnu`) stays in the
-  hashed string. The executable's own path is never hashed, and neither the
-  `host:` triple nor the sysroot. A source comment notes that absolute paths
-  remain in the arguments, and `CARGO_MANIFEST_DIR` is absolute, so one crate
-  in two worktrees has two keys. Registry crates under `~/.cargo/registry/src`
-  have identical paths across worktrees. The source list comes from
-  `get_source_files_and_env_deps`, which runs the compiler with
-  `--emit=dep-info` as a child of the server for every request, hit or miss.
+  hashed string. The executable's own path is never hashed directly, the
+  sysroot is never hashed at all, and the `host:` triple is hashed only as part
+  of the `-vV` string hashed above: it is a line of that string, and the reader
+  takes it from there, but no separate `host` value reaches the hash. A source
+  comment notes that absolute paths remain in the arguments, and
+  `CARGO_MANIFEST_DIR` is absolute, so one crate in two worktrees has two keys.
+  Registry crates under `~/.cargo/registry/src` have identical paths across
+  worktrees. The source list comes from `get_source_files_and_env_deps`, which
+  runs the compiler with `--emit=dep-info` as a child of the server for every
+  request, hit or miss.
 - **C4. Some requests are never cached.** `parse_arguments` refuses
   incremental compilation, unsupported crate types and several input files
   (`cannot_cache!("incremental")`, `cannot_cache!("crate-type", ...)`); the
@@ -241,21 +244,54 @@ consecutive readings:
   implies, but which the generation check now makes explicit rather than
   inferred. C5 still holds: the marker comes from the unit, not from
   `ServerStats`, so an unmanaged or out-of-unit server stays indistinguishable
-  and the decrease test remains the backstop for it.
+  and the decrease test remains the backstop for it. One implementation
+  constraint carries over: the public user-bus fallback in
+  `buildlimits/bus_properties.py` accepts only `MainPID`, `ControlGroup` and
+  `ActiveState`, and rejects any other property name, so W1 must extend that
+  set with `InvocationID` or treat the fallback's refusal as an unavailable
+  reading rather than a `ManagerUnavailable`.
 - The change in `compile_requests` must equal the number of cached groups
   launched in the window, and the outcome counters, including
   `requests_not_compile` for Cargo's `-vV` probes, must account for exactly
   that many requests.
 - The outcome moved is read from the counters, since the reply carries none
-  (C2). One `compilations` increase with no `cache_misses` movement is a hit;
-  with no `non_cacheable_compilations` movement it is a C7 `not_cached`; with
-  `non_cacheable_compilations` it is `not_cacheable`; and a `compile_fails`
-  increase is `failed`. Because a hit moves neither `compilations` nor any miss
-  counter, and a C7 compile moves `compilations` while leaving every miss
-  counter still, neither is visible as a change of its own, so both are derived
-  by subtraction rather than read. The one-request-per-group count check above
-  is what makes the subtraction sound: it fixes the number of compiles the
-  window contains, so each compile's outcome is determined rather than guessed.
+  (C2). The counter movements at 0.14.0 are the table below, taken from the
+  result handlers in `server.rs`; `_` means the counter does not move.
+
+  | `CompileResult` | `cache_hits` | `compilations` | `cache_misses` | `non_cacheable_compilations` | `compile_fails` |
+  | --------------- | ------------ | -------------- | -------------- | ---------------------------- | --------------- |
+  | `CacheHit`      | +1           | _              | _              | _                            | _               |
+  | `CacheMiss`     | _            | +1             | +1             | _                            | _               |
+  | `NotCached`     | _            | +1             | _              | _                            | _               |
+  | `NotCacheable`  | _            | +1             | _              | +1                           | _               |
+  | `CompileFailed` | _            | +1             | _              | _                            | +1              |
+
+  A hit is read from `cache_hits`, which nothing else moves, and
+  `not_cacheable` from `non_cacheable_compilations`. `not_cached` is the only
+  class with no counter of its own: it is a `compilations` increase that leaves
+  `cache_misses` and `non_cacheable_compilations` still and is not a `failed`.
+  `compile_fails` has two increment sites, and `compilations` tells them apart:
+  `CompileFailed` moves it together with `compilations` and is the `failed`
+  class, while `Err(ProcessError)` — a failure raised outside the
+  `CompileResult` variants — moves it alone and is an `error`. The other two
+  `error` sites, `CompileResult::Error` and the fatal-error arm, move
+  `cache_errors` alone, a counter the table above leaves out because a miss
+  whose cache read failed moves it too, and that one is not an error at all.
+- Those last two sites leave every column in the table still, so a delta that
+  moved nothing is not an empty window: the count check pins how many requests
+  it covers, and every one of them was an `error`.
+- Taken one request at a time, each class has a signature of its own, the
+  immobile one included, and that is what makes a solo window's label a reading
+  rather than a guess. Those signatures are not independent, so a sum does not
+  determine its own split: a `failed` beside an `error` whose only movement was
+  `cache_errors` adds up to exactly the delta of a `not_cached` beside an
+  `error` that moved `compile_fails` alone, at the same request count, and the
+  two windows differ in the class the first outcome landed in. Splitting a
+  mixed window would need more than the counters and the count can supply. The
+  rules above never ask them to: a window that is neither solo nor unanimous is
+  `unattributed` before the question arises, so a coinciding total cannot be
+  read as a settled outcome, and an ambiguous window costs coverage rather than
+  soundness.
 - A _solo_ window, one group, takes that request's single outcome. A
   _unanimous_ window, with several groups that all hit, all missed, were all
   not cacheable or were all not cached, gives each group that outcome. Every
@@ -319,23 +355,30 @@ arrival and its launch.
 and malformed documents, and an exhaustive truth table of the attribution rules
 over small deltas, in the style of `tests/test_recovery_starvation.py`: one row
 per outcome class the derivation above can produce, including the `not_cached`
-delta that moves `compilations` alone, and rows for a window whose two readings
-carry different server generations, which must be `unattributed` even when
-every counter rose and the count check would otherwise pass. A Hypothesis state
-machine drives overlapping cached and uncached groups, abnormal endings and
-server restarts — one restart placing the new generation's counters above the
-old, so the decrease test alone would accept it — against a model server that
-knows each true outcome: every attributed label must equal the truth, no mixed
-window may be attributed, and the search must reach a solo and a unanimous
-window, so it cannot pass vacuously. `systemd_user` scenarios
-(`make test-systemd-user`) extend `tests/fixtures/fake_sccache.py` with a
-statistics command and scripted outcomes, and show that labels match the script
-and that no query runs while the restart barrier exists. A stalled statistics
-command with a slow scripted answer must leave the loop admitting: the test
-counts iterations, accepts a request and returns a token while the query is
-outstanding, which is the regression check for the contract above. An opt-in
-host check with the real 0.14.0 binary builds one small registry crate cold and
-then warm, confirming C2, C4 and C5.
+delta that moves `compilations` alone, both `error` deltas — the one that moves
+`compile_fails` alone and the immobile one its other sites leave — the
+ambiguous windows in which differing mixes of outcomes produce identical
+deltas, and rows for a window whose two readings carry different server
+generations, which must be `unattributed` even when every counter rose and the
+count check would otherwise pass. The `hit` row is the one that pins the
+derivation's direction: a `cache_hits` increase with no `compilations` movement
+must be attributed a hit, and a `compilations` increase with no `cache_hits`
+movement must not be, which a decrease-only or hits-from-`compilations`
+implementation fails. A Hypothesis state machine drives overlapping cached and
+uncached groups, abnormal endings and server restarts — one restart placing the
+new generation's counters above the old, so the decrease test alone would
+accept it — against a model server that knows each true outcome: every
+attributed label must equal the truth, no mixed window may be attributed, and
+the search must reach a solo and a unanimous window, so it cannot pass
+vacuously. `systemd_user` scenarios (`make test-systemd-user`) extend
+`tests/fixtures/fake_sccache.py` with a statistics command and scripted
+outcomes, and show that labels match the script and that no query runs while
+the restart barrier exists. A stalled statistics command with a slow scripted
+answer must leave the loop admitting: the test counts iterations, accepts a
+request and returns a token while the query is outstanding, which is the
+regression check for the contract above. An opt-in host check with the real
+0.14.0 binary builds one small registry crate cold and then warm, confirming
+C2, C4 and C5.
 
 **Privacy.** Records use the normalized key of §2 and stay on the host; child
 arguments are compared in memory and never stored; the journal receives only
@@ -374,16 +417,23 @@ that hits can be foreseen into something the journal can check.
   `git:<name>@<rev>`, and any other directory becomes `path:<salted digest>`,
   which is per worktree, as sccache's key is (C3);
 - the target, from `--target`, or `host`;
-- a toolchain identity, which must cover every _shared_ input
-  `generate_hash_key` folds into a key (C3): the compiler path, its `-vV`
-  version string, and the `CACHE_VERSION` constant. The shared-library digests
-  are deliberately _excluded_, because they digest every file in the rustc
-  sysroot's `lib/` (C3) and cost a full sysroot hash per server start for no
-  requirement here. The omission is safe in one direction only, so it is
-  stated: an in-place sysroot change puts two true keys under one identity and
-  mislabels history, which H4 and H5 measure, but one key can never be split
-  across two identities. The identity errs the same way for the per-request
-  hash inputs, which the argument digest covers by construction;
+- a toolchain identity: the compiler path, its `-vV` version string, and the
+  `CACHE_VERSION` constant. This is an _approximate_ identity, deliberately not
+  the full set `generate_hash_key` folds into a key (C3). The shared-library
+  digests are excluded, because they digest every file in the rustc sysroot's
+  `lib/` (C3) and cost a full sysroot hash per server start for no requirement
+  here. The approximation is not one-directional, and both directions are
+  stated rather than one being claimed away. A sysroot changed in place under
+  an unchanged compiler path, `-vV` string and `CACHE_VERSION` leaves this
+  identity unchanged, so the identity cannot exclude that change and the
+  affected history is mislabelled; the change stays a confounder for H4 and H5,
+  which measure it rather than ruling it out. Conversely the identity can
+  separate records sccache's key does not: the compiler path is in this
+  identity but is never hashed into a key (C3), so one key can span two
+  identities, and a request moved to a byte-identical compiler at another path
+  starts a fresh history under a key that did not change. The per-request hash
+  inputs are the one place the approximation is closed by construction: the
+  argument digest covers them;
 - an argument digest: SHA-256 over the argument vector after sccache's own
   removals and sorting (C3), with the `CARGO_*` variables that sccache hashes.
 
@@ -400,8 +450,11 @@ History lives in memory, bounded to the 10,000 most recent records (a
 proposal), and is saved atomically, on a timer and at stop, to the same
 `$XDG_STATE_HOME/buildlimits/cache-outcomes.json` that layer 1 fills, each
 record tagged with the toolchain identity it was taken under, so a record whose
-tag no longer matches is dropped rather than asked to explain an in-place
-toolchain change. A corrupt file is discarded.
+tag no longer matches is dropped rather than asked to explain a toolchain
+change the identity records. The drop is limited to changes the tag actually
+detects: a change that leaves the identity's inputs alone is invisible to this
+test, so the record survives it and the confounder reaches the estimate rather
+than being filtered out. A corrupt file is discarded.
 
 The status document gains an optional `prediction` object per queued request,
 with `class`, `p_hit` and `observations`, which the renderer appends:
@@ -569,9 +622,14 @@ The thresholds below are proposals, to be approved before any data is read.
   outcome pairs within one key flip without a toolchain change. _Falsified if:_
   above 10%, meaning the key merges requests that sccache distinguishes.
   _Decision:_ revise once, then report the key as inadequate. Every pair's
-  toolchain identity is compared before the pair is counted, so a compiler
-  replaced in place under the same path is excluded rather than charged to the
-  digest.
+  toolchain identity is compared before the pair is counted, so a change the
+  identity records is excluded rather than charged to the digest. A change it
+  does not record is not excluded: a sysroot changed in place under an
+  unchanged compiler path, `-vV` string and `CACHE_VERSION` compares equal, so
+  its flips stay in the count. H5 therefore bounds the digest's adequacy _in
+  combination with_ that residual, and an H5 failure is not by itself evidence
+  that the digest is at fault — the cause of a flip cannot be read off the
+  counters, so neither outcome settles it.
 - **H6. Online calibration and lift.** _Prediction:_ over at least 1,000
   predictions, `likely hit` hits at least 90% of the time, calibration is
   within 5 points per decile, and the Brier score beats the base-rate predictor
