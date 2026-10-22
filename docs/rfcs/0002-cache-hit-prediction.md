@@ -255,40 +255,46 @@ consecutive readings:
   `requests_not_compile` for Cargo's `-vV` probes, must account for exactly
   that many requests.
 - The outcome moved is read from the counters, since the reply carries none
-  (C2). The counter movements at 0.14.0 are the table below, taken from the
+  (C2). The table below shows the counter movements at 0.14.0, taken from the
   result handlers in `server.rs`; `_` means the counter does not move.
 
-  | `CompileResult` | `cache_hits` | `compilations` | `cache_misses` | `non_cacheable_compilations` | `compile_fails` |
-  | --------------- | ------------ | -------------- | -------------- | ---------------------------- | --------------- |
-  | `CacheHit`      | +1           | _              | _              | _                            | _               |
-  | `CacheMiss`     | _            | +1             | +1             | _                            | _               |
-  | `NotCached`     | _            | +1             | _              | _                            | _               |
-  | `NotCacheable`  | _            | +1             | _              | +1                           | _               |
-  | `CompileFailed` | _            | +1             | _              | _                            | +1              |
+  | `CompileResult`        | `cache_hits` | `compilations` | `cache_misses` | `non_cacheable_compilations` | `compile_fails` | `cache_errors` |
+  | ---------------------- | ------------ | -------------- | -------------- | ---------------------------- | --------------- | -------------- |
+  | `CacheHit`             | +1           | _              | _              | _                            | _               | _              |
+  | `CacheMiss`            | _            | +1             | +1             | _                            | _               | _ or +1        |
+  | `NotCached`            | _            | +1             | _              | _                            | _               | _              |
+  | `NotCacheable`         | _            | +1             | _              | +1                           | _               | _              |
+  | `CompileFailed`        | _            | +1             | _              | _                            | +1              | _              |
+  | `CompileResult::Error` | _            | _              | _              | _                            | _               | +1             |
+
+  A `CacheMiss` moves `cache_errors` too when its cache read failed
+  (`MissType::CacheReadError`), so that column does not identify an error.
 
   A hit is read from `cache_hits`, which nothing else moves, and
   `not_cacheable` from `non_cacheable_compilations`. `not_cached` is the only
   class with no counter of its own: it is a `compilations` increase that leaves
-  `cache_misses` and `non_cacheable_compilations` still and is not a `failed`.
-  `compile_fails` has two increment sites, and `compilations` tells them apart:
-  `CompileFailed` moves it together with `compilations` and is the `failed`
-  class, while `Err(ProcessError)` — a failure raised outside the
-  `CompileResult` variants — moves it alone and is an `error`. The other two
-  `error` sites, `CompileResult::Error` and the fatal-error arm, move
-  `cache_errors` alone, a counter the table above leaves out because a miss
-  whose cache read failed moves it too, and that one is not an error at all.
-- Those last two sites leave every column in the table still, so a delta that
-  moved nothing is not an empty window: the count check pins how many requests
-  it covers, and every one of them was an `error`.
-- Taken one request at a time, each class has a signature of its own, the
-  immobile one included, and that is what makes a solo window's label a reading
-  rather than a guess. Those signatures are not independent, so a sum does not
-  determine its own split: a `failed` beside an `error` whose only movement was
-  `cache_errors` adds up to exactly the delta of a `not_cached` beside an
-  `error` that moved `compile_fails` alone, at the same request count, and the
-  two windows differ in the class the first outcome landed in. Splitting a
-  mixed window would need more than the counters and the count can supply. The
-  rules above never ask them to: a window that is neither solo nor unanimous is
+  the rest of the table still. `compile_fails` has two increment sites, and
+  `compilations` tells them apart: `CompileFailed` moves it together with
+  `compilations` and is the `failed` class, while `Err(ProcessError)` — a
+  failure raised outside the `CompileResult` variants — moves it alone and is an
+  `error`. The other `error` sites, `CompileResult::Error` and the fatal-error
+  arm, move `cache_errors` alone. A miss whose cache read failed moves that
+  counter too, but never on its own, since it also moves `compilations` and
+  `cache_misses`, so a solo `cache_errors` movement still identifies an `error`
+  and nothing else.
+- Each of those footprints moves at least one column, so a window whose columns
+  are all still covers no requests, and one whose launched groups the counters
+  cannot account for fails the count rule above and is rejected rather than
+  attributed.
+- Taken one request at a time, each footprint has a signature of its own, and
+  that is what makes a solo window's label a reading rather than a guess. Those
+  signatures are not independent, so a sum does not determine its own split: an
+  `error` that moved `compile_fails` alone, a `miss` whose read failed and a
+  `not_cached` add up to the same delta as an `error` that moved `cache_errors`
+  alone, a `failed` and a plain `miss`, at the same three requests, and the two
+  windows differ in the classes their outcomes landed in. Splitting a mixed
+  window would need more than the counters and the count can supply. The rules
+  above never ask them to: a window that is neither solo nor unanimous is
   `unattributed` before the question arises, so a coinciding total cannot be
   read as a settled outcome, and an ambiguous window costs coverage rather than
   soundness.
@@ -356,7 +362,7 @@ and malformed documents, and an exhaustive truth table of the attribution rules
 over small deltas, in the style of `tests/test_recovery_starvation.py`: one row
 per outcome class the derivation above can produce, including the `not_cached`
 delta that moves `compilations` alone, both `error` deltas — the one that moves
-`compile_fails` alone and the immobile one its other sites leave — the
+`compile_fails` alone and the one that moves `cache_errors` alone — the
 ambiguous windows in which differing mixes of outcomes produce identical
 deltas, and rows for a window whose two readings carry different server
 generations, which must be `unattributed` even when every counter rose and the
@@ -431,20 +437,23 @@ that hits can be foreseen into something the journal can check.
   separate records sccache's key does not: the compiler path is in this
   identity but is never hashed into a key (C3), so one key can span two
   identities, and a request moved to a byte-identical compiler at another path
-  starts a fresh history under a key that did not change. The per-request hash
-  inputs are the one place the approximation is closed by construction: the
-  argument digest covers them;
+  starts a fresh history under a key that did not change;
 - an argument digest: SHA-256 over the argument vector after sccache's own
   removals and sorting (C3), with the `CARGO_*` variables that sccache hashes.
 
-The digest cannot see sccache's source and extern rlib digests, so a changed
-source or dependency is a confounder that H4 and H5 measure. A request whose
-arguments match C4 is classed `not cacheable`, but only while H3 survives.
-Otherwise each key keeps its last eight outcomes, and a Beta estimate with a
-prior from its origin's base rate gives the probability of a hit. The proposed
-classes are `likely hit` for at least 0.8 with three or more observations,
-`likely miss` for at most 0.2 with three or more, `uncertain` otherwise, and
-`no history` for a new key. The class is computed once, at submission.
+The argument digest covers the normalized argument vector and the hashed
+`CARGO_*` variables, but it does not close the approximation: it cannot see the
+target JSON file's content, which sccache hashes whenever a path-valued
+`--target` names one (C3), nor the dep-info source-file, extern rlib and
+staticlib digests. A target JSON file changed under an unchanged path, or a
+changed source or dependency, is therefore a confounder that H4 and H5 measure.
+A request whose arguments match C4 is classed `not cacheable`, but only while
+H3 survives. Otherwise each key keeps its last eight outcomes, and a Beta
+estimate with a prior from its origin's base rate gives the probability of a
+hit. The proposed classes are `likely hit` for at least 0.8 with three or more
+observations, `likely miss` for at most 0.2 with three or more, `uncertain`
+otherwise, and `no history` for a new key. The class is computed once, at
+submission.
 
 History lives in memory, bounded to the 10,000 most recent records (a
 proposal), and is saved atomically, on a timer and at stop, to the same
