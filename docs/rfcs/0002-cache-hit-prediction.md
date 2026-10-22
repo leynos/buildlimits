@@ -514,12 +514,21 @@ the attribution and its `cache_outcome` event are nevertheless unchanged, and
 that admission is unchanged — which is the pair of claims the salt paragraph
 separates. Boundary tests assert the rest of the separation the ports exist
 for: that a reading writes no file and emits no telemetry, that a save writes
-only the store, that a timed-out reading leaves the attributed records the same
-as a successful close, and that a raising sink leaves the reading's own result
-and the loop unchanged. Together those are the isolation ADR 003 requires of
-telemetry and the reason the pure functions return their events instead of
-emitting them. An opt-in host check with the real 0.14.0 binary builds one
-small registry crate cold and then warm, confirming C2, C4 and C5.
+only the store, and that a raising sink leaves the reading's own result and the
+loop unchanged. Two failures need their own assertion, because the two are easy
+to confuse: a timed-out reading produces no attributed label for the affected
+window and reports `outcome_reason` `timeout`, so the test asserts the absence
+of a label, the reason and unchanged admission rather than an equality with a
+successful close; a failed store save is a persistence failure _after_ a
+reading that succeeded, so the test asserts the computed attribution is
+unchanged and the caller reports `store_reason` `save_failed`. The first must
+never be written as the second: a reading that produced no label has none to
+preserve, and asserting that it leaves attribution unchanged would pass
+vacuously against an implementation that dropped the label silently. Together
+those assertions are the isolation ADR 003 requires of telemetry and the reason
+the pure functions return their events instead of emitting them. An opt-in host
+check with the real 0.14.0 binary builds one small registry crate cold and then
+warm, confirming C2, C4 and C5.
 
 **Privacy.** Records use the normalized key of §2 and stay on the host; child
 arguments are compared in memory and never stored; the journal receives only
