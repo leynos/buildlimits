@@ -459,20 +459,26 @@ that hits can be foreseen into something the journal can check.
   which is per worktree, as sccache's key is (C3);
 - the target, from `--target`, or `host`;
 - a toolchain identity: the compiler path, its `-vV` version string, and the
-  `CACHE_VERSION` constant. This is an _approximate_ identity, deliberately not
-  the full set `generate_hash_key` folds into a key (C3). The shared-library
-  digests are excluded, because they digest every file in the rustc sysroot's
-  `lib/` (C3) and cost a full sysroot hash per server start for no requirement
-  here. The approximation is not one-directional, and both directions are
-  stated rather than one being claimed away. A sysroot changed in place under
-  an unchanged compiler path, `-vV` string and `CACHE_VERSION` leaves this
-  identity unchanged, so the identity cannot exclude that change and the
-  affected history is mislabelled; the change stays a confounder for H4 and H5,
-  which measure it rather than ruling it out. Conversely the identity can
-  separate records sccache's key does not: the compiler path is in this
-  identity but is never hashed into a key (C3), so one key can span two
-  identities, and a request moved to a byte-identical compiler at another path
-  starts a fresh history under a key that did not change;
+  `CACHE_VERSION` constant. The path enters the identity as a per-host salted
+  digest, the same representation §2's privacy bound requires of every local
+  path, and that digest is what a record persists and what the tag comparison
+  compares; the raw path stays in memory. Two identities are equal exactly when
+  their path digests, `-vV` strings and `CACHE_VERSION` constants all are, so
+  matching a stored tag never needs the path that produced it. This is an
+  _approximate_ identity, deliberately not the full set `generate_hash_key`
+  folds into a key (C3). The shared-library digests are excluded, because they
+  digest every file in the rustc sysroot's `lib/` (C3) and cost a full sysroot
+  hash per server start for no requirement here. The approximation is not
+  one-directional, and both directions are stated rather than one being claimed
+  away. A sysroot changed in place under an unchanged compiler path, `-vV`
+  string and `CACHE_VERSION` leaves this identity unchanged, so the identity
+  cannot exclude that change and the affected history is mislabelled; the
+  change stays a confounder for H4 and H5, which measure it rather than ruling
+  it out. Conversely the identity can separate records sccache's key does not:
+  the compiler path is in this identity but is never hashed into a key (C3), so
+  one key can span two identities, and a request moved to a byte-identical
+  compiler at another path starts a fresh history under a key that did not
+  change;
 - an argument digest: SHA-256 over the argument vector after sccache's own
   removals and sorting (C3), with the `CARGO_*` variables that sccache hashes.
 
@@ -545,10 +551,14 @@ it loads, saves or discards, and the evaluation reports its own
 request: `none` when a class was produced, `key_unavailable` when the request
 could not be keyed, `store_unavailable` when the history could not be read,
 which carries the store's own reason alongside it, and `ineligible` when the
-request is not cacheable under C4. Each token is a fixed identifier carrying no
-key, path or argument, so a reader can tell a failed reading, a failed store
-and a request that could not be classified apart, and `uncertain` and
-`no history` are never the only explanation a reader gets.
+request is not cacheable under C4. `uncertain` and `no history` are classes the
+evaluation produced, not failures of it, so they always carry `none` and never
+a reason of their own; `none` therefore means the classification ran to
+completion, whatever class it reached, and every other token means it did not.
+Each token is a fixed identifier carrying no key, path or argument, so a reader
+can tell a failed reading, a failed store and a request that could not be
+classified apart, and `uncertain` and `no history` are never the only
+explanation a reader gets.
 
 **Test strategy.** Unit tests cover normalization of registry, git and path
 origins, a non-default `CARGO_HOME` and missing variables. Hypothesis checks
@@ -564,9 +574,11 @@ on one path and not another is caught by the reason rather than by the fallback
 alone, and the same test set must provoke `save_failed` on a refused write and
 `expired` on the aging bound, so neither can be added to the vocabulary without
 a test that observes it. Each `evaluation_reason` token is provoked the same
-way, and a test asserts that a request the evaluation could not key is still
-admitted unchanged — the isolation P2 requires — so a classification failure
-costs a class and never a token.
+way, and a test asserts that `uncertain` and `no history` arrive with `none`
+rather than a reason, so a produced class can never be reported as a failed
+evaluation. A test also asserts that a request the evaluation could not key is
+still admitted unchanged — the isolation P2 requires — so a classification
+failure costs a class and never a token.
 
 **Privacy.** Crate names and registry versions are public metadata. Local paths
 are stored only as digests salted with a per-host random value, kept in a file
