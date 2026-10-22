@@ -294,10 +294,10 @@ consecutive readings:
   alone, a `failed` and a plain `miss`, at the same three requests, and the two
   windows differ in the classes their outcomes landed in. Splitting a mixed
   window would need more than the counters and the count can supply. The rules
-  above never ask them to: a window that is neither solo nor unanimous is
-  `unattributed` before the question arises, so a coinciding total cannot be
-  read as a settled outcome, and an ambiguous window costs coverage rather than
-  soundness.
+  above never ask them to split a window. A window that is neither solo nor
+  unanimous is `unattributed` before the question arises, so a coinciding total
+  cannot be read as a settled outcome, and an ambiguous window costs coverage
+  rather than soundness.
 - A _solo_ window, one group, takes that request's single outcome. A
   _unanimous_ window, with several groups that all hit, all missed, were all
   not cacheable or were all not cached, gives each group that outcome. Every
@@ -359,20 +359,23 @@ arrival and its launch.
 `cache_result`, `attribution` (`solo`, `unanimous`, `inferred` or `none`),
 `origin` (`registry`, `git`, `path` or `unknown`) and `outcome_reason`, with
 `runtime_seconds`. `outcome_reason` is `none` for an attributed window and
-otherwise names why the reading produced no label: `timeout`, `parse_error`,
-`empty_stats`, `generation_changed`, `counter_decreased`, `count_mismatch`,
-`ineligible_window` or `no_quiet_point`. It is a second closed vocabulary
-beside the new-event token set, because the schema's existing `reason` field
-already carries admission refusals (`metrics_schema.VOCABULARIES`); widening
-the event without a distinct field would make a rejected window
-indistinguishable from a refusal in the journal. No reason carries a key, a
-path or an argument. The boundaries the proposal crosses are recorded as bounded
-`JournalTracer` spans — `statistics_read`, `outcome_store_load`,
-`outcome_store_save` and `prediction_evaluate` — with fixed operation names,
-bounded attributes and elapsed milliseconds, exported through the existing
-injected sink and dropped on failure without affecting the operation (ADR 003).
-`build-limits-metrics` reports outcome counts, attributed coverage and a count
-per reason.
+otherwise names why the reading produced no label: `timeout`, `read_error`,
+`parse_error`, `empty_stats`, `generation_changed`, `counter_decreased`,
+`count_mismatch`, `ineligible_window` or `no_quiet_point`. `timeout` is the
+deadline elapsing and `read_error` is any other failure of the query itself — a
+launch failure, a socket error or a transport read — so a query that never
+returns statistics is named rather than sharing the timeout's token or falling
+through unnamed. It is a second closed vocabulary beside the new-event token
+set, because the schema's existing `reason` field already carries admission
+refusals (`metrics_schema.VOCABULARIES`); widening the event without a distinct
+field would make a rejected window indistinguishable from a refusal in the
+journal. No reason carries a key, a path or an argument. The boundaries the
+proposal crosses are recorded as bounded `JournalTracer` spans —
+`statistics_read`, `outcome_store_load`, `outcome_store_save` and
+`prediction_evaluate` — with fixed operation names, bounded attributes and
+elapsed milliseconds, exported through the existing injected sink and dropped
+on failure without affecting the operation (ADR 003). `build-limits-metrics`
+reports outcome counts, attributed coverage and a count per reason.
 
 **Test strategy.** Unit tests cover statistics parsing across empty, partial
 and malformed documents, and an exhaustive truth table of the attribution rules
@@ -401,10 +404,13 @@ answer must leave the loop admitting: the test counts iterations, accepts a
 request and returns a token while the query is outstanding, which is the
 regression check for the contract above. Each `outcome_reason` token has a test
 that provokes it and asserts the reason, so the vocabulary cannot rot into a
-single catch-all, and a test asserts that a recording sink which raises leaves
-the reading's own result and the loop unchanged, which is the isolation ADR 003
-requires of telemetry. An opt-in host check with the real 0.14.0 binary builds
-one small registry crate cold and then warm, confirming C2, C4 and C5.
+single catch-all. The `timeout` test provokes the deadline, and the
+`read_error` test a query that fails before it can time out — a launch failure,
+a socket error or a transport read — so the two are distinguished rather than
+both claimed by one test. A test asserts that a recording sink which raises
+leaves the reading's own result and the loop unchanged, which is the isolation
+ADR 003 requires of telemetry. An opt-in host check with the real 0.14.0 binary
+builds one small registry crate cold and then warm, confirming C2, C4 and C5.
 
 **Privacy.** Records use the normalized key of §2 and stay on the host; child
 arguments are compared in memory and never stored; the journal receives only
@@ -465,15 +471,21 @@ The argument digest covers the normalized argument vector and the hashed
 `CARGO_*` variables, but it does not close the approximation: it cannot see the
 target JSON file's content, which sccache hashes whenever a path-valued
 `--target` names one (C3), nor the dep-info source-file, extern rlib and
-staticlib digests. A target JSON file changed under an unchanged path, or a
-changed source or dependency, is therefore a confounder that H4 and H5 measure.
-A request whose arguments match C4 is classed `not cacheable`, but only while
-H3 survives. Otherwise each key keeps its last eight outcomes, and a Beta
-estimate with a prior from its origin's base rate gives the probability of a
-hit. The proposed classes are `likely hit` for at least 0.8 with three or more
-observations, `likely miss` for at most 0.2 with three or more, `uncertain`
-otherwise, and `no history` for a new key. The class is computed once, at
-submission.
+staticlib digests, nor the compile's working directory and the dep-info
+environment values, which `generate_hash_key` hashes as inputs 8 and 9 (C3). A
+target JSON file changed under an unchanged path, a changed source or
+dependency, a compile run from a different directory, or a changed environment
+value listed in dep-info, is therefore a confounder that H4 and H5 measure. The
+working directory and the dep-info environment values are listed as confounders
+rather than added to the key: sccache hashes the whole dep-info environment,
+and the key is defined by what the recorded request can supply without a
+dep-info pass. A request whose arguments match C4 is classed `not cacheable`,
+but only while H3 survives. Otherwise each key keeps its last eight outcomes,
+and a Beta estimate with a prior from its origin's base rate gives the
+probability of a hit. The proposed classes are `likely hit` for at least 0.8
+with three or more observations, `likely miss` for at most 0.2 with three or
+more, `uncertain` otherwise, and `no history` for a new key. The class is
+computed once, at submission.
 
 History lives in memory, bounded to the 10,000 most recent records (a
 proposal), and is saved atomically, on a timer and at stop, to the same
@@ -486,8 +498,13 @@ test, so the record survives it and the confounder reaches the estimate rather
 than being filtered out. A corrupt file is discarded, and the discard is named:
 `store_reason` distinguishes `corrupt`, `unreadable`, `version_mismatch` and
 `tag_dropped`, so a store that is silently unreadable on every start is visible
-rather than merely making prediction look unauthoritative. A save that fails
-names itself the same way and does not disturb the running estimate.
+rather than merely making prediction look unauthoritative. The vocabulary names
+every path the store can take, not only the read paths: `save_failed` covers a
+save that could not be written, and `expired` covers the records the 30-day
+aging bound drops, so a save failing on every stop or an aging bound discarding
+more than expected is visible rather than merely making prediction look
+unauthoritative, which is the same job the load reasons do. A failed save names
+itself and does not disturb the running estimate.
 
 The status document gains an optional `prediction` object per queued request,
 with `class`, `p_hit` and `observations`, which the renderer appends:
@@ -525,9 +542,12 @@ is added, with a CrossHair contract on its bounds; a differential machine shows
 identical admission effects with and without predictions. Snapshots, paired
 with semantic assertions, pin status with and without predictions, and a
 `systemd_user` scenario shows predictions appearing after warm-up against the
-scripted fake server. Each `store_reason` token is provoked and asserted, so a
-store that fails on one path and not another is caught by the reason rather
-than by the fallback alone.
+scripted fake server. Each `store_reason` token is provoked and asserted, which
+covers the whole vocabulary rather than only the load paths: a store that fails
+on one path and not another is caught by the reason rather than by the fallback
+alone, and the same test set must provoke `save_failed` on a refused write and
+`expired` on the aging bound, so neither can be added to the vocabulary without
+a test that observes it.
 
 **Privacy.** Crate names and registry versions are public metadata. Local paths
 are stored only as digests salted with a per-host random value, kept in a file
@@ -710,18 +730,32 @@ Each layer ships behind a supervisor key that is off by default:
 and `hit_priority` (`off`, `shadow` or `on`), all names being proposals.
 Unknown keys stop start-up (user's guide, "Supervisor settings"), so the
 dev-env-rocky collection may set a key only after the release that introduces
-it. The status document and the metric schema change additively;
-`metrics.decode_native_fields` ignores unknown fields, but whether older
-readers reject a new event must be checked (open question 6). The record store
-is new and disposable, and turning a key off is a complete rollback: layer 1
-does not delete it, because running the `W2` replay is the point of recording.
-An sccache upgrade repeats W1's host check before recording resumes, because C1
-to C6 were read from 0.14.0. The `outcome_reason` and `store_reason`
-vocabularies are new schema entries, so they carry open question 6's
-compatibility check with them, and each is additive: a reader that ignores an
-unknown token still reads the event. The user's guide sections "Status" and
-"Metrics", and §§4, 5 and 9 of the developer's guide, change with each layer.
-Enabling 3B or 3D needs an ADR, and 3A or 3C would need ADR 011 revised.
+it. The status document changes additively, and `metrics.decode_native_fields`
+ignores unknown fields, but the metric schema does not: a new event is a
+compatibility break rather than an addition, and the break is precise enough to
+state now (open question 6). `metrics_records._record` returns no record at all
+when the event is absent from `metrics_schema.EVENTS`
+(`if event not in EVENTS: return None`), so an older `build-limits-metrics`
+reading the journal drops every `cache_outcome` record whole rather than
+ignoring the event it does not know. Unknown _vocabulary values_ behave
+differently and are the narrower case: `metrics.bounded_field` returns no value
+for a token outside `metrics_schema.VOCABULARIES`, and `decode_native_fields`
+omits that field while still returning the record, so an unrecognized
+`outcome_reason` or `store_reason` costs one field and an unrecognized event
+costs the record. Layer 1 therefore needs a release that adds `cache_outcome` to
+`EVENTS` before the recording key is enabled, and a reader predating that
+release sees an empty `cache_outcome` history rather than a partial one. That
+is why the key is off by default, so enabling it is a deliberate act taken with
+the release that adds the event. The record store is new and disposable, and
+turning a key off is a complete rollback: layer 1 does not delete it, because
+running the `W2` replay is the point of recording. An sccache upgrade repeats
+W1's host check before recording resumes, because C1 to C6 were read from
+0.14.0. The `outcome_reason` and `store_reason` vocabularies are new schema
+entries, so they carry open question 6's compatibility check with them, and
+each is additive: a reader that ignores an unknown token still reads the event.
+The user's guide sections "Status" and "Metrics", and §§4, 5 and 9 of the
+developer's guide, change with each layer. Enabling 3B or 3D needs an ADR, and
+3A or 3C would need ADR 011 revised.
 
 ## Alternatives considered
 
@@ -760,8 +794,12 @@ so wall time is tested only as a supplement (H2).
 5. Should prediction history persist across supervisor restarts, or stay in
    memory, and should a finished group's status line show its recorded outcome?
    Layer 1's records persist either way, since the replay needs them.
-6. Do older `build-limits-metrics` readers reject records with an unknown
-   event (`metrics_records`)?
+6. The reader's behaviour is settled by source rather than open: an older
+   `build-limits-metrics` drops an unknown event whole (`metrics_records`) and
+   omits only the field for an unknown vocabulary value (`bounded_field`), as
+   the compatibility section states. What remains open is the rollout: does the
+   release adding `cache_outcome` to `metrics_schema.EVENTS` reach every reader
+   of the journal before layer 1's recording key is enabled there?
 7. Should W6 be decided as a composition-policy ADR independently of this RFC?
 
 ## Recommendation
