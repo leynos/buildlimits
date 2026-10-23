@@ -473,22 +473,22 @@ identity and any `path:` origin are unkeyable, and no record is written for
 that compile. The two layers do different work, so each names the operation it
 could not complete, in the vocabulary that owns it, and one missing salt can
 therefore produce a reason at each layer. Layer 1 reports `store_reason`
-`salt_unavailable` because the file it could not read is one the store owns and
+`salt_unavailable` because the file it could not read is one the store owns:
 the save is what cannot happen. Layer 2 still attempts the history load, and
 reports `evaluation_reason` `key_unavailable` when it cannot key the request at
 all; `store_unavailable` is reserved for the load that failed independently, so
 a missing salt never also produces `store_unavailable` by itself, and neither
 reason is reported for a request the layer never reached. Attribution itself is
-unaffected, because the counters never needed the digest. The attributed label
+unaffected because the counters never needed the digest. The attributed label
 and its `cache_outcome` event are the same whether or not the salt was
 available — that event carries no key, no digest and no toolchain identity — so
 the reading is still named and still counted in the coverage the journal
 reports; what is lost is the keyed record in the store, not the attribution.
 "Unchanged attribution" and "unchanged persisted records" are therefore
 different claims, and it is the first that holds here. The raw path is never
-substituted and an unsalted digest is never written, which is the same ban §2's
-privacy bound states, applied at the point where the choice could otherwise be
-made.
+substituted, and an unsalted digest is never written, which is the same ban
+§2's privacy bound states, applied at the point where the choice could
+otherwise be made.
 
 Nothing in the design requires a port for what the layer does not call: the
 pure parts below are given values, not ports. Attribution, the counter
