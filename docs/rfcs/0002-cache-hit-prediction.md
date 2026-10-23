@@ -249,11 +249,21 @@ consecutive readings:
   `buildlimits/bus_properties.py` accepts only `MainPID`, `ControlGroup` and
   `ActiveState`, and rejects any other property name, so W1 must extend that
   set with `InvocationID` or treat the fallback's refusal as an unavailable
-  reading rather than a `ManagerUnavailable`.
+  reading rather than a `BusQueryError`.
 - The change in `compile_requests` must equal the number of cached groups
-  launched in the window, and the outcome counters, including
-  `requests_not_compile` for Cargo's `-vV` probes, must account for exactly
-  that many requests.
+  launched in the window, and the outcome counters must account for exactly
+  that same number of requests in total. A request the server answers without a
+  compile moves one of two counters, and W1 must place it in the right one.
+  `requests_not_compile` counts a command line the compiler's own parser
+  classes as no compile at all, such as `--version`, `-V` or `--print`.
+  `requests_not_cacheable` counts one that parser refused to cache, which is
+  where Cargo's `-vV` probe lands at 0.14.0, under the refusal `missing input`,
+  because `-vV` is not an argument the parser knows. Neither counter is
+  additive with the result counters: a refusal accounts for its request in
+  place of `cache_hits`, `cache_misses`, `non_cacheable_compilations` or
+  `compile_fails`, not on top of one, and it moves neither
+  `non_cacheable_compilations`, which counts a finished compile whose result
+  was not cacheable, nor `compilations`.
 - The outcome moved is read from the counters, since the reply carries none
   (C2). The table below shows the counter movements at 0.14.0, taken from the
   result handlers in `server.rs`; `_` means the counter does not move.
@@ -301,7 +311,11 @@ consecutive readings:
 - A _solo_ window, one group, takes that request's single outcome. A
   _unanimous_ window, with several groups that all hit, all missed, were all
   not cacheable or were all not cached, gives each group that outcome. Every
-  other window is `unattributed`.
+  other window is `unattributed`, which is the outcome token; the event's
+  `attribution` field carries `none` for the same window, since `inferred`,
+  `solo` and `unanimous` are the only labels the attribution itself can claim.
+  The two names are deliberately different: the outcome says what the groups
+  were given, and the attribution says what the reading was able to establish.
 
 A reading must not stop the loop. `Supervisor.serve` runs a single
 single-threaded selector (`supervisor.Supervisor`), so a query awaited in place
@@ -312,10 +326,15 @@ keep serving those three duties for the whole two seconds a query may last, and
 a stalled query must cost only the reading it abandoned. A query that misses
 its deadline is abandoned and its process reaped; the tick records
 `unattributed` and the next tick starts a fresh query rather than waiting on
-the previous one. A reading that arrives late still defines the window it
-actually covers, and the count check above rejects that window if a launch
-slipped into it. Lateness therefore costs coverage, never soundness, and a
-persistently stalling `--show-stats` degrades coverage rather than admission.
+the previous one. A reading is always compared with the last reading the
+sequence accepted, so the windows meet end to end rather than overlapping: an
+abandoned query yields no window at all, and an accepted reading's window is
+the interval between itself and its predecessor, however many ticks apart they
+fall. Every launch therefore falls in exactly one window and no request can be
+attributed twice, which is what lets the count check above reject a window
+rather than accept a double count. Lateness costs coverage, never soundness,
+and a persistently stalling `--show-stats` degrades coverage rather than
+admission.
 
 Outcomes are `hit`, `miss`, `not_cacheable`, `not_cached`, `failed`, `error` and
 `unattributed`. `not_cached` is the C7 result: a successful compile the
@@ -358,16 +377,23 @@ arrival and its launch.
 **Observability.** A new `cache_outcome` event carries the tokens
 `cache_result`, `attribution` (`solo`, `unanimous`, `inferred` or `none`),
 `origin` (`registry`, `git`, `path` or `unknown`) and `outcome_reason`, with
-`runtime_seconds`. `outcome_reason` is `none` for an attributed window and
-otherwise names why the reading produced no label: `timeout`, `read_error`,
-`parse_error`, `empty_stats`, `generation_changed`, `counter_decreased`,
-`count_mismatch`, `ineligible_window` or `no_quiet_point`. `timeout` is the
-deadline elapsing and `read_error` is any other failure of the query itself — a
-launch failure, a socket error or a transport read — so a query that never
-returns statistics is named rather than sharing the timeout's token or falling
-through unnamed. `outcome_reason` covers the reading alone: it is a second
-closed vocabulary beside the new-event token set, because the schema's existing
-`reason` field already carries admission refusals
+`runtime_seconds`. `origin` is `unknown` only when `CARGO_MANIFEST_DIR` is
+absent, because a value that is present always normalizes: §2 sends every
+directory that is neither a registry nor a git checkout to `path`. An unknown
+origin stops neither step. The window is still attributed and its outcome still
+recorded, because attribution never needed the origin, while §2's derivation
+has no origin value to fold into a key and so reports `key_unavailable` for
+that request. `outcome_reason` is `none` exactly when a label was produced — by
+an attributed window (`solo` or `unanimous`) or by I4's inference
+(`inferred`) — and otherwise names why the reading produced no label: `timeout`,
+`read_error`, `parse_error`, `empty_stats`, `generation_changed`,
+`counter_decreased`, `count_mismatch`, `ineligible_window` or `no_quiet_point`.
+`timeout` is the deadline elapsing and `read_error` is any other failure of the
+query itself — a launch failure, a socket error or a transport read — so a
+query that never returns statistics is named rather than sharing the timeout's
+token or falling through unnamed. `outcome_reason` covers the reading alone: it
+is a second closed vocabulary beside the new-event token set, because the
+schema's existing `reason` field already carries admission refusals
 (`metrics_schema.VOCABULARIES`), and widening the event without a distinct
 field would make a rejected window indistinguishable from a refusal in the
 journal. The evaluation surface has its own vocabulary (Layer 2) rather than
@@ -420,36 +446,38 @@ failure carries.
 
 _Table 2: Port operations and the reason each failure carries._
 
-The reason column names the vocabulary each failure is reported through. Three
-of the four failing rows draw on vocabularies defined above — `timeout` and
-`read_error` are `outcome_reason` tokens, and `corrupt`, `unreadable`,
-`version_mismatch` and `save_failed` are `store_reason` tokens.
-`salt_unavailable` is a new `store_reason`, because the salt lives in a file
-the store owns (§2 privacy), so the vocabulary that already names "the
-persistent state could not be read or written" is the one that should name this
-fault too. The layer adds one reason token and no new vocabulary, so the closed
-sets a reader must know stay at three: `outcome_reason`, `store_reason` and
-`evaluation_reason`.
+The reason column names the vocabulary each failure is reported through, and a
+fault's vocabulary follows the operation that failed rather than the fault
+itself. The statistics row draws on `outcome_reason`, whose tokens §1 defines
+above. The load row names the store's read alternatives, and the save row names
+`save_failed`; both belong to `store_reason`, which §2's observability
+paragraph defines in full. `salt_unavailable` is one more `store_reason`
+because the salt lives in a file the store owns (§2 privacy), so the vocabulary
+that already names "the persistent state could not be read or written" is the
+one that should name this fault too. The layer adds one reason token and no new
+vocabulary, so the closed sets a reader must know stay at three:
+`outcome_reason`, `store_reason` and `evaluation_reason`.
 
 Both clock reads are total: the two readings are the OS's, and neither can fail
-in a way the layer must handle, so a clock port has no failure alternative and
+in a way the layer must handle, so a clock port has no failure alternative, and
 its fake exists to move the deadline, not to fail. `expired` and `tag_dropped`
-are outcomes of the store's _contents_, not of a load or a save, so they are
-carried by the record set a load returns and by the store's own reporting
-rather than by an operation's failure alternative. Like every other token,
+are outcomes of the store's _contents_, not of a load or a save, so the store's
+own reporting carries them, and a load returns them in the record set rather
+than through an operation's failure alternative. Like every other token,
 `salt_unavailable` is a fixed identifier carrying no path or value.
 
 A missing salt is not a degraded path to a raw path. The digest is the only
 representation of a path this layer may persist or compare, so when the salt
 cannot be obtained the layer returns no digest: the compile's toolchain
 identity and any `path:` origin are unkeyable, and no record is written for
-that compile. The reason a reader sees depends on which layer could not
-proceed, and one layer at most does. Layer 1 reports `store_reason`
-`salt_unavailable`, because the file it could not read is one the store owns
-and it is the save that cannot happen. Layer 2 still attempts the history load,
-and reports `key_unavailable` when it cannot key the request at all;
-`store_unavailable` is reserved for the load that failed independently, so a
-missing salt never also produces `store_unavailable` by itself, and neither
+that compile. The two layers do different work, so each names the operation it
+could not complete, in the vocabulary that owns it, and one missing salt can
+therefore produce a reason at each layer. Layer 1 reports `store_reason`
+`salt_unavailable` because the file it could not read is one the store owns and
+the save is what cannot happen. Layer 2 still attempts the history load, and
+reports `evaluation_reason` `key_unavailable` when it cannot key the request at
+all; `store_unavailable` is reserved for the load that failed independently, so
+a missing salt never also produces `store_unavailable` by itself, and neither
 reason is reported for a request the layer never reached. Attribution itself is
 unaffected, because the counters never needed the digest. The attributed label
 and its `cache_outcome` event are the same whether or not the salt was
@@ -540,7 +568,17 @@ vacuously against an implementation that dropped the label silently. Together
 those assertions are the isolation ADR 003 requires of telemetry and the reason
 the pure functions return their events instead of emitting them. An opt-in host
 check with the real 0.14.0 binary builds one small registry crate cold and then
-warm, confirming C2, C4 and C5.
+warm, confirming C2 and C5: the hit is invisible in the reply, and only the
+statistics move. C4 is confirmed separately rather than assumed, because a
+cold-then-warm build of a cacheable crate exercises no refusal: the check reads
+the counters once more after the build and requires the refusal Cargo's own
+toolchain probe produces. Cargo asks the compiler for its version with `-vV`
+before it compiles anything, that flag is not in the parser's argument table,
+and the request is therefore refused as uncacheable rather than as
+not-a-compile, which moves `requests_not_cacheable` and leaves
+`requests_not_compile` alone. A build whose counters show the one and not the
+other is the host evidence for C4's refusal path, and the same reading
+distinguishes the two counters the count rule above depends on.
 
 **Privacy.** Records use the normalized key of §2 and stay on the host; child
 arguments are compared in memory and never stored; the journal receives only
@@ -615,7 +653,7 @@ value listed in dep-info, is therefore a confounder that H4 and H5 measure. The
 working directory and the dep-info environment values are listed as confounders
 rather than added to the key: sccache hashes the whole dep-info environment,
 and the key is defined by what the recorded request can supply without a
-dep-info pass. A request whose arguments match C4 is classed `not cacheable`,
+dep-info pass. A request whose arguments match C4 is classed `not_cacheable`,
 but only while H3 survives. Otherwise each key keeps its last eight outcomes,
 and a Beta estimate with a prior from its origin's base rate gives the
 probability of a hit. The proposed classes are `likely hit` for at least 0.8
@@ -631,8 +669,12 @@ tag no longer matches is dropped rather than asked to explain a toolchain
 change the identity records. The drop is limited to changes the tag actually
 detects: a change that leaves the identity's inputs alone is invisible to this
 test, so the record survives it and the confounder reaches the estimate rather
-than being filtered out. A corrupt file is discarded, and the discard is named:
-`store_reason` distinguishes `corrupt`, `unreadable`, `version_mismatch`,
+than being filtered out. A file whose own format version is not the one this
+release writes reports `version_mismatch` and is discarded unread, which is
+distinct from `corrupt`: the file is well-formed, and only the schema it was
+written under is unknown, so a downgrade or a forward-written file is named
+rather than reported as damage. A corrupt file is discarded, and the discard is
+named: `store_reason` distinguishes `corrupt`, `unreadable`, `version_mismatch`,
 `tag_dropped` and `salt_unavailable` — the last naming the salt file it also
 owns (§1 ports) — so a store that is silently unreadable on every start is
 visible rather than merely making prediction look unauthoritative. The
@@ -670,16 +712,18 @@ matrix and a calibration curve by origin. The store reports `store_reason` when
 it loads, saves or discards, and the evaluation reports its own
 `evaluation_reason` — a third closed vocabulary, distinct from the reading's
 `outcome_reason` and the store's `store_reason` — when it cannot classify a
-request: `none` when a class was produced, `key_unavailable` when the request
-could not be keyed, `store_unavailable` when the history could not be read,
-which carries the store's own reason alongside it, and `ineligible` when the
-request is not cacheable under C4. `uncertain` and `no history` are classes the
-evaluation produced, not failures of it, so they always carry `none` and never
+request: `none` when it reached a class of its own, `key_unavailable` when the
+request could not be keyed, `store_unavailable` when the history could not be
+read, which carries the store's own reason alongside it, and `ineligible` when
+the request is not cacheable under C4, which is a class taken from the
+request's arguments rather than from the evaluation, so it is reported as its
+own reason rather than as `none`. `uncertain` and `no history` are classes the
+evaluation computed, not failures of it, so they always carry `none` and never
 a reason of their own; `none` therefore means the classification ran to
-completion, whatever class it reached, and every other token means it did not.
-Each token is a fixed identifier carrying no key, path or argument, so a reader
-can tell a failed reading, a failed store and a request that could not be
-classified apart, and `uncertain` and `no history` are never the only
+completion and produced a class from history, and every other token means it
+did not. Each token is a fixed identifier carrying no key, path or argument, so
+a reader can tell a failed reading, a failed store and a request that could not
+be classified apart, and `uncertain` and `no history` are never the only
 explanation a reader gets.
 
 **Test strategy.** Unit tests cover normalization of registry, git and path
@@ -741,12 +785,12 @@ wait. This is the riskiest layer. Five facts constrain every option:
 5. The staleness trigger reads only retained drains and the queue length
    (`recovery_starvation.starvation`), so reordering leaves its inputs alone.
 
-| Option                                             | Effect on the accounting                                                       | Verdict                            |
-| -------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------- |
-| 3A. Probe slots beyond the pool                    | A miss runs uncovered (fact 1); an abnormal ending cannot be retained (fact 2) | Rejected unless ADR 011 is revised |
-| 3B. Priority with bounded bypass                   | Every group still holds one token; only the choice of waiting request changes  | Candidate, after modelling         |
-| 3C. Short lane, full slot on a miss                | A miss is known only after it starts, so it runs uncovered in between          | Rejected for sccache 0.14.0        |
-| 3D. Compose provably uncacheable requests directly | No prediction; such requests never use the server (C4)                         | Candidate, gated on H3 only        |
+| Option                                             | Effect on the accounting                                                            | Verdict                            |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------- |
+| 3A. Probe slots beyond the pool                    | A miss runs uncovered (fact 1); an abnormal ending cannot be retained (fact 2)      | Rejected unless ADR 011 is revised |
+| 3B. Priority with bounded bypass                   | Every group still holds one token; only the choice of waiting request changes       | Candidate, after modelling         |
+| 3C. Short lane, full slot on a miss                | A miss is known only after it starts, so it runs uncovered in between               | Rejected for sccache 0.14.0        |
+| 3D. Compose provably uncacheable requests directly | No prediction; the server refuses such a request and does no cache work for it (C4) | Candidate, gated on H3 only        |
 
 _Table 3: Options for cheaper admission._
 
@@ -786,10 +830,12 @@ waiting request takes a token".
 **Model first.** Once RFC 0001's model covers its full scope (its W2), extend
 it with predicted classes in the queue and an environment that picks each
 request's true outcome regardless of its prediction. The expected results: S3
-and S6 hold for 3B; without the aging bound, L2 fails through a lasso in which
-a busy queue of predicted hits starves a predicted miss; with the bound, L2
-holds; and a known-bad 3A configuration violates S6 with one mispredicted miss,
-which keeps the model's discriminating power checked.
+and S6 hold for 3B; without the bypass bound K, L2 fails through a lasso in
+which a busy queue of predicted hits starves a predicted miss; with the bound,
+L2 holds; and a known-bad 3A configuration violates S6 with one mispredicted
+miss, which keeps the model's discriminating power checked. The bound the model
+must exercise is K, not the store's 30-day aging, which is a different bound on
+a different thing.
 
 **Observability, privacy and measurement.** `request_admitted` gains a
 `promoted` boolean, and `would_promote` in shadow mode; status shows each
