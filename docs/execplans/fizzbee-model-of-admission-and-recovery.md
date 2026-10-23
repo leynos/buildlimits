@@ -1,37 +1,51 @@
 # Model compile admission and cache recovery in FizzBee
 
-This ExecPlan (execution plan) is a living document. The sections
-`Constraints`, `Tolerances`, `Risks`, `Progress`, `Surprises & discoveries`,
-`Decision log`, `Outcomes & retrospective`, `Conformance basis` and
-`Verification plan` must be kept up to date as work proceeds.
+This ExecPlan (execution plan) is a living document. The sections `Constraints`,
+`Tolerances`, `Risks`, `Progress`, `Surprises & discoveries`, `Decision log`,
+`Outcomes & retrospective`, `Conformance basis` and `Verification plan` must be
+kept up to date as work proceeds.
 
 Status: DRAFT
 
 Approval: not yet approved. No implementation may begin until the user
-explicitly approves this plan. Approval of the plan authorizes milestones
-EP-M1 to EP-M5 only (RFC 0001 workstream W1). Each later gate, G1 to G4,
-requires a separate explicit decision recorded in `Decision log`, as RFC 0001's
-acceptance requires.
+explicitly approves this plan. Approval authorizes:
+
+- milestones EP-M1 to EP-M6, which deliver RFC 0001 workstream W1 and stop at
+  gate G1;
+- the edits to the accepted RFC 0001 that those milestones require (an
+  open-questions record, the baseline audit and the H1 verdict); and
+- the three proposed deviations DV1 to DV3 in `Decision log`, which refine the
+  RFC's baseline and predictions before any trial runs.
+
+Each later gate, G1 to G4, requires a separate explicit decision recorded in
+`Decision log`, as RFC 0001's acceptance requires. On a "proceed" decision at a
+gate, this plan is first revised so that the next workstream's milestones carry
+full template fields, red tests and acceptance evidence, and that revision is
+approved before work starts.
 
 ## Purpose / big picture
 
 Four defects in compile admission's cache recovery reached the shared
-development host on 2026-10-18 before any test found them. Each was a defect of
-behaviour over time: a recovery that never stopped the cache while a busy queue
-refilled each freed slot, a rest that idled retained tokens without
-explanation, a trigger whose evidence never coincided under load, and a fault
-that vanished from status. The existing Hypothesis state machines and CrossHair
-contracts check safety over short random interleavings. None checks progress
-(liveness: "something good eventually happens"), none models a busy queue, and
-none composes admission with recovery.
+development host on 2026-10-18 before any test found them:
+
+- a recovery that never stopped the cache while a busy queue refilled each
+  freed slot;
+- a rest that left retained tokens idle without explanation;
+- a trigger whose evidence never coincided under load;
+- a fault that vanished from status.
+
+Each was a defect of behaviour over time. The existing Hypothesis state
+machines and CrossHair contracts check safety over short random interleavings.
+None checks progress (liveness: "something good eventually happens"), none
+models a busy queue, and none composes admission with recovery.
 
 [RFC 0001](../rfcs/0001-fizzbee-model-of-admission-and-recovery.md), accepted
 on 2026-10-18, proposes a FizzBee model of the token pool, admission, the
 managed cache, the drain probe and the four-phase recovery transaction. FizzBee
 is an open-source model checker whose specification language is close to
-Python; it explores every reachable state of a model within stated bounds and
-checks safety and liveness properties under declared fairness (an assumption
-that an action which stays enabled is eventually taken).
+Python. It explores every reachable state of a model within stated bounds, and
+checks safety and liveness properties under declared fairness. Fairness is an
+assumption that an action which stays enabled is eventually taken.
 
 After this plan is delivered, a maintainer can run one command:
 
@@ -39,842 +53,1519 @@ After this plan is delivered, a maintainer can run one command:
 make model-check
 ```
 
-and see, for every model configuration, a line stating whether each property
-holds or fails with the expected counterexample, together with the fairness
-assumptions in force. The command fails if a fixed configuration violates a
-property, if a deliberately broken ("known-bad") configuration that transcribes
-a historical incident stops producing its counterexample, or if the checker's
-output cannot be interpreted. A companion pytest suite fails when the code
-gains an admission event, effect, recovery phase or fault kind that the model
-does not map, and replays every counterexample through the production
-`Admission`, `ServerWatch` and `CacheRecovery` objects.
+The command prints one line per expectation. Each line names the configuration,
+the property and the verdict, and lists the fairness assumptions in force and
+the number of states explored. It fails when any of these happens:
+
+- a fixed configuration violates a property;
+- a deliberately broken ("known-bad") configuration that transcribes a
+  historical incident stops producing its counterexample;
+- an exploration is truncated or collapses below its recorded size;
+- the checker's output cannot be interpreted.
+
+A companion pytest suite fails when the code gains an admission event, effect,
+recovery phase or fault kind that the model does not map. It also replays every
+counterexample through the production `Admission`, `ServerWatch` and
+`CacheRecovery` objects.
 
 Nothing changes for users of the installed package. The wheel, runtime
 behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
 
 ## Constraints
 
-- No runtime behaviour, threshold, configuration key, command-line interface,
-  status document, metric or journal field in `buildlimits/` may change. The
-  model checks the design; it designs nothing (RFC 0001 non-goals, H4
-  "Decision: none here"). A genuine counterexample against HEAD is reported to
-  the user as a defect with a replayed failing test; fixing it is a separate,
-  separately approved change.
-- The wheel's contents must not change. `pyproject.toml`
-  `[tool.hatch.build.targets.wheel] packages = ["buildlimits"]` stays as it is,
-  and nothing under `models/` or `modelcheck/` is packaged.
-- No new Python runtime or development dependency is added without escalation.
-  The tooling uses the standard library (`subprocess`, `tomllib`, `json`,
-  `pathlib`, `importlib`, `typing`) plus packages already in the `dev` group
-  (`cyclopts`, `pytest`, `pytest-bdd`, `hypothesis`, `syrupy`).
-- The FizzBee binary is a local, pinned, checksum-verified tool installed under
-  the git-ignored `.tools/` directory. It is never committed, never installed
-  system-wide, and never fetched by `make test`, `make lint`, `make typecheck`
-  or `make check-fmt`.
-- Every known-bad configuration must transcribe a specific revision (a commit
-  in this repository or in `leynos/dev-env-rocky`), not a recollection of it
-  (RFC 0001 open question 8). Where a revision is unrecoverable, the
-  configuration records that fact and its transcription basis.
-- Known-bad results that invert a prediction are reported, never tuned away.
-  W1 is limited to two model revisions after its first full run (RFC 0001 W1).
-- Domain and policy logic in `modelcheck/` must not import from its adapters,
-  perform input or output, spawn processes or read the clock. Adapters
-  implement ports that the domain declares (hexagonal architecture; see
-  `Interfaces and dependencies`).
-- Every Python module stays under 400 lines (`AGENTS.md`). Every public
-  function carries a docstring with an example; doctests run under
-  `make test` because pytest uses `--doctest-modules`.
-- Tests live under `tests/` only (`AGENTS.md`).
-- Gates run sequentially, never overlapped, and full gate runs are delegated to
-  the `scrutineer` agent (user instructions).
-- `typos.toml` is generated and never edited by hand; spelling exceptions go in
-  `typos.local.toml` as exact or full-line patterns.
+- **No production changes.** No runtime behaviour, threshold, configuration
+  key, command-line interface, status document, metric or journal field in
+  `buildlimits/` may change. The model checks the design; it designs nothing
+  (RFC 0001 non-goals; H4, "Decision: none here").
+  - A genuine counterexample against HEAD is reported to the user as a defect,
+    with a replayed failing test.
+  - Fixing it is a separate, separately approved change.
+- **Packaging.** The wheel's contents must not change:
+  `[tool.hatch.build.targets.wheel] packages = ["buildlimits"]` stays.
+  - The source distribution will include `modelcheck/` and `models/`. That is
+    acceptable, and the package metadata does not change.
+- **No new Python dependencies** without escalation.
+  - The tooling uses the standard library: `subprocess`, `os`, `signal`,
+    `tomllib`, `json`, `pathlib`, `importlib`, `ast`, `typing`, `enum` and
+    `dataclasses`.
+  - It may also use packages already in the `dev` group: `cyclopts`, `pytest`,
+    `pytest-bdd`, `hypothesis` and `syrupy`.
+- **The FizzBee binary is local, pinned and checksum-verified.**
+  - It is unpacked into a content-addressed cache directory outside the
+    worktree and linked from the git-ignored `.tools/fizzbee`.
+  - It is never committed and never installed system-wide.
+  - It is never fetched or run by `make test`, `make lint`, `make typecheck`
+    or `make check-fmt`.
+- **Checker runs never write into tracked directories.**
+  - Every run copies its materialized specification into a fresh per-run
+    directory under the git-ignored `.model-check/`, and passes `--output-dir`
+    inside it. No run reads a `.fizz` file in place: the FizzBee parser writes
+    `Spec.json` beside the specification it reads.
+  - After any run, `git status --porcelain` must be empty.
+- **Known-bad configurations are HEAD plus named clauses.** Each one is the
+  fixed model with named switches that restore specific pre-fix clauses.
+  - Each switch cites the revision it transcribes (a commit in this repository
+    or in `leynos/dev-env-rocky`) in a `# transcribes: <sha>` comment.
+  - An audit, recorded in RFC 0001, shows that the rest of the diff to that
+    revision does not affect the target property (RFC 0001 open question 8).
+  - Where a revision is unrecoverable, the configuration records that fact and
+    its transcription basis.
+- **Inverted predictions are reported, never tuned away.** W1 is limited to
+  two model revisions after its first full run (RFC 0001 W1).
+- **Hexagonal boundaries.**
+  - Domain and policy modules in `modelcheck/` must not import from its
+    adapters, perform input or output, spawn processes, read the clock or
+    import `buildlimits`.
+  - Adapters implement ports that the domain declares (see
+    `Interfaces and dependencies`).
+- **House code rules.**
+  - Every Python module stays under 400 lines (`AGENTS.md`).
+  - Every public function carries a docstring with an example. Doctests run
+    under `make test` because pytest uses `--doctest-modules`. Doctest
+    examples in adapters must stay pure and never spawn the binary.
+  - Tests live under `tests/` only (`AGENTS.md`).
+- **Shared-host resources.** Checker runs set `GOMAXPROCS=2` and
+  `GOMEMLIMIT=4GiB`, run serially (pytest `-n 0`), and are killed as a whole
+  process group on timeout.
+- **Gates.** Gates run sequentially, never overlapped, and full gate runs are
+  delegated to the `scrutineer` agent (user instructions).
+- **Spelling configuration.** `typos.toml` is generated and never edited by
+  hand. Spelling exceptions go in `typos.local.toml` as exact or full-line
+  patterns.
 
 ## Tolerances (exception triggers)
 
-- Gates: EP-M5 ends at G1, EP-M8 at G2, EP-M10 at G3 and EP-M12 at G4. At each
-  gate, stop, record the evidence and the proposed decision in RFC 0001 and in
-  `Decision log`, and wait for the user's explicit decision. Do not start the
-  next workstream on a recommendation alone.
-- Model revisions: if W1 needs a third model revision after its first full
+- **Gates.** EP-M6 ends at G1, EP-M9 at G2, EP-M11 at G3 and EP-M13 at G4.
+  - At each gate, stop, and record the evidence and the proposed decision in
+    RFC 0001 and in `Decision log`.
+  - Wait for the user's explicit decision. Do not start the next workstream on
+    a recommendation alone.
+- **Model revisions.** If W1 needs a third model revision after its first full
   run, stop. This is H1's falsification boundary.
-- Prediction inversion: if any known-bad configuration fails to produce its
+  - A revision forced by a timer-order infeasibility in replay (see T6) counts
+    as a revision.
+- **Prediction inversion.** If any known-bad configuration fails to produce its
   predicted counterexample, or a fixed configuration fails, after the one
-  permitted correction round, stop and report with the trace and replay
-  result.
-- Runtime budget: if the routine (pull-request) bounds exceed 10 minutes on the
-  development host, or the nightly bounds exceed 60 minutes, stop and present
-  H2's options (whole, nightly only, split).
-- Scope: if any milestone touches more than 25 files or adds more than 1,500
-  net lines of Python (excluding `.fizz` models, fixtures and snapshots), stop
-  and escalate.
-- Production code: if any change to a file under `buildlimits/` appears
-  necessary, stop. This includes adding a metric gauge (RFC 0001 open question
-  9, deferred to roadmap 2.1.1).
-- Dependencies: if `cuprum` or any other new package is needed, stop and
-  escalate (see `Decision log` entry D5).
-- Tool behaviour: if the pinned FizzBee release cannot express a property or a
-  fairness assumption the RFC requires, and no recorded workaround exists, stop
-  and report at G1 with the TLA+ fallback.
-- Iterations: if a gate still fails after three fix attempts, stop and
+  permitted correction round, stop.
+  - Report the trace, the replay disposition and the suspected cause:
+    atomicity, timer abstraction or fairness.
+- **Runtime budget.** H2 sets the budgets: 10 minutes for the routine
+  (pull-request) bounds and 60 minutes for the nightly bounds. If either is
+  exceeded on the development host, stop and present H2's three options:
+  - run the whole model on pull requests;
+  - run it nightly only;
+  - split it into a coupling model and a transaction model, and re-measure
+    once.
+- **Memory.** If any single checker run exceeds 8 GiB peak resident memory,
+  stop.
+- **Scope.** If any milestone touches more than 25 files or adds more than
+  1,500 net lines of Python, stop and escalate. The count excludes `.fizz`
+  models, fixtures and snapshots.
+- **Production code.** If any change to a file under `buildlimits/` appears
+  necessary, stop.
+  - This includes adding a metric gauge (RFC 0001 open question 9, deferred to
+    roadmap 2.1.1).
+- **Dependencies.** If `cuprum` or any other new package is needed, stop and
+  escalate (D5).
+- **Tool behaviour.** If the pinned FizzBee release cannot express a property
+  or fairness assumption the RFC requires, and no recorded workaround exists,
+  stop. Report at G1 with the TLA+ fallback.
+- **Iterations.** If a gate still fails after three fix attempts, stop and
   escalate with the failing log path.
-- Ambiguity: if the pre-fix revision of an incident admits two materially
+- **Ambiguity.** If the pre-fix revision of an incident admits two materially
   different transcriptions, stop and present both.
 
 ## Risks
 
-- Risk: the "fixed" baseline in RFC 0001 is `7445bf0`, but HEAD (`42f40e4`) has
-  changed `admission.py`, `admission_state.py`, `cache_recovery.py`,
-  `recovery_starvation.py`, `server_watch.py` and added `recovery_stop.py`
-  (PRs #14, #15 and #21). Severity: medium. Likelihood: certain. Mitigation:
-  the fixed configuration transcribes HEAD at the start of EP-M3, and EP-M3
-  records a diff audit showing which changes are refactors (no model effect)
-  and which are behaviour. The known behaviour change is graceful closing
-  (`Admission.begin_closing`, the `closing` gate and
-  `supervisor_shutdown.settle_graceful_stop`'s manual recovery request), which
-  W1 excludes with start-up and shutdown. The drift check lists those methods
-  as explicit, reasoned exclusions. See `Decision log` D1.
-- Risk: the Linux release is a 335 MB tarball (a Go checker, a bundled Python
-  parser and a bash wrapper). Severity: medium. Likelihood: certain.
-  Mitigation: install once under `.tools/fizzbee-<version>/`, verify the
-  SHA-256 digest, and cache it in CI keyed on version and digest.
-- Risk: `fizz` exits 0 when a check fails; failure is visible only on standard
-  output. Severity: high (a silent false pass). Likelihood: certain on HEAD of
-  FizzBee; to be confirmed for v0.5.4. Mitigation: the output parser fails
-  closed: a run counts as a pass only with exit status 0 and a
-  `PASSED: Model checker completed successfully` line and no `FAILED`,
-  `DEADLOCK` or `Model checker stopped` line. Property tests in EP-M2 check
-  that no text without the pass line is ever classified as a pass.
-- Risk: FizzBee's documentation says liveness checking is off by default; its
-  `main.go` treats an unset value as strict. Severity: high (vacuous liveness).
-  Likelihood: medium. Mitigation: every configuration sets `liveness` explicitly
-  in the materialized frontmatter, and the e2e suite includes a negative
-  control (a toy model whose liveness property must fail).
-- Risk: identifier-free counts give action-level, not per-group, fairness.
-  Weak fairness on "some leader exits" does not force a particular group to
-  exit. Severity: medium. Likelihood: medium. Mitigation: groups are
-  interchangeable in the properties except the tracked request, which is a
-  distinguished variable; the toy model in EP-M1 settles whether FizzBee roles
-  give per-instance fairness (they do, per its liveness tutorial) and whether
-  that is needed for L2.
-- Risk: FizzBee does not support assertions inside roles, `import`, `del` or
-  tuple unpacking in `for`, and copying state into a local introduces an
-  interleaving point. Severity: medium. Likelihood: certain. Mitigation:
-  properties stay top-level; guards use `require` over state read in place;
-  EP-M1 records each workaround with a runnable example.
-- Risk: the full model may exceed 400 lines, and FizzBee has no `import`.
-  Severity: low. Likelihood: medium. Mitigation: the materializer assembles an
-  ordered list of fragments into one specification in the output directory
-  (see `Decision log` D4); the W1 model is expected to fit in one file.
-- Risk: the pre-fix revisions of incidents 1, 2 and 4 predate the import and
-  live in `leynos/dev-env-rocky`. Severity: medium. Likelihood: medium.
-  Mitigation: EP-M1 searches that history with `gh` and `git log -S`; an
-  unrecoverable revision is recorded with its transcription basis.
-- Risk: state explosion at H2's bounds. Severity: medium. Likelihood: medium.
-  Mitigation: counts by class, symmetry where groups are held in a `bag()`,
-  minimal bounds that still reproduce Table 4, and H2's split option.
-- Risk: `ty` or pytest may not resolve the new top-level `modelcheck` package.
-  Severity: low. Likelihood: low. Mitigation: EP-M2 adds `"."` to pytest's
-  `pythonpath` and confirms `make typecheck` resolves the package before any
-  logic is written.
+- **Baseline drift.**
+  - Risk: RFC 0001 names `7445bf0` as the fixed baseline. HEAD (`42f40e4`) has
+    changed `admission.py`, `admission_state.py`, `cache_recovery.py`,
+    `recovery_starvation.py` and `server_watch.py`, and added
+    `recovery_stop.py` (PRs #14, #15 and #21).
+  - Severity: medium. Likelihood: certain.
+  - Mitigation: DV1 and the EP-M4 baseline audit.
+- **Wall-clock time in the harness.**
+  - Risk: the replay harness runs `ServerWatch` on wall time.
+    `harness_for` sets `supervisor.clock` after construction, but
+    `Supervisor.__init__` already passed `clock=self.clock` to `ServerWatch`
+    (`buildlimits/supervisor.py:114`). The cache hold and the drain-retry gate
+    therefore ignore `Harness.now`.
+  - Severity: high (replay would match or diverge for the wrong reason).
+    Likelihood: certain.
+  - Mitigation: the replay driver also sets
+    `supervisor.server.clock = lambda: harness.now`. This is a test-side
+    change only. A replay test asserts that the hold expires under `Harness.now`.
+- **Exit status 0 on failure.**
+  - Risk: `fizz` exits 0 when a check fails; failure is visible only on
+    standard output.
+  - Severity: high (a silent false pass). Likelihood: certain on FizzBee
+    HEAD; to be confirmed for v0.5.4.
+  - Mitigation: the parser fails closed (obligation T1). Fixtures for every
+    output class come from the pinned binary (EP-M1).
+- **Vacuous passes.**
+  - Risk: a check passes for a reason other than the property holding:
+    - a missing or misspelt retained assertion;
+    - a state space collapsed by a bad `Init` guard;
+    - an exploration truncated by `max_actions`;
+    - liveness checking silently off (FizzBee's documentation says liveness
+      checking is off by default, but `main.go` treats an unset value as
+      strict).
+  - Severity: high. Likelihood: medium.
+  - Mitigation:
+    - the materializer refuses a configuration whose retained assertions do
+      not exist;
+    - every run writes all options, including `liveness`, explicitly;
+    - every configuration records a `min_states` floor;
+    - a fixpoint check confirms that doubling `max_actions` leaves the state
+      count unchanged;
+    - truncation is classified `STOPPED`;
+    - negative controls must fail.
+- **Fairness abstraction.**
+  - Risk: identifier-free counts give action-level fairness. One weakly fair
+    "some leader exits" action lets the adversary exit uncached groups for ever
+    while a cached group runs.
+  - Severity: high. Likelihood: certain if unaddressed.
+  - Mitigation: per-class actions `LeaderExitsCached` and
+    `LeaderExitsUncached`, each weakly fair. Under the hold, the count of
+    moving cached groups only falls, so per-class weak fairness suffices. The
+    EP-M1 toy models confirm FizzBee's per-role-instance fairness in case L2
+    needs it.
+- **Timer abstraction.**
+  - Risk: unordered timer expiry admits orders that a real clock cannot
+    produce, and the stop's retry backoff can defeat strong fairness of the
+    stop (DV2).
+  - Severity: medium. Likelihood: high.
+  - Mitigation: model the backoff and the blocked-stop branch explicitly.
+    Replay classifies an impossible timer order separately from a divergence.
+- **Language limitations.**
+  - Risk: FizzBee does not support assertions inside roles, `import`, `del`,
+    or tuple unpacking in `for`. Copying state into a local introduces an
+    interleaving point.
+  - Severity: medium. Likelihood: certain.
+  - Mitigation: properties stay top-level, and guards use `require` over state
+    read in place. EP-M1 records each workaround with a runnable example.
+- **Model size.**
+  - Risk: the full model may exceed 400 lines, and FizzBee has no `import`.
+  - Severity: low. Likelihood: medium.
+  - Mitigation: the materializer concatenates an ordered fragment list (D4).
+- **Pre-fix revisions.**
+  - Risk: the pre-fix revisions of incidents 1, 2 and 4 predate the import and
+    live in `leynos/dev-env-rocky`.
+  - Severity: medium. Likelihood: medium.
+  - Mitigation: EP-M1 searches that history. An unrecoverable revision is
+    recorded with its transcription basis.
+- **Tarball size and integrity.**
+  - Risk: the Linux release is a 335 MB tarball containing a Go checker, a
+    bundled Python parser and a bash wrapper. Its only published integrity
+    evidence is the digest shown on the GitHub release page.
+  - Severity: medium. Likelihood: certain.
+  - Mitigation:
+    - a content-addressed cache shared by worktrees;
+    - trust-on-first-use recording of the digest, with the date and the URL;
+    - a mismatch message forbidding blind digest bumps;
+    - the release's container image digest recorded as a fallback pin.
+- **Shared-host load.**
+  - Risk: the checker uses every core and much memory on a host that other
+    agents share.
+  - Severity: high. Likelihood: medium.
+  - Mitigation: `GOMAXPROCS`, `GOMEMLIMIT`, serial runs, process-group kill,
+    and the opt-in environment variable (D6).
+- **Lint gates.**
+  - Risk: the dead-code and lint gates flag Protocol methods, adapters reached
+    only from the command-line entry point, and doubles called only from
+    `modelcheck/`. Ruff flags `subprocess` use outside tests.
+  - Severity: medium. Likelihood: high.
+  - Mitigation: EP-M3 budgets Skylos entry points, Vulture `ignore_names`,
+    Ruff per-file ignores and duplication allowances, each with its reason,
+    and records them in the developer's guide §12.
+- **State explosion.**
+  - Risk: H2's bounds may be too large to check within budget.
+  - Severity: medium. Likelihood: medium.
+  - Mitigation: counts by class, symmetry where groups are held in a `bag()`,
+    minimal bounds that still reproduce Table 4, and H2's split option.
 
 ## Progress
 
 - [x] (2026-10-23 23:40Z) Renamed the branch to
   `fizzbee-model-of-admission-and-recovery`.
-- [x] (2026-10-24 00:05Z) Reconnaissance by a Wyvern team: production code
-  map, test doubles and harnesses, documentation conventions; FizzBee research
+- [x] (2026-10-24 00:05Z) Reconnaissance by a Wyvern team (production code,
+  test doubles and harnesses, documentation conventions) and FizzBee research
   through Firecrawl.
 - [x] (2026-10-24 00:30Z) First draft of this ExecPlan.
-- [ ] Community-of-experts review of the draft and revision.
+- [x] (2026-10-24 01:20Z) Community-of-experts review by four panellists
+  (formal methods; Python and hexagonal architecture; operations, CI and supply
+  chain; delivery process and documentation). Their findings were folded into
+  this revision.
 - [ ] Draft pull request opened for review.
-- [ ] User approval of the plan.
-- [ ] EP-M1: pre-fix revisions, pinned FizzBee and toy-model answers.
-- [ ] EP-M2: `modelcheck` domain, ports, adapters and CLI, with tests.
-- [ ] EP-M3: minimal model with the busy queue (W1).
-- [ ] EP-M4: incident 1 and 3 known-bad configurations, replay and
+- [ ] User approval of the plan, including DV1 to DV3.
+- [ ] EP-M1 (prototyping): pre-fix revisions, pinned FizzBee, toy models and
+  fixtures.
+- [ ] EP-M2: `modelcheck` pure domain.
+- [ ] EP-M3: `modelcheck` ports, service, adapters and command-line interface.
+- [ ] EP-M4: minimal model with the busy queue (W1).
+- [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
-- [ ] EP-M5: H1 verdict recorded; stop at G1.
+- [ ] EP-M6: H1 verdict recorded; stop at G1.
 
 ## Surprises & discoveries
 
-- Observation: `fizz` exits 0 when an assertion, deadlock or liveness check
-  fails. Evidence: FizzBee `main.go` returns nil on failure branches, and the
-  `fizz` wrapper comments that the binary "doesn't exit non-zero on FAILED"
-  (read 2026-10-24 at FizzBee HEAD `ae9d9cf`). Impact: the runner must parse
-  standard output and fail closed; see the Risks entry and the EP-M2 property
-  tests.
-- Observation: FizzBee's model-based testing supports Go, Java, Rust and
-  TypeScript, not Python (RFC 0001 open question 7). Evidence:
-  `mbt/lib` in the FizzBee repository and its "work in progress" page. Impact:
-  counterexample replay stays bespoke (EP-M4, EP-M9).
-- Observation: on a failure FizzBee writes `error-graph.json` (the failing path
-  as JSON) to the output directory, and on a pass writes node and link JSON
-  files. Evidence: FizzBee `main.go` and documentation. Impact: traces and
-  state graphs are machine-readable (open question 3, provisionally); EP-M1
-  confirms the exact schema for v0.5.4.
-- Observation: main has moved past the RFC's baseline in the modelled modules.
-  Evidence: `git diff --stat 7445bf0 HEAD -- buildlimits/` lists six of them.
-  Impact: `Decision log` D1.
-- Observation: the repository has no `docs/*-design.md` technical design
-  document. Evidence: `docs/` listing and the documentation style guide's
-  expectation of one. Impact: design decisions are recorded in RFC 0001 (the
-  accepted design), in ADR 004 for the tooling architecture, and in the
-  developer's guide for internal interfaces; see D7.
+- **`fizz` exits 0 when a check fails.**
+  - Observation: this holds for assertion, deadlock and liveness failures.
+  - Evidence: FizzBee `main.go` returns nil on its failure branches, and the
+    `fizz` wrapper's comment says the binary "doesn't exit non-zero on FAILED"
+    (read 2026-10-24 at FizzBee HEAD `ae9d9cf`).
+  - Impact: the parser must fail closed (T1).
+- **No Python support in FizzBee's model-based testing.**
+  - Observation: it supports Go, Java, Rust and TypeScript only (RFC 0001 open
+    question 7).
+  - Evidence: `mbt/lib` in the FizzBee repository, and its "work in progress"
+    page.
+  - Impact: counterexample replay stays bespoke.
+- **FizzBee's output is machine-readable.**
+  - Observation: on failure FizzBee writes `error-graph.json`, and on a pass it
+    writes node and link JSON. Its parser also writes `Spec.json` beside the
+    specification it reads.
+  - Evidence: FizzBee `main.go` and the `fizz` wrapper.
+  - Impact: traces are machine-readable (open question 3, provisionally), and
+    runs must use scratch copies (Constraints).
+- **One supervisor tick is one atomic unit.**
+  - Observation: `Supervisor._tick` (`buildlimits/supervisor.py:326-345`)
+    reaps leaders, empties scopes and runs `poll_services`, which runs the
+    drain probe and then `CacheRecovery.tick` on one `now` sample, all in one
+    callback.
+  - Evidence: the code at `42f40e4`.
+  - Impact: the model uses one composite `SupervisorTick` action (D10), and
+    RFC 0001 Table 5's atomic units are refined accordingly.
+- **The harness clock does not reach `ServerWatch`.**
+  - Evidence: `buildlimits/supervisor.py:114` and
+    `tests/cache_recovery_harness.py:176`.
+  - Impact: see the wall-clock time entry in `Risks`.
+- **`main` has moved past the RFC's baseline in the modelled modules.**
+  - Evidence: `git diff --stat 7445bf0 HEAD -- buildlimits/`.
+  - Impact: DV1.
+- **No technical design document exists.**
+  - Observation: there is no `docs/*-design.md`.
+  - Impact: D7.
 
 ## Decision log
 
-- D1. Decision: the "fixed" configuration transcribes HEAD of `main` at the
-  start of EP-M3 (currently `42f40e4`), not `7445bf0`. EP-M3 audits
-  `git diff 7445bf0 <head> -- buildlimits/` and records in RFC 0001 that the
-  recovery dynamics are unchanged (refactors into `recovery_outlook.py` and
-  `recovery_stop.py`) and that admission gained graceful closing, which W1
-  excludes. Rationale: replay drives the production code at HEAD, so the
-  model must transcribe HEAD for replay to be meaningful; the RFC's predictions
-  about `7445bf0` carry over because the recovery transitions are identical.
-  This is a mechanical update of a baseline, not an architecture deviation; if
-  the audit finds a behavioural change inside W1's scope, it becomes a
-  deviation and the plan is set to `BLOCKED`. Date/Author: 2026-10-24, planning
-  agent.
-- D2. Decision: the tooling is a top-level Python package `modelcheck/`, not
-  shipped in the wheel, organized as a hexagon: pure domain modules, a
-  `ports` module of `typing.Protocol` interfaces, and adapters for the FizzBee
-  command line, the `buildlimits` code inventory and the command-line entry
-  point. The models live in `models/admission/`. Rationale: the tooling has
-  real policy (expectation judgement, materialization of variants, drift
-  computation, trace normalization) that must be unit-tested without the
-  335 MB binary; ports let the BDD scenarios run against a fake checker.
-  `tests/` holds only tests and test doubles, as `AGENTS.md` and the
-  repository layout require. Recorded as ADR 004. Date/Author: 2026-10-24,
-  planning agent.
-- D3. Decision: each expectation is checked in its own run, with every other
-  assertion removed from the materialized specification. Rationale: FizzBee
-  reports the first failing property, so a known-bad configuration could fail a
-  different property first and either mask or impersonate the predicted one.
-  One property per run makes attribution exact and lets the report state which
-  fairness assumptions that property relied on. Date/Author: 2026-10-24,
-  planning agent.
-- D4. Decision: variants are produced by a pure materializer from one source
-  specification. It rewrites only top-level constant lines named in the
-  configuration (for example `PREFIX_GUARD_COUNTS_UNCACHED = True`), the
-  fairness keyword of actions tagged `# fairness: <id>`, the YAML frontmatter
-  (bounds and `liveness`), and the set of retained assertions. If a model is
-  ever split, the materializer concatenates an ordered fragment list first.
-  Rationale: FizzBee has no `import` or parameters, and hand-copied variant
-  files would drift from the fixed model, which is exactly the false
-  confidence RFC 0001 §5 warns against. Date/Author: 2026-10-24, planning
-  agent.
-- D5. Decision: the FizzBee adapter uses the standard library's `subprocess`
-  with an argument list, an explicit timeout and no shell, as
-  `tests/test_crosshair.py` does, rather than `cuprum`. Rationale: `cuprum` is
-  not a dependency; the scripting standards apply to `scripts/`, and adding a
-  dependency requires escalation. If review requires `cuprum`, that is a
-  dependency decision for the user. Date/Author: 2026-10-24, planning agent.
-- D6. Decision: tests that need the real FizzBee binary carry a new pytest
-  marker `fizzbee` and skip, with a reason naming `make fizzbee`, when the
-  pinned binary is absent. `make model-check` installs the binary and runs
-  them; CI runs `make model-check` in its own job (EP-M11). Rationale:
-  `make test` must stay hermetic and fast; the model check is its own gate,
-  as RFC 0001 §6 proposes. Whether `make model-check` joins `make all` is G4's
-  decision (open question 10). Date/Author: 2026-10-24, planning agent.
-- D7. Decision: with no technical design document in the repository, design
-  decisions are recorded in RFC 0001 (answers to open questions, H1 to H4
-  verdicts and gate decisions), in ADR 004 (tooling architecture), and in a new
-  developer's guide section 11.6 (internal interfaces and the update policy).
-  `docs/users-guide.md` is not changed: the change has no user-visible
-  behaviour, and the style guide excludes maintainer-only tooling from it.
-  Date/Author: 2026-10-24, planning agent.
-- D8. Decision: install the FizzBee binary from EP-M1 through a pinned
-  `make fizzbee` target, rather than waiting for roadmap task 1.5.1. Rationale:
-  every W1 task needs a reproducible binary; 1.5.1 then adds the routine
-  bounds, the known-bad sweep and CI on top of an existing pin. Date/Author:
-  2026-10-24, planning agent.
+### Proposed deviations (accepted only by explicit approval of this plan)
+
+- **DV1. Transcribe HEAD; keep `7445bf0` as a named audit point.**
+  - Decision: the fixed configuration, `head`, transcribes HEAD of `main` at
+    the start of EP-M4 (currently `42f40e4`).
+  - Before writing the model, EP-M4 audits
+    `git diff 7445bf0 <head> -- buildlimits/` over the update-policy modules,
+    and records the result in RFC 0001.
+  - The expected finding is that the recovery dynamics are unchanged. The
+    changes are refactors into `recovery_outlook.py` and `recovery_stop.py`,
+    plus the status-only outlook. Admission gained graceful closing
+    (`begin_closing`, the `closing` gate and the manual request in
+    `supervisor_shutdown.settle_graceful_stop`), which W1 excludes along with
+    start-up and shutdown.
+  - If the audit confirms this, `head` also stands for `7445bf0` within W1's
+    scope, and RFC 0001's predictions about `7445bf0` are checked on `head`.
+  - If the audit finds a behavioural change inside W1's scope, both revisions
+    become separate configurations and the plan is set to `BLOCKED`.
+  - Affected: RFC 0001 H1, H4 and W2's exit evidence; roadmap tasks 1.1.5,
+    1.2.2, 1.2.5, 1.3.2 and 1.3.4. Each will read "`7445bf0`, checked as
+    `head` per the baseline audit".
+  - Rationale: replay drives the production code at HEAD, so the model must
+    transcribe HEAD for replay to mean anything.
+  - Approver: the user, through plan approval.
+- **DV2. Refine the incident 1 capacity-2 prediction.**
+  - The RFC predicts that at capacity 2, incident 1's lasso appears under weak
+    but not strong fairness of the recovery step. That holds only in an
+    abstraction without the stop's retry backoff.
+  - In the code, `_try_stop` is never disabled. A blocked stop calls `_fail`,
+    which re-arms the backoff (`min(30 * attempts, 120)` seconds) and resets
+    the roots grace. An adversary that expires the backoff only while an
+    uncached group is moving keeps the stop branch disabled at every attempt,
+    so strong fairness gives no help.
+  - The model therefore splits the stop into `RecoveryStopTaken` and
+    `RecoveryStopBlocked`. It checks two capacity-2 configurations under
+    strong fairness:
+    - `incident-1-cap2-strong-nobackoff`, expected to hold, which is the RFC's
+      prediction in the RFC's abstraction;
+    - `incident-1-cap2-strong-backoff`, expected to yield a lasso.
+  - Strong fairness here stands in for a physical assumption the code does not
+    guarantee: an unsynchronized 1-second poll eventually lands in a window of
+    positive length. The H1 verdict will say so.
+  - Without this refinement, a lasso at capacity 2 under strong fairness would
+    be misread as wrong atomicity and spend W1's revision budget on the wrong
+    cause.
+  - Recorded in RFC 0001 before the first run.
+- **DV3. Split L4 and add fairness assumption F3a.**
+  - L4 is two properties:
+    - L4a (safety, finite counterexample): a refused operator request implies
+      a faulted manager transport. It is a `transition` assertion.
+    - L4b (liveness): an accepted request eventually ends in a completed
+      transaction or accounted tokens.
+  - Incident 3's "finite counterexample to L4" is a counterexample to L4a.
+  - The liveness of the visible-roots grace needs a new assumption F3a:
+    unknown root readings are finite. The grace neither starts nor completes
+    while the root count is unknown (`recovery_roots.stop_verdict`).
+    - F3a is stated beside the drain probe.
+    - Configuration `head-unknown-roots`, with F3a dropped, is expected to
+      fail L1.
+    - This anticipates H4's "a grace that cannot expire" clause.
+  - Recorded in RFC 0001 before the first run.
+
+### Decisions
+
+- **D2. The tooling is a top-level package, `modelcheck/`, outside the wheel.**
+  - It is organized as a hexagon:
+    - pure domain modules;
+    - a `ports` module of `typing.Protocol` interfaces;
+    - an application service;
+    - adapters for the FizzBee process, FizzBee's output format, the
+      configuration file and the `buildlimits` code inventory;
+    - a Cyclopts driving adapter.
+  - The models live in `models/admission/`.
+  - Rationale:
+    - The tooling has real policy: expectation judgement, materialization of
+      variants, drift computation and trace normalization. That policy must
+      be unit-tested without the 335 MB binary, and the ports let the
+      behavioural scenarios run against a fake checker.
+    - `scripts/` is for single-file `uv run --script` programs, and `tests/`
+      holds tests and test doubles.
+    - Git source discovery, Skylos (`roots=["."]`), Pylint and `ty` already
+      cover a top-level package.
+  - Recorded as ADR 004 in EP-M3.
+- **D3. One expected failure per run.**
+  - Each run retains every assertion expected to hold in its configuration,
+    plus exactly one expected failure. The other expected failures are
+    stripped.
+  - All runs of one configuration must report the same `states_explored`.
+    That proves cheaply that stripping assertions did not change the state
+    graph.
+  - Rationale: FizzBee reports the first failing property. A known-bad
+    configuration could otherwise fail a different property first, and a
+    counterexample found where a safety property is violated would mean
+    nothing.
+- **D4. Variants are produced by a pure materializer from one source.**
+  - It rewrites only:
+    - top-level constant lines named in the configuration;
+    - the fairness keyword of actions tagged `# fairness: <id>`;
+    - the complete YAML frontmatter (every option, including `max_actions`,
+      `max_concurrent_actions`, `liveness` and `deadlock_detection`);
+    - the set of retained assertions.
+  - It concatenates an ordered fragment list first if a model is ever split.
+  - It also derives `fairness_in_force` from the tags, so reports cannot drift
+    from the model.
+  - Rationale: FizzBee has no `import` and no parameters, and hand-copied
+    variants would drift from the fixed model.
+- **D5. `subprocess` with process-group control.**
+  - The FizzBee adapter uses `subprocess.Popen` with an argument list,
+    `start_new_session=True`, no shell and `check=False` semantics.
+  - On timeout it sends `SIGTERM` to the process group with `os.killpg`, then
+    `SIGKILL` after 5 seconds, then reaps the processes and closes the pipes.
+  - It is not `cuprum`, because `cuprum` is not a dependency and the
+    scripting standards govern `scripts/`. Requiring it would be a dependency
+    decision for the user.
+  - Ruff `S404` and `S603` are ignored for this one adapter module, with the
+    reason recorded.
+- **D6. Running the real binary is opt-in.**
+  - Tests marked `fizzbee` run only when `BUILD_LIMITS_MODEL_CHECK=1`. This
+    follows the host-acceptance precedent of `BUILD_LIMITS_HOST_ACCEPTANCE`.
+  - Under that variable, a missing binary is a failure, not a skip.
+  - `make model-check` sets the variable, runs pytest with `-n 0 -m fizzbee`,
+    and fails if anything was skipped.
+  - `make test` never runs these tests, whatever is installed. It stays
+    hermetic.
+  - Whether `make model-check` joins `make all` is G4's decision (open
+    question 10).
+- **D7. Where design decisions are recorded.**
+  - With no technical design document in the repository, decisions go to
+    three places:
+    - RFC 0001: the open-questions record, the baseline audit, the H1 to H4
+      verdicts and the gate decisions;
+    - ADR 004: the tooling architecture;
+    - a new developer's guide §11.6: internal interfaces, conventions and the
+      update policy.
+  - `docs/users-guide.md` is not changed. Nothing user-visible changes, and
+    the style guide excludes maintainer-only tooling from that guide.
+- **D8. Install from EP-M1 through `make fizzbee`.**
+  - Rationale: every W1 task needs a reproducible binary. Roadmap task 1.5.1
+    is ticked only when its full success criterion is met, in EP-M12.
+- **D9. Create `make model-check` in EP-M4.**
+  - It is created ahead of roadmap task 1.5.1, with W1 bounds only.
+  - Rationale: W1's own acceptance needs a reproducible command. 1.5.1 later
+    adds the routine and nightly bounds, the determinism check and CI.
+- **D10. One composite supervisor tick.**
+  - The model has one `atomic fair action SupervisorTick` (fairness F1) whose
+    body:
+    1. empties a nondeterministic subset of draining scopes, applying
+       `group_emptied` and its token returns;
+    2. then chooses, with `oneof`, between "server poll not due" and "drain
+       probe, then one recovery step".
+  - `LeaderExitsCached` and `LeaderExitsUncached` (the `SIGCHLD` callback,
+    F2), `TokenArrives` (the pool callback, F5), `Submit`, `Cancel` and
+    `OperatorRequest` remain separate actions.
+  - Rationale: this matches `Supervisor._tick`'s single callback. Separate
+    actions would admit paths the code cannot take, and replay would reject
+    them.
+- **D11. Spike artefacts are kept.**
+  - `models/spike/` and `tests/test_fizzbee_spike.py` stay as permanent checks
+    of the language and checker behaviour the model relies on.
+  - Rationale: a FizzBee version bump that changes fairness, liveness or
+    output semantics must fail loudly.
+- **D12. A Python explicit-state explorer is offered at G1, not built in W1.**
+  - The formal-methods panellist proposed a third comparator arm: a roughly
+    300-line Python explorer over the same count-based state. Its transitions
+    would call the production pure predicates directly
+    (`recovery_starvation.starvation`, `blocked`, `recovery_roots.stop_verdict`
+    and `cooldown_after`), with a fair-cycle check by strongly connected
+    components.
+  - Rationale: RFC 0001 fixes the comparator as the Hypothesis extension, and
+    W1's scope is bounded. The option is recorded for the G1 decision, where
+    it could pre-discharge much of H3.
 
 ## Outcomes & retrospective
 
-Not started. To be completed at each gate and at completion.
+Not started. Completed at each gate and at completion.
 
 ## Context and orientation
 
-The repository is a Python 3.14 package, `buildlimits/`, that runs a
-supervisor which admits Rust compiler invocations into a shared token pool so
-only a few compile at once. The terms below are used throughout.
+The repository is a Python 3.14 package, `buildlimits/`. It runs a supervisor
+that admits Rust compiler invocations into a shared token pool, so that only a
+few compile at once.
 
-A _token_ is one compile slot from the shared pool (`buildlimits/pool.py`;
-`FakePool` in `tests/pool_helpers.py` is the test double). A _request_ is a
-compile waiting for a token. A _group_ is one admitted compile and its
-processes; it moves through the lifecycle `RUNNING`, `DRAINING` and
-`SERVER_DRAIN` (`buildlimits/admission_state.py`, `GroupState`). A group is
-_cached_ when it runs with the managed sccache server (the _cache_). A
-`SERVER_DRAIN` group has finished but keeps its token because work it handed
-to the cache server may still be running (`Group.may_orphan_server_work`).
+**Admission terms.**
 
-`buildlimits/admission.py` holds `Admission`, a pure state machine whose event
-methods (`submit`, `token_arrived`, `launch_failed`, `cancel`,
-`leader_exited`, `group_emptied`, `server_activity`, `health_failed`,
-`begin_closing`) return _effects_ from `buildlimits/effects.py` (`RequestToken`,
-`ReturnToken`, `Launch`, `NotifyQueued`, `NotifyFinished`, `Refuse`,
-`Terminate`, `Shutdown`). The queue is a first-in, first-out `deque`. Whether a
-launch is cached is decided at launch: `cacheable and self.cached and
-self.cache_allowed()`. `Counts` (`admission_state.py`) includes
-`cached_moving`, the number of cached `RUNNING` plus `DRAINING` groups.
+- A _token_ is one compile slot from the shared pool (`buildlimits/pool.py`).
+  `FakePool` in `tests/pool_helpers.py` is its test double.
+- A _request_ is a compile waiting for a token.
+- A _group_ is one admitted compile and its processes. It moves through the
+  lifecycle `RUNNING`, `DRAINING` and `SERVER_DRAIN`
+  (`buildlimits/admission_state.py`, `GroupState`).
+- A group is _cached_ when it runs with the managed sccache server (the
+  _cache_).
+- A `SERVER_DRAIN` group has finished but keeps its token, because work it
+  handed to the cache server may still be running
+  (`Group.may_orphan_server_work`, which is true unless the leader exited
+  cleanly and was not cancelled).
 
-`buildlimits/server_watch.py` holds `ServerWatch`. Its drain probe,
-`drained_tokens`, asks `ManagedSccache.accounted_drain`
-(`buildlimits/sccache.py`) whether the service is stopped and empty; only then
-does `Admission.server_activity` release `SERVER_DRAIN` tokens. A failed probe
-records a _fault kind_, one of `live_work`, `stopped_populated` or `manager`
-(`buildlimits/drain_guidance.py`, `FaultKind`). `hold_cache` denies cache
-composition for a period; `cache_allowed` reads that hold.
+**The admission state machine.** `buildlimits/admission.py` holds `Admission`,
+a pure state machine.
 
-`buildlimits/cache_recovery.py` holds `CacheRecovery`, the recovery
-transaction. Its `Phase` is `idle`, `quiescing` (write the restart barrier),
-`stopping` (stop the cache), `accounting` (wait for the retained tokens to be
-released) and `restarting` (clear the barrier and start the cache). `request`
-opens a transaction for an operator; `tick` opens one automatically when
-`recovery_starvation.starvation` finds starvation, and otherwise advances one
-phase step. The stop is guarded by `recovery_starvation.blocked` (no cached
-group moving, and a readable manager) and by `recovery_roots.stop_verdict`
-(visible compiler roots delay an automatic stop for
-`RECOVERY_ROOTS_GRACE_SECONDS = 600`). Other timers:
-`RECOVERY_SETTLE_SECONDS = 60` after a clean ending,
-`RECOVERY_COOLDOWN_SECONDS = 900` after a faulted one,
-`RECOVERY_STALE_DRAIN_SECONDS = 300`, and retries of
-`min(30 * attempts, 120)` seconds with a restart limit of 8.
+- Its event methods are `submit`, `token_arrived`, `launch_failed`, `cancel`,
+  `leader_exited`, `group_emptied`, `server_activity`, `health_failed` and
+  `begin_closing`.
+- They return _effects_ from `buildlimits/effects.py`: `RequestToken`,
+  `ReturnToken`, `Launch`, `NotifyQueued`, `NotifyFinished`, `Refuse`,
+  `Terminate` and `Shutdown`.
+- The queue is a first-in, first-out `deque`. At most one token request is
+  outstanding.
+- Whether a launch is cached is decided at launch, as
+  `cacheable and self.cached and self.cache_allowed()`.
+- `Counts` includes `cached_moving`, the number of cached `RUNNING` plus
+  `DRAINING` groups.
 
-`buildlimits/supervisor_polling.py` runs, once a second, the drain probe and
-then `CacheRecovery.tick`. Each supervisor decision is therefore a pure
-transition executed atomically between observations of the outside world,
-which is what makes model checking a good fit.
+**The drain probe.** `buildlimits/server_watch.py` holds `ServerWatch`.
 
-Existing verification: `tests/test_admission.py` (Hypothesis
-`AdmissionMachine`, capacity 3, 300 examples of 60 steps);
-`tests/cache_recovery_state_machine.py` and
-`tests/test_cache_recovery_properties.py` (recovery machine, 200-second steps,
-mutation evidence recorded in a comment at the end of the file);
-`tests/cache_recovery_model.py` (every modelled group is cached, which is why
-incidents 1 and 3 were invisible); `tests/cache_recovery_harness.py`
-(`Harness` and `harness_for`, which drive a real `Supervisor` over `FakePool`
-with a hand-driven clock); `tests/test_crosshair.py` (the precedent for
-invoking an external checker from pytest).
+- Its drain probe, `drained_tokens`, asks `ManagedSccache.accounted_drain`
+  (`buildlimits/sccache.py`) whether the service is stopped and empty. Only
+  then does `Admission.server_activity` release the `SERVER_DRAIN` tokens.
+- A failed probe records a _fault kind_: `live_work`, `stopped_populated` or
+  `manager` (`buildlimits/drain_guidance.py`, `FaultKind`).
+- A `live_work` fault carries a root count. Zero proves "no visible roots",
+  a positive count shows roots, and an unknown count proves neither.
+- `hold_cache` denies cache composition for a period, and `cache_allowed`
+  reads that hold.
 
-FizzBee terms used here: a _specification_ (`.fizz` file) declares state in
-`action Init` and actions that change it; `atomic` actions run without
-interleaving; `require` disables an action whose guard is false; `fair` (weak
-fairness) means an action that stays enabled is eventually taken, and
-`fair<strong>` means an action enabled infinitely often is eventually taken;
-`always`, `eventually always`, `always eventually` and `transition` assertions
-state properties. A _lasso_ is a liveness counterexample: a finite prefix
-followed by a cycle repeated for ever. Options go in YAML frontmatter between
-`---` lines at the top of the file. The checker writes results to an output
-directory; `error-graph.json` holds a failing path.
+**The recovery transaction.** `buildlimits/cache_recovery.py` holds
+`CacheRecovery`.
 
-Skills and documents to read before starting: the `execplans` skill (this
-plan's format), the `hexagonal-architecture` skill (domain, ports and adapters
-in `modelcheck/`), the `python-router` skill and through it
-`python-testing`, `hypothesis`, `python-types-and-apis` and
-`python-data-shapes`; the `firecrawl-mcp` skill for any further FizzBee
-documentation lookup; `docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md`
-(the design); `docs/roadmap.md` phase 1 (task numbering); the developer's
-guide §§3, 5, 6, 9 and 11 (the code the model transcribes and the test
-conventions); `docs/documentation-style-guide.md` (ADR and RFC format);
-`docs/scripting-standards.md` (command-line conventions);
-`docs/repository-layout.md`.
+- Its `Phase` is one of:
+  - `idle`;
+  - `quiescing` (write the restart barrier);
+  - `stopping` (stop the cache);
+  - `accounting` (wait until the retained tokens are released);
+  - `restarting` (clear the barrier and start the cache).
+- `request` opens a transaction for an operator, and is refused only on a
+  `manager` fault.
+- `tick` renews the hold, then does one of two things:
+  - opens a transaction automatically when `recovery_starvation.starvation`
+    finds starvation (the `stale` or `detached` proof);
+  - otherwise advances one phase step.
+- The stop is guarded by `recovery_starvation.blocked`: no cached group may be
+  moving, and the manager must be readable. A blocked stop counts as a failure:
+  it increments the attempts, arms a backoff of `min(30 * attempts, 120)`
+  seconds, and resets the roots grace.
+- `recovery_roots.stop_verdict` delays an automatic stop while roots are
+  visible, for `RECOVERY_ROOTS_GRACE_SECONDS = 600`.
+- The other timers are:
+  - `RECOVERY_SETTLE_SECONDS = 60` after a clean ending;
+  - `RECOVERY_COOLDOWN_SECONDS = 900` after a faulted ending;
+  - `RECOVERY_STALE_DRAIN_SECONDS = 300`;
+  - a 120-second hold renewed on every tick;
+  - a restart limit of 8.
+
+**Polling.** `buildlimits/supervisor.py` runs `_tick` as one callback. It reaps
+leaders, empties draining scopes, and then calls
+`supervisor_polling.poll_services`. That runs the drain probe and then
+`CacheRecovery.tick` on one `now` sample, once a second.
+
+**Existing verification.**
+
+- `tests/test_admission.py`: the Hypothesis `AdmissionMachine` (capacity 3,
+  300 examples of 60 steps).
+- `tests/cache_recovery_state_machine.py` and
+  `tests/test_cache_recovery_properties.py`: the recovery machine with
+  200-second steps. Mutation evidence is recorded in a comment at the end of
+  the properties module.
+- `tests/cache_recovery_model.py`: every modelled group is cached, which is
+  why incidents 1 and 3 were invisible.
+- `tests/cache_recovery_harness.py`: `Harness` and `harness_for` drive a real
+  `Supervisor` over `FakePool` with a hand-driven clock.
+- `tests/test_crosshair.py`: the precedent for invoking an external checker
+  from pytest.
+
+**FizzBee terms.**
+
+- A _specification_ (`.fizz` file) declares state in `action Init`, and
+  actions that change it.
+- `atomic` actions run without interleaving. `require` disables an action
+  whose guard is false.
+- `fair` (weak fairness) means an action that stays enabled is eventually
+  taken. `fair<strong>` means an action enabled infinitely often is eventually
+  taken.
+- `always`, `exists`, `eventually always`, `always eventually` and
+  `transition` assertions state properties. An `exists` assertion is a
+  reachability probe.
+- A _lasso_ is a liveness counterexample: a finite prefix followed by a cycle
+  repeated for ever. A _stutter_ counterexample ends in a state where nothing
+  more happens.
+- Options go in YAML frontmatter between `---` lines.
+
+Skills and documents to read before starting:
+
+- **Skills:**
+  - `execplans`: this plan's format and living-document duties.
+  - `hexagonal-architecture`: domain, ports and adapters in `modelcheck/`.
+  - `python-router`, and through it `python-testing`, `hypothesis`,
+    `python-verification`, `python-types-and-apis`, `python-data-shapes` and
+    `python-errors-and-logging`.
+  - `ruff-016` and `skylos`: the lint gates.
+  - `firecrawl-mcp`: further FizzBee documentation lookup.
+  - `en-gb-oxendict`: prose.
+  - `commit-message`.
+  - `sdlc-implementation`: executing an approved plan.
+- **Documents:**
+  - RFC 0001 (the design).
+  - `docs/roadmap.md` phase 1 (task numbering).
+  - The developer's guide: §§3, 5, 6 and 9 (the code the model transcribes);
+    §11.3 (existing verification); §12 (static-analysis exceptions); §13
+    (automation); §14 (spelling).
+  - ADR 001 (the excluded closing path).
+  - ADR 003 (the format model for ADR 004).
+  - `docs/documentation-style-guide.md`.
+  - `docs/scripting-standards.md`.
+  - `docs/repository-layout.md`.
 
 ## Conformance basis
 
-No Terms of Reference document exists. The governing artefacts are:
+No Terms of Reference document exists. The governing artefacts, at commit
+`42f40e4`, are:
 
-- RFC 0001, accepted 2026-10-18, at commit `42f40e4`: design §§1-6
-  (identifiers RFC-§1 to RFC-§6), fairness F1 to F7, properties S1 to S9,
-  L1 to L4 and R1, incidents I1 to I4 (Table 4), hypotheses H1 to H4,
-  workstreams W1 to W4 and gates G1 to G4, open questions OQ1 to OQ12.
-- `docs/roadmap.md` phase 1, tasks 1.1.1 to 1.5.3, at `42f40e4`.
-- `AGENTS.md` and `docs/documentation-style-guide.md` (governing standards).
-- ADR 001 (graceful supervisor restart), relevant only to the excluded closing
-  path.
-- ADR 004, to be written in EP-M2, for the tooling architecture.
+- **RFC 0001**, accepted 2026-10-18. Its identifiers are:
+  - design sections RFC-§1 to RFC-§6;
+  - fairness F1 to F7, plus F3a (DV3);
+  - properties S1 to S9, L1 to L3, L4a, L4b (DV3) and R1;
+  - incidents I1 to I4 (Table 4);
+  - hypotheses H1 to H4, workstreams W1 to W4 and gates G1 to G4;
+  - open questions OQ1 to OQ12.
+- **The roadmap**, `docs/roadmap.md` phase 1, tasks 1.1.1 to 1.5.3.
+- **Governing standards:** `AGENTS.md` and
+  `docs/documentation-style-guide.md`.
+- **ADR 001**, relevant only to the excluded closing path.
+- **ADR 004**, to be written in EP-M3.
+- **Deferred items:** OQ9 is deferred to roadmap 2.1.1 and OQ11 to roadmap
+  2.1.2. Neither is discharged here.
 
-Trace links (requirement, design element, milestone, evidence):
+For screen readers: the following block lists one trace link per line. Each
+line runs from a roadmap task, through its RFC identifiers and the milestone
+that delivers it, to its acceptance evidence.
 
 ```plaintext
-RFC-H1, roadmap 1.1.1        -> EP-M1 -> RFC 0001 open-questions record (pre-fix revisions)
-RFC-OQ1..3, OQ6, roadmap 1.1.2 -> EP-M1 -> models/spike/*.fizz, tests/test_fizzbee_spike.py
-RFC-OQ4..5, roadmap 1.1.3    -> EP-M1 -> Makefile FIZZBEE_VERSION/FIZZBEE_SHA256, make fizzbee
-RFC-§5, RFC-§6               -> EP-M2 -> modelcheck/*, tests/test_modelcheck_*.py, ADR 004
-RFC-§1..3 (S1,S2,L1,L3,L4), roadmap 1.1.4 -> EP-M3 -> models/admission/admission.fizz,
-                                  tests/test_model_check_e2e.py::test_fixed_configuration_holds
-RFC Table 4 I1, I3, roadmap 1.1.5 -> EP-M4 -> models/admission/configurations.toml,
-                                  tests/test_model_check_e2e.py::test_known_bad_yields_counterexample
-RFC-§5 replay, roadmap 1.1.6 -> EP-M4 -> tests/test_model_replay.py
-RFC-H1 comparator, roadmap 1.1.7 -> EP-M4 -> tests/test_recovery_progress_comparator.py
-RFC-H1, G1, roadmap 1.1.8    -> EP-M5 -> RFC 0001 "H1 verdict" section
-RFC-W2 (S1..S9, L1..L4, R1, I2, I4), roadmap 1.2.x -> EP-M6..EP-M8 -> model, configurations, RFC H2 verdict
-RFC-H4, roadmap 1.3.x        -> EP-M7 -> configurations 37d08e5 and HEAD, RFC H4 verdict
-RFC-§5 drift/projection, H3, roadmap 1.4.x -> EP-M9..EP-M10 -> tests/test_model_drift.py,
-                                  tests/test_model_projection.py, RFC H3 verdict
-RFC-§6, W4, roadmap 1.5.x    -> EP-M11..EP-M12 -> make model-check, .github/workflows/model-check.yml,
-                                  developer's guide §11.6
+1.1.1 OQ8                     -> EP-M1  -> RFC 0001 open-questions record: pre-fix revision table
+1.1.2 OQ1-3, OQ6              -> EP-M1  -> models/spike/*.fizz; tests/test_fizzbee_spike.py; tests/fixtures/fizzbee/
+1.1.3 OQ4-5                   -> EP-M1  -> Makefile FIZZBEE_VERSION, FIZZBEE_SHA256; make fizzbee; RFC licence record
+RFC-§5, §6 tooling            -> EP-M2  -> modelcheck domain; tests/test_modelcheck_{expectations,materialize,drift,trace}.py
+RFC-§5, §6 tooling            -> EP-M3  -> modelcheck adapters, CLI; tests/features/model_check.feature; ADR 004
+1.1.4 S1 S2 L1 L3 L4a L4b F1-F7 F3a -> EP-M4 -> models/admission/admission.fizz; .model-check/results.json (head)
+1.1.5 I1 I3 H1 DV2            -> EP-M5  -> models/admission/configurations.toml; results.json (known-bad rows)
+1.1.6 RFC-§5 replay           -> EP-M5  -> tests/test_model_replay.py
+1.1.7 H1 comparator           -> EP-M5  -> tests/test_recovery_progress_comparator.py
+1.1.8 H1 G1                   -> EP-M6  -> RFC 0001 "H1 verdict" section; Decision log G1 entry
+1.2.1 S1 S2 S4 S5 S7          -> EP-M7  -> results.json (head, W2 bounds)
+1.2.2 S3 S6 S8 S9             -> EP-M7  -> results.json (head)
+1.2.3 L1-L4b F1-F7            -> EP-M8  -> results.json (head, fairness ablations)
+1.2.4 R1 I2                   -> EP-M8  -> results.json (incident-2)
+1.2.5 Table 4 I4              -> EP-M8  -> results.json (incident-4, all known-bad rows)
+1.2.6 H2 G2                   -> EP-M9  -> RFC 0001 "H2 verdict" section
+1.3.1 H4 (37d08e5)            -> EP-M8  -> results.json (stale-path-37d08e5)
+1.3.2 H4 (head grace)         -> EP-M8  -> results.json (head, head-unknown-roots)
+1.3.3 OQ12                    -> EP-M9  -> RFC 0001 OQ12 decision; start-up action or roadmap 2.1.3 deferral
+1.3.4 W2 exit                 -> EP-M9  -> RFC 0001 W2 exit record
+1.4.1 RFC-§5 drift            -> EP-M10 -> tests/test_model_drift.py
+1.4.2 OQ7 regressions         -> EP-M10 -> tests/test_model_replay.py (full model); RFC OQ7 record
+1.4.3 projection              -> EP-M11 -> tests/test_model_projection.py
+1.4.4 H3 G3                   -> EP-M11 -> RFC 0001 "H3 verdict" section
+1.5.1 RFC-§6 pin and target   -> EP-M12 -> make model-check (routine, nightly, determinism)
+1.5.2 CI                      -> EP-M12 -> .github/workflows/model-check.yml
+1.5.3 OQ10 docs               -> EP-M13 -> developer's guide §11.6 update policy; G4 entry
 ```
 
-_Figure 1: Trace links from RFC 0001 and the roadmap to milestones and
+_Figure 1: Trace links from the roadmap and RFC 0001 to milestones and
 evidence._
 
 ## Verification plan
 
-This plan has two layers to verify: the model's claims about the design, and
-the repository-owned tooling that runs the model and interprets its results.
-Third-party internals (FizzBee's checker, Hypothesis, pytest) are axioms; the
+Two layers need verifying:
+
+- the model's claims about the design;
+- the repository-owned tooling that runs the model and interprets its results.
+
+Third-party internals (FizzBee's checker, Hypothesis, pytest) are axioms. The
 repository-owned logic built on them is verified against the real interface.
 
 ### Axioms
 
-- A1. FizzBee v0.5.4 explores every reachable state of a specification within
-  its configured bounds and reports a liveness violation, under the declared
-  fairness, as a failing path. Exercised by the toy-model negative controls in
-  EP-M1, which must fail.
-- A2. FizzBee prints `PASSED: Model checker completed successfully` only when
-  every retained assertion holds. Exercised by EP-M1 fixtures and by the e2e
-  negative controls; the parser never relies on the exit status alone.
-- A3. The systemd user manager completes accepted jobs and its transport
-  faults are finite (RFC F4); sccache's detached work finishes or is stopped
-  (F3); requested tokens arrive and are returned (F5). These are claims about
-  the environment, stated beside the actions they constrain, and named in
-  every report that relies on them.
-- A4. The production event loop executes each callback and each ordered tick
-  sub-step atomically (developer's guide §§3 and 6). This is what licenses
-  `atomic` actions in Table 5 of the RFC; a replay divergence that contradicts
-  it falsifies the model, not the code.
+- **A1. FizzBee explores exhaustively within bounds.** FizzBee v0.5.4
+  explores every reachable state of a specification within its configured
+  bounds. It reports a liveness violation, under the declared fairness, as a
+  failing path.
+  - Exercised by: the EP-M1 negative controls, which must fail; the
+    `max_actions` fixpoint check; the `min_states` floors.
+- **A2. The pass line means every retained assertion held.** FizzBee prints
+  `PASSED: Model checker completed successfully` only when the exploration
+  completed and every retained assertion held.
+  - Exercised by: the EP-M1 fixtures for every output class, including
+    truncation.
+  - The parser never relies on the exit status alone.
+- **A3. Environment claims.** These describe the environment, not
+  buildlimits:
+  - the systemd user manager completes accepted jobs, and its transport faults
+    are finite (F4);
+  - sccache's detached work finishes or is stopped (F3);
+  - unknown root readings are finite (F3a);
+  - requested tokens arrive and are returned (F5).
+  - Each is stated beside the action it constrains, and every report that
+    relies on one names it.
+- **A4. Atomicity.** The production event loop runs each callback atomically:
+  a `SIGCHLD`, pool or connection callback, or one `Supervisor._tick`
+  (developer's guide §§3 and 6).
+  - This licenses `atomic` actions, and the composite `SupervisorTick` (D10).
+  - A replay divergence that contradicts it falsifies the model, not the
+    code.
 
 ### Model obligations (discharged by FizzBee runs)
 
-- Obligation M-S: S1 to S9 hold in every reachable state of the fixed
-  configuration. Method: state-machine model checking (exhaustive within
-  bounds). Rationale: safety over all interleavings within bounds is exactly
-  what random Hypothesis search could not establish. Domain: capacity 3, two
-  waiting requests, the W1 then W2 bounds of `models/admission/fizz.yaml`.
-  Artefact: `models/admission/admission.fizz` and
-  `models/admission/configurations.toml`. Evidence:
-  `make model-check` reports `holds` for each property on configuration
-  `head`. Non-vacuity: `exists` assertions (FizzBee reachability probes) for a
-  stop issued, a token released by accounting, a transaction reaching
-  `restarting`, and a group in each lifecycle state, each of which must be
-  satisfied; a seeded fault per property (for example, deleting the
-  `cached_moving` guard from `RecoveryStop`) must produce a finite
-  counterexample to S1, recorded in the model's known-bad sweep.
-- Obligation M-L: L1 to L4 hold under F1 to F7 on the fixed configuration.
-  Method: liveness model checking with `liveness: strict` set explicitly.
-  Rationale: incidents 1 and 3 were infinite behaviours with no finite
-  counterexample. Domain: as M-S. Artefact: as M-S. Evidence: `holds` with the
-  fairness identifiers listed. Non-vacuity: the known-bad configurations are
-  the negative controls (next obligation); additionally a configuration
-  `head-without-F1` with the recovery step made unfair must yield a lasso to
-  L3, showing the property depends on the stated fairness rather than holding
-  trivially.
-- Obligation M-KB: each known-bad configuration yields a counterexample of the
-  predicted shape to its Table 4 property, and inverting a prediction fails
-  the check. Method: model checking plus the expectation judgement of
-  `modelcheck.expectations`. Domain: I1 at capacity 3 (lasso to L3 under weak
-  and under strong fairness of the recovery step), I1 at capacity 2 (lasso
-  under weak, none under strong), I3 at `eba08ad` (lasso to L1, finite
-  counterexample to L4), and in W2 I2 (finite counterexample to S8 and R1),
-  I4 (finite counterexample to S9) and H4 at `37d08e5` (L1 fails without F3).
-  Evidence: the e2e test and `make model-check` report `counterexample as
-  expected`. Non-vacuity: by construction each configuration differs from the
-  fixed one only in the switches it names, so a pass on the fixed one and a
-  failure on the known-bad one isolate the switch; the report prints the
-  switch values.
+- **Obligation M-S: safety on the fixed configuration.**
+  - Statement: the safety properties in scope (S1 and S2 in W1; S1 to S9 in
+    W2) hold in every reachable state of `head`, within bounds.
+  - Method: exhaustive state-machine model checking.
+  - Rationale: random Hypothesis search could not establish safety over all
+    interleavings.
+  - Domain: capacity 3; two waiting requests; W1 bounds in `fizz.yaml` and in
+    the materialized frontmatter.
+  - Artefacts: `models/admission/admission.fizz` and
+    `models/admission/configurations.toml`.
+  - Evidence: `make model-check` reports `holds` for each property on `head`,
+    with `states_explored` at or above the configuration's `min_states`.
+    Doubling `max_actions` leaves the state count unchanged.
+  - Non-vacuity:
+    - `exists` probes must all be satisfied: a stop issued; a token released
+      by accounting; a transaction reaching `restarting`; a group in each
+      lifecycle state; a cached and an uncached group running together.
+    - Seeded faults must fail. Each is a configuration that deletes one guard,
+      such as the `cached_moving` clause of `RecoveryStopTaken`, which must
+      yield a finite counterexample to S1.
+- **Obligation M-L: liveness on the fixed configuration.**
+  - Statement: the liveness properties in scope (L1, L3, L4b in W1; L1 to L4b
+    in W2) hold on `head` under F1 to F7 and F3a.
+  - Method: liveness model checking, with `liveness: strict` written
+    explicitly.
+  - Rationale: incidents 1 and 3 were infinite behaviours with no finite
+    counterexample.
+  - Evidence: `holds`, with the fairness identifiers derived from the tags.
+  - Non-vacuity: targeted mutants of `head` must each yield a lasso:
+    - `head-no-stale-proof` (L1);
+    - `head-no-grace-deadline` (L1, with roots that stay visible);
+    - `head-unfair-leader-exits` (L3);
+    - `head-unknown-roots` (L1; F3a dropped).
+  - At G1, a per-property ablation drops each fairness identifier in turn,
+    and the report records which assumptions each property was found to need.
+- **Obligation M-KB: the known-bad configurations.**
+  - Statement: each known-bad configuration yields a counterexample of the
+    predicted kind to its Table 4 property. Losing one fails the check.
+  - Method: model checking, plus the expectation judgement in
+    `modelcheck.expectations`.
+  - Domain:
+    - I1 at capacity 3: a lasso to L3 under weak and under strong fairness of
+      the recovery step.
+    - I1 at capacity 2, under DV2's refinement: a lasso under weak fairness;
+      none under strong fairness without the backoff; a lasso under strong
+      fairness with the backoff.
+    - I3 at `eba08ad`: a lasso to L1, and a finite counterexample to L4a.
+    - In W2: I2 (finite counterexamples to S8 and R1), I4 (a finite
+      counterexample to S9), and H4 at `37d08e5` (L1 fails without F3).
+  - Evidence: the report shows `counterexample as expected`, with the kind.
+  - Non-vacuity: each configuration differs from `head` only in the switches
+    it names, and the report prints them. D3's equal-state-count check shows
+    that the graph is the one `head` explores under those switches.
 
 ### Tooling obligations (discharged by pytest)
 
-- Obligation T1 (fail-closed classification): for any checker output, the
-  parsed outcome is `PASSED` only if the exit status is 0, a pass line is
-  present, and no `FAILED`, `DEADLOCK`, `Model checker stopped` or error line
-  is present. Method: Hypothesis property test over generated outputs built by
-  interleaving real fixture lines with arbitrary text, plus parametrized tests
-  over the captured fixtures. Artefact: `tests/test_modelcheck_fizzbee_output.py`.
-  Evidence: red first under `xfail(strict=True)`, then passes. Non-vacuity:
-  `hypothesis.event` classifies generated cases by presence of each marker
-  line; the test asserts every class was reached via a `target`ed or explicit
-  example; the mutation "ignore the FAILED line" must be rejected.
-- Obligation T2 (judgement truth table): `judge(expectation, outcome)` returns
-  `met` exactly when the expectation is `holds` and the outcome is `PASSED`,
-  or the expectation is `fails` with the same property and counterexample
-  kind (finite or lasso); every other combination is `unmet` with a reason,
-  and an `ERROR` or `STOPPED` outcome is never `met`. Method: exhaustive
-  parametrized test over the finite product of expectation kinds and outcome
-  kinds (the domain is small enough to enumerate). Artefact:
-  `tests/test_modelcheck_expectations.py`. Non-vacuity: the table has a row
-  for every pair, generated from the enums, so a new enum member fails the
-  test until classified.
-- Obligation T3 (materializer locality): materializing a configuration changes
-  only the named constant lines, the tagged fairness keywords, the frontmatter
-  and the removed assertions; materializing with an empty configuration is the
-  identity on the body; materializing is idempotent; an unknown constant or
-  fairness tag is an error, never silently ignored. Method: Hypothesis
-  property tests over generated specification texts (constant lines,
-  tagged actions and assertions interleaved with arbitrary lines) and
-  configurations. Artefact: `tests/test_modelcheck_materialize.py`.
-  Non-vacuity: classification events for each rewrite kind; a seeded mutation
-  that rewrites every `fair` keyword, not only tagged ones, must be rejected.
-- Obligation T4 (drift completeness): the drift report is empty if and only
-  if every inventory item is mapped or explicitly excluded with a reason, and
-  every mapped dotted path resolves. Method: Hypothesis property over
-  generated inventories, mapping sets and exclusions, plus an integration test
-  against the real `buildlimits` inventory. Artefacts:
-  `tests/test_modelcheck_drift.py`, `tests/test_model_drift.py`. Non-vacuity:
-  the roadmap's success criterion is the negative control: a test that adds
-  a fake `Effect` member to the inventory, and one that renames a mapped path,
-  must both produce a non-empty report.
-- Obligation T5 (trace normalization): a normalized trace, built from
-  `error-graph.json`, preserves the order of actions and the model state at
-  each step, and marks the cycle start of a lasso. Method: parametrized tests
-  over captured `error-graph.json` fixtures from EP-M1 (one finite, one
-  lasso). Artefact: `tests/test_modelcheck_trace.py`. Non-vacuity: the lasso
-  fixture's cycle start is asserted to differ from the trace start.
-- Obligation T6 (replay correspondence): each counterexample trace is replayed
-  through the production doubles; every step either matches the projected
-  production state or is reported as a divergence naming the step. Method:
-  scripted pytest per trace. Artefact: `tests/test_model_replay.py`.
-  Non-vacuity: replaying the fixed configuration's `exists` witness traces
-  must match at every step; replaying a known-bad trace at HEAD must diverge
-  at the step its fix governs (for I1, the step that issues the stop).
-- Obligation T7 (projection inclusion, W3): every transition recorded from the
-  Hypothesis machines, projected onto model state, is an edge of the model's
-  state graph up to stuttering. Method: property test over the existing
-  machines with a recording hook, checked against the exported graph at small
-  bounds. Artefact: `tests/test_model_projection.py`. Non-vacuity: the test
-  records how many distinct projected transitions it saw and fails below a
-  floor; a seeded model mutation that removes `TokenArrives` must be rejected.
+- **Obligation T1: classification fails closed.**
+  - Statement: a run is classified `Passed` only if:
+    - the exit status is 0;
+    - a pass line is present;
+    - no `FAILED`, `DEADLOCK`, truncation, `Model checker stopped` or error
+      line is present.
+  - Method: an exhaustive parametrized test over all 32 presence combinations
+    of the five marker classes, with the oracle derived from which markers
+    were inserted. Hypothesis only injects noise lines that cannot start with
+    a marker. Parametrized tests also cover the captured EP-M1 fixtures.
+  - Artefact: `tests/test_modelcheck_fizzbee_output.py`.
+  - Evidence: red under a strict `xfail`, then green.
+  - Non-vacuity: the 32 rows are generated from the marker enumeration, so a
+    new marker fails the test until it is classified. A hand-applied mutation
+    that ignores the `FAILED` line was rejected; it is recorded in a closing
+    comment, in the style of `tests/test_cache_recovery_properties.py`.
+- **Obligation T2: the judgement truth table.**
+  - Statement: `judge` returns a `Verdict` for every combination of
+    expectation kind and result variant.
+    - `Holds` is met only by `Passed`.
+    - `FailsAs(kind)` is met only by a `Counterexample` with the same property
+      and kind.
+    - `Reachable` is met only by a satisfied probe.
+    - `Stopped` and `Errored` are never met.
+  - Method: an exhaustive parametrized test over the finite product, generated
+    from the enumerations.
+  - Artefact: `tests/test_modelcheck_expectations.py`.
+  - Non-vacuity: generated rows, so a new variant fails until classified.
+- **Obligation T3: the materializer changes only what it names.**
+  - Statement:
+    - It changes only the named constant lines, the tagged fairness keywords,
+      the frontmatter and the stripped assertions.
+    - An empty configuration that keeps every assertion is the identity on
+      the body.
+    - It is idempotent.
+    - An unknown constant, fairness tag or retained assertion is an error,
+      never silently ignored.
+    - It fails unless the retained expected failure names exactly one
+      existing assertion.
+  - Method: Hypothesis property tests over generated specification texts and
+    configurations.
+  - Artefact: `tests/test_modelcheck_materialize.py`.
+  - Non-vacuity: explicit `@example`s for each rewrite kind. A handwritten
+    mutant materializer that rewrites every `fair` keyword, not only the
+    tagged ones, is run by the same properties in a test that expects them to
+    fail.
+- **Obligation T4: drift detection.**
+  - Statement:
+    - Adding an unmapped inventory item makes the report non-empty and names
+      the item.
+    - Excluding it with a reason clears it, and mapping it clears it.
+    - Mapping a path that does not resolve names that path.
+  - Method: metamorphic Hypothesis properties over generated inventories,
+    plus an integration test against the real `buildlimits` inventory.
+  - Artefacts: `tests/test_modelcheck_drift.py` and, from EP-M10,
+    `tests/test_model_drift.py`.
+  - Non-vacuity: the roadmap's success criterion is the negative control. A
+    fake `Effect` added to the inventory, and a renamed mapped path, must
+    each produce a non-empty report.
+- **Obligation T5: trace normalization.**
+  - Statement: a normalized trace keeps the order of actions and the model
+    state at each step. It marks the cycle start of a lasso, and the terminal
+    state of a stutter.
+  - Method: parametrized tests over captured `error-graph.json` fixtures (one
+    finite, one lasso, one stutter).
+  - Artefact: `tests/test_modelcheck_trace.py`.
+  - Non-vacuity: the lasso's cycle start differs from the trace start, and
+    the stutter's last state repeats.
+- **Obligation T6: replay correspondence.**
+  - Statement: each stored trace is replayed through the production doubles.
+    Every step either matches the projected production state or is reported
+    with one of three dispositions:
+    - a divergence naming the step;
+    - a timer order that a real clock cannot produce;
+    - an expected divergence at a fixed clause.
+  - Method: one scripted pytest per trace.
+  - Artefact: `tests/test_model_replay.py`, with the driver in
+    `tests/model_replay.py`.
+  - Non-vacuity:
+    - the `exists` witness traces of `head` must replay exactly;
+    - each known-bad trace must diverge at HEAD at the step its fix governs
+      (for I1, the step that issues the stop);
+    - a replay test asserts that the cache hold expires under `Harness.now`,
+      so the clock fix is not vacuous.
+- **Obligation T7: projection inclusion (W3).**
+  - Statement: every transition recorded from the Hypothesis machines,
+    projected onto model state, is an edge of the model's state graph, up to
+    stuttering.
+  - Method: a property test with a recording hook, checked against the
+    exported graph at small bounds.
+  - Artefact: `tests/test_model_projection.py`.
+  - Non-vacuity: the test fails below a floor of distinct projected
+    transitions. A seeded model mutation that removes `TokenArrives` must be
+    rejected.
+- **Obligation T8: layering.**
+  - Statement: pure modules import only an allowlist of standard-library
+    modules (`enum`, `dataclasses`, `typing`, `collections.abc`, `re`, `json`)
+    and each other.
+  - They call no `open`, `read_text`, `write_text`, `subprocess`, `os` or
+    `time`.
+  - Only `adapters/inventory.py` imports `buildlimits`.
+  - Method: an abstract-syntax-tree test.
+  - Artefact: `tests/test_modelcheck_layering.py`.
+  - Non-vacuity: a fixture module that violates each rule must be rejected.
 
 ### Residual gaps
 
 The model checks a design abstraction within bounds. It does not prove the
-Python implementation correct. Replay and projection narrow the gap only in
-the direction of behaviours the doubles can exhibit. Journal trace checking
-(roadmap 2.1.2) and per-group identities are out of scope.
+Python implementation correct. Replay and projection narrow the gap only for
+behaviours the doubles can exhibit. Strong fairness of the stop stands in for a
+physical timing assumption (DV2). Journal trace checking (roadmap 2.1.2) and
+per-group identities are out of scope.
 
 ## Plan of work
 
 The work follows RFC 0001's workstreams in order, with a hard stop at each
-gate. Each milestone ends with `make check-fmt`, `make typecheck`, `make lint`
-and `make test` passing (run sequentially by the `scrutineer` agent), plus
-`make markdownlint` and `make nixie` when documentation changed, and, from
-EP-M3 on, `make model-check`.
+gate. Every milestone ends with these gates, run in sequence by the
+`scrutineer` agent:
 
-Stage A (EP-M1) settles the facts the design rests on, without production
-tooling: pre-fix revisions, a pinned binary, and toy models that answer the
-language questions and capture real checker output as test fixtures.
+- `make check-fmt`, `make typecheck`, `make lint` and `make test`;
+- `make markdownlint` and `make nixie`, when documentation changed;
+- from EP-M4 on, `make model-check`.
 
-Stage B (EP-M2) builds the `modelcheck` tooling test-first against those
-fixtures and a fake checker, so the tooling is trustworthy before any
-counterexample is believed.
+Every milestone also updates the documentation that describes what it added,
+and ticks the roadmap tasks whose success criteria it met. The stages are:
 
-Stage C (EP-M3 to EP-M5) is the RFC's W1 spike: the minimal model, the known
-bad configurations for incidents 1 and 3, replay, the Hypothesis comparator
-and the H1 verdict. It stops at G1.
-
-Stage D (EP-M6 to EP-M12) covers W2 to W4 and runs only as each gate decides.
+- **Stage A (EP-M1, prototyping)** settles the facts without production
+  tooling: the pre-fix revisions, a pinned binary, toy models, and captured
+  checker output.
+- **Stage B (EP-M2, EP-M3)** builds `modelcheck` test-first against those
+  fixtures and a fake checker, so the tooling is trustworthy before any
+  counterexample is believed.
+- **Stage C (EP-M4 to EP-M6)** is the RFC's W1 spike. It stops at G1.
+- **Stage D (EP-M7 to EP-M13)** covers W2 to W4. It runs only as each gate
+  decides, and only after this plan has been expanded for the next workstream.
 
 ## Milestones and plateaus
 
-### EP-M1: facts, pinned tool and toy models (roadmap 1.1.1 to 1.1.3)
+### EP-M1 (prototyping): facts, pinned tool and toy models
 
-Outcome: the repository can install a verified FizzBee, the pre-fix revisions
-are named, and every W1 language question has a runnable answer.
+- **Outcome.**
+  - The repository can install a verified FizzBee.
+  - The pre-fix revisions are named.
+  - Every W1 language question has a runnable answer.
+  - Real checker output is captured as fixtures.
+- **Requirements and gaps:** roadmap 1.1.1 (OQ8), 1.1.2 (OQ1 to OQ3, OQ6),
+  1.1.3 (OQ4, OQ5).
+- **Steps.**
+  1. **Pre-fix revisions.**
+     - Clone `leynos/dev-env-rocky` into `/tmp/dev-env-rocky-history`, as
+       scratch only.
+     - Search the `build_limits` paths with `git log -S cached_moving`,
+        `git log -S RECOVERY_COOLDOWN_SECONDS`, `git log -S cooling_for` and
+        `git log -S _last_fault`.
+     - Record each incident's last pre-fix commit, the clauses that commit
+       contributes, and the audit of the rest of its diff. Put this in a new
+       "Open questions record" section of RFC 0001.
+  2. **Pin.** Add to the `Makefile`:
+     - `FIZZBEE_VERSION ?= v0.5.4`;
+     - `FIZZBEE_SHA256 ?= 8a1d0900f9ad920002151922337912e11f9e588a2f1196249fe40bf75370f782`;
+     - `FIZZBEE_HOME ?= $${XDG_CACHE_HOME:-$$HOME/.cache}/buildlimits/fizzbee/$(FIZZBEE_SHA256)`;
+     - `FIZZ ?= .tools/fizzbee/fizz`;
+     - a stamp file target, `$(FIZZBEE_HOME)/.verified`, that contains the
+       digest.
 
-1. Pre-fix revisions (1.1.1). Clone `leynos/dev-env-rocky` into
-   `/tmp/dev-env-rocky-history` (scratch only) and search with
-   `git log -S cached_moving`, `git log -S RECOVERY_COOLDOWN_SECONDS`,
-   `git log -S cooling_for` and `git log -S _last_fault` over the
-   `build_limits` paths. Record each incident's last pre-fix commit, or its
-   absence with the transcription basis, in a new "Open questions record"
-   section of RFC 0001, answering OQ8.
-2. Pin (1.1.3). Add to the `Makefile`: `FIZZBEE_VERSION ?= v0.5.4`,
-   `FIZZBEE_SHA256 ?= 8a1d0900f9ad920002151922337912e11f9e588a2f1196249fe40bf75370f782`,
-   `FIZZBEE_DIR := .tools/fizzbee-$(FIZZBEE_VERSION)`, `FIZZ := $(FIZZBEE_DIR)/fizz`,
-   and a `fizzbee` target that downloads
-   `fizzbee-$(FIZZBEE_VERSION)-linux_x86.tar.gz` from the GitHub release with
-   `curl --fail --location`, checks it with `sha256sum --check`, and unpacks
-   it into `$(FIZZBEE_DIR)` atomically (unpack into a temporary sibling, then
-   rename). The target is idempotent: if `$(FIZZ)` exists it does nothing.
-   Before relying on the pinned digest, re-read the release page and confirm
-   it; record the licence (Apache-2.0 for the repository; check the tarball
-   for a bundled licence file) in RFC 0001, answering OQ4 and OQ5.
-3. Toy models (1.1.2). Under `models/spike/`, write small specifications that
-   answer OQ1 (records, dicts, `bag()`, roles, per-role-instance fairness),
-   OQ2 (`liveness: strict` against `eventual`, and how a lasso is reported),
-   OQ3 (the `error-graph.json` and pass-graph schema) and OQ6 (state counts
-   with and without symmetry; partial-order reduction is not documented). Each
-   includes a negative control: a liveness property that must fail under weak
-   fairness and hold under strong, mirroring the capacity-2 prediction. Copy
-   the checker's standard output and `error-graph.json` for one finite and one
-   lasso failure, and one pass, into `tests/fixtures/fizzbee/` as the EP-M2
-   parser fixtures. Record answers and workarounds (including the interleaving
-   points of RFC 0001's sketch) in the RFC's open-questions record.
-4. Add `tests/test_fizzbee_spike.py`, marked `fizzbee`, that runs each toy
-   model and asserts its documented answer (for example, the weak-fairness
-   negative control fails and the strong one holds). Register the `fizzbee`
-   marker in `pyproject.toml`.
+     The recipe:
+     - runs under `flock` on `$(FIZZBEE_HOME).lock`;
+     - downloads to `.part` with `curl --fail --location --retry 3`,
+       `--retry-all-errors`, `--connect-timeout 20` and `--max-time 900`;
+     - checks the digest with `sha256sum --check`;
+     - unpacks with `tar --no-same-owner --no-same-permissions` into a
+       `mktemp -d` sibling on the same filesystem, rejecting absolute and
+       `..` members;
+     - moves the result into place with `mv -T`, writes the stamp, deletes
+       the tarball, and links `.tools/fizzbee` to `$(FIZZBEE_HOME)`.
 
-Acceptance: `make fizzbee` installs and verifies the binary twice in a row
-without error (the second run is a no-op); `uv run pytest -m fizzbee
-tests/test_fizzbee_spike.py` passes; without the binary the same tests are
-skipped with a reason naming `make fizzbee`; the four gates pass.
+     A digest mismatch fails with "upstream asset changed; do not update
+     FIZZBEE_SHA256 without review". The `fizzbee` phony target depends on
+     the stamp, so a second run is a no-op.
+  3. **Provenance and licence.**
+     - Record in RFC 0001 the digest as trust-on-first-use, with the date and
+       the release URL.
+     - Record the tarball's file listing, and every bundled LICENSE or NOTICE
+       file (the repository is Apache-2.0, and the bundled CPython is under
+       the PSF licence).
+     - Record the digest of the container image
+       `ghcr.io/fizzbee-io/fizzbee:v0.5.4` as `FIZZBEE_IMAGE`, a fallback pin
+       that is not used by default.
+     - If rootless Podman permits it, run one toy model with `--network=none`
+       to show that the tool needs no network.
+  4. **Toy models,** under `models/spike/`.
+     - Each answers one question:
+       - OQ1: records, dicts, `bag()`, roles, and per-role-instance fairness.
+       - OQ2: `liveness: strict` against `eventual`, and how a lasso and a
+         stutter are reported.
+       - OQ3: the `error-graph.json` schema and the schema of the graph
+         written on a pass.
+       - OQ6: state counts with and without symmetry. Partial-order reduction
+         is not documented.
+       - Truncation: what v0.5.4 prints when `max_actions` cuts exploration
+         short.
+       - Determinism: five runs each under `GOMAXPROCS=1` and
+         `GOMAXPROCS=4`.
+     - Negative controls: a liveness property that must fail under weak
+       fairness and hold under strong, and one that must fail with liveness
+       explicitly on.
+     - Copy each output class into `tests/fixtures/fizzbee/`, with standard
+       output and `error-graph.json` where present: pass, safety failure,
+       lasso, stutter, deadlock, truncation and parse error.
+  5. **Spike tests.**
+     - Add `tests/test_fizzbee_spike.py`, marked `fizzbee`, with explicit
+       `@pytest.mark.timeout` values. It runs each toy model through a
+       minimal scratch-directory runner and asserts the documented answer.
+     - Register the `fizzbee` marker in `pyproject.toml`, and add the opt-in
+       skip in `tests/conftest.py`.
+     - Add `.model-check/`, `models/**/Spec.json` and `models/**/out/` to
+       `.gitignore`.
+  6. **Documentation.**
+     - Developer's guide: a `make fizzbee` row in Table 1; a sentence in
+       §11.3 on the `fizzbee` marker and `BUILD_LIMITS_MODEL_CHECK`.
+     - `docs/repository-layout.md`: extend the `.tools` wording to "`.tools`
+       (the pinned duplication detector and a link to the FizzBee cache)".
+     - Record the answers and workarounds, including the interleaving points
+       of RFC 0001's sketch, in the RFC's open-questions record.
+- **Acceptance evidence.**
+  - EP-M1-E1: `make fizzbee` succeeds twice in a row, and the second run
+    prints nothing.
+  - EP-M1-E2:
+    `BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -m fizzbee tests/test_fizzbee_spike.py`
+    passes.
+  - EP-M1-E3: without the variable, the same tests are skipped with a reason
+    naming it.
+  - EP-M1-E4: `git status --porcelain` is empty afterwards.
+  - EP-M1-E5: the four gates pass.
+  - Roadmap tasks 1.1.1 to 1.1.3 are ticked.
+- **Keep or discard.** The spike models and tests are kept (D11). Toy-model
+  questions that cannot be answered are recorded as unanswerable, with their
+  consequence for W3.
+- **Conformance check.**
+  - OQ1 to OQ6 and OQ8 are answered, or recorded as unanswerable.
+  - The design is unchanged, apart from facts feeding DV1 to DV3.
+  - No upstream assumption is falsified, or the falsification is recorded.
+  - No new Python dependency or public interface.
+  - The only new trust boundary is the pinned binary and its digest.
+  - Trace links for 1.1.1 to 1.1.3 are current.
+- **Recovery:** `rm -rf .tools/fizzbee "$FIZZBEE_HOME"`, never `.tools/`
+  itself, then rerun `make fizzbee`.
+- **Remaining gaps:** the tooling.
+- **Compatibility decision:** none.
 
-Conformance check: OQ1 to OQ6 and OQ8 answered or recorded as unanswerable;
-no production change; no new Python dependency; the only new external
-artefact is the pinned binary under `.tools/`.
+### EP-M2: the `modelcheck` pure domain
 
-Recovery: delete `.tools/fizzbee-*` and rerun `make fizzbee`. Remaining gaps:
-the tooling (EP-M2). Compatibility decision: none.
+- **Outcome:** the pure modules exist and are tested, with no input or output:
+  - `domain.py`: the result union, expectation kinds, `Verdict` and
+    `Configuration`;
+  - `expectations.py`: `judge`;
+  - `materialize.py`;
+  - `drift.py`;
+  - `trace.py`;
+  - `report.py`.
+- **Requirements and gaps:** the tooling side of RFC-§5 and §6 (obligations
+  T2 to T5, T8).
+- **Red first.**
+  - Write `tests/test_modelcheck_expectations.py`,
+    `tests/test_modelcheck_materialize.py`, `tests/test_modelcheck_drift.py`,
+    `tests/test_modelcheck_trace.py` and
+    `tests/test_modelcheck_layering.py`.
+  - Each test imports inside its body, and carries
+    a strict `xfail` whose `raises` names `ModuleNotFoundError` and
+    `NotImplementedError`, with the reason "EP-M2 red".
+  - Run `uv run pytest tests/test_modelcheck_*.py`, and expect every test to
+    report `XFAIL`.
+  - Implement module by module, removing each `xfail` as its tests turn green.
+- **Documentation:** add `modelcheck/` and `models/` to the repository layout
+  tree and table.
+- **Acceptance evidence.**
+  - EP-M2-E1: the red run shows only `XFAIL` results; the green run shows them
+    passing.
+  - EP-M2-E2: the doctests in each module pass under `make test`.
+  - EP-M2-E3: the four gates pass.
+- **Conformance check.**
+  - T2 to T5 and T8 are discharged.
+  - The domain imports only the allowlist.
+  - No upstream assumption has changed.
+  - No new dependency.
+  - No new trust boundary.
+  - Trace links are current.
+- **Recovery:** the package is additive, so revert the milestone's commits.
+- **Remaining gaps:** ports, adapters and the command-line interface.
+- **Compatibility decision:** none.
 
-### EP-M2: the `modelcheck` tooling (RFC 0001 §§5-6, ADR 004)
+### EP-M3: ports, service, adapters and command-line interface
 
-Outcome: a tested hexagon that runs a configuration matrix through a checker
-port, judges each result against its expectation, renders a report and checks
-drift, with the FizzBee command line and the `buildlimits` inventory as
-adapters.
+- **Outcome:** the remaining modules exist, and `python -m modelcheck`
+  works end to end against a stub checker:
+  - `ports.py`;
+  - `service.py`;
+  - `adapters/fizzbee_output.py`: `parse_output` and `normalize_trace`, both
+    pure;
+  - `adapters/fizzbee_process.py`;
+  - `adapters/configuration.py`;
+  - `adapters/inventory.py`;
+  - `cli.py`, with `make_app`;
+  - `__main__.py`.
+- **Requirements and gaps:** RFC-§5 and §6 (obligation T1, plus the
+  behavioural contract); ADR 004.
+- **Red first.**
+  - Write `tests/features/model_check.feature` and
+    `tests/test_model_check_behaviour.py`, with a module-level `pytestmark`
+    strict `xfail`.
+  - `tests/modelcheck_doubles.py` holds `FakeChecker`, which returns
+    `parse_output` applied to a named fixture from `tests/fixtures/fizzbee/`.
+    The scenarios therefore exercise the real parser against real output.
+  - Write `tests/test_modelcheck_fizzbee_output.py` (T1),
+    `tests/test_modelcheck_cli.py` and `tests/test_modelcheck_report.py`.
+  - Run
+    `uv run pytest tests/test_model_check_behaviour.py tests/test_modelcheck_fizzbee_output.py`,
+    and expect `XFAIL` results.
+- **Feature specification.**
 
-Red first: write `tests/features/model_check.feature` and its step module
-`tests/test_model_check_behaviour.py` against a `FakeChecker` double in
-`tests/modelcheck_doubles.py`; write the unit and property tests named in
-T1 to T5 with `@pytest.mark.xfail(strict=True, reason="EP-M2 red")`; run them
-and confirm they fail for the expected reason (`ModuleNotFoundError` or the
-unimplemented function). Then implement module by module, removing each
-`xfail` as its tests go green. Write ADR 004 in this milestone.
+  ```gherkin
+  Feature: Model check verdicts
+    The model check passes only when every fixed configuration holds and every
+    known-bad configuration still yields the counterexample it was built to find.
 
-The feature specification:
+    Scenario: A fixed configuration holds
+      Given a configuration "head" expected to satisfy "L3"
+      And the checker output is the fixture "pass"
+      When the model check runs
+      Then the report shows "head" "L3" as "holds"
+      And the model check exits with status 0
 
-```gherkin
-Feature: Model check verdicts
-  The model check passes only when every fixed configuration holds and every
-  known-bad configuration still yields the counterexample it was built to find.
+    Scenario: A fixed configuration fails
+      Given a configuration "head" expected to satisfy "S1"
+      And the checker output is the fixture "safety-failure"
+      When the model check runs
+      Then the report shows "head" "S1" as "unexpected counterexample"
+      And the model check exits with status 1
 
-  Scenario: A fixed configuration holds
-    Given a configuration "head" expected to satisfy "L3"
-    And the checker reports that "L3" holds
-    When the model check runs
-    Then the report shows "head" "L3" as "holds"
-    And the model check succeeds
+    Scenario: A known-bad configuration yields its counterexample
+      Given a configuration "incident-1" expected to fail "L3" with a lasso
+      And the checker output is the fixture "lasso"
+      When the model check runs
+      Then the report shows "incident-1" "L3" as "counterexample as expected"
+      And the model check exits with status 0
 
-  Scenario: A known-bad configuration yields its counterexample
-    Given a configuration "incident-1" expected to fail "L3" with a lasso
-    And the checker reports a lasso counterexample to "L3"
-    When the model check runs
-    Then the report shows "incident-1" "L3" as "counterexample as expected"
-    And the model check succeeds
+    Scenario: A known-bad configuration loses its counterexample
+      Given a configuration "incident-1" expected to fail "L3" with a lasso
+      And the checker output is the fixture "pass"
+      When the model check runs
+      Then the report shows "incident-1" "L3" as "expected counterexample missing"
+      And the model check exits with status 1
 
-  Scenario: A known-bad configuration loses its counterexample
-    Given a configuration "incident-1" expected to fail "L3" with a lasso
-    And the checker reports that "L3" holds
-    When the model check runs
-    Then the report shows "incident-1" "L3" as "expected counterexample missing"
-    And the model check fails
+    Scenario: A counterexample of the wrong kind does not count
+      Given a configuration "incident-3" expected to fail "L4a" with a finite trace
+      And the checker output is the fixture "lasso"
+      When the model check runs
+      Then the report shows "incident-3" "L4a" as "wrong counterexample kind"
+      And the model check exits with status 1
 
-  Scenario: A counterexample of the wrong shape does not count
-    Given a configuration "incident-3" expected to fail "L4" with a finite trace
-    And the checker reports a lasso counterexample to "L4"
-    When the model check runs
-    Then the model check fails
+    Scenario: A truncated exploration is not a pass
+      Given a configuration "head" expected to satisfy "S2"
+      And the checker output is the fixture "truncated"
+      When the model check runs
+      Then the report shows "head" "S2" as "stopped"
+      And the model check exits with status 1
 
-  Scenario: Uninterpretable checker output fails closed
-    Given a configuration "head" expected to satisfy "S1"
-    And the checker output has no verdict line
-    When the model check runs
-    Then the report shows "head" "S1" as "error"
-    And the model check fails
+    Scenario: Uninterpretable checker output fails closed
+      Given a configuration "head" expected to satisfy "S1"
+      And the checker output has no verdict line
+      When the model check runs
+      Then the report shows "head" "S1" as "error"
+      And the model check exits with status 1
 
-  Scenario: Every report names its fairness assumptions
-    Given a configuration "head" expected to satisfy "L1"
-    And the property "L1" relies on fairness "F1, F3, F6"
-    And the checker reports that "L1" holds
-    When the model check runs
-    Then the report line for "head" "L1" names "F1, F3, F6"
+    Scenario: An exploration below its floor is not a pass
+      Given a configuration "head" with a floor of 1000 states expected to satisfy "S1"
+      And the checker output is the fixture "pass" with 300 states explored
+      When the model check runs
+      Then the report shows "head" "S1" as "state space below floor"
+      And the model check exits with status 1
 
-  Scenario: An unmapped effect is drift
-    Given the model maps every admission event and effect
-    And the code gains an effect "Pause"
-    When the drift check runs
-    Then it fails naming "buildlimits.effects.Pause"
+    Scenario: An unsatisfied reachability probe fails
+      Given a configuration "head" expected to reach "StopIssued"
+      And the checker reports that "StopIssued" was never satisfied
+      When the model check runs
+      Then the report shows "head" "StopIssued" as "unreachable"
+      And the model check exits with status 1
 
-  Scenario: A renamed mapped function is drift
-    Given the model maps "buildlimits.admission.Admission.token_arrived"
-    And that path no longer resolves
-    When the drift check runs
-    Then it fails naming "buildlimits.admission.Admission.token_arrived"
-```
+    Scenario: Every report names its fairness assumptions
+      Given a configuration "head" expected to satisfy "L1"
+      And the model tags fairness "F1, F3, F6" on the actions "L1" relies on
+      And the checker output is the fixture "pass"
+      When the model check runs
+      Then the report line for "head" "L1" names "F1, F3, F6"
 
-Modules (see `Interfaces and dependencies` for signatures): `modelcheck/domain.py`,
-`modelcheck/expectations.py`, `modelcheck/materialize.py`, `modelcheck/drift.py`,
-`modelcheck/trace.py`, `modelcheck/report.py`, `modelcheck/ports.py`,
-`modelcheck/service.py`, `modelcheck/adapters/fizzbee.py`,
-`modelcheck/adapters/inventory.py`, `modelcheck/adapters/configuration.py`,
-`modelcheck/__main__.py`. Add `"."` to `[tool.pytest.ini_options] pythonpath`
-and `"modelcheck"` to `testpaths` so doctests run. Snapshot the rendered
-report for the four outcome classes (holds, counterexample as expected,
-expected counterexample missing, error) and the drift report with syrupy in
-`tests/test_modelcheck_report.py`, paired with semantic assertions on the
-verdict and exit status; normalize durations and paths before snapshotting.
+    Scenario: An unmapped effect is drift
+      Given the model maps every admission event and effect
+      And the code gains an effect "Pause"
+      When the drift check runs
+      Then it fails naming "buildlimits.effects.Pause"
 
-Acceptance: `make test` runs the feature, unit, property and snapshot tests
-and they pass; each `xfail` was observed failing before its implementation;
-`uv run python -m modelcheck --help` prints the commands `check` and `drift`;
-the four gates pass; ADR 004 passes `make markdownlint`.
+    Scenario: A renamed mapped function is drift
+      Given the model maps "buildlimits.admission.Admission.token_arrived"
+      And that path no longer resolves
+      When the drift check runs
+      Then it fails naming "buildlimits.admission.Admission.token_arrived"
+  ```
 
-Conformance check: domain modules import nothing from `modelcheck.adapters`,
-`subprocess` or `pathlib` I/O (enforced by a test that parses imports,
-`tests/test_modelcheck_layering.py`); no production change; no new
-dependency. Recovery: the package is additive; revert the milestone commits.
-Remaining gaps: no real model yet. Compatibility decision: none.
+- **Command-line contract** (`modelcheck/cli.py`).
+  - Commands: `check MODEL_DIR`, with options `--fizz PATH`,
+    `--bounds routine|nightly`, `--only CONFIG[:PROPERTY]`, `--json PATH` and
+    `--save-traces`; and `drift MODEL_DIR`.
+  - Configuration is environment-first, with the prefix `MODELCHECK_` (per the
+    scripting standards).
+  - Exit codes: 0 when every expectation is met, 1 when any is unmet, 2 on a
+    tool or usage error.
+  - It is tested through `make_app(...)` with Cyclopts'
+    `result_action="return_value"`.
+- **End-to-end test, without the binary.**
+  `tests/test_modelcheck_cli_e2e.py` runs
+  `uv run python -m modelcheck check tests/fixtures/modelcheck/model` as a
+  subprocess, with `--fizz` pointing at a stub `fizz` script in
+  `tests/fixtures/modelcheck/`. The stub prints a named fixture and writes
+  `error-graph.json`. The test asserts:
+  - exit status 0 for a met matrix, and 1 when a known-bad configuration
+    loses its counterexample;
+  - the `--json` file's contents;
+  - that the stub saw a scratch-directory path, never the fixture directory.
+- **Process control test.** It uses a stub that spawns a sleeping child and
+  never exits. The adapter must kill the whole group at its timeout, and the
+  test asserts that no descendant survives.
+- **Snapshots.** Syrupy snapshots in `tests/test_modelcheck_report.py` cover
+  the rendered report for every `Verdict`, and the drift report. Each is paired
+  with assertions on the verdicts and the exit status. Durations and paths are
+  normalized before snapshotting.
+- **Configuration and gates.**
+  - Add `"."` to `[tool.pytest.ini_options] pythonpath`, and `"modelcheck"` to
+    `testpaths`.
+  - Add Ruff per-file ignores for `modelcheck/adapters/fizzbee_process.py`
+    (`S404`, `S603`) and for the runtime `Path` annotation in `cli.py`
+    (`TC`), with their reasons.
+  - Add Skylos entry points for the `modelcheck.__main__` path, and Vulture
+    `ignore_names` for the doubles' Protocol methods, each with its call path.
+  - Add duplication allowances only if the gate reports them.
+- **Documentation.**
+  - Write ADR 004, "Model-check tooling as a hexagonal package outside the
+    wheel", in the format of ADR 003, and add it to `docs/contents.md`.
+  - Add a developer's guide §11.6 stub, "Model checking", covering how to run
+    the tooling, the `fizzbee` marker, and the package's ports.
+  - Record each lint exception in §12.
+- **Acceptance evidence.**
+  - EP-M3-E1: the red run shows `XFAIL` results; the green run passes all
+    twelve scenarios.
+  - EP-M3-E2: `uv run python -m modelcheck --help` lists `check` and `drift`.
+  - EP-M3-E3: the CLI end-to-end and process-control tests pass under
+    `make test`.
+  - EP-M3-E4: the four gates, `make markdownlint` and `make nixie` pass.
+- **Conformance check.**
+  - T1 and T8 are discharged, and the behavioural contract is met.
+  - The ports match `Interfaces and dependencies`.
+  - No upstream assumption has changed.
+  - No new dependency.
+  - The new trust boundary (process spawning) is confined to one adapter.
+  - Trace links are current.
+- **Recovery:** revert the milestone's commits; EP-M2 still stands.
+- **Remaining gaps:** no real model yet.
+- **Compatibility decision:** none.
 
-### EP-M3: the minimal model with a busy queue (roadmap 1.1.4)
+### EP-M4: the minimal model with a busy queue
 
-Outcome: `models/admission/admission.fizz` checks S1, S2, L1, L3 and L4 at
-capacity 3 on configuration `head`, each report naming its fairness.
+- **Outcome:** `models/admission/admission.fizz` checks S1, S2, L1, L3, L4a
+  and L4b at capacity 3 on configuration `head`, with every report naming its
+  fairness.
+- **Requirements and gaps:** roadmap 1.1.4; RFC-§1 to §3; F1 to F7 and F3a;
+  DV1 and DV3.
+- **Steps.**
+  1. **Baseline audit (DV1).** Audit `git diff 7445bf0 HEAD` over the
+     update-policy modules, and record the result in RFC 0001. Stop if a
+     W1-scope behaviour changed.
+  2. **Write the model.** Exclude health, start-up, closing, escalation detail
+     and metrics, as W1 requires.
+     - **Actions,** each a W1-scope row of RFC 0001 Table 5, refined by D10:
+       - `Submit` (cacheable or uncached; maps `Admission.submit`);
+       - `TokenArrives` (`Admission.token_arrived`, F5);
+       - `Cancel` (`Admission.cancel`, bounded);
+       - `LeaderExitsCached` and `LeaderExitsUncached`
+         (`Admission.leader_exited`, F2, each weakly fair);
+       - `SupervisorTick` (F1; `Groups.advance`, `Admission.group_emptied`,
+         `ServerWatch.drained_tokens`, `CacheRecovery.tick`), whose recovery
+         step has the branches `RecoveryStopTaken` and `RecoveryStopBlocked`;
+       - `OperatorRequest` (`CacheRecovery.request`);
+       - `ServerWorkEnds` (F3);
+       - `TimerExpires` (F6), over the timer classes.
+     - **State** is counts by class:
+       - free tokens, and tokens held by others;
+       - queue counts of cacheable and uncached requests;
+       - `token_requested`;
+       - the tracked request and its queue position;
+       - groups by lifecycle and composition, and whether each
+         `SERVER_DRAIN` group may orphan work;
+       - the reachability reading, and the hold;
+       - the drain fault kind, and the root evidence (zero, visible or
+         unknown);
+       - the transaction phase, attempts (bounded), trigger and last fault.
+     - **Timer classes:** stale (300), grace (600), backoff (30 to 120), rest
+       (settle 60 or cooldown 900), hold (120) and drain retry (30). In W1
+       each is armed or expired; W2 adds ordered units.
+     - **Annotations:**
+       - each action carries `# maps: <dotted path>`;
+       - each fair action carries `# fairness: <F-id>`;
+       - each known-bad switch carries `# transcribes: <sha>`.
+     - Guards use `require` over state read in place.
+  3. **Configuration.**
+     - Add `models/admission/fizz.yaml`, with the W1 bounds and every option
+       explicit.
+     - Add `models/admission/configurations.toml`, with:
+       - `head` and its expectations, `min_states` and `exists` probes;
+       - the M-L mutants `head-no-stale-proof`, `head-no-grace-deadline`,
+         `head-unfair-leader-exits` and `head-unknown-roots`;
+       - the S1 seeded fault, `head-no-cached-guard`.
+  4. **Make target.** Add `make model-check: fizzbee build`. Its recipe runs
+     the matrix once, then the opt-in tests, and fails if anything was
+     skipped:
 
-First, audit `git diff 7445bf0 HEAD -- buildlimits/` for the modules in RFC
-0001's update policy and record the result in RFC 0001 (D1). Then write the
-model with the RFC's §1 scope, excluding health, start-up, closing,
-escalation detail and metrics as W1 requires. State is counts by class: free
-tokens, tokens held by others, queue counts of cacheable and uncached
-requests, `token_requested`, the tracked request and its position, groups by
-lifecycle and composition (and whether each `SERVER_DRAIN` group may orphan
-work), the reachability reading, the hold, the drain fault kind and root
-evidence (zero, visible, unknown), the retained-drain age as a timer class,
-and the transaction phase, attempts (bounded), trigger, last fault and rest
-timer. Each supervisor action carries `# maps: <dotted path>` and each fair
-action carries `# fairness: <F-id>`. Guards use `require` over state read in
-place. Add `models/admission/fizz.yaml` (W1 bounds, `liveness: strict`) and
-`models/admission/configurations.toml` with configuration `head` and its
-expectations, and `exists` probes for non-vacuity.
+     ```make
+     $(UV_ENV) $(UV) run python -m modelcheck check --fizz $(FIZZ) \
+         --json .model-check/results.json models/admission
+     BUILD_LIMITS_MODEL_CHECK=1 $(UV_ENV) $(UV) run pytest -n 0 -rs -m fizzbee tests
+     ```
 
-Red first: add `tests/test_model_check_e2e.py` (marker `fizzbee`) with
-`test_fixed_configuration_holds` parametrized over the `head` expectations,
-under `xfail(strict=True)` until the model exists. Add the `model-check`
-target: `model-check: fizzbee build` running
-`$(UV_ENV) $(UV) run python -m modelcheck check --fizz $(FIZZ) models/admission`
-followed by `pytest -m fizzbee`.
+     The pytest end-to-end tests read `results.json`. They do not re-run the
+     matrix.
+  5. **Documentation.** Add to the developer's guide §11.6 a first "when you
+     change `cache_recovery.py` or `admission.py`" checklist, and a
+     `make model-check` row in Table 1.
+- **Red first.**
+  - Add `tests/test_model_check_e2e.py` (marker `fizzbee`), with
+    `test_fixed_configuration_holds` and `test_mutants_fail` reading
+    `results.json`.
+  - Run it before the model exists. Expect it to fail with "configuration
+    `head` not found".
+- **Acceptance evidence.**
+  - EP-M4-E1: `make model-check` reports `holds` on `head` for S1, S2, L1, L3,
+    L4a and L4b, each naming its fairness, with every `exists` probe
+    satisfied.
+  - EP-M4-E2: each mutant yields its predicted counterexample.
+  - EP-M4-E3: the `max_actions` fixpoint check holds.
+  - EP-M4-E4: `git status --porcelain` is empty afterwards.
+  - EP-M4-E5: the gates pass.
+  - Roadmap task 1.1.4 is ticked.
+- **Conformance check.**
+  - 1.1.4 is satisfied.
+  - RFC-§1 scope is respected, and D10's refinement is recorded in RFC 0001.
+  - The DV1 audit is recorded.
+  - No production change.
+  - No new trust boundary.
+  - Trace links are current.
+- **Recovery:** the model files are additive.
+- **Remaining gaps:** the known-bad configurations.
+- **Compatibility decision:** none.
 
-Acceptance: `make model-check` prints `holds` for S1, S2, L1, L3 and L4 on
-`head`, each with its fairness identifiers, and all `exists` probes are
-satisfied; the four gates pass. Conformance check: every Table 5 action of
-the RFC that is in W1 scope exists and is mapped; RFC §1 scope respected;
-D1 audit recorded. Recovery: model files are additive. Remaining gaps:
-known-bad configurations.
+### EP-M5: incidents 1 and 3, replay and comparator
 
-### EP-M4: incidents 1 and 3, replay and comparator (roadmap 1.1.5 to 1.1.7)
+- **Outcome:** the H1 evidence exists.
+- **Requirements and gaps:** roadmap 1.1.5 to 1.1.7; H1; DV2.
+- **Steps.**
+  1. **Known-bad configurations (1.1.5).**
+     - Add two switches:
+       - `PREFIX_GUARD_COUNTS_UNCACHED` (I1). It transcribes the stop guard at
+         the pre-fix revision found in EP-M1.
+       - `PREFIX_TRIGGER_EBA08AD` (I3), as at `eba08ad`:
+         - the trigger needs zero visible roots and no cached group moving in
+           the same reading, and has no stale proof;
+         - `_try_stop` requires the zero-roots proof;
+         - `request` is refused while a cached compile runs.
+     - Add the configurations:
+       - `incident-1-cap3-weak` and `incident-1-cap3-strong` (L3 lasso);
+       - `incident-1-cap2-weak` (L3 lasso);
+       - `incident-1-cap2-strong-nobackoff` (L3 holds);
+       - `incident-1-cap2-strong-backoff` (L3 lasso);
+       - `incident-3` (L1 lasso; L4a finite).
+     - Red: add them to `configurations.toml` before the switches exist, so the
+       materializer rejects the unknown constants.
+  2. **Replay (1.1.6).** Add `tests/model_replay.py`. The driver:
+     - builds a `harness_for` harness;
+     - sets `supervisor.server.clock = lambda: harness.now`;
+     - sets `admission.cached` explicitly;
+     - maps each model action to its production call. A composite tick
+       becomes `admission.group_emptied` for each emptied scope, followed by
+       `harness.tick()`. `Submit`, `TokenArrives` and `Cancel` call the
+       `Admission` event directly, as the existing tests do.
+     - routes `ReturnToken` effects to `FakePool.give_back`;
+     - keeps timer arm timestamps, and advances `Harness.now` by
+       `arm + duration - now`;
+     - projects the production state onto model state after each step.
 
-Outcome: the H1 evidence exists.
+     Store each counterexample's and witness's normalized trace in
+     `models/admission/traces/`, written by `--save-traces` from runs pinned
+     to `GOMAXPROCS=1`.
 
-1. Known-bad configurations (1.1.5). Add switches to the model:
-   `PREFIX_GUARD_COUNTS_UNCACHED` (I1; transcribes the stop guard at the
-   pre-fix revision found in EP-M1) and `PREFIX_TRIGGER_EBA08AD` (I3; the
-   trigger needs zero visible roots and no cached group moving in the same
-   reading, no stale proof, and `request` is refused while a cached compile
-   runs, as at `eba08ad`). Add configurations `incident-1-cap3-weak`,
-   `incident-1-cap3-strong`, `incident-1-cap2-weak`, `incident-1-cap2-strong`
-   (expected to hold: the prediction is that strong fairness of the recovery
-   step defeats the capacity-2 lasso), `incident-3` (L1 lasso, L4 finite) and
-   `head-without-F1` (L3 lasso). Red: add them to the e2e test before the
-   switches exist so the materializer rejects the unknown constant.
-2. Replay (1.1.6). Add `tests/model_replay.py`, a driver that maps each model
-   action name to a `Harness` call (`tests/cache_recovery_harness.py`) or an
-   `Admission` event, advancing `Harness.now` by each timer class's duration,
-   and projects the production state to model state after each step. Store
-   each counterexample's normalized trace in `models/admission/traces/` (JSON,
-   produced by `python -m modelcheck check --save-traces`). Add
-   `tests/test_model_replay.py` with one test per stored trace: known-bad
-   traces must diverge at HEAD at the step the fix governs; witness traces of
-   `head` must replay exactly. A trace the code follows to a property
-   violation is a defect: stop and report it (Constraints).
-3. Comparator (1.1.7). Add `tests/test_recovery_progress_comparator.py`
-   extending the recovery machine with uncached groups and a bounded-progress
-   invariant "once a transaction reaches `stopping` with no cached group
-   moving, the stop is issued within N supervisor ticks", with N derived from
-   the retry schedule (`min(30 * attempts, 120)` seconds) and stated in the
-   test. A second test patches the pre-fix guard in and asserts Hypothesis
-   finds a failure (`pytest.raises`), recording examples and wall time with
-   `--hypothesis-show-statistics`.
+     `tests/test_model_replay.py` has one test per stored trace, plus the
+     hold-expiry check. A trace the code follows to a property violation is a
+     defect: stop and report it.
+  3. **Comparator (1.1.7).** Add
+     `tests/test_recovery_progress_comparator.py`.
+     - It extends the recovery machine with uncached groups and a
+       bounded-progress invariant: once a transaction reaches `stopping` with
+       no cached group moving, the stop is issued within N supervisor ticks.
+     - N is derived from the retry schedule, and stated in the test.
+     - It uses `derandomize=True`, a fixed `max_examples` and a timeout mark.
+     - A second test patches the pre-fix guard in and asserts that Hypothesis
+       finds a failure. Its examples and wall time are recorded with
+       `--hypothesis-show-statistics`.
+  4. **Documentation.** Record the switches, the configurations and the
+     `transcribes` audit in the RFC's open-questions record.
+- **Acceptance evidence.**
+  - EP-M5-E1: `make model-check` reports `counterexample as expected` for each
+    known-bad expectation, and `holds` for `head`.
+  - EP-M5-E2: the capacity-2 results match DV2, or the inversion is reported.
+  - EP-M5-E3: every stored trace has a replay test with a disposition.
+  - EP-M5-E4: the comparator's cost is recorded beside the model's in
+    `Artefacts and notes`.
+  - EP-M5-E5: the gates pass.
+  - Roadmap tasks 1.1.5 to 1.1.7 are ticked.
+- **Conformance check.**
+  - 1.1.5 to 1.1.7 are satisfied.
+  - The design is followed.
+  - DV2's prediction is recorded before the run.
+  - No production change: the replay's clock fix is test-side.
+  - No new trust boundary.
+  - Trace links are current.
+- **Recovery:** revert the switches and configurations; the fixed model stands.
+- **Remaining gaps:** the verdict.
+- **Compatibility decision:** none.
 
-Acceptance: `make model-check` reports `counterexample as expected` for each
-known-bad expectation and `holds` for `head`; the capacity-2 results match the
-prediction or the inversion is reported (Tolerances); every trace has a
-replay test; the comparator's cost is recorded beside the model's in
-`Artefacts and notes`; the four gates pass. Recovery: revert the switches and
-configurations; the fixed model stands.
+### EP-M6: H1 verdict and G1
 
-### EP-M5: H1 verdict and G1 (roadmap 1.1.8)
+- **Outcome:** RFC 0001 carries an "H1 verdict" section containing:
+  - the evidence table (configuration, property, predicted, observed, run
+    time, states explored, peak memory);
+  - the per-property fairness ablation;
+  - the comparator comparison;
+  - the replay dispositions;
+  - the number of model revisions used;
+  - a proposed G1 decision: proceed; change tool to TLA+; prefer extending
+    Hypothesis; adopt D12's Python explorer; or stop.
+- **Requirements and gaps:** roadmap 1.1.8; H1; G1.
+- **Acceptance evidence:**
+  - EP-M6-E1: the RFC section passes `make markdownlint`.
+  - Roadmap task 1.1.8 is ticked when the user's decision is recorded.
+- **Conformance check.**
+  - Every Table 4 W1 row has an observed result.
+  - No unrecorded deviation remains.
+  - Trace links are current.
+- **Stop.** Set this plan's status to `BLOCKED` pending the user's G1
+  decision, and record it in `Decision log`.
+- **Recovery:** not applicable.
+- **Remaining gaps:** W2 to W4.
+- **Compatibility decision:** none.
 
-Add an "H1 verdict" section to RFC 0001 with the evidence table (configuration,
-property, predicted, observed, run time, states explored), the comparator
-comparison, the replay dispositions, the number of model revisions used, and a
-proposed G1 decision (proceed, change tool to TLA+, prefer Hypothesis, or
-stop). Tick roadmap tasks 1.1.1 to 1.1.8 as their success criteria are met.
-Set this plan's status to `BLOCKED` pending the user's G1 decision, record it
-in `Decision log`, and stop.
+### Later milestones (expanded only after each gate)
 
-### EP-M6 to EP-M8: full model, H4 and G2 (W2; roadmap 1.2.x and 1.3.x)
+These outlines fix scope and trace links. Each is expanded to full template
+fields, with red tests and acceptance evidence, when its gate opens.
 
-Only after a "proceed" decision at G1. EP-M6 adds the remaining environment
-(signals and clean exits, bounded cancellations, detached server work, the
-user manager with transport faults, the operator, health, the barrier) and
-S3 to S9 (1.2.1, 1.2.2). EP-M7 adds L2 and the abstract timers in small units
-advanced by a tick action, R1, incidents 2 and 4 (finite counterexamples to
-S8 and R1, and S9), and H4's configurations at `37d08e5` and HEAD (1.2.3 to
-1.2.5, 1.3.1, 1.3.2). EP-M8 measures H2's bounds (capacity 3, two waiting
-requests, two abnormal endings, one manager fault, restart limit 2) against
-the 10- and 60-minute budgets, settles OQ12 (start-up quiescence and the
-closing path from ADR 001: in scope or deferred to roadmap 2.1.3), records the
-H2 verdict and G2 proposal in RFC 0001, and stops for G2. Each new
-counterexample gets a replay test as in EP-M4.
-
-### EP-M9 and EP-M10: honesty checks and G3 (W3; roadmap 1.4.x)
-
-Only after G2. EP-M9 adds `tests/test_model_drift.py`, the drift check over
-the real inventory (public `Admission` event methods, `Effect` members, `Phase`
-and `FaultKind` literals), with reasoned exclusions for paths out of model
-scope; and the regression or correspondence test for every counterexample
-from the full model (1.4.1, 1.4.2). EP-M10 adds projection inclusion
-(`tests/test_model_projection.py`, obligation T7) using the exported state
-graph at small bounds, then records the H3 verdict and G3 proposal (required
-or advisory) and stops.
-
-### EP-M11 and EP-M12: quality gate and G4 (W4; roadmap 1.5.x)
-
-Only after G3. EP-M11 finalizes `make model-check` (routine bounds plus every
-known-bad configuration; a `MODEL_BOUNDS=nightly` variant), checks two
-consecutive runs on unchanged sources give identical reports, and adds
-`.github/workflows/model-check.yml`: on pull requests touching `models/`,
-`modelcheck/` or the update-policy modules, and nightly with larger bounds,
-caching `.tools/fizzbee-<version>` keyed on version and digest. EP-M12
-documents the model (developer's guide §11.6, Table 1 row, §13 CI bullet;
-repository layout entries for `models/` and `modelcheck/`, and `.tools`
-wording; contents entry for ADR 004), records the G4 decision on joining
-`make all` and on making the job required (OQ10), and stops.
+- **EP-M7: full environment and safety** (roadmap 1.2.1, 1.2.2).
+  - Adds signals and clean exits, bounded cancellations, detached server
+    work, the user manager with transport faults, the operator, health, the
+    barrier and ordered timer units.
+  - Adds S3 to S9.
+- **EP-M8: liveness, timers and known-bad configurations** (roadmap 1.2.3 to
+  1.2.5, 1.3.1, 1.3.2).
+  - Adds L2, with `TokenArrives` strongly fair under F5.
+  - Adds R1 in timer units, `incident-2` (finite counterexamples to S8 and
+    R1) and `incident-4` (a finite counterexample to S9).
+  - Adds `stale-path-37d08e5` (L1 holds with F3, fails without it; L4b holds
+    without F3), and the HEAD grace under F3a.
+  - Every new counterexample is replayed.
+- **EP-M9: bounds, start-up and G2** (roadmap 1.2.6, 1.3.3, 1.3.4).
+  - Times H2's bounds: capacity 3, two waiting requests, two abnormal endings,
+    one manager fault and a restart limit of 2.
+  - Settles OQ12. If start-up is in scope, a start-up action cites the merged
+    `cache_quiesce.py` path, and S3, S4 and L1 hold across a restart that
+    finds a live cache. Otherwise the deferral is recorded in roadmap 2.1.3.
+  - Records W2's exit evidence and the H2 verdict, and stops for G2.
+- **EP-M10: drift and regressions** (roadmap 1.4.1, 1.4.2).
+  - Adds `tests/test_model_drift.py` over the real inventory (public
+    `Admission` event methods, `Effect` members, `Phase` and `FaultKind`
+    literals), with reasoned exclusions, such as `begin_closing` while the
+    closing path is out of scope.
+  - Verifies each `transcribes` SHA.
+  - Adds a regression or correspondence test for every full-model
+    counterexample, and records the OQ7 answer in RFC 0001.
+- **EP-M11: projection and G3** (roadmap 1.4.3, 1.4.4).
+  - Adds `tests/test_model_projection.py` (T7).
+  - Records the H3 verdict and the G3 proposal, and stops.
+- **EP-M12: gate and CI** (roadmap 1.5.1, 1.5.2).
+  - Finalizes `make model-check` with `MODEL_BOUNDS=routine|nightly`, and
+    checks that two runs give identical verdicts and state counts.
+  - Adds `.github/workflows/model-check.yml`:
+    - **Triggers:**
+      - pull requests touching `models/` or `modelcheck/`;
+      - pull requests touching any of the eleven update-policy modules:
+        `admission`, `admission_state`, `effects`, `groups`, `group_drain`,
+        `server_watch`, `sccache`, `cache_recovery`, `recovery_starvation`,
+        `recovery_barrier` and `supervisor_polling`;
+      - nightly, in a cron slot outside the 03:05 to 09:30 UTC band other
+        workflows use.
+    - **Caching:** the tarball is cached under the key
+      `fizzbee-<version>-<sha256>-linux-x64`, with no restore keys, and its
+      digest is re-checked after every restore.
+    - **Run limits:** `concurrency` with `cancel-in-progress: false`, and
+      `timeout-minutes: 75`.
+    - **Artefacts:** the report, traces and memory log are uploaded.
+    - **Failure handling:** on a nightly failure, one tracking issue is opened
+      or updated.
+    - **Required-check readiness:** a single always-running job whose steps
+      do nothing when no relevant path changed, so the job can be made
+      required.
+- **EP-M13: documentation and G4** (roadmap 1.5.3).
+  - Completes the developer's guide §11.6: the model, the update policy and
+    the version-bump procedure, which re-captures the EP-M1 fixtures.
+  - Adds a §13 CI bullet.
+  - Records the G4 decision on joining `make all`, and on making the job
+    required (OQ10).
 
 ## Concrete steps
 
-All commands run from the repository root,
-`/home/leynos/.lody/repos/github---leynos---buildlimits/worktrees/3b0cd6e0-5780-46a7-a5d4-6d223b4e16e6`
-or the worktree that replaces it. Gate logs go to `/tmp` with the naming
+All commands run from the repository root, the worktree
+`/home/leynos/.lody/repos/github---leynos---buildlimits/worktrees/3b0cd6e0-5780-46a7-a5d4-6d223b4e16e6`,
+or the worktree that replaces it. Gate logs go to `/tmp`, named
 `/tmp/$ACTION-buildlimits-$(git branch --show-current).out`.
 
-Install and verify the checker (EP-M1):
+Install and verify the checker, then run the spike (EP-M1):
 
 ```bash
 make fizzbee 2>&1 | tee /tmp/fizzbee-buildlimits-$(git branch --show-current).out
-.tools/fizzbee-v0.5.4/fizz models/spike/weak_fairness.fizz
+BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -rs -m fizzbee tests/test_fizzbee_spike.py \
+  2>&1 | tee /tmp/spike-buildlimits-$(git branch --show-current).out
+git status --porcelain
 ```
 
-Expected tail of the second command for the weak-fairness negative control:
+Expected: the second command ends `N passed` with no skips, and the third
+prints nothing.
 
-```plaintext
-FAILED: Liveness check failed
-Invariant: EventuallyServed
-```
-
-Run the gates after each milestone (delegated to `scrutineer`):
+Run the gates after each milestone. The `scrutineer` agent runs them in
+sequence:
 
 ```bash
 make check-fmt 2>&1 | tee /tmp/check-fmt-buildlimits-$(git branch --show-current).out
@@ -886,150 +1577,314 @@ make nixie 2>&1 | tee /tmp/nixie-buildlimits-$(git branch --show-current).out
 make model-check 2>&1 | tee /tmp/model-check-buildlimits-$(git branch --show-current).out
 ```
 
-Expected shape of the model-check report from EP-M4 on (illustrative; the
-exact wording is pinned by the syrupy snapshot):
+For screen readers: the following block shows the expected shape of the
+model-check report from EP-M5 onwards. There is one line per expectation,
+followed by a summary line. The exact wording is pinned by the Syrupy snapshot.
 
 ```plaintext
-head                    S1  holds                        fairness: none
-head                    L3  holds                        fairness: F1, F2, F5, F6
-incident-1-cap3-weak    L3  counterexample as expected   lasso, 9 steps
-incident-3              L4  counterexample as expected   finite, 6 steps
-model check: 14 expectations met, 0 unmet
+head                              S1   holds                        states 41210  fairness: none
+head                              L3   holds                        states 41210  fairness: F1, F2, F5, F6
+incident-1-cap3-weak              L3   counterexample as expected   lasso, 9 steps  fairness: F1(weak), F2, F5, F6
+incident-1-cap2-strong-nobackoff  L3   holds                        states 18034  fairness: F1(strong), F2, F5, F6
+incident-3                        L4a  counterexample as expected   finite, 6 steps
+model check: 23 expectations met, 0 unmet
 ```
 
-Commit after each green step with a message in the imperative mood, after the
-gates pass, and push to the draft pull request.
+Commit after each green step, once the gates pass, with a message in the
+imperative mood. Push to the draft pull request.
 
 ## Validation and acceptance
 
 Quality criteria:
 
-- Tests: `make test` passes, including the BDD feature, the T1 to T6 unit and
-  property tests and the report snapshots; `make model-check` passes, with
-  every `fizzbee`-marked test run rather than skipped.
-- Verification: M-S, M-L and M-KB discharged for W1's scope at G1 and for the
-  full scope at G2; T1 to T6 discharged in EP-M2 to EP-M4; T7 at G3.
-- Lint and typecheck: `make check-fmt`, `make lint` and `make typecheck` exit
-  0.
-- Documentation: `make markdownlint` and `make nixie` exit 0.
-- Performance: routine bounds under 10 minutes and nightly under 60 minutes
-  on the development host and on a hosted runner (G2, G4).
-- Security: the binary is fetched over HTTPS from the pinned release and its
-  SHA-256 digest is checked before unpacking; no shell strings are built from
-  input.
+- **Tests:** `make test` passes, including the behavioural feature, the T1 to
+  T6 and T8 tests, the command-line end-to-end and process-control tests, and
+  the report snapshots. `make model-check` passes, with no `fizzbee` test
+  skipped.
+- **Verification:** M-S, M-L and M-KB are discharged for W1's scope at G1,
+  and for the full scope at G2. T1 to T6 and T8 are discharged in EP-M2 to
+  EP-M5, and T7 at G3.
+- **Lint and typecheck:** `make check-fmt`, `make lint` and `make typecheck`
+  exit 0.
+- **Documentation:** `make markdownlint` and `make nixie` exit 0.
+- **Performance:** routine bounds finish in under 10 minutes and nightly
+  bounds in under 60 minutes, on the development host and on a hosted runner
+  (G2, G4). No single run exceeds 8 GiB.
+- **Security:**
+  - the binary is fetched over HTTPS from the pinned release, and its digest
+    is checked before unpacking;
+  - unpacking rejects unsafe paths;
+  - no shell strings are built from input;
+  - process groups are always reaped.
 
-Red-Green-Refactor evidence is recorded in `Artefacts and notes` per
-milestone: the red command and its expected failure (strict `xfail` or
-`ModuleNotFoundError`), the green command, and the refactor gate run.
+Quality method:
+
+- the `scrutineer` agent runs the gate commands in `Concrete steps`, in
+  sequence, and reports the log paths;
+- `git status --porcelain` is checked after every `make model-check`;
+- from EP-M12, the CI job runs `make model-check` on a hosted runner.
+
+Red-Green-Refactor evidence is recorded in `Artefacts and notes` for each
+milestone:
+
+- the red command and its expected `XFAIL` or failure reason;
+- the green command;
+- the refactor gate run.
 
 ## Idempotence and recovery
 
-`make fizzbee` is idempotent and atomic: a partial download leaves only a
-temporary directory, which the next run removes. Model checks write to a
-fresh `out/` directory under `/tmp` or the configured output directory, never
-into `models/`. Every milestone is additive, so recovery is reverting its
-commits. Trace files in `models/admission/traces/` are regenerated by
-`python -m modelcheck check --save-traces` and reviewed as diffs.
+- **`make fizzbee`** is idempotent and atomic:
+  - a stamp file marks a verified install;
+  - a partial download leaves only a `.part` file or a temporary directory,
+    which the next run replaces;
+  - a lock prevents two installs racing.
+- **Checker runs** write only under `.model-check/` and `$(FIZZBEE_HOME)`.
+  Deleting `.model-check/` is always safe.
+- **Milestones** are additive, so recovery is reverting the milestone's
+  commits.
+- **Trace files** in `models/admission/traces/` are regenerated by
+  `--save-traces`, and reviewed as diffs.
 
 ## Artefacts and notes
 
-To be filled during implementation: red and green transcripts, the pre-fix
-revision table, the toy-model answers, state counts and run times, the
-comparator's cost, and the replay dispositions.
+Filled in during implementation: the red and green transcripts, the pre-fix
+revision table, the toy-model answers, the determinism results, the state
+counts, run times and peak memory, the comparator's cost, and the replay
+dispositions.
 
 ## Interfaces and dependencies
 
-No new dependencies. FizzBee v0.5.4 (Apache-2.0) is an external tool pinned in
-the `Makefile`. The package layout and the contracts that must exist at the
-end of EP-M2 are below.
+There are no new Python dependencies. FizzBee v0.5.4 (Apache-2.0) is an
+external tool, pinned in the `Makefile` by version and digest.
+
+For screen readers: the following block is a directory tree of the planned
+`modelcheck` package and the `models` directory. Each entry names the module's
+responsibility.
 
 ```plaintext
 modelcheck/
 ├── __init__.py
-├── __main__.py            driving adapter: Cyclopts CLI, composition root
-├── domain.py              value types: Outcome, CounterexampleKind, CheckResult, Configuration
-├── expectations.py        Expectation, Judgement, judge()
-├── materialize.py         materialize(): source text + Configuration -> spec text
-├── drift.py               parse_mappings(), drift() -> DriftReport
-├── trace.py               Trace, Step, normalize_trace()
-├── report.py              render_report(), render_drift()
-├── ports.py               ModelChecker, CodeInventory, ConfigurationSource protocols
-├── service.py             run_matrix(): the application service over the ports
+├── __main__.py              wiring only: builds adapters and calls cli.make_app
+├── cli.py                   driving adapter: Cyclopts app factory, exit codes
+├── domain.py                Configuration, expectation kinds, result union, Verdict, MaterializedSpec
+├── expectations.py          judge(): expectation x result -> Judgement
+├── materialize.py           materialize(): source + configuration -> MaterializedSpec
+├── drift.py                 parse_mappings(), drift() -> DriftReport
+├── trace.py                 Trace, Step, cycle and stutter markers
+├── report.py                render_report(), render_drift()
+├── ports.py                 ModelChecker, CodeInventory, ConfigurationSource
+├── service.py               run_matrix(): the application service over the ports
 └── adapters/
-    ├── fizzbee.py         FizzbeeChecker (subprocess) and parse_output()
-    ├── inventory.py       BuildlimitsInventory (importlib, typing.get_args)
-    └── configuration.py   TomlConfigurations (tomllib over configurations.toml)
+    ├── fizzbee_output.py    parse_output(), normalize_trace(): pure translation of FizzBee output
+    ├── fizzbee_process.py   FizzbeeChecker: scratch directory, Popen, process-group timeout
+    ├── configuration.py     TomlConfigurations: tomllib over configurations.toml
+    └── inventory.py         BuildlimitsInventory: importlib and typing.get_args over buildlimits
 models/
-├── spike/                 EP-M1 toy models
+├── spike/                   EP-M1 toy models, kept as language checks
 └── admission/
-    ├── admission.fizz     the model
-    ├── fizz.yaml          default bounds and liveness mode
-    ├── configurations.toml fixed and known-bad configurations with expectations
-    └── traces/            normalized counterexample and witness traces
+    ├── admission.fizz       the model
+    ├── fizz.yaml            default bounds and options
+    ├── configurations.toml  fixed, mutant and known-bad configurations with expectations
+    └── traces/              normalized counterexample and witness traces
 ```
 
 _Figure 2: Planned layout of the tooling and models._
 
-The ports, in `modelcheck/ports.py`:
+The ports, in `modelcheck/ports.py`, follow the house Protocol style: a
+docstring as the body, with no `...`.
 
 ```python
 class ModelChecker(typ.Protocol):
-    def check(self, spec_text: str, *, work_dir: Path) -> CheckResult: ...
+    """Run one materialized specification and classify the outcome."""
+
+    def check(self, spec: MaterializedSpec) -> CheckResult:
+        """Return the classified result; the adapter owns its scratch directory."""
+
 
 class CodeInventory(typ.Protocol):
-    def items(self) -> frozenset[str]: ...
-    def resolves(self, dotted_path: str) -> bool: ...
+    """Enumerate the production surface the model must map."""
+
+    def items(self) -> frozenset[str]:
+        """Return dotted paths of events, effects, phases and fault kinds."""
+
+    def resolves(self, dotted_path: str) -> bool:
+        """Report whether a mapped dotted path still names something."""
+
 
 class ConfigurationSource(typ.Protocol):
-    def source_text(self) -> str: ...
-    def configurations(self) -> tuple[Configuration, ...]: ...
+    """Supply the model source, its configurations and drift exclusions."""
+
+    def source_text(self) -> str:
+        """Return the concatenated model source."""
+
+    def configurations(self) -> tuple[Configuration, ...]:
+        """Return every configuration with its expectations."""
+
+    def exclusions(self) -> cabc.Mapping[str, str]:
+        """Return inventory items deliberately unmapped, each with its reason."""
 ```
 
-The domain and service contracts:
+The domain contracts, in `modelcheck/domain.py`:
 
 ```python
-class Outcome(enum.StrEnum):
-    PASSED = "passed"
-    COUNTEREXAMPLE = "counterexample"
-    STOPPED = "stopped"
-    ERROR = "error"
-
 class CounterexampleKind(enum.StrEnum):
     FINITE = "finite"
     LASSO = "lasso"
+    STUTTER = "stutter"
+    DEADLOCK = "deadlock"
+
 
 @dc.dataclass(frozen=True, slots=True)
-class CheckResult:
-    outcome: Outcome
-    property_name: str | None
-    kind: CounterexampleKind | None
-    trace: Trace | None
-    states_explored: int | None
+class Passed:
+    states: int
+    elapsed_seconds: float
+    unsatisfied_probes: tuple[str, ...]
+
+
+@dc.dataclass(frozen=True, slots=True)
+class Counterexample:
+    property_name: str
+    kind: CounterexampleKind
+    trace: Trace
+    states: int
+    elapsed_seconds: float
+
+
+@dc.dataclass(frozen=True, slots=True)
+class Stopped:
     detail: str
 
-@dc.dataclass(frozen=True, slots=True)
-class Expectation:
-    configuration: str
-    property_name: str
-    fails_as: CounterexampleKind | None   # None means the property must hold
-    fairness: tuple[str, ...]
 
-def judge(expectation: Expectation, result: CheckResult) -> Judgement: ...
-def materialize(source: str, configuration: Configuration, *, keep: str) -> str: ...
-def drift(mapped: frozenset[str], inventory: CodeInventory,
-          exclusions: cabc.Mapping[str, str]) -> DriftReport: ...
-def run_matrix(source: ConfigurationSource, checker: ModelChecker,
-               work_dir: Path) -> tuple[Judgement, ...]: ...
+@dc.dataclass(frozen=True, slots=True)
+class Errored:
+    detail: str
+
+
+type CheckResult = Passed | Counterexample | Stopped | Errored
+
+
+@dc.dataclass(frozen=True, slots=True)
+class Holds:
+    property_name: str
+
+
+@dc.dataclass(frozen=True, slots=True)
+class FailsAs:
+    property_name: str
+    kind: CounterexampleKind
+
+
+@dc.dataclass(frozen=True, slots=True)
+class Reachable:
+    probe_name: str
+
+
+type Expectation = Holds | FailsAs | Reachable
+
+
+@dc.dataclass(frozen=True, slots=True)
+class Configuration:
+    name: str
+    constants: cabc.Mapping[str, str]
+    fairness: cabc.Mapping[str, str]          # tag -> "weak" | "strong" | "unfair"
+    options: cabc.Mapping[str, object]        # complete frontmatter
+    min_states: int
+    expectations: tuple[Expectation, ...]
+
+
+@dc.dataclass(frozen=True, slots=True)
+class MaterializedSpec:
+    configuration: str
+    text: str
+    fairness_in_force: tuple[str, ...]
+
+
+class Verdict(enum.StrEnum):
+    HOLDS = "holds"
+    AS_EXPECTED = "counterexample as expected"
+    REACHED = "reached"
+    MISSING = "expected counterexample missing"
+    WRONG_KIND = "wrong counterexample kind"
+    UNEXPECTED = "unexpected counterexample"
+    UNREACHABLE = "unreachable"
+    BELOW_FLOOR = "state space below floor"
+    STOPPED = "stopped"
+    ERROR = "error"
+
+
+@dc.dataclass(frozen=True, slots=True)
+class Judgement:
+    configuration: str
+    expectation: Expectation
+    result: CheckResult
+    verdict: Verdict
+    fairness_in_force: tuple[str, ...]
+
+    @property
+    def is_met(self) -> bool:
+        """Report whether the verdict satisfies the expectation."""
+        return self.verdict in {Verdict.HOLDS, Verdict.AS_EXPECTED, Verdict.REACHED}
 ```
 
-Hexagonal boundaries: `domain`, `expectations`, `materialize`, `drift`,
-`trace` and `report` are pure and import only the standard library and each
-other. `service` depends on `ports` and the domain. Only `adapters/*` and
-`__main__` touch processes, files or `buildlimits`. `__main__` is the only
-place that constructs adapters. `tests/test_modelcheck_layering.py` enforces
-this by parsing imports.
+The functions:
+
+```python
+def judge(configuration: Configuration, expectation: Expectation,
+          spec: MaterializedSpec, result: CheckResult) -> Judgement: ...
+def materialize(source: str, configuration: Configuration,
+                *, expected_failure: str | None) -> MaterializedSpec: ...
+def drift(mapped: frozenset[str], inventory: frozenset[str], resolves: cabc.Callable[[str], bool],
+          exclusions: cabc.Mapping[str, str]) -> DriftReport: ...
+def run_matrix(source: ConfigurationSource, checker: ModelChecker) -> tuple[Judgement, ...]: ...
+def parse_output(stdout: str, exit_status: int, error_graph: str | None) -> CheckResult: ...
+```
+
+Hexagonal boundaries:
+
+- `domain`, `expectations`, `materialize`, `drift`, `trace` and `report` are
+  pure.
+- `service` depends on `ports` and the domain only, and takes a `drift`
+  inventory as values rather than calling `buildlimits`.
+- `adapters/*` translate between the outside world and the domain.
+  `fizzbee_output` is pure translation; the other adapters perform input,
+  output or process control.
+- `cli.make_app` receives its adapters as factories, and `__main__` is the
+  only place that constructs them.
+- `tests/test_modelcheck_layering.py` enforces these rules (T8).
 
 ## Revision note
 
-- 2026-10-24: first draft from Wyvern reconnaissance and FizzBee research.
-  Pending community-of-experts review.
+- 2026-10-24: first draft, from Wyvern reconnaissance and FizzBee research.
+- 2026-10-24: revised after a four-panellist community-of-experts review.
+  - **Changed: model abstraction.**
+    - The baseline move became deviation DV1.
+    - DV2 refined the capacity-2 prediction for the stop's backoff.
+    - DV3 split L4 and added F3a.
+    - D10 introduced the composite supervisor tick.
+    - Leader exits became per-class fair actions.
+  - **Changed: result types.** The result type became a tagged union with
+    stutter and deadlock kinds, reachability probes and a `Verdict`
+    enumeration.
+  - **Changed: anti-vacuity measures.** These were added: retained
+    assertions, equal state counts, `min_states` floors, the `max_actions`
+    fixpoint and truncation fixtures.
+  - **Changed: operations and supply chain.**
+    - Checker runs moved to scratch directories under `.model-check/`.
+    - The binary moved to a shared content-addressed cache, with a hardened
+      install.
+    - Real-binary tests became opt-in, with skips forbidden under
+      `make model-check`.
+    - Process groups are killed on timeout.
+    - Resource limits were added.
+  - **Changed: replay.** The replay driver now fixes the `ServerWatch`
+    clock.
+  - **Changed: milestone structure.**
+    - The `modelcheck` milestone was split into EP-M2 (domain) and EP-M3
+      (adapters), and later milestones were renumbered.
+    - Template fields were added to every W1 milestone.
+    - Documentation now lands with each milestone.
+    - Every roadmap task is traced individually.
+    - The skills and documents to read are signposted.
+  - **Effect on remaining work:** approval now also covers DV1 to DV3.
+    EP-M1 to EP-M6 are executable as written, and later milestones are
+    expanded at their gates.
