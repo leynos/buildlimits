@@ -3,8 +3,9 @@
 ## Preamble
 
 - **RFC number:** 0002
-- **Status:** Proposed
+- **Status:** Accepted
 - **Created:** 2026-10-18
+- **Accepted:** 2026-10-23; see [Acceptance](#acceptance)
 - **Baseline:** `main` at `32e2105`, with sccache 0.14.0 on the host. RFC
   0001, the FizzBee model of admission and recovery, has since been accepted
   and is on `main`[^1].
@@ -216,8 +217,8 @@ A server child alone means nothing because every request spawns a dep-info pass
 (C3). A miss also spawns a full-emit `rustc` whose `-C metadata` value matches
 the request's own arguments, and its group usually runs longer than that key's
 hits. Those clues reach overlapping compiles, which window labels cannot, but a
-one-second poll misses every short miss, so they are tested against window
-labels (H2) before they label anything.
+one-second poll can miss short misses, so they are tested against window labels
+(H2) before they label anything.
 
 **Design.** The supervisor reads the server's statistics only at _quiet
 points_: ticks where `Counts.cached_moving` and `Counts.server_drain` are both
@@ -247,7 +248,7 @@ consecutive readings:
   precondition already implies, but which the generation check now makes
   explicit rather than inferred. C5 still holds: the marker comes from the
   unit, not from `ServerStats`, so an unmanaged or out-of-unit server stays
-  indistinguishable and the decrease test remains the backstop for it. One
+  indistinguishable, and the decrease test remains the backstop for it. One
   implementation constraint carries over: the public user-bus fallback in
   `buildlimits/bus_properties.py` accepts only `MainPID`, `ControlGroup` and
   `ActiveState`, and rejects any other property name, so W1 must extend that
@@ -1069,6 +1070,17 @@ compatible with ADR 011 because a mispredicted hit is an undetectable real
 compile in the server's control group. 3B proceeds only after RFC 0001's model
 and the trace replay both pass. W6 deserves its own decision once H3 has
 survived.
+
+## Acceptance
+
+Accepted on 2026-10-23. Acceptance approves the recommendation above: W1 and W2
+go ahead now, with the H1 to H5 thresholds as written, and W3 to W5 proceed
+only as each gate, G1 to G4, decides. Layer 3 stays 3B or nothing, and 3B
+remains gated on RFC 0001's model and the trace replay; W6 continues to wait on
+H3. Every threshold in this document is still a proposal to be fixed before any
+data is read, and the open questions stay open until the evidence settles them.
+Acceptance changes no runtime behaviour: it records the decision to run W1 and
+W2, not an implementation.
 
 [^1]: RFC 0001, `docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md`,
       accepted 2026-10-18 and present on `main`.

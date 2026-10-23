@@ -61,4 +61,5 @@
 - [RFC 0002: Recording and predicting sccache hits for queued
   compiles](rfcs/0002-cache-hit-prediction.md) proposes recording each cached
   compilation's real outcome, adding an advisory hit prediction to status and
-  metrics, and conducting a gated analysis of hit-first admission.
+  metrics, and conducting a gated analysis of hit-first admission. Accepted
+  2026-10-23.
