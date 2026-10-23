@@ -1,0 +1,2006 @@
+# Record the real outcome of each cached compile and evaluate prediction offline
+
+This ExecPlan (execution plan) is a living document. The sections `Constraints`,
+`Tolerances`, `Risks`, `Progress`, `Surprises & discoveries`, `Decision log`,
+`Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
+be kept up to date as work proceeds.
+
+Status: DRAFT (revised after expert-panel review; Q1 answered (b) by the owner
+on 2026-10-23; awaiting owner approval of the whole plan)
+
+Branch: `cache-hit-prediction`. Plan path:
+`docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
+2026-10-23 at `42f40e4`.
+
+## Purpose / big picture
+
+Nothing in buildlimits knows whether a compile was an sccache hit. A waiting
+request in `build-limits-status` could be a 200-millisecond cache read or a
+five-minute compile, so nobody can judge proposals to admit hits sooner without
+knowing how often hits occur and whether they can be foreseen.
+
+RFC 0002 answers this in layers, each gated on evidence from the one before.
+Its acceptance approves workstreams W1 and W2 only:
+
+- W1, recording: the supervisor reads the managed sccache server's global
+  statistics at _quiet points_, when no cached compile is moving and nothing
+  waits. Wherever the counters can say which request a change belongs to, it
+  labels the cached compile `hit`, `miss` and so on. The label is journalled as
+  a closed-vocabulary metric, and a keyed record is appended to a local store
+  for offline analysis. While cached compiles run, the supervisor also looks
+  for each request's full-emit compiler among the server's processes (a _child
+  sighting_), so that H2 can test whether wall time and sightings separate hits
+  from misses where the counters cannot. A real-binary check confirms the
+  sccache facts both rely on.
+- W2, offline evaluation: a replay over W1's records yields the H3 to H5
+  verdicts (whether a hit can be foreseen from history) without building any
+  prediction into admission.
+
+Layers 2 and 3 (W3 to W6) are out of scope. They proceed only when the owner's
+gates G2 to G5 release them, and each needs its own plan.
+
+After W1, an operator can set `cache_outcomes = "record"` in
+`~/.config/buildlimits/supervisor.toml` and build as normal. They will then see:
+
+- a `cache outcomes: recording (812 attributed, last reading none)` line in
+  `build-limits-status`;
+- a `cache_outcomes` section in
+  `build-limits-metrics --since 1h --max-records 100000` that counts results,
+  reasons and coverage;
+- the H2 and H3 verdicts from the local store, by running
+  `build-limits-cache-replay h2` and `build-limits-cache-replay h3`.
+
+After W2, which starts only once the owner has decided G1,
+`build-limits-cache-replay` also reports H4 and H5 against thresholds that were
+fixed before any data was read.
+
+Admission, token accounting, `SERVER_DRAIN` retention and cache recovery behave
+identically whether recording is on or off. That is the central safety claim,
+and a differential test proves it.
+
+## Constraints
+
+These are hard invariants. Violating one requires escalation, not a workaround.
+
+- C-OBS (RFC I1, observation only): no decision in the modules below reads an
+  outcome, a record, a key or a reading. A transitive import-closure test
+  enforces this. The modules are `buildlimits/admission.py`,
+  `admission_state.py`, `effects.py`, `server_watch.py`, `cache_recovery.py`,
+  `recovery_starvation.py`, `recovery_roots.py` and `recovery_outlook.py`.
+- C-NOSTART (RFC I2): the supervisor runs only
+  `sccache --show-stats --stats-format json`, never `--zero-stats`,
+  `--dist-status` or `--start-server`. It never queries under any of these
+  conditions:
+  - a recovery hold is active;
+  - the restart barrier exists;
+  - the cache is unreachable;
+  - recovery is not idle.
+- C-ISOLATE (RFC I3): a statistics, generation, store or salt failure yields
+  a named reason. It never makes the supervisor unhealthy, never refuses a
+  request and never delays an admission. Every code path this plan adds to the
+  selector loop must be non-blocking and _total_, meaning it catches its own
+  exceptions. `DrainLoop._failure` calls `fail_health` on the first escaped
+  exception (S6).
+- C-TOKEN: no hook this plan adds may sit between `Groups.remove` and
+  `Admission.group_emptied`, or before `Groups.release`. A failing hook must
+  never strand a token or delay its return.
+- C-NOINFER (RFC I4): an attributed label is never inferred. W1 produces only
+  `solo` and `unanimous` attributions. `inferred` is a registered vocabulary
+  token that W1 never emits.
+- C-PRIV (RFC §2 privacy): no raw path, argument, environment value or
+  toolchain name is written to the journal, a span or the store. Any value that
+  can carry a local path is keyed with the per-host salt. This covers the
+  manifest directory, the compiler as given, `RUSTUP_TOOLCHAIN` and the
+  argument vector. No salt means no record. Records never leave the host.
+- C-DEFAULT: every new behaviour sits behind `cache_outcomes`, which
+  defaults to `off`. With `off` the supervisor builds a null shell: it spawns
+  no new process, opens no new file or socket, starts no thread and emits no
+  new event.
+- C-SIZE: no code file exceeds 400 lines (AGENTS.md). `supervisor.py` (392
+  lines), `server_watch.py` (392), `cache_recovery.py` (400) and `groups.py`
+  (391) have no headroom. New logic lives in new modules, and existing files
+  gain at most a handful of lines.
+- C-HOST:
+  - Never stop, restart, signal or reconfigure the live
+    `buildlimits-supervisor.service` or `buildlimits-sccache.service`.
+  - Never install on the host or run `build-limits-recover`.
+  - Never bypass compile admission: no test or tool runs a real `rustc`
+    outside an admitted scope.
+  - Read-only journal queries and a read-only `--show-stats` against the
+    managed socket are permitted (A5).
+- C-PY: the Python 3.14 baseline and the tools pinned in `pyproject.toml` and
+  `Makefile`. No new runtime or development dependency. The standard library's
+  `hashlib`, `hmac`, `secrets`, `json`, `socket`, `subprocess`, `threading` and
+  `queue` suffice.
+- C-SCHEMA: `cache_outcome`, `outcome_reading` and `outcome_store` enter
+  `metrics_schema.EVENTS` in the same release that can emit them, or an earlier
+  one (RFC "Compatibility and migration").
+- C-GATES: W2 implementation (EP-M9) must not begin until the owner records
+  the G1 decision (`proceed` or `narrow`) in `Decision log`. W3 and later are
+  out of scope.
+
+## Tolerances (exception triggers)
+
+- Scope: escalate if W1 needs more than 32 changed or new production source
+  files, or more than 3,200 net added lines of production code.
+- Interface: escalate before changing any of the following:
+  - the wire protocol (`protocol.py`);
+  - any existing status-document key;
+  - the effect types in `effects.py`;
+  - any existing metric event's fields.
+
+  Adding the `cache_outcomes` status object is within tolerance.
+- Admission: escalate if any milestone appears to need a change to
+  `admission.py` or `admission_state.py`.
+- Dependencies: escalate if a new dependency seems necessary.
+- Iterations: escalate if a gate still fails after three fix attempts on the
+  same cause.
+- Feasibility: escalate if EP-M1 is still no-go after a 1.5-hour time-box.
+  The fallback is in D9.
+- Coverage evidence: the G0 measurement below projects the solo-window bound
+  on this host at 4.5%, under H1's 5% falsification line. The owner answered Q1
+  with (b): W1 also collects child sightings for H2 (EP-M8). Escalate if a
+  re-run of G0 at the start of EP-M1 falls below 2%.
+- Performance: store I/O runs on a writer thread, so the loop never waits on
+  a file. Escalate if the opt-in latency test shows either of these:
+  - p99 tick lengthening above 5 ms while a reading is in flight;
+  - p99 append enqueue above 1 ms;
+  - p99 child-sighting sample above 2 ms, or more than 64 processes inspected
+    in one sample.
+- Ambiguity: stop and present options if EP-M1 contradicts axiom A2 or A3.
+
+## Risks
+
+- R1. Statistics may trail the reply. The installed binary may not order
+  statistics and reply as its 0.14.0 source reads (A2), and a partial footprint
+  would read as a wrong label.
+  - Severity: high.
+  - Likelihood: low, because the source shows one guard taken before the
+    reply (S1).
+  - Mitigation: EP-M1 reads the counters immediately after each of 200
+    client exits. Any partial footprint activates D12.
+- R2. Coverage is structurally low on a busy host.
+  - Severity: medium.
+  - Likelihood: high. Evidence G0 (S5) puts the solo-window bound at 4.5% of
+    cached finishes, about 3,000 a day here.
+  - Mitigation:
+    - The absolute count clears the 2,000-outcome minimum within a day.
+    - The gate clause `queued == 0` stops wasted readings that would
+      straddle a launch.
+    - Every verdict states the quiet-window bias.
+    - The owner chose (Q1 (b)) to collect child sightings in W1 (EP-M8), so
+      that G1 can judge H2, the RFC's route to coverage below 5%.
+- R3. Failure loops could flood the journal, at about 86,400 events a day
+  with a 1-second retry.
+  - Severity: medium.
+  - Likelihood: medium.
+  - Mitigation:
+    - Exponential back-off from 1 s to 60 s.
+    - A transition-only `outcome_reading` event, plus a once-a-minute
+      aggregate.
+    - Recording disables itself until restart after `unsupported_version`
+      (D16).
+- R4. Store I/O could stall the loop under heavy write-back.
+  - Severity: high if it happens.
+  - Likelihood: medium on a build host.
+  - Mitigation: append-only JSON Lines owned by a single writer thread. The
+    loop only enqueues into a bounded queue, compaction runs on the thread,
+    and the stop path joins the thread with a 1-second bound after tokens
+    are settled (D17).
+- R5. A downgrade could stop start-up. If the package is downgraded with
+  `cache_outcomes` still in `supervisor.toml`, start-up exits 2, and
+  `RestartPreventExitStatus=2` keeps the service down.
+  - Severity: high.
+  - Likelihood: low.
+  - Mitigation:
+    - EP-M6 is a releasable, inert plateau that accepts the key, so a
+      downgrade to it is safe.
+    - The users' guide says to remove the key before downgrading further.
+    - The plan recommends that the dev-env-rocky role render the key only
+      when it is not `off` (D18).
+- R6. The fake toolchain may not pass sccache's Rust detection.
+  - Severity: medium.
+  - Likelihood: medium.
+  - Mitigation: EP-M1 is a 1.5-hour time-boxed prototype that does not block
+    EP-M2 to EP-M7, and D9 is its fallback.
+- R7. Readers that predate the release drop the new events whole (RFC open
+  question 6).
+  - Severity: low.
+  - Mitigation: recording is off by default, and the upgrade order is
+    documented.
+- R8. The 10,000-record bound, not 30-day aging, sets how much history W2
+  sees: about 1 to 3 days at this host's rate.
+  - Severity: low.
+  - Mitigation:
+    - ADR 004 records the limit.
+    - The replay reports the time span it covers.
+    - If H4 or H5 is `insufficient`, W2 may propose per-key retention as a
+      separate decision.
+- R9. Child sightings miss short misses and may cost loop time. A sample every
+  `CHILD_SAMPLE_SECONDS = 0.25` cannot see a full-emit child that lives less
+  than that, and reading `/proc/<pid>/cmdline` takes the target's `mmap_lock`,
+  so it can stall briefly while that process faults heavily.
+  - Severity: medium (it biases H2 towards long misses; a stall delays one
+    tick).
+  - Likelihood: medium for short misses, low for stalls.
+  - Mitigation:
+    - Each record stores `child_samples`, so H2 can be computed over groups
+      that were sampled at least once and the bias is visible.
+    - Sampling runs only while `cached_moving > 0`, inspects at most 64
+      processes, and reads each process's `cmdline` once per `(pid,
+      starttime)`.
+    - The opt-in latency test measures the sample cost against the
+      performance tolerance.
+    - H2's falsification ends sampling (G1 runbook).
+
+## Progress
+
+- [x] (2026-10-23 19:05Z) Branch renamed to `cache-hit-prediction`; RFC 0002
+  read in full.
+- [x] (2026-10-23 19:20Z) Wyvern reconnaissance by four agents, covering
+  admission, the loop, `ServerWatch` and `ManagedSccache`, metrics, tracing,
+  status, tests and the documentation conventions.
+- [x] (2026-10-23 19:25Z) Firecrawl checks of sccache 0.14.0 `ServerStats`,
+  `ServerInfo`, `PerLanguageCount` and `CACHE_VERSION`, and of systemd
+  `InvocationID`.
+- [x] (2026-10-23 19:50Z) A2 and A3 settled from the 0.14.0 source (S1).
+- [x] (2026-10-23 20:05Z) First draft committed (`ef248d5`).
+- [x] (2026-10-23 21:10Z) The Logisphere expert panel of six agents
+  reviewed the draft. Verdict: proceed with conditions. The synthesis is in
+  `Decision log` D15 to D23 and in `Outcomes & retrospective`.
+- [x] (2026-10-23 21:20Z) G0 coverage bound measured read-only from this
+  host's journal (S5).
+- [x] (2026-10-23 21:40Z) Plan revised for every 🔴 and 🟡 panel finding.
+- [x] (2026-10-23 22:30Z) PR #24 opened as a draft. Issue #25 raised for the
+  unrelated `ty` version drift on `main`.
+- [x] (2026-10-23 23:00Z) The owner answered Q1 with (b). EP-M8 (H2 child
+  sightings) was added to W1, and W2 was renumbered EP-M9 (D24, D25).
+- [ ] Owner approval of the whole plan, including the deviations D2 to D25.
+  Implementation must not begin before this.
+- [ ] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents.
+- [ ] EP-M1: real-binary feasibility and axiom check (prototype; go or
+  no-go).
+- [ ] EP-M2: pure statistics, footprints, attribution and gate.
+- [ ] EP-M3: pure keys, records and the window ledger.
+- [ ] EP-M4: the reading sequencer over fake ports.
+- [ ] EP-M5: adapters (non-blocking child, queries, generation, store
+  writer).
+- [ ] EP-M6: inert schema, configuration and tracing vocabulary
+  (releasable).
+- [ ] EP-M7: supervisor wiring, status, report, `h3` replay, systemd
+  scenarios and documentation.
+- [ ] EP-M8: H2 child sightings, the `h2` replay, and their documentation.
+- [ ] G1 (owner): release, enable, collect, record H1, H2 and H3, and
+  decide.
+- [ ] EP-M9: W2 offline replay (H4 and H5), gated on G1.
+
+## Surprises & discoveries
+
+- S1. In sccache 0.14.0, every result counter for a request is updated under
+  one `me.stats.lock().await` guard, inside the spawned task, before `Ok(res)`
+  is returned (`start_compile_task`, around `server.rs` line 1376). The
+  `CompileFinished` body is built only from that resolved future (around lines
+  1022-1028). The cache-write counters are awaited later, but they are also in
+  place before the reply. Further details:
+  - `compile_requests` (in `call`, around line 864), the classification
+    counter and the result counters are three separate lock acquisitions.
+  - `Err(HttpClientError)` and a panic in the task count only
+    `requests_executed`. This plan calls that the _silent_ footprint.
+  - Without a server, `--show-stats --stats-format json` exits 0 and prints
+    a full `ServerInfo` with zeroed statistics and the client's own
+    `version`.
+  - A failed query prints `sccache: error: ...` and exits 2.
+  - `-vV` is classified `CannotCache("missing input")`. `--print`,
+    `--version`, `-V`, `--explain`, `--help`, and an emit with neither
+    `link` nor `metadata`, are classified `NotCompilation`.
+
+  Evidence: quoted `server.rs`, `commands.rs` and `compiler/rust.rs` at
+  `v0.14.0` (research pass of 2026-10-23). Impact: A2 and A3 hold from source,
+  so D12 becomes a contingency only. D13 defines `empty_stats`, and the truth
+  table gains the silent footprint.
+- S2. RFC 0002 says `InvocationID` can be read "as one more property name on
+  the `manager.show` call the supervisor already makes". That does not fit the
+  code:
+  - The only `show` callers are `ManagedSccache.accounted_drain` and
+    `active_compiles` (`buildlimits/sccache.py` lines 221 and 253). They run
+    only while a group is in `SERVER_DRAIN`, which is exactly when a quiet
+    point cannot occur.
+  - Reachability is an `AF_UNIX` connect (`sccache.py` lines 185-219), not a
+    `show` call.
+  - Adding the property to the drain call would turn the public-bus
+    fallback's refusal (`bus_properties.service_properties`, line 177) into
+    a drain fault.
+
+  Impact: D2.
+- S3. Every existing `systemctl` and `busctl` call is a blocking
+  `subprocess.run` with a 3-second bound (`systemd._transport_bound`). The
+  private manager connection on this host is known to fail at times, which is
+  why the bus fallback exists. The panel measured a spawned `systemctl` at 10
+  to 24 ms typically, 300 ms at p90 and 1.1 s at worst. Impact: D2 reads the
+  generation without spawning a process.
+- S4. `metrics_records._source_accepts_event` already accepts every
+  supervisor event except `adapter_finished`.
+  `tests/test_metrics_report.py::test_event_source_matrix` is parametrized over
+  `sorted(EVENTS)`. Impact: `metrics_records.py` needs no change.
+- S5. G0, the coverage bound, was measured read-only with the command in
+  `Artefacts and notes`. Over seven days there were 473,503 `request_finished`
+  records with `cache_path=cached`:
+  - 30,795 (6.5%) finished with `queued == 0` and `server_drain == 0`;
+  - 21,110 (4.5%) also had at most one group running or draining, which
+    bounds the solo-window share;
+  - the typical state at finish was 12 to 16 queued and 3 running.
+
+  Impact: on this host, H1's coverage prediction (at least 20%) is very likely
+  falsified, and the RFC's rule then makes H2 "the only route to coverage". The
+  absolute count, however, is about 3,000 candidate solo windows a day. This
+  raised open question Q1, which the owner answered with (b): add H2 child
+  sightings to W1 (EP-M8).
+- S6. `DrainLoop._failure` calls `fail_health` on every escaped exception.
+  `MAX_INTERNAL_FAILURES` (20) only sets the operator recovery text. Impact:
+  C-ISOLATE requires total entry points (D19).
+
+## Decision log
+
+Decisions D1 to D25 are proposals of this draft, and take effect only when the
+owner approves the plan. Each deviation from the letter of RFC 0002 is marked,
+and EP-M0 repeats it in ADR 004. If a deviation is rejected, the plan returns to
+`DRAFT`.
+
+- D1. Scope. Decision: W1 is EP-M0 to EP-M8, and W2 is EP-M9, gated on the
+  G1 decision. Rationale: RFC acceptance approves W1 now and W2 at G1.
+- D2. Deviation from RFC 0002 §1: the generation read. Decision: the _server
+  generation_ is read synchronously, with no spawned process, on either side of
+  each statistics query:
+  1. a non-blocking `AF_UNIX` connect to the managed socket;
+  2. `SO_PEERCRED` gives the listening server's PID;
+  3. `/proc/<pid>/stat` field 22 gives the start time;
+  4. `/proc/<pid>/environ` gives `INVOCATION_ID`.
+
+  The generation is the triple `(INVOCATION_ID or "", pid, starttime)`. A
+  refused connect means _no server_. Any other failure is
+  `generation_unavailable`. Rationale (S2, S3):
+  - It still reads the unit's own invocation identifier, which systemd
+    places in every service process's environment.
+  - It identifies the very process that answers the statistics query.
+  - It catches a server restart within one invocation.
+  - It costs a connect and two small `/proc` reads, which is the same kind of
+    connect `is_reachable` makes every 5 s.
+
+  Alternatives considered:
+  - Spawning `systemctl show` twice per reading: rejected for the spawns,
+    the latency tail and the fallback gap.
+  - Reading the unit's cgroup `cgroup.procs`: rejected because the cgroup
+    path is unknown while the unit is inactive.
+- D3. Refinement. Decision: a reading during whose statistics query any
+  cached group launched is discarded as `straddled_reading`. It is neither a
+  window end nor a baseline. Rationale: admission keeps running during the
+  query, so discarding keeps every launch in exactly one window.
+- D4. Deviation in the vocabulary. Decision: `cache_result` gains three
+  tokens for requests the server declined without compiling:
+  - `declined` (`requests_not_cacheable`);
+  - `not_compile` (`requests_not_compile`);
+  - `unsupported` (`requests_unsupported_compiler`).
+
+  Rationale: every Cargo build begins with a `-vV` probe, which the adapter
+  submits as cacheable and the server declines (S1). These windows need a name
+  for the count rule and for H3. `declined` avoids reading like an admission
+  refusal, and `not_cacheable` stays a result of a compile that ran.
+- D5. Deviation in the vocabulary. Decision: `outcome_reason` gains
+  `unsupported_version`. A document whose `version` is outside
+  `SUPPORTED_SCCACHE_VERSIONS = frozenset({"0.14.0"})` is rejected, and
+  recording disables itself until restart (D16). Rationale: the RFC requires
+  the host check to be repeated after an upgrade.
+- D6. Deviation in event shape; this replaces the draft's two-grain event.
+  Decision: three supervisor events.
+  - `cache_outcome` (group grain only): exactly one per cached launch while
+    recording is on. Its fields are `cache_result`, `outcome_attribution`,
+    `crate_origin`, `outcome_reason`, `runtime_seconds` and
+    `window_groups`.
+  - `outcome_reading` (reading grain): emitted when the reading reason
+    changes, and once a minute as an aggregate with the counters
+    `readings`, `readings_skipped` and `readings_failed`.
+  - `outcome_store`: carries `store_operation` (`load`, `append`, `compact`
+    or `salt`), `store_reason`, `store_records` and `store_discarded`.
+
+  The field names avoid the generic `origin` and `attribution`, because
+  `FIELD_KINDS` is one flat namespace. Rationale: the panel found that a single
+  event with two grains double-counts in reports and floods the journal.
+- D7. Refinement for privacy. Decision: every digest is HMAC-SHA-256 under
+  the salt. Rationale: the argument digest covers absolute paths.
+- D8. Decision: a reading starts only when every gate clause holds (D20), and
+  only when either no baseline exists or the open window holds at least one
+  ended launch. Readings start at most once per `OUTCOME_READ_SECONDS = 1.0`,
+  with exponential back-off to 60 s on repeated failure. The statistics query
+  has a deadline of `OUTCOME_QUERY_SECONDS = 2.0`, and at most one query is in
+  flight.
+- D9. Deviation in the host-check method. Decision: run the real sccache
+  0.14.0 binary on a private socket and a private `SCCACHE_DIR`, driven by a
+  scripted fake `rustc` (`tests/fake_rustc.py`). The check is opt-in,
+  time-boxed to 1.5 hours, and does not block other milestones, because the
+  statistics fixture is captured read-only from the live managed socket in
+  EP-M0. Fallback if the check is no-go: a documented operator procedure (a
+  real cold-then-warm build through the live, admitted supervisor after
+  release). That fallback can show trailing counters only indirectly, as
+  `count_mismatch` spikes, so D12 then becomes mandatory. Rationale: compiling
+  under a private server would bypass admission (C-HOST).
+- D10. Deviation from RFC 0002 §2: the toolchain identity. Decision: the
+  identity is pure and needs no input or output. It is the tuple of:
+  - the HMAC of the compiler as given;
+  - the HMAC of `RUSTUP_TOOLCHAIN`, or of `""` when it is unset;
+  - the sccache Rust `CACHE_VERSION` (`"6"`);
+  - the server `version` from the statistics document.
+
+  The supervisor never runs `<compiler> -vV`, and never resolves or stats the
+  compiler. Rationale:
+  - Running a request-supplied compiler in the supervisor's control group is
+    a new trust boundary.
+  - Cargo already folds the compiler's `-vV` text into `-C metadata`, which
+    the argument digest covers.
+  - The panel found that the draft's filesystem fingerprint had no owner and
+    no port.
+
+  The residual confounder, a rustup channel name that has moved, is measured by
+  H5, just as the RFC accepts for an in-place sysroot change.
+- D11. Decision: the H1 to H5 thresholds in `Artefacts and notes` are fixed
+  in ADR 004 in EP-M0, before any data is read. `outcome_replay` holds them as
+  constants, and a test pins them to the ADR's text.
+- D12. Contingency, conditional on A2. Decision: only if EP-M1 shows a
+  trailing counter, a label is provisional until confirmed. A pure
+  `confirm(provisional, next) -> Attribution` confirms it only when the next
+  accepted window in the same generation balances exactly. The recorder holds
+  at most one pending attribution. An unconfirmed label becomes `unattributed`
+  with `count_mismatch`.
+- D13. Decision on classification order. A reading's reason is the first of
+  the following that applies:
+  1. `read_error`: the query exited non-zero or could not be launched.
+  2. `parse_error`: the output is not one JSON object with a `stats` object.
+  3. `unsupported_version`.
+  4. `generation_unavailable`.
+  5. `generation_changed`.
+  6. `empty_stats`: all counters are zero while the window holds a launch.
+  7. `counter_decreased`.
+  8. `ineligible_window`: the window holds an unclean group.
+  9. `count_mismatch`: any of these:
+     - Δ`compile_requests` is not the number of launches;
+     - the classification counters do not sum to Δ`compile_requests`;
+     - footprints cannot explain the executed requests.
+  10. `mixed_window`.
+
+  An all-zero baseline in a running generation is accepted, because a fresh
+  server is all zero.
+- D14. Deviation in the vocabulary. Decision: `outcome_reason` gains
+  `mixed_window`, for a sound, balanced window that the counters cannot split.
+  Rationale: the RFC requires `outcome_reason` to be `none` exactly when a
+  label exists, and none of its nine tokens names this case.
+- D15. Deviation in the vocabulary, from the panel. Decision:
+  `outcome_reason` gains these tokens:
+  - `straddled_reading` (D3);
+  - `supervisor_stopped`, for a window still open at stop;
+  - `no_baseline`, for launches that closed before the first baseline;
+  - `generation_unavailable` (D2);
+  - `window_overflow`, for more than 64 launches in one open window;
+  - `recorder_disabled`, when the total wrapper caught an exception or
+    `unsupported_version` fired.
+
+  `no_quiet_point` keeps the RFC's meaning, reported in the aggregate
+  `readings_skipped`. Rationale: O2 (one event per launch) needs a reason for
+  every path, and the panel found `no_quiet_point` overloaded three ways.
+- D16. Decision on back-off. Repeated identical reading failures back off 1,
+  2, 4 … 60 s, and the interval resets on success. `unsupported_version` and
+  `recorder_disabled` stop readings until restart, and the status document and
+  an `outcome_reading` event both say so.
+- D17. Deviation from RFC 0002 §2: the store format and writer. Decision:
+  the store is append-only JSON Lines at
+  `$XDG_STATE_HOME/buildlimits/cache-outcomes.jsonl` (default
+  `~/.local/state/buildlimits/`; directory mode 0700, files 0600).
+  - The first line is a header: `{"format": "buildlimits-cache-outcomes",
+    "version": 1, "salt_id": …, "written_at": …}`.
+  - One writer thread owns every file operation. The loop enqueues appends
+    into a bounded queue of 4,096 entries; on overflow the append is dropped
+    with `save_failed`.
+  - Compaction runs on the thread, at start and at stop. It drops records
+    aged 30 days by `observed_at`, keeps the 10,000 newest by insertion
+    sequence, then calls `fsync` and `os.replace` on a fixed temporary name.
+  - On load, a torn final line is dropped, and a file over 16 MiB is
+    `corrupt`. A `corrupt` or `version_mismatch` file is moved aside once to
+    `cache-outcomes.jsonl.bad`. A file of a newer version is never
+    overwritten.
+  - The stop path enqueues compaction after `settle_token_request` and
+    `requests.close_all`, then joins the thread for at most 1 s.
+
+  Rationale: the panel showed that a once-a-minute rewrite with `fsync` writes
+  up to 5.8 GB a day and can stall the loop for seconds. The RFC's "atomic
+  save" is kept for compaction. In W1, layer 1 is the only writer, and the
+  replay CLI gets a read-only loader.
+- D18. Decision on rollback safety. EP-M6 is a releasable, inert plateau. It
+  accepts `cache_outcomes` (`off` or `record`; `record` logs once that
+  recording is not built in this release) and registers the events. Compatible
+  with whom: the dev-env-rocky role's rendered `supervisor.toml` on a
+  downgrade. Without this plateau, a downgrade with the key set exits 2 and
+  stays down (R5). The users' guide documents removing the key before
+  downgrading past it.
+- D19. Decision on total entry points. Every `OutcomeShell` method that the
+  loop calls is wrapped. On an exception the wrapper logs once, records
+  `recorder_disabled`, switches to the null shell until restart, and returns.
+  The hooks are placed after the admission call they observe:
+  - the launch hook runs on the admitted branch, after `Groups.release`;
+  - the emptied hook reads `(group_id, cached, clean)` into a frozen value
+    before `group_emptied`, and calls the shell after `_apply`.
+- D20. Decision on the gate. The pure function
+  `outcome_gate.quiet_point(inputs) -> GateReason | None` requires every clause
+  to hold:
+  - `queued == 0`;
+  - `cached_moving == 0`;
+  - `server_drain == 0`;
+  - `admission.cached`;
+  - `cache_allowed()`;
+  - recovery idle;
+  - no restart barrier file;
+  - no query already in flight.
+
+  Recovery idle is read last, through `CacheRecovery.describe(now)["phase"]`,
+  because `cache_recovery.py` has no headroom for a property. The `queued == 0`
+  clause is the panel's: with a queue, the next launch follows within a
+  millisecond, and the reading would straddle.
+- D21. Deviation in the H3 evidence. Decision: the C4 predicate
+  `cacheability_features(argv)` covers two kinds of refusal:
+  - the RFC's features: incremental compilation, crate type, several inputs,
+    and `--emit` without `link`, `--crate-name` or `--out-dir`;
+  - S1's refusals: a missing input (Cargo's `-vV`) and the `NotCompilation`
+    flags.
+
+  For every balanced window, mixed or not, the store also gets a _window
+  summary_ record. It holds the number of launches, Δ`requests_not_cacheable`,
+  and how many launches the predicate classes as uncacheable. H3 uses both the
+  per-request rows from solo windows and the window counts. Rationale: without
+  "missing input", Cargo's first probe falsifies H3 at once, and the window
+  counts widen the sample from quiet windows to every balanced window. Equal
+  counts are necessary but not sufficient, and the verdict says so.
+- D22. Decision: `build-limits-cache-replay h3` ships in W1 (EP-M7), read
+  only over the store. Rationale: G1 needs the H3 verdict, so it cannot wait
+  for W2.
+- D23. Superseded by the owner's Q1 answer (b) on 2026-10-23. The draft
+  proposed that W1 collect no child sightings and report H2 as `not_collected`.
+  W1 now collects them in EP-M8 (D24, D25), and `not_collected` is reported
+  only for a store written before sampling existed, which cannot happen once
+  EP-M8 ships.
+- D24. Deviation from RFC 0002 §1 (ports). Decision: the RFC's
+  unit-properties port becomes `ServerProcessPort`, with two synchronous
+  operations on the same server process:
+  - `generation()` is the D2 read;
+  - `full_emit_metadata()` returns the `-C metadata` values of every
+    full-emit compiler process now in the server's control group, or
+    `SampleFailure`.
+
+  The control-group directory comes from `/proc/<pid>/cgroup` of the
+  generation's PID (`cgroups.parse_unified_path` and `cgroups.directory`),
+  cached per generation. Its members come from `cgroups.member_pids`. Each new
+  `(pid, starttime)` has its `/proc/<pid>/cmdline` read once and classified by
+  the pure `outcome_sightings.full_emit_metadata`. A sample inspects at most 64
+  processes, and the classification cache forgets a process once it leaves the
+  group. Rationale: both operations read the one server process from `/proc`,
+  so a sixth port would split a single concern, and the RFC's budget of five
+  ports holds. The RFC already requires child arguments to be compared in
+  memory and never stored, and this keeps that: only a tri-state token and a
+  sample count reach the record.
+- D25. Decision (H2 design, fixed in ADR 004 before any data is read).
+  - Matching. `outcome_sightings.request_metadata(argv)` reads the request's
+    own `-C metadata=X`, in any of the spellings `-C metadata=X`,
+    `-Cmetadata=X`, `--codegen metadata=X` and `--codegen=metadata=X`, and
+    keeps it in memory on the window entry. A process counts as a full-emit
+    compile only if it is a `rustc` (or `clippy-driver`) whose `--emit` set
+    includes `link` or `metadata`, or which has no `--emit` at all. A
+    dep-info-only pass never counts.
+  - Sampling. Every `CHILD_SAMPLE_SECONDS = 0.25`, while recording is on and
+    `cached_moving > 0`, each running cached entry gains one sample. It is
+    marked `seen` if its metadata is in the sampled set. Failures back off
+    from 0.25 s to 8 s and are counted.
+  - Record and event. Each `cache_outcome` and each stored record carries
+    `child_sighting`, which is `seen`, `not_seen` (sampled at least once and
+    never seen) or `unavailable` (never sampled, or the request had no
+    metadata), together with `child_samples`.
+  - The H2 classifier, applied by `build-limits-cache-replay h2` to stored
+    records labelled `hit` or `miss`, walking each key in insertion order:
+    1. Predict `miss` if `child_sighting` is `seen`.
+    2. Otherwise predict `miss` if the key has at least one earlier `hit`
+       and `runtime_seconds > max(1.0, 3 × median runtime of those earlier
+       hits)`.
+    3. Otherwise predict `hit`.
+
+    Only records with `child_samples >= 1` whose key holds both outcomes in
+    the store are evaluated, which is the RFC's "keys with both outcomes".
+  - The verdict:
+    - `supported` at 95% agreement or more;
+    - `refuted` below 90%;
+    - `inconclusive` in between;
+    - `insufficient` below 2,000 attributed outcomes or 100 evaluable
+      records.
+
+    The report also gives the share of labelled misses that were `seen`,
+    which tests the RFC's assumption that most misses leave a visible
+    child, and the agreement of each clue on its own.
+
+  Rationale: the RFC states H2's prediction and thresholds but not the
+  classifier, and an unfixed classifier could be tuned to the data. Fixing the
+  rule, the evaluable set and the minimum before reading keeps the verdict
+  honest. The `max(1.0, …)` floor keeps a key with very fast hits from calling
+  every dep-info-dominated hit a miss. What H2's verdict leads to is out of
+  this plan's scope: if `supported`, a separate plan may emit `inferred`
+  outcomes apart from labels (RFC I4); if `refuted`, a follow-up change removes
+  sampling (G1 runbook).
+- Considered and rejected: a "W1-lite" that defers the store, salt and key
+  until G1, as the panel's alternative. It saves about 40% of W1's code if G1
+  says stop, but delays H4 and H5 data by a whole collection period. G0 already
+  answers the coverage risk it hedged, and more cheaply. The owner may still
+  choose it at approval.
+- Q1 (resolved 2026-10-23 by the owner, leynos): (b), add an H2
+  child-sighting milestone to W1 now. G0 (S5) bounds solo coverage near 4.5%,
+  below H1's 5% line, and the RFC's rule then makes H2 the only route to
+  coverage. The other options were (a), proceed and decide H2 at G1, and (c),
+  stop after EP-M0. The impact is EP-M8 (D24, D25), with W2 renumbered EP-M9.
+
+## Outcomes & retrospective
+
+The panel's verdict on the first draft (Pandalump, Wafflecat, Buzzy Bee,
+Telefono, Doggylump and Dinolump, 2026-10-23) was ⚠️ proceed with conditions.
+This revision meets those conditions with:
+
+- a generation read that spawns nothing (D2);
+- separate events with bounded volume (D6, D16);
+- an append-only store on a writer thread (D17);
+- total entry points and safe hook placement (D19);
+- a pure gate with a `queued == 0` clause (D20);
+- a corrected H3 predicate with window evidence (D21), and `h3` delivered
+  before G1 (D22);
+- a pure toolchain identity (D10), with `RUSTUP_TOOLCHAIN` salted
+  (C-PRIV);
+- no toolchain-tag dropping in W1, since H5 needs those records (Telefono);
+- EP-M5 split into EP-M4 to EP-M7;
+- the test scaffolding named explicitly;
+- the self-contained tables in `Artefacts and notes`.
+
+The pre-mortem scenarios, each with its mitigation now designed in:
+
+- a once-a-minute `fsync` stall, answered by the writer thread;
+- a rollback outage on an unknown key, answered by D18;
+- six weeks of empty data from failing generation reads, answered by
+  `generation_unavailable`, back-off, the status line and a 24-hour check in
+  the G1 runbook.
+
+## Context and orientation
+
+buildlimits is a Python 3.14 package (`buildlimits/`) that rations Rust
+compiles on a shared host. The terms below are used throughout this plan.
+
+- Cargo runs `build-limits-rustc` (the _adapter_, `buildlimits/adapter.py`)
+  as `RUSTC_WRAPPER`. The adapter sends a _compile request_ (`argv`, `cwd`,
+  `env`, `label`, `cacheable`) to the _supervisor_ over a Unix socket. The
+  request's `env` is the caller's complete environment.
+- The supervisor (`buildlimits/supervisor.py`, `Supervisor`) is an
+  imperative shell around a pure _admission core_ (`buildlimits/admission.py`,
+  `Admission`). Admission returns _effects_ (`buildlimits/effects.py`), which
+  the shell carries out through `buildlimits/effect_dispatch.py`.
+- A _token_ is a byte from the shared pool device `/dev/guild`. Each
+  admitted request becomes a _group_ (`admission_state.Group`, `gN`), run in a
+  systemd transient _scope_. The token returns when the scope is empty.
+- A group is _cached_ when admission composed it with the _managed sccache
+  server_ (`buildlimits-sccache.service`, socket
+  `$XDG_RUNTIME_DIR/buildlimits/sccache.sock`). `Groups.launch_spec`
+  (`buildlimits/groups.py` line 283) prefixes `settings.sccache_executable` and
+  sets `SCCACHE_SERVER_UDS`. The client writes to the caller directly, so the
+  supervisor never sees a hit.
+- `Counts` (`admission_state.py` line 25) is an identifier-free snapshot.
+  `queued` counts waiting requests, `cached_moving` counts cached groups
+  running or draining, and `server_drain` counts groups retained in
+  `SERVER_DRAIN`. A cached group that ended abnormally keeps its token until
+  `ManagedSccache.accounted_drain` proves the server stopped and empty.
+  `Group.may_orphan_server_work` (line 88) is true when a group was cancelled,
+  has no recorded exit, or was signalled. Its negation is the RFC's _clean_
+  ending.
+- The loop:
+  - `Supervisor.serve` runs `DrainLoop.run` with `TICK_SECONDS = 0.1`. Each
+    cycle selects, dispatches, and calls `Supervisor._tick` (line 326).
+  - `_tick` ends with `supervisor_polling.poll_services`, which runs
+    `_poll_server` (every 1 s), `_poll_pool` (2 s) and `_poll_cache` (5 s).
+  - At lines 341-343, `_tick` calls `groups.remove(group_id)` and then
+    `_apply(admission.group_emptied(group_id))` for each emptied scope.
+  - `DrainLoop._failure` calls `fail_health` on any exception that escapes a
+    cycle (S6).
+  - `SIGCHLD` wakes the selector (`signal.set_wakeup_fd`). Group reaping is
+    per process ID, so a new child of the supervisor is never reaped by
+    group code.
+  - `pool.py` already runs a daemon reader thread, the precedent for a
+    worker thread.
+- `ServerWatch` (`buildlimits/server_watch.py`) owns reachability
+  (`admission.cached`, refreshed every 5 s by connecting to the socket), the
+  recovery hold (`cache_allowed()` is false during it) and drain release.
+  `CacheRecovery.describe(now)["phase"] == "idle"` is the only recovery-idle
+  predicate. The restart barrier is the file `settings.recovery_marker`.
+- Stop: `Supervisor.serve` returns from the loop, then calls
+  `supervisor_shutdown.settle_token_request` and `requests.close_all`
+  (`supervisor.py` lines 219-220).
+- Metrics:
+  - `metrics_schema.py` holds closed tables (`EVENTS`, `VOCABULARIES`,
+    `DURATIONS`, `COUNTERS`, `BOOLEANS`), and `FIELD_KINDS` is derived from
+    them.
+  - `metrics.Metrics.emit` validates each field and drops what fails.
+  - `metrics_report.report` builds the sections. `_cache` is the model, and
+    `metrics_pressure_report` shows an optional section.
+  - `metrics_cli._render` prints every top-level section.
+  - `journalctl --lines` caps a query at `--max-records`, 10,000 by default.
+    This host writes about 69,000 cached finishes a day, so the default
+    covers only a few hours.
+- Tracing: `tracing.JournalTracer.start(operation)` refuses an operation
+  that is not in `tracing_export.OPERATIONS`. `_bounded_attributes` keeps
+  `outcome`, `failure_category`, `stop_mode` and `retry_attempt` from the
+  `tracing_export` vocabularies (ADR 003). Spans are timed live, between
+  `start` and `finish`.
+- Settings: `config.SupervisorConfig` is a frozen dataclass. An unknown key
+  or a bad value stops start-up with exit 2. Enumerations are `str` fields
+  checked by `_RANGE_RULES`.
+- Clock: `timing.Clock` is a frozen dataclass of callables (`now`, `sleep`).
+- Tests: everything lives in `tests/`.
+  - Hypothesis state machines: `tests/test_admission.py::AdmissionMachine`.
+  - CrossHair contracts: `tests/crosshair_contracts.py`, run by
+    `tests/test_crosshair.py`.
+  - Syrupy snapshots: `tests/__snapshots__/`.
+  - pytest-bdd features: `tests/features/`.
+  - Opt-in host acceptance is marked `systemd_user`.
+    `make test-systemd-user` sets `BUILD_LIMITS_HOST_ACCEPTANCE=1`, and the
+    skip helper is `tests/systemd_harness.py::systemd_user_marks`.
+  - The global pytest timeout is 30 s.
+  - `tests/fixtures/fake_sccache.py` has only `server` and `client` modes.
+  - `tests/toolchain_trees.py::make_toolchain` creates empty toolchain
+    files.
+  - `make lint` runs strict Skylos and Vulture dead-code checks and a
+    duplication gate, whose allowances live in `pyproject.toml`.
+
+## Conformance basis
+
+- Terms of Reference: none exists for this repository. RFC 0002 supplies the
+  upstream intent.
+- Technical design: RFC 0002 (`docs/rfcs/0002-cache-hit-prediction.md`),
+  accepted 2026-10-23 at `42f40e4`. There is no separate `*-design.md`; the
+  developer's guide is the living interface reference.
+- ADRs:
+  - ADR 003 (bounded tracing) governs the spans. ADR 004 amends its scope
+    for the new operations.
+  - dev-env-rocky ADR 011 governs token coverage.
+  - This plan creates ADR 004 (`docs/adr-004-cache-outcome-recording.md`),
+    which records D2 to D25 and the fixed thresholds.
+- Standards: `AGENTS.md`, `docs/developers-guide.md`,
+  `docs/documentation-style-guide.md` and `docs/scripting-standards.md`.
+
+The traced identifiers are:
+
+- RFC-GOAL-1: record outcomes soundly. RFC-GOAL-3: decide with evidence.
+- RFC-I1 to RFC-I4: the layer 1 invariants.
+- RFC-PORTS: the five ports (clock, statistics, server process, store and
+  salt). D2 and D24 turn the unit-properties port into the server-process port.
+- RFC-OBS: the events, reasons, spans and report.
+- RFC-STORE: the store's path, bounds, aging, atomicity and single writer
+  (refined by D17).
+- RFC-PRIV: the salt, the file modes and the ban on export.
+- RFC-KEY: §2's key as used by layer 1 records (refined by D10).
+- RFC-H1 to RFC-H5, RFC-W1 and RFC-W2.
+- RFC-COMPAT: the off-by-default key and the schema-first rule.
+
+```plaintext
+RFC-GOAL-1 -> RFC-I4 -> EP-M2 outcome_attribution.attribute
+  -> tests/test_outcome_attribution.py::test_truth_table, ::test_every_mixed_multiset_is_unattributed
+RFC-GOAL-1 -> EP-M4 outcome_recorder -> tests/test_outcome_recorder_machine.py::RecorderMachine (O2, O3)
+RFC-I1 -> C-OBS -> EP-M7 -> tests/test_outcome_boundaries.py::test_decision_modules_never_reach_outcomes,
+  tests/test_outcome_noninterference.py::test_admission_trace_identical
+RFC-I2 -> C-NOSTART -> EP-M2/EP-M5 -> tests/test_outcome_gate.py, tests/test_outcome_queries.py::test_argv_is_show_stats_only
+RFC-I3 -> C-ISOLATE, C-TOKEN -> EP-M7 -> tests/test_outcome_loop.py::test_loop_admits_while_query_stalls,
+  tests/test_outcome_totality.py::test_raising_shell_never_strands_a_token
+RFC-PORTS -> EP-M4/EP-M5 -> tests/test_outcome_ports.py::test_every_port_failure_has_its_reason
+RFC-STORE, RFC-PRIV -> EP-M3/EP-M5 -> tests/test_outcome_records.py, tests/test_outcome_store.py,
+  tests/test_outcome_key_properties.py
+RFC-KEY -> EP-M3 -> tests/test_outcome_key.py
+RFC-OBS -> EP-M6/EP-M7 -> tests/test_outcome_metrics.py, tests/__snapshots__/test_metrics_report.ambr,
+  tests/__snapshots__/test_status_render.ambr
+RFC-W1 host check -> EP-M1 -> tests/test_sccache_real_binary.py (opt-in)
+RFC-H1, RFC-H3 -> EP-M7 -> build-limits-metrics cache_outcomes, build-limits-cache-replay h3 -> G1
+RFC-H2 -> Q1 (b), D24, D25 -> EP-M8 -> tests/test_outcome_sightings.py, tests/test_outcome_sightings_properties.py,
+  tests/test_outcome_replay_h2.py, build-limits-cache-replay h2 -> G1
+RFC-W2, RFC-H4, RFC-H5 -> EP-M9 -> tests/test_outcome_replay.py, tests/__snapshots__/test_outcome_replay.ambr
+RFC-COMPAT -> C-DEFAULT, C-SCHEMA, D18 -> EP-M6 -> tests/test_outcome_config.py,
+  tests/test_metrics_records_compatibility.py (extended)
+```
+
+## Verification plan
+
+### Axioms
+
+- A1. sccache 0.14.0 moves its counters as in Table A (`Artefacts and notes`).
+  Source: RFC 0002 §1 and S1. EP-M1 confirms hit, miss and declined on the real
+  binary.
+- A2. Every result counter for a request is updated before the reply, so a
+  reading taken after the client exits sees the whole footprint. Source: S1.
+  EP-M1 confirms it over 200 exits. If it fails, D12 activates.
+- A3. Each `Compile` request moves `compile_requests` once, then exactly one
+  of `requests_unsupported_compiler`, `requests_not_compile`,
+  `requests_not_cacheable` or `requests_executed`. An executed request moves at
+  most one result footprint, and none for the silent paths. A panic in
+  `compiler_info` moves `compile_requests` alone, which the count rule rejects.
+  Source: S1.
+- A4. `SO_PEERCRED` on a connected `AF_UNIX` stream socket returns the
+  credentials the listening process had when it called `listen(2)` (`unix(7)`).
+  systemd sets `INVOCATION_ID` in every process of a service invocation
+  (`systemd.exec(5)`). `/proc/<pid>/stat` field 22 is the start time in clock
+  ticks since boot (`proc(5)`). The EP-M7 systemd scenario and EP-M1 exercise
+  these facts.
+- A5. `sccache --show-stats` uses `connect_to_server` and never starts a
+  server (S1, RFC C5).
+- A6. A scope reported empty means the sccache client has exited (the
+  existing `group_drain` contract).
+- A7. Cargo sets `CARGO_PKG_NAME`, `CARGO_PKG_VERSION` and
+  `CARGO_MANIFEST_DIR` for every compiler invocation, and folds `rustc -vV` into
+  `-C metadata` (Cargo Book).
+- A8. `os.replace` within one directory is atomic on Linux local
+  filesystems. A single `write` of one line under `O_APPEND` either lands whole
+  or leaves a torn tail, which the loader drops.
+- A9. For a miss, sccache 0.14.0 runs the full-emit compile as a descendant of
+  the server, inside the unit's control group. That process's argv keeps the
+  request's `-C metadata` value and an `--emit` that includes `link` or
+  `metadata`. The hash-key pass of every request, hit or miss, runs with
+  `--emit=dep-info` only. Source: RFC 0002 C3 and its discussion of Table 1.
+  EP-M1 confirms this with a fake `rustc` that sleeps on full emit.
+- A10. Reading `/proc/<pid>/cmdline` or `/proc/<pid>/stat` for a process that
+  has just exited fails with `ENOENT` or `ESRCH`, or returns empty text, and
+  never returns another process's data. A `(pid, starttime)` pair guards
+  against PID reuse (`proc(5)`).
+
+### Obligations
+
+Each obligation names its method, artefact, evidence and non-vacuity check.
+
+O1. Footprint decoding is sound. A solo window's label is the true outcome of
+its request. A unanimous window's label is true for every request in it. Every
+window whose delta is a sum of two or more distinct footprints is
+`unattributed`.
+
+- Method: exhaustive enumeration, plus a CrossHair contract.
+- Domain: every multiset of size 1 to 4 drawn from Table A's thirteen
+  footprints.
+- Artefacts:
+  - `tests/test_outcome_attribution.py::test_truth_table`;
+  - `tests/test_outcome_attribution.py::test_every_mixed_multiset_is_unattributed`;
+  - `tests/crosshair_contracts.py::decoding_never_labels_mixed`.
+- Evidence (red):
+  `ModuleNotFoundError: No module named 'buildlimits.outcome_attribution'`.
+- Non-vacuity:
+  - The enumeration must produce at least one solo window of each class.
+  - It must produce one unanimous window of each unanimous class (hit, miss,
+    not_cached, not_cacheable, declined).
+  - It must produce at least 500 mixed multisets.
+  - The RFC's ambiguous pair is a named row, and a solo silent window must
+    be `count_mismatch`.
+- Mutations: each of these must fail a named test:
+  - hits derived from `compilations`;
+  - the `cache_errors` footprint dropped;
+  - a unanimous `error` allowed.
+
+  The mutation log goes to `/tmp/mutation-buildlimits-cache-hit-prediction.out`
+  and is summarized in `Outcomes & retrospective`.
+
+O2. Exactly one event per launch. Every cached launch made while recording is
+on yields exactly one `cache_outcome`. It comes from its window's close, or from
+`supervisor_stopped`, `no_baseline`, `window_overflow` or `recorder_disabled`.
+
+- Method: a Hypothesis `RuleBasedStateMachine` over the recorder (EP-M4)
+  with fake ports.
+- Rules:
+  - a launch (cached or direct), a launch failure, a clean exit, a signalled
+    exit and a cancel;
+  - `SERVER_DRAIN` and its release;
+  - a reading in each port outcome (prompt, slow, abandoned, failing);
+  - a straddling launch, a server restart, and more than 64 launches;
+  - an injected exception, and stop.
+- Artefact: `tests/test_outcome_recorder_machine.py::RecorderMachine`.
+- Non-vacuity: `hypothesis.event` labels must include each of these:
+  - a solo, a unanimous, a mixed and a rejected window;
+  - an abandonment, a straddle, a restart and an overflow.
+
+  A teardown check over the `RecorderMachine.TestCase` run fails if any label
+  is missing.
+- Mutation: treating a straddled reading as a baseline must produce a
+  double count that the machine finds.
+
+O3. Labels are sound against a model server. Every emitted label equals the
+model's truth. This holds under overlapping groups, abnormal endings, restarts
+(one of which places the new generation's counters above the old), and the D12
+path when it is active.
+
+- Method: the same machine, whose model server keeps per-request truth.
+- Non-vacuity: at least one label per run.
+- Mutation: skip the generation check. A restart above the old values must
+  then yield a wrong label.
+
+O4. Non-interference (I1). The admission input trace (the sequence of
+`Admission` method calls and arguments), the dispatched effects and the
+token-return ticks are identical with recording on and off.
+
+- Methods:
+  - a differential state machine driving two full shells with a fake pool,
+    fake groups and fake ports;
+  - a transitive import-closure test over both `import` and `from`
+    statements;
+  - the reverse rule: outcome domain modules never import `admission`.
+- Artefacts: `tests/test_outcome_noninterference.py` and
+  `tests/test_outcome_boundaries.py`.
+- Non-vacuity: the run must reach a cached launch, a `SERVER_DRAIN` and a
+  completed reading.
+- Mutation: the shell delays `token_arrived` while a query is in flight. The
+  differential must fail.
+
+O5. Loop liveness (I3). While a statistics query stalls for its whole deadline,
+the loop still accepts a request, admits it and returns a token. The child is
+killed and reaped, and its pipe closed.
+
+- Artefact: `tests/test_outcome_loop.py::test_loop_admits_while_query_stalls`.
+- Evidence:
+  - at least 10 loop iterations during the stall;
+  - one admission and one token return;
+  - `waitpid` reports the child reaped;
+  - no descriptor left open (`descriptor_guard`).
+- Non-vacuity: substituting a blocking `subprocess.run` makes the iteration
+  count 0.
+
+O6. Vocabulary completeness. A test provokes and asserts each token of
+`outcome_reason`, `store_reason`, `cache_result`, `store_operation` and the
+gate reasons, and each Table 2 port failure. The exception is `inferred`, which
+is asserted never to be emitted.
+
+- Artefacts: `tests/test_outcome_reasons.py` and
+  `tests/test_outcome_ports.py`.
+- Non-vacuity:
+  - A meta-test compares the parametrized IDs with both
+    `metrics_schema.VOCABULARIES` and the `typ.Literal` aliases (through
+    `typ.get_args`).
+  - A timed-out reading asserts that no label exists, never that a label is
+    unchanged.
+
+O7. Privacy. No stored or journalled value contains a path separator or any
+component of a generated local path. The paths cover the manifest directory,
+`CARGO_HOME`, the compiler as given, `RUSTUP_TOOLCHAIN` as a path, and path
+arguments. Without a salt no record is written, and the `cache_outcome` event
+is unchanged.
+
+- Method: Hypothesis over those generators.
+- Artefact: `tests/test_outcome_key_properties.py`.
+- Non-vacuity: `hypothesis.event` must classify registry, git and path
+  origins, and a path-valued `RUSTUP_TOOLCHAIN`.
+- Mutation: storing the raw input to the `path:` digest must make the
+  property fail.
+
+O8. Store bounds and durability:
+
+- After compaction, the file holds at most 10,000 records, none of them with
+  `observed_at` older than 30 days.
+- Eviction follows insertion sequence.
+- A torn tail line is dropped.
+- A version mismatch moves the file aside, and a newer file is never
+  overwritten.
+- A wall-clock jump of more than one day in either direction skips aging,
+  with `clock_skew`.
+- A changed salt reports `salt_changed`.
+- A salt that exists but cannot be read is never regenerated.
+
+Method and evidence:
+
+- Method: Hypothesis over append, compact, load, clock and salt sequences,
+  plus fault-injected input and output.
+- Artefacts: `tests/test_outcome_records.py` and
+  `tests/test_outcome_store.py`.
+- Non-vacuity: the generator reaches the bound, an expiry and a torn tail.
+
+O9. Restart baseline. After a restart, the first window in the new generation
+is attributed against the reading that exposed the restart. That reading is
+never itself attributed.
+
+- Method: a unit test and the systemd scenario.
+- Non-vacuity: the scenario's counters after the restart exceed the old
+  values, so a decrease-only rule would mislabel.
+- Mutation: keeping the old baseline must fail the scenario.
+
+O10. Key normalization. The key handles:
+
+- registry origins, including pre-release versions with hyphens;
+- git and path origins;
+- a non-default `CARGO_HOME` and missing variables;
+- both `--crate-name=foo` and `--crate-name foo`;
+- `--target` as a name or as a JSON path.
+
+- Method: parameterized tests.
+- Non-vacuity: a row in which `CARGO_PKG_VERSION` disagrees with the
+  directory name must become `path:`, never `registry:`.
+
+O11. Totality (C-ISOLATE, C-TOKEN). An exception injected into each shell entry
+point leaves `loop.failures == 0` and `admission.healthy`. Every token is
+returned, and a graceful stop completes.
+
+- Artefact: `tests/test_outcome_totality.py`.
+- Mutation: removing the wrapper must make the test fail.
+
+O12. Sighting soundness (H2 input). An entry is marked `seen` only when one
+sample, taken while the entry was running, contained a full-emit process whose
+`-C metadata` equals the entry's own. A dep-info-only process never marks an
+entry. An entry without metadata is always `unavailable`. `not_seen` means at
+least one sample and no match. `child_samples` counts exactly the samples taken
+while the entry was running.
+
+- Method:
+  - parameterized tests of `request_metadata` and `full_emit_metadata` over
+    each `-C`/`--codegen` spelling, each `--emit` form, and no `--emit`;
+  - a Hypothesis property over generated launch, end and sample sequences,
+    with overlapping groups of the same crate but different metadata.
+- Artefacts: `tests/test_outcome_sightings.py` and
+  `tests/test_outcome_sightings_properties.py`.
+- Non-vacuity: `hypothesis.event` must classify `seen`, `not_seen` and
+  `unavailable`, plus a sample that held a dep-info pass only.
+- Mutations: each of these must fail a named test:
+  - treating `--emit=dep-info` as full emit;
+  - matching on the crate name instead of the metadata;
+  - counting samples taken after the entry ended.
+
+O13. Replay verdict boundaries. For H2 and H3 in W1, and H4 and H5 in EP-M9,
+the verdict changes exactly at the thresholds fixed in ADR 004. For H2 the
+boundaries are 95% and 90% agreement, 100 evaluable records and 2,000
+attributed outcomes. The evaluable set is exactly as D25 defines it.
+
+- Method: parameterized synthetic stores at, just above and just below each
+  boundary, plus a test that pins the constants to ADR 004's text.
+- Artefacts: `tests/test_outcome_replay_h2.py`,
+  `tests/test_outcome_replay.py`.
+- Non-vacuity: every verdict token is reached for every hypothesis that can
+  produce it.
+- Mutation: off-by-one on any boundary, or counting a key that holds only
+  one outcome as evaluable, must fail.
+
+Residual gaps:
+
+- Label soundness on the real server rests on A1 to A3. EP-M1 checks a few
+  hundred windows on the real binary, and the model server covers the
+  interleavings.
+- The RFC's caveat stands: labels from solo and unanimous windows favour
+  quiet, uniform periods. On this host that means at most about 4.5% of cached
+  compiles (S5).
+- H2 is evaluated only against those same labels. Its agreement measures the
+  classifier on quiet windows, while its use would be on busy ones. A sample
+  every 0.25 s also misses full-emit children that live less than that, which
+  biases the sighting clue towards long misses (R9). The H2 report states both
+  limits.
+
+## Plan of work
+
+The design follows the repository's functional core and imperative shell
+(developer's guide §3) and the hexagonal rule that the domain owns its ports.
+Every new module but one generic helper uses the single prefix `outcome_`, so
+the module inventory gains one row. The draft name `cache_outcome.attribute`
+becomes `outcome_attribution.attribute`.
+
+Domain modules are pure: no input or output, no `os`, `socket`, `subprocess` or
+`threading`, and no clock.
+
+- `outcome_stats.py`: `StatsReading` and `parse_statistics(text, supported)`.
+- `outcome_attribution.py`: `FOOTPRINTS` (Table A as data),
+  `attribute(before, after, window)`, and `confirm` (D12).
+- `outcome_gate.py`: `QuietInputs` and `quiet_point(inputs)`.
+- `outcome_key.py`: `crate_name`, `crate_origin`, `target`,
+  `argument_digest`, `toolchain_identity` and `cacheability_features`. Each
+  takes the `Salt` as a value.
+- `outcome_records.py`: `OutcomeRecord`, `WindowSummary`, `StoreHeader`,
+  `encode_line`, `decode_lines` and `compact`.
+- `outcome_window.py`: `OutcomeWindow[P]`, a ledger generic over an opaque
+  payload. The recorder is its only owner.
+- `outcome_sightings.py` (EP-M8): `request_metadata(argv)`,
+  `full_emit_metadata(argv)` and `ChildSightings`, which is the per-entry
+  sample count and sighting, folded by the recorder on each `Sampled` event.
+- `outcome_vocabulary.py`: the `typ.Literal` aliases (`CacheResult`,
+  `OutcomeReason`, `StoreReason`, `GateReason`, `StoreOperation` and, from
+  EP-M8, `ChildSighting`), each tested equal to its `metrics_schema` table.
+- `outcome_ports.py`: `StatisticsPort`, `ServerProcessPort` and
+  `OutcomeStorePort` (each a `typ.Protocol`), `SaltSource` (a `Callable`
+  alias), and their result and failure types. The clock is `timing.Clock`,
+  extended with an optional `wall` callable.
+
+The application service, `outcome_recorder.py`, is a typestate:
+
+- `RecorderState` is one of the frozen dataclasses `Idle` (which holds the
+  back-off), `Querying` and `Disabled`.
+- A pure `advance(state, event) -> tuple[RecorderState, Outputs]` handles
+  the events `Launched`, `Ended`, `GateOpen`, `PollResult` and `Stopping`.
+- `Outputs` carries events, records, span transitions (`QueryStarted`,
+  `QueryFinished`) and port commands (`StartQuery`, `CloseQuery`).
+- A thin driver, `OutcomeRecorder`, executes the port commands. It emits and
+  saves nothing itself.
+
+The adapters form the shell.
+
+- `nonblocking_child.py`: `NonBlockingChild` and `ChildReaper`. They are
+  generic, and the only sanctioned way for the loop to run a helper process.
+  - `subprocess.Popen` gets an absolute executable, resolved once at start.
+  - It runs with `stdin=DEVNULL`, `stderr=DEVNULL` and stdout as a
+    non-blocking pipe. It passes no `preexec_fn`, user, group, umask or
+    process group, which keeps CPython's `posix_spawn` path.
+  - Reads are capped at 64 KiB in total. At the deadline the child gets
+    `SIGKILL` and its pipe is closed at once. The reaper polls
+    `Popen.poll()`, with a bound of 4. When it is full, starting a child
+    fails with `read_skipped`, a gate reason.
+  - The one live pipe comes out of
+    `descriptor_budget.DESCRIPTOR_RESERVE` (16), and the developer's guide
+    says so.
+- `outcome_queries.py`:
+  - `SccacheStatistics(StatisticsPort)`, with the argv module constant
+    `("--show-stats", "--stats-format", "json")` after the executable. Its
+    environment is the supervisor's own `PATH`, `HOME` and
+    `XDG_RUNTIME_DIR`, plus `SCCACHE_SERVER_UDS`.
+  - `PeerServerProcess(ServerProcessPort)`: the D2 generation read
+    (EP-M5), and from EP-M8 the D24 child sample. Both are synchronous and
+    bounded.
+- `outcome_store.py`:
+  - `StoreWriter(OutcomeStorePort)` is the writer thread, with a bounded
+    queue, `load`, `append`, `compact` and `close(timeout)`. A result queue
+    is drained by the loop each tick.
+  - `file_salt(path) -> Salt | StoreFailure` creates the salt with `O_EXCL`
+    and a rename, checks its length, and never regenerates an unreadable
+    salt. It runs on the writer thread at start. The loop receives the
+    `Salt` through the result queue. Launches before it arrives have no key:
+    their attribution is unchanged, and no record is written.
+  - The store path resolver `store_path(env)` is shared with the replay
+    CLI.
+- `outcome_telemetry.py`: maps `Outputs` to `Metrics.emit` calls and to live
+  `JournalTracer` spans, one per in-flight query.
+- `supervisor_outcomes.py`: `OutcomeShell` and `NullOutcomeShell`. The shell
+  reads the gate inputs, routes the hooks to the recorder, drains the writer's
+  results, and wraps every entry point (D19). Its entry points are
+  `launched(entry, group_id)`, `emptied(GroupEnding)`, `on_tick(now)`,
+  `describe()` and `close(timeout)`.
+
+Changes to existing modules:
+
+- `supervisor.py`:
+  - a field `outcomes`, built in `start` from settings (a null shell when
+    recording is off);
+  - a hook after `_apply(group_emptied)`;
+  - `close(1.0)` after `requests.close_all()`.
+
+  The emptied loop moves into `group_recovery.empty_groups(supervisor)` to free
+  lines.
+- `supervisor_placement.py`: `outcomes.launched` on the admitted branch,
+  after the release.
+- `supervisor_polling.py`: `outcomes.on_tick(now)` last in `poll_services`.
+- `config.py`: `cache_outcomes: str = "off"`, a `CACHE_OUTCOMES` constant,
+  and a `_RANGE_RULES` row that rejects `record` with `cache_mode = "direct"`.
+- `metrics_schema.py`:
+  - three events;
+  - the vocabularies `cache_result`, `outcome_attribution` (`solo`,
+    `unanimous`, `inferred`, `none`), `crate_origin`, `outcome_reason`,
+    `store_reason` and `store_operation`;
+  - the counters `window_groups`, `readings`, `readings_skipped`,
+    `readings_failed`, `store_records` and `store_discarded`.
+- `metrics_report.py`: an optional `cache_outcomes` section. The coverage
+  denominator is `request_admitted` records with `cache_path=cached`.
+- `tracing_export.py`:
+  - the operations `statistics_read` (one span per statistics query) and
+    `outcome_store_compact`;
+  - the broad failure categories `statistics_query`, `store_io` and `salt`;
+  - the span outcome `completed`.
+
+  Detailed reasons stay in metrics only. ADR 004 amends ADR 003's scope.
+- `status.py` and `status_render.py`: an optional `cache_outcomes` object
+  and one line, absent when recording is `off`.
+- `pyproject.toml`: the marker `sccache_host_check`, the console script
+  `build-limits-cache-replay`, Skylos entry points, Vulture `ignore_names` for
+  the CrossHair contracts, and any duplication-gate allowances. Each is listed
+  in developer's guide §12.
+- `Makefile`: a `test-sccache-host` target. It is `.PHONY`, has `##` help
+  text, sets `BUILD_LIMITS_SCCACHE_HOST_CHECK=1`, and runs
+  `pytest -m sccache_host_check tests`. It must pass `mbake validate Makefile`.
+
+Test support:
+
+- `tests/fixtures/fake_sccache.py` gains a
+  `client --show-stats --stats-format json` mode. Its server gains counters,
+  scripted outcomes from `FAKE_SCCACHE_SCRIPT` (JSON lines such as
+  `{"result": "hit"}`), a scripted statistics delay, and an `INVOCATION_ID`
+  inherited from the unit. `tests/test_fake_sccache.py` gains matching tests.
+- `tests/fake_rustc.py` (new): a scripted fake `rustc` that answers `-vV`,
+  `--print=sysroot` and dep-info requests and writes outputs. It gets a row in
+  developer's guide §11.2.
+- `tests/outcome_doubles.py` (new): fake ports, the model server and
+  `RecordingSpans`.
+- `tests/sccache_host.py` (new): `sccache_host_marks()`, modelled on
+  `systemd_user_marks`, with its own opt-in test.
+
+W2:
+
+- `outcome_replay.py` (pure) computes:
+  - the H2 verdict (EP-M8), using D25's classifier;
+  - the H3 verdict, from solo rows and window summaries;
+  - the H4 registry hit rate after the first observation;
+  - the H5 flip rates, excluding identity changes;
+  - a comparison by Brier score and calibration of a base-rate predictor, a
+    last-outcome predictor, and a Beta estimate over the last eight outcomes
+    with an origin prior.
+
+  The thresholds are constants pinned to ADR 004. The verdict tokens are
+  `supported`, `refuted`, `inconclusive` (between the support and falsification
+  thresholds), `insufficient` and `not_collected`.
+- `outcome_replay_cli.py` provides
+  `build-limits-cache-replay [h2|h3|h4|h5|all] [--store PATH] [--json]`. The
+  JSON output carries a `schema` key. Exit status is 0 for a report (a missing
+  store reports `insufficient`), 1 for a `corrupt` or `version_mismatch` store
+  (with the reason named), and 2 for bad options. `h3` ships in EP-M7, `h2` in
+  EP-M8, and `h4`, `h5` and `all` in EP-M9. Coverage derived from the journal
+  stays in `build-limits-metrics`, so the replay never queries the journal.
+
+## Milestones and plateaus
+
+Each milestone ends with the gates run sequentially by the `scrutineer`
+subagent: `make check-fmt`, `make typecheck`, `make lint` and `make test`.
+Documentation changes add `make markdownlint` and `make nixie`, and EP-M7 also
+runs `make test-systemd-user`.
+
+Commit at least once per milestone, with separate commits for the red, green
+and refactor steps when each leaves the tree green. Use a strict `xfail` to
+commit a red step. Add the module-inventory rows (developer's guide §4) in the
+milestone that adds each module.
+
+### EP-M0: decisions recorded before any data
+
+- Outcome:
+  - `docs/adr-004-cache-outcome-recording.md` (Status: Proposed; Accepted
+    when EP-M8 merges) records D2 to D25, the fixed thresholds of Table B,
+    the 2,000-outcome minimum, the vocabulary and the ADR 003 scope
+    amendment. RFC 0002 links to it.
+  - `docs/roadmap.md` gains a rewritten preamble covering both RFCs, with
+    references qualified as in "RFC 0002 G1". It also gains phase 3,
+    "Record and evaluate cache outcomes", with step 3.1 (W1: EP-M1 to
+    EP-M8) and step 3.2 (W2: EP-M9).
+  - `docs/contents.md` indexes ADR 004.
+  - `tests/fixtures/sccache_0_14_0_stats.json` is captured by one read-only
+    `--show-stats --stats-format json` against the managed socket, with
+    `cache_location` and `basedirs` redacted.
+  - G0 (S5) is recorded.
+- Acceptance: the documentation gates pass, and the thresholds match RFC
+  0002 verbatim.
+- Recovery: revert the commits.
+- Compatibility decision: none.
+
+### EP-M1 (prototype, 1.5-hour time-box, not blocking): real sccache behaves as read
+
+- Outcome: `tests/test_sccache_real_binary.py`, marked `sccache_host_check`
+  and skipped unless `BUILD_LIMITS_SCCACHE_HOST_CHECK=1` and
+  `sccache --version` prints `sccache 0.14.0`. It carries
+  `pytest.mark.timeout(600)`.
+- Setup:
+  - It starts a private server with `SCCACHE_SERVER_UDS` and `SCCACHE_DIR`
+    in a temporary directory, `SCCACHE_IDLE_TIMEOUT=0` and
+    `SCCACHE_NO_DAEMON=1`.
+  - The server runs under `systemd-run --user --scope` when available, so
+    `INVOCATION_ID` is checked too.
+  - It drives the server with a `make_toolchain` tree whose `rustc` is
+    `tests/fake_rustc.py`.
+- Checks:
+  - A cold request moves the miss footprint, and a warm identical one moves
+    only `cache_hits` (A1). The client's output and exit status are
+    identical in both cases (C2).
+  - `-vV` moves `requests_not_cacheable`, and `--print=sysroot` moves
+    `requests_not_compile` (A3).
+  - Across 200 exits, a reading taken immediately after each exit shows the
+    whole footprint (A2).
+  - `SO_PEERCRED` on the private socket yields the server's PID (A4).
+  - During a cold request, the fake `rustc` sleeps for
+    `FAKE_RUSTC_EMIT_SECONDS = 1.0` on full emit. A sample of the server's
+    control group then finds a process whose argv carries the request's
+    `-C metadata` and a full `--emit`. During a warm request it finds at most a
+    `--emit=dep-info` process (A9, used by EP-M8).
+- Fixture: the readings and true outcomes are saved as
+  `tests/fixtures/sccache_0_14_0_windows.jsonl`. EP-M2 replays them through
+  `attribute()` in continuous integration, which gives H1's label agreement.
+- Go or no-go: go if every assertion passes. Otherwise take D9's fallback,
+  document the operator procedure in EP-M7, and make D12 mandatory.
+- Recovery: the check is additive and opt-in, so delete it to discard.
+- Compatibility decision: none.
+
+### EP-M2: pure statistics, attribution and gate
+
+- Outcome: `outcome_vocabulary.py`, `outcome_stats.py`,
+  `outcome_attribution.py` and `outcome_gate.py`. This discharges O1 and the
+  gate half of C-NOSTART.
+- Red:
+  - `tests/test_outcome_stats.py`: the fixture, and empty, partial,
+    malformed and unsupported-version documents.
+  - `tests/test_outcome_attribution.py`.
+  - `tests/test_outcome_gate.py`: each clause false in turn.
+  - The CrossHair contract.
+  - The BDD feature below.
+
+  Run the command below, and expect
+  `ModuleNotFoundError: No module named 'buildlimits.outcome_attribution'`:
+
+  ```bash
+  uv run pytest tests/test_outcome_stats.py tests/test_outcome_attribution.py \
+    tests/test_outcome_gate.py tests/test_outcome_rules_behaviour.py
+  ```
+
+- Feature `tests/features/outcome_rules.feature`, with steps in
+  `tests/test_outcome_rules_behaviour.py`:
+
+  ```gherkin
+  Feature: Attributing sccache outcomes from statistics at quiet points
+    A label is given only when the counters can say which request it belongs to.
+
+    Scenario: A solo window that only moved cache_hits is a hit
+      Given a baseline reading in generation "a"
+      And one cached group that ended cleanly
+      When a reading in generation "a" shows cache_hits up by 1 and compile_requests up by 1
+      Then the group is labelled "hit" with attribution "solo"
+
+    Scenario: A solo window that only moved compilations is not a hit
+      Given a baseline reading in generation "a"
+      And one cached group that ended cleanly
+      When a reading in generation "a" shows compilations up by 1 and compile_requests up by 1
+      Then the group is labelled "not_cached" with attribution "solo"
+
+    Scenario: A mixed window is never split
+      Given a baseline reading in generation "a"
+      And three cached groups that ended cleanly
+      When a reading shows one hit, one miss and one declined request
+      Then every group is "unattributed" with attribution "none"
+      And the outcome reason is "mixed_window"
+
+    Scenario: A restart is caught even when counters climb past the old values
+      Given a baseline reading in generation "a" with compile_requests 5
+      And one cached group that ended cleanly
+      When a reading in generation "b" shows compile_requests 9
+      Then the group is "unattributed" with outcome reason "generation_changed"
+
+    Scenario: A signalled group makes its window ineligible
+      Given a baseline reading in generation "a"
+      And one cached group that was signalled
+      When a reading in generation "a" shows a miss
+      Then the group is "unattributed" with outcome reason "ineligible_window"
+
+    Scenario: Cargo's version probe is declined, not a non-cacheable compile
+      Given a baseline reading in generation "a"
+      And one cached group that ended cleanly
+      When a reading shows requests_not_cacheable up by 1 and compile_requests up by 1
+      Then the group is labelled "declined" with attribution "solo"
+  ```
+
+- Conformance check: `tests/test_outcome_boundaries.py` pins the purity of
+  the domain modules.
+- Remaining gaps: keys, the recorder, the adapters and the wiring.
+- Compatibility decision: none.
+
+### EP-M3: keys, records and the window ledger
+
+- Outcome: `outcome_key.py`, `outcome_records.py` and `outcome_window.py`.
+  This discharges O7, the pure part of O8, and O10.
+- Red: `tests/test_outcome_key.py`, `tests/test_outcome_key_properties.py`
+  and `tests/test_outcome_records.py`.
+- Snapshot: `tests/__snapshots__/test_outcome_records.ambr` pins one header
+  line, one record line and one window-summary line under a fixed salt and
+  fixed times, with a round-trip semantic assertion beside it.
+- Compatibility decision: none; format version 1 is new.
+
+### EP-M4: the reading sequencer over fake ports
+
+- Outcome: `outcome_ports.py` and `outcome_recorder.py`. This discharges O2,
+  O3, the reading reasons of O6, and O9 at unit level. D12's `confirm` stays
+  behind a flag.
+- Red: `tests/test_outcome_recorder.py` (examples) and
+  `tests/test_outcome_recorder_machine.py`.
+- Remaining gaps: the real adapters and the wiring.
+- Compatibility decision: none.
+
+### EP-M5: adapters
+
+- Outcome: `nonblocking_child.py`, `outcome_queries.py` and
+  `outcome_store.py`. This discharges O5 at adapter level, the input and output
+  part of O8, and the port half of O6.
+- Red:
+  - `tests/test_nonblocking_child.py`:
+    - a slow script is killed at the deadline, reaped, and its pipe closed;
+    - output is capped at 64 KiB;
+    - the reaper bound holds;
+    - the `Popen` keyword arguments are pinned.
+  - `tests/test_outcome_queries.py`:
+    - the extended `fake_sccache.py client --show-stats`, with the argv
+      pinned;
+    - the peer generation over a real listening socket, including a refused
+      connect, `/proc` read failures, and a listener whose environment holds
+      `INVOCATION_ID`.
+  - `tests/test_outcome_store.py`, with a temporary `XDG_STATE_HOME`:
+    - file modes;
+    - a torn tail and a file over 16 MiB;
+    - a version mismatch, and moving the file aside;
+    - refused writes and a full queue;
+    - a writer stalled for 5 seconds against the 1-second close bound;
+    - salt creation, an unreadable salt and a changed salt.
+- Compatibility decision: none.
+
+### EP-M6: inert schema, configuration and vocabulary (releasable plateau)
+
+- Outcome:
+  - `config.py` accepts `cache_outcomes`. With `record`, start-up logs
+    "cache outcome recording is not available in this build" once.
+  - `metrics_schema.py` gains the three events and their fields, and
+    `tracing_export.py` the operations and categories.
+  - `metrics_report.py` gains the optional section, which is empty without
+    events.
+  - A report snapshot from synthetic records.
+  - The users' guide Table 2 gains the key.
+- Red:
+  - `tests/test_outcome_config.py`.
+  - `tests/test_outcome_metrics.py`.
+  - The O6 meta-test.
+  - An extended `tests/test_metrics_records_compatibility.py`. A
+    `cache_outcome` with an unknown `cache_result` must still decode its
+    other fields, and `attributed` must be computed from
+    `outcome_attribution`.
+- Compatibility decision: D18. This release is compatible with the role's
+  rendered configuration on a downgrade to it.
+
+### EP-M7: wiring, status, report, `h3` and documentation
+
+- Outcome:
+  - `outcome_telemetry.py` and `supervisor_outcomes.py`;
+  - the hooks (D19) and the moved emptied loop;
+  - the status object and its line;
+  - `outcome_replay.py` (H3 only) and `outcome_replay_cli.py h3`;
+  - the documentation set below.
+- Red:
+  - `tests/test_outcome_loop.py` (O5);
+  - `tests/test_outcome_noninterference.py` (O4);
+  - `tests/test_outcome_totality.py` (O11);
+  - `tests/test_outcome_null_shell.py` (C-DEFAULT), which spies on
+    `subprocess.Popen`, `open`, `socket.socket` and `threading.Thread`;
+  - status snapshots with and without the object;
+  - `tests/test_replay_cli.py` (the `h3` exit codes);
+  - `tests/test_cache_outcomes_systemd.py`, with
+    `tests/features/cache_outcomes_on_systemd.feature` below.
+- Opt-in performance test: `tests/test_outcome_latency.py`, marked
+  `sccache_host_check`. It records p99 tick lengthening and append-enqueue time
+  into `Outcomes & retrospective`, against the performance tolerance.
+- Feature, marked `systemd_user`:
+
+  ```gherkin
+  Feature: Recording cache outcomes under a real user manager
+    Background:
+      Given an isolated supervisor with cache_outcomes "record" and a scripted fake sccache
+
+    Scenario: Labels follow the script
+      Given the fake sccache scripts "miss" then "hit"
+      When two cached compiles run one after the other with nothing queued
+      Then the journal has cache_outcome events "miss" then "hit" with attribution "solo"
+      And the outcome store holds two records with the same key
+
+    Scenario: No query runs while the restart barrier exists
+      Given the cache recovery barrier is present
+      When a cached compile finishes
+      Then no statistics query was started
+
+    Scenario: The first window after a restart uses the new generation
+      Given one attributed compile in the first invocation
+      When the cache unit restarts and its counters climb past the old values
+      And one cached compile runs
+      Then that compile is attributed against the new generation
+
+    Scenario: A stalled statistics query does not stall admission
+      Given the fake sccache answers statistics after 5 seconds
+      When a cached compile finishes and another compile is submitted
+      Then the second compile is admitted while the query is outstanding
+      And an outcome_reading event reports "timeout"
+
+    Scenario: Status shows that recording is on
+      When a cached compile is attributed
+      Then build-limits-status shows a cache outcomes line with 1 attributed
+  ```
+
+- Documentation:
+  - `docs/users-guide.md`:
+    - "Supervisor settings": the `cache_outcomes` key, and that `record`
+      conflicts with `cache_mode = "direct"`.
+    - A new section, "Record cache outcomes", covering:
+      - what is recorded and what is never recorded;
+      - the store path, its file modes, how to delete it and what that
+        costs;
+      - the status line;
+      - `build-limits-metrics --max-records 100000`;
+      - `build-limits-cache-replay h3`;
+      - the upgrade order (every journal reader first);
+      - the downgrade rule (remove the key first);
+      - the sccache-upgrade runbook: on `unsupported_version`, run
+        `make test-sccache-host`, then raise `SUPPORTED_SCCACHE_VERSIONS`;
+      - D9's operator procedure, if that fallback was taken.
+    - "Metrics" and "Status": the new section and the new line.
+  - `docs/developers-guide.md`:
+    - §4: the module rows.
+    - §6: the outcome shell, the hook placement, the writer thread, and the
+      `nonblocking_child` convention (the only way the loop runs a helper
+      process).
+    - §9: the recorder, the ports and their reasons, and the events and
+      spans.
+    - §11.2: the helpers. §11.3: the new state machines and the CrossHair
+      contract. §11.4: `make test-sccache-host`.
+    - §12: the Skylos, Vulture and duplication entries.
+  - `docs/contents.md` is updated.
+- Conformance check: O4 and O11 pass, `supervisor.py` stays at 400 lines or
+  fewer, and no admission file has changed.
+- Recovery: with the key off, the null shell restores today's behaviour.
+- Compatibility decision: none beyond EP-M6.
+
+### EP-M8: H2 child sightings (W1, added by the owner's Q1 answer)
+
+- Outcome:
+  - `outcome_sightings.py` (pure): `request_metadata`, `full_emit_metadata`
+    and `ChildSightings`.
+  - The recorder gains a `Sampled(metadata: frozenset[str])` event and a
+    `SampleFailed` event. The pure `advance` folds each sample into the
+    running entries (O12).
+  - `PeerServerProcess.full_emit_metadata()` implements D24: the server's
+    control group is cached per generation, at most 64 processes are
+    inspected, and argv is classified once per `(pid, starttime)`.
+  - `OutcomeShell.on_tick` takes a sample every `CHILD_SAMPLE_SECONDS`
+    while recording is on and `cached_moving > 0`. It is total (D19), and
+    failures back off.
+  - Schema:
+    - the `child_sighting` vocabulary (`seen`, `not_seen`, `unavailable`);
+    - the `child_samples` counter on `cache_outcome`;
+    - the aggregate counters `child_samples_taken` and
+      `child_sample_failures` on `outcome_reading`.
+  - The store record gains `child_sighting` and `child_samples`. Record
+    format version 1 is finalized in this milestone. Nothing is released with
+    recording enabled between EP-M3 and here (only EP-M6, the inert plateau,
+    can be released), so no deployed store needs migrating.
+  - `outcome_replay` gains H2 (D25), and the CLI gains `h2`.
+  - The `cache_outcomes` report section gains counts by `child_sighting`.
+- Red:
+  - `tests/test_outcome_sightings.py` and
+    `tests/test_outcome_sightings_properties.py` (O12).
+  - `tests/test_outcome_server_process.py`. A fake `/proc` and cgroup tree
+    under `tmp_path` checks the 64-process bound, the per-`(pid, starttime)`
+    cache, a process that exits mid-sample (A10), an unreadable group, and a
+    PID reused with a new start time.
+  - `tests/test_outcome_replay_h2.py` (O13).
+  - An extended `RecorderMachine` with sample rules. Its non-vacuity labels
+    gain `seen` and `not_seen`.
+  - A sixth systemd scenario, added to
+    `tests/features/cache_outcomes_on_systemd.feature`:
+
+    ```gherkin
+    Scenario: Child sightings follow the script
+      Given the fake sccache scripts "miss" with a compiler that runs for 1 second, then "hit"
+      When two cached compiles with distinct -C metadata run one after the other with nothing queued
+      Then the "miss" cache_outcome reports child_sighting "seen"
+      And the "hit" cache_outcome reports child_sighting "not_seen"
+      And the outcome store holds no argument or metadata value
+    ```
+
+    The fake server already runs a miss's compiler as its own child. For a
+    scripted `hit` it replies without running one.
+  - A snapshot of `build-limits-cache-replay h2` text and JSON over a fixture
+    store, paired with semantic assertions on the verdict and the sample
+    sizes.
+- Opt-in performance: `tests/test_outcome_latency.py` adds the p99 cost of a
+  sample against the tolerance.
+- Documentation:
+  - `docs/users-guide.md`, "Record cache outcomes": what a child sighting
+    is, that only a token and a count are stored, how sampling cost is
+    bounded, `build-limits-cache-replay h2` and its limits.
+  - `docs/developers-guide.md` §6 and §9: the sample cadence, the
+    server-process port, and the rule that `/proc` reads stay inside
+    `PeerServerProcess`.
+  - ADR 004 records D23 to D25 and becomes Accepted.
+- Requirements: RFC-H2 and RFC-W1 (the H1 to H3 exit evidence), plus Q1 (b).
+- Conformance check: O4, O11 and O12 hold. No argv, metadata or path reaches
+  the store, the journal or a span (an extended O7). Sampling never runs when
+  recording is `off` (the C-DEFAULT spy test is extended to `/proc` opens).
+- Recovery: the sampling is additive behind the same key.
+- Remaining gaps: using `inferred` outcomes if H2 survives is out of scope.
+- Compatibility decision: none. The record format is still unreleased, and
+  the new metric fields are additive (old readers omit them).
+
+### G1 (owner gate, runbook)
+
+1. Release EP-M8 (W1 complete) by tag and install it through the
+   dev-env-rocky role, upgrading every journal reader first. Do not enable
+   recording on a release that lacks EP-M8.
+2. Set `cache_outcomes = "record"` and restart the supervisor gracefully.
+3. After 24 hours, check the status line and run
+   `build-limits-cache-replay h3` and `build-limits-cache-replay h2`. If
+   nothing has been attributed, look at the last reading reason and fix it
+   before going on. If `child_sighting` is `unavailable` for nearly every
+   record, look at `child_sample_failures` in the `cache_outcomes` report.
+4. Track progress by the attributed count on the status line, not by journal
+   windows.
+5. When 2,000 attributed outcomes exist, or after 14 days, whichever comes
+   first, record the evidence:
+   - the commit, the sccache version and the date range;
+   - the totals;
+   - the coverage by origin, from
+     `build-limits-metrics --since 14d --max-records 100000`;
+   - the H1 verdict, with label agreement taken from EP-M1's fixture
+     replay;
+   - the H2 verdict, with its agreement, evaluable count, the share of
+     misses that were `seen`, and its stated limits;
+   - the H3 verdict.
+6. Record the decision in `Decision log`:
+   - `proceed` moves the plan to `IN PROGRESS` and starts EP-M9;
+   - `narrow` starts EP-M9 with the limits recorded;
+   - `stop` means: set the key to `off`, delete `~/.local/state/buildlimits/`,
+     and plan removal of the code in a separate change.
+
+   Independently of the overall decision, H2's verdict decides sampling:
+   - `refuted` means planning removal of sampling, keeping wall time (RFC H2);
+   - `supported` lets a separate plan propose `inferred` outcomes, which are
+     reported apart from labels (RFC I4);
+   - `inconclusive` or `insufficient` means continuing to record and
+     re-running `h2` later.
+
+   The status stays `BLOCKED` until then, and only the owner changes it.
+
+### EP-M9: W2 offline replay (after G1 says proceed or narrow)
+
+- Outcome: `h4`, `h5` and `all` in the replay CLI. They report verdicts,
+  sample sizes, the time span the store covers (R8), and the quiet-window
+  caveat. Below 2,000 attributed records, the verdict is `insufficient`.
+- Red:
+  - `tests/test_outcome_replay.py`: synthetic sets at, above and below each
+    threshold.
+  - A Hypothesis property that verdicts do not depend on record order within
+    a key.
+  - Snapshots of the text and JSON output, each paired with a semantic
+    assertion.
+  - End-to-end runs of the console script.
+- Compatibility decision: none.
+
+## Concrete steps
+
+Work from
+`/home/leynos/.lody/repos/github---leynos---buildlimits/worktrees/ac9f6ac4-ab16-4230-a4f9-0b19d16fbf25`.
+
+1. Run `git branch --show-current` and expect `cache-hit-prediction`.
+2. For each milestone, write the red tests, then run only them through the
+   Makefile's environment, capturing a log:
+
+   ```bash
+   uv run pytest <new test files> 2>&1 | tee /tmp/red-buildlimits-cache-hit-prediction.out
+   ```
+
+   Expect only the stated failure. For a new module this is
+   `ModuleNotFoundError: No module named 'buildlimits.<module>'`. For new
+   behaviour in an existing module, a strict `xfail` reports `XFAIL`.
+3. Implement, then rerun the same command and expect every test to pass.
+   Remove any `xfail` marker in the green commit.
+4. Ask `scrutineer` to run, in order: `make check-fmt`, `make typecheck`,
+   `make lint` and `make test`. Add `make markdownlint` and `make nixie` for
+   documentation, and `make test-systemd-user` in EP-M7. Each gate's log goes to
+   `/tmp/<gate>-buildlimits-cache-hit-prediction.out`.
+5. Commit with an imperative subject of about 50 characters and the
+   session's attribution trailer. Update `Progress` with a UTC timestamp.
+6. At each milestone boundary, write the conformance check and any mutation
+   results into `Outcomes & retrospective`.
+
+## Validation and acceptance
+
+- Tests:
+  - `make test` passes, and every new test existed red first, with its log
+    kept.
+  - `make test-systemd-user` passes the six new scenarios.
+  - `make test-sccache-host` passes on a host with sccache 0.14.0, or the D9
+    fallback is recorded.
+- Verification: O1 to O11 are discharged, with their non-vacuity evidence.
+  Each mutation control was run once as a temporary, uncommitted edit and
+  failed its named test, and the results are recorded in this plan.
+- Lint and typecheck: `make lint` and `make typecheck` pass. Every new
+  suppression links to its planned fix.
+- Performance: the opt-in latency figures are recorded and within
+  tolerance.
+- Behaviour: on the isolated harness with `record`, the status line, the
+  `cache_outcomes` report section and `build-limits-cache-replay h3` all agree
+  with the fake sccache's script.
+
+## Idempotence and recovery
+
+Every milestone is additive until the hooks in EP-M7, and rerunning tests is
+safe. Stores live under each test's own `XDG_STATE_HOME`, and the systemd
+scenarios use uniquely named units that the harness removes.
+
+To roll back on a host, set `cache_outcomes = "off"` and restart gracefully. To
+downgrade past EP-M6, remove the key first. Deleting
+`~/.local/state/buildlimits/` removes every trace of the store; the only cost
+is the replay.
+
+## Artefacts and notes
+
+Table A gives the counter movement per request at sccache 0.14.0, from RFC 0002
+§1 and S1. Every row also moves `compile_requests` by 1. The column
+abbreviations are:
+
+- `hits`: `cache_hits`;
+- `comp`: `compilations`;
+- `miss`: `cache_misses`;
+- `ncc`: `non_cacheable_compilations`;
+- `fail`: `compile_fails`;
+- `err`: `cache_errors`;
+- `exec`: `requests_executed`;
+- `ncr`: `requests_not_cacheable`;
+- `nco`: `requests_not_compile`;
+- `uns`: `requests_unsupported_compiler`.
+
+| Footprint      | hits | comp | miss | ncc | fail | err | exec | ncr | nco | uns | Label           |
+| -------------- | ---- | ---- | ---- | --- | ---- | --- | ---- | --- | --- | --- | --------------- |
+| hit            | 1    | 0    | 0    | 0   | 0    | 0   | 1    | 0   | 0   | 0   | `hit`           |
+| miss           | 0    | 1    | 1    | 0   | 0    | 0   | 1    | 0   | 0   | 0   | `miss`          |
+| miss, read err | 0    | 1    | 1    | 0   | 0    | 1   | 1    | 0   | 0   | 0   | `miss`          |
+| not cached     | 0    | 1    | 0    | 0   | 0    | 0   | 1    | 0   | 0   | 0   | `not_cached`    |
+| not cacheable  | 0    | 1    | 0    | 1   | 0    | 0   | 1    | 0   | 0   | 0   | `not_cacheable` |
+| failed         | 0    | 1    | 0    | 0   | 1    | 0   | 1    | 0   | 0   | 0   | `failed`        |
+| error (fails)  | 0    | 0    | 0    | 0   | 1    | 0   | 1    | 0   | 0   | 0   | `error`         |
+| error (cache)  | 0    | 0    | 0    | 0   | 0    | 1   | 1    | 0   | 0   | 0   | `error`         |
+| fatal error    | 0    | 0    | 0    | 0   | 0    | 1   | 1    | 0   | 0   | 0   | `error`         |
+| silent         | 0    | 0    | 0    | 0   | 0    | 0   | 1    | 0   | 0   | 0   | none            |
+| declined       | 0    | 0    | 0    | 0   | 0    | 0   | 0    | 1   | 0   | 0   | `declined`      |
+| not compile    | 0    | 0    | 0    | 0   | 0    | 0   | 0    | 0   | 1   | 0   | `not_compile`   |
+| unsupported    | 0    | 0    | 0    | 0   | 0    | 0   | 0    | 0   | 0   | 1   | `unsupported`   |
+
+_Table A: Per-request counter footprints at sccache 0.14.0._
+
+A solo window takes the label of its single footprint. A unanimous window of
+_n_ launches is labelled only if its delta is either _n_ copies of the `hit`,
+`not_cached`, `not_cacheable` or `declined` footprint, or _n_ misses with
+anywhere from 0 to _n_ read errors. Every other balanced window is
+`mixed_window`.
+
+Table B gives the thresholds that EP-M0 fixes, verbatim from RFC 0002.
+
+| Hypothesis | Prediction                                                                                                                 | Falsified if                     |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| H1         | No attributed label disagrees with truth in at least 200 controlled windows; host coverage at least 20% of cached requests | Any wrong label, or coverage <5% |
+| H2         | Wall time plus a sighted child agrees with at least 95% of window labels                                                   | Below 90%                        |
+| H3         | Every request with a C4 feature is declined, and none without one is                                                       | One counterexample               |
+| H4         | Registry crates at a pinned version with an unchanged argument digest hit at least 95% after their first observation       | Below 90%                        |
+| H5         | At most 5% of consecutive outcome pairs within one key flip without a toolchain change                                     | Above 10%                        |
+
+_Table B: Hypothesis thresholds (minimum 2,000 attributed outcomes)._
+
+G0, the coverage bound, was measured read-only on 2026-10-23 with the command
+below, giving the result in S5. The bound counts cached finishes with
+`queued == 0`, `server_drain == 0` and `running + draining <= 1`.
+
+```bash
+journalctl --user BUILD_LIMITS_SCHEMA=1 BUILD_LIMITS_EVENT=request_finished \
+  _SYSTEMD_USER_UNIT=buildlimits-supervisor.service --since -7d -o json \
+  --output-fields=BUILD_LIMITS_CACHE_PATH,BUILD_LIMITS_QUEUED,BUILD_LIMITS_RUNNING \
+  --output-fields=BUILD_LIMITS_DRAINING,BUILD_LIMITS_SERVER_DRAIN \
+  > /tmp/g0-buildlimits-cache-hit-prediction.jsonl
+```
+
+The statistics document below is abbreviated to the fields that `outcome_stats`
+reads; the EP-M0 fixture pins the full shape.
+
+```json
+{"stats": {"compile_requests": 3, "requests_unsupported_compiler": 0,
+  "requests_not_compile": 0, "requests_not_cacheable": 1,
+  "requests_executed": 2, "cache_errors": {"counts": {}, "adv_counts": {}},
+  "cache_hits": {"counts": {"Rust": 1}, "adv_counts": {"rust": 1}},
+  "cache_misses": {"counts": {"Rust": 1}, "adv_counts": {"rust": 1}},
+  "non_cacheable_compilations": 0, "compilations": 1, "compile_fails": 0},
+ "version": "0.14.0"}
+```
+
+## Interfaces and dependencies
+
+These names must exist at the end of the milestone named in each comment.
+Private helpers are omitted.
+
+```python
+# buildlimits/outcome_vocabulary.py (EP-M2); each alias equals its metrics_schema table
+type CacheResult = typ.Literal["hit", "miss", "not_cacheable", "not_cached", "failed", "error",
+                               "declined", "not_compile", "unsupported", "unattributed"]
+type OutcomeReason = typ.Literal["none", "timeout", "read_error", "parse_error", "empty_stats",
+    "generation_changed", "generation_unavailable", "counter_decreased", "count_mismatch",
+    "ineligible_window", "mixed_window", "no_quiet_point", "straddled_reading", "no_baseline",
+    "supervisor_stopped", "window_overflow", "unsupported_version", "recorder_disabled"]
+type StoreReason = typ.Literal["none", "corrupt", "unreadable", "version_mismatch", "save_failed",
+    "expired", "salt_unavailable", "salt_changed", "clock_skew"]
+type StoreOperation = typ.Literal["load", "append", "compact", "salt"]
+type GateReason = typ.Literal["queued", "cached_moving", "server_drain", "unreachable", "held",
+    "recovering", "barrier", "in_flight", "read_skipped", "backing_off"]
+type ChildSighting = typ.Literal["seen", "not_seen", "unavailable"]           # EP-M8
+type Verdict = typ.Literal["supported", "refuted", "inconclusive", "insufficient", "not_collected"]
+
+# buildlimits/outcome_stats.py (EP-M2)
+@dc.dataclass(frozen=True, slots=True)
+class StatsReading:
+    compile_requests: int
+    requests_unsupported_compiler: int
+    requests_not_compile: int
+    requests_not_cacheable: int
+    requests_executed: int
+    cache_hits: int            # sum of PerLanguageCount.counts
+    cache_misses: int
+    cache_errors: int
+    non_cacheable_compilations: int
+    compilations: int
+    compile_fails: int
+    version: str
+
+@dc.dataclass(frozen=True, slots=True)
+class ReadFailure:
+    reason: typ.Literal["parse_error", "unsupported_version"]
+
+def parse_statistics(text: str, *, supported: frozenset[str]) -> StatsReading | ReadFailure: ...
+
+# buildlimits/outcome_attribution.py (EP-M2)
+@dc.dataclass(frozen=True, slots=True)
+class Generation:
+    invocation: str            # INVOCATION_ID or ""
+    pid: int
+    starttime: int
+
+@dc.dataclass(frozen=True, slots=True)
+class Reading:
+    generation: Generation | None   # None: no server listening
+    stats: StatsReading
+
+@dc.dataclass(frozen=True, slots=True)
+class WindowEntry:
+    group_id: str
+    is_clean: bool             # not Group.may_orphan_server_work
+
+@dc.dataclass(frozen=True, slots=True)
+class Attribution:
+    labels: tuple[tuple[str, CacheResult], ...]
+    kind: typ.Literal["solo", "unanimous", "none"]
+    reason: OutcomeReason
+
+def attribute(before: Reading, after: Reading, window: tuple[WindowEntry, ...]) -> Attribution: ...
+
+# buildlimits/outcome_gate.py (EP-M2)
+@dc.dataclass(frozen=True, slots=True)
+class QuietInputs:
+    counts: Counts
+    is_reachable: bool
+    is_cache_allowed: bool
+    is_recovery_idle: bool
+    has_barrier: bool
+    has_query_in_flight: bool
+
+def quiet_point(inputs: QuietInputs) -> GateReason | None: ...
+
+# buildlimits/outcome_ports.py (EP-M4)
+@dc.dataclass(frozen=True, slots=True)
+class Ticket:                  # opaque; at most one outstanding per port
+    serial: int
+    deadline: float
+
+@dc.dataclass(frozen=True, slots=True)
+class Pending: ...
+
+@dc.dataclass(frozen=True, slots=True)
+class StatisticsText:
+    text: str
+
+@dc.dataclass(frozen=True, slots=True)
+class QueryFailure:
+    reason: typ.Literal["timeout", "read_error"]
+
+@dc.dataclass(frozen=True, slots=True)
+class GenerationFailure:
+    reason: typ.Literal["generation_unavailable"]
+
+@dc.dataclass(frozen=True, slots=True)
+class StoreFailure:
+    reason: StoreReason
+
+@dc.dataclass(frozen=True, slots=True)
+class Salt:
+    key: bytes                 # 32 bytes
+    salt_id: str               # HMAC(key, "buildlimits-salt-id"), hex
+
+class StatisticsPort(typ.Protocol):
+    def start(self, now: float) -> Ticket | QueryFailure: ...
+    def poll(self, ticket: Ticket, now: float) -> Pending | StatisticsText | QueryFailure: ...
+    def close(self, ticket: Ticket) -> None: ...   # idempotent; poll after a terminal result is an error
+
+@dc.dataclass(frozen=True, slots=True)
+class SampleFailure:                                                           # EP-M8
+    reason: typ.Literal["server_unknown", "group_unreadable"]
+
+class ServerProcessPort(typ.Protocol):
+    def generation(self) -> Generation | None | GenerationFailure: ...         # EP-M5
+    def full_emit_metadata(self) -> frozenset[str] | SampleFailure: ...       # EP-M8; values never leave memory
+
+# buildlimits/outcome_sightings.py (EP-M8)
+def request_metadata(argv: cabc.Sequence[str]) -> str | None: ...
+def full_emit_metadata(argv: cabc.Sequence[str]) -> str | None: ...
+
+@dc.dataclass(frozen=True, slots=True)
+class ChildSightings:
+    samples: int
+    is_seen: bool
+    has_metadata: bool
+
+    def sighting(self) -> ChildSighting: ...
+
+class OutcomeStorePort(typ.Protocol):
+    def append(self, line: OutcomeRecord | WindowSummary) -> None: ...  # never blocks
+    def results(self) -> tuple[StoreResult, ...]: ...                   # drained each tick
+    def close(self, timeout: float) -> None: ...
+
+type SaltSource = cabc.Callable[[], Salt | StoreFailure]
+```
+
+There are no new dependencies.
+
+Load these skills while implementing, starting with `python-router`:
+
+- `execplans`, to keep this plan current;
+- `hexagonal-architecture`, for domain and port boundaries;
+- `python-types-and-apis`, for Protocols, `Literal` aliases and the
+  typestate;
+- `python-data-shapes`, for frozen dataclasses;
+- `python-concurrency`, for the writer thread and the non-blocking child;
+- `python-errors-and-logging`, for failure alternatives instead of
+  exceptions;
+- `python-testing`, `hypothesis`, `crosshair` and `python-verification`,
+  for O1 to O11;
+- `python-quality-tools` and `skylos`, for the dead-code entries;
+- `en-gb-oxendict-style`, for the documentation;
+- `commit-message` and `pr-creation`.
+
+Consult these documents:
+
+- RFC 0002, every section;
+- ADR 001, for graceful restart and status conventions;
+- ADR 003, for tracing;
+- `docs/developers-guide.md`, §§3 to 6, 9, 11 and 12;
+- `docs/users-guide.md`: "Supervisor settings", "Status" and "Metrics";
+- `docs/documentation-style-guide.md`, for the ADR and roadmap formats;
+- `docs/scripting-standards.md`.
+
+## Revision note
+
+- 2026-10-23: the initial draft, from RFC 0002, Wyvern reconnaissance and
+  Firecrawl checks.
+- 2026-10-23: the second revision, after the six-member Logisphere panel and
+  the G0 measurement.
+  - What changed:
+    - a spawn-free peer generation replaces `systemctl` (D2);
+    - three events replace one event with two grains (D6);
+    - an append-only store with a writer thread replaces whole-file saves on
+      the loop (D17);
+    - a pure toolchain identity replaces the filesystem fingerprint (D10);
+    - the gate is pure and gains `queued == 0` (D20);
+    - the H3 predicate is corrected and gains window evidence (D21);
+    - `h3` moves into W1 (D22);
+    - totality and hook placement are specified (D19);
+    - a releasable inert plateau is added (D18), with back-off (D16) and
+      new vocabulary (D15);
+    - EP-M5 is split into EP-M4 to EP-M7, and W2 becomes EP-M8 (renumbered
+      EP-M9 in the third revision);
+    - Tables A and B are inlined, and Q1 is raised from G0.
+  - Effect on the remaining work: its intent is unchanged. Next comes owner
+    approval, then EP-M0.
+- 2026-10-23: the third revision, after the owner answered Q1 with (b).
+  - What changed:
+    - EP-M8 is added to W1: H2 child sightings, the `h2` replay and their
+      documentation;
+    - W2 is renumbered EP-M9;
+    - D23 is superseded, and D24 (the server-process port, still five ports)
+      and D25 (the H2 design and classifier, fixed before data) are added;
+    - axioms A9 and A10, obligations O12 and O13, and risk R9 are added;
+    - EP-M1 gains a sighting check;
+    - the G1 runbook releases EP-M8 and records H2;
+    - ADR 004 now becomes Accepted with EP-M8.
+  - Why: G0 bounds solo coverage near 4.5%, and the RFC makes H2 the route to
+    coverage below 5%.
+  - Effect on the remaining work: W1 grows by one milestone, and G1 waits for
+    it. W2 is unchanged apart from its number.
