@@ -212,12 +212,12 @@ unable to disturb admission. Table 1 evaluates the candidates.
 
 _Table 1: Candidate outcome signals._
 
-A server child alone means nothing, because every request spawns a dep-info
-pass (C3). A miss also spawns a full-emit `rustc` whose `-C metadata` value
-matches the request's own arguments, and its group usually runs longer than
-that key's hits. Those clues reach overlapping compiles, which window labels
-cannot, but a one-second poll misses every short miss, so they are tested
-against window labels (H2) before they label anything.
+A server child alone means nothing because every request spawns a dep-info pass
+(C3). A miss also spawns a full-emit `rustc` whose `-C metadata` value matches
+the request's own arguments, and its group usually runs longer than that key's
+hits. Those clues reach overlapping compiles, which window labels cannot, but a
+one-second poll misses every short miss, so they are tested against window
+labels (H2) before they label anything.
 
 **Design.** The supervisor reads the server's statistics only at _quiet
 points_: ticks where `Counts.cached_moving` and `Counts.server_drain` are both
@@ -235,17 +235,20 @@ consecutive readings:
   extra process is spawned and the transport's existing three-second bound
   still applies. The unit restarts the server its own way after a failure (ADR
   011), so that id is the server's identity, and a window whose two readings
-  differ is rejected however the counters moved. This closes the case the
-  decrease test cannot see: a restart from an all-zero baseline, or one
-  followed by enough work to exceed the old values, would otherwise attribute
-  post-restart deltas to the previous server's launches. While no invocation is
-  running the generation is _no server_, and a window with an absent server at
-  either end is rejected — which the cache-reachability precondition already
-  implies, but which the generation check now makes explicit rather than
-  inferred. C5 still holds: the marker comes from the unit, not from
-  `ServerStats`, so an unmanaged or out-of-unit server stays indistinguishable
-  and the decrease test remains the backstop for it. One implementation
-  constraint carries over: the public user-bus fallback in
+  differ is rejected however the counters moved. That reading is still the
+  baseline for the next window, so the window after a restart is measured
+  within the new invocation rather than across it: rejecting a window discards
+  that interval's attribution, never the reading that ended it. This closes the
+  case the decrease test cannot see: a restart from an all-zero baseline, or
+  one followed by enough work to exceed the old values, would otherwise
+  attribute post-restart deltas to the previous server's launches. While no
+  invocation is running the generation is _no server_, and a window with an
+  absent server at either end is rejected — which the cache-reachability
+  precondition already implies, but which the generation check now makes
+  explicit rather than inferred. C5 still holds: the marker comes from the
+  unit, not from `ServerStats`, so an unmanaged or out-of-unit server stays
+  indistinguishable and the decrease test remains the backstop for it. One
+  implementation constraint carries over: the public user-bus fallback in
   `buildlimits/bus_properties.py` accepts only `MainPID`, `ControlGroup` and
   `ActiveState`, and rejects any other property name, so W1 must extend that
   set with `InvocationID` or treat the fallback's refusal as an unavailable
@@ -253,11 +256,11 @@ consecutive readings:
 - The change in `compile_requests` must equal the number of cached groups
   launched in the window, and the outcome counters must account for exactly
   that same number of requests in total. A request the server answers without a
-  compile moves one of two counters, and W1 must place it in the right one.
+  compilation moves one of two counters, and W1 must place it in the right one.
   `requests_not_compile` counts a command line the compiler's own parser
   classes as no compile at all, such as `--version`, `-V` or `--print`.
   `requests_not_cacheable` counts one that parser refused to cache, which is
-  where Cargo's `-vV` probe lands at 0.14.0, under the refusal `missing input`,
+  where Cargo's `-vV` probe lands at 0.14.0, under the refusal `missing input`
   because `-vV` is not an argument the parser knows. Neither counter is
   additive with the result counters: a refusal accounts for its request in
   place of `cache_hits`, `cache_misses`, `non_cacheable_compilations` or
@@ -327,9 +330,10 @@ a stalled query must cost only the reading it abandoned. A query that misses
 its deadline is abandoned and its process reaped; the tick records
 `unattributed` and the next tick starts a fresh query rather than waiting on
 the previous one. A reading is always compared with the last reading the
-sequence accepted, so the windows meet end to end rather than overlapping: an
-abandoned query yields no window at all, and an accepted reading's window is
-the interval between itself and its predecessor, however many ticks apart they
+sequence took, so the windows meet end to end rather than overlapping: an
+abandoned query yields no window at all, and a reading that was taken is the
+next baseline whether or not its window was accepted. A reading's window is the
+interval between itself and its predecessor, however many ticks apart they
 fall. Every launch therefore falls in exactly one window and no request can be
 attributed twice, which is what lets the count check above reject a window
 rather than accept a double count. Lateness costs coverage, never soundness,
@@ -378,22 +382,22 @@ arrival and its launch.
 `cache_result`, `attribution` (`solo`, `unanimous`, `inferred` or `none`),
 `origin` (`registry`, `git`, `path` or `unknown`) and `outcome_reason`, with
 `runtime_seconds`. `origin` is `unknown` only when `CARGO_MANIFEST_DIR` is
-absent, because a value that is present always normalizes: §2 sends every
+absent because a value that is present always normalizes: §2 sends every
 directory that is neither a registry nor a git checkout to `path`. An unknown
 origin stops neither step. The window is still attributed and its outcome still
-recorded, because attribution never needed the origin, while §2's derivation
-has no origin value to fold into a key and so reports `key_unavailable` for
-that request. `outcome_reason` is `none` exactly when a label was produced — by
-an attributed window (`solo` or `unanimous`) or by I4's inference
-(`inferred`) — and otherwise names why the reading produced no label: `timeout`,
-`read_error`, `parse_error`, `empty_stats`, `generation_changed`,
-`counter_decreased`, `count_mismatch`, `ineligible_window` or `no_quiet_point`.
-`timeout` is the deadline elapsing and `read_error` is any other failure of the
-query itself — a launch failure, a socket error or a transport read — so a
-query that never returns statistics is named rather than sharing the timeout's
-token or falling through unnamed. `outcome_reason` covers the reading alone: it
-is a second closed vocabulary beside the new-event token set, because the
-schema's existing `reason` field already carries admission refusals
+recorded because attribution never needed the origin, while §2's derivation has
+no origin value to fold into a key and so reports `key_unavailable` for that
+request. `outcome_reason` is `none` exactly when a label was produced — by an
+attributed window (`solo` or `unanimous`) or by I4's inference (`inferred`) —
+and otherwise names why the reading produced no label: `timeout`, `read_error`,
+`parse_error`, `empty_stats`, `generation_changed`, `counter_decreased`,
+`count_mismatch`, `ineligible_window` or `no_quiet_point`. `timeout` is the
+deadline elapsing and `read_error` is any other failure of the query itself — a
+launch failure, a socket error or a transport read — so a query that never
+returns statistics is named rather than sharing the timeout's token or falling
+through unnamed. `outcome_reason` covers the reading alone: it is a second
+closed vocabulary beside the new-event token set because the schema's existing
+`reason` field already carries admission refusals
 (`metrics_schema.VOCABULARIES`), and widening the event without a distinct
 field would make a rejected window indistinguishable from a refusal in the
 journal. The evaluation surface has its own vocabulary (Layer 2) rather than
@@ -418,7 +422,7 @@ shapes, their failures stay isolable, and a test can drive the layer without a
 clock, a socket or a file system. Four ports carry it, and no more, which keeps
 the count independent of the retry and scoring work layer 2 adds later:
 
-- a clock port offering monotonic and wall-clock readings separately, because
+- a clock port offering monotonic and wall-clock readings separately because
   the deadline is measured against the monotonic reading while a record stores
   the wall-clock one, and only the second may move when the host's time does;
 - a statistics port returning one bounded document for the managed socket, the
@@ -526,28 +530,34 @@ the search must reach a solo and a unanimous window, so it cannot pass
 vacuously. `systemd_user` scenarios (`make test-systemd-user`) extend
 `tests/fixtures/fake_sccache.py` with a statistics command and scripted
 outcomes, and show that labels match the script and that no query runs while
-the restart barrier exists. A stalled statistics command with a slow scripted
-answer must leave the loop admitting: the test counts iterations, accepts a
-request and returns a token while the query is outstanding, which is the
-regression check for the contract above. Each `outcome_reason` token has a test
-that provokes it and asserts the reason, so the vocabulary cannot rot into a
-single catch-all. The `timeout` test provokes the deadline, and the
-`read_error` test a query that fails before it can time out — a launch failure,
-a socket error or a transport read — so the two are distinguished rather than
-both claimed by one test. The ports make each of those failures a fake's return
-rather than a real timeout, socket or file: a fake statistics port answers from
-a script, a fake store port fails a load or a save on demand, a fake clock
-moves the deadline, and a fake salt port refuses on demand. Each failure in
-Table 2 is provoked and its declared reason asserted, so a port contract cannot
-be added without a test that observes it: a refused save yields `save_failed`,
-a load over an unreadable file yields `unreadable` where a permission-denied
-read makes the file unreadable rather than corrupt, and a refused salt yields
+the restart barrier exists. A restart scenario pins the baseline transition
+rather than the rejection alone: it restarts the unit, sends counters that
+climb past the pre-restart values, and asserts that the first post-restart
+window is attributed against the new invocation — so a reading that exposed a
+generation change is proven to become the next baseline, and a
+`generation_changed` rejection is never allowed to strand the sequence on the
+old invocation. A stalled statistics command with a slow scripted answer must
+leave the loop admitting: the test counts iterations, accepts a request and
+returns a token while the query is outstanding, which is the regression check
+for the contract above. Each `outcome_reason` token has a test that provokes it
+and asserts the reason, so the vocabulary cannot rot into a single catch-all.
+The `timeout` test provokes the deadline, and the `read_error` test a query
+that fails before it can time out — a launch failure, a socket error or a
+transport read — so the two are distinguished rather than both claimed by one
+test. The ports make each of those failures a fake's return rather than a real
+timeout, socket or file: a fake statistics port answers from a script, a fake
+store port fails a load or a save on demand, a fake clock moves the deadline,
+and a fake salt port refuses on demand. Each failure in Table 2 is provoked and
+its declared reason asserted, so a port contract cannot be added without a test
+that observes it: a refused save yields `save_failed`, a load over an
+unreadable file yields `unreadable` where a permission-denied read makes the
+file unreadable rather than corrupt, and a refused salt yields
 `salt_unavailable`. The salt tests assert the whole declared behaviour rather
 than the reason alone — that no record is written for the affected compile,
 that no raw path and no unsalted digest reaches the store or a comparison, that
 the attribution and its `cache_outcome` event are nevertheless unchanged, and
 that admission is unchanged — which is the pair of claims the salt paragraph
-separates. The salt test also asserts which reason each layer reports, because
+separates. The salt test also asserts which reason each layer reports because
 the two layers reach the missing salt differently: layer 1 asserts
 `store_reason` `salt_unavailable` for the save it could not make, and layer 2
 asserts `evaluation_reason` `key_unavailable` for the request it could not key
@@ -555,7 +565,7 @@ and asserts that `store_unavailable` is _not_ reported for that same request.
 Boundary tests assert the rest of the separation the ports exist for: that a
 reading writes no file and emits no telemetry, that a save writes only the
 store, and that a raising sink leaves the reading's own result and the loop
-unchanged. Two failures need their own assertion, because the two are easy to
+unchanged. Two failures need their own assertion because the two are easy to
 confuse: a timed-out reading produces no attributed label for the affected
 window and reports `outcome_reason` `timeout`, so the test asserts the absence
 of a label, the reason and unchanged admission rather than an equality with a
@@ -569,7 +579,7 @@ those assertions are the isolation ADR 003 requires of telemetry and the reason
 the pure functions return their events instead of emitting them. An opt-in host
 check with the real 0.14.0 binary builds one small registry crate cold and then
 warm, confirming C2 and C5: the hit is invisible in the reply, and only the
-statistics move. C4 is confirmed separately rather than assumed, because a
+statistics move. C4 is confirmed separately rather than assumed because a
 cold-then-warm build of a cacheable crate exercises no refusal: the check reads
 the counters once more after the build and requires the refusal Cargo's own
 toolchain probe produces. Cargo asks the compiler for its version with `-vV`
@@ -585,8 +595,8 @@ arguments are compared in memory and never stored; the journal receives only
 closed-vocabulary tokens.
 
 **Storage.** G2 must be decided from layer 1's own records, so the keyed
-records are written in layer 1, not layer 2: the same append-only,
-atomically-written local file §2 describes, at
+records belong to layer 1, not layer 2: the same atomically-written local file
+§2 describes, whose records live in the set §2's one writer saves, at
 `$XDG_STATE_HOME/buildlimits/cache-outcomes.json`, holding key, outcome,
 origin, wall time, toolchain identity and timestamp per attributed record. The
 journal keeps only the closed-vocabulary event; the file is the only place a
@@ -594,7 +604,10 @@ key is written to disk, it never leaves the host, and it is read by `W2`'s
 offline replay and by nothing in `admission`. Its bounds, aging and atomicity
 are §2's, and deleting it costs only the replay. Layer 2 reuses this store
 rather than introducing a second one, so a `W2` that decides against prediction
-leaves one removable file behind and no other trace.
+leaves one removable file behind and no other trace. Because it is one file
+with two interested layers, §2 also fixes who writes it: with prediction off,
+layer 1 saves it itself; with prediction on, layer 2 is its only writer and
+layer 1's records reach the disk through layer 2's next save.
 
 **Measurement for the next layer.** After at least 2,000 attributed outcomes (a
 proposal), compute coverage by origin, the outcome mix, and an offline replay
@@ -625,7 +638,7 @@ that hits can be foreseen into something the journal can check.
   their path digests, `-vV` strings and `CACHE_VERSION` constants all are, so
   matching a stored tag never needs the path that produced it. This is an
   _approximate_ identity, deliberately not the full set `generate_hash_key`
-  folds into a key (C3). The shared-library digests are excluded, because they
+  folds into a key (C3). The shared-library digests are excluded because they
   digest every file in the rustc sysroot's `lib/` (C3) and cost a full sysroot
   hash per server start for no requirement here. The approximation is not
   one-directional, and both directions are stated rather than one being claimed
@@ -684,6 +697,24 @@ records the 30-day aging bound drops, so a save failing on every stop or an
 aging bound discarding more than expected is visible rather than merely making
 prediction look unauthoritative, which is the same job the load reasons do. A
 failed save names itself and does not disturb the running estimate.
+
+Two layers write this file, so it has one writer rather than two. While
+prediction is enabled the file's contents are layer 2's in-memory set and
+nothing else: layer 1's attributed records enter that same set, so the set is
+the single source of truth for both layers and a save writes all of it. An
+atomic replacement prevents a partial file, but it does not merge two
+snapshots, and two writers each replacing the same path would let the later
+writer drop records the earlier had already committed. One writer is therefore
+what makes the snapshot safe, and the set is what makes it complete. A save
+that begins while an attribution lands writes the set as it stood when the save
+started, so that record is absent from that snapshot and present in the next
+one: it is delayed in the file, never discarded by it, and a restart falling
+between the two saves costs the coverage of that one interval. The 30-day aging
+bound and the 10,000-record bound are properties of the set, so they reach the
+file with the next save and are not re-derived from what a previous file
+happened to hold. Recording with prediction off has no second writer to
+coordinate with, so layer 1 saves the set itself then; the mode decides which
+shape applies, and the file's contents do not record which mode wrote them.
 
 The status document gains an optional `prediction` object per queued request,
 with `class`, `p_hit` and `observations`, which the renderer appends:
@@ -744,7 +775,15 @@ way, and a test asserts that `uncertain` and `no history` arrive with `none`
 rather than a reason, so a produced class can never be reported as a failed
 evaluation. A test also asserts that a request the evaluation could not key is
 still admitted unchanged — the isolation P2 requires — so a classification
-failure costs a class and never a token.
+failure costs a class and never a token. The write coordination has its own
+test, since it is the one place two layers meet on disk: an attribution that
+lands while a save is in flight is absent from that save's snapshot and present
+in the file after the next save, and a record the set still holds is never
+dropped from the file by a save. That pair is asserted with the writer and the
+attribution driven from the same test so the interleaving is chosen rather than
+waited for, and a save refused mid-run is observed as its `save_failed` reason
+with the previous file still readable, so a lost save is never mistaken for an
+empty history.
 
 **Privacy.** Crate names and registry versions are public metadata. Local paths
 are stored only as digests salted with a per-host random value, kept in a file
@@ -753,9 +792,9 @@ be checked against a guessed path elsewhere. History is never journalled or
 exported, deleting it resets prediction, and records untouched for 30 days are
 dropped (a proposal). Status already shows the working directory, only to the
 same user (`SO_PEERCRED`, developer's guide §8), so the display discloses
-nothing new. These bounds are layer 1's as well, because layer 1 writes the
-same file: the salt, the modes, the 30-day aging and the ban on export all
-apply from the moment recording starts.
+nothing new. These bounds are layer 1's as well because layer 1 writes the same
+file: the salt, the modes, the 30-day aging and the ban on export all apply
+from the moment recording starts.
 
 **Measurement for the next layer.** Online accuracy and calibration (H6), and a
 trace replay of recorded arrivals, predictions and runtimes under first-in,
@@ -809,11 +848,11 @@ cache at this instant (`cached`, `cache_allowed()` and `cacheable`), and only
 while every request the promotion would skip has been overtaken fewer than K
 times (K is 4, a proposal); otherwise it takes the head of the queue. The bound
 is exclusive so that it holds Q3 exactly: a request already overtaken K times
-is never skipped again, because the guard admits no further overtake of it.
-Each request the promotion skips has its bypass count incremented, and the
-count of the request that takes the token is left alone — it was not skipped.
-The class arrives as immutable data at `submit`, so the core stays pure. Shadow
-mode comes first: the choice is computed and recorded, but the head is still
+is never skipped again because the guard admits no further overtake of it. Each
+request the promotion skips has its bypass count incremented, and the count of
+the request that takes the token is left alone — it was not skipped. The class
+arrives as immutable data at `submit`, so the core stays pure. Shadow mode
+comes first: the choice is computed and recorded, but the head is still
 admitted.
 
 **Safety invariants.** 3B relaxes P1 to "a prediction affects only which
@@ -965,9 +1004,9 @@ costs the record. Layer 1 therefore needs a release that adds `cache_outcome` to
 release sees an empty `cache_outcome` history rather than a partial one. That
 is why the key is off by default, so enabling it is a deliberate act taken with
 the release that adds the event. The record store is new and disposable, and
-turning a key off is a complete rollback: layer 1 does not delete it, because
+turning a key off is a complete rollback: layer 1 does not delete it because
 running the `W2` replay is the point of recording. An sccache upgrade repeats
-W1's host check before recording resumes, because C1 to C6 were read from
+W1's host check before recording resumes because C1 to C6 were read from
 0.14.0. The `outcome_reason`, `store_reason` and `evaluation_reason`
 vocabularies are new schema entries, so they carry open question 6's
 compatibility check with them, and each is additive: a reader that ignores an
@@ -1026,7 +1065,7 @@ Approve W1 and W2 now. Recording is observation only, and an offline evaluation
 of its records decides whether prediction is worth building before any of it is
 built. Decide layer 2 at G2. Treat layer 3 as 3B or nothing: no cheaper
 admission that lets a cached compile run without a full pool token is
-compatible with ADR 011, because a mispredicted hit is an undetectable real
+compatible with ADR 011 because a mispredicted hit is an undetectable real
 compile in the server's control group. 3B proceeds only after RFC 0001's model
 and the trace replay both pass. W6 deserves its own decision once H3 has
 survived.
