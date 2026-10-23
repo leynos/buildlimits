@@ -5,7 +5,8 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: DRAFT (revised after expert-panel review; awaiting owner approval)
+Status: DRAFT (revised after expert-panel review; Q1 answered (b) by the owner
+on 2026-10-23; awaiting owner approval of the whole plan)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -26,8 +27,11 @@ Its acceptance approves workstreams W1 and W2 only:
   waits. Wherever the counters can say which request a change belongs to, it
   labels the cached compile `hit`, `miss` and so on. The label is journalled as
   a closed-vocabulary metric, and a keyed record is appended to a local store
-  for offline analysis. A real-binary check confirms the sccache facts the
-  attribution relies on.
+  for offline analysis. While cached compiles run, the supervisor also looks
+  for each request's full-emit compiler among the server's processes (a _child
+  sighting_), so that H2 can test whether wall time and sightings separate hits
+  from misses where the counters cannot. A real-binary check confirms the
+  sccache facts both rely on.
 - W2, offline evaluation: a replay over W1's records yields the H3 to H5
   verdicts (whether a hit can be foreseen from history) without building any
   prediction into admission.
@@ -43,8 +47,8 @@ After W1, an operator can set `cache_outcomes = "record"` in
 - a `cache_outcomes` section in
   `build-limits-metrics --since 1h --max-records 100000` that counts results,
   reasons and coverage;
-- the H3 verdict from the local store, by running
-  `build-limits-cache-replay h3`.
+- the H2 and H3 verdicts from the local store, by running
+  `build-limits-cache-replay h2` and `build-limits-cache-replay h3`.
 
 After W2, which starts only once the owner has decided G1,
 `build-limits-cache-replay` also reports H4 and H5 against thresholds that were
@@ -111,7 +115,7 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - C-SCHEMA: `cache_outcome`, `outcome_reading` and `outcome_store` enter
   `metrics_schema.EVENTS` in the same release that can emit them, or an earlier
   one (RFC "Compatibility and migration").
-- C-GATES: W2 implementation (EP-M8) must not begin until the owner records
+- C-GATES: W2 implementation (EP-M9) must not begin until the owner records
   the G1 decision (`proceed` or `narrow`) in `Decision log`. W3 and later are
   out of scope.
 
@@ -134,13 +138,15 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - Feasibility: escalate if EP-M1 is still no-go after a 1.5-hour time-box.
   The fallback is in D9.
 - Coverage evidence: the G0 measurement below projects the solo-window bound
-  on this host at 4.5%, under H1's 5% falsification line. The plan proceeds
-  only if the owner accepts this at approval (Q1). Escalate if a re-run of G0
-  at the start of EP-M1 falls below 2%.
+  on this host at 4.5%, under H1's 5% falsification line. The owner answered Q1
+  with (b): W1 also collects child sightings for H2 (EP-M8). Escalate if a
+  re-run of G0 at the start of EP-M1 falls below 2%.
 - Performance: store I/O runs on a writer thread, so the loop never waits on
   a file. Escalate if the opt-in latency test shows either of these:
   - p99 tick lengthening above 5 ms while a reading is in flight;
-  - p99 append enqueue above 1 ms.
+  - p99 append enqueue above 1 ms;
+  - p99 child-sighting sample above 2 ms, or more than 64 processes inspected
+    in one sample.
 - Ambiguity: stop and present options if EP-M1 contradicts axiom A2 or A3.
 
 ## Risks
@@ -162,8 +168,8 @@ These are hard invariants. Violating one requires escalation, not a workaround.
     - The gate clause `queued == 0` stops wasted readings that would
       straddle a launch.
     - Every verdict states the quiet-window bias.
-    - Whether to commission H2 (child sightings) is the owner's call at
-      approval (Q1) and again at G1.
+    - The owner chose (Q1 (b)) to collect child sightings in W1 (EP-M8), so
+      that G1 can judge H2, the RFC's route to coverage below 5%.
 - R3. Failure loops could flood the journal, at about 86,400 events a day
   with a 1-second retry.
   - Severity: medium.
@@ -210,6 +216,22 @@ These are hard invariants. Violating one requires escalation, not a workaround.
     - The replay reports the time span it covers.
     - If H4 or H5 is `insufficient`, W2 may propose per-key retention as a
       separate decision.
+- R9. Child sightings miss short misses and may cost loop time. A sample every
+  `CHILD_SAMPLE_SECONDS = 0.25` cannot see a full-emit child that lives less
+  than that, and reading `/proc/<pid>/cmdline` takes the target's `mmap_lock`,
+  so it can stall briefly while that process faults heavily.
+  - Severity: medium (it biases H2 towards long misses; a stall delays one
+    tick).
+  - Likelihood: medium for short misses, low for stalls.
+  - Mitigation:
+    - Each record stores `child_samples`, so H2 can be computed over groups
+      that were sampled at least once and the bias is visible.
+    - Sampling runs only while `cached_moving > 0`, inspects at most 64
+      processes, and reads each process's `cmdline` once per `(pid,
+      starttime)`.
+    - The opt-in latency test measures the sample cost against the
+      performance tolerance.
+    - H2's falsification ends sampling (G1 runbook).
 
 ## Progress
 
@@ -229,7 +251,11 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] (2026-10-23 21:20Z) G0 coverage bound measured read-only from this
   host's journal (S5).
 - [x] (2026-10-23 21:40Z) Plan revised for every 🔴 and 🟡 panel finding.
-- [ ] Owner approval, including Q1 and the deviations D2 to D23.
+- [x] (2026-10-23 22:30Z) PR #24 opened as a draft. Issue #25 raised for the
+  unrelated `ty` version drift on `main`.
+- [x] (2026-10-23 23:00Z) The owner answered Q1 with (b). EP-M8 (H2 child
+  sightings) was added to W1, and W2 was renumbered EP-M9 (D24, D25).
+- [ ] Owner approval of the whole plan, including the deviations D2 to D25.
   Implementation must not begin before this.
 - [ ] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents.
 - [ ] EP-M1: real-binary feasibility and axiom check (prototype; go or
@@ -243,8 +269,10 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   (releasable).
 - [ ] EP-M7: supervisor wiring, status, report, `h3` replay, systemd
   scenarios and documentation.
-- [ ] G1 (owner): release, enable, collect, record H1 and H3, and decide.
-- [ ] EP-M8: W2 offline replay (H4 and H5), gated on G1.
+- [ ] EP-M8: H2 child sightings, the `h2` replay, and their documentation.
+- [ ] G1 (owner): release, enable, collect, record H1, H2 and H3, and
+  decide.
+- [ ] EP-M9: W2 offline replay (H4 and H5), gated on G1.
 
 ## Surprises & discoveries
 
@@ -304,20 +332,21 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
   Impact: on this host, H1's coverage prediction (at least 20%) is very likely
   falsified, and the RFC's rule then makes H2 "the only route to coverage". The
-  absolute count, however, is about 3,000 candidate solo windows a day. This is
-  open question Q1 for the owner.
+  absolute count, however, is about 3,000 candidate solo windows a day. This
+  raised open question Q1, which the owner answered with (b): add H2 child
+  sightings to W1 (EP-M8).
 - S6. `DrainLoop._failure` calls `fail_health` on every escaped exception.
   `MAX_INTERNAL_FAILURES` (20) only sets the operator recovery text. Impact:
   C-ISOLATE requires total entry points (D19).
 
 ## Decision log
 
-Decisions D1 to D23 are proposals of this draft, and take effect only when the
+Decisions D1 to D25 are proposals of this draft, and take effect only when the
 owner approves the plan. Each deviation from the letter of RFC 0002 is marked,
 and EP-M0 repeats it in ADR 004. If a deviation is rejected, the plan returns to
 `DRAFT`.
 
-- D1. Scope. Decision: W1 is EP-M0 to EP-M7, and W2 is EP-M8, gated on the
+- D1. Scope. Decision: W1 is EP-M0 to EP-M8, and W2 is EP-M9, gated on the
   G1 decision. Rationale: RFC acceptance approves W1 now and W2 at G1.
 - D2. Deviation from RFC 0002 §1: the generation read. Decision: the _server
   generation_ is read synchronously, with no spawned process, on either side of
@@ -530,23 +559,85 @@ and EP-M0 repeats it in ADR 004. If a deviation is rejected, the plan returns to
 - D22. Decision: `build-limits-cache-replay h3` ships in W1 (EP-M7), read
   only over the store. Rationale: G1 needs the H3 verdict, so it cannot wait
   for W2.
-- D23. Deviation for H2. Decision: W1 collects no child sightings, and H2 is
-  reported as `not_collected`. Rationale: child sampling is per-tick `/proc`
-  work that has no port in the RFC's budget. G0 (S5) makes coverage the owner's
-  first question, so H2 is the owner's Q1 option rather than something included
-  silently.
+- D23. Superseded by the owner's Q1 answer (b) on 2026-10-23. The draft
+  proposed that W1 collect no child sightings and report H2 as `not_collected`.
+  W1 now collects them in EP-M8 (D24, D25), and `not_collected` is reported
+  only for a store written before sampling existed, which cannot happen once
+  EP-M8 ships.
+- D24. Deviation from RFC 0002 §1 (ports). Decision: the RFC's
+  unit-properties port becomes `ServerProcessPort`, with two synchronous
+  operations on the same server process:
+  - `generation()` is the D2 read;
+  - `full_emit_metadata()` returns the `-C metadata` values of every
+    full-emit compiler process now in the server's control group, or
+    `SampleFailure`.
+
+  The control-group directory comes from `/proc/<pid>/cgroup` of the
+  generation's PID (`cgroups.parse_unified_path` and `cgroups.directory`),
+  cached per generation. Its members come from `cgroups.member_pids`. Each new
+  `(pid, starttime)` has its `/proc/<pid>/cmdline` read once and classified by
+  the pure `outcome_sightings.full_emit_metadata`. A sample inspects at most 64
+  processes, and the classification cache forgets a process once it leaves the
+  group. Rationale: both operations read the one server process from `/proc`,
+  so a sixth port would split a single concern, and the RFC's budget of five
+  ports holds. The RFC already requires child arguments to be compared in
+  memory and never stored, and this keeps that: only a tri-state token and a
+  sample count reach the record.
+- D25. Decision (H2 design, fixed in ADR 004 before any data is read).
+  - Matching. `outcome_sightings.request_metadata(argv)` reads the request's
+    own `-C metadata=X`, in any of the spellings `-C metadata=X`,
+    `-Cmetadata=X`, `--codegen metadata=X` and `--codegen=metadata=X`, and
+    keeps it in memory on the window entry. A process counts as a full-emit
+    compile only if it is a `rustc` (or `clippy-driver`) whose `--emit` set
+    includes `link` or `metadata`, or which has no `--emit` at all. A
+    dep-info-only pass never counts.
+  - Sampling. Every `CHILD_SAMPLE_SECONDS = 0.25`, while recording is on and
+    `cached_moving > 0`, each running cached entry gains one sample. It is
+    marked `seen` if its metadata is in the sampled set. Failures back off
+    from 0.25 s to 8 s and are counted.
+  - Record and event. Each `cache_outcome` and each stored record carries
+    `child_sighting`, which is `seen`, `not_seen` (sampled at least once and
+    never seen) or `unavailable` (never sampled, or the request had no
+    metadata), together with `child_samples`.
+  - The H2 classifier, applied by `build-limits-cache-replay h2` to stored
+    records labelled `hit` or `miss`, walking each key in insertion order:
+    1. Predict `miss` if `child_sighting` is `seen`.
+    2. Otherwise predict `miss` if the key has at least one earlier `hit`
+       and `runtime_seconds > max(1.0, 3 × median runtime of those earlier
+       hits)`.
+    3. Otherwise predict `hit`.
+
+    Only records with `child_samples >= 1` whose key holds both outcomes in
+    the store are evaluated, which is the RFC's "keys with both outcomes".
+  - The verdict:
+    - `supported` at 95% agreement or more;
+    - `refuted` below 90%;
+    - `inconclusive` in between;
+    - `insufficient` below 2,000 attributed outcomes or 100 evaluable
+      records.
+
+    The report also gives the share of labelled misses that were `seen`,
+    which tests the RFC's assumption that most misses leave a visible
+    child, and the agreement of each clue on its own.
+
+  Rationale: the RFC states H2's prediction and thresholds but not the
+  classifier, and an unfixed classifier could be tuned to the data. Fixing the
+  rule, the evaluable set and the minimum before reading keeps the verdict
+  honest. The `max(1.0, …)` floor keeps a key with very fast hits from calling
+  every dep-info-dominated hit a miss. What H2's verdict leads to is out of
+  this plan's scope: if `supported`, a separate plan may emit `inferred`
+  outcomes apart from labels (RFC I4); if `refuted`, a follow-up change removes
+  sampling (G1 runbook).
 - Considered and rejected: a "W1-lite" that defers the store, salt and key
   until G1, as the panel's alternative. It saves about 40% of W1's code if G1
   says stop, but delays H4 and H5 data by a whole collection period. G0 already
   answers the coverage risk it hedged, and more cheaply. The owner may still
   choose it at approval.
-- Open question Q1 for the owner, raised by G0. On this host, solo coverage
-  is bounded near 4.5%, below H1's 5% line, although the absolute count is
-  large. The options are:
-  - (a) proceed as planned, treat coverage as a reported limit, and decide on
-    H2 at G1 (recommended);
-  - (b) add an H2 child-sighting milestone to W1 now;
-  - (c) stop at W1's EP-M0 and record the evidence.
+- Q1 (resolved 2026-10-23 by the owner, leynos): (b), add an H2
+  child-sighting milestone to W1 now. G0 (S5) bounds solo coverage near 4.5%,
+  below H1's 5% line, and the RFC's rule then makes H2 the only route to
+  coverage. The other options were (a), proceed and decide H2 at G1, and (c),
+  stop after EP-M0. The impact is EP-M8 (D24, D25), with W2 renumbered EP-M9.
 
 ## Outcomes & retrospective
 
@@ -676,7 +767,7 @@ compiles on a shared host. The terms below are used throughout this plan.
     for the new operations.
   - dev-env-rocky ADR 011 governs token coverage.
   - This plan creates ADR 004 (`docs/adr-004-cache-outcome-recording.md`),
-    which records D2 to D23 and the fixed thresholds.
+    which records D2 to D25 and the fixed thresholds.
 - Standards: `AGENTS.md`, `docs/developers-guide.md`,
   `docs/documentation-style-guide.md` and `docs/scripting-standards.md`.
 
@@ -684,8 +775,8 @@ The traced identifiers are:
 
 - RFC-GOAL-1: record outcomes soundly. RFC-GOAL-3: decide with evidence.
 - RFC-I1 to RFC-I4: the layer 1 invariants.
-- RFC-PORTS: the five ports (clock, statistics, generation, store and salt;
-  D2 renames the unit-properties port).
+- RFC-PORTS: the five ports (clock, statistics, server process, store and
+  salt). D2 and D24 turn the unit-properties port into the server-process port.
 - RFC-OBS: the events, reasons, spans and report.
 - RFC-STORE: the store's path, bounds, aging, atomicity and single writer
   (refined by D17).
@@ -711,7 +802,9 @@ RFC-OBS -> EP-M6/EP-M7 -> tests/test_outcome_metrics.py, tests/__snapshots__/tes
   tests/__snapshots__/test_status_render.ambr
 RFC-W1 host check -> EP-M1 -> tests/test_sccache_real_binary.py (opt-in)
 RFC-H1, RFC-H3 -> EP-M7 -> build-limits-metrics cache_outcomes, build-limits-cache-replay h3 -> G1
-RFC-W2, RFC-H4, RFC-H5 -> EP-M8 -> tests/test_outcome_replay.py, tests/__snapshots__/test_outcome_replay.ambr
+RFC-H2 -> Q1 (b), D24, D25 -> EP-M8 -> tests/test_outcome_sightings.py, tests/test_outcome_sightings_properties.py,
+  tests/test_outcome_replay_h2.py, build-limits-cache-replay h2 -> G1
+RFC-W2, RFC-H4, RFC-H5 -> EP-M9 -> tests/test_outcome_replay.py, tests/__snapshots__/test_outcome_replay.ambr
 RFC-COMPAT -> C-DEFAULT, C-SCHEMA, D18 -> EP-M6 -> tests/test_outcome_config.py,
   tests/test_metrics_records_compatibility.py (extended)
 ```
@@ -748,6 +841,16 @@ RFC-COMPAT -> C-DEFAULT, C-SCHEMA, D18 -> EP-M6 -> tests/test_outcome_config.py,
 - A8. `os.replace` within one directory is atomic on Linux local
   filesystems. A single `write` of one line under `O_APPEND` either lands whole
   or leaves a torn tail, which the loader drops.
+- A9. For a miss, sccache 0.14.0 runs the full-emit compile as a descendant of
+  the server, inside the unit's control group. That process's argv keeps the
+  request's `-C metadata` value and an `--emit` that includes `link` or
+  `metadata`. The hash-key pass of every request, hit or miss, runs with
+  `--emit=dep-info` only. Source: RFC 0002 C3 and its discussion of Table 1.
+  EP-M1 confirms this with a fake `rustc` that sleeps on full emit.
+- A10. Reading `/proc/<pid>/cmdline` or `/proc/<pid>/stat` for a process that
+  has just exited fails with `ENOENT` or `ESRCH`, or returns empty text, and
+  never returns another process's data. A `(pid, starttime)` pair guards
+  against PID reuse (`proc(5)`).
 
 ### Obligations
 
@@ -921,6 +1024,41 @@ returned, and a graceful stop completes.
 - Artefact: `tests/test_outcome_totality.py`.
 - Mutation: removing the wrapper must make the test fail.
 
+O12. Sighting soundness (H2 input). An entry is marked `seen` only when one
+sample, taken while the entry was running, contained a full-emit process whose
+`-C metadata` equals the entry's own. A dep-info-only process never marks an
+entry. An entry without metadata is always `unavailable`. `not_seen` means at
+least one sample and no match. `child_samples` counts exactly the samples taken
+while the entry was running.
+
+- Method:
+  - parameterized tests of `request_metadata` and `full_emit_metadata` over
+    each `-C`/`--codegen` spelling, each `--emit` form, and no `--emit`;
+  - a Hypothesis property over generated launch, end and sample sequences,
+    with overlapping groups of the same crate but different metadata.
+- Artefacts: `tests/test_outcome_sightings.py` and
+  `tests/test_outcome_sightings_properties.py`.
+- Non-vacuity: `hypothesis.event` must classify `seen`, `not_seen` and
+  `unavailable`, plus a sample that held a dep-info pass only.
+- Mutations: each of these must fail a named test:
+  - treating `--emit=dep-info` as full emit;
+  - matching on the crate name instead of the metadata;
+  - counting samples taken after the entry ended.
+
+O13. Replay verdict boundaries. For H2 and H3 in W1, and H4 and H5 in EP-M9,
+the verdict changes exactly at the thresholds fixed in ADR 004. For H2 the
+boundaries are 95% and 90% agreement, 100 evaluable records and 2,000
+attributed outcomes. The evaluable set is exactly as D25 defines it.
+
+- Method: parameterized synthetic stores at, just above and just below each
+  boundary, plus a test that pins the constants to ADR 004's text.
+- Artefacts: `tests/test_outcome_replay_h2.py`,
+  `tests/test_outcome_replay.py`.
+- Non-vacuity: every verdict token is reached for every hypothesis that can
+  produce it.
+- Mutation: off-by-one on any boundary, or counting a key that holds only
+  one outcome as evaluable, must fail.
+
 Residual gaps:
 
 - Label soundness on the real server rests on A1 to A3. EP-M1 checks a few
@@ -929,6 +1067,11 @@ Residual gaps:
 - The RFC's caveat stands: labels from solo and unanimous windows favour
   quiet, uniform periods. On this host that means at most about 4.5% of cached
   compiles (S5).
+- H2 is evaluated only against those same labels. Its agreement measures the
+  classifier on quiet windows, while its use would be on busy ones. A sample
+  every 0.25 s also misses full-emit children that live less than that, which
+  biases the sighting clue towards long misses (R9). The H2 report states both
+  limits.
 
 ## Plan of work
 
@@ -952,10 +1095,13 @@ Domain modules are pure: no input or output, no `os`, `socket`, `subprocess` or
   `encode_line`, `decode_lines` and `compact`.
 - `outcome_window.py`: `OutcomeWindow[P]`, a ledger generic over an opaque
   payload. The recorder is its only owner.
+- `outcome_sightings.py` (EP-M8): `request_metadata(argv)`,
+  `full_emit_metadata(argv)` and `ChildSightings`, which is the per-entry
+  sample count and sighting, folded by the recorder on each `Sampled` event.
 - `outcome_vocabulary.py`: the `typ.Literal` aliases (`CacheResult`,
-  `OutcomeReason`, `StoreReason`, `GateReason`, `StoreOperation`), each tested
-  equal to its `metrics_schema` table.
-- `outcome_ports.py`: `StatisticsPort`, `GenerationPort` and
+  `OutcomeReason`, `StoreReason`, `GateReason`, `StoreOperation` and, from
+  EP-M8, `ChildSighting`), each tested equal to its `metrics_schema` table.
+- `outcome_ports.py`: `StatisticsPort`, `ServerProcessPort` and
   `OutcomeStorePort` (each a `typ.Protocol`), `SaltSource` (a `Callable`
   alias), and their result and failure types. The clock is `timing.Clock`,
   extended with an optional `wall` callable.
@@ -991,7 +1137,9 @@ The adapters form the shell.
     `("--show-stats", "--stats-format", "json")` after the executable. Its
     environment is the supervisor's own `PATH`, `HOME` and
     `XDG_RUNTIME_DIR`, plus `SCCACHE_SERVER_UDS`.
-  - `PeerGeneration(GenerationPort)`: the D2 read, synchronous.
+  - `PeerServerProcess(ServerProcessPort)`: the D2 generation read
+    (EP-M5), and from EP-M8 the D24 child sample. Both are synchronous and
+    bounded.
 - `outcome_store.py`:
   - `StoreWriter(OutcomeStorePort)` is the writer thread, with a bounded
     queue, `load`, `append`, `compact` and `close(timeout)`. A result queue
@@ -1070,6 +1218,7 @@ Test support:
 W2:
 
 - `outcome_replay.py` (pure) computes:
+  - the H2 verdict (EP-M8), using D25's classifier;
   - the H3 verdict, from solo rows and window summaries;
   - the H4 registry hit rate after the first observation;
   - the H5 flip rates, excluding identity changes;
@@ -1078,14 +1227,15 @@ W2:
     with an origin prior.
 
   The thresholds are constants pinned to ADR 004. The verdict tokens are
-  `supported`, `refuted`, `insufficient` and `not_collected`.
+  `supported`, `refuted`, `inconclusive` (between the support and falsification
+  thresholds), `insufficient` and `not_collected`.
 - `outcome_replay_cli.py` provides
-  `build-limits-cache-replay [h3|h4|h5|all] [--store PATH] [--json]`. The JSON
-  output carries a `schema` key. Exit status is 0 for a report (a missing store
-  reports `insufficient`), 1 for a `corrupt` or `version_mismatch` store (with
-  the reason named), and 2 for bad options. `h3` ships in EP-M7; `h4`, `h5` and
-  `all` ship in EP-M8. Coverage derived from the journal stays in
-  `build-limits-metrics`, so the replay never queries the journal.
+  `build-limits-cache-replay [h2|h3|h4|h5|all] [--store PATH] [--json]`. The
+  JSON output carries a `schema` key. Exit status is 0 for a report (a missing
+  store reports `insufficient`), 1 for a `corrupt` or `version_mismatch` store
+  (with the reason named), and 2 for bad options. `h3` ships in EP-M7, `h2` in
+  EP-M8, and `h4`, `h5` and `all` in EP-M9. Coverage derived from the journal
+  stays in `build-limits-metrics`, so the replay never queries the journal.
 
 ## Milestones and plateaus
 
@@ -1103,13 +1253,13 @@ milestone that adds each module.
 
 - Outcome:
   - `docs/adr-004-cache-outcome-recording.md` (Status: Proposed; Accepted
-    when EP-M7 merges) records D2 to D23, the fixed thresholds of Table B,
+    when EP-M8 merges) records D2 to D25, the fixed thresholds of Table B,
     the 2,000-outcome minimum, the vocabulary and the ADR 003 scope
     amendment. RFC 0002 links to it.
   - `docs/roadmap.md` gains a rewritten preamble covering both RFCs, with
     references qualified as in "RFC 0002 G1". It also gains phase 3,
     "Record and evaluate cache outcomes", with step 3.1 (W1: EP-M1 to
-    EP-M7) and step 3.2 (W2: EP-M8).
+    EP-M8) and step 3.2 (W2: EP-M9).
   - `docs/contents.md` indexes ADR 004.
   - `tests/fixtures/sccache_0_14_0_stats.json` is captured by one read-only
     `--show-stats --stats-format json` against the managed socket, with
@@ -1143,6 +1293,11 @@ milestone that adds each module.
   - Across 200 exits, a reading taken immediately after each exit shows the
     whole footprint (A2).
   - `SO_PEERCRED` on the private socket yields the server's PID (A4).
+  - During a cold request, the fake `rustc` sleeps for
+    `FAKE_RUSTC_EMIT_SECONDS = 1.0` on full emit. A sample of the server's
+    control group then finds a process whose argv carries the request's
+    `-C metadata` and a full `--emit`. During a warm request it finds at most a
+    `--emit=dep-info` process (A9, used by EP-M8).
 - Fixture: the readings and true outcomes are saved as
   `tests/fixtures/sccache_0_14_0_windows.jsonl`. EP-M2 replays them through
   `attribute()` in continuous integration, which gives H1's label agreement.
@@ -1374,20 +1529,94 @@ milestone that adds each module.
     - §11.2: the helpers. §11.3: the new state machines and the CrossHair
       contract. §11.4: `make test-sccache-host`.
     - §12: the Skylos, Vulture and duplication entries.
-  - ADR 004 becomes Accepted, and `docs/contents.md` is updated.
+  - `docs/contents.md` is updated.
 - Conformance check: O4 and O11 pass, `supervisor.py` stays at 400 lines or
   fewer, and no admission file has changed.
 - Recovery: with the key off, the null shell restores today's behaviour.
 - Compatibility decision: none beyond EP-M6.
 
+### EP-M8: H2 child sightings (W1, added by the owner's Q1 answer)
+
+- Outcome:
+  - `outcome_sightings.py` (pure): `request_metadata`, `full_emit_metadata`
+    and `ChildSightings`.
+  - The recorder gains a `Sampled(metadata: frozenset[str])` event and a
+    `SampleFailed` event. The pure `advance` folds each sample into the
+    running entries (O12).
+  - `PeerServerProcess.full_emit_metadata()` implements D24: the server's
+    control group is cached per generation, at most 64 processes are
+    inspected, and argv is classified once per `(pid, starttime)`.
+  - `OutcomeShell.on_tick` takes a sample every `CHILD_SAMPLE_SECONDS`
+    while recording is on and `cached_moving > 0`. It is total (D19), and
+    failures back off.
+  - Schema:
+    - the `child_sighting` vocabulary (`seen`, `not_seen`, `unavailable`);
+    - the `child_samples` counter on `cache_outcome`;
+    - the aggregate counters `child_samples_taken` and
+      `child_sample_failures` on `outcome_reading`.
+  - The store record gains `child_sighting` and `child_samples`. Record
+    format version 1 is finalized in this milestone. Nothing is released with
+    recording enabled between EP-M3 and here (only EP-M6, the inert plateau,
+    can be released), so no deployed store needs migrating.
+  - `outcome_replay` gains H2 (D25), and the CLI gains `h2`.
+  - The `cache_outcomes` report section gains counts by `child_sighting`.
+- Red:
+  - `tests/test_outcome_sightings.py` and
+    `tests/test_outcome_sightings_properties.py` (O12).
+  - `tests/test_outcome_server_process.py`. A fake `/proc` and cgroup tree
+    under `tmp_path` checks the 64-process bound, the per-`(pid, starttime)`
+    cache, a process that exits mid-sample (A10), an unreadable group, and a
+    PID reused with a new start time.
+  - `tests/test_outcome_replay_h2.py` (O13).
+  - An extended `RecorderMachine` with sample rules. Its non-vacuity labels
+    gain `seen` and `not_seen`.
+  - A sixth systemd scenario, added to
+    `tests/features/cache_outcomes_on_systemd.feature`:
+
+    ```gherkin
+    Scenario: Child sightings follow the script
+      Given the fake sccache scripts "miss" with a compiler that runs for 1 second, then "hit"
+      When two cached compiles with distinct -C metadata run one after the other with nothing queued
+      Then the "miss" cache_outcome reports child_sighting "seen"
+      And the "hit" cache_outcome reports child_sighting "not_seen"
+      And the outcome store holds no argument or metadata value
+    ```
+
+    The fake server already runs a miss's compiler as its own child. For a
+    scripted `hit` it replies without running one.
+  - A snapshot of `build-limits-cache-replay h2` text and JSON over a fixture
+    store, paired with semantic assertions on the verdict and the sample
+    sizes.
+- Opt-in performance: `tests/test_outcome_latency.py` adds the p99 cost of a
+  sample against the tolerance.
+- Documentation:
+  - `docs/users-guide.md`, "Record cache outcomes": what a child sighting
+    is, that only a token and a count are stored, how sampling cost is
+    bounded, `build-limits-cache-replay h2` and its limits.
+  - `docs/developers-guide.md` §6 and §9: the sample cadence, the
+    server-process port, and the rule that `/proc` reads stay inside
+    `PeerServerProcess`.
+  - ADR 004 records D23 to D25 and becomes Accepted.
+- Requirements: RFC-H2 and RFC-W1 (the H1 to H3 exit evidence), plus Q1 (b).
+- Conformance check: O4, O11 and O12 hold. No argv, metadata or path reaches
+  the store, the journal or a span (an extended O7). Sampling never runs when
+  recording is `off` (the C-DEFAULT spy test is extended to `/proc` opens).
+- Recovery: the sampling is additive behind the same key.
+- Remaining gaps: using `inferred` outcomes if H2 survives is out of scope.
+- Compatibility decision: none. The record format is still unreleased, and
+  the new metric fields are additive (old readers omit them).
+
 ### G1 (owner gate, runbook)
 
-1. Release EP-M7 by tag and install it through the dev-env-rocky role,
-   upgrading every journal reader first.
+1. Release EP-M8 (W1 complete) by tag and install it through the
+   dev-env-rocky role, upgrading every journal reader first. Do not enable
+   recording on a release that lacks EP-M8.
 2. Set `cache_outcomes = "record"` and restart the supervisor gracefully.
 3. After 24 hours, check the status line and run
-   `build-limits-cache-replay h3`. If nothing has been attributed, look at the
-   last reading reason and fix it before going on.
+   `build-limits-cache-replay h3` and `build-limits-cache-replay h2`. If
+   nothing has been attributed, look at the last reading reason and fix it
+   before going on. If `child_sighting` is `unavailable` for nearly every
+   record, look at `child_sample_failures` in the `cache_outcomes` report.
 4. Track progress by the attributed count on the status line, not by journal
    windows.
 5. When 2,000 attributed outcomes exist, or after 14 days, whichever comes
@@ -1398,16 +1627,25 @@ milestone that adds each module.
      `build-limits-metrics --since 14d --max-records 100000`;
    - the H1 verdict, with label agreement taken from EP-M1's fixture
      replay;
+   - the H2 verdict, with its agreement, evaluable count, the share of
+     misses that were `seen`, and its stated limits;
    - the H3 verdict.
 6. Record the decision in `Decision log`:
-   - `proceed` moves the plan to `IN PROGRESS` and starts EP-M8;
-   - `narrow` starts EP-M8 with the limits recorded;
+   - `proceed` moves the plan to `IN PROGRESS` and starts EP-M9;
+   - `narrow` starts EP-M9 with the limits recorded;
    - `stop` means: set the key to `off`, delete `~/.local/state/buildlimits/`,
      and plan removal of the code in a separate change.
 
+   Independently of the overall decision, H2's verdict decides sampling:
+   - `refuted` means planning removal of sampling, keeping wall time (RFC H2);
+   - `supported` lets a separate plan propose `inferred` outcomes, which are
+     reported apart from labels (RFC I4);
+   - `inconclusive` or `insufficient` means continuing to record and
+     re-running `h2` later.
+
    The status stays `BLOCKED` until then, and only the owner changes it.
 
-### EP-M8: W2 offline replay (after G1 says proceed or narrow)
+### EP-M9: W2 offline replay (after G1 says proceed or narrow)
 
 - Outcome: `h4`, `h5` and `all` in the replay CLI. They report verdicts,
   sample sizes, the time span the store covers (R8), and the quiet-window
@@ -1454,7 +1692,7 @@ Work from
 - Tests:
   - `make test` passes, and every new test existed red first, with its log
     kept.
-  - `make test-systemd-user` passes the five new scenarios.
+  - `make test-systemd-user` passes the six new scenarios.
   - `make test-sccache-host` passes on a host with sccache 0.14.0, or the D9
     fallback is recorded.
 - Verification: O1 to O11 are discharged, with their non-vacuity evidence.
@@ -1575,6 +1813,8 @@ type StoreReason = typ.Literal["none", "corrupt", "unreadable", "version_mismatc
 type StoreOperation = typ.Literal["load", "append", "compact", "salt"]
 type GateReason = typ.Literal["queued", "cached_moving", "server_drain", "unreachable", "held",
     "recovering", "barrier", "in_flight", "read_skipped", "backing_off"]
+type ChildSighting = typ.Literal["seen", "not_seen", "unavailable"]           # EP-M8
+type Verdict = typ.Literal["supported", "refuted", "inconclusive", "insufficient", "not_collected"]
 
 # buildlimits/outcome_stats.py (EP-M2)
 @dc.dataclass(frozen=True, slots=True)
@@ -1670,8 +1910,25 @@ class StatisticsPort(typ.Protocol):
     def poll(self, ticket: Ticket, now: float) -> Pending | StatisticsText | QueryFailure: ...
     def close(self, ticket: Ticket) -> None: ...   # idempotent; poll after a terminal result is an error
 
-class GenerationPort(typ.Protocol):
-    def read(self) -> Generation | None | GenerationFailure: ...
+@dc.dataclass(frozen=True, slots=True)
+class SampleFailure:                                                           # EP-M8
+    reason: typ.Literal["server_unknown", "group_unreadable"]
+
+class ServerProcessPort(typ.Protocol):
+    def generation(self) -> Generation | None | GenerationFailure: ...         # EP-M5
+    def full_emit_metadata(self) -> frozenset[str] | SampleFailure: ...       # EP-M8; values never leave memory
+
+# buildlimits/outcome_sightings.py (EP-M8)
+def request_metadata(argv: cabc.Sequence[str]) -> str | None: ...
+def full_emit_metadata(argv: cabc.Sequence[str]) -> str | None: ...
+
+@dc.dataclass(frozen=True, slots=True)
+class ChildSightings:
+    samples: int
+    is_seen: bool
+    has_metadata: bool
+
+    def sighting(self) -> ChildSighting: ...
 
 class OutcomeStorePort(typ.Protocol):
     def append(self, line: OutcomeRecord | WindowSummary) -> None: ...  # never blocks
@@ -1727,7 +1984,23 @@ Consult these documents:
     - totality and hook placement are specified (D19);
     - a releasable inert plateau is added (D18), with back-off (D16) and
       new vocabulary (D15);
-    - EP-M5 is split into EP-M4 to EP-M7, and W2 becomes EP-M8;
+    - EP-M5 is split into EP-M4 to EP-M7, and W2 becomes EP-M8 (renumbered
+      EP-M9 in the third revision);
     - Tables A and B are inlined, and Q1 is raised from G0.
   - Effect on the remaining work: its intent is unchanged. Next comes owner
     approval, then EP-M0.
+- 2026-10-23: the third revision, after the owner answered Q1 with (b).
+  - What changed:
+    - EP-M8 is added to W1: H2 child sightings, the `h2` replay and their
+      documentation;
+    - W2 is renumbered EP-M9;
+    - D23 is superseded, and D24 (the server-process port, still five ports)
+      and D25 (the H2 design and classifier, fixed before data) are added;
+    - axioms A9 and A10, obligations O12 and O13, and risk R9 are added;
+    - EP-M1 gains a sighting check;
+    - the G1 runbook releases EP-M8 and records H2;
+    - ADR 004 now becomes Accepted with EP-M8.
+  - Why: G0 bounds solo coverage near 4.5%, and the RFC makes H2 the route to
+    coverage below 5%.
+  - Effect on the remaining work: W1 grows by one milestone, and G1 waits for
+    it. W2 is unchanged apart from its number.
