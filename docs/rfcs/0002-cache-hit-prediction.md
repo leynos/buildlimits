@@ -1073,14 +1073,16 @@ survived.
 
 ## Acceptance
 
-Accepted on 2026-10-23. Acceptance approves the recommendation above: W1 and W2
-go ahead now, with the H1 to H5 thresholds as written, and W3 to W5 proceed
-only as each gate, G1 to G4, decides. Layer 3 stays 3B or nothing, and 3B
-remains gated on RFC 0001's model and the trace replay; W6 continues to wait on
-H3. Every threshold in this document is still a proposal to be fixed before any
-data is read, and the open questions stay open until the evidence settles them.
-Acceptance changes no runtime behaviour: it records the decision to run W1 and
-W2, not an implementation.
+Accepted on 2026-10-23. Acceptance approves the recommendation above. W1 starts
+now and W2 follows it at G1, with the H1 to H5 thresholds as written. W3 to W5
+proceed only as each of their releasing gates decides: G2 releases W3, G3
+releases W4 and G4 releases W5, with G5 left as the owner's decision on the
+default it names. Layer 3 stays 3B or nothing, and 3B remains gated on RFC
+0001's model and the trace replay; W6 continues to wait on H3. Every threshold
+in this document is still a proposal to be fixed before any data is read, and
+the open questions stay open until the evidence settles them. Acceptance
+changes no runtime behaviour: it records the decision to run W1 and W2, not an
+implementation.
 
 [^1]: RFC 0001, `docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md`,
       accepted 2026-10-18 and present on `main`.
