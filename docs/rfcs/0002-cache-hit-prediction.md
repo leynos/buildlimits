@@ -442,18 +442,25 @@ rather than by an operation's failure alternative. Like every other token,
 A missing salt is not a degraded path to a raw path. The digest is the only
 representation of a path this layer may persist or compare, so when the salt
 cannot be obtained the layer returns no digest: the compile's toolchain
-identity and any `path:` origin are unkeyable, `key_unavailable` and
-`store_unavailable` follow for layer 2, and no record is written for that
-compile. Attribution itself is unaffected, because the counters never needed
-the digest. The attributed label and its `cache_outcome` event are the same
-whether or not the salt was available — that event carries no key, no digest
-and no toolchain identity — so the reading is still named and still counted in
-the coverage the journal reports; what is lost is the keyed record in the
-store, not the attribution. "Unchanged attribution" and "unchanged persisted
-records" are therefore different claims, and it is the first that holds here.
-The raw path is never substituted and an unsalted digest is never written,
-which is the same ban §2's privacy bound states, applied at the point where the
-choice could otherwise be made.
+identity and any `path:` origin are unkeyable, and no record is written for
+that compile. The reason a reader sees depends on which layer could not
+proceed, and one layer at most does. Layer 1 reports `store_reason`
+`salt_unavailable`, because the file it could not read is one the store owns
+and it is the save that cannot happen. Layer 2 still attempts the history load,
+and reports `key_unavailable` when it cannot key the request at all;
+`store_unavailable` is reserved for the load that failed independently, so a
+missing salt never also produces `store_unavailable` by itself, and neither
+reason is reported for a request the layer never reached. Attribution itself is
+unaffected, because the counters never needed the digest. The attributed label
+and its `cache_outcome` event are the same whether or not the salt was
+available — that event carries no key, no digest and no toolchain identity — so
+the reading is still named and still counted in the coverage the journal
+reports; what is lost is the keyed record in the store, not the attribution.
+"Unchanged attribution" and "unchanged persisted records" are therefore
+different claims, and it is the first that holds here. The raw path is never
+substituted and an unsalted digest is never written, which is the same ban §2's
+privacy bound states, applied at the point where the choice could otherwise be
+made.
 
 Nothing in the design requires a port for what the layer does not call: the
 pure parts below are given values, not ports. Attribution, the counter
@@ -512,11 +519,16 @@ than the reason alone — that no record is written for the affected compile,
 that no raw path and no unsalted digest reaches the store or a comparison, that
 the attribution and its `cache_outcome` event are nevertheless unchanged, and
 that admission is unchanged — which is the pair of claims the salt paragraph
-separates. Boundary tests assert the rest of the separation the ports exist
-for: that a reading writes no file and emits no telemetry, that a save writes
-only the store, and that a raising sink leaves the reading's own result and the
-loop unchanged. Two failures need their own assertion, because the two are easy
-to confuse: a timed-out reading produces no attributed label for the affected
+separates. The salt test also asserts which reason each layer reports, because
+the two layers reach the missing salt differently: layer 1 asserts
+`store_reason` `salt_unavailable` for the save it could not make, and layer 2
+asserts `evaluation_reason` `key_unavailable` for the request it could not key
+and asserts that `store_unavailable` is _not_ reported for that same request.
+Boundary tests assert the rest of the separation the ports exist for: that a
+reading writes no file and emits no telemetry, that a save writes only the
+store, and that a raising sink leaves the reading's own result and the loop
+unchanged. Two failures need their own assertion, because the two are easy to
+confuse: a timed-out reading produces no attributed label for the affected
 window and reports `outcome_reason` `timeout`, so the test asserts the absence
 of a label, the reason and unchanged admission rather than an equality with a
 successful close; a failed store save is a persistence failure _after_ a
