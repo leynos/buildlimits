@@ -762,10 +762,15 @@ hit.
 **Design of 3B.** `Admission.token_arrived` takes the oldest waiting request
 classed `likely hit`, but only when that request would be composed with the
 cache at this instant (`cached`, `cache_allowed()` and `cacheable`), and only
-while no waiting request has been overtaken more than K times (K is 4, a
-proposal); otherwise it takes the head of the queue. The class arrives as
-immutable data at `submit`, so the core stays pure. Shadow mode comes first:
-the choice is computed and recorded, but the head is still admitted.
+while every request the promotion would skip has been overtaken fewer than K
+times (K is 4, a proposal); otherwise it takes the head of the queue. The bound
+is exclusive so that it holds Q3 exactly: a request already overtaken K times
+is never skipped again, because the guard admits no further overtake of it.
+Each request the promotion skips has its bypass count incremented, and the
+count of the request that takes the token is left alone — it was not skipped.
+The class arrives as immutable data at `submit`, so the core stays pure. Shadow
+mode comes first: the choice is computed and recorded, but the head is still
+admitted.
 
 **Safety invariants.** 3B relaxes P1 to "a prediction affects only which
 waiting request takes a token".
