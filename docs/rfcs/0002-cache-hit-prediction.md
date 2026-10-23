@@ -234,10 +234,15 @@ consecutive readings:
   the sccache unit's current invocation, read as one more property name on the
   `manager.show` call the supervisor already makes to inspect the unit, so no
   extra process is spawned and the transport's existing three-second bound
-  still applies. The unit restarts the server its own way after a failure (ADR
-  011), so that id is the server's identity, and a window whose two readings
-  differ is rejected however the counters moved. That reading is still the
-  baseline for the next window, so the window after a restart is measured
+  still applies. It reaches the selector through the layer's own
+  unit-properties port (§1), which is what gives the read a declared shape and
+  a failure token rather than leaving it implicit in the statistics query. The
+  generation is read on either side of each statistics query, so a restart that
+  lands while a query is outstanding is caught even though no statistics
+  document records it. The unit restarts the server its own way after a failure
+  (ADR 011), so that id is the server's identity, and a window whose two
+  readings differ is rejected however the counters moved. That reading is still
+  the baseline for the next window, so the window after a restart is measured
   within the new invocation rather than across it: rejecting a window discards
   that interval's attribution, never the reading that ended it. This closes the
   case the decrease test cannot see: a restart from an all-zero baseline, or
@@ -321,25 +326,24 @@ consecutive readings:
   The two names are deliberately different: the outcome says what the groups
   were given, and the attribution says what the reading was able to establish.
 
-A reading must not stop the loop. `Supervisor.serve` runs a single
-single-threaded selector (`supervisor.Supervisor`), so a query awaited in place
-would suspend request acceptance, pool-token arrival and group reaping for as
-long as `--show-stats` takes, on every tick. The reading is therefore a
-contract rather than a call site: whatever mechanism carries it, the loop must
-keep serving those three duties for the whole two seconds a query may last, and
-a stalled query must cost only the reading it abandoned. A query that misses
-its deadline is abandoned and its process reaped; the tick records
-`unattributed` and the next tick starts a fresh query rather than waiting on
-the previous one. A reading is always compared with the last reading the
-sequence took, so the windows meet end to end rather than overlapping: an
-abandoned query yields no window at all, and a reading that was taken is the
-next baseline whether or not its window was accepted. A reading's window is the
-interval between itself and its predecessor, however many ticks apart they
-fall. Every launch therefore falls in exactly one window and no request can be
-attributed twice, which is what lets the count check above reject a window
-rather than accept a double count. Lateness costs coverage, never soundness,
-and a persistently stalling `--show-stats` degrades coverage rather than
-admission.
+A reading must not stop the loop. `Supervisor.serve` runs a single-threaded
+selector (`supervisor.Supervisor`), so a query awaited in place would suspend
+request acceptance, pool-token arrival and group reaping for as long as
+`--show-stats` takes, on every tick. The reading is therefore a contract rather
+than a call site: whatever mechanism carries it, the loop must keep serving
+those three duties for the whole two seconds a query may last, and a stalled
+query must cost only the reading it abandoned. A query that misses its deadline
+is abandoned and its process reaped; the tick records `unattributed` and the
+next tick starts a fresh query rather than waiting on the previous one. A
+reading is always compared with the last reading the sequence took, so the
+windows meet end to end rather than overlapping: an abandoned query yields no
+window at all, and a reading that was taken is the next baseline whether or not
+its window was accepted. A reading's window is the interval between itself and
+its predecessor, however many ticks apart they fall. Every launch therefore
+falls in exactly one window and no request can be attributed twice, which is
+what lets the count check above reject a window rather than accept a double
+count. Lateness costs coverage, never soundness, and a persistently stalling
+`--show-stats` degrades coverage rather than admission.
 
 Outcomes are `hit`, `miss`, `not_cacheable`, `not_cached`, `failed`, `error` and
 `unattributed`. `not_cached` is the C7 result: a successful compile the
@@ -396,15 +400,17 @@ and otherwise names why the reading produced no label: `timeout`, `read_error`,
 deadline elapsing and `read_error` is any other failure of the query itself — a
 launch failure, a socket error or a transport read — so a query that never
 returns statistics is named rather than sharing the timeout's token or falling
-through unnamed. `outcome_reason` covers the reading alone: it is a second
-closed vocabulary beside the new-event token set because the schema's existing
-`reason` field already carries admission refusals
-(`metrics_schema.VOCABULARIES`), and widening the event without a distinct
-field would make a rejected window indistinguishable from a refusal in the
-journal. The evaluation surface has its own vocabulary (Layer 2) rather than
-reusing this one, so a reading that failed and a request that could not be
-classified are never confused in the journal. No reason carries a key, a path
-or an argument. The boundaries the proposal crosses are recorded as bounded
+through unnamed. `generation_changed` is the unit-properties read disagreeing
+with itself across the window, or failing `unavailable` at either end, since a
+generation that cannot be read cannot be shown to have held. `outcome_reason`
+covers the reading alone: it is a second closed vocabulary beside the new-event
+token set because the schema's existing `reason` field already carries
+admission refusals (`metrics_schema.VOCABULARIES`), and widening the event
+without a distinct field would make a rejected window indistinguishable from a
+refusal in the journal. The evaluation surface has its own vocabulary (Layer 2)
+rather than reusing this one, so a reading that failed and a request that could
+not be classified are never confused in the journal. No reason carries a key, a
+path or an argument. The boundaries the proposal crosses are recorded as bounded
 `JournalTracer` spans — `statistics_read`, `outcome_store_load`,
 `outcome_store_save`, `prediction_evaluate` and `admission_selection` — with
 fixed operation names, bounded attributes and elapsed milliseconds, exported
@@ -420,8 +426,8 @@ coverage and a count per reason.
 **Ports.** Everything this layer reads or writes that is not its own memory is
 reached through a narrow injected port, so the reads and writes have declared
 shapes, their failures stay isolable, and a test can drive the layer without a
-clock, a socket or a file system. Four ports carry it, and no more, which keeps
-the count independent of the retry and scoring work layer 2 adds later:
+clock, a socket, or a file system. Five ports carry it, and no more, which
+keeps the count independent of the retry and scoring work layer 2 adds later:
 
 - a clock port offering monotonic and wall-clock readings separately because
   the deadline is measured against the monotonic reading while a record stores
@@ -430,6 +436,20 @@ the count independent of the retry and scoring work layer 2 adds later:
   command it runs being the port's own business
   (`--show-stats --stats-format json`, never `--zero-stats` or `--dist-status`,
   per I2);
+- a unit-properties port reading one named property of the sccache unit through
+  the same `manager.show` call the cache-reachability check already makes, so
+  `InvocationID` has a declared shape of its own rather than being folded into
+  the statistics document. The two reads stay separate because they answer
+  different questions over different transports: the statistics come from the
+  server's socket, the generation from the unit's own record of which
+  invocation is running. Pairing them is therefore the caller's ordering, not a
+  property either document can carry. The selector reads the generation before
+  it launches a query and again after the query ends, and it accepts the window
+  only when the two agree; because a restart can only change the invocation, a
+  restart that lands during a query is then caught even though neither
+  statistics document mentions one. This is the same ordering `outcome_reason`
+  `generation_changed` reports, and the port's failure is `unavailable`, which
+  the caller treats as an unavailable reading rather than a window;
 - an outcome-store port offering a bounded load and an atomic save, with the
   store's path, its 10,000-record bound and its 30-day aging behind it; and
 - a salt port offering one per-host random value, which is the only source the
@@ -440,14 +460,15 @@ raising a shared exception, so the reasons above stay the caller's to attach.
 Table 2 gives the alternatives each operation returns and the reason token its
 failure carries.
 
-| Port       | Operation          | Success               | Failure reason                              |
-| ---------- | ------------------ | --------------------- | ------------------------------------------- |
-| clock      | monotonic reading  | seconds, total        | none: the read cannot fail                  |
-| clock      | wall-clock reading | seconds, total        | none: the read cannot fail                  |
-| statistics | read one document  | bounded document      | `timeout`, `read_error`                     |
-| store      | load history       | bounded records       | `corrupt`, `unreadable`, `version_mismatch` |
-| store      | save history       | saved                 | `save_failed`                               |
-| salt       | acquire the value  | per-host random value | `salt_unavailable`                          |
+| Port            | Operation          | Success               | Failure reason                              |
+| --------------- | ------------------ | --------------------- | ------------------------------------------- |
+| clock           | monotonic reading  | seconds, total        | none: the read cannot fail                  |
+| clock           | wall-clock reading | seconds, total        | none: the read cannot fail                  |
+| statistics      | read one document  | bounded document      | `timeout`, `read_error`                     |
+| unit-properties | read the property  | property value        | `unavailable`                               |
+| store           | load history       | bounded records       | `corrupt`, `unreadable`, `version_mismatch` |
+| store           | save history       | saved                 | `save_failed`                               |
+| salt            | acquire the value  | per-host random value | `salt_unavailable`                          |
 
 _Table 2: Port operations and the reason each failure carries._
 
@@ -547,9 +568,10 @@ that fails before it can time out — a launch failure, a socket error or a
 transport read — so the two are distinguished rather than both claimed by one
 test. The ports make each of those failures a fake's return rather than a real
 timeout, socket or file: a fake statistics port answers from a script, a fake
-store port fails a load or a save on demand, a fake clock moves the deadline,
-and a fake salt port refuses on demand. Each failure in Table 2 is provoked and
-its declared reason asserted, so a port contract cannot be added without a test
+unit-properties port changes or withholds the invocation, a fake store port
+fails a load or a save on demand, a fake clock moves the deadline, and a fake
+salt port refuses on demand. Each failure in Table 2 is provoked and its
+declared reason asserted, so a port contract cannot be added without a test
 that observes it: a refused save yields `save_failed`, a load over an
 unreadable file yields `unreadable` where a permission-denied read makes the
 file unreadable rather than corrupt, and a refused salt yields
@@ -924,10 +946,18 @@ The thresholds below are proposals, to be approved before any data is read.
   _Decision:_ if it survives, report `inferred` outcomes for overlapping
   compiles, apart from labels (I4); if falsified, keep wall time for display
   and stop sampling children.
-- **H3. Arguments decide non-cacheability.** _Prediction:_ every attributed
-  request with a C4 feature is `not_cacheable`, and none without one is.
-  _Falsified if:_ one counterexample occurs. _Decision:_ if it survives, W6 may
-  go to design review; if falsified, drop the deterministic class.
+- **H3. Arguments decide non-cacheability.** _Prediction:_ every request with a
+  C4 feature is refused as uncacheable and none without one is, read from
+  `requests_not_cacheable` rather than from an outcome label. _Falsified if:_
+  one counterexample occurs. _Decision:_ if it survives, W6 may go to design
+  review; if falsified, drop the deterministic class. H3 tests the refusal
+  counter because a C4 refusal never reaches a `CompileResult`: the parser
+  declines the request, the client compiles it itself, and the server records
+  the refusal in `requests_not_cacheable` while moving neither
+  `non_cacheable_compilations` nor `compilations`. Reading the refusal from the
+  counter keeps it distinct from `not_cacheable`, which is only ever a server
+  result for a compile that ran. The two are different claims about different
+  observations, and a window label cannot stand in for a refusal count.
 - **H4. Registry crates are predictable.** _Prediction:_ registry crates at a
   pinned version with an unchanged argument digest hit at least 95% of the time
   on this host after their first attributed observation. _Comparator:_ the
