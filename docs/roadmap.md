@@ -41,7 +41,7 @@ behaviour and passes on the fixed behaviour. Its outcome is the H1 verdict,
 which decides at G1 whether to proceed, change tool or stop. See RFC 0001 §§1-3
 and H1.
 
-- [ ] 1.1.1. Identify the pre-fix revisions of incidents 1, 2 and 4.
+- [x] 1.1.1. Identify the pre-fix revisions of incidents 1, 2 and 4.
   - See RFC 0001 open question 8.
   - Search the dev-env-rocky history that predates the import; incident 3's
     pre-fix revision is `eba08ad` in this repository.
