@@ -78,7 +78,7 @@ Read the server generation synchronously before and after a statistics query:
 3. Read `/proc/<pid>/stat` field 22 for the process start time.
 4. Read `INVOCATION_ID` from `/proc/<pid>/environ`.
 
-The generation is `(INVOCATION_ID or "", pid, starttime)`. A refused connect
+The generation is `(INVOCATION_ID or "", pid, starttime)`. A connection refusal
 means no server; any other failure is `generation_unavailable`. This identifies
 the process serving the query and detects a restart inside one service
 invocation. It avoids the blocking `systemctl show` alternative and the
@@ -97,7 +97,7 @@ Add `declined` (`requests_not_cacheable`), `not_compile`
 `cache_result` for server declines that do not compile. Add
 `unsupported_version` to `outcome_reason`. Only sccache version `0.14.0` is
 supported; another version disables recording until restart. This distinguishes
-requests such as Cargo's `-vV` probe from a compile that ran and returned
+requests such as Cargo's `-vV` probe from a compilation that ran and returned
 `not_cacheable`.
 
 ### D6: separate group, reading and store events
@@ -106,9 +106,10 @@ Register three supervisor events:
 
 - `cache_outcome`, once per cached launch while recording is on, with
   `cache_result`, `outcome_attribution`, `crate_origin`, `outcome_reason`,
-  `runtime_seconds` and `window_groups`.
+  `runtime_seconds`, `window_groups`, `child_sighting` and `child_samples`.
 - `outcome_reading`, emitted when the reading reason changes and once a minute
-  as a summary of `readings`, `readings_skipped` and `readings_failed`.
+  as a summary of `readings`, `readings_skipped`, `readings_failed`,
+  `child_samples_taken` and `child_sample_failures`.
 - `outcome_store`, with `store_operation` (`load`, `append`, `compact` or
   `salt`), `store_reason`, `store_records` and `store_discarded`.
 
@@ -188,7 +189,7 @@ Use this first-applicable reading-reason order:
 8. `ineligible_window` for an unclean group.
 9. `count_mismatch` when launch counts, classification counters or executed
    request footprints do not balance.
-10. `mixed_window` for a balanced window the counters cannot split.
+10. `mixed_window` for a balanced window whose counters cannot be split.
 
 Accept an all-zero baseline in a running generation. Add `straddled_reading`,
 `supervisor_stopped`, `no_baseline`, `generation_unavailable`,
@@ -203,12 +204,13 @@ after success. Stop readings until restart for `unsupported_version` or
 
 Store JSON Lines at `$XDG_STATE_HOME/buildlimits/cache-outcomes.jsonl`,
 defaulting to `~/.local/state/buildlimits/`. Set the directory to mode 0700 and
-files to 0600. The first line is
+files to 0600. The first line has this JSON header:
 `{"format": "buildlimits-cache-outcomes",
 "version": 1, "salt_id": …, "written_at": …}`.
-A single writer thread owns every file operation; the loop appends through a
-bounded queue of 4,096 entries and drops overflow with `save_failed`. Each
-serialized record is at most 16 KiB, which also bounds the queue's payload.
+The header records the file format, salt identifier and write time. A single
+writer thread owns every file operation; the loop appends through a bounded
+queue of 4,096 entries and drops overflow with `save_failed`. Each serialized
+record is at most 16 KiB, which also bounds the queue's payload.
 
 Compact at start, when an append would take the file above 12 MiB, and at stop.
 Compaction drops records older than 30 days by `observed_at`, keeps the 10,000
@@ -300,22 +302,23 @@ entry has that metadata. If several active entries share it, mark each
 `ambiguous`; never use that child to satisfy more than one request. Failures
 back off from 0.25 to 8 seconds and are counted.
 
-Each event and record carries `child_sighting` (`seen`, `not_seen` after at
-least one sample and no matching child, `ambiguous` when a matching child was
-shared by active entries and no unique match was seen, or `unavailable` if
-never sampled or no request metadata) and `child_samples`. A unique `seen`
-match takes precedence over an ambiguous sample. For records labelled `hit` or
-`miss`, walk each key in insertion order and predict `miss` when a child is
-uniquely seen; otherwise predict `miss` when an earlier hit exists and runtime
-exceeds the greater of 1 second or three times the median of earlier hits;
-otherwise predict `hit`. Evaluate records with at least one sample whose key
-has both outcomes; an ambiguous sighting contributes no child clue, but its
-runtime may still be evaluated. The child-only agreement and the share of
-labelled misses with a sighting use only `seen`/`not_seen` records; report
-ambiguous and unavailable counts separately. Report `supported` at 95%
-agreement or more, `refuted` below 90%, `inconclusive` between, and
-`insufficient` below 2,000 attributed outcomes or 100 evaluable records. Also
-report each clue's agreement.
+Each `cache_outcome` event and stored record carries `child_sighting` (`seen`,
+`not_seen` after at least one sample and no matching child, `ambiguous` when a
+matching child was shared by active entries and no unique match was seen, or
+`unavailable` if never sampled or no request metadata) and `child_samples`. The
+`outcome_reading` event carries aggregate `child_samples_taken` and
+`child_sample_failures` counters. A unique `seen` match takes precedence over
+an ambiguous sample. For records labelled `hit` or `miss`, walk each key in
+insertion order and predict `miss` when a child is uniquely seen; otherwise
+predict `miss` when an earlier hit exists and runtime exceeds the greater of 1
+second or three times the median of earlier hits; otherwise predict `hit`.
+Evaluate records with at least one sample whose key has both outcomes; an
+ambiguous sighting contributes no child clue, but its runtime may still be
+evaluated. The child-only agreement and the share of labelled misses with a
+sighting use only `seen`/`not_seen` records; report ambiguous and unavailable
+counts separately. Report `supported` at 95% agreement or more, `refuted` below
+90%, `inconclusive` between, and `insufficient` below 2,000 attributed outcomes
+or 100 evaluable records. Also report each clue's agreement.
 
 ## Goals and non-goals
 

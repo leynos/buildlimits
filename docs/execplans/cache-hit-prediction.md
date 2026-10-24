@@ -5,8 +5,8 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN PROGRESS (2026-10-24; EP-M0 evidence is captured; D30-D32 gates
-passed and their exact-head review is pending)
+Status: IN PROGRESS (2026-10-24; EP-M1 is go; the exact-head EP-M0 review and
+the audit-gated code commit remain pending)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -275,10 +275,29 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   `make markdownlint` and serial `make nixie` in the isolated container.
   Formatting output was copied into the worktree; a fresh exact-head review is
   the remaining EP-M0 gate.
+- [x] (2026-10-24 01:39Z) Fresh CodeRabbit review of `278cccb` completed with
+  nine findings. D33 and the linked RFC/ADR corrections reconcile the HMAC,
+  store, event-field, parser and toolchain contracts; documentation gates and a
+  fresh review are pending.
+- Current (2026-10-24 02:02Z): isolated `make fmt` and `make check-fmt` passed.
+  The first `make lint` run found 68 issues in EP-M1's new Python test support;
+  later gates did not run. Fixes now separate pure statistics fixture handling
+  into `tests/sccache_stats.py` (D34); the ordered gates must be rerun.
+- [x] (2026-10-24) The rebuilt isolated candidate passed `make fmt`,
+  `make check-fmt`, `make lint` and `make typecheck`. The full suite passed at
+  `PYTEST_XDIST_WORKERS=1` (1,763 passed, 26 skipped), and the opt-in
+  `test_real_sccache_014_counter_and_child_contracts` passed against the real
+  sccache 0.14.0 server (1 passed). Its 204-line JSONL fixture was extracted
+  only after the no-mount container exited successfully; SHA-256:
+  `14a9490fe20f356789a9707eca1f63b189fc8f56be9a0a21ffcf3346de376058`.
+- [ ] `make audit` remains a commit blocker: the isolated gate could not reach
+  PyPI, and a separate metadata-only scan found six advisories in the
+  pre-existing `filelock==4.2.0` lock entry, fixed in 4.2.1. Resolve this
+  outside the approved feature scope before committing Python changes.
 - [ ] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
-  fixture; local CodeRabbit review pending.
-- [ ] EP-M1: real-binary feasibility and axiom check (prototype; go or
-  no-go).
+  fixture; exact-head local CodeRabbit review pending.
+- [ ] EP-M1: real-binary feasibility and axiom check: **go**; implementation
+  and validation passed, with the code commit held by the audit blocker above.
 - [ ] EP-M2: pure statistics, footprints, attribution and gate.
 - [ ] EP-M3: pure keys, records and the window ledger.
 - [ ] EP-M4: the reading sequencer over fake ports.
@@ -357,6 +376,14 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - S6. `DrainLoop._failure` calls `fail_health` on every escaped exception.
   `MAX_INTERNAL_FAILURES` (20) only sets the operator recovery text. Impact:
   C-ISOLATE requires total entry points (D19).
+- S7. Two one-second launch tests timed out in the isolated full suite with two
+  workers. The same suite passed with one worker (1,763 passed, 26 skipped),
+  with no source change between runs. Keep the candidate gate at one worker on
+  this shared host.
+- S8. The isolated `make audit` could not resolve its PyPI service. A separate
+  metadata-only scan of the committed dependency set found six advisories in
+  `filelock==4.2.0`, all fixed by 4.2.1. This is pre-existing and unrelated to
+  W1; the lockfile change is outside the approved scope and is not included.
 
 ## Decision log
 
@@ -404,7 +431,7 @@ C-GATES.
   Rationale: every Cargo build begins with a `-vV` probe, which the adapter
   submits as cacheable and the server declines (S1). These windows need a name
   for the count rule and for H3. `declined` avoids reading like an admission
-  refusal, and `not_cacheable` stays a result of a compile that ran.
+  refusal, and `not_cacheable` stays a result of a compilation that ran.
 - D5. Deviation in the vocabulary. Decision: `outcome_reason` gains
   `unsupported_version`. A document whose `version` is outside
   `SUPPORTED_SCCACHE_VERSIONS = frozenset({"0.14.0"})` is rejected, and
@@ -579,10 +606,11 @@ C-GATES.
   scanning, missing input, `--out-dir`, `--emit` or `--crate-name` is
   `declined`, in that order. An emit set with neither `link` nor `metadata` is
   `not_compile`, including dep-info-only, asm-only and `--emit=` (one empty
-  member). No supported `rlib` or `staticlib` type is `declined`; unsupported
-  emit kinds are `declined` only after the no-link/no-metadata check.
-  Metadata-only is cacheable when the other required fields and a supported
-  crate type are present. Cargo's `-vV` probe is `declined` as `missing input`.
+  member). When no supported `rlib` or `staticlib` type is present, predict
+  `declined`; unsupported emit kinds are `declined` only after the
+  no-link/no-metadata check. Metadata-only is cacheable when the other required
+  fields and a supported crate type are present. Cargo's `-vV` probe is
+  `declined` as `missing input`.
 
   For every balanced window, mixed or not, the store also gets a _window
   summary_ record. It holds the launch count, Δ`requests_not_compile`,
@@ -706,20 +734,20 @@ C-GATES.
   them first. After the scan, missing input, `--out-dir`, `--emit` or
   `--crate-name` predicts `declined`, in that order. An emit set with neither
   `link` nor `metadata` predicts `not_compile`, including dep-info-only,
-  asm-only and `--emit=` (one empty member). No supported `rlib` or `staticlib`
-  type predicts `declined`; unsupported emit kinds predict `declined` only
-  after the no-link/no-metadata check. Compare `not_compile` with
-  `requests_not_compile` and `declined` with `requests_not_cacheable`; predicted
-  `cacheable` requests must move neither refusal counter. Persist only the
-  `parser_class` enum on request records and the predicted class counts in
-  window summaries, never argv; do not add it to the journal event. The
-  fixture's `not_cached` breakdown includes 363 `-`, 477 `-o`, 54 `--sysroot`
-  and 2,583 `crate-type` declines, within 6,271 total. Rationale: the earlier
-  H3 set omitted parser branches already visible in the one read-only stats
-  snapshot. A repository sweep found that `groups.compiler_argv` only removes
-  wrapper layers; it does not parse rustc options. Keep the pure predictor in
-  its own `outcome_parser.py`, scoped to sccache 0.14 Rust H3 evidence and
-  reused by record creation and replay only.
+  asm-only and `--emit=` (one empty member). When no supported `rlib` or
+  `staticlib` type is present, predict `declined`; unsupported emit kinds
+  predict `declined` only after the no-link/no-metadata check. Compare
+  `not_compile` with `requests_not_compile` and `declined` with
+  `requests_not_cacheable`; predicted `cacheable` requests must move neither
+  refusal counter. Persist only the `parser_class` enum on request records and
+  the predicted class counts in window summaries, never argv; do not add it to
+  the journal event. The fixture's `not_cached` breakdown includes 363 `-`, 477
+  `-o`, 54 `--sysroot` and 2,583 `crate-type` declines, within 6,271 total.
+  Rationale: the earlier H3 set omitted parser branches already visible in the
+  one read-only stats snapshot. A repository sweep found that
+  `groups.compiler_argv` only removes wrapper layers; it does not parse rustc
+  options. Keep the pure predictor in its own `outcome_parser.py`, scoped to
+  sccache 0.14 Rust H3 evidence and reused by record creation and replay only.
 - D31. Review correction to D25. Decision: build a multimap from metadata to
   active entries at each child sample. A full-emit child marks an entry `seen`
   only when exactly one active entry has its metadata. If more than one active
@@ -737,6 +765,20 @@ C-GATES.
   by first appearance, with Rust `str::split`, sccache `parse_arguments`, the
   command response, Cargo environment variables, Cargo fingerprints, and the
   server counter updates in that order.
+- D33. Review correction to cross-document contracts. Decision: ADR 004 D17
+  owns one append-only JSON Lines store and its single writer; layer 2 reads
+  those records and does not persist a second snapshot. RFC 0002 uses the same
+  HMAC-SHA-256 digest and toolchain identity rules, and scopes child-sighting
+  fields to per-launch events and records while `outcome_reading` carries only
+  aggregate child-sampling counters. Rationale: the earlier RFC described a
+  second writer, snapshot file and different identity inputs, so its readers
+  could disagree with the W1 record writer and classifier.
+- D34. EP-M1 test-support boundary. Decision: keep the real-server lifecycle in
+  `tests/sccache_host.py` and move pure counter validation plus replay-window
+  normalization into `tests/sccache_stats.py`. The latter is test-only and is
+  not a runtime API. Rationale: the pinned check needs both process-lifecycle
+  and counter-fixture support; keeping those responsibilities separate keeps
+  each source file below 400 lines and the process harness focused.
 
 ## Outcomes & retrospective
 
@@ -1365,6 +1407,9 @@ Test support:
   `RecordingSpans`.
 - `tests/sccache_host.py` (new): `sccache_host_marks()`, modelled on
   `systemd_user_marks`, with its own opt-in test.
+- `tests/sccache_stats.py` (new): validates pinned counter footprints and
+  writes redacted replay-window readings; it is test-only and has no runtime
+  callers.
 
 W2:
 

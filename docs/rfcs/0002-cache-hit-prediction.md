@@ -464,8 +464,9 @@ keeps the count independent of the retry and scoring work layer 2 adds later:
   statistics document mentions one. This is the same ordering `outcome_reason`
   `generation_changed` reports, and the port's failure is `unavailable`, which
   the caller treats as an unavailable reading rather than a window;
-- an outcome-store port offering a bounded load and an atomic save, with the
-  store's path, its 10,000-record bound and its 30-day aging behind it; and
+- an outcome-store port offering a bounded load, append and compaction, with
+  the JSON Lines path, single writer, size bounds and aging defined by ADR 004
+  D17; and
 - a salt port offering one per-host random value, which is the only source the
   path digest draws on.
 
@@ -480,8 +481,8 @@ failure carries.
 | clock           | wall-clock reading | seconds, total        | none: the read cannot fail                  |
 | statistics      | read one document  | bounded document      | `timeout`, `read_error`                     |
 | unit-properties | read the property  | property value        | `unavailable`                               |
-| store           | load history       | bounded records       | `corrupt`, `unreadable`, `version_mismatch` |
-| store           | save history       | saved                 | `save_failed`                               |
+| store           | load records       | bounded JSONL records | `corrupt`, `unreadable`, `version_mismatch` |
+| store           | append or compact  | saved                 | `save_failed`                               |
 | salt            | acquire the value  | per-host random value | `salt_unavailable`                          |
 
 _Table 2: Port operations and the reason each failure carries._
@@ -632,19 +633,16 @@ arguments are compared in memory and never stored; the journal receives only
 closed-vocabulary tokens.
 
 **Storage.** G2 must be decided from layer 1's own records, so the keyed
-records belong to layer 1, not layer 2: the same atomically-written local file
-§2 describes, whose records live in the set §2's one writer saves, at
-`$XDG_STATE_HOME/buildlimits/cache-outcomes.json`, holding key, outcome,
-origin, wall time, toolchain identity and timestamp per attributed record. The
-journal keeps only the closed-vocabulary event; the file is the only place a
-key is written to disk, it never leaves the host, and it is read by `W2`'s
-offline replay and by nothing in `admission`. Its bounds, aging and atomicity
-are §2's, and deleting it costs only the replay. Layer 2 reuses this store
-rather than introducing a second one, so a `W2` that decides against prediction
-leaves one removable file behind and no other trace. Because it is one file
-with two interested layers, §2 also fixes who writes it: with prediction off,
-layer 1 saves it itself; with prediction on, layer 2 is its only writer and
-layer 1's records reach the disk through layer 2's next save.
+records belong to layer 1. The same append-only JSON Lines file defined by ADR
+004 D17 lives at `$XDG_STATE_HOME/buildlimits/cache-outcomes.jsonl` and holds
+the key, outcome, origin, wall time, toolchain identity and timestamp per
+attributed record. Layer 2 reads those records to build its in-memory history;
+it does not create a second file or become a second writer. The layer 1 writer
+owns every load, append and compaction in every mode. The journal keeps only
+the closed-vocabulary event; the file is the only place a key is written to
+disk, it never leaves the host, and it is read by `W2`'s offline replay and by
+nothing in `admission`. Its queue, size bounds, aging and atomic compaction
+follow ADR 004 D17. Deleting it costs only the replay.
 
 **Measurement for the next layer.** After at least 2,000 attributed outcomes (a
 proposal), compute coverage by origin, the outcome mix, and an offline replay
@@ -667,29 +665,21 @@ that hits can be foreseen into something the journal can check.
   `git:<name>@<rev>`, and any other directory becomes `path:<salted digest>`,
   which is per worktree, as sccache's key is (C3);
 - the target, from `--target`, or `host`;
-- a toolchain identity: the compiler path, its `-vV` version string, and the
-  `CACHE_VERSION` constant. The path enters the identity as a per-host salted
-  digest, the same representation §2's privacy bound requires of every local
-  path, and that digest is what a record persists and what the tag comparison
-  compares; the raw path stays in memory. Two identities are equal exactly when
-  their path digests, `-vV` strings and `CACHE_VERSION` constants all are, so
-  matching a stored tag never needs the path that produced it. This is an
+- a toolchain identity: HMAC-SHA-256 under the local salt of the compiler
+  argument and `RUSTUP_TOOLCHAIN` (or the empty string), together with
+  sccache's Rust `CACHE_VERSION` (`"6"`) and the server version in the
+  statistics document, as ADR 004 D10 specifies. The supervisor does not
+  resolve or stat the compiler or run `<compiler> -vV`; Cargo already includes
+  `-vV` output in `-C metadata`, which the argument digest covers. This is an
   _approximate_ identity, deliberately not the full set `generate_hash_key`
-  folds into a key (C3). The shared-library digests are excluded because they
-  digest every file in the rustc sysroot's `lib/` (C3) and cost a full sysroot
-  hash per server start for no requirement here. The approximation is not
-  one-directional, and both directions are stated rather than one being claimed
-  away. A sysroot changed in place under an unchanged compiler path, `-vV`
-  string and `CACHE_VERSION` leaves this identity unchanged, so the identity
-  cannot exclude that change and the affected history is mislabelled; the
-  change stays a confounder for H4 and H5, which measure it rather than ruling
-  it out. Conversely the identity can separate records sccache's key does not:
-  the compiler path is in this identity but is never hashed into a key (C3), so
-  one key can span two identities, and a request moved to a byte-identical
-  compiler at another path starts a fresh history under a key that did not
-  change;
-- an argument digest: SHA-256 over the argument vector after sccache's own
-  removals and sorting (C3), with the `CARGO_*` variables that sccache hashes.
+  folds into a key (C3). Shared-library digests are excluded because they cover
+  every file in the rustc sysroot's `lib/` (C3) and cost a full sysroot hash
+  per server start. A sysroot changed in place while the compiler argument,
+  rustup environment, `CACHE_VERSION` and server version stay fixed is
+  invisible to this identity; the change remains a confounder for H4 and H5.
+- an argument digest: HMAC-SHA-256 under the local salt over the argument
+  vector after sccache's own removals and sorting (C3), with the `CARGO_*`
+  variables that sccache hashes.
 
 The argument digest covers the normalized argument vector and the hashed
 `CARGO_*` variables, but it does not close the approximation: it cannot see the
@@ -711,47 +701,26 @@ with three or more observations, `likely miss` for at most 0.2 with three or
 more, `uncertain` otherwise, and `no history` for a new key. The class is
 computed once, at submission.
 
-History lives in memory, bounded to the 10,000 most recent records (a
-proposal), and is saved atomically, on a timer and at stop, to the same
-`$XDG_STATE_HOME/buildlimits/cache-outcomes.json` that layer 1 fills, each
-record tagged with the toolchain identity it was taken under, so a record whose
-tag no longer matches is dropped rather than asked to explain a toolchain
-change the identity records. The drop is limited to changes the tag actually
-detects: a change that leaves the identity's inputs alone is invisible to this
-test, so the record survives it and the confounder reaches the estimate rather
-than being filtered out. A file whose own format version is not the one this
-release writes reports `version_mismatch` and is discarded unread, which is
-distinct from `corrupt`: the file is well-formed, and only the schema it was
-written under is unknown, so a downgrade or a forward-written file is named
-rather than reported as damage. A corrupt file is discarded, and the discard is
-named: `store_reason` distinguishes `corrupt`, `unreadable`, `version_mismatch`,
-`tag_dropped` and `salt_unavailable` — the last naming the salt file it also
-owns (§1 ports) — so a store that is silently unreadable on every start is
-visible rather than merely making prediction look unauthoritative. The
-vocabulary names every path the store can take, not only the read paths:
-`save_failed` covers a save that could not be written, and `expired` covers the
-records the 30-day aging bound drops, so a save failing on every stop or an
-aging bound discarding more than expected is visible rather than merely making
-prediction look unauthoritative, which is the same job the load reasons do. A
-failed save names itself and does not disturb the running estimate.
+Layer 2 keeps a bounded in-memory index over layer 1's attributed records. The
+records share the append-only JSON Lines file at
+`$XDG_STATE_HOME/buildlimits/cache-outcomes.jsonl`; each has its key, outcome,
+origin, wall time and toolchain identity. Layer 2 reads this file to rebuild
+history and never writes a separate snapshot. The layer 1 writer owns the file
+in every mode. Its D17 contract uses a bounded append queue and compacts at
+startup, when an append would take the file above 12 MiB, and at stop. It drops
+records older than 30 days, keeps the 10,000 newest, and atomically replaces
+the file; the file remains at most 16 MiB. A record tagged with another
+toolchain identity is dropped from the in-memory history, not treated as a
+match. The identity detects only changes to its inputs, so an in-place sysroot
+change that leaves them fixed remains a confounder for H4 and H5.
 
-Two layers write this file, so it has one writer rather than two. While
-prediction is enabled the file's contents are layer 2's in-memory set and
-nothing else: layer 1's attributed records enter that same set, so the set is
-the single source of truth for both layers and a save writes all of it. An
-atomic replacement prevents a partial file, but it does not merge two
-snapshots, and two writers each replacing the same path would let the later
-writer drop records the earlier had already committed. One writer is therefore
-what makes the snapshot safe, and the set is what makes it complete. A save
-that begins while an attribution lands writes the set as it stood when the save
-started, so that record is absent from that snapshot and present in the next
-one: it is delayed in the file, never discarded by it, and a restart falling
-between the two saves costs the coverage of that one interval. The 30-day aging
-bound and the 10,000-record bound are properties of the set, so they reach the
-file with the next save and are not re-derived from what a previous file
-happened to hold. Recording with prediction off has no second writer to
-coordinate with, so layer 1 saves the set itself then; the mode decides which
-shape applies, and the file's contents do not record which mode wrote them.
+The store distinguishes `corrupt`, `unreadable`, `version_mismatch`,
+`tag_dropped`, `salt_unavailable`, `save_failed` and `expired`. A file with a
+newer or older format is named as `version_mismatch`, while malformed data is
+`corrupt`; a failure to save does not disturb the running estimate. A missing
+or unreadable salt is reported as `salt_unavailable`, and records excluded by
+the 30-day bound are reported as `expired`. A store failure yields
+`no history`, never an admission refusal.
 
 The status document gains an optional `prediction` object per queued request,
 with `class`, `p_hit` and `observations`, which the renderer appends:
@@ -812,15 +781,11 @@ way, and a test asserts that `uncertain` and `no history` arrive with `none`
 rather than a reason, so a produced class can never be reported as a failed
 evaluation. A test also asserts that a request the evaluation could not key is
 still admitted unchanged — the isolation P2 requires — so a classification
-failure costs a class and never a token. The write coordination has its own
-test, since it is the one place two layers meet on disk: an attribution that
-lands while a save is in flight is absent from that save's snapshot and present
-in the file after the next save, and a record the set still holds is never
-dropped from the file by a save. That pair is asserted with the writer and the
-attribution driven from the same test so the interleaving is chosen rather than
-waited for, and a save refused mid-run is observed as its `save_failed` reason
-with the previous file still readable, so a lost save is never mistaken for an
-empty history.
+failure costs a class and never a token. The storage tests assert that layer 2
+rebuilds its in-memory index from layer 1's attributed records without writing
+a second store. They also exercise append and compaction bounds, and verify
+that an append failure is reported as `save_failed` while the previous file
+remains readable.
 
 **Privacy.** Crate names and registry versions are public metadata. Local paths
 are stored only as digests salted with a per-host random value, kept in a file
@@ -973,7 +938,7 @@ The thresholds below are proposals, to be approved before any data is read.
   review; if falsified, drop the deterministic class. Neither refusal reaches a
   `CompileResult`: the parser declines the request and the client compiles it
   itself. These refusal counters are distinct from `not_cacheable`, which is
-  only a server result for a compile that ran, and neither adds to
+  only a server result for a compilation that ran, and neither adds to
   `non_cacheable_compilations` or `compilations`. The two classes are different
   claims about different observations, and a window label cannot stand in for a
   refusal count.
@@ -989,12 +954,12 @@ The thresholds below are proposals, to be approved before any data is read.
   _Decision:_ revise once, then report the key as inadequate. Every pair's
   toolchain identity is compared before the pair is counted, so a change the
   identity records is excluded rather than charged to the digest. A change it
-  does not record is not excluded: a sysroot changed in place under an
-  unchanged compiler path, `-vV` string and `CACHE_VERSION` compares equal, so
-  its flips stay in the count. H5 therefore bounds the digest's adequacy _in
-  combination with_ that residual, and an H5 failure is not by itself evidence
-  that the digest is at fault — the cause of a flip cannot be read off the
-  counters, so neither outcome settles it.
+  does not record is not excluded: a sysroot changed in place while the
+  compiler argument, `RUSTUP_TOOLCHAIN`, `CACHE_VERSION` and server version
+  stay fixed compares equal, so its flips stay in the count. H5 therefore
+  bounds the digest's adequacy _in combination with_ that residual, and an H5
+  failure is not by itself evidence that the digest is at fault — the cause of
+  a flip cannot be read off the counters, so neither outcome settles it.
 - **H6. Online calibration and lift.** _Prediction:_ over at least 1,000
   predictions, `likely hit` hits at least 90% of the time, calibration is
   within 5 points per decile, and the Brier score beats the base-rate predictor
@@ -1098,9 +1063,9 @@ so wall time is tested only as a supplement (H2).
    with `clippy-driver` before `rustc` (`groups.compiler_argv`)?
 4. How long does the dep-info pass take on the largest crates on this host;
    is a hit always short (H2)?
-5. Should prediction history persist across supervisor restarts, or stay in
-   memory, and should a finished group's status line show its recorded outcome?
-   Layer 1's records persist either way, since the replay needs them.
+5. Should a finished group's status line show its recorded outcome? Layer 2
+   rebuilds history across supervisor restarts from the persistent layer 1
+   store defined by ADR 004 D17.
 6. The reader's behaviour is settled by source rather than open: an older
    `build-limits-metrics` drops an unknown event whole (`metrics_records`) and
    omits only the field for an unknown vocabulary value (`bounded_field`), as
