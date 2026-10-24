@@ -56,7 +56,7 @@ and H1.
   - Record workarounds, including the interleaving points in the RFC's sketch.
   - Success: each question is answered with a runnable example, or marked
     unanswerable with the consequence for W3.
-- [ ] 1.1.3. Settle FizzBee's packaging and licence for a pinned release.
+- [x] 1.1.3. Settle FizzBee's packaging and licence for a pinned release.
   - See RFC 0001 open questions 4 and 5.
   - Record the Linux release's runtime dependencies, checksum or signature, and
     the licence of the candidate release.

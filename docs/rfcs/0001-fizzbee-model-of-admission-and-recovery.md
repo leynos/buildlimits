@@ -612,6 +612,124 @@ This section records the evidence that settles the open questions above. Each
 entry states the question, the answer, and the evidence for it. An entry is
 added when the evidence exists, not when the question is raised.
 
+### Open question 4: packaging, dependencies and pinning
+
+**Release and digest.** The pinned release is `v0.5.4`, published on 2026-10-01
+at <https://github.com/fizzbee-io/fizzbee/releases/tag/v0.5.4>. The tag object
+is unsigned: GitHub's tag API reports `verification.reason` as `unsigned`, so
+there is no signature to check. The integrity evidence the release does publish
+is a digest per asset, and the digests below are the ones this project pins.
+
+For screen readers: the following block lists the digest of the release tarball
+in use and the digests of the container image recorded as a fallback.
+
+```plaintext
+tarball  linux_x86  sha256:8a1d0900f9ad920002151922337912e11f9e588a2f1196249fe40bf75370f782
+image    index      sha256:e7b90a0157ab466283e96a9650ab9f91b8ab80a9db8ac6f1d868ecd2b2c687b8
+image    amd64      sha256:c0ecb5c6142553c86ffd4f99c10e5186385056489f124952d33c76f1dc1216db
+image    arm64      sha256:5503b7be21acadb1906ee4307e4eff3555b0217d2bbd706c1e2c2578550fc5c4
+```
+
+The tarball digest is **trust-on-first-use**, recorded on 2026-10-24: it was
+compared with the hash of the downloaded 335 MiB asset and with the digest the
+release page publishes, and with no signature, because none exists. The release
+publishes three further assets for ARM and macOS, each with its own digest;
+none of them is pinned.
+
+**Tarball contents.** The tarball holds 1,795 entries: 1,673 files and 122
+directories, with no symbolic links. Unpacked they occupy about 675 MiB. Table
+10 groups them by area.
+
+| Area          | Entries     | Unpacked | Purpose                                                                    |
+| ------------- | ----------- | -------- | -------------------------------------------------------------------------- |
+| `fizz`        | 1 file      | 18 KiB   | Bash launcher: reads `fizz.env`, runs the parser, then the checker         |
+| `fizzbee`     | 1 file      | 8.5 MiB  | Go model checker, stripped, linked only against libc                       |
+| `fizz.env`    | 1 file      | 121 B    | Sets `PARSER_BIN`, `FIZZBEE_BIN` and `MBT_GEN_ZIP`                         |
+| `mbt_gen.zip` | 1 file      | 169 MiB  | Zipapp for model-based-test scaffolding, with Jinja2 and MarkupSafe        |
+| `parser/`     | 1,669 files | 497 MiB  | Bazel stub and runfiles tree: CPython 3.12.11, the ANTLR runtime, protobuf |
+| total         | 1,673 files | 675 MiB  | The unpacked cache entry                                                   |
+
+_Table 10: Contents of the v0.5.4 Linux x86 release tarball._
+
+The member listing is reproducible from the pinned asset with `tar -tzf`, and
+the digest above fixes which bytes it names, so this census and the licence
+inventory below stand in place of a 1,795-line dump.
+
+**Runtime dependencies.** The launcher is bash and calls `dirname`, `mktemp`,
+`readlink` and `rm`. The checker needs no shared object beyond libc:
+`ldd fizzbee` lists only `linux-vdso`, `libc` and the ELF interpreter, and
+`go version -m` reports `go1.26.7`. The parser stub begins
+`#!/usr/bin/env python3`, so a `python3` must be on `PATH`; the stub then
+re-executes the bundled CPython 3.12.11 by a hard-coded runfiles path, so the
+system interpreter only has to run the stub itself. The spike tested CPython
+3.12.15 on Rocky Linux 10. With no `python3` on `PATH` a run stops at once with
+`/usr/bin/env: 'python3': No such file or directory`,
+`Error: Compilation failed` and exit status 1. The launcher's `mbt-scaffold`
+subcommand also needs an unversioned `python`; model checking never invokes it.
+A run needs no network. It writes its graph files to `--output-dir` when one is
+given, defaulting to `SPEC_DIR/out/run_<timestamp>`, and it always writes
+`<name>.json` beside the specification it reads, which is why every run here
+copies the specification into a scratch directory first.
+
+**The container image.** This plan named `ghcr.io/fizzbee-io/fizzbee:v0.5.4` as
+the fallback pin. That tag does not exist: the registry lists `0.5.3`, `latest`
+and `0.5.4`, with no `v` prefix. The corrected pin is the index digest in the
+block above, created on 2026-10-03, which both `0.5.4` and `latest` resolve to.
+The `Makefile` records it as `FIZZBEE_IMAGE`, a fallback that no target pulls
+or runs: the tarball needs no container runtime, and adding Podman to the
+quality gates is not part of W1.
+
+Two properties of the image are worth the record. It wraps the same release —
+entrypoint `/opt/fizzbee/fizz`, `/opt/fizzbee` first on `PATH`, and CPython
+3.12.15 at `/usr/local/bin/python3` — so it satisfies the `python3` dependency
+itself. And its amd64 attestation is an in-toto statement carrying the SLSA v1
+provenance predicate: BuildKit as the build type, GitHub Actions run
+37125967911 attempt 1 as the builder, source revision `579328a5`, and
+`pkg:docker/python@3.12-slim-trixie` as the resolved base image. The tarball
+publishes nothing comparable, so the image carries stronger supply-chain
+evidence than the artefact in use; recording that asymmetry is the limit of
+what the spike can verify. The release notes say the image is rebuilt monthly
+on the current Debian trixie base, so only the digest is a stable pin, never
+the tag.
+
+**The no-network check.** Rootless Podman 5.8.2 ran a two-state toy model from
+a bind mount with `--network=none`, and it printed
+`PASSED: Model checker completed successfully`. DNS resolution inside that
+container failed, and the same model passed again with `--network=host`, so the
+pass does not depend on the isolation.
+
+### Open question 5: the licence of the pinned release
+
+The upstream repository declares Apache-2.0 (GitHub's licence API returns
+`spdx_id: Apache-2.0`, read 2026-10-24), and that is the licence of the pinned
+release. The artefact does not carry the licence: no Apache-2.0 text and no
+`NOTICE` file appears anywhere in the tarball, and the Go checker is stripped,
+so `go version -m` prints only its toolchain and its carriage of notice text
+cannot be checked either. The licence rests on the repository declaration,
+which is what roadmap task 1.1.3 asks to record.
+
+What the tarball does ship is a set of third-party components whose notices
+travel with them. Table 11 lists them with the licence text each one brings.
+
+| Component               | Version | Licence                    | Licence text in the release |
+| ----------------------- | ------- | -------------------------- | --------------------------- |
+| FizzBee Go checker      | v0.5.4  | Apache-2.0 (repository)    | None                        |
+| CPython runtime         | 3.12.11 | PSF                        | `LICENSE.txt`               |
+| Tcl/Tk                  | 8.6     | BSD-style                  | `license.terms`             |
+| antlr4-python3-runtime  | 4.13.1  | BSD (its `METADATA`)       | None                        |
+| protobuf Python runtime | 6.33.0  | Not stated in the artefact | None                        |
+| pip                     | 24.3.1  | MIT                        | `LICENSE.txt`               |
+| Jinja2                  | 3.1.6   | BSD-3-Clause               | `LICENSE.txt`               |
+| MarkupSafe              | 3.0.2   | BSD-3-Clause               | `LICENSE.txt`               |
+
+_Table 11: Components in the v0.5.4 release and their licences._
+
+Every row marked "None" was searched for and not found. The project does not
+redistribute the release, so these obligations stay with the downloader: the
+cache is local and git-ignored, and `.tools/fizzbee` is a git-ignored symbolic
+link into it. Should a later step ship the checker inside a container image,
+that image must take on the Apache-2.0 text and the bundled notices together.
+
 ### Open question 8: the pre-fix revisions
 
 Incidents 1, 2 and 4 predate the import into this repository, so the question
