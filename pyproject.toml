@@ -522,6 +522,8 @@ ignore_names = [
     "test_*",
     "pytestmark",
     "pytest_plugins",
+    # pytest calls this hook by name during collection; no test names it.
+    "pytest_collection_modifyitems",
     "teardown",
     "descriptor_leak_guard",
     # Vulture cannot resolve quoted cast types imported only for type checks.
@@ -601,6 +603,7 @@ filterwarnings = [
 markers = [
     "sccache_host_check: requires opt-in, Linux, and a supported sccache",
     "systemd_user: needs a running systemd user manager and busctl",
+    "fizzbee: runs the pinned FizzBee checker; opt in with BUILD_LIMITS_MODEL_CHECK=1",
 ]
 
 [tool.uv]
@@ -1503,3 +1506,7 @@ members = [
     "buildlimits/outcome_attribution.py::_failure_reason",
 ]
 reason = "The matched subdag is the shared reading-failure gate: attribute asks _failure_reason to classify the window before it reads counters, so the second call site is the delegation itself rather than a copy of the rule. The identical doctest preambles construct the same empty statistics value the two examples both start from."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_fizzbee_spike.py", "tests/test_fizzbee_graphs.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."

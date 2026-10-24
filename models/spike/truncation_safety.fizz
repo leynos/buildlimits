@@ -1,0 +1,21 @@
+---
+# OQ2, truncation: `max_actions: 2` cuts exploration after two steps and the
+# run still prints PASSED, with no warning that the state space was not
+# exhausted. The same model at `max_actions: 4` reaches the level-3 state and
+# fails NeverFull, so a pass at a low bound says nothing about the bound. This
+# is why the spike, and later the model check, doubles the bound until the
+# state count stops growing before believing a pass.
+options:
+  max_actions: 2
+liveness: "false"
+---
+
+action Init:
+  level = 0
+
+atomic action Fill:
+  require level < 3
+  level = level + 1
+
+always assertion NeverFull:
+  return level < 3

@@ -47,7 +47,7 @@ and H1.
     pre-fix revision is `eba08ad` in this repository.
   - Success: each revision is named by commit, or recorded as unrecoverable
     with the transcription basis stated, in the RFC's open-questions record.
-- [ ] 1.1.2. Settle FizzBee's language and checker behaviour with a toy model.
+- [x] 1.1.2. Settle FizzBee's language and checker behaviour with a toy model.
   - See RFC 0001 open questions 1 to 3 and 6.
   - Establish state records and collections, per-instance fairness, the
     liveness modes (including the meaning of `liveness: "strict"`), how lasso

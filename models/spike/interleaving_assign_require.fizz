@@ -1,0 +1,31 @@
+---
+# OQ1 and RFC 0001 §4, the remaining spelling: `require` after the action has
+# already assigned. This action is atomic, and an atomic action commits only
+# at its end, so a failed `require` discards the whole step and this passes
+# even though the assignment precedes the test. The RFC sketch's rule is
+# therefore about ordering the guard before any commit, not about textual
+# adjacency. The scoping to atomic actions matters: in a plain action the
+# assignment commits at once and a failed `require` leaves it standing, which
+# `interleaving_plain_rollback.fizz` demonstrates.
+options:
+  max_actions: 20
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  v = 0
+  done = False
+
+atomic fair<strong> action Step:
+  if v == 0:
+    v = 1
+  else:
+    v = 0
+
+atomic fair<strong> action Deliver:
+  done = True
+  require v == 1
+
+always eventually assertion Delivered:
+  return done

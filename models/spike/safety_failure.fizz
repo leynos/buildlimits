@@ -1,0 +1,23 @@
+---
+# OQ2: a safety failure is reported as `FAILED: Model checker failed.
+# Invariant:  NeverFull` followed by the shortest path to the offending state.
+# The spelling differs from the liveness verdict's, so the spike asserts both
+# shapes rather than one.
+options:
+  max_actions: 12
+liveness: "false"
+---
+
+action Init:
+  level = 0
+
+atomic action Fill:
+  require level < 3
+  level = level + 1
+
+atomic action Drain:
+  require level > 0
+  level = level - 1
+
+always assertion NeverFull:
+  return level < 3

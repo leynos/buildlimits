@@ -1,0 +1,18 @@
+---
+# OQ2: an assertion with no temporal prefix. FizzBee accepts only the prefixed
+# forms (`always assertion`, `always eventually assertion`,
+# `eventually always assertion`, `transition assertion`, `exists assertion`),
+# so this file is a parse error: the launcher prints the line and column, then
+# `Error: Compilation failed`, and exits 1 without writing a model. The file is
+# under `models/` because the fixture is captured from it; it is not runnable
+# and no test asks it to pass.
+options:
+  max_actions: 4
+liveness: "false"
+---
+
+action Init:
+  n = 0
+
+assertion Bare:
+  return n >= 0
