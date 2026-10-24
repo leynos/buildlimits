@@ -295,38 +295,46 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
 
 ## Progress
 
-- [x] (2026-10-23 23:40Z) Renamed the branch to
+Times below and in the milestone records are the workstation's local time,
+which was `+02:00` throughout. Earlier revisions of this plan wrote them with a
+`Z` suffix, implying UTC; the suffix was wrong, and the timestamps now name
+their offset. The one genuine UTC reference, a cron band in EP-M5, says so
+explicitly.
+
+- [x] (2026-10-23 23:40+02:00) Renamed the branch to
   `fizzbee-model-of-admission-and-recovery`.
-- [x] (2026-10-24 00:05Z) Reconnaissance by a Wyvern team (production code,
+- [x] (2026-10-24 00:05+02:00) Reconnaissance by a Wyvern team (production code,
   test doubles and harnesses, documentation conventions) and FizzBee research
   through Firecrawl.
-- [x] (2026-10-24 00:30Z) First draft of this ExecPlan.
-- [x] (2026-10-24 01:20Z) Community-of-experts review by four panellists
+- [x] (2026-10-24 00:30+02:00) First draft of this ExecPlan.
+- [x] (2026-10-24 01:20+02:00) Community-of-experts review by four panellists
   (formal methods; Python and hexagonal architecture; operations, CI and supply
   chain; delivery process and documentation). Their findings were folded into
   this revision.
-- [x] (2026-10-24 10:40Z) Draft pull request #26 opened for review.
-- [x] (2026-10-24 10:40Z) User approval of the plan, including DV1 to DV3. The
-  approval is recorded above and in `Decision log`.
+- [x] (2026-10-24 10:40+02:00) Draft pull request #26 opened for review.
+- [x] (2026-10-24 10:40+02:00) User approval of the plan, including DV1 to DV3.
+  The approval is recorded above and in `Decision log`.
 - [x] EP-M1 (prototyping): pre-fix revisions, pinned FizzBee, toy models and
   fixtures.
-  - [x] (2026-10-24 12:50Z) Step 1, the pre-fix revisions, recorded as RFC 0001
-    "Open question 8" with Table 13. The dev-env-rocky history carries only one
+  - [x] (2026-10-24 12:50+02:00) Step 1, the pre-fix revisions, recorded as
+    RFC 0001 "Open question 8" with Table 13. The dev-env-rocky history carries
+    only one
     vendored snapshot of the package and no source change between its addition
     and removal, so it cannot name three revisions. The staging branch
     `initial-import` does: its tip `416b1ae` is tree-identical to the squashed
     import `eba08ad`, and it names `9f2c94f` (incident 1), `f1ee9aa` (incident
     2) and `d91cd22` (incident 4). The vendored `d024aaa` snapshot is recorded
     as corroboration.
-  - [x] (2026-10-24 13:05Z) Step 2, the pin and installer, in the `Makefile` as
-    `FIZZBEE_VERSION`, `FIZZBEE_SHA256`, `FIZZBEE_HOME`, `FIZZBEE_STAMP` and
-    `FIZZ`. `make fizzbee` printed the fetch line once and nothing on the second
-    run; the digest, the unsafe-member guard and the `FIZZBEE_HOME` suffix guard
+  - [x] (2026-10-24 13:05+02:00) Step 2, the pin and installer, in the
+    `Makefile` as `FIZZBEE_VERSION`, `FIZZBEE_SHA256`, `FIZZBEE_HOME`,
+    `FIZZBEE_STAMP` and `FIZZ`. `make fizzbee` printed the fetch line once and
+    nothing on the second run; the digest, the unsafe-member guard and the
+    `FIZZBEE_HOME` suffix guard
     were each exercised against a local fixture asset, and every failure path
     left no tarball behind. The download and unpack happen inside
     `flock ... 9>"$$home.lock"`, so two checkouts share one cache entry.
-  - [x] (2026-10-24 11:25Z) Step 3, provenance and licence, recorded as RFC 0001
-    "Open question 4" and "Open question 5". The tarball digest is
+  - [x] (2026-10-24 11:25+02:00) Step 3, provenance and licence, recorded as
+    RFC 0001 "Open question 4" and "Open question 5". The tarball digest is
     trust-on-first-use from 2026-10-24: the tag is unsigned, and the release
     publishes per-asset digests and nothing more. The tarball holds 1,795
     entries and no Apache-2.0 text or `NOTICE`; the licence rests on the
@@ -336,8 +344,8 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     `FIZZBEE_IMAGE`, a fallback that no target uses. A toy model passed under
     Podman `--network=none`, and the parser's `python3` dependency was
     confirmed by removing it from `PATH`.
-  - [x] (2026-10-24 13:10Z) Step 4, the toy models, under `models/spike/`: 26
-    specs, each answering one of OQ1, OQ2, OQ3, OQ6, truncation or
+  - [x] (2026-10-24 13:10+02:00) Step 4, the toy models, under `models/spike/`:
+    26 specs, each answering one of OQ1, OQ2, OQ3, OQ6, truncation or
     determinism, and each with a passing or failing expectation recorded in
     its header. All were run through `tests/fizzbee_spike.py`, which copies a
     spec into pytest's scratch directory before invoking the checker, so no
@@ -348,7 +356,7 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     fairness does force a continuously enabled action) and
     `interleaving_plain_rollback.fizz` (an assignment before a test is safe
     only in an atomic action).
-  - [x] (2026-10-24 15:55Z) Step 5, the spike tests:
+  - [x] (2026-10-24 15:55+02:00) Step 5, the spike tests:
     `tests/test_fizzbee_spike.py` (the language and checker questions),
     `tests/test_fizzbee_graphs.py` (the artefacts a run writes and the state
     counts the RFC quotes) and `tests/test_fizzbee_fixtures.py` (the captured
@@ -375,8 +383,8 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     conflated. A fifth module, `tests/test_fizzbee_opt_in.py`, pins the
     opt-in itself in five tests, so the four gate-exercised modules collect
     20 tests between them.
-  - [x] (2026-10-24 13:30Z) Step 6, the documentation: the `make fizzbee` row
-    in the developer's guide's Table 1, the `fizzbee` marker and
+  - [x] (2026-10-24 13:30+02:00) Step 6, the documentation: the `make fizzbee`
+    row in the developer's guide's Table 1, the `fizzbee` marker and
     `BUILD_LIMITS_MODEL_CHECK` sentence in §11.3, the extended `.tools`
     wording in `docs/repository-layout.md`, and the RFC 0001 answers above.
     The RFC's tables were renumbered into document order as Tables 9 to 13 as
@@ -594,6 +602,21 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     `normalize`, and the doctest now quotes a stable launcher line instead of
     the misspelled one. Anyone adding a captured fixture must stage it before
     the spelling gate can see it.
+- **This plan's own timestamps were labelled UTC but were local time.**
+  - Observation: every `Progress` entry and milestone measurement carried a
+    `Z` suffix while naming the workstation's clock, which ran at `+02:00`.
+    The error was invisible until checked against an outside clock: the
+    milestone review was recorded as running `16:39Z to 17:30Z` on a day whose
+    real UTC time was still before 16:00 when the record was written.
+  - Evidence: `git log --format='%cI'` puts commits at `+02:00`, and each
+    recorded step time matches a commit's local time rather than its UTC time —
+    Step 1 at `12:50Z` against `92286fb` at `12:53:56+02:00`, for instance. The
+    second review's own output says `review_finished=2026-10-24T17:13:19+02:00`,
+    a minute where the record claimed `17:30Z`.
+  - Impact: the times now carry `+02:00`, and a note under `Progress` states the
+    convention. The one genuine UTC reference, EP-M5's cron band, stays marked
+    UTC. A record that cannot be checked against a clock is not evidence, so
+    future entries name their offset.
 
 ## Decision log
 
@@ -1379,14 +1402,14 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
   - EP-M1-E4: `git status --porcelain` is empty afterwards.
   - EP-M1-E5: the four gates pass.
   - Roadmap tasks 1.1.1 to 1.1.3 are ticked.
-  - **Observed 2026-10-24 13:31Z.** E1: `make fizzbee` exited 0 twice and the
-    second run printed nothing (0 bytes). E2: 20 tests passed in 17.50 s with
+  - **Observed 2026-10-24 13:31+02:00.** E1: `make fizzbee` exited 0 twice and
+    the second run printed nothing (0 bytes). E2: 20 tests passed in 17.50 s with
     `BUILD_LIMITS_MODEL_CHECK=1`, across both test modules. E3: without the
     variable all 20 skipped, each reporting "needs the pinned FizzBee checker;
     set BUILD_LIMITS_MODEL_CHECK=1 (after `make fizzbee`)". E4:
     `git status --porcelain` showed only the milestone's own tracked and
     untracked files, and no run directory.
-  - **Observed 2026-10-24 16:28Z, E5.** Scrutineer ran the six gates in
+  - **Observed 2026-10-24 16:28+02:00, E5.** Scrutineer ran the six gates in
     sequence and all passed:
 
     | Gate | Exit | Decisive line |
@@ -1398,7 +1421,7 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
     | `make markdownlint` | 0 | `Summary: 0 issues in 0 files`; spelling gate exit 0, `typos.toml` unchanged |
     | `make nixie` | 0 | `All diagrams validated successfully!` |
 
-    The first gate run, at 15:10Z, failed three of them, all on work this
+    The first gate run, at 15:10+02:00, failed three of them, all on work this
     milestone had added. `check-fmt` wanted an mdtablefix rewrap and a table
     column widened in `docs/developers-guide.md`; `markdownlint` reported
     MD060 on that same row, MD049 for two asterisk-emphasized words in RFC
@@ -1410,13 +1433,78 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
     merge into one parametrized contrast, and by a reasoned allow entry for
     the purely matching import lists of the two test modules — the same
     treatment eight existing entries already give that shape.
+  - **Re-run 2026-10-24 17:16 to 17:20+02:00, after the review fixes.** The
+    scrutineer ran the same six gates in sequence against `9078648`, plus two
+    supplementary checks, and every exit was 0:
+
+    | Gate | Exit | Decisive line |
+    | ---- | ---- | ------------- |
+    | `make check-fmt` | 0 | `29 files left unchanged`; Ruff `257 files already formatted` |
+    | `make typecheck` | 0 | `All checks passed!` |
+    | `make lint` | 0 | `duplication gate passed (nose 0.20.0); 132 allowed by reasoned exceptions` |
+    | `make test` | 0 | `1777 passed, 44 skipped`; `46 snapshots passed` |
+    | `make markdownlint` | 0 | `Summary: 0 issues in 0 files`; spelling gate exit 0 |
+    | `make nixie` | 0 | `All diagrams validated successfully!` |
+    | opted-in spike suite | 0 | `25 passed` under `BUILD_LIMITS_MODEL_CHECK=1 -m fizzbee` |
+    | opt-in inheritance | 0 | `make test` with the variable exported: 1,821 outcomes identical to a run without it |
+
     `git status --porcelain` was byte-identical before and after every run,
     and no `out/`, `run_*`, `Spec.json` or `.model-check/` appeared.
-  - **Milestone scope, measured 2026-10-24 16:40Z.** Sixteen in-scope files
-    (ten tracked, six new Python modules) and 1,197 net Python lines (1,165 in
-    the new modules, 33 added and one removed in `tests/conftest.py`). The 26
-    `.fizz` models, the 33 fixture files and the two snapshots are excluded by
-    the plan's scope rule.
+  - **Milestone CodeRabbit review, 2026-10-24 16:30 to 17:13 (local; the
+    branch's commits carry `+02:00`).** Two runs of `coderabbit review --agent`,
+    requested through the scrutineer. The first reviewed 75 files from
+    `0c75871`, which was its recorded base and one commit behind the branch
+    head; the second was `--fresh --committed` from the merge base
+    `42f40e4`, against `74682da`. The first raised ten findings reducing to
+    six root causes; the second raised two more. Each was checked against the
+    source before disposition, and all twelve were accepted.
+    - _Verdicts were matched by prefix only._ A safety failure and a deadlock
+      both print `FAILED: Model checker failed`, so three call sites that
+      named `NeverFull`, and one that named `NeverClosedDelivery`, in their
+      prose would have passed on a deadlock. Raised three times, in
+      `test_fizzbee_spike.py` and twice in `test_fizzbee_graphs.py`. Accepted and
+      fixed: `Expectation` now carries the whole line, built by
+      `invariant()`, and the name was confirmed from a live run
+      (`FAILED: Model checker failed. Invariant:  NeverClosedDelivery`, two
+      spaces) before being written down.
+    - _Two fixture classes went unchecked._ No test read any `exit-code.txt`,
+      and `parse-error` was never re-run. Raised three times, once against the
+      unread fixture itself. Accepted and fixed: `_CAPTURED` now holds all
+      eight classes and `_captured_exit_code` compares each status.
+    - _A test could never exercise its own branch._ The `OPT_IN` literal pin
+      sat in a `fizzbee`-marked module, where the opt-in is always set when the
+      test runs. Raised twice. Accepted and fixed: the pin moved to the
+      unmarked `tests/test_fizzbee_opt_in.py` and the original test, with its
+      unreachable `else` and false docstring, was deleted.
+    - _A doctest mutated the caller's environment._ It popped the variable and
+      never restored it, and printed the popped value when one was set.
+      Accepted and fixed with `mock.patch.dict`.
+    - _Two documentation claims overstated coverage._ The repository layout
+      said the fixtures module "pins each to the live output", and the
+      developer's guide said it "re-runs every captured class". Both became
+      true with the second fix and were left as written; the layout row's
+      wording was updated to the narrower, now-accurate claim.
+    - _One American spelling in a comment._ `unrecognised` became
+      `unrecognized`. Accepted and fixed. The gate later found more of the same
+      class, which is recorded under `Surprises & discoveries`.
+    - _`make model-check` was documented as if it existed._ From the second
+      review. It arrives in EP-M4 (D9). Accepted and fixed: the layout row now
+      names the opted-in pytest command that works today.
+    - _`make test` inherited the opt-in._ From the second review. With
+      `BUILD_LIMITS_MODEL_CHECK=1` exported, D6's "never runs these tests,
+      whatever is installed" was false for that shell. Accepted and fixed in
+      the recipe with `env -u BUILD_LIMITS_MODEL_CHECK`; a gate run with the
+      variable exported reproduced all 1,821 test outcomes of a run without
+      it.
+  - **Milestone scope, measured 2026-10-24 16:40+02:00, at `bac76ce`.** Sixteen
+    in-scope files and 1,197 net Python lines, against the plan's 25-file and
+    1,500-line budget: 1,165 lines in six new modules, plus 33 added and one
+    removed in `tests/conftest.py`. Nine of the sixteen changed an existing
+    file; seven were new (six Python modules and this plan). The 26 `.fizz`
+    models, the 33 fixture files and the two snapshots are excluded by the
+    plan's scope rule. The two later commits that close review findings,
+    `74682da` and `9078648`, bring the milestone overall to 18 in-scope files
+    and 1,276 net Python lines, still inside the same budget.
 - **Keep or discard.** The spike models and tests are kept (D11). Toy-model
   questions that cannot be answered are recorded as unanswerable, with their
   consequence for W3.
