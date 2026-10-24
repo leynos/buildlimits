@@ -121,11 +121,14 @@ behaves as its source reads.
   request, hit or miss.
 - **C4. Some requests are never cached.** `parse_arguments` refuses
   incremental compilation, unsupported crate types and several input files
-  (`cannot_cache!("incremental")`, `cannot_cache!("crate-type", ...)`); the
-  Rust notes add a required `--emit` including `link`, `--crate-name` and
-  `--out-dir`[^6]. The server answers `UnhandledCompile`, and the client then
-  runs the compiler itself (`handle_compile_response`)[^7], inside the compiler
-  scope, not the server's control group.
+  (`cannot_cache!("incremental")`, `cannot_cache!("crate-type", ...)`). It
+  requires an input, `--emit`, `--crate-name` and `--out-dir`; the emit set
+  must include `link` or `metadata`. A metadata-only emit is accepted, while a
+  dep-info-only emit is classified as `NotCompilation` and unsupported emit
+  kinds are rejected[^6][^10]. A `NotCompilation` result produces
+  `UnhandledCompile`, and the client then runs the compiler itself
+  (`handle_compile_response`)[^7], inside the compiler scope, not the server's
+  control group.
 - **C5. Statistics are global.** `ServerStats` includes `compile_requests`,
   `requests_not_compile`, `requests_not_cacheable`, `requests_executed`,
   per-language `cache_hits` and `cache_misses`, `cache_errors`,
@@ -1147,3 +1150,6 @@ evidence is collected.
 
 [^9]: The Cargo Book, "Build cache", retrieved 2026-10-18:
       <https://doc.rust-lang.org/cargo/reference/build-cache.html>
+
+[^10]: sccache v0.14.0, `src/compiler/rust.rs`, `parse_arguments`:
+       <https://github.com/mozilla/sccache/blob/v0.14.0/src/compiler/rust.rs>

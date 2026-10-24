@@ -207,16 +207,22 @@ files to 0600. The first line is
 `{"format": "buildlimits-cache-outcomes",
 "version": 1, "salt_id": …, "written_at": …}`.
 A single writer thread owns every file operation; the loop appends through a
-bounded queue of 4,096 entries and drops overflow with `save_failed`.
+bounded queue of 4,096 entries and drops overflow with `save_failed`. Each
+serialized record is at most 16 KiB, which also bounds the queue's payload.
 
-Compact at start and stop. Drop records older than 30 days by `observed_at`,
-keep the 10,000 newest by insertion sequence, then `fsync` and `os.replace` a
-fixed temporary name. Drop a torn final line on load. Treat files over 16 MiB
-as corrupt; move corrupt or version-mismatched files aside once to
-`cache-outcomes.jsonl.bad`; never overwrite a newer format. At stop, enqueue
-compaction after `settle_token_request` and `requests.close_all`, then join the
-writer for at most one second. This preserves atomic compaction without a
-once-a-minute rewrite that could write up to 5.8 GB a day or stall the loop.
+Compact at start, when an append would take the file above 12 MiB, and at
+stop. Compaction drops records older than 30 days by `observed_at`, keeps the
+10,000 newest by insertion sequence, then evicts the oldest remaining records
+until the file is at most 12 MiB. It then calls `fsync` and `os.replace` on a
+fixed temporary name. If compaction fails, an append is allowed only when it
+keeps the file at or below 16 MiB; otherwise drop it with `save_failed`.
+Records over 16 KiB are also dropped with `save_failed`. Drop a torn final
+line on load. Treat files over 16 MiB as corrupt; move corrupt or
+version-mismatched files aside once to `cache-outcomes.jsonl.bad`; never
+overwrite a newer format. At stop, enqueue compaction after
+`settle_token_request` and `requests.close_all`, then join the writer for at
+most one second. The high-water compaction bounds a long-running store without
+a once-a-minute rewrite that could write up to 5.8 GB a day or stall the loop.
 
 ### D18-D20: keep release compatibility and the quiet-point gate
 
@@ -240,8 +246,10 @@ clause prevents the next queued launch from straddling the query.
 ### D21-D23: define H3 evidence and deliver its replay in W1
 
 `cacheability_features(argv)` includes incremental compilation, crate type,
-multiple inputs, `--emit` without `link`, `--crate-name` or `--out-dir`,
-missing input (including Cargo's `-vV`) and sccache's `NotCompilation` flags.
+multiple inputs, missing required arguments (`input`, `--emit`, `--crate-name`
+or `--out-dir`), and `--emit` sets that contain neither `link` nor `metadata`
+or contain an unsupported kind. A metadata-only emit is cacheable. It also
+includes Cargo's `-vV` probe and sccache's `NotCompilation` flags.
 For every balanced window, including mixed windows, store a summary with the
 launch count, delta of `requests_not_cacheable` and count classified as
 uncacheable. H3 uses those totals and per-request rows from solo windows; equal

@@ -508,9 +508,15 @@ C-GATES.
   - One writer thread owns every file operation. The loop enqueues appends
     into a bounded queue of 4,096 entries; on overflow the append is dropped
     with `save_failed`.
-  - Compaction runs on the thread, at start and at stop. It drops records
-    aged 30 days by `observed_at`, keeps the 10,000 newest by insertion
-    sequence, then calls `fsync` and `os.replace` on a fixed temporary name.
+  - Each serialized record is at most 16 KiB. Compaction runs on the thread,
+    at start, before an append would take the file above 12 MiB, and at stop.
+    It drops records aged 30 days by `observed_at`, keeps the 10,000 newest by
+    insertion sequence, then evicts the oldest remaining records until the
+    file is at most 12 MiB. It then calls `fsync` and `os.replace` on a fixed
+    temporary name.
+  - If compaction fails, an append is allowed only when the file remains at or
+    below 16 MiB; otherwise the append is dropped with `save_failed`. Records
+    over 16 KiB are also dropped with `save_failed`.
   - On load, a torn final line is dropped, and a file over 16 MiB is
     `corrupt`. A `corrupt` or `version_mismatch` file is moved aside once to
     `cache-outcomes.jsonl.bad`. A file of a newer version is never
@@ -555,7 +561,9 @@ C-GATES.
 - D21. Deviation in the H3 evidence. Decision: the C4 predicate
   `cacheability_features(argv)` covers two kinds of refusal:
   - the RFC's features: incremental compilation, crate type, several inputs,
-    and `--emit` without `link`, `--crate-name` or `--out-dir`;
+    missing required arguments (`input`, `--emit`, `--crate-name` or
+    `--out-dir`), and `--emit` sets that contain neither `link` nor `metadata`
+    or contain an unsupported kind. A metadata-only emit is cacheable;
   - S1's refusals: a missing input (Cargo's `-vV`) and the `NotCompilation`
     flags.
 
@@ -653,6 +661,18 @@ C-GATES.
   authorizes W1 through EP-M8. EP-M9 remains gated on G1, and no later RFC
   workstream is authorized by this approval. Rationale: the explicit approval
   requested before implementation was supplied with the implementation request.
+- D27. Review correction to D17. Decision: compact on the writer thread before
+  an append would take the store above 12 MiB, retain at most 10,000 records
+  within that byte budget, and cap serialized records at 16 KiB. If compaction
+  fails, reject an append that would exceed the existing 16 MiB load limit.
+  Rationale: start/stop-only compaction could make a valid long-running store
+  look corrupt on the next start. This preserves D17's retention and durability
+  policy while enforcing its existing file bound during a run.
+- D28. Review correction to D21. Decision: match sccache 0.14's parser: an
+  `--emit` set is a refusal feature when it contains neither `link` nor
+  `metadata`, or contains an unsupported kind. Metadata-only is cacheable.
+  Rationale: the parser explicitly accepts `--emit=metadata`; the previous
+  “without `link`” predicate would produce a false H3 classification.
 
 ## Outcomes & retrospective
 
@@ -1030,6 +1050,9 @@ O8. Store bounds and durability:
 
 - After compaction, the file holds at most 10,000 records, none of them with
   `observed_at` older than 30 days.
+- Each record line is at most 16 KiB. Before an append would take the file
+  above 12 MiB, the writer compacts it to at most 12 MiB. A successful append
+  never takes the file above 16 MiB, including after a compaction failure.
 - Eviction follows insertion sequence.
 - A torn tail line is dropped.
 - A version mismatch moves the file aside, and a newer file is never
@@ -1046,6 +1069,9 @@ Method and evidence:
 - Artefacts: `tests/test_outcome_records.py` and
   `tests/test_outcome_store.py`.
 - Non-vacuity: the generator reaches the bound, an expiry and a torn tail.
+- The writer tests cross the 12 MiB high-water mark, verify byte-budget
+  eviction, reject an oversized record, and preserve the 16 MiB hard bound
+  when compaction fails.
 
 O9. Restart baseline. After a restart, the first window in the new generation
 is attributed against the reading that exposed the restart. That reading is
@@ -1304,7 +1330,7 @@ milestone that adds each module.
 
 - Outcome:
   - `docs/adr-004-cache-outcome-recording.md` (Status: Proposed; Accepted
-    when EP-M8 merges) records D2 to D25, the fixed thresholds of Table B,
+    when EP-M8 merges) records D2 to D28, the fixed thresholds of Table B,
     the 2,000-outcome minimum, the vocabulary and the ADR 003 scope
     amendment. RFC 0002 links to it.
   - `docs/roadmap.md` gains a rewritten preamble covering both RFCs, with
@@ -1433,7 +1459,9 @@ milestone that adds each module.
 - Outcome: `outcome_key.py`, `outcome_records.py` and `outcome_window.py`.
   This discharges O7, the pure part of O8, and O10.
 - Red: `tests/test_outcome_key.py`, `tests/test_outcome_key_properties.py`
-  and `tests/test_outcome_records.py`.
+  and `tests/test_outcome_records.py`. Cacheability tests assert that
+  metadata-only emit is accepted, while dep-info-only and unsupported emit
+  kinds are refusal features.
 - Snapshot: `tests/__snapshots__/test_outcome_records.ambr` pins one header
   line, one record line and one window-summary line under a fixed salt and
   fixed times, with a round-trip semantic assertion beside it.
@@ -2057,3 +2085,6 @@ Consult these documents:
     it. W2 is unchanged apart from its number.
 - 2026-10-23: the owner approved the whole plan, including deviations D2 to
   D25. EP-M0 is authorized; EP-M9 remains gated by G1.
+- 2026-10-24: CodeRabbit's EP-M0 review identified a long-run store-size gap
+  and an overbroad `--emit` refusal predicate. D27 and D28 record the resulting
+  corrections, checked against sccache v0.14.0 source before editing.
