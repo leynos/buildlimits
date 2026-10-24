@@ -730,7 +730,9 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
   - `make model-check` sets the variable, runs pytest with `-n 0 -m fizzbee`,
     and fails if anything was skipped.
   - `make test` never runs these tests, whatever is installed. It stays
-    hermetic.
+    hermetic. The recipe runs `env -u BUILD_LIMITS_MODEL_CHECK` so that an
+    opt-in left in the calling shell cannot reach it; without that, the
+    guarantee would hold only for a shell that had never set the variable.
   - Whether `make model-check` joins `make all` is G4's decision (open
     question 10).
 - **D7. Where design decisions are recorded.**

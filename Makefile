@@ -180,8 +180,11 @@ nixie: ## Validate Mermaid diagrams
 	$(call ensure_tool,$(NIXIE))
 	$(NIXIE) --no-sandbox
 
+# The model-check opt-in is cleared here so an opt-in left in the calling
+# shell cannot make `make test` depend on the pinned checker being installed.
+# Tests that need the checker are run by an explicitly opted-in pytest.
 test: build $(VENV_TOOLS) ## Run tests
-	$(UV_ENV) $(ACT_TEST_ENV) $(UV) run pytest -v -n $(PYTEST_XDIST_WORKERS)
+	env -u BUILD_LIMITS_MODEL_CHECK $(UV_ENV) $(ACT_TEST_ENV) $(UV) run pytest -v -n $(PYTEST_XDIST_WORKERS)
 
 # Host acceptance drives the developer's own systemd user manager with
 # uniquely named units, so it runs only when asked for and never under xdist.
