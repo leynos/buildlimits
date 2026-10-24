@@ -716,10 +716,15 @@ explicitly.
     add the model and its fixtures. If the tolerance is enforced as written,
     the whole workstream breaches it; if it is a warning threshold, the plan
     should say so before EP-M3 sizes itself against it.
-  - Status: escalated to the user on 2026-10-24 before the EP-M2 commit. The
-    milestone is otherwise complete and gated, and the commit proceeds while
-    the tolerance question is open, so that the delivered work is recoverable
-    either way.
+  - Status: **blocking, awaiting a user decision.** EP-M2 is committed
+    (`b38adaf`) and gated, so the delivered work is recoverable. EP-M3 has not
+    started and sizes itself against the same tolerance, so it waits on the
+    answer. The question was raised twice through the interactive question
+    tool on 2026-10-24 and aborted at the permission step both times without
+    reaching the user; it is therefore carried in the session report and in
+    this note instead. The options put to the user were: treat 1,500 as a
+    reporting threshold, raise it to 2,000, trim EP-M2, or stop the
+    workstream at EP-M2.
 
 ## Decision log
 
