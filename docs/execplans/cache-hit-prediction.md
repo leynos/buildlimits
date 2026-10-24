@@ -5,8 +5,8 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: DRAFT (revised after expert-panel review; Q1 answered (b) by the owner
-on 2026-10-23; awaiting owner approval of the whole plan)
+Status: APPROVED (2026-10-23; the owner approved the whole plan, including
+deviations D2 to D25; EP-M0 may begin)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -255,8 +255,8 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   unrelated `ty` version drift on `main`.
 - [x] (2026-10-23 23:00Z) The owner answered Q1 with (b). EP-M8 (H2 child
   sightings) was added to W1, and W2 was renumbered EP-M9 (D24, D25).
-- [ ] Owner approval of the whole plan, including the deviations D2 to D25.
-  Implementation must not begin before this.
+- [x] (2026-10-23 23:27Z) Owner approved the whole plan, including deviations
+  D2 to D25. EP-M0 is authorized to begin.
 - [ ] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents.
 - [ ] EP-M1: real-binary feasibility and axiom check (prototype; go or
   no-go).
@@ -341,10 +341,11 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
 ## Decision log
 
-Decisions D1 to D25 are proposals of this draft, and take effect only when the
-owner approves the plan. Each deviation from the letter of RFC 0002 is marked,
-and EP-M0 repeats it in ADR 004. If a deviation is rejected, the plan returns to
-`DRAFT`.
+Decisions D1 to D25 were proposals of this draft and took effect when the owner
+approved the whole plan on 2026-10-23. Each deviation from the letter of RFC
+0002 is marked, and EP-M0 repeats it in ADR 004. W1 (EP-M0 to EP-M8) is
+approved to proceed. W2 (EP-M9) remains gated on the owner's G1 decision under
+C-GATES.
 
 - D1. Scope. Decision: W1 is EP-M0 to EP-M8, and W2 is EP-M9, gated on the
   G1 decision. Rationale: RFC acceptance approves W1 now and W2 at G1.
@@ -638,6 +639,11 @@ and EP-M0 repeats it in ADR 004. If a deviation is rejected, the plan returns to
   below H1's 5% line, and the RFC's rule then makes H2 the only route to
   coverage. The other options were (a), proceed and decide H2 at G1, and (c),
   stop after EP-M0. The impact is EP-M8 (D24, D25), with W2 renumbered EP-M9.
+- D26. Owner approval. Decision: the owner approved this whole plan,
+  including D1 to D25 and all recorded deviations, on 2026-10-23. This
+  authorizes W1 through EP-M8. EP-M9 remains gated on G1, and no later RFC
+  workstream is authorized by this approval. Rationale: the explicit approval
+  requested before implementation was supplied with the implementation request.
 
 ## Outcomes & retrospective
 
@@ -2004,3 +2010,5 @@ Consult these documents:
     coverage below 5%.
   - Effect on the remaining work: W1 grows by one milestone, and G1 waits for
     it. W2 is unchanged apart from its number.
+- 2026-10-23: the owner approved the whole plan, including deviations D2 to
+  D25. EP-M0 is authorized; EP-M9 remains gated by G1.
