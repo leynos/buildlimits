@@ -33,6 +33,9 @@
   status](adr-004-admission-readiness-status.md) records how readiness differs
   from supervisor health and cache reachability, while preserving health-only
   status checks and token accounting.
+- [ADR 004: cache-outcome recording](adr-004-cache-outcome-recording.md)
+  records the fixed thresholds, local outcome store and observation-only design
+  approved for RFC 0002 W1.
 
 ## Conventions
 

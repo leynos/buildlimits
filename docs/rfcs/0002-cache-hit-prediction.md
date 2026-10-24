@@ -1114,6 +1114,11 @@ the open questions stay open until the evidence settles them. Acceptance
 changes no runtime behaviour: it records the decision to run W1 and W2, not an
 implementation.
 
+The implementation refinements and fixed H1-H5 thresholds for W1 are recorded in
+[ADR 004](../adr-004-cache-outcome-recording.md). Its status remains Proposed
+until EP-M8 merges; the thresholds and H2 classifier are fixed before new
+evidence is collected.
+
 [^1]: RFC 0001, `docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md`,
       accepted 2026-10-18 and present on `main`.
 

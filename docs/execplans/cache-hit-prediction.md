@@ -5,8 +5,8 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: APPROVED (2026-10-23; the owner approved the whole plan, including
-deviations D2 to D25; EP-M0 may begin)
+Status: IN PROGRESS (2026-10-24; EP-M0 is underway after approval commit
+`0400924`)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -257,6 +257,9 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   sightings) was added to W1, and W2 was renumbered EP-M9 (D24, D25).
 - [x] (2026-10-23 23:27Z) Owner approved the whole plan, including deviations
   D2 to D25. EP-M0 is authorized to begin.
+- [ ] (2026-10-24 00:10Z) EP-M0 started. No new live statistics have been read;
+  ADR 004 and its fixed thresholds must be committed before the stats fixture
+  is captured.
 - [ ] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents.
 - [ ] EP-M1: real-binary feasibility and axiom check (prototype; go or
   no-go).
