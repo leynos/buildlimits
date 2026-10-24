@@ -308,10 +308,10 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
 - [x] (2026-10-24 10:40Z) Draft pull request #26 opened for review.
 - [x] (2026-10-24 10:40Z) User approval of the plan, including DV1 to DV3. The
   approval is recorded above and in `Decision log`.
-- [ ] EP-M1 (prototyping): pre-fix revisions, pinned FizzBee, toy models and
+- [x] EP-M1 (prototyping): pre-fix revisions, pinned FizzBee, toy models and
   fixtures.
   - [x] (2026-10-24 12:50Z) Step 1, the pre-fix revisions, recorded as RFC 0001
-    "Open question 8" with Table 9. The dev-env-rocky history carries only one
+    "Open question 8" with Table 13. The dev-env-rocky history carries only one
     vendored snapshot of the package and no source change between its addition
     and removal, so it cannot name three revisions. The staging branch
     `initial-import` does: its tip `416b1ae` is tree-identical to the squashed
@@ -336,6 +336,51 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     `FIZZBEE_IMAGE`, a fallback that no target uses. A toy model passed under
     Podman `--network=none`, and the parser's `python3` dependency was
     confirmed by removing it from `PATH`.
+  - [x] (2026-10-24 13:10Z) Step 4, the toy models, under `models/spike/`: 26
+    specs, each answering one of OQ1, OQ2, OQ3, OQ6, truncation or
+    determinism, and each with a passing or failing expectation recorded in
+    its header. All were run through `tests/fizzbee_spike.py`, which copies a
+    spec into pytest's scratch directory before invoking the checker, so no
+    run writes beside a tracked file. The questions are answered in RFC 0001
+    "Open questions record" as Open question 1, 2, 3 and 6, plus the
+    Truncation and Determinism entries. Two negative-control pairs were kept
+    that the plan did not name: `continuously_enabled{,_unfair}.fizz` (weak
+    fairness does force a continuously enabled action) and
+    `interleaving_plain_rollback.fizz` (an assignment before a test is safe
+    only in an atomic action).
+  - [x] (2026-10-24 15:55Z) Step 5, the spike tests:
+    `tests/test_fizzbee_spike.py` (the language and checker questions),
+    `tests/test_fizzbee_graphs.py` (the artefacts a run writes and the state
+    counts the RFC quotes) and `tests/test_fizzbee_fixtures.py` (the captured
+    output pins), 19 tests between them, over the shared
+    `tests/fizzbee_spike.py` runner. The `fizzbee` marker is registered in
+    `pyproject.toml`, the opt-in skip is in `tests/conftest.py`, and the three
+    `.gitignore` entries are added. Eight output classes are captured in
+    `tests/fixtures/fizzbee/` (pass, safety failure, lasso, stutter, deadlock,
+    truncation-safety, truncation-liveness, parse error) with their standard
+    output, exit code and, where one is written, `error-graph.json` and the
+    `.dot` files. The captured `graph.dot` files were regenerated verbatim: an
+    earlier pass had replaced their pointer ids with `"node0"`, which the
+    checker never emits. The tests were split across three modules because a
+    single one reached 438 lines against the repository's 400-line limit; the
+    first split left 415, which the graphs module's own boundary then brought
+    under it. A fourth helper module, `tests/fizzbee_expectations.py`, carries
+    the `Expectation` value, `check` and `paired`: the shared assertion shape
+    that the duplication gate would otherwise see repeated in every test. An
+    `Expectation` names the model, the verdict line, the counts the run must
+    explore and, where the question turns on it, the trace the counterexample
+    must step through. The module also separates the safety and deadlock
+    `FAILED: Model checker failed` line from the liveness
+    `FAILED: Liveness check failed` line, which the first version of the tests
+    conflated. A fifth module, `tests/test_fizzbee_opt_in.py`, pins the
+    opt-in itself in five tests, so the four gate-exercised modules collect
+    20 tests between them.
+  - [x] (2026-10-24 13:30Z) Step 6, the documentation: the `make fizzbee` row
+    in the developer's guide's Table 1, the `fizzbee` marker and
+    `BUILD_LIMITS_MODEL_CHECK` sentence in §11.3, the extended `.tools`
+    wording in `docs/repository-layout.md`, and the RFC 0001 answers above.
+    The RFC's tables were renumbered into document order as Tables 9 to 13 as
+    part of that record.
 - [ ] EP-M2: `modelcheck` pure domain.
 - [ ] EP-M3: `modelcheck` ports, service, adapters and command-line interface.
 - [ ] EP-M4: minimal model with the busy queue (W1).
@@ -369,6 +414,59 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
   - Evidence: `mbt/lib` in the FizzBee repository, and its "work in progress"
     page.
   - Impact: counterexample replay stays bespoke.
+- **A passing run and a failing run write different files, and only the error
+  graph is replayable in a stable form.**
+  - Observation: a pass writes `graph.dot`, `nodes_*.pb`,
+    `adjacency_lists_*.pb`, `spec_ast.json` and `state_config.json`; a failure
+    adds `error-graph.dot`, `error-graph.json`, `error-states.html` and
+    `nodes_errors.pb`. `graph.dot` labels every node with a Go pointer
+    (`"0x..."`) that changes every run, so only the error graph names states
+    and actions in a form a replay can consume. `--experimental_no_graph`
+    writes neither and exports `trace.txt` instead.
+  - Evidence: a pass and a failure of the same pinned binary, five runs each
+    at `GOMAXPROCS` 1 and 4: one distinct masked standard output, one distinct
+    `error-graph.json`, exit 0 every time, and pointer-masked `graph.dot`
+    equal. `graph.go:299,329` formats node ids with `%p`.
+  - Impact: replay reads `error-graph.json`, or `trace.txt` when the run used
+    `--experimental_no_graph`; it must not read `graph.dot`. Open question 3
+    records both forms. The per-run inventory is the fixture contract.
+- **Liveness dispatch is by an exact string, and an unrecognized one checks
+  nothing.**
+  - Observation: ``""``(absent), `enabled`, `true`, `strict` and `strict/bfs`
+    run `CheckStrictLiveness`; `eventual` and `nondeterministic` run
+    `CheckFastLiveness` and print "Checking strict liveness with
+    nondeterministic checker"; every other string checks no liveness property
+    and still prints `IsLive: true`.
+  - Evidence: one model per value, one value per row of RFC 0001's Table 10,
+    plus the unquoted YAML scalar `liveness: true`, which fails to parse with
+    `invalid value for string field liveness: true` and exits 1.
+    `state_config.json` reproduces the frontmatter string verbatim and omits
+    the key when the field is absent, even though strict liveness still runs.
+  - Impact: RFC 0001 Open question 2 names the supported modes, and W1's
+    models spell the mode out rather than relying on a default. A model whose
+    liveness mode is a typo passes without checking anything.
+- **Symmetry is on by default, applies only to `bag()`, and the flag must
+  precede the spec.**
+  - Observation: two symmetric workers in a `bag()` give 9 reachable, 7
+    distinct and 3 terminal states with the default reduction, and 12, 10 and
+    4 with `--no-symmetry-reduction`; the same pair in a list stays 12, 10
+    and 4 either way. The launcher stops its option loop at the first
+    non-option argument, so `fizz spec.fizz --no-symmetry-reduction` silently
+    runs reduced.
+  - Evidence: `models/spike/symmetry.fizz` run both ways, with the flag on
+    each side of the filename. No partial-order reduction exists in v0.5.4;
+    `fizz --help` lists no such flag and the source has no POR pass.
+  - Impact: RFC 0001 Open question 6 records both facts, and the spike runner
+    puts every option before the model path.
+- **Truncation is silent and can manufacture either verdict.**
+  - Observation: `max_actions` cuts exploration with no warning. At
+    `max_actions: 2` a safety model passes although the forbidden state is
+    reachable at 3; at `max_actions: 6` a liveness model fails on a stutter the
+    bound produced, and passes at 12.
+  - Evidence: `truncation_{safety,liveness}{,_reaches}.fizz`.
+  - Impact: every W1 model's bound must exceed its reachable depth, or the
+    model must carry a termination action; RFC 0001's Truncation entry records
+    the rule.
 - **FizzBee's output is machine-readable.**
   - Observation: on failure FizzBee writes `error-graph.json`, and on a pass it
     writes node and link JSON. Its parser also writes `Spec.json` beside the
@@ -388,6 +486,43 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     target uses. The image's amd64 attestation does carry SLSA v1 provenance,
     so a later decision to containerize inherits stronger evidence than the
     tarball path has.
+- **A failed `require` rolls back an atomic step only.**
+  - Observation: in an `atomic` action a failing `require` discards the whole
+    step. In a plain (non-atomic) action every assignment commits and yields
+    as it runs, so a later failing `require` leaves the earlier writes in
+    place, and another action can run between an assignment and the test that
+    follows it.
+  - Evidence: five spellings of one guard were run in both kinds of action.
+    `seen = v; if seen == 1` fails in both; `if v == 1` and `require v == 1`
+    first pass in both; `seen = v; require seen == 1` passes atomically and
+    fails plainly (20 nodes); `done = True; require v == 1` passes atomically
+    and fails plainly (8 nodes), with the error graph
+    `Init {done: False, v: 0}` → `Deliver {done: True, v: 0}`. A plain
+    action's internal yield also appears in `error-graph.json` as a link named
+    `thread-0` with an empty `Type`.
+  - Impact: RFC 0001's sketch rule "guard before committing" is about
+    ordering, not textual adjacency, and it bites hardest in a plain action.
+    The rule is recorded in RFC 0001 Open question 1, and
+    `models/spike/interleaving_plain_rollback.fizz` is the negative control.
+    The earlier, over-general reading that `require` always rolls back is
+    corrected here.
+  - A second consequence, measured after the first: a commit before a guard
+    is invisible to a liveness property. `done = True; require v == 1` in a
+    plain action satisfies `always eventually done` at 8 nodes while reaching
+    `done` true with `v` zero; the same model with the safety assertion
+    `not done or v == 1` fails at 3 nodes. W1 therefore states each
+    interleaving hazard as a safety assertion and reserves liveness for
+    progress.
+- **Weak fairness does force a continuously enabled action.**
+  - Observation: an action that stays enabled for ever cannot be starved under
+    `fair`/`fair<weak>`. An earlier contrary reading came from an unbounded
+    counter that a low `max_actions` truncated, so the "starvation" was the
+    bound's artefact.
+  - Evidence: `continuously_enabled.fizz` passes and
+    `continuously_enabled_unfair.fizz` fails on a stutter from the initial
+    state; RFC 0001's RC3 entry records the correction.
+  - Impact: W1 may rely on weak fairness for a continuously enabled stop, and
+    only a gate-cycled action needs `fair<strong>`.
 - **The parser needs a system `python3`, not a `python` or a bundled one.**
   - Observation: `parser/parser_bin` starts `#!/usr/bin/env python3`, so the
     host interpreter only runs the stub; the stub then re-executes the bundled
@@ -410,6 +545,18 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     EP-M1 step 5, and every target run uses a scratch directory. Upstream's
     `Writen` above is a typo, so no output matcher may depend on the correct
     spelling of that word; match on `graph dotfile` instead.
+- **A liveness counterexample and a safety one print different verdicts.**
+  - Observation: a safety failure or a deadlock prints `FAILED: Model checker
+    failed` (the safety case appending `. Invariant:  NeverFull`, with two
+    spaces), but a liveness failure prints `FAILED: Liveness check failed`
+    and never the other line. Every failing run still exits 0.
+  - Evidence: the eight captured fixtures in `tests/fixtures/fizzbee/`, and
+    RFC 0001 Open question 2's table.
+  - Impact: the spike's first assertion helper matched only the
+    `Model checker failed` prefix, so five liveness expectations would have
+    passed vacuously. The helper now names the two lines separately, and the
+    opt-in suite is the only thing that exposed it, since no lint or unit gate
+    reads a checker verdict.
 - **One supervisor tick is one atomic unit.**
   - Observation: `Supervisor._tick` (`buildlimits/supervisor.py:326-345`)
     reaps leaders, empties scopes and runs `poll_services`, which runs the
@@ -612,8 +759,10 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     actions would admit paths the code cannot take, and replay would reject
     them.
 - **D11. Spike artefacts are kept.**
-  - `models/spike/` and `tests/test_fizzbee_spike.py` stay as permanent checks
-    of the language and checker behaviour the model relies on.
+  - `models/spike/`, `tests/test_fizzbee_spike.py`,
+    `tests/test_fizzbee_graphs.py` and `tests/test_fizzbee_fixtures.py` stay
+    as permanent checks of the language and checker behaviour the model relies
+    on.
   - Rationale: a FizzBee version bump that changes fairness, liveness or
     output semantics must fail loudly.
 - **D12. A Python explicit-state explorer is offered at G1, not built in W1.**
@@ -627,9 +776,48 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     W1's scope is bounded. The option is recorded for the G1 decision, where
     it could pre-discharge much of H3.
 
+- **D13. The spike runner puts every checker option before the model path.**
+  - `tests/fizzbee_spike.py::run_model` builds `[fizz, *options, model]`,
+    because v0.5.4's launcher stops parsing options at the first non-option
+    argument. A flag after the filename is silently ignored, so
+    `fizz symmetry.fizz --no-symmetry-reduction` runs with the reduction on.
+  - Rationale: an ignored flag is a test that asserts the wrong thing and
+    passes. RFC 0001 Open question 6 records the behaviour.
+- **D14. Replay reads the error graph, never `graph.dot`.**
+  - A replay consumes `error-graph.json` (or the `trace.txt` an
+    `--experimental_no_graph` run exports) and checks the verdict line as well
+    as the exit status, because every verdict exits 0.
+  - Rationale: `graph.dot` names nodes by pointer, so it differs every run and
+    cannot be compared or replayed, and the exit status alone cannot tell a
+    pass from a failure. `error-graph.json` is stable across runs and carries
+    the action, state and fairness of each step.
+
 ## Outcomes & retrospective
 
 Not started. Completed at each gate and at completion.
+
+### EP-M1
+
+- **Delivered.** The pin and installer in the `Makefile`; the pre-fix
+  revisions and the release provenance and licence recorded in RFC 0001; 26 toy
+  models and 20 spike tests; eight captured output classes; the developer's
+  guide, repository layout and RFC 0001 open-questions record updated. Roadmap
+  tasks 1.1.1 to 1.1.3 are ticked.
+- **What the spike changed.** Three RFC 0001 statements moved on evidence: the
+  capacity-2 refinement (RC1, DV2), the split of L4 into L4a and L4b with the
+  addition of F3a (RC2, DV3), and the correction that weak fairness does force
+  a continuously enabled action (RC3). The guard rule in the RFC's sketch is
+  now scoped to atomic actions, with a plain-action negative control.
+- **What it cost.** No W1 revision budget was touched: the spike's models are
+  not W1's, and the tolerance's two revisions count W1's model after its first
+  full run. One spike reading was wrong and was replaced: weak fairness was
+  first read as not forcing an enabled action, from a truncated unbounded
+  counter, and `continuously_enabled.fizz` corrected it before it reached the
+  RFC.
+- **Carried forward.** Nothing blocking. `TY_VERSION ?= 0.0.74` in the
+  `Makefile` and the developer's guide's `ty` version lag `ty==0.0.89` in
+  `pyproject.toml`; both are recorded for a separate change, not this plan.
+  Open questions 7 and 9 to 12 stay open and none bears on W1.
 
 ## Context and orientation
 
@@ -796,7 +984,7 @@ that delivers it, to its acceptance evidence.
 
 ```plaintext
 1.1.1 OQ8                     -> EP-M1  -> RFC 0001 open-questions record: pre-fix revision table
-1.1.2 OQ1-3, OQ6              -> EP-M1  -> models/spike/*.fizz; tests/test_fizzbee_spike.py; tests/fixtures/fizzbee/
+1.1.2 OQ1-3, OQ6              -> EP-M1  -> models/spike/*.fizz; tests/test_fizzbee_{spike,fixtures}.py; tests/fixtures/fizzbee/
 1.1.3 OQ4-5                   -> EP-M1  -> Makefile FIZZBEE_VERSION, FIZZBEE_SHA256; make fizzbee; RFC licence record
 RFC-§5, §6 tooling            -> EP-M2  -> modelcheck domain; tests/test_modelcheck_{expectations,materialize,drift,trace}.py
 RFC-§5, §6 tooling            -> EP-M3  -> modelcheck adapters, CLI; tests/features/model_check.feature; ADR 004
@@ -1140,6 +1328,13 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
      - Add `tests/test_fizzbee_spike.py`, marked `fizzbee`, with explicit
        `@pytest.mark.timeout` values. It runs each toy model through a
        minimal scratch-directory runner and asserts the documented answer.
+       The captured-output pins went into a second module,
+       `tests/test_fizzbee_fixtures.py`, and the artefact and state-count
+       pins into a third, `tests/test_fizzbee_graphs.py`, so each stays under
+       the 400-line limit. The shared assertion shape lives in
+       `tests/fizzbee_expectations.py`: an `Expectation` names the model, the
+       verdict line and the counts it must explore, and `check` and `paired`
+       enforce one model or a pass/fail pair.
      - Register the `fizzbee` marker in `pyproject.toml`, and add the opt-in
        skip in `tests/conftest.py`.
      - Add `.model-check/`, `models/**/Spec.json` and `models/**/out/` to
@@ -1155,13 +1350,52 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
   - EP-M1-E1: `make fizzbee` succeeds twice in a row, and the second run
     prints nothing.
   - EP-M1-E2:
-    `BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -m fizzbee tests/test_fizzbee_spike.py`
-    passes.
+    `BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -m fizzbee
+    tests/test_fizzbee_spike.py tests/test_fizzbee_graphs.py
+    tests/test_fizzbee_fixtures.py` passes.
   - EP-M1-E3: without the variable, the same tests are skipped with a reason
     naming it.
   - EP-M1-E4: `git status --porcelain` is empty afterwards.
   - EP-M1-E5: the four gates pass.
   - Roadmap tasks 1.1.1 to 1.1.3 are ticked.
+  - **Observed 2026-10-24 13:31Z.** E1: `make fizzbee` exited 0 twice and the
+    second run printed nothing (0 bytes). E2: 20 tests passed in 17.50 s with
+    `BUILD_LIMITS_MODEL_CHECK=1`, across both test modules. E3: without the
+    variable all 20 skipped, each reporting "needs the pinned FizzBee checker;
+    set BUILD_LIMITS_MODEL_CHECK=1 (after `make fizzbee`)". E4:
+    `git status --porcelain` showed only the milestone's own tracked and
+    untracked files, and no run directory.
+  - **Observed 2026-10-24 16:28Z, E5.** Scrutineer ran the six gates in
+    sequence and all passed:
+
+    | Gate | Exit | Decisive line |
+    | ---- | ---- | ------------- |
+    | `make check-fmt` | 0 | `29 files left unchanged` (mdtablefix); Ruff `257 files already formatted` |
+    | `make typecheck` | 0 | `All checks passed!` |
+    | `make lint` | 0 | `duplication gate passed (nose 0.20.0); 133 allowed by reasoned exceptions` |
+    | `make test` | 0 | `1775 passed, 45 skipped`; `46 snapshots passed` |
+    | `make markdownlint` | 0 | `Summary: 0 issues in 0 files`; spelling gate exit 0, `typos.toml` unchanged |
+    | `make nixie` | 0 | `All diagrams validated successfully!` |
+
+    The first gate run, at 15:10Z, failed three of them, all on work this
+    milestone had added. `check-fmt` wanted an mdtablefix rewrap and a table
+    column widened in `docs/developers-guide.md`; `markdownlint` reported
+    MD060 on that same row, MD049 for two asterisk-emphasized words in RFC
+    0001, and the spelling gate for six American or non-`artefact` spellings
+    across four documents; and `lint` failed the duplication gate on two
+    families. `make fmt` fixed the first two. The duplication families were
+    fixed by folding the expected trace into the `Expectation` value, which
+    removed the `counterexample` helper and let the two weak-fairness tests
+    merge into one parametrized contrast, and by a reasoned allow entry for
+    the purely matching import lists of the two test modules — the same
+    treatment eight existing entries already give that shape.
+    `git status --porcelain` was byte-identical before and after every run,
+    and no `out/`, `run_*`, `Spec.json` or `.model-check/` appeared.
+  - **Milestone scope, measured 2026-10-24 16:40Z.** Sixteen in-scope files
+    (ten tracked, six new Python modules) and 1,197 net Python lines (1,165 in
+    the new modules, 33 added and one removed in `tests/conftest.py`). The 26
+    `.fizz` models, the 33 fixture files and the two snapshots are excluded by
+    the plan's scope rule.
 - **Keep or discard.** The spike models and tests are kept (D11). Toy-model
   questions that cannot be answered are recorded as unanswerable, with their
   consequence for W3.
@@ -1664,7 +1898,9 @@ Install and verify the checker, then run the spike (EP-M1):
 
 ```bash
 make fizzbee 2>&1 | tee /tmp/fizzbee-buildlimits-$(git branch --show-current).out
-BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -rs -m fizzbee tests/test_fizzbee_spike.py \
+BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -rs -m fizzbee \
+  tests/test_fizzbee_spike.py tests/test_fizzbee_graphs.py \
+  tests/test_fizzbee_fixtures.py \
   2>&1 | tee /tmp/spike-buildlimits-$(git branch --show-current).out
 git status --porcelain
 ```

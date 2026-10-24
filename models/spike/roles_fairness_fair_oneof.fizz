@@ -1,0 +1,26 @@
+---
+# OQ1: `fair oneof` over a bag of role instances is the other way to get
+# per-instance progress. The action picks one worker and ticks it, and the fair
+# choice makes every instance run eventually. Both models pass; the pair
+# records that either spelling is available.
+options:
+  max_actions: 20
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  workers = bag()
+  for i in range(2):
+    workers.add(Worker())
+
+role Worker:
+  action Init:
+    self.ticked = False
+
+atomic fair action TickAny:
+  w = fair oneof workers
+  w.ticked = True
+
+always eventually assertion BothTick:
+  return len([w for w in workers if w.ticked]) == 2

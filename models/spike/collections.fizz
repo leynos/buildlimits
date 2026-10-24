@@ -1,0 +1,42 @@
+---
+# OQ1: records, dicts, sets, bags, lists and records inside a collection all
+# survive as state and are reported back in the state JSON. Deadlock detection
+# is off because the model deliberately stops once two of each kind exist, and
+# that terminal state is wanted here rather than reported as a fault.
+options:
+  max_actions: 24
+  max_concurrent_actions: 1
+liveness: "false"
+deadlock_detection: false
+---
+
+action Init:
+  slots = record(waiting=0, running=0)
+  tally = {"cached": 0, "uncached": 0}
+  seen = set()
+  multi = bag()
+  by_name = {"only": record(n=0)}
+  pairs = []
+
+atomic action AddCached:
+  require tally["cached"] < 2
+  tally["cached"] = tally["cached"] + 1
+  slots = record(waiting=slots.waiting, running=slots.running + 1)
+  seen.add("cached")
+  multi.add("x")
+  by_name["only"] = record(n=by_name["only"].n + 1)
+  pairs.append(record(kind="cached", at=slots.running))
+
+atomic action AddUncached:
+  require tally["uncached"] < 2
+  tally["uncached"] = tally["uncached"] + 1
+  slots = record(waiting=slots.waiting + 1, running=slots.running)
+  seen.add("uncached")
+  multi.add("y")
+  pairs.append(record(kind="uncached", at=slots.running))
+
+always assertion Consistent:
+  return slots.running + slots.waiting <= 4 and len(seen) <= 2
+
+always assertion NoNegative:
+  return tally["cached"] >= 0 and tally["uncached"] >= 0

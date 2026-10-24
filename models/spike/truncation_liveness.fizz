@@ -1,0 +1,20 @@
+---
+# OQ2, truncation against a liveness property: Bump is weakly fair and Reaches
+# Ten needs ten steps, but `max_actions: 6` stops exploration at six. The
+# checker reports a liveness failure whose counterexample ends in `stutter`,
+# which is a spurious verdict caused by the bound: at `max_actions: 12` the
+# same model passes. A stutter-terminated liveness failure is therefore only
+# meaningful once the state count has stopped growing with the bound.
+options:
+  max_actions: 6
+liveness: "strict"
+---
+
+action Init:
+  n = 0
+
+atomic fair action Bump:
+  n = n + 1
+
+always eventually assertion ReachesTen:
+  return n >= 10

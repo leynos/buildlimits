@@ -1,0 +1,28 @@
+---
+# OQ1 and RFC 0001 §4, the fixed half of the pair: Deliver reads the gate in
+# place inside the test, so the action is enabled only when the gate is open at
+# the moment it runs. The run passes. Together with
+# `interleaving_snapshot.fizz` this is the evidence for the sketch's rule to
+# read state in place rather than through a local.
+options:
+  max_actions: 20
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  v = 0
+  done = False
+
+atomic fair<strong> action Step:
+  if v == 0:
+    v = 1
+  else:
+    v = 0
+
+atomic fair<strong> action Deliver:
+  if v == 1:
+    done = True
+
+always eventually assertion Delivered:
+  return done

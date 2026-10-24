@@ -1,0 +1,33 @@
+---
+# OQ1: fairness is attached to an action, not to a role instance. Two workers
+# sit in a bag as separate role instances. Each instance's Tick is weakly fair,
+# and the property needs both instances to tick, so the run passes only if the
+# checker treats the instances as separate fair actions. The state is a sticky
+# flag, so the run never outgrows its bound: a counter would make the state
+# space unbounded and the property fail for want of actions, not for want of
+# fairness. `roles_fairness_strong.fizz` and `roles_fairness_unfair.fizz` are
+# the same model with the modifier changed.
+options:
+  max_actions: 20
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  workers = bag()
+  for i in range(2):
+    workers.add(Worker())
+
+role Worker:
+  action Init:
+    self.ticked = False
+
+  atomic fair action Tick:
+    self.ticked = True
+
+atomic fair action TickAny:
+  w = oneof workers
+  w.ticked = True
+
+always eventually assertion BothTick:
+  return len([w for w in workers if w.ticked]) == 2

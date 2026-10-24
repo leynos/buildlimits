@@ -45,6 +45,7 @@ investigating a specific failure; reconcile with `make all` before committing.
 | `make typecheck`         | `ty` 0.0.74 against the project interpreter (`--python .venv`)                                    |
 | `make test`              | pytest under xdist over `tests/` and the package's doctests                                       |
 | `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
+| `make fizzbee`           | Installs the pinned FizzBee checker into the shared XDG cache; a second run is a no-op            |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
 
 _Table 1: Make targets and the gates behind them._
@@ -517,6 +518,8 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `cache_recovery_machines.py` | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
 | `systemd_harness.py`         | Host acceptance `Harness`, `systemd_user_marks` and `wait_for`                                      |
 | `harness_units.py`           | Transient unit control and `unit_properties` over the public user bus                               |
+| `fizzbee_spike.py`           | The scratch-directory `run_model` runner, output masking and error-graph readers                    |
+| `fizzbee_expectations.py`    | `Expectation`, `check` and `paired`: what one run or a pass/fail pair must show, enforced per test  |
 
 _Table 4: Shared test helper modules._
 
@@ -532,6 +535,32 @@ treat a repeat as a signal to raise the search budget, not to delete the
 assertion. CrossHair proves the contracts in `tests/crosshair_contracts.py`.
 Snapshot tests pin rendered status, recovery and metrics output; pair any new
 snapshot with semantic assertions for the behaviour it represents.
+
+Tests marked `fizzbee` run the pinned model checker, so they are opt-in:
+`tests/conftest.py` skips them unless `BUILD_LIMITS_MODEL_CHECK=1`, and the
+skip reason names the variable. With the variable set, a missing binary is a
+failure rather than a skip, because an opted-in run that checked nothing must
+not report success. `make fizzbee` installs the binary; run the tests with
+`BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -m fizzbee`. `make test` never
+runs them and stays hermetic. Every test copies its spec into pytest's scratch
+directory first, so a run leaves `models/` untouched; `tests/fizzbee_spike.py`
+holds the shared runner, including the process-group kill on timeout.
+`tests/test_fizzbee_spike.py` asserts the language and checker behaviour RFC
+0001 records, `tests/test_fizzbee_graphs.py` pins the artefacts a run writes
+and the state counts the RFC quotes, and `tests/test_fizzbee_fixtures.py`
+re-runs every captured class and compares it with `tests/fixtures/fizzbee/`, so
+a checker version bump that changes an output format fails there. The three
+modules are split this way because a single one outgrew the 400-line limit.
+`tests/test_fizzbee_opt_in.py` pins the opt-in itself: which values enable it,
+that a missing binary fails rather than skips, and that the marker is
+registered. `tests/fizzbee_expectations.py` states what a run must show — the
+`PASSED` line, the `FAILED` line for safety and deadlock failures, or the
+separate `FAILED: Liveness check failed` line — together with the counts it
+must explore and, where the question turns on it, the actions its
+counterexample must step through, in one `Expectation` value. Each test then
+reads as its property rather than as repeated boilerplate. A test that poses a
+fairness or interleaving question as a pass/fail pair calls `paired`, which
+runs both models in their own subdirectories and returns the failing run.
 
 ### 11.4. Host acceptance
 

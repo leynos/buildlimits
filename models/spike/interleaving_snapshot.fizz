@@ -1,0 +1,30 @@
+---
+# OQ1 and RFC 0001 §4: an assignment is a yield point and therefore an
+# interleaving point. Deliver reads the gate into `seen` and only then tests
+# it, so the scheduler may republish the gate in between; the action is enabled
+# by the assignment whatever the test decides. The run fails, and the
+# counterexample's last step is Deliver taken while the gate is closed.
+# `interleaving_in_place.fizz` is the same model reading the gate in place.
+options:
+  max_actions: 20
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  v = 0
+  done = False
+
+atomic fair<strong> action Step:
+  if v == 0:
+    v = 1
+  else:
+    v = 0
+
+atomic fair<strong> action Deliver:
+  seen = v
+  if seen == 1:
+    done = True
+
+always eventually assertion Delivered:
+  return done

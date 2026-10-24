@@ -450,6 +450,8 @@ ignore_names = [
     "test_*",
     "pytestmark",
     "pytest_plugins",
+    # pytest calls this hook by name during collection; no test names it.
+    "pytest_collection_modifyitems",
     "teardown",
     "descriptor_leak_guard",
     "__call__",
@@ -513,6 +515,7 @@ filterwarnings = [
 ]
 markers = [
     "systemd_user: needs a running systemd user manager and busctl",
+    "fizzbee: runs the pinned FizzBee checker; opt in with BUILD_LIMITS_MODEL_CHECK=1",
 ]
 
 [tool.uv]
@@ -1200,3 +1203,7 @@ reason = "Matching import lists: each module names the protocol or port symbols 
 [[tool.duplication_gate.allow]]
 members = ["tests/test_cache_recovery_systemd.py", "tests/test_graceful_restart_systemd.py"]
 reason = "Both modules own an isolated real-systemd world and release it in the same try/finally fixture; the matching lines are the repository's fixture idiom for host acceptance, not shared logic, and a shared fixture would have to know both worlds' different resources."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_fizzbee_spike.py", "tests/test_fizzbee_graphs.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."

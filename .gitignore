@@ -209,5 +209,15 @@ target/
 .typos-oxendict-base.json
 .typos-oxendict-base.toml
 
-# Verified duplication detector installed by df12-duplication.
+# Verified duplication detector installed by df12-duplication, and the
+# FizzBee link `make fizzbee` keeps beside it. Both are install artefacts.
 .tools/
+
+# FizzBee writes `<spec>.json` beside the spec it was given and a run
+# directory under `out/`. Every target copies the spec into a scratch
+# directory under `.model-check/` first, so these cover only a manual run
+# beside the source model. The pattern is one level deep so that recorded
+# traces under `models/admission/traces/` stay committable.
+.model-check/
+models/*/*.json
+models/**/out/

@@ -1,0 +1,20 @@
+---
+# OQ2: a state with no enabled action. Fill is guarded to stop at three and
+# nothing else is enabled once it has, so the run prints `DEADLOCK detected`
+# followed by `FAILED: Model checker failed` and the path to the stuck state.
+# `deadlock_detection: false` in the frontmatter suppresses the verdict, which
+# is how a model with a deliberate terminal state passes instead.
+options:
+  max_actions: 12
+liveness: "false"
+---
+
+action Init:
+  level = 0
+
+atomic action Fill:
+  require level < 3
+  level = level + 1
+
+always assertion Bounded:
+  return level <= 3

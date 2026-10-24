@@ -1,0 +1,24 @@
+digraph G {
+  "0x397048c34000" [label="yield
+Actions: 0, Forks: 0
+State: {\"b\":0,\"g\":0}
+", color="black" penwidth="2" ];
+  "0x397048c34000" -> "0x397048c34080" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x397048c34080" [label="yield
+Actions: 1, Forks: 1
+State: {\"b\":0,\"g\":1}
+", color="black" penwidth="2" ];
+  "0x397048c34080" -> "0x397048c34000" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x397048c34080" -> "0x397048c34400" [label="B", color="forestgreen" penwidth="1" ];
+  "0x397048c34400" [label="yield
+Actions: 2, Forks: 2
+State: {\"b\":1,\"g\":1}
+", color="green" penwidth="2" ];
+  "0x397048c34400" -> "0x397048c34600" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x397048c34600" [label="yield
+Actions: 3, Forks: 3
+State: {\"b\":1,\"g\":0}
+", color="green" penwidth="2" ];
+  "0x397048c34600" -> "0x397048c34400" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x397048c34400" -> "0x397048c34400" [label="B", color="forestgreen" penwidth="1" ];
+}

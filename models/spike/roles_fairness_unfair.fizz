@@ -1,0 +1,29 @@
+---
+# OQ1, negative control: the same two workers as `roles_fairness.fizz`, but
+# their Tick is atomic without fairness. BothTick must fail. The counterexample
+# repeats TickAny on one worker, which is what a per-instance starvation looks
+# like before any fairness is assumed.
+options:
+  max_actions: 20
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  workers = bag()
+  for i in range(2):
+    workers.add(Worker())
+
+role Worker:
+  action Init:
+    self.ticked = False
+
+  atomic action Tick:
+    self.ticked = True
+
+atomic fair action TickAny:
+  w = oneof workers
+  w.ticked = True
+
+always eventually assertion BothTick:
+  return len([w for w in workers if w.ticked]) == 2
