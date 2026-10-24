@@ -5,8 +5,8 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN PROGRESS (2026-10-24; EP-M0 is underway after approval commit
-`0400924`)
+Status: IN PROGRESS (2026-10-24; EP-M0 evidence is captured; its local
+milestone review is pending)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -257,10 +257,16 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   sightings) was added to W1, and W2 was renumbered EP-M9 (D24, D25).
 - [x] (2026-10-23 23:27Z) Owner approved the whole plan, including deviations
   D2 to D25. EP-M0 is authorized to begin.
-- [ ] (2026-10-24 00:10Z) EP-M0 started. No new live statistics have been read;
-  ADR 004 and its fixed thresholds must be committed before the stats fixture
-  is captured.
-- [ ] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents.
+- [x] (2026-10-24 00:10Z) EP-M0 started after plan approval commit `0400924`.
+- [x] (2026-10-24 00:18Z) Committed ADR 004's decisions, H1-H5 thresholds and
+  H2 classifier as `ddfaeae` before one read-only stats query. Captured
+  `tests/fixtures/sccache_0_14_0_stats.json` from the managed socket and
+  redacted `cache_location` and `basedirs`. G0 remains recorded in S5.
+- [x] (2026-10-24 00:26Z) Final documentation gates passed sequentially at
+  `ddfaeae` plus the fixture and evidence changes. Local CodeRabbit milestone
+  review remains pending.
+- [ ] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
+  fixture; local CodeRabbit review pending.
 - [ ] EP-M1: real-binary feasibility and axiom check (prototype; go or
   no-go).
 - [ ] EP-M2: pure statistics, footprints, attribution and gate.
@@ -676,6 +682,29 @@ The pre-mortem scenarios, each with its mitigation now designed in:
   `generation_unavailable`, back-off, the status line and a 24-hour check in
   the G1 runbook.
 
+EP-M0 conformance and evidence (2026-10-24):
+
+- ADR 004 records D2 to D25 and fixes Table 1 before the live query; its
+  status remains Proposed until EP-M8 merges.
+- The sccache 0.14.0 fixture came from one read-only query to the managed
+  socket. `cache_location` and `basedirs` were redacted before writing the
+  fixture. G0's 4.5% solo-window bound remains the prior journal measurement in
+  S5; it was not re-measured.
+- The first final gate run passed `make check-fmt`, found `unlabeled` in ADR
+  004 (corrected to `unlabelled`), and timed out on three existing diagrams in
+  `make nixie`. The container reports 24 CPUs and Nixie's default concurrency
+  is CPU count minus one. The final run passed `make check-fmt`,
+  `make markdownlint` including spelling, and `make nixie` with its documented
+  maximum concurrency set to one. Logs are
+  `/tmp/buildlimits-epm0-final.LiUuHY/check-fmt.out`,
+  `/tmp/buildlimits-epm0-final.LiUuHY/markdownlint.out` and
+  `/tmp/buildlimits-epm0-final.LiUuHY/nixie.out`.
+- Spelling used the cached `typos-config-builder` 0.1.3 executable because
+  uv's Git resolver cannot contact GitHub in the networkless container.
+  `uv sync` regenerated unrelated `uv.lock` drift during formatting and gates;
+  it was restored each time. No code mutation results apply to this
+  documentation and fixture work.
+
 ## Context and orientation
 
 buildlimits is a Python 3.14 package (`buildlimits/`) that rations Rust
@@ -776,7 +805,8 @@ compiles on a shared host. The terms below are used throughout this plan.
     for the new operations.
   - dev-env-rocky ADR 011 governs token coverage.
   - This plan creates ADR 004 (`docs/adr-004-cache-outcome-recording.md`),
-    which records D2 to D25 and the fixed thresholds.
+    which records D2 to D25 and the fixed thresholds. Its decision was
+    committed as `ddfaeae` before the live stats fixture was captured.
 - Standards: `AGENTS.md`, `docs/developers-guide.md`,
   `docs/documentation-style-guide.md` and `docs/scripting-standards.md`.
 
@@ -819,6 +849,18 @@ RFC-COMPAT -> C-DEFAULT, C-SCHEMA, D18 -> EP-M6 -> tests/test_outcome_config.py,
 ```
 
 ## Verification plan
+
+### Current evidence
+
+- EP-M0's ADR 004 threshold decision is committed before the fixture's single
+  read-only query. The fixture pins the complete sccache 0.14.0 JSON shape and
+  redacts host-specific `cache_location` and `basedirs` values.
+- G0 is the existing read-only journal measurement recorded in S5; no new
+  journal query was needed for EP-M0.
+- EP-M0's `make check-fmt`, `make markdownlint` including spelling, and
+  `make nixie` passed sequentially. Nixie used the documented one-worker limit
+  to avoid timeouts from the container's 24-CPU default. Exact logs are listed
+  under `Outcomes & retrospective`.
 
 ### Axioms
 

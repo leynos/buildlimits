@@ -1,0 +1,71 @@
+{
+  "stats": {
+    "compile_requests": 15917,
+    "requests_unsupported_compiler": 0,
+    "requests_not_compile": 168,
+    "requests_not_cacheable": 6271,
+    "requests_executed": 9478,
+    "cache_errors": {
+      "counts": {
+        "Rust": 7
+      },
+      "adv_counts": {
+        "rust": 7
+      }
+    },
+    "cache_hits": {
+      "counts": {
+        "Rust": 7047
+      },
+      "adv_counts": {
+        "rust": 7047
+      }
+    },
+    "cache_misses": {
+      "counts": {
+        "Rust": 2387
+      },
+      "adv_counts": {
+        "rust": 2387
+      }
+    },
+    "cache_timeouts": 0,
+    "cache_read_errors": 0,
+    "non_cacheable_compilations": 0,
+    "forced_recaches": 0,
+    "cache_write_errors": 0,
+    "cache_writes": 2387,
+    "cache_write_duration": {
+      "secs": 6,
+      "nanos": 366082981
+    },
+    "cache_read_hit_duration": {
+      "secs": 10,
+      "nanos": 801883834
+    },
+    "compilations": 2387,
+    "compiler_write_duration": {
+      "secs": 1107,
+      "nanos": 616857894
+    },
+    "compile_fails": 37,
+    "not_cached": {
+      "missing input": 290,
+      "multiple input files": 1738,
+      "incremental": 698,
+      "-": 363,
+      "crate-type": 2583,
+      "missing output_dir": 68,
+      "--sysroot": 54,
+      "-o": 477
+    },
+    "dist_compiles": {},
+    "dist_errors": 0
+  },
+  "cache_location": "<redacted>",
+  "cache_size": 128846201634,
+  "max_cache_size": 128849018880,
+  "use_preprocessor_cache_mode": true,
+  "version": "0.14.0",
+  "basedirs": []
+}

@@ -309,7 +309,7 @@ report the share of labelled misses with a sighting and each clue's agreement.
 - Quiet and unanimous windows favour low-activity periods; every verdict must
   report its limited representativeness.
 - Counter windows can be unattributable after a restart, mixed result or
-  unsupported server version; such windows must remain unlabeled.
+  unsupported server version; such windows must remain unlabelled.
 - HMAC protects stored digests, but local records and their timing still reveal
   build activity to the host account that can read them.
 - Child sampling can miss short-lived processes. `unavailable` and sample
