@@ -1,0 +1,28 @@
+---
+# OQ2: the three fairness levels the parser accepts, and the compiled AST they
+# produce. OQ1 and the RFC's fairness table ask which level an action carries,
+# and the answer is visible in the `<spec>.json` the launcher writes beside
+# this file: Init is STRONG because it is a constructor, a plain action is
+# UNFAIR, and `fair`, `fair<weak>` and `fair<strong>` map to WEAK, WEAK and
+# STRONG. Deadlock detection is off because every action here is a self-loop
+# on one counter and the run has nothing to finish.
+options:
+  max_actions: 4
+liveness: "false"
+deadlock_detection: false
+---
+
+action Init:
+  n = 0
+
+atomic action Plain:
+  n = n
+
+atomic fair action Weak:
+  n = n
+
+atomic fair<weak> action WeakExplicit:
+  n = n
+
+atomic fair<strong> action Strong:
+  n = n

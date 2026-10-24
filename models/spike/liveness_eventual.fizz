@@ -1,0 +1,23 @@
+---
+# OQ2: `liveness: "eventual"` adds the line `Checking strict liveness with
+# nondeterministic checker` and then runs the same strict check under a
+# nondeterministic search. On this model it passes where `strict` fails, which
+# is why the spike records the mode rather than assuming the two agree.
+options:
+  max_actions: 12
+liveness: "eventual"
+---
+
+action Init:
+  g = 0
+  b = 0
+
+atomic fair action Gate:
+  g = 1 - g
+
+atomic fair action B:
+  require g == 1
+  b = 1
+
+always eventually assertion BEventually:
+  return b >= 1

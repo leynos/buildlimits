@@ -450,6 +450,8 @@ ignore_names = [
     "test_*",
     "pytestmark",
     "pytest_plugins",
+    # pytest calls this hook by name during collection; no test names it.
+    "pytest_collection_modifyitems",
     "teardown",
     "descriptor_leak_guard",
     "__call__",
@@ -513,6 +515,7 @@ filterwarnings = [
 ]
 markers = [
     "systemd_user: needs a running systemd user manager and busctl",
+    "fizzbee: runs the pinned FizzBee checker; opt in with BUILD_LIMITS_MODEL_CHECK=1",
 ]
 
 [tool.uv]
@@ -1215,3 +1218,7 @@ reason = "Matching imports: the host assertions and direct timing test have dist
 [[tool.duplication_gate.allow]]
 unit = "tests/test_rustc_query_host.py"
 reason = "The only matched fragments are separate optional Cargo Clippy and Dylint prerequisites with distinct skip messages. The one-line matches cannot be scoped to function names by this gate; this dedicated host acceptance module needs both checks so either linter can skip independently."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_fizzbee_spike.py", "tests/test_fizzbee_graphs.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."

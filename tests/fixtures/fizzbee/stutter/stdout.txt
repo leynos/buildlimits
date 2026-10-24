@@ -1,0 +1,31 @@
+Model checking liveness_stutter.json
+configFileName: fizz.yaml
+fizz.yaml not found. Using default options
+StateSpaceOptions: options:{max_actions:12  max_concurrent_actions:2}  liveness:"strict"  deadlock_detection:false
+Nodes: 4, queued: <count>, elapsed: <duration>
+Time taken for model checking: <duration>
+Writen graph dotfile: out/run_<timestamp>/graph.dot
+To generate svg, run: 
+dot -Tsvg out/run_<timestamp>/graph.dot -o graph.svg && open graph.svg
+Valid Nodes: 4 Unique states: 4
+Checking always eventually Served
+IsLive: false
+Time taken to check liveness: <duration>
+FAILED: Liveness check failed
+Invariant: Served
+------
+Init
+--
+state: {"g":0,"served":false}
+------
+stutter
+--
+state: {"g":0,"served":false}
+------
+Writen graph json: out/run_<timestamp>/error-graph.json
+Writen graph dotfile: out/run_<timestamp>/error-graph.dot
+To generate an image file, run: 
+dot -Tsvg out/run_<timestamp>/error-graph.dot -o error-graph.svg && open error-graph.svg
+Writen error states as html: out/run_<timestamp>/error-states.html
+To open: 
+open out/run_<timestamp>/error-states.html
