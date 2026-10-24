@@ -1041,7 +1041,7 @@ EP-M2 conformance and evidence (2026-10-24):
 - The local CodeRabbit pass inspected the committed range from `327ae5a` to
   `080d9c0` and found no further issues. The draft PR's remote head was not
   changed. A separate plan-documentation review found one serial-comma
-  correction, fixed in `6f3c40e`; its docs gates passed and its local review
+  correction, fixed in `6f3c40e`; its docs gates passed, and its local review
   found no further issues. The draft PR's remote head remains unchanged.
 
 ## Context and orientation
