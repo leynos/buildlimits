@@ -5,8 +5,8 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN PROGRESS (2026-10-24; EP-M0 evidence is captured; its local
-milestone review is pending)
+Status: IN PROGRESS (2026-10-24; EP-M0 evidence is captured; D30-D32 gates
+passed and their exact-head review is pending)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -265,6 +265,16 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] (2026-10-24 00:26Z) Final documentation gates passed sequentially at
   `ddfaeae` plus the fixture and evidence changes. Local CodeRabbit milestone
   review remains pending.
+- [x] (2026-10-24 01:02Z) D29 review corrections passed `make fmt`,
+  `make check-fmt`, `make markdownlint` and serial `make nixie` in the isolated
+  container, then were committed as `6d2589c`.
+- [x] (2026-10-24 01:08Z) Fresh CodeRabbit review of `6d2589c` completed with
+  two major and one minor finding. Source and design review confirmed missing
+  H3 parser branches and shared-metadata ambiguity; D30-D32 specify the fixes.
+- [x] (2026-10-24 01:17Z) D30-D32 passed `make fmt`, `make check-fmt`,
+  `make markdownlint` and serial `make nixie` in the isolated container.
+  Formatting output was copied into the worktree; a fresh exact-head review is
+  the remaining EP-M0 gate.
 - [ ] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; local CodeRabbit review pending.
 - [ ] EP-M1: real-binary feasibility and axiom check (prototype; go or
@@ -558,15 +568,21 @@ C-GATES.
   because `cache_recovery.py` has no headroom for a property. The `queued == 0`
   clause is the panel's: with a queue, the next launch follows within a
   millisecond, and the reading would straddle.
-- D21. Deviation in the H3 evidence. Decision: `cacheability_features(argv)`
-  predicts the parser result in sccache 0.14 order. `not_compile` covers
-  `NotCompilation` flags and emit sets with neither `link` nor `metadata`,
-  including dep-info-only, asm-only and `--emit=` (one empty member).
-  `declined` covers `CannotCache`: incremental compilation, unsupported crate
-  types, several inputs, missing required arguments (`input`, `--emit`,
-  `--crate-name` or `--out-dir`), and unsupported emit kinds when `link` or
-  `metadata` is also present. Metadata-only is cacheable. Cargo's `-vV` probe
-  is `declined` as `missing input`.
+- D21. Deviation in the H3 evidence. Decision: `parser_class(argv)` predicts
+  the first terminal result of sccache 0.14's Rust parser as `not_compile`,
+  `declined` or `cacheable`. During the left-to-right argument scan, parse
+  errors, `TooHardFlag`/`TooHardPath` (including `-`, `-o` and `--sysroot`),
+  repeated `--emit`, unsupported crate types, `-C extra-filename` without a
+  value, incremental compilation, an unsure target and multiple inputs are
+  `declined`. `--explain`, `--help`, `--pretty`, `--print`, `--unpretty`,
+  `--version` and `-V` are `not_compile` if the scan reaches them first. After
+  scanning, missing input, `--out-dir`, `--emit` or `--crate-name` is
+  `declined`, in that order. An emit set with neither `link` nor `metadata` is
+  `not_compile`, including dep-info-only, asm-only and `--emit=` (one empty
+  member). No supported `rlib` or `staticlib` type is `declined`; unsupported
+  emit kinds are `declined` only after the no-link/no-metadata check.
+  Metadata-only is cacheable when the other required fields and a supported
+  crate type are present. Cargo's `-vV` probe is `declined` as `missing input`.
 
   For every balanced window, mixed or not, the store also gets a _window
   summary_ record. It holds the launch count, Δ`requests_not_compile`,
@@ -600,9 +616,11 @@ C-GATES.
   group. Rationale: both operations read the one server process from `/proc`,
   so a sixth port would split a single concern, and the RFC's budget of five
   ports holds. The RFC already requires child arguments to be compared in
-  memory and never stored, and this keeps that: only a tri-state token and a
-  sample count reach the record.
-- D25. Decision (H2 design, fixed in ADR 004 before any data is read).
+  memory and never stored, and this keeps that: only a closed-vocabulary
+  sighting token and a sample count reach the record.
+- D25. Partially superseded by D31. Its sampling cadence and H2 thresholds
+  remain, but the child-to-entry matching and ambiguous-sighting rules are
+  replaced by D31 after review.
   - Matching. `outcome_sightings.request_metadata(argv)` reads the request's
     own `-C metadata=X`, in any of the spellings `-C metadata=X`,
     `-Cmetadata=X`, `--codegen metadata=X` and `--codegen=metadata=X`, and
@@ -611,13 +629,11 @@ C-GATES.
     includes `link` or `metadata`, or which has no `--emit` at all. A
     dep-info-only pass never counts.
   - Sampling. Every `CHILD_SAMPLE_SECONDS = 0.25`, while recording is on and
-    `cached_moving > 0`, each running cached entry gains one sample. It is
-    marked `seen` if its metadata is in the sampled set. Failures back off
+    `cached_moving > 0`, each running cached entry gains one sample. D31
+    defines how shared metadata matches are classified. Failures back off
     from 0.25 s to 8 s and are counted.
   - Record and event. Each `cache_outcome` and each stored record carries
-    `child_sighting`, which is `seen`, `not_seen` (sampled at least once and
-    never seen) or `unavailable` (never sampled, or the request had no
-    metadata), together with `child_samples`.
+    `child_sighting` and `child_samples`; D31 adds `ambiguous` to the vocabulary.
   - The H2 classifier, applied by `build-limits-cache-replay h2` to stored
     records labelled `hit` or `miss`, walking each key in insertion order:
     1. Predict `miss` if `child_sighting` is `seen`.
@@ -628,6 +644,9 @@ C-GATES.
 
     Only records with `child_samples >= 1` whose key holds both outcomes in
     the store are evaluated, which is the RFC's "keys with both outcomes".
+    An ambiguous child contributes no child clue; the runtime rule remains
+    available. The child-only agreement excludes ambiguous and unavailable
+    records, and the report gives their counts separately.
   - The verdict:
     - `supported` at 95% agreement or more;
     - `refuted` below 90%;
@@ -636,8 +655,9 @@ C-GATES.
       records.
 
     The report also gives the share of labelled misses that were `seen`,
-    which tests the RFC's assumption that most misses leave a visible
-    child, and the agreement of each clue on its own.
+    among `seen`/`not_seen` records, which tests the RFC's assumption that
+    most misses leave a visible child, and the agreement of each clue on its
+    own.
 
   Rationale: the RFC states H2's prediction and thresholds but not the
   classifier, and an unfixed classifier could be tuned to the data. Fixing the
@@ -669,22 +689,54 @@ C-GATES.
   Rationale: start/stop-only compaction could make a valid long-running store
   look corrupt on the next start. This preserves D17's retention and durability
   policy while enforcing its existing file bound during a run.
-- D28. Review correction to D21. Decision: match sccache 0.14's parser: an
-  `--emit` set is a refusal feature when it contains neither `link` nor
-  `metadata`, or contains an unsupported kind. Metadata-only is cacheable.
-  Rationale: the parser explicitly accepts `--emit=metadata`; the previous
-  “without `link`” predicate would produce a false H3 classification.
-- D29. Review correction to D21 and D28. Decision: classify `NotCompilation`
-  separately from `CannotCache`, following parser order. Emit sets without
-  `link` or `metadata`, including dep-info-only, asm-only and `--emit=`, predict
-  `not_compile`; the empty value splits to one empty member. Missing required
-  arguments, incremental compilation, unsupported crate types, multiple inputs
-  and unsupported emit kinds when `link` or `metadata` is present predict
-  `declined`. Compare `not_compile` with `requests_not_compile` and `declined`
-  with `requests_not_cacheable` separately. Rationale: sccache returns
-  `NotCompilation` before checking unsupported emit kinds when neither
-  `link` nor `metadata` is present; its server updates separate counters for
-  the two parser results. The empty value does not reach a cacheable path.
+- D28. Superseded by D30. The review correction established that metadata-only
+  emit is accepted and that the no-link/no-metadata check precedes unsupported
+  emit-kind validation.
+- D29. Superseded by D30. The review correction separated `NotCompilation`
+  from `CannotCache`, confirmed that dep-info-only, asm-only and `--emit=` are
+  `NotCompilation`, and identified the two matching statistics counters.
+- D30. Review correction to D21, D28 and D29. Decision: `parser_class(argv)`
+  predicts the first terminal result of sccache 0.14's Rust parser as
+  `not_compile`, `declined` or `cacheable`. During the left-to-right argument
+  scan, parse errors, `TooHardFlag`/`TooHardPath` (including `-`, `-o` and
+  `--sysroot`), repeated `--emit`, unsupported crate types, `-C extra-filename`
+  without a value, incremental compilation, an unsure target and multiple
+  inputs predict `declined`. `--explain`, `--help`, `--pretty`, `--print`,
+  `--unpretty`, `--version` and `-V` predict `not_compile` if the scan reaches
+  them first. After the scan, missing input, `--out-dir`, `--emit` or
+  `--crate-name` predicts `declined`, in that order. An emit set with neither
+  `link` nor `metadata` predicts `not_compile`, including dep-info-only,
+  asm-only and `--emit=` (one empty member). No supported `rlib` or `staticlib`
+  type predicts `declined`; unsupported emit kinds predict `declined` only
+  after the no-link/no-metadata check. Compare `not_compile` with
+  `requests_not_compile` and `declined` with `requests_not_cacheable`; predicted
+  `cacheable` requests must move neither refusal counter. Persist only the
+  `parser_class` enum on request records and the predicted class counts in
+  window summaries, never argv; do not add it to the journal event. The
+  fixture's `not_cached` breakdown includes 363 `-`, 477 `-o`, 54 `--sysroot`
+  and 2,583 `crate-type` declines, within 6,271 total. Rationale: the earlier
+  H3 set omitted parser branches already visible in the one read-only stats
+  snapshot. A repository sweep found that `groups.compiler_argv` only removes
+  wrapper layers; it does not parse rustc options. Keep the pure predictor in
+  its own `outcome_parser.py`, scoped to sccache 0.14 Rust H3 evidence and
+  reused by record creation and replay only.
+- D31. Review correction to D25. Decision: build a multimap from metadata to
+  active entries at each child sample. A full-emit child marks an entry `seen`
+  only when exactly one active entry has its metadata. If more than one active
+  entry shares the value, mark each `ambiguous`; that sample cannot label any
+  of them `seen`. `ChildSighting` is `seen` if any unique match was observed,
+  else `ambiguous` if any shared match was observed, else `not_seen` after a
+  sample with neither kind of match, else `unavailable` if no metadata or no
+  sample exists. The H2 classifier does not use an ambiguous sample as a child
+  clue, but may still use runtime. Child-only agreement and the miss sighting
+  share use only `seen`/`not_seen` records; the report gives ambiguous and
+  unavailable counts. Add unit, property, replay and overlapping systemd
+  coverage for identical active metadata. Rationale: a child argument can
+  identify multiple active requests, and must not be assigned to each.
+- D32. Review correction to RFC 0002 footnotes. Decision: number references
+  by first appearance, with Rust `str::split`, sccache `parse_arguments`, the
+  command response, Cargo environment variables, Cargo fingerprints, and the
+  server counter updates in that order.
 
 ## Outcomes & retrospective
 
@@ -718,7 +770,7 @@ EP-M0 conformance and evidence (2026-10-24):
 
 - The initial ADR 004 commit, `ddfaeae`, recorded D2 to D25 and fixed Table 1
   before the live query; its status remains Proposed until EP-M8 merges. Review
-  corrections D27 to D29 are recorded in this ExecPlan.
+  corrections D27 to D32 are recorded in this ExecPlan.
 - The sccache 0.14.0 fixture came from one read-only query to the managed
   socket. `cache_location` and `basedirs` were redacted before writing the
   fixture. G0's 4.5% solo-window bound remains the prior journal measurement in
@@ -839,7 +891,7 @@ compiles on a shared host. The terms below are used throughout this plan.
   - dev-env-rocky ADR 011 governs token coverage.
   - This plan creates ADR 004 (`docs/adr-004-cache-outcome-recording.md`). Its
     initial commit `ddfaeae` recorded D2 to D25 and fixed the thresholds before
-    the live stats fixture was captured. Review corrections D27 to D29 are
+    the live stats fixture was captured. Review corrections D27 to D32 are
     recorded in this ExecPlan.
 - Standards: `AGENTS.md`, `docs/developers-guide.md`,
   `docs/documentation-style-guide.md` and `docs/scripting-standards.md`.
@@ -1084,8 +1136,8 @@ Method and evidence:
   `tests/test_outcome_store.py`.
 - Non-vacuity: the generator reaches the bound, an expiry and a torn tail.
 - The writer tests cross the 12 MiB high-water mark, verify byte-budget
-  eviction, reject an oversized record, and preserve the 16 MiB hard bound
-  when compaction fails.
+  eviction, reject an oversized record, and preserve the 16 MiB hard bound when
+  compaction fails.
 
 O9. Restart baseline. After a restart, the first window in the new generation
 is attributed against the reading that exposed the restart. That reading is
@@ -1168,9 +1220,10 @@ Residual gaps:
 
 The design follows the repository's functional core and imperative shell
 (developer's guide §3) and the hexagonal rule that the domain owns its ports.
-Every new module but one generic helper uses the single prefix `outcome_`, so
-the module inventory gains one row. The draft name `cache_outcome.attribute`
-becomes `outcome_attribution.attribute`.
+Every new domain module uses the `outcome_` prefix, including the dedicated
+Rust parser predictor. The module inventory gains a row for each new module.
+The draft name `cache_outcome.attribute` becomes
+`outcome_attribution.attribute`.
 
 Domain modules are pure: no input or output, no `os`, `socket`, `subprocess` or
 `threading`, and no clock.
@@ -1180,18 +1233,25 @@ Domain modules are pure: no input or output, no `os`, `socket`, `subprocess` or
   `attribute(before, after, window)`, and `confirm` (D12).
 - `outcome_gate.py`: `QuietInputs` and `quiet_point(inputs)`.
 - `outcome_key.py`: `crate_name`, `crate_origin`, `target`,
-  `argument_digest`, `toolchain_identity` and `cacheability_features`. Each
-  takes the `Salt` as a value.
-- `outcome_records.py`: `OutcomeRecord`, `WindowSummary`, `StoreHeader`,
-  `encode_line`, `decode_lines` and `compact`.
+  `argument_digest` and `toolchain_identity`. Each key derivation takes the
+  `Salt` as a value.
+- `outcome_parser.py` (EP-M3): `ParserClass` and `parser_class(argv)`, a pure
+  sccache 0.14 Rust-parser predictor used only for H3 evidence. It sees argv in
+  memory and returns one closed-vocabulary class; it never stores the arguments
+  or affects admission.
+- `outcome_records.py`: `OutcomeRecord` (including the bounded `parser_class`
+  and `child_sighting` values), `WindowSummary` (including H3 class counts),
+  `StoreHeader`, `encode_line`, `decode_lines` and `compact`.
 - `outcome_window.py`: `OutcomeWindow[P]`, a ledger generic over an opaque
   payload. The recorder is its only owner.
 - `outcome_sightings.py` (EP-M8): `request_metadata(argv)`,
   `full_emit_metadata(argv)` and `ChildSightings`, which is the per-entry
   sample count and sighting, folded by the recorder on each `Sampled` event.
-- `outcome_vocabulary.py`: the `typ.Literal` aliases (`CacheResult`,
+- `outcome_vocabulary.py`: the metrics `typ.Literal` aliases (`CacheResult`,
   `OutcomeReason`, `StoreReason`, `GateReason`, `StoreOperation` and, from
   EP-M8, `ChildSighting`), each tested equal to its `metrics_schema` table.
+  `ParserClass` is local to `outcome_parser.py` and is tested against its
+  documented three-value vocabulary; it is not a metrics field.
 - `outcome_ports.py`: `StatisticsPort`, `ServerProcessPort` and
   `OutcomeStorePort` (each a `typ.Protocol`), `SaltSource` (a `Callable`
   alias), and their result and failure types. The clock is `timing.Clock`,
@@ -1347,7 +1407,7 @@ milestone that adds each module.
     when EP-M8 merges) records D2 to D25, the fixed thresholds of Table B,
     the 2,000-outcome minimum, the vocabulary and the ADR 003 scope
     amendment. RFC 0002 links to it. This ExecPlan records review corrections
-    D27 to D29.
+    D27 to D32.
   - `docs/roadmap.md` gains a rewritten preamble covering both RFCs, with
     references qualified as in "RFC 0002 G1". It also gains phase 3,
     "Record and evaluate cache outcomes", with step 3.1 (W1: EP-M1 to
@@ -1471,12 +1531,22 @@ milestone that adds each module.
 
 ### EP-M3: keys, records and the window ledger
 
-- Outcome: `outcome_key.py`, `outcome_records.py` and `outcome_window.py`.
-  This discharges O7, the pure part of O8, and O10.
-- Red: `tests/test_outcome_key.py`, `tests/test_outcome_key_properties.py`
-  and `tests/test_outcome_records.py`. Cacheability tests assert that
-  metadata-only is cacheable; dep-info-only, asm-only and `--emit=` predict
-  `not_compile`; and `--emit=link,asm` predicts `declined`.
+- Outcome: `outcome_key.py`, `outcome_parser.py`, `outcome_records.py` and
+  `outcome_window.py`. This discharges O7, the pure part of O8, and O10.
+- Red: `tests/test_outcome_key.py`, `tests/test_outcome_key_properties.py`,
+  `tests/test_outcome_parser.py` and `tests/test_outcome_records.py`.
+  Parser-class tests assert that metadata-only is cacheable with required
+  fields and a supported crate type; dep-info-only, asm-only and `--emit=`
+  predict `not_compile`; and `--emit=link,asm` predicts `declined`. Cover every
+  parser refusal branch: parse errors, `-`, `-o`, `--sysroot`, repeated
+  `--emit`, unsupported crate types, missing `-C extra-filename`, incremental
+  compilation, an unsure target, multiple inputs, missing required fields, no
+  supported crate type and unsupported emit kinds. Cover each `NotCompilation`
+  option and both argv orders for a `NotCompilation` option paired with a
+  `CannotCache` option.
+- Add the `outcome_parser` row to the module inventory in developer's guide §4;
+  document its source version, in-memory-only argv handling and H3-only reuse
+  in §9 when the integrated feature documentation lands in EP-M7.
 - Snapshot: `tests/__snapshots__/test_outcome_records.ambr` pins one header
   line, one record line and one window-summary line under a fixed salt and
   fixed times, with a round-trip semantic assertion beside it.
@@ -1644,7 +1714,8 @@ milestone that adds each module.
     while recording is on and `cached_moving > 0`. It is total (D19), and
     failures back off.
   - Schema:
-    - the `child_sighting` vocabulary (`seen`, `not_seen`, `unavailable`);
+    - the `child_sighting` vocabulary (`seen`, `not_seen`, `ambiguous`,
+      `unavailable`);
     - the `child_samples` counter on `cache_outcome`;
     - the aggregate counters `child_samples_taken` and
       `child_sample_failures` on `outcome_reading`.
@@ -1652,18 +1723,20 @@ milestone that adds each module.
     format version 1 is finalized in this milestone. Nothing is released with
     recording enabled between EP-M3 and here (only EP-M6, the inert plateau,
     can be released), so no deployed store needs migrating.
-  - `outcome_replay` gains H2 (D25), and the CLI gains `h2`.
+  - `outcome_replay` gains H2 (D25, D31), and the CLI gains `h2`.
   - The `cache_outcomes` report section gains counts by `child_sighting`.
 - Red:
   - `tests/test_outcome_sightings.py` and
-    `tests/test_outcome_sightings_properties.py` (O12).
+    `tests/test_outcome_sightings_properties.py` (O12), including duplicate
+    active metadata: one child must never mark multiple entries `seen`.
   - `tests/test_outcome_server_process.py`. A fake `/proc` and cgroup tree
     under `tmp_path` checks the 64-process bound, the per-`(pid, starttime)`
     cache, a process that exits mid-sample (A10), an unreadable group, and a
     PID reused with a new start time.
   - `tests/test_outcome_replay_h2.py` (O13).
   - An extended `RecorderMachine` with sample rules. Its non-vacuity labels
-    gain `seen` and `not_seen`.
+    gain `seen`, `not_seen` and `ambiguous`; H2 child-only agreement excludes
+    ambiguous samples while the combined classifier may still use runtime.
   - A sixth systemd scenario, added to
     `tests/features/cache_outcomes_on_systemd.feature`:
 
@@ -1678,6 +1751,10 @@ milestone that adds each module.
 
     The fake server already runs a miss's compiler as its own child. For a
     scripted `hit` it replies without running one.
+
+    A second scenario holds two active requests with the same metadata while
+    one runs a full-emit child. Both entries report `ambiguous`, and H2 does
+    not use that child as evidence for either request.
   - A snapshot of `build-limits-cache-replay h2` text and JSON over a fixture
     store, paired with semantic assertions on the verdict and the sample
     sizes.
@@ -1685,8 +1762,9 @@ milestone that adds each module.
   sample against the tolerance.
 - Documentation:
   - `docs/users-guide.md`, "Record cache outcomes": what a child sighting
-    is, that only a token and a count are stored, how sampling cost is
-    bounded, `build-limits-cache-replay h2` and its limits.
+    is, how shared metadata produces an ambiguous sighting, that only a token
+    and a count are stored, how sampling cost is bounded,
+    `build-limits-cache-replay h2` and its limits.
   - `docs/developers-guide.md` §6 and §9: the sample cadence, the
     server-process port, and the rule that `/proc` reads stay inside
     `PeerServerProcess`.
@@ -1858,7 +1936,7 @@ Table B gives the thresholds that EP-M0 fixes, verbatim from RFC 0002.
 | ---------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
 | H1         | No attributed label disagrees with truth in at least 200 controlled windows; host coverage at least 20% of cached requests | Any wrong label, or coverage <5% |
 | H2         | Wall time plus a sighted child agrees with at least 95% of window labels                                                   | Below 90%                        |
-| H3         | C4 features predict `NotCompilation` or `CannotCache`; each matching counter moves, and neither moves without a C4 feature | One counterexample               |
+| H3         | The sccache 0.14 Rust parser's first result is predicted; each refusal class moves only its matching counter               | One counterexample               |
 | H4         | Registry crates at a pinned version with an unchanged argument digest hit at least 95% after their first observation       | Below 90%                        |
 | H5         | At most 5% of consecutive outcome pairs within one key flip without a toolchain change                                     | Above 10%                        |
 
@@ -1907,7 +1985,7 @@ type StoreReason = typ.Literal["none", "corrupt", "unreadable", "version_mismatc
 type StoreOperation = typ.Literal["load", "append", "compact", "salt"]
 type GateReason = typ.Literal["queued", "cached_moving", "server_drain", "unreachable", "held",
     "recovering", "barrier", "in_flight", "read_skipped", "backing_off"]
-type ChildSighting = typ.Literal["seen", "not_seen", "unavailable"]           # EP-M8
+type ChildSighting = typ.Literal["seen", "not_seen", "ambiguous", "unavailable"] # EP-M8
 type Verdict = typ.Literal["supported", "refuted", "inconclusive", "insufficient", "not_collected"]
 
 # buildlimits/outcome_stats.py (EP-M2)
@@ -1931,6 +2009,10 @@ class ReadFailure:
     reason: typ.Literal["parse_error", "unsupported_version"]
 
 def parse_statistics(text: str, *, supported: frozenset[str]) -> StatsReading | ReadFailure: ...
+
+# buildlimits/outcome_parser.py (EP-M3); argv is inspected, never retained
+type ParserClass = typ.Literal["cacheable", "not_compile", "declined"]
+def parser_class(argv: cabc.Sequence[str]) -> ParserClass: ...
 
 # buildlimits/outcome_attribution.py (EP-M2)
 @dc.dataclass(frozen=True, slots=True)
@@ -2020,6 +2102,7 @@ def full_emit_metadata(argv: cabc.Sequence[str]) -> str | None: ...
 class ChildSightings:
     samples: int
     is_seen: bool
+    is_ambiguous: bool
     has_metadata: bool
 
     def sighting(self) -> ChildSighting: ...
@@ -2101,5 +2184,9 @@ Consult these documents:
 - 2026-10-23: the owner approved the whole plan, including deviations D2 to
   D25. EP-M0 is authorized; EP-M9 remains gated by G1.
 - 2026-10-24: CodeRabbit's EP-M0 review identified a long-run store-size gap
-  and H3 classification errors. D27 to D29 record the resulting corrections,
+  and H3 classification errors. D27 to D29 record the first corrections,
   checked against sccache v0.14.0 source before editing.
+- 2026-10-24: the fresh EP-M0 review found omitted parser refusal branches and
+  shared child metadata that could be assigned to multiple entries. D30 to D32
+  define the complete parser-order predictor, ambiguous child sightings and RFC
+  footnote order; the pinned source and fixture were checked before editing.

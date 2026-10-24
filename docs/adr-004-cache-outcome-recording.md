@@ -160,7 +160,7 @@ prediction threshold and its falsification threshold are inconclusive.
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
 | H1         | No attributed label disagrees with truth in at least 200 controlled windows; host coverage is at least 20% of cached requests. | Any wrong label, or coverage below 5%. |
 | H2         | Wall time plus a sighted child agrees with at least 95% of window labels.                                                      | Agreement below 90%.                   |
-| H3         | C4 features predict `NotCompilation` or `CannotCache`; each matching counter moves, and neither moves without a C4 feature.       | One counterexample.                    |
+| H3         | The sccache 0.14 Rust parser's first result is predicted; each refusal class moves only its matching counter.                  | One counterexample.                    |
 | H4         | Registry crates at a pinned version with an unchanged argument digest hit at least 95% after their first observation.          | Below 90%.                             |
 | H5         | At most 5% of consecutive outcome pairs within one key flip without a toolchain change.                                        | Above 10%.                             |
 
@@ -210,19 +210,19 @@ A single writer thread owns every file operation; the loop appends through a
 bounded queue of 4,096 entries and drops overflow with `save_failed`. Each
 serialized record is at most 16 KiB, which also bounds the queue's payload.
 
-Compact at start, when an append would take the file above 12 MiB, and at
-stop. Compaction drops records older than 30 days by `observed_at`, keeps the
-10,000 newest by insertion sequence, then evicts the oldest remaining records
-until the file is at most 12 MiB. It then calls `fsync` and `os.replace` on a
-fixed temporary name. If compaction fails, an append is allowed only when it
-keeps the file at or below 16 MiB; otherwise drop it with `save_failed`.
-Records over 16 KiB are also dropped with `save_failed`. Drop a torn final
-line on load. Treat files over 16 MiB as corrupt; move corrupt or
-version-mismatched files aside once to `cache-outcomes.jsonl.bad`; never
-overwrite a newer format. At stop, enqueue compaction after
-`settle_token_request` and `requests.close_all`, then join the writer for at
-most one second. The high-water compaction bounds a long-running store without
-a once-a-minute rewrite that could write up to 5.8 GB a day or stall the loop.
+Compact at start, when an append would take the file above 12 MiB, and at stop.
+Compaction drops records older than 30 days by `observed_at`, keeps the 10,000
+newest by insertion sequence, then evicts the oldest remaining records until
+the file is at most 12 MiB. It then calls `fsync` and `os.replace` on a fixed
+temporary name. If compaction fails, an append is allowed only when it keeps
+the file at or below 16 MiB; otherwise drop it with `save_failed`. Records over
+16 KiB are also dropped with `save_failed`. Drop a torn final line on load.
+Treat files over 16 MiB as corrupt; move corrupt or version-mismatched files
+aside once to `cache-outcomes.jsonl.bad`; never overwrite a newer format. At
+stop, enqueue compaction after `settle_token_request` and `requests.close_all`,
+then join the writer for at most one second. The high-water compaction bounds a
+long-running store without a once-a-minute rewrite that could write up to 5.8
+GB a day or stall the loop.
 
 ### D18-D20: keep release compatibility and the quiet-point gate
 
@@ -245,22 +245,35 @@ clause prevents the next queued launch from straddling the query.
 
 ### D21-D23: define H3 evidence and deliver its replay in W1
 
-`cacheability_features(argv)` predicts the parser result in sccache 0.14 order.
-It classifies `NotCompilation` flags and emit sets with neither `link` nor
-`metadata` as `not_compile`. This includes dep-info-only, asm-only and
-`--emit=`; splitting the empty value yields one empty member. It classifies
-incremental compilation, unsupported crate types, multiple inputs, missing
-required arguments (`input`, `--emit`, `--crate-name` or `--out-dir`), and an
-unsupported emit kind in a set that also contains `link` or `metadata` as
-`declined` (`CannotCache`). A metadata-only emit is cacheable. Cargo's `-vV`
-probe is `declined` as `missing input`.
+`parser_class(argv)` predicts the first terminal result of sccache 0.14's Rust
+parser: `not_compile` (`NotCompilation`), `declined` (`CannotCache`) or
+`cacheable`. During the left-to-right argument scan, parse errors,
+`TooHardFlag` and `TooHardPath` arguments (including `-`, `-o` and
+`--sysroot`), repeated `--emit`, unsupported crate types, `-C extra-filename`
+without a value, incremental compilation, an unsure target and multiple inputs
+predict `declined`. The recognized non-compilation options `--explain`,
+`--help`, `--pretty`, `--print`, `--unpretty`, `--version` and `-V` predict
+`not_compile` if the scan reaches them first.
 
-For every balanced window, including mixed windows, store the launch count,
-the `requests_not_compile` and `requests_not_cacheable` deltas, and the number
-of launches predicted in each class. Compare each prediction with its own
-counter and with per-request rows from solo windows; equal counts are
-necessary but not sufficient. `NotCompilation` maps to
-`requests_not_compile`, while `CannotCache` maps to `requests_not_cacheable`.
+After the scan, missing input, `--out-dir`, `--emit` or `--crate-name` predicts
+`declined`, in that order. An emit set with neither `link` nor `metadata`
+predicts `not_compile`, including dep-info-only, asm-only and `--emit=`; the
+empty value splits to one empty member. An absent supported crate type (`rlib`
+or `staticlib`) predicts `declined`, as does an unsupported emit kind when the
+set also contains `link` or `metadata`. Metadata-only is cacheable when the
+other required fields and a supported crate type are present. Cargo's `-vV`
+probe is `declined` as `missing input`. The ordered rules mirror
+`parse_arguments`; they classify one result even when argv contains features
+from both classes.
+
+For every balanced window, including mixed windows, store the launch count, the
+`requests_not_compile` and `requests_not_cacheable` deltas, and the number of
+launches predicted in each class. Compare each prediction with its own counter
+and with per-request rows from solo windows; equal counts are necessary but not
+sufficient. `NotCompilation` maps to `requests_not_compile`, while
+`CannotCache` maps to `requests_not_cacheable`. The stats fixture's
+`not_cached` breakdown records 363 `-`, 477 `-o`, 54 `--sysroot` and 2,583
+`crate-type` refusals, among its 6,271 total declines.
 
 Ship `build-limits-cache-replay h3` read-only over the store in W1 (EP-M7), so
 G1 has the H3 verdict. The owner's Q1 answer supersedes the earlier proposal to
@@ -281,19 +294,28 @@ Extract the request's own `-C metadata` value from `-C metadata=X`,
 in memory only. Count a `rustc` or `clippy-driver` child as a full-emit compile
 if `--emit` contains `link` or `metadata`, or is absent; dep-info-only passes
 do not count. Every 0.25 seconds, while recording and `cached_moving > 0`,
-sample each running cached entry. Mark it `seen` if its metadata appears;
-failures back off from 0.25 to 8 seconds and are counted.
+sample each running cached entry. Build a multimap from metadata to active
+entries: a full-emit child marks an entry `seen` only when exactly one active
+entry has that metadata. If several active entries share it, mark each
+`ambiguous`; never use that child to satisfy more than one request. Failures
+back off from 0.25 to 8 seconds and are counted.
 
 Each event and record carries `child_sighting` (`seen`, `not_seen` after at
-least one sample, or `unavailable` if never sampled or no request metadata) and
-`child_samples`. For records labelled `hit` or `miss`, walk each key in
-insertion order and predict `miss` when a child is seen; otherwise predict
-`miss` when an earlier hit exists and runtime exceeds the greater of 1 second
-or three times the median of earlier hits; otherwise predict `hit`. Evaluate
-only records with a sample whose key has both outcomes. Report `supported` at
-95% agreement or more, `refuted` below 90%, and `inconclusive` between. Report
+least one sample and no matching child, `ambiguous` when a matching child was
+shared by active entries and no unique match was seen, or `unavailable` if
+never sampled or no request metadata) and `child_samples`. A unique `seen`
+match takes precedence over an ambiguous sample. For records labelled `hit` or
+`miss`, walk each key in insertion order and predict `miss` when a child is
+uniquely seen; otherwise predict `miss` when an earlier hit exists and runtime
+exceeds the greater of 1 second or three times the median of earlier hits;
+otherwise predict `hit`. Evaluate records with at least one sample whose key
+has both outcomes; an ambiguous sighting contributes no child clue, but its
+runtime may still be evaluated. The child-only agreement and the share of
+labelled misses with a sighting use only `seen`/`not_seen` records; report
+ambiguous and unavailable counts separately. Report `supported` at 95%
+agreement or more, `refuted` below 90%, `inconclusive` between, and
 `insufficient` below 2,000 attributed outcomes or 100 evaluable records. Also
-report the share of labelled misses with a sighting and each clue's agreement.
+report each clue's agreement.
 
 ## Goals and non-goals
 

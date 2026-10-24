@@ -119,18 +119,25 @@ behaves as its source reads.
   worktrees. The source list comes from `get_source_files_and_env_deps`, which
   runs the compiler with `--emit=dep-info` as a child of the server for every
   request, hit or miss.
-- **C4. Some requests are never cached.** `parse_arguments` refuses
-  incremental compilation, unsupported crate types and several input files
-  (`cannot_cache!("incremental")`, `cannot_cache!("crate-type", ...)`). It
-  requires an input, `--emit`, `--crate-name` and `--out-dir`; the emit set
-  must include `link` or `metadata`. A metadata-only emit is accepted. A
-  non-empty emit set with neither `link` nor `metadata` is `NotCompilation`,
-  including dep-info-only, asm-only and `--emit=` (which splits to one empty
-  member)[^12]. An unsupported kind in a set that also includes `link` or
-  `metadata` is `CannotCache`[^6][^10]. A `NotCompilation` result produces
-  `UnhandledCompile`, and the client then runs the compiler itself
-  (`handle_compile_response`)[^7], inside the compiler scope, not the server's
-  control group.
+- **C4. The Rust parser can decline a request before compilation.** The
+  supported Rust cache subset is intentionally limited[^6]. Its left-to-right
+  argument scan returns `CannotCache` for argument parse errors,
+  `TooHardFlag`/`TooHardPath` options (including `-`, `-o` and `--sysroot`),
+  repeated `--emit`, unsupported crate types, `-C extra-filename` without a
+  value, incremental compilation, an unsure target and multiple inputs. It
+  returns `NotCompilation` for `--explain`, `--help`, `--pretty`, `--print`,
+  `--unpretty`, `--version` and `-V` when the scan reaches them first. After
+  scanning, missing input, `--out-dir`, `--emit` or `--crate-name` returns
+  `CannotCache`, in that order. An emit set with neither `link` nor `metadata`
+  returns `NotCompilation`, including dep-info-only, asm-only and `--emit=`
+  (one empty member)[^7]. An absent supported crate type (`rlib` or
+  `staticlib`) returns `CannotCache`, as does an unsupported emit kind when the
+  set also includes `link` or `metadata`. These branches and their order follow
+  sccache's pinned parser implementation[^8]. A metadata-only emit is accepted
+  when the other required fields and a supported crate type are present. A
+  `NotCompilation` result produces `UnhandledCompile`, and the client then runs
+  the compiler itself (`handle_compile_response`)[^9], inside the compiler
+  scope, not the server's control group.
 - **C5. Statistics are global.** `ServerStats` includes `compile_requests`,
   `requests_not_compile`, `requests_not_cacheable`, `requests_executed`,
   per-language `cache_hits` and `cache_misses`, `cache_errors`,
@@ -162,7 +169,7 @@ behaves as its source reads.
   `compile result: cache hit`, naming no request (C2's source).
 
 Cargo sets `CARGO_PKG_NAME`, `CARGO_PKG_VERSION` and `CARGO_MANIFEST_DIR` for
-each compiler invocation[^8], and its fingerprints skip fresh units[^9], so
+each compiler invocation[^10], and its fingerprints skip fresh units[^11], so
 every queued request is dirty as far as Cargo knows. A queued registry crate is
 therefore usually a crate that another target directory has already built.
 
@@ -221,7 +228,9 @@ _Table 1: Candidate outcome signals._
 A server child alone means nothing because every request spawns a dep-info pass
 (C3). A miss also spawns a full-emit `rustc` whose `-C metadata` value matches
 the request's own arguments, and its group usually runs longer than that key's
-hits. Those clues reach overlapping compiles, which window labels cannot, but a
+hits. If multiple active requests share that metadata, the child cannot be
+assigned to one request; record the sighting as `ambiguous` for those entries.
+Those clues reach overlapping compiles, which window labels cannot, but a
 one-second poll can miss short misses, so they are tested against window labels
 (H2) before they label anything.
 
@@ -950,19 +959,24 @@ The thresholds below are proposals, to be approved before any data is read.
   window labels for keys with both outcomes. _Falsified if:_ below 90%.
   _Decision:_ if it survives, report `inferred` outcomes for overlapping
   compiles, apart from labels (I4); if falsified, keep wall time for display
-  and stop sampling children.
-- **H3. Arguments decide non-cacheability.** _Prediction:_ every request with a
-  C4 feature is refused in its predicted parser class, and none without one is.
+  and stop sampling children. A child whose metadata matches multiple active
+  entries is `ambiguous`: it is not a child clue for any of them. The combined
+  classifier may still use runtime for that entry. Child-only agreement and the
+  share of misses with a sighting use only `seen`/`not_seen` records; report
+  ambiguous counts separately.
+- **H3. The parser result predicts refusal counters.** _Prediction:_ the C4
+  classifier matches the Rust parser's first result for each request.
   `NotCompilation` moves `requests_not_compile`; `CannotCache` moves
-  `requests_not_cacheable`[^11]. The two counter deltas are compared separately,
-  not inferred from an outcome label. _Falsified if:_ one counterexample
-  occurs. _Decision:_ if it survives, W6 may go to design review; if falsified,
-  drop the deterministic class. Neither refusal reaches a `CompileResult`: the
-  parser declines the request and the client compiles it itself. These refusal
-  counters are distinct from `not_cacheable`, which is only a server result for
-  a compile that ran, and neither adds to `non_cacheable_compilations` or
-  `compilations`. The two classes are different claims about different
-  observations, and a window label cannot stand in for a refusal count.
+  `requests_not_cacheable`[^12]. The two counter deltas are compared
+  separately, not inferred from an outcome label. _Falsified if:_ one
+  counterexample occurs. _Decision:_ if it survives, W6 may go to design
+  review; if falsified, drop the deterministic class. Neither refusal reaches a
+  `CompileResult`: the parser declines the request and the client compiles it
+  itself. These refusal counters are distinct from `not_cacheable`, which is
+  only a server result for a compile that ran, and neither adds to
+  `non_cacheable_compilations` or `compilations`. The two classes are different
+  claims about different observations, and a window label cannot stand in for a
+  refusal count.
 - **H4. Registry crates are predictable.** _Prediction:_ registry crates at a
   pinned version with an unchanged argument digest hit at least 95% of the time
   on this host after their first attributed observation. _Comparator:_ the
@@ -1143,21 +1157,21 @@ evidence is collected.
 [^6]: sccache v0.14.0, `docs/Rust.md`:
       <https://github.com/mozilla/sccache/blob/v0.14.0/docs/Rust.md>
 
-[^7]: sccache v0.14.0, `src/commands.rs`:
+[^7]: Rust standard library, `str::split`:
+       <https://doc.rust-lang.org/std/primitive.str.html#method.split>
+
+[^8]: sccache v0.14.0, `src/compiler/rust.rs`, `ARGS` and `parse_arguments`:
+       <https://github.com/mozilla/sccache/blob/v0.14.0/src/compiler/rust.rs#L1028-L1247>
+
+[^9]: sccache v0.14.0, `src/commands.rs`:
       <https://github.com/mozilla/sccache/blob/v0.14.0/src/commands.rs>
 
-[^8]: The Cargo Book, "Environment variables Cargo sets for crates",
+[^10]: The Cargo Book, "Environment variables Cargo sets for crates",
       retrieved 2026-10-18:
       <https://doc.rust-lang.org/cargo/reference/environment-variables.html>
 
-[^9]: The Cargo Book, "Build cache", retrieved 2026-10-18:
+[^11]: The Cargo Book, "Build cache", retrieved 2026-10-18:
       <https://doc.rust-lang.org/cargo/reference/build-cache.html>
 
-[^10]: sccache v0.14.0, `src/compiler/rust.rs`, `parse_arguments`:
-       <https://github.com/mozilla/sccache/blob/v0.14.0/src/compiler/rust.rs>
-
-[^11]: sccache v0.14.0, `src/server.rs`, request counter updates:
+[^12]: sccache v0.14.0, `src/server.rs`, request counter updates:
        <https://github.com/mozilla/sccache/blob/v0.14.0/src/server.rs>
-
-[^12]: Rust standard library, `str::split`:
-       <https://doc.rust-lang.org/std/primitive.str.html#method.split>
