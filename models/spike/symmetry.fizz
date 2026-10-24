@@ -1,0 +1,32 @@
+---
+# OQ6: symmetry reduction exists and is on by default. Two symmetric workers in
+# a bag give 9 nodes, 7 valid and 3 unique states; the same model run with
+# `--no-symmetry-reduction` gives 12, 10 and 4. The bag matters: the reference
+# warns that a list keeps role identities concrete, and a list here reproduces
+# the unreduced counts even with the flag absent.
+options:
+  max_actions: 20
+liveness: "false"
+---
+
+action Init:
+  workers = bag()
+  for i in range(2):
+    workers.add(Worker())
+
+symmetric role Worker:
+  action Init:
+    self.busy = False
+
+atomic fair action StartAny:
+  oneof w in workers:
+    require not w.busy
+    w.busy = True
+
+atomic fair action FinishAny:
+  oneof w in workers:
+    require w.busy
+    w.busy = False
+
+always assertion AtMostTwo:
+  return len([w for w in workers if w.busy]) <= 2

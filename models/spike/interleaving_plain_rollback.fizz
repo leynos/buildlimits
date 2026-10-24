@@ -1,0 +1,32 @@
+---
+# OQ1 and RFC 0001 §4, the negative control for atomicity. `Deliver` is a plain
+# action: each assignment commits and yields as it runs, so the `require` that
+# follows `done = True` cannot undo it. The reachable state `done` true with
+# `v` zero is a delivery through a closed gate, and the safety assertion
+# rejects it. The atomic spelling of the same body, in
+# `interleaving_assign_require.fizz`, passes, because there the failed
+# `require` discards the whole step. So an assignment before a test is safe
+# only in an atomic action: the RFC sketch's rule to guard before committing is
+# about ordering, not textual adjacency, and it bites hardest in a plain one.
+options:
+  max_actions: 20
+liveness: "false"
+deadlock_detection: false
+---
+
+action Init:
+  v = 0
+  done = False
+
+atomic fair<strong> action Step:
+  if v == 0:
+    v = 1
+  else:
+    v = 0
+
+action Deliver:
+  done = True
+  require v == 1
+
+always assertion NeverClosedDelivery:
+  return not done or v == 1

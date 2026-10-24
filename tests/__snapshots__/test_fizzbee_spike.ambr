@@ -1,0 +1,33 @@
+# serializer version: 1
+# name: test_collections_survive_as_state
+  list([
+    '{"by_name":{"only":{"n":0}},"multi":["y","y"],"pairs":[{"at":0,"kind":"uncached"},{"at":0,"kind":"uncached"}],"seen":["uncached"],"slots":{"running":0,"waiting":2},"tally":{"cached":0,"uncached":2}}',
+    '{"by_name":{"only":{"n":0}},"multi":["y"],"pairs":[{"at":0,"kind":"uncached"}],"seen":["uncached"],"slots":{"running":0,"waiting":1},"tally":{"cached":0,"uncached":1}}',
+    '{"by_name":{"only":{"n":0}},"multi":[],"pairs":[],"seen":[],"slots":{"running":0,"waiting":0},"tally":{"cached":0,"uncached":0}}',
+    '{"by_name":{"only":{"n":1}},"multi":["x","y","y"],"pairs":[{"at":0,"kind":"uncached"},{"at":0,"kind":"uncached"},{"at":1,"kind":"cached"}],"seen":["cached","uncached"],"slots":{"running":1,"waiting":2},"tally":{"cached":1,"uncached":2}}',
+    '{"by_name":{"only":{"n":1}},"multi":["x","y","y"],"pairs":[{"at":0,"kind":"uncached"},{"at":1,"kind":"cached"},{"at":1,"kind":"uncached"}],"seen":["cached","uncached"],"slots":{"running":1,"waiting":2},"tally":{"cached":1,"uncached":2}}',
+    '{"by_name":{"only":{"n":1}},"multi":["x","y","y"],"pairs":[{"at":1,"kind":"cached"},{"at":1,"kind":"uncached"},{"at":1,"kind":"uncached"}],"seen":["cached","uncached"],"slots":{"running":1,"waiting":2},"tally":{"cached":1,"uncached":2}}',
+    '{"by_name":{"only":{"n":1}},"multi":["x","y"],"pairs":[{"at":0,"kind":"uncached"},{"at":1,"kind":"cached"}],"seen":["cached","uncached"],"slots":{"running":1,"waiting":1},"tally":{"cached":1,"uncached":1}}',
+    '{"by_name":{"only":{"n":1}},"multi":["x","y"],"pairs":[{"at":1,"kind":"cached"},{"at":1,"kind":"uncached"}],"seen":["cached","uncached"],"slots":{"running":1,"waiting":1},"tally":{"cached":1,"uncached":1}}',
+    '{"by_name":{"only":{"n":1}},"multi":["x"],"pairs":[{"at":1,"kind":"cached"}],"seen":["cached"],"slots":{"running":1,"waiting":0},"tally":{"cached":1,"uncached":0}}',
+    '{"by_name":{"only":{"n":2}},"multi":["x","x","y","y"],"pairs":[{"at":0,"kind":"uncached"},{"at":0,"kind":"uncached"},{"at":1,"kind":"cached"},{"at":2,"kind":"cached"}],"seen":["cached","uncached"],"slots":{"running":2,"waiting":2},"tally":{"cached":2,"uncached":2}}',
+    '{"by_name":{"only":{"n":2}},"multi":["x","x","y","y"],"pairs":[{"at":0,"kind":"uncached"},{"at":1,"kind":"cached"},{"at":1,"kind":"uncached"},{"at":2,"kind":"cached"}],"seen":["cached","uncached"],"slots":{"running":2,"waiting":2},"tally":{"cached":2,"uncached":2}}',
+    '{"by_name":{"only":{"n":2}},"multi":["x","x","y","y"],"pairs":[{"at":0,"kind":"uncached"},{"at":1,"kind":"cached"},{"at":2,"kind":"cached"},{"at":2,"kind":"uncached"}],"seen":["cached","uncached"],"slots":{"running":2,"waiting":2},"tally":{"cached":2,"uncached":2}}',
+    '{"by_name":{"only":{"n":2}},"multi":["x","x","y","y"],"pairs":[{"at":1,"kind":"cached"},{"at":1,"kind":"uncached"},{"at":1,"kind":"uncached"},{"at":2,"kind":"cached"}],"seen":["cached","uncached"],"slots":{"running":2,"waiting":2},"tally":{"cached":2,"uncached":2}}',
+    '{"by_name":{"only":{"n":2}},"multi":["x","x","y","y"],"pairs":[{"at":1,"kind":"cached"},{"at":1,"kind":"uncached"},{"at":2,"kind":"cached"},{"at":2,"kind":"uncached"}],"seen":["cached","uncached"],"slots":{"running":2,"waiting":2},"tally":{"cached":2,"uncached":2}}',
+    '{"by_name":{"only":{"n":2}},"multi":["x","x","y","y"],"pairs":[{"at":1,"kind":"cached"},{"at":2,"kind":"cached"},{"at":2,"kind":"uncached"},{"at":2,"kind":"uncached"}],"seen":["cached","uncached"],"slots":{"running":2,"waiting":2},"tally":{"cached":2,"uncached":2}}',
+    '{"by_name":{"only":{"n":2}},"multi":["x","x","y"],"pairs":[{"at":0,"kind":"uncached"},{"at":1,"kind":"cached"},{"at":2,"kind":"cached"}],"seen":["cached","uncached"],"slots":{"running":2,"waiting":1},"tally":{"cached":2,"uncached":1}}',
+    '{"by_name":{"only":{"n":2}},"multi":["x","x","y"],"pairs":[{"at":1,"kind":"cached"},{"at":1,"kind":"uncached"},{"at":2,"kind":"cached"}],"seen":["cached","uncached"],"slots":{"running":2,"waiting":1},"tally":{"cached":2,"uncached":1}}',
+    '{"by_name":{"only":{"n":2}},"multi":["x","x","y"],"pairs":[{"at":1,"kind":"cached"},{"at":2,"kind":"cached"},{"at":2,"kind":"uncached"}],"seen":["cached","uncached"],"slots":{"running":2,"waiting":1},"tally":{"cached":2,"uncached":1}}',
+    '{"by_name":{"only":{"n":2}},"multi":["x","x"],"pairs":[{"at":1,"kind":"cached"},{"at":2,"kind":"cached"}],"seen":["cached"],"slots":{"running":2,"waiting":0},"tally":{"cached":2,"uncached":0}}',
+  ])
+# ---
+# name: test_fairness_levels_and_the_compiled_ast
+  dict({
+    'Init': 'FAIRNESS_LEVEL_STRONG',
+    'Plain': 'FAIRNESS_LEVEL_UNFAIR',
+    'Strong': 'FAIRNESS_LEVEL_STRONG',
+    'Weak': 'FAIRNESS_LEVEL_WEAK',
+    'WeakExplicit': 'FAIRNESS_LEVEL_WEAK',
+  })
+# ---

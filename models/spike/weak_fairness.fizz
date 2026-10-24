@@ -1,0 +1,27 @@
+---
+# OQ2, negative control: B can only run while the gate is open, and Gate is
+# weakly fair. Weak fairness does not help B, because Gate can always take its
+# turn, close the gate, and leave B enabled only in between. BEventually must
+# fail, and the counterexample is the two-state lasso through Gate. The
+# companion `strong_fairness.fizz` is the same model with `fair<strong>`, which
+# does force B to run, so the pair isolates the fairness level rather than the
+# model.
+options:
+  max_actions: 12
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  g = 0
+  b = 0
+
+atomic fair action Gate:
+  g = 1 - g
+
+atomic fair action B:
+  require g == 1
+  b = 1
+
+always eventually assertion BEventually:
+  return b >= 1

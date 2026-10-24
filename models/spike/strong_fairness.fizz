@@ -1,0 +1,24 @@
+---
+# OQ2, the other half of the negative control: `fair<strong>` on both actions
+# makes the checker consider B, which is enabled infinitely often, and the run
+# passes. `weak_fairness.fizz` is the same model one level down and fails, so
+# the pair shows the modifier is load-bearing rather than incidental.
+options:
+  max_actions: 12
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  g = 0
+  b = 0
+
+atomic fair<strong> action Gate:
+  g = 1 - g
+
+atomic fair<strong> action B:
+  require g == 1
+  b = 1
+
+always eventually assertion BEventually:
+  return b >= 1

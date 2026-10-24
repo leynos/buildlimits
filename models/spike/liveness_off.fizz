@@ -1,0 +1,25 @@
+---
+# OQ2, negative control: `liveness: "none"` names the mode that checks no
+# liveness property at all. The assertion below is the one
+# `liveness_strict.fizz` falsifies, and here the run passes without printing a
+# `Checking …` line. Any unrecognised string behaves the same way, which is
+# why the RFC records "strict" or "eventual" explicitly rather than relying on
+# the default.
+options:
+  max_actions: 12
+liveness: "none"
+---
+
+action Init:
+  g = 0
+  b = 0
+
+atomic fair action Gate:
+  g = 1 - g
+
+atomic fair action B:
+  require g == 1
+  b = 1
+
+always eventually assertion BEventually:
+  return b >= 1

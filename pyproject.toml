@@ -549,6 +549,8 @@ ignore_names = [
     "test_*",
     "pytestmark",
     "pytest_plugins",
+    # pytest calls this hook by name during collection; no test names it.
+    "pytest_collection_modifyitems",
     "teardown",
     "descriptor_leak_guard",
     # Vulture cannot resolve quoted cast types imported only for type checks.
@@ -630,6 +632,7 @@ markers = [
     "kache_host_check: requires opt-in, Linux, and a supported kache",
     "sccache_host_check: requires opt-in, Linux, and a supported sccache",
     "systemd_user: needs a running systemd user manager and busctl",
+    "fizzbee: runs the pinned FizzBee checker; opt in with BUILD_LIMITS_MODEL_CHECK=1",
 ]
 
 [tool.uv]
@@ -1658,4 +1661,8 @@ members = [
 reason = "Matching import lists: each module names the subprocess, JSON, typing and pytest symbols its own backend needs, and sharing them through a re-export module would hide each module's real dependencies."
 [[tool.duplication_gate.allow]]
 members = ["buildlimits/outcome_record_codec.py", "tests/test_kache_detached_events.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_fizzbee_spike.py", "tests/test_fizzbee_graphs.py"]
 reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."

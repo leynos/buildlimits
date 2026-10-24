@@ -1,0 +1,24 @@
+---
+# OQ2: `liveness: "strict"` checks the `always eventually` assertion below and
+# a lasso-shaped cycle is reported against it. The gate toggles on every step
+# and B can only run while the gate is open, so a scheduler that always closes
+# the gate before B runs starves B for ever. Gate and B are both weakly fair;
+# weak fairness does not help B because it is not continuously enabled.
+options:
+  max_actions: 12
+liveness: "strict"
+---
+
+action Init:
+  g = 0
+  b = 0
+
+atomic fair action Gate:
+  g = 1 - g
+
+atomic fair action B:
+  require g == 1
+  b = 1
+
+always eventually assertion BEventually:
+  return b >= 1
