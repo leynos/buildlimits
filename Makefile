@@ -57,6 +57,11 @@ FIZZBEE_VERSION ?= v0.5.4
 FIZZBEE_SHA256 ?= 8a1d0900f9ad920002151922337912e11f9e588a2f1196249fe40bf75370f782
 FIZZBEE_ASSET ?= fizzbee-$(FIZZBEE_VERSION)-linux_x86.tar.gz
 FIZZBEE_URL ?= https://github.com/fizzbee-io/fizzbee/releases/download/$(FIZZBEE_VERSION)/$(FIZZBEE_ASSET)
+# Fallback pin only. The image wraps the same release and carries SLSA
+# provenance, but no target pulls or runs it: the tarball needs no container
+# runtime. It is recorded so a later decision to containerize starts from a
+# verified digest. Its tag is 0.5.4; a v-prefixed tag does not exist.
+FIZZBEE_IMAGE ?= ghcr.io/fizzbee-io/fizzbee@sha256:e7b90a0157ab466283e96a9650ab9f91b8ab80a9db8ac6f1d868ecd2b2c687b8
 FIZZBEE_HOME ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/buildlimits/fizzbee/$(FIZZBEE_SHA256)
 FIZZBEE_STAMP ?= $(FIZZBEE_HOME)/.verified
 FIZZ ?= .tools/fizzbee/fizz
