@@ -384,6 +384,11 @@ explicitly.
     opt-in itself in six tests; it carries no `fizzbee` marker, so `-m fizzbee`
     selects 19 tests from the other three modules and the opt-in module runs in
     `make test` instead.
+  - [x] (2026-10-24 19:08+02:00) A ninth output class was captured in EP-M2,
+    `lasso-prefix`, from a new `models/spike/liveness_prefix.fizz` (D15). The
+    original eight could not check T5's "cycle start differs from the trace
+    start" clause, because the `lasso` class cycles back onto its own first
+    state. `models/spike/` therefore holds 27 specs.
   - [x] (2026-10-24 13:30+02:00) Step 6, the documentation: the `make fizzbee`
     row in the developer's guide's Table 1, the `fizzbee` marker and
     `BUILD_LIMITS_MODEL_CHECK` sentence in §11.3, the extended `.tools`
@@ -879,6 +884,28 @@ explicitly.
     cannot be compared or replayed, and the exit status alone cannot tell a
     pass from a failure. `error-graph.json` is stable across runs and carries
     the action, state and fairness of each step.
+- **D15. A lasso's cycle start is found by state, not assumed to be its
+  first step.**
+  - A trace is a lasso when its last state equals an earlier state; the cycle
+    starts at the first such index, which may be 0.
+  - Rationale: T5's non-vacuity clause reads "the lasso's cycle start differs
+    from the trace start", but the captured `lasso` class
+    (`liveness_strict.fizz`) closes its cycle onto the trace's own first state,
+    so that clause cannot be checked against it. EP-M2 captures a second lasso
+    class, `lasso-prefix`, from a new `models/spike/liveness_prefix.fizz` whose
+    first step `Open` must happen before `Gate` can alternate; its cycle starts
+    at index 1, and the clause is checked against that class while the older
+    one pins the degenerate shape. A classifier that assumed the cycle always
+    starts at or after the first repeated state would report this trace as a
+    stutter, because its terminal state repeats too.
+- **D16. `modelcheck` joins `pythonpath` and `testpaths` in EP-M2, not
+  EP-M3.**
+  - EP-M3's "Configuration and gates" step moves into EP-M2.
+  - Rationale: EP-M2 is the milestone that creates the package. Without `"."`
+    on `pythonpath` its tests cannot import it, and without `"modelcheck"` in
+    `testpaths` `--doctest-modules` never collects the module docstrings that
+    EP-M2-E2 requires. Discovering this at EP-M3 would leave EP-M2 unable to
+    pass its own acceptance evidence.
 
 ## Outcomes & retrospective
 
@@ -1612,6 +1639,10 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
   - Implement module by module, removing each `xfail` as its tests turn green.
 - **Documentation:** add `modelcheck/` and `models/` to the repository layout
   tree and table.
+- **Configuration and gates.**
+  - Add `"."` to `[tool.pytest.ini_options] pythonpath`, and `"modelcheck"` to
+    `testpaths` (D16; EP-M3's step of the same name applied here).
+  - Capture the `lasso-prefix` output class (D15).
 - **Acceptance evidence.**
   - EP-M2-E1: the red run shows only `XFAIL` results; the green run shows them
     passing.
@@ -1773,8 +1804,7 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
   with assertions on the verdicts and the exit status. Durations and paths are
   normalized before snapshotting.
 - **Configuration and gates.**
-  - Add `"."` to `[tool.pytest.ini_options] pythonpath`, and `"modelcheck"` to
-    `testpaths`.
+  - The `pythonpath` and `testpaths` additions are already made in EP-M2 (D16).
   - Add Ruff per-file ignores for `modelcheck/adapters/fizzbee_process.py`
     (`S404`, `S603`) and for the runtime `Path` annotation in `cli.py`
     (`TC`), with their reasons.

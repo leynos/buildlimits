@@ -1,0 +1,17 @@
+digraph G {
+    "0" [label="yield
+Actions: 0, Forks: 0
+State: {\"b\":0,\"g\":0,\"opened\":false}
+", color="black" penwidth="2" ];
+    "1" [label="yield
+Actions: 1, Forks: 1
+State: {\"b\":0,\"g\":0,\"opened\":true}
+", color="black" penwidth="2" ];
+    "0" -> "1" [label="1: Open", color="forestgreen" penwidth="1"];
+    "2" [label="yield
+Actions: 2, Forks: 2
+State: {\"b\":0,\"g\":1,\"opened\":true}
+", color="black" penwidth="2" ];
+    "1" -> "2" [label="2: Gate", color="forestgreen" penwidth="1"];
+    "2" -> "1" [label="3: Gate", color="forestgreen" penwidth="1"];
+}
