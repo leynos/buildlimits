@@ -906,6 +906,34 @@ explicitly.
     `testpaths` `--doctest-modules` never collects the module docstrings that
     EP-M2-E2 requires. Discovering this at EP-M3 would leave EP-M2 unable to
     pass its own acceptance evidence.
+- **D17. The red step commits docstring-only stubs, not an absent package.**
+  - `ty` reports `unresolved-import` for an `import modelcheck.domain` inside a
+    test function body just as it does at module level, so an absent package
+    cannot pass `make typecheck` or `make lint`. The red commit therefore adds
+    `modelcheck/__init__.py` and one module per planned module, each a
+    docstring, its data classes, and functions that raise
+    `NotImplementedError`.
+  - The tests still import inside the test body, so a future rename of a
+    module or function fails the import the tests expect rather than being
+    caught only by the type checker. Their strict `xfail` names both
+    `ModuleNotFoundError` and `NotImplementedError`, which covers the stub
+    commit and keeps the marker honest if a module is later split out.
+  - Rationale: `AGENTS.md` forbids a commit that fails a gate, and the plan's
+    own evidence for EP-M2-E3 is the four gates passing at every milestone
+    commit. A red commit that cannot be gated would violate the repository
+    rule that only gate-passing changes are committed.
+- **D18. `DriftReport` is a value with three named parts.**
+  - It carries `unmapped: tuple[str, ...]`, `stale: tuple[str, ...]` and
+    `excluded: tuple[str, ...]`, all sorted, plus an `is_clean` property
+    that is true only when `unmapped` and `stale` are both empty.
+  - `stale` is a mapped path that no longer resolves, and `unmapped` an
+    inventory item with neither a mapping nor an exclusion. `excluded` is
+    carried, not just subtracted, so a report can show the deliberate gaps
+    and the reason each one is deliberate.
+  - Rationale: T4 names three behaviours (an unmapped item, an exclusion, a
+    mapping that no longer resolves) and one rendering obligation; a sorted
+    tuple triple keeps the report comparable, printable and free of the
+    mapping type the caller happened to use.
 
 ## Outcomes & retrospective
 
