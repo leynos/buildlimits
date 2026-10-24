@@ -30,6 +30,14 @@ MODELS = REPOSITORY / "models" / "spike"
 FIZZ = REPOSITORY / ".tools" / "fizzbee" / "fizz"
 OPT_IN = "BUILD_LIMITS_MODEL_CHECK"
 
+CAPTURED_FIXTURES = Path(__file__).with_name("fixtures") / "fizzbee"
+"""Where the recorded checker runs live.
+
+The capture tests re-run the models to compare against these, and the trace
+tests read the recorded graphs directly. Both need the same path, and only the
+first is opt-in, so it lives here rather than in either test module.
+"""
+
 # The launcher prints wall-clock durations, a timestamped run directory and
 # the frontier size it happened to hold when exploration ended. Masking them
 # lets an assertion quote a line without pinning a machine's timing, and lets
@@ -297,8 +305,49 @@ def error_graph(run: CheckerRun) -> list[dict[str, typ.Any]]:
     list[dict[str, Any]]
         One link object per step of the counterexample.
     """
-    payload = (run.output / "error-graph.json").read_text(encoding="utf-8")
-    return json.loads(payload)
+    return read_graph(run.output / "error-graph.json")
+
+
+def read_graph(path: Path) -> list[dict[str, typ.Any]]:
+    """Parse one ``error-graph.json`` off disk.
+
+    The record's shape is the checker's, not this tool's, so a test that pins a
+    normalization or a capture has to read the same file the same way. It takes
+    a path rather than a run because the capture tests read a fixture whose run
+    happened on another machine.
+
+    Parameters
+    ----------
+    path : Path
+        The ``error-graph.json`` to read.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        The links, in the order the checker wrote them.
+    """
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def captured_graph(output_class: str) -> list[dict[str, typ.Any]]:
+    """Parse one recorded fixture's error graph.
+
+    Two test modules read the same recorded run for different purposes: the
+    capture tests replay it to compare against the live checker, and the trace
+    tests normalize it. Both reach the same file, so the path is resolved here
+    rather than in either.
+
+    Parameters
+    ----------
+    output_class : str
+        Directory under ``tests/fixtures/fizzbee`` holding the run.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        The links, in the order the checker wrote them.
+    """
+    return read_graph(CAPTURED_FIXTURES / output_class / "error-graph.json")
 
 
 def link_names(graph: cabc.Sequence[dict[str, typ.Any]]) -> list[str]:

@@ -10,17 +10,14 @@ Like every checker test these are opt-in: without
 ``BUILD_LIMITS_MODEL_CHECK=1`` ``tests/conftest.py`` skips the module.
 """
 
-import json
-import typing as typ
 from pathlib import Path
 
 import pytest
-from fizzbee_spike import error_graph, run_model
+from fizzbee_spike import CAPTURED_FIXTURES as FIXTURES
+from fizzbee_spike import captured_graph, error_graph, run_model
 
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
-FIXTURES = Path(__file__).with_name("fixtures") / "fizzbee"
+# ``FIXTURES`` is a from-import alias so the re-export rule is satisfied by the
+# import itself rather than by a module-level assignment.
 
 # A plain assignment here would be reported by the DF12 re-export rule, so
 # the mark is written as a list the way the systemd modules do it.
@@ -104,23 +101,6 @@ def _captured_exit_code(output_class: str) -> int:
     return int(status)
 
 
-def _captured_graph(output_class: str) -> cabc.Sequence[dict[str, typ.Any]]:
-    """Return a captured fixture's parsed error graph.
-
-    Parameters
-    ----------
-    output_class : str
-        Directory under ``tests/fixtures/fizzbee`` with an ``error-graph.json``.
-
-    Returns
-    -------
-    Sequence[dict[str, Any]]
-        The recorded links.
-    """
-    payload = (FIXTURES / output_class / "error-graph.json").read_text(encoding="utf-8")
-    return json.loads(payload)
-
-
 @pytest.mark.timeout(180)
 def test_captured_fixtures_match_the_live_output_and_exit_code(
     tmp_path: Path,
@@ -138,4 +118,4 @@ def test_captured_error_graphs_match_the_live_ones(tmp_path: Path) -> None:
     models = dict(_CAPTURED)
     for output_class in _WITH_ERROR_GRAPH:
         run = run_model(tmp_path / output_class, models[output_class])
-        assert error_graph(run) == list(_captured_graph(output_class)), output_class
+        assert error_graph(run) == list(captured_graph(output_class)), output_class
