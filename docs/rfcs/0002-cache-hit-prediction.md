@@ -475,15 +475,15 @@ raising a shared exception, so the reasons above stay the caller's to attach.
 Table 2 gives the alternatives each operation returns and the reason token its
 failure carries.
 
-| Port            | Operation          | Success               | Failure reason                              |
-| --------------- | ------------------ | --------------------- | ------------------------------------------- |
-| clock           | monotonic reading  | seconds, total        | none: the read cannot fail                  |
-| clock           | wall-clock reading | seconds, total        | none: the read cannot fail                  |
-| statistics      | read one document  | bounded document      | `timeout`, `read_error`                     |
-| unit-properties | read the property  | property value        | `unavailable`                               |
-| store           | load records       | bounded JSONL records | `corrupt`, `unreadable`, `version_mismatch` |
-| store           | append or compact  | saved                 | `save_failed`                               |
-| salt            | acquire the value  | per-host random value | `salt_unavailable`                          |
+| Port            | Operation                                  | Success               | Failure reason                              |
+| --------------- | ------------------------------------------ | --------------------- | ------------------------------------------- |
+| clock           | monotonic reading                          | seconds, total        | none: the read cannot fail                  |
+| clock           | wall-clock reading                         | seconds, total        | none: the read cannot fail                  |
+| statistics      | read one document                          | bounded document      | `timeout`, `read_error`                     |
+| unit-properties | read the property                          | property value        | `unavailable`                               |
+| store           | load records                               | bounded JSONL records | `corrupt`, `unreadable`, `version_mismatch` |
+| store           | append or compact                          | saved                 | `save_failed`                               |
+| salt            | acquire the value (`store_operation=salt`) | per-host random value | `salt_unavailable`                          |
 
 _Table 2: Port operations and the reason each failure carries._
 
@@ -495,9 +495,11 @@ above. The load row names the store's read alternatives, and the save row names
 paragraph defines in full. `salt_unavailable` is one more `store_reason`
 because the salt lives in a file the store owns (§2 privacy), so the vocabulary
 that already names "the persistent state could not be read or written" is the
-one that should name this fault too. The layer adds one reason token and no new
-vocabulary, so the closed sets a reader must know stay at three:
-`outcome_reason`, `store_reason` and `evaluation_reason`.
+one that should name this fault too. The `outcome_store` event reports this
+operation as `store_operation=salt`, even though the salt has a separate port.
+The layer adds one reason token and no new vocabulary, so the closed sets a
+reader must know stay at three: `outcome_reason`, `store_reason` and
+`evaluation_reason`.
 
 Both clock reads are total: the two readings are the OS's, and neither can fail
 in a way the layer must handle, so a clock port has no failure alternative, and

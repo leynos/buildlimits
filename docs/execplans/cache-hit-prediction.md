@@ -5,8 +5,8 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN PROGRESS (2026-10-24; EP-M1 is go; the exact-head EP-M0 review and
-the audit-gated code commit remain pending)
+Status: IN PROGRESS (2026-10-24; EP-M1 is approved to proceed; EP-M0 review
+corrections and the audit-gated Python commit remain pending)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -278,11 +278,11 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] (2026-10-24 01:39Z) Fresh CodeRabbit review of `278cccb` completed with
   nine findings. D33 and the linked RFC/ADR corrections reconcile the HMAC,
   store, event-field, parser and toolchain contracts; documentation gates and a
-  fresh review are pending.
-- Current (2026-10-24 02:02Z): isolated `make fmt` and `make check-fmt` passed.
+  fresh review were pending at that point.
+- [x] (2026-10-24 02:02Z) Isolated `make fmt` and `make check-fmt` passed.
   The first `make lint` run found 68 issues in EP-M1's new Python test support;
-  later gates did not run. Fixes now separate pure statistics fixture handling
-  into `tests/sccache_stats.py` (D34); the ordered gates must be rerun.
+  later gates had not yet run. D34 separated pure statistics fixture handling
+  into `tests/sccache_stats.py`; subsequent candidate gates passed.
 - [x] (2026-10-24) The rebuilt isolated candidate passed `make fmt`,
   `make check-fmt`, `make lint` and `make typecheck`. The full suite passed at
   `PYTEST_XDIST_WORKERS=1` (1,763 passed, 26 skipped), and the opt-in
@@ -290,12 +290,18 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   sccache 0.14.0 server (1 passed). Its 204-line JSONL fixture was extracted
   only after the no-mount container exited successfully; SHA-256:
   `14a9490fe20f356789a9707eca1f63b189fc8f56be9a0a21ffcf3346de376058`.
+- [x] (2026-10-24) Fresh CodeRabbit review of `9098857` completed with six
+  findings: two reports on the D33 field inventory, two on historical progress
+  wording, one on the RFC salt operation, and one grammar correction. The
+  inventory omissions and salt-operation wording are corrected below; the
+  earlier progress states are now explicitly historical.
 - [ ] `make audit` remains a commit blocker: the isolated gate could not reach
   PyPI, and a separate metadata-only scan found six advisories in the
   pre-existing `filelock==4.2.0` lock entry, fixed in 4.2.1. Resolve this
   outside the approved feature scope before committing Python changes.
 - [ ] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
-  fixture; exact-head local CodeRabbit review pending.
+  fixture; review corrections from `9098857` are complete, with a fresh
+  exact-head local CodeRabbit review pending.
 - [ ] EP-M1: real-binary feasibility and axiom check: **go**; implementation
   and validation passed, with the code commit held by the audit blocker above.
 - [ ] EP-M2: pure statistics, footprints, attribution and gate.
@@ -442,10 +448,11 @@ C-GATES.
   - `cache_outcome` (group grain only): exactly one per cached launch while
     recording is on. Its fields are `cache_result`, `outcome_attribution`,
     `crate_origin`, `outcome_reason`, `runtime_seconds` and
-    `window_groups`.
+    `window_groups`, `child_sighting` and `child_samples`.
   - `outcome_reading` (reading grain): emitted when the reading reason
     changes, and once a minute as an aggregate with the counters
-    `readings`, `readings_skipped` and `readings_failed`.
+    `readings`, `readings_skipped`, `readings_failed`,
+    `child_samples_taken` and `child_sample_failures`.
   - `outcome_store`: carries `store_operation` (`load`, `append`, `compact`
     or `salt`), `store_reason`, `store_records` and `store_discarded`.
 
@@ -1281,9 +1288,9 @@ Domain modules are pure: no input or output, no `os`, `socket`, `subprocess` or
   sccache 0.14 Rust-parser predictor used only for H3 evidence. It sees argv in
   memory and returns one closed-vocabulary class; it never stores the arguments
   or affects admission.
-- `outcome_records.py`: `OutcomeRecord` (including the bounded `parser_class`
-  and `child_sighting` values), `WindowSummary` (including H3 class counts),
-  `StoreHeader`, `encode_line`, `decode_lines` and `compact`.
+- `outcome_records.py`: `OutcomeRecord` (including the bounded `parser_class`,
+  `child_sighting` and `child_samples` values), `WindowSummary` (including H3
+  class counts), `StoreHeader`, `encode_line`, `decode_lines` and `compact`.
 - `outcome_window.py`: `OutcomeWindow[P]`, a ledger generic over an opaque
   payload. The recorder is its only owner.
 - `outcome_sightings.py` (EP-M8): `request_metadata(argv)`,
@@ -1371,7 +1378,10 @@ Changes to existing modules:
   - three events;
   - the vocabularies `cache_result`, `outcome_attribution` (`solo`,
     `unanimous`, `inferred`, `none`), `crate_origin`, `outcome_reason`,
-    `store_reason` and `store_operation`;
+    `store_reason`, `store_operation` and `child_sighting`;
+  - the per-launch fields `child_sighting` and `child_samples` on
+    `cache_outcome`, and the aggregate counters `child_samples_taken` and
+    `child_sample_failures` on `outcome_reading`;
   - the counters `window_groups`, `readings`, `readings_skipped`,
     `readings_failed`, `store_records` and `store_discarded`.
 - `metrics_report.py`: an optional `cache_outcomes` section. The coverage
