@@ -1,0 +1,29 @@
+digraph G {
+  "0x14dac1272700" [label="yield
+Actions: 0, Forks: 0
+State: {\"b\":0,\"g\":0,\"opened\":false}
+", color="black" penwidth="2" ];
+  "0x14dac1272700" -> "0x14dac1272780" [label="Open", color="forestgreen" penwidth="1" ];
+  "0x14dac1272780" [label="yield
+Actions: 1, Forks: 1
+State: {\"b\":0,\"g\":0,\"opened\":true}
+", color="black" penwidth="2" ];
+  "0x14dac1272780" -> "0x14dac1272c00" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x14dac1272c00" [label="yield
+Actions: 2, Forks: 2
+State: {\"b\":0,\"g\":1,\"opened\":true}
+", color="black" penwidth="2" ];
+  "0x14dac1272c00" -> "0x14dac1272780" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x14dac1272c00" -> "0x14dac1273080" [label="B", color="forestgreen" penwidth="1" ];
+  "0x14dac1273080" [label="yield
+Actions: 3, Forks: 3
+State: {\"b\":1,\"g\":1,\"opened\":true}
+", color="green" penwidth="2" ];
+  "0x14dac1273080" -> "0x14dac1273380" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x14dac1273380" [label="yield
+Actions: 4, Forks: 4
+State: {\"b\":1,\"g\":0,\"opened\":true}
+", color="green" penwidth="2" ];
+  "0x14dac1273380" -> "0x14dac1273080" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x14dac1273080" -> "0x14dac1273080" [label="B", color="forestgreen" penwidth="1" ];
+}

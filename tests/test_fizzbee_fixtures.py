@@ -33,6 +33,11 @@ _CAPTURED = (
     ("pass", "continuously_enabled.fizz"),
     ("safety-failure", "safety_failure.fizz"),
     ("lasso", "liveness_strict.fizz"),
+    # The same verdict class as ``lasso``, but its cycle cannot close onto the
+    # first state, because ``Open`` must run before ``Gate`` can alternate.
+    # ``test_modelcheck_trace.py`` needs that shape to tell a cycle start from
+    # a trace start; here it is pinned like every other captured run.
+    ("lasso-prefix", "liveness_prefix.fizz"),
     ("stutter", "liveness_stutter.fizz"),
     ("deadlock", "deadlock.fizz"),
     ("truncation-safety", "truncation_safety.fizz"),
@@ -44,6 +49,7 @@ _CAPTURED = (
 _WITH_ERROR_GRAPH = (
     "safety-failure",
     "lasso",
+    "lasso-prefix",
     "stutter",
     "deadlock",
     "truncation-liveness",
