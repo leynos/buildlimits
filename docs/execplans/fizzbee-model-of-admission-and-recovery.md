@@ -415,6 +415,10 @@ explicitly.
     observed in the working tree, but no log of that run survives and the
     red and green halves are one commit. EP-M2-E2 and EP-M2-E3 are recorded
     for the green state.
+  - [x] (2026-10-24 00:20+02:00) Committed as `b38adaf`, 23 files,
+    +4,387 −42, after a second full gate run that stayed green. The
+    milestone's line count is escalated in Risks; the commit was made so the
+    delivered work is recoverable while that question is open.
 - [ ] EP-M3: `modelcheck` ports, service, adapters and command-line interface.
 - [ ] EP-M4: minimal model with the busy queue (W1).
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
