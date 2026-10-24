@@ -633,7 +633,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `harness_processes.py`             | `wait_for`, `start_adapter`, process cleanup and host process observations                          |
 | `harness_status.py`                | `HarnessStatus`, the status document, readiness and drain-fault queries                             |
 | `sccache_host.py`                  | `sccache_host_marks` and private-server helpers for the opt-in real-binary check                    |
-| `sccache_stats.py`                 | Test-only sccache 0.14 counter validation and redacted replay-window fixtures                       |
+| `sccache_stats.py`                 | Test-only sccache 0.14.0 counter validation and redacted replay-window fixtures                       |
 | `systemd_harness.py`               | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling    |
 | `rustc_linter_acceptance.py`       | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios       |
 | `rustc_query_host_checks.py`       | Query and readiness assertions shared by host query and timing scenarios                            |
@@ -644,7 +644,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `rustc_query_timing_shim.py`       | Sibling-adapter timing shim with JSON-line probe records                                            |
 | `harness_units.py`                 | User-manager readiness, acceptance marks, transient unit control and properties                     |
 | `fake_rustc.py`                    | Scripted Rust compiler for the opt-in real-sccache host check                                       |
-| `test_sccache_real_binary.py`      | Opt-in sccache 0.14 acceptance test; `_RefusalProbe` is local to this test and is not shared API    |
+| `test_sccache_real_binary.py`      | Opt-in sccache 0.14.0 acceptance test; `_RefusalProbe` is local to this test and is not shared API    |
 
 _Table 4: Shared test helper modules._
 

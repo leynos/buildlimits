@@ -179,17 +179,19 @@ counter behaviour.
 
 Use this first-applicable reading-reason order:
 
-1. `read_error` (query failure or launch failure).
-2. `parse_error` (not one JSON object with a `stats` object).
-3. `unsupported_version`.
-4. `generation_unavailable`.
-5. `generation_changed`.
-6. `empty_stats` while the window has a launch.
-7. `counter_decreased`.
-8. `ineligible_window` for an unclean group.
-9. `count_mismatch` when launch counts, classification counters or executed
+1. `timeout` when the query deadline expires.
+2. `read_error` for any non-timeout failure of the reading operation, including
+   a query-launch failure, socket error or transport read failure.
+3. `parse_error` (not one JSON object with a `stats` object).
+4. `unsupported_version`.
+5. `generation_unavailable`.
+6. `generation_changed`.
+7. `empty_stats` while the window has a launch.
+8. `counter_decreased`.
+9. `ineligible_window` for an unclean group.
+10. `count_mismatch` when launch counts, classification counters or executed
    request footprints do not balance.
-10. `mixed_window` for a balanced window whose counters cannot be split.
+11. `mixed_window` for a balanced window whose counters cannot be split.
 
 Accept an all-zero baseline in a running generation. Add `straddled_reading`,
 `supervisor_stopped`, `no_baseline`, `generation_unavailable`,
@@ -204,9 +206,12 @@ after success. Stop readings until restart for `unsupported_version` or
 
 Store JSON Lines at `$XDG_STATE_HOME/buildlimits/cache-outcomes.jsonl`,
 defaulting to `~/.local/state/buildlimits/`. Set the directory to mode 0700 and
-files to 0600. The first line has this JSON header:
-`{"format": "buildlimits-cache-outcomes",
-"version": 1, "salt_id": …, "written_at": …}`.
+files to 0600. The first line has this JSON header, with illustrative values:
+
+```json
+{"format":"buildlimits-cache-outcomes","version":1,"salt_id":"example-salt-id","written_at":"2026-10-24T00:00:00Z"}
+```
+
 The header records the file format, salt identifier and write time. A single
 writer thread owns every file operation; the loop appends through a bounded
 queue of 4,096 entries and drops overflow with `save_failed`. Each serialized

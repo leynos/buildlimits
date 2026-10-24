@@ -5,8 +5,9 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN PROGRESS (2026-10-24; EP-M1 is approved to proceed; EP-M0 review
-corrections and the audit-gated Python commit remain pending)
+Status: IN PROGRESS (2026-10-24; EP-M0 is complete; r31 documentation gates and
+review passed; EP-M1 validation passed, but its Python commit remains gated by
+the unresolved audit blocker)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -299,13 +300,75 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   findings on en-GB spelling, grammar, 80-column wrapping, the 12 MiB trigger
   wording and the store-port contract. The follow-up matches the RFC to
   `OutcomeStorePort` and keeps load and compaction inside `StoreWriter`.
+- [x] (2026-10-24) Fresh CodeRabbit review of `8e0bd40` completed with seven
+  low findings: invalid illustrative JSON, reading-reason vocabulary, bounded
+  close wording, shared-store replay fields, separate toolchain HMAC fields and
+  RFC punctuation. The ADR, RFC, and plan now align on those contracts; final
+  docs gates and a fresh exact-head review are pending.
+- [x] (2026-10-24) The previous Markdown overlay passed `make fmt`,
+  `make check-fmt`, `make markdownlint` and `make nixie`. Fresh local
+  CodeRabbit review of the docs overlay against `278cccb` completed with zero
+  findings. The reviewed files were ADR 004, the ExecPlan, RFC 0002 and the
+  developers' guide; the source candidate was `8e0bd40`. The later r6
+  corrections below require the final docs gates and review to run again.
+- [x] (2026-10-24) Fresh overlay CodeRabbit review against `278cccb` through
+  source candidate `8e0bd40` reported two valid RFC findings: the port
+  description still used the rejected unit-properties contract, and the record
+  inventory called its retention field `timestamp`. The RFC now uses the
+  accepted `ServerProcessPort` D2/D24 contract and names `observed_at`; final
+  docs gates and fresh review are pending.
+- [x] (2026-10-24) Fresh overlay review against `278cccb` through `8e0bd40`
+  reported three valid prose findings: use `countermovement`, state the fixed
+  30-day retention without a proposal qualifier, and define `read_error` as a
+  non-timeout reading-operation failure with socket and transport-read
+  examples. The RFC and ExecPlan now match; D13 order is unchanged. Final docs
+  gates and fresh review are pending.
+- [x] (2026-10-24) Fresh review of the four-doc overlay found four valid
+  vocabulary findings: pin the helper inventory to sccache 0.14.0, list all
+  D13-D16 `outcome_reason` values, reserve `no_quiet_point` for aggregate
+  `readings_skipped`, and remove it from the `OutcomeReason` type. The RFC,
+  developers' guide and ExecPlan now reflect those corrections; final docs
+  gates and fresh review are pending.
+- [x] (2026-10-24) The r15 docs-only run stopped at `make fmt` because it
+  reported formatter output in the RFC and developers' guide. Applied that
+  formatter diff; final docs gates and fresh review remain pending.
+- [x] (2026-10-24) The r17 docs-only run stopped after `make fmt` reported one
+  remaining wrap in the status paragraph. Applied that formatter correction;
+  final docs gates and fresh review remain pending.
+- [x] (2026-10-24) Fresh r19 review found four cross-document mismatches:
+  `evaluation_reason` was missing from the inventory and O6, store reasons
+  omitted accepted O8 outcomes, reading-failure wording excluded query launch,
+  and tracing operations omitted store compaction and `admission_selection`.
+  `StatisticsPort.start` returns `Ticket | QueryFailure`, so a failed query
+  launch is part of the reading operation and belongs to `read_error`, after
+  the higher-priority timeout check. The RFC, ADR, and plan now agree on that
+  rule and on O6/O8/D13-D16 and EP-M6/M7/M9; final docs gates and fresh review
+  remain pending.
+- [x] (2026-10-24) The r27 review found two minor punctuation issues. Added
+  Oxford commas to three-item lists in the RFC and plan, including the
+  reading-failure examples and historical review summaries.
+- [x] (2026-10-24) The r21 documentation run stopped at `make fmt` due to
+  formatter output in the RFC and ExecPlan. Applied the exact formatter diff;
+  final documentation gates and fresh review remain pending.
+- [x] (2026-10-24) The corrected four-doc overlay passed `make fmt`,
+  `make check-fmt`, `make markdownlint` and `make nixie` sequentially with an
+  empty formatter diff. A fresh CodeRabbit review against `278cccb` reported
+  zero findings across ADR 004, the ExecPlan, RFC 0002 and the developers'
+  guide at source candidate `8e0bd40`. The r19 contract and r21 formatter
+  corrections are included.
+- [x] (2026-10-24) After the r27 Oxford comma fixes, the four-doc overlay passed
+  `make fmt`, `make check-fmt`, `make markdownlint` and `make nixie`
+  sequentially with an empty formatter diff. CodeRabbit 0.9.1 reviewed the four
+  documents against `278cccb` through `8e0bd40` and found zero issues.
 - [ ] `make audit` remains a commit blocker: the isolated gate could not reach
   PyPI, and a separate metadata-only scan found six advisories in the
   pre-existing `filelock==4.2.0` lock entry, fixed in 4.2.1. Resolve this
   outside the approved feature scope before committing Python changes.
-- [ ] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
-  fixture; review corrections from `9098857` and `684fffde` are applied, with
-  documentation gates and a fresh exact-head review pending.
+- [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
+  fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
+  applied, and its documentation gates and review passed at that revision. The
+  r6/r9/r13/r19 follow-up corrections and r21 formatter correction are recorded
+  above; the r23 and r31 documentation gates and reviews passed.
 - [ ] EP-M1: real-binary feasibility and axiom check: **go**; implementation
   and validation passed, with the code commit held by the audit blocker above.
 - [ ] EP-M2: pure statistics, footprints, attribution and gate.
@@ -510,19 +573,21 @@ C-GATES.
   with `count_mismatch`.
 - D13. Decision on classification order. A reading's reason is the first of
   the following that applies:
-  1. `read_error`: the query exited non-zero or could not be launched.
-  2. `parse_error`: the output is not one JSON object with a `stats` object.
-  3. `unsupported_version`.
-  4. `generation_unavailable`.
-  5. `generation_changed`.
-  6. `empty_stats`: all counters are zero while the window holds a launch.
-  7. `counter_decreased`.
-  8. `ineligible_window`: the window holds an unclean group.
-  9. `count_mismatch`: any of these:
-     - Δ`compile_requests` is not the number of launches;
-     - the classification counters do not sum to Δ`compile_requests`;
-     - footprints cannot explain the executed requests.
-  10. `mixed_window`.
+  1. `timeout`: the query deadline expires.
+  2. `read_error`: any non-timeout failure of the reading operation, including
+     a query-launch failure, socket error, or transport read failure.
+  3. `parse_error`: the output is not one JSON object with a `stats` object.
+  4. `unsupported_version`.
+  5. `generation_unavailable`.
+  6. `generation_changed`.
+  7. `empty_stats`: all counters are zero while the window holds a launch.
+  8. `counter_decreased`.
+  9. `ineligible_window`: the window holds an unclean group.
+  10. `count_mismatch`: launch counts, classification counters and executed
+      footprints do not balance: Δ`compile_requests` is not the number of
+      launches; classification counters do not sum to it; or footprints
+      cannot explain the requests.
+  11. `mixed_window`.
 
   An all-zero baseline in a running generation is accepted, because a fresh
   server is all zero.
@@ -540,9 +605,9 @@ C-GATES.
   - `recorder_disabled`, when the total wrapper caught an exception or
     `unsupported_version` fired.
 
-  `no_quiet_point` keeps the RFC's meaning, reported in the aggregate
-  `readings_skipped`. Rationale: O2 (one event per launch) needs a reason for
-  every path, and the panel found `no_quiet_point` overloaded three ways.
+  `no_quiet_point` is reserved for aggregate `readings_skipped`; it is not an
+  `outcome_reason` token. Rationale: O2 (one event per launch) needs a reason
+  for every path, and the panel found `no_quiet_point` overloaded three ways.
 - D16. Decision on back-off. Repeated identical reading failures back off 1,
   2, 4 … 60 s, and the interval resets on success. `unsupported_version` and
   `recorder_disabled` stop readings until restart, and the status document and
@@ -1139,9 +1204,9 @@ killed and reaped, and its pipe closed.
   count 0.
 
 O6. Vocabulary completeness. A test provokes and asserts each token of
-`outcome_reason`, `store_reason`, `cache_result`, `store_operation` and the
-gate reasons, and each Table 2 port failure. The exception is `inferred`, which
-is asserted never to be emitted.
+`outcome_reason`, `store_reason`, `evaluation_reason`, `cache_result`,
+`store_operation` and the gate reasons, and each Table 2 port failure. The
+exception is `inferred`, which is asserted never to be emitted.
 
 - Artefacts: `tests/test_outcome_reasons.py` and
   `tests/test_outcome_ports.py`.
@@ -1179,6 +1244,8 @@ O8. Store bounds and durability:
 - A wall-clock jump of more than one day in either direction skips ageing,
   with `clock_skew`.
 - A changed salt reports `salt_changed`.
+- A record tagged with another toolchain identity is excluded from history and
+  reports `tag_dropped`.
 - A salt that exists but cannot be read is never regenerated.
 
 Method and evidence:
@@ -1301,10 +1368,11 @@ Domain modules are pure: no input or output, no `os`, `socket`, `subprocess` or
   `full_emit_metadata(argv)` and `ChildSightings`, which is the per-entry
   sample count and sighting, folded by the recorder on each `Sampled` event.
 - `outcome_vocabulary.py`: the metrics `typ.Literal` aliases (`CacheResult`,
-  `OutcomeReason`, `StoreReason`, `GateReason`, `StoreOperation` and, from
-  EP-M8, `ChildSighting`), each tested equal to its `metrics_schema` table.
-  `ParserClass` is local to `outcome_parser.py` and is tested against its
-  documented three-value vocabulary; it is not a metrics field.
+  `OutcomeReason`, `StoreReason`, `EvaluationReason`, `GateReason`,
+  `StoreOperation` and, from EP-M8, `ChildSighting`), each tested equal to its
+  `metrics_schema` table. `ParserClass` is local to `outcome_parser.py` and is
+  tested against its documented three-value vocabulary; it is not a metrics
+  field.
 - `outcome_ports.py`: `StatisticsPort`, `ServerProcessPort` and
   `OutcomeStorePort` (each a `typ.Protocol`), `SaltSource` (a `Callable`
   alias), and their result and failure types. The clock is `timing.Clock`,
@@ -1345,10 +1413,10 @@ The adapters form the shell.
     (EP-M5), and from EP-M8 the D24 child sample. Both are synchronous and
     bounded.
 - `outcome_store.py`:
-  - `StoreWriter` implements `OutcomeStorePort` on a writer thread. The port
-    exposes non-blocking `append`, `results()` and `close(timeout)` calls. Its
-    bounded queue accepts appends; the writer performs bounded loading and
-    internal compaction. The loop drains writer results each tick.
+  - `OutcomeStorePort` exposes non-blocking `append` and `results()` calls, plus
+    bounded `close(timeout)`. `StoreWriter` implements the port on a writer
+    thread; its bounded queue accepts appends, and it performs bounded loading
+    and internal compaction. The loop drains writer results each tick.
   - `file_salt(path) -> Salt | StoreFailure` creates the salt with `O_EXCL`
     and a rename, checks its length, and never regenerates an unreadable
     salt. It runs on the writer thread at start. The loop receives the
@@ -1383,7 +1451,8 @@ Changes to existing modules:
   - three events;
   - the vocabularies `cache_result`, `outcome_attribution` (`solo`,
     `unanimous`, `inferred`, `none`), `crate_origin`, `outcome_reason`,
-    `store_reason`, `store_operation` and `child_sighting`;
+    `store_reason`, `evaluation_reason`, `store_operation` and
+    `child_sighting`;
   - the per-launch fields `child_sighting` and `child_samples` on
     `cache_outcome`, and the aggregate counters `child_samples_taken` and
     `child_sample_failures` on `outcome_reading`;
@@ -1392,8 +1461,9 @@ Changes to existing modules:
 - `metrics_report.py`: an optional `cache_outcomes` section. The coverage
   denominator is `request_admitted` records with `cache_path=cached`.
 - `tracing_export.py`:
-  - the operations `statistics_read` (one span per statistics query) and
-    `outcome_store_compact`;
+  - EP-M6 registers `statistics_read` (one span per statistics query),
+    `outcome_store_load`, `outcome_store_save` and `outcome_store_compact`;
+  - EP-M7 adds `admission_selection`; EP-M9 adds `prediction_evaluate`;
   - the broad failure categories `statistics_query`, `store_io` and `salt`;
   - the span outcome `completed`.
 
@@ -1951,7 +2021,7 @@ is the replay.
 
 ## Artefacts and notes
 
-Table A gives the counter movement per request at sccache 0.14.0, from RFC 0002
+Table A gives the countermovement per request at sccache 0.14.0, from RFC 0002
 §1 and S1. Every row also moves `compile_requests` by 1. The column
 abbreviations are:
 
@@ -2036,12 +2106,20 @@ Private helpers are omitted.
 # buildlimits/outcome_vocabulary.py (EP-M2); each alias equals its metrics_schema table
 type CacheResult = typ.Literal["hit", "miss", "not_cacheable", "not_cached", "failed", "error",
                                "declined", "not_compile", "unsupported", "unattributed"]
-type OutcomeReason = typ.Literal["none", "timeout", "read_error", "parse_error", "empty_stats",
-    "generation_changed", "generation_unavailable", "counter_decreased", "count_mismatch",
-    "ineligible_window", "mixed_window", "no_quiet_point", "straddled_reading", "no_baseline",
-    "supervisor_stopped", "window_overflow", "unsupported_version", "recorder_disabled"]
-type StoreReason = typ.Literal["none", "corrupt", "unreadable", "version_mismatch", "save_failed",
-    "expired", "salt_unavailable", "salt_changed", "clock_skew"]
+type OutcomeReason = typ.Literal[
+    "none", "timeout", "read_error", "parse_error", "unsupported_version",
+    "generation_unavailable", "generation_changed", "empty_stats",
+    "counter_decreased", "ineligible_window", "count_mismatch", "mixed_window",
+    "straddled_reading", "supervisor_stopped", "no_baseline", "window_overflow",
+    "recorder_disabled",
+]
+type StoreReason = typ.Literal[
+    "none", "corrupt", "unreadable", "version_mismatch", "tag_dropped",
+    "salt_unavailable", "save_failed", "expired", "salt_changed", "clock_skew",
+]
+type EvaluationReason = typ.Literal[
+    "none", "key_unavailable", "store_unavailable", "ineligible",
+]
 type StoreOperation = typ.Literal["load", "append", "compact", "salt"]
 type GateReason = typ.Literal["queued", "cached_moving", "server_drain", "unreachable", "held",
     "recovering", "barrier", "in_flight", "read_skipped", "backing_off"]
@@ -2168,9 +2246,9 @@ class ChildSightings:
     def sighting(self) -> ChildSighting: ...
 
 class OutcomeStorePort(typ.Protocol):
-    def append(self, line: OutcomeRecord | WindowSummary) -> None: ...  # never blocks
-    def results(self) -> tuple[StoreResult, ...]: ...                   # drained each tick
-    def close(self, timeout: float) -> None: ...
+    def append(self, line: OutcomeRecord | WindowSummary) -> None: ...  # non-blocking
+    def results(self) -> tuple[StoreResult, ...]: ...                   # non-blocking
+    def close(self, timeout: float) -> None: ...                        # bounded
 
 type SaltSource = cabc.Callable[[], Salt | StoreFailure]
 ```

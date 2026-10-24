@@ -244,35 +244,19 @@ consecutive readings:
 - A window is eligible only if every cached group launched in it ended with a
   known exit, uncancelled and unsignalled (`not may_orphan_server_work`), and
   no counter decreased, which would mean a restarted server.
-- Each reading carries a _server generation_: the `InvocationID` systemd gives
-  the sccache unit's current invocation, read as one more property name on the
-  `manager.show` call the supervisor already makes to inspect the unit, so no
-  extra process is spawned and the transport's existing three-second bound
-  still applies. It reaches the selector through the layer's own
-  unit-properties port (§1), which is what gives the read a declared shape and
-  a failure token rather than leaving it implicit in the statistics query. The
-  generation is read on either side of each statistics query, so a restart that
-  lands while a query is outstanding is caught even though no statistics
-  document records it. The unit restarts the server its own way after a failure
-  (ADR 011), so that id is the server's identity, and a window whose two
-  readings differ is rejected however the counters moved. That reading is still
-  the baseline for the next window, so the window after a restart is measured
-  within the new invocation rather than across it: rejecting a window discards
-  that interval's attribution, never the reading that ended it. This closes the
-  case the decrease test cannot see: a restart from an all-zero baseline, or
-  one followed by enough work to exceed the old values, would otherwise
-  attribute post-restart deltas to the previous server's launches. While no
-  invocation is running the generation is _no server_, and a window with an
-  absent server at either end is rejected — which the cache-reachability
-  precondition already implies, but which the generation check now makes
-  explicit rather than inferred. C5 still holds: the marker comes from the
-  unit, not from `ServerStats`, so an unmanaged or out-of-unit server stays
-  indistinguishable, and the decrease test remains the backstop for it. One
-  implementation constraint carries over: the public user-bus fallback in
-  `buildlimits/bus_properties.py` accepts only `MainPID`, `ControlGroup` and
-  `ActiveState`, and rejects any other property name, so W1 must extend that
-  set with `InvocationID` or treat the fallback's refusal as an unavailable
-  reading rather than a `BusQueryError`.
+- Each reading carries a _server generation_: `ServerProcessPort.generation()`
+  reads it synchronously on either side of the statistics query. It
+  non-blockingly connects to the managed socket, gets the server PID from
+  `SO_PEERCRED`, then reads `/proc/<pid>/stat` and `/proc/<pid>/environ` (§1;
+  ADR 004 D2). A restart during a query is caught even though no statistics
+  document records it. Different generations reject the window regardless of
+  countermovement, but the ending reading remains the next baseline. This
+  catches a restart from an all-zero baseline or one followed by enough work to
+  exceed the old counters. A refused connection means no server; other
+  generation-read failures are `generation_unavailable`. A window with no
+  server at either end is rejected. The generation identifies the process
+  serving the query; an out-of-unit server remains indistinguishable, so the
+  counter-decrease check remains a backstop (C5).
 - The change in `compile_requests` must equal the number of cached groups
   launched in the window, and the outcome counters must account for exactly
   that same number of requests in total. A request the server answers without a
@@ -288,7 +272,7 @@ consecutive readings:
   `non_cacheable_compilations`, which counts a finished compile whose result
   was not cacheable, nor `compilations`.
 - The outcome moved is read from the counters, since the reply carries none
-  (C2). The table below shows the counter movements at 0.14.0, taken from the
+  (C2). The table below shows the countermovements at 0.14.0, taken from the
   result handlers in `server.rs`; `_` means the counter does not move.
 
   | `CompileResult`        | `cache_hits` | `compilations` | `cache_misses` | `non_cacheable_compilations` | `compile_fails` | `cache_errors` |
@@ -409,33 +393,39 @@ no origin value to fold into a key and so reports `key_unavailable` for that
 request. `outcome_reason` is `none` exactly when a label was produced — by an
 attributed window (`solo` or `unanimous`) or by I4's inference (`inferred`) —
 and otherwise names why the reading produced no label: `timeout`, `read_error`,
-`parse_error`, `empty_stats`, `generation_changed`, `counter_decreased`,
-`count_mismatch`, `ineligible_window` or `no_quiet_point`. `timeout` is the
-deadline elapsing and `read_error` is any other failure of the query itself — a
-launch failure, a socket error or a transport read — so a query that never
-returns statistics is named rather than sharing the timeout's token or falling
-through unnamed. `generation_changed` is the unit-properties read disagreeing
-with itself across the window, or failing `unavailable` at either end, since a
-generation that cannot be read cannot be shown to have held. `outcome_reason`
-covers the reading alone: it is a second closed vocabulary beside the new-event
-token set because the schema's existing `reason` field already carries
-admission refusals (`metrics_schema.VOCABULARIES`), and widening the event
-without a distinct field would make a rejected window indistinguishable from a
-refusal in the journal. The evaluation surface has its own vocabulary (Layer 2)
-rather than reusing this one, so a reading that failed and a request that could
-not be classified are never confused in the journal. No reason carries a key, a
-path or an argument. The boundaries the proposal crosses are recorded as bounded
+`parse_error`, `unsupported_version`, `generation_unavailable`,
+`generation_changed`, `empty_stats`, `counter_decreased`, `ineligible_window`,
+`count_mismatch`, `mixed_window`, `straddled_reading`, `supervisor_stopped`,
+`no_baseline`, `window_overflow` or `recorder_disabled`. `no_quiet_point` is
+reserved for the aggregate `readings_skipped` counter, not `outcome_reason`.
+`timeout` is the deadline elapsing and `read_error` is any non-timeout failure
+of the reading operation, including a query-launch failure, socket error, or
+transport read failure. These tokens distinguish deadline expiry from other
+reading failures. `generation_changed` means the two `generation()` calls
+returned different values, including a change to or from `no server`. A failed
+generation read is `generation_unavailable`; a refused socket connection returns
+`no server`. `outcome_reason` covers the reading alone: it is a second closed
+vocabulary beside the new-event token set because the schema's existing
+`reason` field already carries admission refusals
+(`metrics_schema.VOCABULARIES`), and widening the event without a distinct
+field would make a rejected window indistinguishable from a refusal in the
+journal. The evaluation surface has its own vocabulary (Layer 2) rather than
+reusing this one, so a reading that failed and a request that could not be
+classified are never confused in the journal. No reason carries a key, a path,
+or an argument. The boundaries the proposal crosses are recorded as bounded
 `JournalTracer` spans — `statistics_read`, `outcome_store_load`,
-`outcome_store_save`, `prediction_evaluate` and `admission_selection` — with
-fixed operation names, bounded attributes and elapsed milliseconds, exported
-through the existing injected sink and dropped on failure without affecting the
-operation (ADR 003). Both span vocabularies are closed and must be extended by
-the release that adds these: `JournalTracer.start` refuses an operation absent
-from `tracing_export.OPERATIONS`, and `_bounded_attributes` keeps only
-attributes with a registered vocabulary, so an unregistered operation is
-dropped by design and an unregistered attribute is omitted rather than exported
-as free text. `build-limits-metrics` reports outcome counts, attributed
-coverage and a count per reason.
+`outcome_store_save`, `outcome_store_compact`, `prediction_evaluate` and
+`admission_selection` — with fixed operation names, bounded attributes and
+elapsed milliseconds, exported through the existing injected sink and dropped
+on failure without affecting the operation (ADR 003). The reading and store
+operations are registered in EP-M6; `admission_selection` is added in EP-M7, and
+`prediction_evaluate` in EP-M9. Both span vocabularies are closed and must be
+extended by the release that adds these: `JournalTracer.start` refuses an
+operation absent from `tracing_export.OPERATIONS`, and `_bounded_attributes`
+keeps only attributes with a registered vocabulary, so an unregistered
+operation is dropped by design and an unregistered attribute is omitted rather
+than exported as free text. `build-limits-metrics` reports outcome counts,
+attributed coverage and a count per reason.
 
 **Ports.** Everything this layer reads or writes that is not its own memory is
 reached through a narrow injected port, so the reads and writes have declared
@@ -450,24 +440,17 @@ keeps the count independent of the retry and scoring work layer 2 adds later:
   command it runs being the port's own business
   (`--show-stats --stats-format json`, never `--zero-stats` or `--dist-status`,
   per I2);
-- a unit-properties port reading one named property of the sccache unit through
-  the same `manager.show` call the cache-reachability check already makes, so
-  `InvocationID` has a declared shape of its own rather than being folded into
-  the statistics document. The two reads stay separate because they answer
-  different questions over different transports: the statistics come from the
-  server's socket, the generation from the unit's own record of which
-  invocation is running. Pairing them is therefore the caller's ordering, not a
-  property either document can carry. The selector reads the generation before
-  it launches a query and again after the query ends, and it accepts the window
-  only when the two agree; because a restart can only change the invocation, a
-  restart that lands during a query is then caught even though neither
-  statistics document mentions one. This is the same ordering `outcome_reason`
-  `generation_changed` reports, and the port's failure is `unavailable`, which
-  the caller treats as an unavailable reading rather than a window;
-- an outcome-store port with non-blocking `append(line)`, `results()` to drain
-  writer results each tick, and `close(timeout)`. Its single `StoreWriter`
-  performs bounded loading and compaction internally under ADR 004 D17's file
-  bounds and ageing rules; and
+- a `ServerProcessPort` for the statistics server. `generation()` non-blockingly
+  connects to the socket and gets the server PID from `SO_PEERCRED`. It reads
+  the start time and `INVOCATION_ID` from `/proc/<pid>/stat` and
+  `/proc/<pid>/environ` (ADR 004 D2). `full_emit_metadata()` samples the server
+  process group and returns in-memory `-C metadata` values for full-emit
+  compiler children (ADR 004 D24). This keeps server identity and child
+  sightings separate from the statistics document;
+- an outcome-store port with non-blocking `append(line)` and `results()` calls,
+  and bounded `close(timeout)`. Its single `StoreWriter` performs bounded
+  loading and compaction internally under ADR 004 D17's file bounds and ageing
+  rules;
 - a salt port offering one per-host random value, which is the only source the
   path digest draws on.
 
@@ -476,27 +459,28 @@ raising a shared exception, so the reasons above stay the caller's to attach.
 Table 2 distinguishes the `OutcomeStorePort` methods from the writer's internal
 file operations and gives the reason token each failure carries.
 
-| Surface          | Operation                              | Success               | Failure reason                              |
-| ---------------- | -------------------------------------- | --------------------- | ------------------------------------------- |
-| clock            | monotonic reading                      | seconds, total        | none: the read cannot fail                  |
-| clock            | wall-clock reading                     | seconds, total        | none: the read cannot fail                  |
-| statistics       | read one document                      | bounded document      | `timeout`, `read_error`                     |
-| unit-properties  | read the property                      | property value        | `unavailable`                               |
-| OutcomeStorePort | `append(line)` (non-blocking)          | queued                | `save_failed` via `results()`               |
-| OutcomeStorePort | `results()`                            | writer results        | none                                        |
-| OutcomeStorePort | `close(timeout)`                       | bounded close         | none                                        |
-| StoreWriter      | `load` (bounded, internal)             | bounded JSONL records | `corrupt`, `unreadable`, `version_mismatch` |
-| StoreWriter      | `append` or `compact` (internal)       | saved                 | `save_failed`                               |
-| SaltSource       | acquire value (`store_operation=salt`) | per-host random value | `salt_unavailable`                          |
+| Surface           | Operation                              | Success                 | Failure reason                              |
+| ----------------- | -------------------------------------- | ----------------------- | ------------------------------------------- |
+| clock             | monotonic reading                      | seconds, total          | none: the read cannot fail                  |
+| clock             | wall-clock reading                     | seconds, total          | none: the read cannot fail                  |
+| statistics        | read one document                      | bounded document        | `timeout`, `read_error`                     |
+| ServerProcessPort | `generation()`                         | generation or no server | `generation_unavailable`                    |
+| ServerProcessPort | `full_emit_metadata()`                 | metadata values         | `server_unknown`, `group_unreadable`        |
+| OutcomeStorePort  | `append(line)` (non-blocking)          | queued                  | `save_failed` via `results()`               |
+| OutcomeStorePort  | `results()` (non-blocking)             | writer results          | none                                        |
+| OutcomeStorePort  | `close(timeout)` (bounded)             | bounded close           | none                                        |
+| StoreWriter       | `load` (bounded, internal)             | bounded JSONL records   | `corrupt`, `unreadable`, `version_mismatch` |
+| StoreWriter       | `append` or `compact` (internal)       | saved                   | `save_failed`                               |
+| SaltSource        | acquire value (`store_operation=salt`) | per-host random value   | `salt_unavailable`                          |
 
 _Table 2: Port methods, writer operations and their failure reasons._
 
-`OutcomeStorePort.append` only enqueues work; it never waits for file I/O. The
-loop drains asynchronous writer outcomes through `results()`, while
-`close(timeout)` bounds shutdown. `StoreWriter` performs the bounded load and
-compaction internally. The emitted `store_operation` vocabulary remains `load`,
-`append`, `compact` and `salt`; these values name file operations, not the
-port's `results()` or `close(timeout)` methods.
+`OutcomeStorePort.append` only enqueues work; it never waits for file I/O.
+`results()` is also non-blocking and drains available writer outcomes. The
+bounded `close(timeout)` call limits shutdown. `StoreWriter` performs the
+bounded load and compaction internally. The emitted `store_operation`
+vocabulary remains `load`, `append`, `compact` and `salt`; these values name
+file operations, not the port's `results()` or `close(timeout)` methods.
 
 The reason column names the vocabulary used to report each failure. The
 statistics row uses `outcome_reason`, whose tokens §1 defines. The internal
@@ -587,18 +571,18 @@ leave the loop admitting: the test counts iterations, accepts a request and
 returns a token while the query is outstanding, which is the regression check
 for the contract above. Each `outcome_reason` token has a test that provokes it
 and asserts the reason, so the vocabulary cannot rot into a single catch-all.
-The `timeout` test provokes the deadline, and the `read_error` test a query
-that fails before it can time out — a launch failure, a socket error or a
-transport read — so the two are distinguished rather than both claimed by one
-test. The ports make each of those failures a fake's return rather than a real
-timeout, socket or file: a fake statistics port answers from a script, a fake
-unit-properties port changes or withholds the invocation, a fake store port
-fails a load or a save on demand, a fake clock moves the deadline, and a fake
-salt port refuses on demand. Each failure in Table 2 is provoked and its
-declared reason asserted, so a port contract cannot be added without a test
-that observes it: a refused save yields `save_failed`, a load over an
-unreadable file yields `unreadable` where a permission-denied read makes the
-file unreadable rather than corrupt, and a refused salt yields
+The `timeout` test provokes the deadline; the `read_error` test provokes a
+query-launch failure, socket error, or transport read failure before timeout,
+so the two are distinguished rather than both claimed by one test. The tests
+inject failures through fakes instead of using a real timeout, socket, or file.
+A fake statistics port answers from a script; a fake `ServerProcessPort`
+changes or withholds the generation and controls sampled process-group
+metadata; a fake store port fails a load or save on demand; a fake clock moves
+the deadline; and a fake salt port refuses on demand. Each failure in Table 2
+is provoked and its declared reason asserted, so a port contract cannot be
+added without a test that observes it: a refused save yields `save_failed`, a
+load over an unreadable file yields `unreadable` where a permission-denied read
+makes the file unreadable rather than corrupt, and a refused salt yields
 `salt_unavailable`. The salt tests assert the whole declared behaviour rather
 than the reason alone — that no record is written for the affected compile,
 that no raw path and no unsalted digest reaches the store or a comparison, that
@@ -644,12 +628,13 @@ closed-vocabulary tokens.
 **Storage.** G2 must be decided from layer 1's own records, so the keyed
 records belong to layer 1. The same append-only JSON Lines file defined by ADR
 004 D17 lives at `$XDG_STATE_HOME/buildlimits/cache-outcomes.jsonl` and holds
-the key, outcome, origin, wall time, toolchain identity and timestamp per
-attributed record. Layer 2 reads those records to build its in-memory history;
-it does not create a second file or become a second writer. The layer 1 writer
-owns every load, append and compaction in every mode. The journal keeps only
-the closed-vocabulary event; the file is the only place a key is written to
-disk, it never leaves the host, and it is read by `W2`'s offline replay and by
+the key, outcome, origin, wall time, toolchain identity, `observed_at`,
+`parser_class`, `child_sighting` and `child_samples` per attributed record.
+Layer 2 reads those records to build its in-memory history; it does not create
+a second file or become a second writer. The layer 1 writer owns every load,
+append and compaction in every mode. The journal keeps only the
+closed-vocabulary event; the file is the only place a key is written to disk,
+it never leaves the host, and it is read by `W2`'s offline replay and by
 nothing in `admission`. Its queue, size bounds, ageing and atomic compaction
 follow ADR 004 D17. Deleting it costs only the replay.
 
@@ -674,18 +659,19 @@ that hits can be foreseen into something the journal can check.
   `git:<name>@<rev>`, and any other directory becomes `path:<salted digest>`,
   which is per worktree, as sccache's key is (C3);
 - the target, from `--target`, or `host`;
-- a toolchain identity: HMAC-SHA-256 under the local salt of the compiler
-  argument and `RUSTUP_TOOLCHAIN` (or the empty string), together with
-  sccache's Rust `CACHE_VERSION` (`"6"`) and the server version in the
-  statistics document, as ADR 004 D10 specifies. The supervisor does not
-  resolve or stat the compiler or run `<compiler> -vV`; Cargo already includes
-  `-vV` output in `-C metadata`, which the argument digest covers. This is an
-  _approximate_ identity, deliberately not the full set `generate_hash_key`
-  folds into a key (C3). Shared-library digests are excluded because they cover
-  every file in the rustc sysroot's `lib/` (C3) and cost a full sysroot hash
-  per server start. A sysroot changed in place while the compiler argument,
-  rustup environment, `CACHE_VERSION` and server version stay fixed is
-  invisible to this identity; the change remains a confounder for H4 and H5.
+- a toolchain identity with two separate HMAC-SHA-256 fields under the local
+  salt: one for the compiler argument and one for `RUSTUP_TOOLCHAIN` (or the
+  empty string). It also includes sccache's Rust `CACHE_VERSION` (`"6"`) and
+  the server version in the statistics document, as ADR 004 D10 specifies. The
+  supervisor does not resolve or stat the compiler or run `<compiler> -vV`.
+  Cargo already includes `-vV` output in `-C metadata`, which the argument
+  digest covers. This is an _approximate_ identity, deliberately not the full
+  set `generate_hash_key` folds into a key (C3). Shared-library digests are
+  excluded because they cover every file in the rustc sysroot's `lib/` (C3) and
+  cost a full sysroot hash per server start. A sysroot changed in place while
+  the compiler argument, rustup environment, `CACHE_VERSION` and server version
+  stay fixed is invisible to this identity; the change remains a confounder for
+  H4 and H5.
 - an argument digest: HMAC-SHA-256 under the local salt over the argument
   vector after sccache's own removals and sorting (C3), with the `CARGO_*`
   variables that sccache hashes.
@@ -723,13 +709,17 @@ toolchain identity is dropped from the in-memory history, not treated as a
 match. The identity detects only changes to its inputs, so an in-place sysroot
 change that leaves them fixed remains a confounder for H4 and H5.
 
-The store distinguishes `corrupt`, `unreadable`, `version_mismatch`,
-`tag_dropped`, `salt_unavailable`, `save_failed` and `expired`. A file with a
-newer or older format is named as `version_mismatch`, while malformed data is
-`corrupt`; a failure to save does not disturb the running estimate. A missing
-or unreadable salt is reported as `salt_unavailable`, and records excluded by
-the 30-day bound are reported as `expired`. A store failure yields
-`no history`, never an admission refusal.
+The closed `store_reason` vocabulary is `none`, `corrupt`, `unreadable`,
+`version_mismatch`, `tag_dropped`, `salt_unavailable`, `save_failed`, `expired`,
+`salt_changed` and `clock_skew`. `none` means no store reason was reported. A
+file with a newer or older format is `version_mismatch`; malformed data is
+`corrupt`; and a failure to save does not disturb the running estimate.
+`tag_dropped` marks a record excluded because its toolchain identity differs. A
+missing or unreadable salt is `salt_unavailable`; a stored `salt_id` that
+differs from the current salt reports `salt_changed`. Records excluded by the
+30-day bound are `expired`. If the wall clock jumps by more than one day in
+either direction, ageing is skipped and `clock_skew` is reported. A store
+failure yields `no history`, never an admission refusal.
 
 The status document gains an optional `prediction` object per queued request,
 with `class`, `p_hit` and `observations`, which the renderer appends:
@@ -758,10 +748,11 @@ matrix and a calibration curve by origin. The store reports `store_reason` when
 it loads, saves or discards, and the evaluation reports its own
 `evaluation_reason` — a third closed vocabulary, distinct from the reading's
 `outcome_reason` and the store's `store_reason` — when it cannot classify a
-request: `none` when it reached a class of its own, `key_unavailable` when the
-request could not be keyed, `store_unavailable` when the history could not be
-read, which carries the store's own reason alongside it, and `ineligible` when
-the request is not cacheable under C4, which is a class taken from the
+request. Its tokens are `none`, `key_unavailable`, `store_unavailable` and
+`ineligible`: `none` when it reached a class of its own, `key_unavailable` when
+the request could not be keyed, `store_unavailable` when the history could not
+be read, which carries the store's own reason alongside it, and `ineligible`
+when the request is not cacheable under C4, which is a class taken from the
 request's arguments rather than from the evaluation, so it is reported as its
 own reason rather than as `none`. `uncertain` and `no history` are classes the
 evaluation computed, not failures of it, so they always carry `none` and never
@@ -801,11 +792,11 @@ are stored only as digests salted with a per-host random value, kept in a file
 of mode 0600 beside the history in a directory of mode 0700, so a digest cannot
 be checked against a guessed path elsewhere. History is never journalled or
 exported, deleting it resets prediction, and records untouched for 30 days are
-dropped (a proposal). Status already shows the working directory, only to the
-same user (`SO_PEERCRED`, developer's guide §8), so the display discloses
-nothing new. These bounds are layer 1's as well because layer 1 writes the same
-file: the salt, the modes, the 30-day ageing and the ban on export all apply
-from the moment recording starts.
+dropped. Status already shows the working directory, only to the same user
+(`SO_PEERCRED`, developer's guide §8), so the display discloses nothing new.
+These bounds are layer 1's as well because layer 1 writes the same file: the
+salt, the modes, the 30-day ageing and the ban on export all apply from the
+moment recording starts.
 
 **Measurement for the next layer.** Online accuracy and calibration (H6), and a
 trace replay of recorded arrivals, predictions and runtimes under first-in,
