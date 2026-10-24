@@ -5,10 +5,10 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis` and `Verification plan` must be
 kept up to date as work proceeds.
 
-Status: DRAFT
+Status: APPROVED
 
-Approval: not yet approved. No implementation may begin until the user
-explicitly approves this plan. Approval authorizes:
+Approval: approved by the user on 2026-10-24 with the instruction to mark this
+plan approved before implementation begins. Approval authorizes:
 
 - milestones EP-M1 to EP-M6, which deliver RFC 0001 workstream W1 and stop at
   gate G1;
@@ -254,6 +254,9 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
   - Severity: medium. Likelihood: medium.
   - Mitigation: EP-M1 searches that history. An unrecoverable revision is
     recorded with its transcription basis.
+  - Resolved (EP-M1 step 1): dev-env-rocky does not carry the revisions, but
+    the staging branch `initial-import` does. All three are named in RFC 0001's
+    open-questions record, and the risk no longer applies.
 - **Tarball size and integrity.**
   - Risk: the Linux release is a 335 MB tarball containing a Go checker, a
     bundled Python parser and a bash wrapper. Its only published integrity
@@ -296,10 +299,19 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
   (formal methods; Python and hexagonal architecture; operations, CI and supply
   chain; delivery process and documentation). Their findings were folded into
   this revision.
-- [ ] Draft pull request opened for review.
-- [ ] User approval of the plan, including DV1 to DV3.
+- [x] (2026-10-24 10:40Z) Draft pull request #26 opened for review.
+- [x] (2026-10-24 10:40Z) User approval of the plan, including DV1 to DV3. The
+  approval is recorded above and in `Decision log`.
 - [ ] EP-M1 (prototyping): pre-fix revisions, pinned FizzBee, toy models and
   fixtures.
+  - [x] (2026-10-24 12:50Z) Step 1, the pre-fix revisions, recorded as RFC 0001
+    "Open question 8" with Table 9. The dev-env-rocky history carries only one
+    vendored snapshot of the package and no source change between its addition
+    and removal, so it cannot name three revisions. The staging branch
+    `initial-import` does: its tip `416b1ae` is tree-identical to the squashed
+    import `eba08ad`, and it names `9f2c94f` (incident 1), `f1ee9aa` (incident
+    2) and `d91cd22` (incident 4). The vendored `d024aaa` snapshot is recorded
+    as corroboration.
 - [ ] EP-M2: `modelcheck` pure domain.
 - [ ] EP-M3: `modelcheck` ports, service, adapters and command-line interface.
 - [ ] EP-M4: minimal model with the busy queue (W1).
@@ -309,6 +321,18 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
 
 ## Surprises & discoveries
 
+- **The pre-fix revisions are in this repository, not in dev-env-rocky.**
+  - Observation: dev-env-rocky vendored the package once and never changed its
+    source before removing it, so its history cannot name a pre-fix revision.
+    Its pickaxe searches find only the vendoring commit for
+    `RECOVERY_COOLDOWN_SECONDS` and `_last_fault`, and nothing at all for
+    `cached_moving` and `cooling_for`.
+  - Evidence: `git log d83f709..0eeebbe -- 'python/build_limits/src/**'` shows
+    no source commit; `git diff eba08ad initial-import` is empty, so the
+    staging branch is the exact pre-squash history behind PR #9.
+  - Impact: roadmap task 1.1.1 is satisfied from `initial-import`, and the
+    known-bad configurations cite `9f2c94f`, `f1ee9aa` and `d91cd22`. The risk
+    entry that expected an unrecoverable revision no longer applies.
 - **`fizz` exits 0 when a check fails.**
   - Observation: this holds for assertion, deadlock and liveness failures.
   - Evidence: FizzBee `main.go` returns nil on its failure branches, and the
@@ -349,7 +373,17 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
 
 ## Decision log
 
-### Proposed deviations (accepted only by explicit approval of this plan)
+### Approval
+
+- **AP1. The plan is approved, including DV1 to DV3.**
+  - Decision: the user approved this plan on 2026-10-24 with the instruction to
+    mark it approved before implementation begins. The status line above reads
+    `APPROVED`.
+  - Scope: EP-M1 to EP-M6, the RFC 0001 edits those milestones need, and DV1 to
+    DV3. G1 to G4 each still require their own explicit decision.
+  - Recorded: 2026-10-24, before any milestone work began.
+
+### Proposed deviations (approved with this plan on 2026-10-24)
 
 - **DV1. Transcribe HEAD; keep `7445bf0` as a named audit point.**
   - Decision: the fixed configuration, `head`, transcribes HEAD of `main` at
