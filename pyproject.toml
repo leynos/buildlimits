@@ -586,11 +586,14 @@ pytest_add_cli_args_test_selection = ["tests/"]
 # Tests automatically killed after seconds elapsed
 timeout = 30
 # Module doctests are part of the contract, so collection covers the package
-# as well as the test tree.
-testpaths = ["tests", "buildlimits"]
+# as well as the test tree. ``modelcheck`` is a top-level package outside the
+# wheel (ADR 004), so it is collected here too.
+testpaths = ["tests", "buildlimits", "modelcheck"]
 # ``descriptor_guard`` is a plugin, not a conftest fixture, so its autouse leak
 # guard also covers the package's doctests (see tests/descriptor_guard.py).
-pythonpath = ["tests"]
+# The repository root is on the path because ``modelcheck`` is not installed:
+# only ``buildlimits`` is, through the editable install.
+pythonpath = ["tests", "."]
 addopts = ["--doctest-modules", "-p", "descriptor_guard"]
 # A descriptor-owning object that is dropped unclosed is a test defect, not
 # noise: the collector closes it during some later test, whose descriptor
