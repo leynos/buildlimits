@@ -20,18 +20,17 @@ def _fixture() -> tuple[ModuleType, typ.Any, tuple[str, ...]]:
     key_module = outcome_module("outcome_key")
     records = outcome_module("outcome_records")
     salt = key_module.Salt(key=b"s" * 32, salt_id="fixed-salt")
-    identity = key_module.toolchain_identity(
-        "/toolchain/bin/rustc", {"RUSTUP_TOOLCHAIN": "stable"}, "0.14.0", salt
+    identity = key_module.ToolchainIdentity(
+        compiler_digest="a" * 64,
+        rustup_toolchain_digest="b" * 64,
+        cache_version="6",
+        server_version="0.14.0",
     )
     cache_key = key_module.CacheKey(
         crate_name="serde",
         crate_origin="registry:serde@1.2.3",
         target="host",
-        argument_digest=key_module.argument_digest(
-            ("/toolchain/bin/rustc", "--crate-name=serde", "src/lib.rs"),
-            {"CARGO_PKG_VERSION": "1.2.3"},
-            salt,
-        ),
+        argument_digest="c" * 64,
         toolchain_identity=identity,
     )
     header = records.StoreHeader(salt_id=salt.salt_id, written_at=_NOW)

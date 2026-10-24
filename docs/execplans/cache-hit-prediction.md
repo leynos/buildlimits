@@ -494,6 +494,39 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   `b1e5a66a25c1c358f10cc1f7f6f673f46129523d882fc35255ad83681f5d1f28`; gate logs
   use the `/tmp/*-buildlimits-cache-hit-prediction-epm3-green-candidate-12.out`
   prefix.
+- [x] (2026-10-24 18:56Z) EP-M4's sequencer and D13 red contracts are drafted.
+  Candidates 1-4 passed formatting and documentation gates, then stopped at
+  successive Ruff, Pylint and Ambrleaks findings. Candidate 4 identified
+  high-entropy HMAC fields in the existing M3 snapshot. Its codec fixture now
+  uses valid low-entropy digest values; the dedicated outcome-key tests
+  continue to cover HMAC derivation. Candidate 5 reached Vulture, which treated
+  the typed recorder accessor and Hypothesis collection alias as dead code;
+  both references are now explicit. Typecheck and tests remain pending.
+- [x] (2026-10-24 19:03Z) Candidate 6 passed Ambrleaks, Skylos and Vulture, then
+  stopped at five duplication families in the new recorder tests. Their shared
+  state setup and import boilerplate are being moved into a recorder-specific
+  test helper before candidate 7; typecheck and tests remain pending.
+- [x] (2026-10-24 19:04Z) Recorder fixtures, typestate readers and query setup
+  now extend the existing `tests/outcome_test_helpers.py`; failure and
+  state-machine cases use the shared module directly. Candidate 7's earlier
+  archive stopped at Ruff on helper docstrings and assertions, plus one stale
+  state-machine helper call. Returns contracts were documented, the command
+  assertion moved to the test, and the machine now reuses its payload. Later
+  candidates continued through the complete gate sequence.
+- [x] (2026-10-24 20:52Z) Candidate 34 passed formatting, Markdown and
+  spelling, Mermaid, lint, typecheck, and the full one-worker test suite. The
+  suite reported 1,942 passed, 26 skipped, 18 expected strict xfails and 47
+  snapshots passed. The xfails are the EP-M4 contracts against production
+  modules that have not yet been implemented; the milestone remains incomplete.
+  Typecheck exposed a test-machine field/method name collision, fixed by
+  renaming the model field to `server_drain_count`. The dependency audit reused
+  its passing result because `uv.lock` is unchanged (SHA-256
+  `4274d6491e149c4668defe091e389d7eaa0f69cbd8fc2aebc7953d7f40554d13`).
+  Candidate source SHA-256:
+  `62a3dd7c399d2cb596eabc47510775202070d396481273afe75d94080147dd57`. Gate logs
+  use the `/tmp/*-buildlimits-cache-hit-prediction-epm4-candidate-34.out`
+  prefix; final exact-tree validation is pending after this progress entry is
+  added.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
