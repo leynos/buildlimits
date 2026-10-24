@@ -450,6 +450,8 @@ ignore_names = [
     "test_*",
     "pytestmark",
     "pytest_plugins",
+    # pytest calls this hook by name during collection; no test names it.
+    "pytest_collection_modifyitems",
     "teardown",
     "descriptor_leak_guard",
     "__call__",
@@ -497,11 +499,14 @@ pytest_add_cli_args_test_selection = ["tests/"]
 # Tests automatically killed after seconds elapsed
 timeout = 30
 # Module doctests are part of the contract, so collection covers the package
-# as well as the test tree.
-testpaths = ["tests", "buildlimits"]
+# as well as the test tree. ``modelcheck`` is a top-level package outside the
+# wheel (ADR 004), so it is collected here too.
+testpaths = ["tests", "buildlimits", "modelcheck"]
 # ``descriptor_guard`` is a plugin, not a conftest fixture, so its autouse leak
 # guard also covers the package's doctests (see tests/descriptor_guard.py).
-pythonpath = ["tests"]
+# The repository root is on the path because ``modelcheck`` is not installed:
+# only ``buildlimits`` is, through the editable install.
+pythonpath = ["tests", "."]
 addopts = ["--doctest-modules", "-p", "descriptor_guard"]
 # A descriptor-owning object that is dropped unclosed is a test defect, not
 # noise: the collector closes it during some later test, whose descriptor
@@ -513,6 +518,7 @@ filterwarnings = [
 ]
 markers = [
     "systemd_user: needs a running systemd user manager and busctl",
+    "fizzbee: runs the pinned FizzBee checker; opt in with BUILD_LIMITS_MODEL_CHECK=1",
 ]
 
 [tool.uv]
@@ -1200,3 +1206,27 @@ reason = "Matching import lists: each module names the protocol or port symbols 
 [[tool.duplication_gate.allow]]
 members = ["tests/test_cache_recovery_systemd.py", "tests/test_graceful_restart_systemd.py"]
 reason = "Both modules own an isolated real-systemd world and release it in the same try/finally fixture; the matching lines are the repository's fixture idiom for host acceptance, not shared logic, and a shared fixture would have to know both worlds' different resources."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_fizzbee_spike.py", "tests/test_fizzbee_graphs.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_group_drain_metrics.py", "modelcheck/expectations.py", "tests/test_cache_recovery_telemetry.py", "tests/test_recovery_roots_deadline.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/modelcheck_cases.py", "modelcheck/expectations.py"]
+reason = "Matching import lists: each module names the domain symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_modelcheck_expectations.py", "tests/test_modelcheck_report.py"]
+reason = "Matching import lists: each module names the case builders it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_modelcheck_expectations.py::test_the_truth_table_classifies_every_row", "tests/test_modelcheck_expectations.py::test_judge_returns_the_classified_verdict"]
+reason = "The parametrized row test states one row's full judgement, and the sweep states that every row is classified and every verdict reached; both judge through _judge_row, so only their docstrings and assertions repeat, and merging them would leave T2 with one test where the plan requires a row test and a non-vacuity sweep."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/modelcheck_cases.py::result_of", "tests/modelcheck_cases.py::trace"]
+reason = "Two unrelated builders share only the numpy Returns section and the deferred-import line the test-support module requires; extracting a helper from them would invent a shape neither has."

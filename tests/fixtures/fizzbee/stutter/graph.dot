@@ -1,0 +1,23 @@
+digraph G {
+  "0x25bcaa08c700" [label="yield
+Actions: 0, Forks: 0
+State: {\"g\":0,\"served\":false}
+", color="black" penwidth="2" ];
+  "0x25bcaa08c700" -> "0x25bcaa08c780" [label="Gate", color="black" penwidth="1" ];
+  "0x25bcaa08c780" [label="yield
+Actions: 1, Forks: 1
+State: {\"g\":1,\"served\":false}
+", color="black" penwidth="2" ];
+  "0x25bcaa08c780" -> "0x25bcaa08c700" [label="Gate", color="black" penwidth="1" ];
+  "0x25bcaa08c780" -> "0x25bcaa08cb00" [label="Serve", color="black" penwidth="1" ];
+  "0x25bcaa08cb00" [label="yield
+Actions: 2, Forks: 2
+State: {\"g\":1,\"served\":true}
+", color="green" penwidth="2" ];
+  "0x25bcaa08cb00" -> "0x25bcaa08cd00" [label="Gate", color="black" penwidth="1" ];
+  "0x25bcaa08cd00" [label="yield
+Actions: 3, Forks: 3
+State: {\"g\":0,\"served\":true}
+", color="green" penwidth="2" ];
+  "0x25bcaa08cd00" -> "0x25bcaa08cb00" [label="Gate", color="black" penwidth="1" ];
+}

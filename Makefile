@@ -42,9 +42,30 @@ PYLINT_PYTHON ?= cpython@3.14
 PYLINT_VERSION ?= 4.0.9
 PYLINT_TARGETS ?= $(PYTHON_TARGETS)
 PYLINT = $(UV_ENV) $(UV) tool run --managed-python --python $(PYLINT_PYTHON) --from 'pylint==$(PYLINT_VERSION)' pylint
+# FizzBee model checker (RFC 0001). The release is pinned by digest and cached
+# under the user's XDG cache, so every checkout shares one verified download.
+# FIZZBEE_HOME and FIZZBEE_STAMP are spelled with make's $(or ...) rather than
+# the shell's ${XDG_CACHE_HOME:-$HOME/.cache} because make must resolve the
+# stamp path to decide whether a refetch is needed. The cache path carries the
+# version as well as the digest, so overriding either one moves the stamp and
+# make re-verifies instead of silently keeping the release it already had. The
+# asset name and the digest still move together: a release change without its
+# digest fails the check inside the recipe, where make cannot skip it.
+FIZZBEE_VERSION ?= v0.5.4
+FIZZBEE_SHA256 ?= 8a1d0900f9ad920002151922337912e11f9e588a2f1196249fe40bf75370f782
+FIZZBEE_ASSET ?= fizzbee-$(FIZZBEE_VERSION)-linux_x86.tar.gz
+FIZZBEE_URL ?= https://github.com/fizzbee-io/fizzbee/releases/download/$(FIZZBEE_VERSION)/$(FIZZBEE_ASSET)
+# Fallback pin only. The image wraps the same release and carries SLSA
+# provenance, but no target pulls or runs it: the tarball needs no container
+# runtime. It is recorded so a later decision to containerize starts from a
+# verified digest. Its tag is 0.5.4; a v-prefixed tag does not exist.
+FIZZBEE_IMAGE ?= ghcr.io/fizzbee-io/fizzbee@sha256:e7b90a0157ab466283e96a9650ab9f91b8ab80a9db8ac6f1d868ecd2b2c687b8
+FIZZBEE_HOME ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/buildlimits/fizzbee/$(FIZZBEE_SHA256)
+FIZZBEE_STAMP ?= $(FIZZBEE_HOME)/.verified-$(FIZZBEE_ASSET)
+FIZZ ?= .tools/fizzbee/fizz
 
 
-.PHONY: help all audit clean build build-release lint lint-python fmt check-fmt \
+.PHONY: help all audit clean build build-release fizzbee lint lint-python fmt check-fmt \
         check-python-sources \
         markdownlint nixie spelling test test-systemd-user typecheck dead-code duplication install-nose lint-actions validate $(TOOLS) $(VENV_TOOLS)
 
@@ -162,8 +183,11 @@ nixie: ## Validate Mermaid diagrams
 	$(call ensure_tool,$(NIXIE))
 	$(NIXIE) --no-sandbox
 
+# The model-check opt-in is cleared here so an opt-in left in the calling
+# shell cannot make `make test` depend on the pinned checker being installed.
+# Tests that need the checker are run by an explicitly opted-in pytest.
 test: build $(VENV_TOOLS) ## Run tests
-	$(UV_ENV) $(ACT_TEST_ENV) $(UV) run pytest -v -n $(PYTEST_XDIST_WORKERS)
+	env -u BUILD_LIMITS_MODEL_CHECK $(UV_ENV) $(ACT_TEST_ENV) $(UV) run pytest -v -n $(PYTEST_XDIST_WORKERS)
 
 # Host acceptance drives the developer's own systemd user manager with
 # uniquely named units, so it runs only when asked for and never under xdist.
@@ -183,6 +207,56 @@ install-nose: ## Install the pinned detector with the shared verified installer
 
 duplication: install-nose ## Check every duplication family with the shared gate
 	$(DUPLICATION_GATE) check --repository .
+
+# The stamp carries the digest, so a cache entry left by an interrupted unpack,
+# or by another version, is never mistaken for a verified one. Its name carries
+# the asset, so make re-verifies when either the release or its digest changes.
+# The recipe holds a lock so two checkouts fetching at once still unpack once.
+$(FIZZBEE_STAMP):
+	@set -eu; \
+	  want='$(FIZZBEE_SHA256)'; \
+	  home='$(FIZZBEE_HOME)'; \
+	  stamp='$(FIZZBEE_STAMP)'; \
+	  asset="$$home.tar.gz"; \
+	  case "$$home" in \
+	    */buildlimits/fizzbee/"$$want") ;; \
+	    *) printf 'Error: FIZZBEE_HOME must end in /buildlimits/fizzbee/%s\n' "$$want" >&2; exit 1 ;; \
+	  esac; \
+	  mkdir -p "$$(dirname "$$home")"; \
+	  ( \
+	    flock 9; \
+	    if [ "$$(cat "$$stamp" 2>/dev/null || :)" = "$$want" ]; then exit 0; fi; \
+	    printf 'Fetching %s\n' '$(FIZZBEE_URL)'; \
+	    rm -f "$$asset.part"; \
+	    curl --fail --location --retry 3 --retry-all-errors \
+	      --connect-timeout 20 --max-time 900 \
+	      --output "$$asset.part" '$(FIZZBEE_URL)'; \
+	    mv -f "$$asset.part" "$$asset"; \
+	    if ! printf '%s  %s\n' "$$want" "$$asset" | sha256sum --check --status -; then \
+	      printf 'Error: upstream asset changed; do not update FIZZBEE_SHA256 without review\n' >&2; \
+	      printf 'Expected %s\n' "$$want" >&2; \
+	      sha256sum "$$asset" >&2 || :; \
+	      rm -f "$$asset"; \
+	      exit 1; \
+	    fi; \
+	    if tar --list --gzip --file "$$asset" | grep -Eq '^/|(^|/)\.\.(/|$$)'; then \
+	      printf 'Error: %s contains unsafe member paths\n' '$(FIZZBEE_ASSET)' >&2; \
+	      rm -f "$$asset"; \
+	      exit 1; \
+	    fi; \
+	    unpack=''; trap 'rm -rf "$$unpack"' EXIT HUP INT TERM; \
+	    unpack="$$(mktemp -d "$$(dirname "$$home")/.unpack.XXXXXX")"; \
+	    tar --extract --gzip --file "$$asset" --directory "$$unpack" \
+	      --no-same-owner --no-same-permissions; \
+	    rm -rf "$$home"; \
+	    mv -T "$$unpack/$(FIZZBEE_ASSET:.tar.gz=)" "$$home"; \
+	    rm -rf "$$unpack"; \
+	    printf '%s\n' "$$want" > "$$stamp"; \
+	    rm -f "$$asset"; \
+	  ) 9>"$$home.lock"
+
+fizzbee: $(FIZZBEE_STAMP) ## Install the pinned FizzBee checker
+	@set -eu; mkdir -p .tools; ln -sfn '$(abspath $(FIZZBEE_HOME))' .tools/fizzbee
 
 lint-actions: build $(ACTIONLINT) $(ACTION_VALIDATOR) ## Validate workflows and local actions
 	$(call ensure_tool,shellcheck)

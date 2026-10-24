@@ -1,0 +1,26 @@
+digraph G {
+  "0x25387d7ac000" [label="yield
+Actions: 0, Forks: 0
+State: {\"a\":0,\"b\":false}
+", color="black" penwidth="2" ];
+  "0x25387d7ac000" -> "0x25387d7ac080" [label="A", color="forestgreen" penwidth="1" ];
+  "0x25387d7ac080" [label="yield
+Actions: 1, Forks: 1
+State: {\"a\":1,\"b\":false}
+", color="black" penwidth="2" ];
+  "0x25387d7ac080" -> "0x25387d7ac000" [label="A", color="forestgreen" penwidth="1" ];
+  "0x25387d7ac080" -> "0x25387d7ac400" [label="B", color="forestgreen" penwidth="1" ];
+  "0x25387d7ac400" [label="yield
+Actions: 2, Forks: 2
+State: {\"a\":1,\"b\":true}
+", color="green" penwidth="2" ];
+  "0x25387d7ac400" -> "0x25387d7ac180" [label="A", color="forestgreen" penwidth="1" ];
+  "0x25387d7ac180" [label="yield
+Actions: 1, Forks: 1
+State: {\"a\":0,\"b\":true}
+", color="green" penwidth="2" ];
+  "0x25387d7ac180" -> "0x25387d7ac400" [label="A", color="forestgreen" penwidth="1" ];
+  "0x25387d7ac180" -> "0x25387d7ac180" [label="B", color="forestgreen" penwidth="1" ];
+  "0x25387d7ac400" -> "0x25387d7ac400" [label="B", color="forestgreen" penwidth="1" ];
+  "0x25387d7ac000" -> "0x25387d7ac180" [label="B", color="forestgreen" penwidth="1" ];
+}
