@@ -2,7 +2,7 @@
 # OQ2, negative control: `liveness: "none"` names the mode that checks no
 # liveness property at all. The assertion below is the one
 # `liveness_strict.fizz` falsifies, and here the run passes without printing a
-# `Checking …` line. Any unrecognised string behaves the same way, which is
+# `Checking …` line. Any unrecognized string behaves the same way, which is
 # why the RFC records "strict" or "eventual" explicitly rather than relying on
 # the default.
 options:

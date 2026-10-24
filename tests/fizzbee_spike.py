@@ -84,9 +84,14 @@ def missing_opt_in_reason() -> str | None:
 
     Examples
     --------
+    The example opts out in a copy of the environment rather than in this
+    process, so it gives the same answer however the suite was invoked and
+    leaves ``os.environ`` as it found it.
+
     >>> import os
-    >>> os.environ.pop("BUILD_LIMITS_MODEL_CHECK", None)
-    >>> reason = missing_opt_in_reason()
+    >>> from unittest import mock
+    >>> with mock.patch.dict(os.environ, {}, clear=True):
+    ...     reason = missing_opt_in_reason()
     >>> "BUILD_LIMITS_MODEL_CHECK" in reason
     True
     """
@@ -121,7 +126,7 @@ def graph_states(text: str) -> list[str]:
     return [state.replace('\\"', '"') for state in _GRAPH_STATE.findall(text)]
 
 
-def normalise(text: str) -> str:
+def normalize(text: str) -> str:
     """Mask the figures that differ between two runs of the same model.
 
     Parameters
@@ -136,9 +141,12 @@ def normalise(text: str) -> str:
 
     Examples
     --------
-    >>> normalise("Writen graph dotfile: out/run_2026-10-24_13-59-07/graph.dot")
-    'Writen graph dotfile: out/run_<timestamp>/graph.dot'
-    >>> normalise("Nodes: 4, queued: 1, elapsed: 812.5ms")
+    The launcher's own lines are quoted by their stable part alone, because
+    upstream misspells "Written" and no matcher may depend on that spelling.
+
+    >>> normalize("dot -Tsvg out/run_2026-10-24_13-59-07/graph.dot -o graph.svg")
+    'dot -Tsvg out/run_<timestamp>/graph.dot -o graph.svg'
+    >>> normalize("Nodes: 4, queued: 1, elapsed: 812.5ms")
     'Nodes: 4, queued: <count>, elapsed: <duration>'
     """
     for pattern, replacement in _VOLATILE:
@@ -243,7 +251,7 @@ def run_model(
             process.communicate()
             pytest.fail(f"{model} did not finish within {timeout:.0f}s")
         return CheckerRun(
-            process.returncode, normalise(raw.decode()), _run_directory(directory)
+            process.returncode, normalize(raw.decode()), _run_directory(directory)
         )
 
 

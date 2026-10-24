@@ -18,11 +18,11 @@ from pathlib import Path
 
 import pytest
 from fizzbee_expectations import (
-    FAILED,
     FAILED_LIVENESS,
     PASSED,
     Expectation,
     check,
+    invariant,
     paired,
 )
 from fizzbee_spike import error_graph, graph_states, link_names, link_states, run_model
@@ -168,8 +168,8 @@ def test_interleaving_plain_rollback(tmp_path: Path) -> None:
         tmp_path,
         Expectation(
             "interleaving_plain_rollback.fizz",
-            FAILED,
-            f"{FAILED}. Invariant:  NeverClosedDelivery names the closed-gate delivery",
+            invariant("NeverClosedDelivery"),
+            "the closed-gate delivery violates the safety assertion",
         ),
     )
     graph = error_graph(run)
@@ -241,7 +241,7 @@ def test_liveness_modes(tmp_path: Path) -> None:
     ``liveness_strict.fizz`` reports the lasso, ``liveness_eventual.fizz``
     passes and prints the nondeterministic-checker line, and
     ``liveness_off.fizz`` passes with no ``Checking`` line at all. Any
-    unrecognised string behaves like ``none``, so the RFC names the mode.
+    unrecognized string behaves like ``none``, so the RFC names the mode.
     """
     strict = check(
         tmp_path / "strict",
