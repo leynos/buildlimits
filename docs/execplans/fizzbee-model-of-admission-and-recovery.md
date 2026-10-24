@@ -267,6 +267,12 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     - trust-on-first-use recording of the digest, with the date and the URL;
     - a mismatch message forbidding blind digest bumps;
     - the release's container image digest recorded as a fallback pin.
+  - Confirmed (EP-M1 step 3): the tag is unsigned and no signature exists, so
+    trust-on-first-use is the whole of the evidence for the tarball. The image
+    carries SLSA v1 provenance naming its GitHub Actions builder and source
+    revision, which the tarball does not. The 675 MiB unpacked cache entry and
+    the `python3` runtime dependency are recorded in RFC 0001 open questions 4
+    and 5. The risk stands; it is now measured rather than assumed.
 - **Shared-host load.**
   - Risk: the checker uses every core and much memory on a host that other
     agents share.
@@ -319,6 +325,17 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     were each exercised against a local fixture asset, and every failure path
     left no tarball behind. The download and unpack happen inside
     `flock ... 9>"$$home.lock"`, so two checkouts share one cache entry.
+  - [x] (2026-10-24 11:25Z) Step 3, provenance and licence, recorded as RFC 0001
+    "Open question 4" and "Open question 5". The tarball digest is
+    trust-on-first-use from 2026-10-24: the tag is unsigned, and the release
+    publishes per-asset digests and nothing more. The tarball holds 1,795
+    entries and no Apache-2.0 text or `NOTICE`; the licence rests on the
+    repository's Apache-2.0 declaration. The plan's image reference
+    `ghcr.io/fizzbee-io/fizzbee:v0.5.4` does not exist — the tag is `0.5.4` —
+    so the corrected index digest is pinned in the `Makefile` as
+    `FIZZBEE_IMAGE`, a fallback that no target uses. A toy model passed under
+    Podman `--network=none`, and the parser's `python3` dependency was
+    confirmed by removing it from `PATH`.
 - [ ] EP-M2: `modelcheck` pure domain.
 - [ ] EP-M3: `modelcheck` ports, service, adapters and command-line interface.
 - [ ] EP-M4: minimal model with the busy queue (W1).
@@ -359,6 +376,29 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
   - Evidence: FizzBee `main.go` and the `fizz` wrapper.
   - Impact: traces are machine-readable (open question 3, provisionally), and
     runs must use scratch copies (Constraints).
+- **The release publishes no signature, and the image's tag is not the plan's.**
+  - Observation: the `v0.5.4` tag is unsigned, so the tarball digest is
+    trust-on-first-use. The container image tag is `0.5.4`; the plan's
+    `ghcr.io/fizzbee-io/fizzbee:v0.5.4` does not exist in the registry.
+  - Evidence: `gh api repos/fizzbee-io/fizzbee/git/tags/<sha>` reports
+    `verification.reason: unsigned`; `skopeo list-tags` returns `0.5.3`,
+    `latest` and `0.5.4` only.
+  - Impact: RFC 0001 records the trust-on-first-use basis, and the `Makefile`
+    pins the image by index digest as `FIZZBEE_IMAGE`, a fallback that no
+    target uses. The image's amd64 attestation does carry SLSA v1 provenance,
+    so a later decision to containerize inherits stronger evidence than the
+    tarball path has.
+- **The parser needs a system `python3`, not a `python` or a bundled one.**
+  - Observation: `parser/parser_bin` starts `#!/usr/bin/env python3`, so the
+    host interpreter only runs the stub; the stub then re-executes the bundled
+    CPython 3.12.11 by a hard-coded path in its runfiles tree.
+  - Evidence: `strace -e trace=execve` shows `/usr/bin/python3` running
+    `parser_bin` and then the bundled `bin/python3`; with `python3` removed
+    from `PATH` the run stops at `/usr/bin/env: 'python3': No such file or
+    directory` and exits 1.
+  - Impact: every host that runs the checker needs `python3` on `PATH`. The
+    container image supplies its own at `/usr/local/bin/python3`, which is why
+    the fallback pin works even where the host lacks one.
 - **`fizz` writes `out/` into the directory it is run from.**
   - Observation: the v0.5.4 binary writes `out/run_<timestamp>/graph.dot` and
     the node/link files relative to the current directory, and `Spec.json`
@@ -549,6 +589,11 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
   - `FIZZBEE_ASSET` and `FIZZBEE_URL` are separate variables, so a test can
     point the recipe at a local fixture and exercise the digest and path
     guards without a 335 MiB download.
+  - `FIZZBEE_IMAGE` records the container image by index digest. It is a
+    fallback pin only: no target pulls or runs it, and adding a container
+    runtime to the gates is not W1's business. The plan's `v0.5.4` tag does not
+    exist, so the corrected pin is the digest both `0.5.4` and `latest` resolve
+    to. RFC 0001 open question 4 records the correction.
 - **D9. Create `make model-check` in EP-M4.**
   - It is created ahead of roadmap task 1.5.1, with W1 bounds only.
   - Rationale: W1's own acceptance needs a reproducible command. 1.5.1 later
@@ -1065,9 +1110,11 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
      - Record the tarball's file listing, and every bundled LICENSE or NOTICE
        file (the repository is Apache-2.0, and the bundled CPython is under
        the PSF licence).
-     - Record the digest of the container image
-       `ghcr.io/fizzbee-io/fizzbee:v0.5.4` as `FIZZBEE_IMAGE`, a fallback pin
-       that is not used by default.
+     - Record the digest of the container image as `FIZZBEE_IMAGE`, a fallback
+       pin that is not used by default. This step named the tag `v0.5.4`;
+       the registry publishes `0.5.4` with no `v`, so the pin is the index
+       digest that tag resolves to, and RFC 0001 open question 4 records the
+       correction.
      - If rootless Podman permits it, run one toy model with `--network=none`
        to show that the tool needs no network.
   4. **Toy models,** under `models/spike/`.
@@ -1716,7 +1763,11 @@ dispositions.
 ## Interfaces and dependencies
 
 There are no new Python dependencies. FizzBee v0.5.4 (Apache-2.0) is an
-external tool, pinned in the `Makefile` by version and digest.
+external tool, pinned in the `Makefile` by version and digest. It needs bash,
+the GNU coreutils the launcher calls, and a `python3` on `PATH`; it needs no
+network, no container runtime and no JVM. RFC 0001 open question 4 records the
+release census and the dependencies, and open question 5 the licence and the
+bundled notices.
 
 For screen readers: the following block is a directory tree of the planned
 `modelcheck` package and the `models` directory. Each entry names the module's
