@@ -381,8 +381,9 @@ explicitly.
     `FAILED: Model checker failed` line from the liveness
     `FAILED: Liveness check failed` line, which the first version of the tests
     conflated. A fifth module, `tests/test_fizzbee_opt_in.py`, pins the
-    opt-in itself in five tests, so the four gate-exercised modules collect
-    20 tests between them.
+    opt-in itself in six tests; it carries no `fizzbee` marker, so `-m fizzbee`
+    selects 19 tests from the other three modules and the opt-in module runs in
+    `make test` instead.
   - [x] (2026-10-24 13:30+02:00) Step 6, the documentation: the `make fizzbee`
     row in the developer's guide's Table 1, the `fizzbee` marker and
     `BUILD_LIMITS_MODEL_CHECK` sentence in §11.3, the extended `.tools`
@@ -617,6 +618,42 @@ explicitly.
     convention. The one genuine UTC reference, EP-M5's cron band, stays marked
     UTC. A record that cannot be checked against a clock is not evidence, so
     future entries name their offset.
+- **A make stamp that only names the digest cannot notice a release change.**
+  - Observation: `FIZZBEE_HOME` was keyed on `$(FIZZBEE_SHA256)` alone and the
+    stamp was a constant `.verified` inside it, so
+    `make fizzbee FIZZBEE_VERSION=<other>` found the stamp already present, ran
+    nothing, and left `.tools/fizzbee` selecting the release that was already
+    unpacked. The comment above the pin claimed the asset and digest "move
+    together", which was true only inside the recipe — and make never reached
+    the recipe.
+  - Evidence: `make -n fizzbee FIZZBEE_VERSION=v9.9.9` printed only the
+    `ln -sfn` line, with no fetch and no check. After naming the asset in the
+    stamp, the same command prints the whole recipe, and
+    `make -n fizzbee FIZZBEE_SHA256=deadbeef` moves the directory too.
+  - Impact: the stamp is now `$(FIZZBEE_HOME)/.verified-$(FIZZBEE_ASSET)`, and
+    the recipe reads and writes `$(FIZZBEE_STAMP)` rather than a hard-coded
+    path. A cache written under the old name must be renamed once, or `make
+    fizzbee` re-downloads it; that is the intended behaviour for a stamp whose
+    identity changed. This was CodeRabbit's only finding in the review after
+    the milestone's record was committed.
+- **A gate can fail on an advisory that did not exist when the branch
+  started.**
+  - Observation: `make audit` failed with six advisories against `filelock`
+    4.2.0, a dev-only transitive dependency of `pip-audit`. None of them
+    existed at the pre-review gate run: they were published on 2026-10-23
+    between 21:59 and 22:28, while the branch's earlier green run is older.
+    The same pin is on `main`, so the failure was inherited rather than
+    introduced.
+  - Evidence: `pip-audit` printed `Found 6 known vulnerabilities in 1 package`
+    with six CVE identifiers, all fixed in 4.2.1. `git show origin/main:uv.lock`
+    carries `filelock` 4.2.0, and the dependency chain is `pip-audit` →
+    `cachecontrol[filecache]` → `filelock`. The scheduled audit workflow's
+    last run on `main`, on 2026-10-19, predates all six.
+  - Impact: `uv lock --upgrade-package filelock` moved it to 4.2.4, and
+    `make audit` now reports `No known vulnerabilities found`. No manifest
+    changed. A branch that is green today can go red tomorrow for a reason
+    outside its diff, so a gate rerun after any delay is worth reading rather
+    than trusting the older result.
 
 ## Decision log
 
@@ -785,6 +822,13 @@ explicitly.
     runtime to the gates is not W1's business. The plan's `v0.5.4` tag does not
     exist, so the corrected pin is the digest both `0.5.4` and `latest` resolve
     to. RFC 0001 open question 4 records the correction.
+  - The stamp is named for the asset rather than the constant `.verified`:
+    `$(FIZZBEE_HOME)/.verified-$(FIZZBEE_ASSET)`. Make decides whether to run a
+    recipe from its prerequisites' timestamps, so the stamp's _path_ is the
+    only thing that can make a release change re-verify. Once the recipe has
+    been skipped, its internal digest comparison never runs. A constant name
+    therefore let `make fizzbee FIZZBEE_VERSION=<other>` succeed while
+    `.tools/fizzbee` still selected the release already unpacked.
 - **D9. Create `make model-check` in EP-M4.**
   - It is created ahead of roadmap task 1.5.1, with W1 bounds only.
   - Rationale: W1's own acceptance needs a reproducible command. 1.5.1 later
@@ -1319,8 +1363,13 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
      - `FIZZBEE_SHA256 ?= 8a1d0900f9ad920002151922337912e11f9e588a2f1196249fe40bf75370f782`;
      - `FIZZBEE_HOME ?= $${XDG_CACHE_HOME:-$$HOME/.cache}/buildlimits/fizzbee/$(FIZZBEE_SHA256)`;
      - `FIZZ ?= .tools/fizzbee/fizz`;
-     - a stamp file target, `$(FIZZBEE_HOME)/.verified`, that contains the
-       digest.
+     - a stamp file target, `$(FIZZBEE_HOME)/.verified-$(FIZZBEE_ASSET)`, that
+       contains the digest. Naming the asset in the file, rather than leaving a
+       bare `.verified`, is what makes a release override re-verify: make
+       resolves the stamp path before it decides whether to skip the recipe, so
+       a stamp whose name does not move would let
+       `make fizzbee FIZZBEE_VERSION=...` succeed while `.tools/fizzbee` still
+       selected the release already unpacked.
 
      The recipe:
      - runs under `flock` on `$(FIZZBEE_HOME).lock`;
@@ -1403,10 +1452,12 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
   - EP-M1-E5: the four gates pass.
   - Roadmap tasks 1.1.1 to 1.1.3 are ticked.
   - **Observed 2026-10-24 13:31+02:00.** E1: `make fizzbee` exited 0 twice and
-    the second run printed nothing (0 bytes). E2: 20 tests passed in 17.50 s with
-    `BUILD_LIMITS_MODEL_CHECK=1`, across both test modules. E3: without the
-    variable all 20 skipped, each reporting "needs the pinned FizzBee checker;
-    set BUILD_LIMITS_MODEL_CHECK=1 (after `make fizzbee`)". E4:
+    the second run printed nothing (0 bytes). E2: 20 tests passed in 17.50 s
+    with `BUILD_LIMITS_MODEL_CHECK=1`, across the two test modules that existed
+    then; the fixtures module was added later, so the command E2 now names
+    selects 19 and is recorded at the re-run above. E3: without the variable all
+    20 skipped, each reporting "needs the pinned FizzBee checker; set
+    BUILD_LIMITS_MODEL_CHECK=1 (after `make fizzbee`)". E4:
     `git status --porcelain` showed only the milestone's own tracked and
     untracked files, and no run directory.
   - **Observed 2026-10-24 16:28+02:00, E5.** Scrutineer ran the six gates in
@@ -1445,7 +1496,7 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
     | `make test` | 0 | `1777 passed, 44 skipped`; `46 snapshots passed` |
     | `make markdownlint` | 0 | `Summary: 0 issues in 0 files`; spelling gate exit 0 |
     | `make nixie` | 0 | `All diagrams validated successfully!` |
-    | opted-in spike suite | 0 | `25 passed` under `BUILD_LIMITS_MODEL_CHECK=1 -m fizzbee` |
+    | opted-in spike suite | 0 | `19 passed` under `BUILD_LIMITS_MODEL_CHECK=1 -m fizzbee tests`; the six unmarked opt-in tests run without the marker |
     | opt-in inheritance | 0 | `make test` with the variable exported: 1,821 outcomes identical to a run without it |
 
     `git status --porcelain` was byte-identical before and after every run,
@@ -1496,6 +1547,22 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
       the recipe with `env -u BUILD_LIMITS_MODEL_CHECK`; a gate run with the
       variable exported reproduced all 1,821 test outcomes of a run without
       it.
+    - _The FizzBee cache could not see a release change._ From a third run,
+      against `7407648`, after this record was first written. `FIZZBEE_STAMP`
+      was a constant `.verified` under a directory keyed on the digest alone,
+      so a version override skipped the recipe and kept the old checker.
+      Accepted and fixed: the stamp now names the asset, and the recipe reads
+      `$(FIZZBEE_STAMP)` rather than a hard-coded path. Evidence is under
+      `Surprises & discoveries`. That run also caught two stale test counts in
+      this record, which are corrected: `-m fizzbee` selects 19 tests, not 25,
+      because the six opt-in tests carry no marker.
+  - **Dependency audit, 2026-10-24 17:45+02:00.** `make audit` exited 2 on six
+    advisories against `filelock` 4.2.0, published the previous evening while
+    the branch sat between gate runs. The pin is inherited from `main` and
+    reaches the project only through `pip-audit`. `uv lock
+    --upgrade-package filelock` moved it to 4.2.4 and the gate then printed
+    `No known vulnerabilities found`. `Surprises & discoveries` records the
+    detail; no manifest changed.
   - **Milestone scope, measured 2026-10-24 16:40+02:00, at `bac76ce`.** Sixteen
     in-scope files and 1,197 net Python lines, against the plan's 25-file and
     1,500-line budget: 1,165 lines in six new modules, plus 33 added and one
