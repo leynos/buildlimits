@@ -1,6 +1,6 @@
 """Assert the files a passing run and a failing run write, and how big they get.
 
-A verdict alone says what the checker decided; these tests pin the artifacts
+A verdict alone says what the checker decided; these tests pin the artefacts
 and the figures RFC 0001 relies on, so a version bump that changes an output
 format, an exit code, or a state count fails here rather than silently
 invalidating the record. The exit-code questions live here because they are
@@ -15,11 +15,13 @@ from pathlib import Path
 
 import pytest
 from fizzbee_expectations import (
+    DEADLOCK,
     FAILED,
     FAILED_LIVENESS,
     PASSED,
     Expectation,
     check,
+    invariant,
 )
 from fizzbee_spike import error_graph, link_names, run_model
 
@@ -52,8 +54,8 @@ def test_error_graph_link_schema(tmp_path: Path, snapshot: SnapshotAssertion) ->
         tmp_path,
         Expectation(
             "safety_failure.fizz",
-            FAILED,
-            f"{FAILED}. Invariant:  NeverFull names the failing invariant",
+            invariant("NeverFull"),
+            "the failing invariant is named on the verdict line",
         ),
     )
     graph = error_graph(run)
@@ -72,16 +74,20 @@ def test_deadlock_and_safety_failures_use_different_lines(tmp_path: Path) -> Non
     """A deadlock prints ``DEADLOCK detected``; a safety failure names the invariant."""
     deadlock = check(
         tmp_path / "deadlock",
-        Expectation("deadlock.fizz", FAILED, "the deadlock is reported as a failure"),
+        Expectation(
+            "deadlock.fizz",
+            DEADLOCK,
+            "the deadlock is reported as a deadlock rather than an assertion",
+        ),
     )
-    assert "DEADLOCK detected" in deadlock.stdout, "the deadlock is named as one"
+    assert FAILED in deadlock.stdout, "a deadlock is still a failed run"
 
     check(
         tmp_path / "safety",
         Expectation(
             "safety_failure.fizz",
-            FAILED,
-            f"{FAILED}. Invariant:  NeverFull names the failing invariant",
+            invariant("NeverFull"),
+            "the failing invariant is named on the verdict line",
         ),
     )
 
@@ -146,8 +152,8 @@ def test_truncation_is_silent_and_can_invent_a_pass_or_a_failure(
         tmp_path / "full-safety",
         Expectation(
             "truncation_safety_reaches.fizz",
-            FAILED,
-            f"without the bound {FAILED}. Invariant:  NeverFull",
+            invariant("NeverFull"),
+            "without the bound the forbidden state is reached",
         ),
     )
     cut_live = check(
