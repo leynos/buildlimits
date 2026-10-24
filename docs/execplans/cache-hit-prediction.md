@@ -8,9 +8,8 @@ be kept up to date as work proceeds.
 Status: APPROVED FOR EXECUTION; IN PROGRESS (2026-10-24; EP-M0 is complete; r31
 documentation gates and review passed; EP-M1 validation, audit evidence and
 documentation gates and milestone review passed; EP-M1 commits are complete;
-EP-M2 implementation, gates and O1 mutation controls passed; milestone review
-is complete with no actionable findings; final documentation gates, commit and
-post-commit CodeRabbit review are pending)
+EP-M2 is complete in `327ae5a` and `080d9c0`, with final gates and local
+CodeRabbit review passed; EP-M3 is next)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -457,8 +456,26 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   `/tmp/o1-baseline-red-buildlimits-cache-hit-prediction.out`.
 - [x] (2026-10-24 15:03Z) Manual review of the M2 modules, contracts,
   integration tests and documentation found no actionable defects.
-- [ ] Run final documentation gates after this evidence update, commit M2, and
-  complete the post-commit CodeRabbit review.
+- [x] (2026-10-24 16:00Z) CodeRabbit's review of M2 commit
+  `327ae5ac2f74dbdee1d643db7cf80d7d9b4845a4` found five valid improvements:
+  named CrossHair fields, named footprint lookups, public dataclass field
+  discovery in the fixture helper, a shared BDD result guard and decoder-limit
+  failures mapped to `parse_error`. Commit
+  `080d9c05296018c0665db5428bfcfb877c52be16` applies those changes. The final
+  candidate archive
+  `3fa0205e1b45e36366edd7271e37ae6a575d8899b6464a889d4fdda4f7b897fa` passed
+  formatting, lint, typecheck and all tests (1,861 passed, 26 skipped). The
+  unchanged lockfile SHA
+  `4274d6491e149c4668defe091e389d7eaa0f69cbd8fc2aebc7953d7f40554d13` remains
+  covered by the dependency-only pip-audit 2.10.1 result: no known
+  vulnerabilities. Gate logs use the
+  `/tmp/*-buildlimits-cache-hit-prediction-final-diagnostic.out` prefix.
+- [x] (2026-10-24 16:00Z) The local committed-diff CodeRabbit review of
+  `080d9c05296018c0665db5428bfcfb877c52be16`, against
+  `327ae5ac2f74dbdee1d643db7cf80d7d9b4845a4`, completed with zero findings
+  across eight files. It ran as
+  `coderabbit review --agent --fresh --committed`; PR #24 remained a draft, so
+  no formal review was queued and no PR state or remote branch was changed.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
@@ -467,7 +484,9 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] EP-M1: real-binary feasibility and axiom check: **go**; implementation,
   code and documentation gates passed; milestone review passed; commits are
   `3455cee` and `e583fdc`.
-- [ ] EP-M2: pure statistics, footprints, attribution and gate.
+- [x] EP-M2: pure statistics, footprints, attribution and gate; implementation
+  commit `327ae5a`, review follow-up `080d9c0`, final gates and local
+  CodeRabbit review complete.
 - [ ] EP-M3: pure keys, records and the window ledger.
 - [ ] EP-M4: the reading sequencer over fake ports.
 - [ ] EP-M5: adapters (non-blocking child, queries, generation, store
@@ -1011,6 +1030,17 @@ EP-M0 conformance and evidence (2026-10-24):
   `uv sync` regenerated unrelated `uv.lock` drift during formatting and gates;
   it was restored each time. No code mutation results apply to this
   documentation and fixture work.
+
+EP-M2 conformance and evidence (2026-10-24):
+
+- The post-review implementation changes are isolated in `080d9c0`. The final
+  candidate passed the deterministic code gates and the full one-worker suite;
+  the O1 mutation controls ran before the review follow-up and failed at their
+  intended assertions as recorded above. No dependency changed, so the pinned
+  dependency-only audit result remains applicable.
+- The local CodeRabbit pass inspected the committed range from `327ae5a` to
+  `080d9c0` and found no further issues. The draft PR's remote head was not
+  changed.
 
 ## Context and orientation
 
