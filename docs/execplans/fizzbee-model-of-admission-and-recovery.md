@@ -312,6 +312,13 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     import `eba08ad`, and it names `9f2c94f` (incident 1), `f1ee9aa` (incident
     2) and `d91cd22` (incident 4). The vendored `d024aaa` snapshot is recorded
     as corroboration.
+  - [x] (2026-10-24 13:05Z) Step 2, the pin and installer, in the `Makefile` as
+    `FIZZBEE_VERSION`, `FIZZBEE_SHA256`, `FIZZBEE_HOME`, `FIZZBEE_STAMP` and
+    `FIZZ`. `make fizzbee` printed the fetch line once and nothing on the second
+    run; the digest, the unsafe-member guard and the `FIZZBEE_HOME` suffix guard
+    were each exercised against a local fixture asset, and every failure path
+    left no tarball behind. The download and unpack happen inside
+    `flock ... 9>"$$home.lock"`, so two checkouts share one cache entry.
 - [ ] EP-M2: `modelcheck` pure domain.
 - [ ] EP-M3: `modelcheck` ports, service, adapters and command-line interface.
 - [ ] EP-M4: minimal model with the busy queue (W1).
@@ -352,6 +359,17 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
   - Evidence: FizzBee `main.go` and the `fizz` wrapper.
   - Impact: traces are machine-readable (open question 3, provisionally), and
     runs must use scratch copies (Constraints).
+- **`fizz` writes `out/` into the directory it is run from.**
+  - Observation: the v0.5.4 binary writes `out/run_<timestamp>/graph.dot` and
+    the node/link files relative to the current directory, and `Spec.json`
+    beside the specification file it reads.
+  - Evidence: a smoke run of the pinned digest on a three-state toy spec
+    printed `Writen graph dotfile: out/run_2026-10-24_12-58-12/graph.dot` and
+    left `clock.json` next to `clock.fizz`.
+  - Impact: `models/**/Spec.json` and `models/**/out/` go in `.gitignore` at
+    EP-M1 step 5, and every target run uses a scratch directory. Upstream's
+    `Writen` above is a typo, so no output matcher may depend on the correct
+    spelling of that word; match on `graph dotfile` instead.
 - **One supervisor tick is one atomic unit.**
   - Observation: `Supervisor._tick` (`buildlimits/supervisor.py:326-345`)
     reaps leaders, empties scopes and runs `poll_services`, which runs the
@@ -522,6 +540,15 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
 - **D8. Install from EP-M1 through `make fizzbee`.**
   - Rationale: every W1 task needs a reproducible binary. Roadmap task 1.5.1
     is ticked only when its full success criterion is met, in EP-M12.
+  - The cache root is resolved by make, not by the shell:
+    `$(or $(XDG_CACHE_HOME),$(HOME)/.cache)` rather than
+    `$${XDG_CACHE_HOME:-$$HOME/.cache}`. Make compares the stamp path it is
+    given against the file system, and a shell expression is not expanded in a
+    prerequisite name, so the shell form would make the stamp unreachable and
+    refetch on every run. A comment in the `Makefile` records the reason.
+  - `FIZZBEE_ASSET` and `FIZZBEE_URL` are separate variables, so a test can
+    point the recipe at a local fixture and exercise the digest and path
+    guards without a 335 MiB download.
 - **D9. Create `make model-check` in EP-M4.**
   - It is created ahead of roadmap task 1.5.1, with W1 bounds only.
   - Rationale: W1's own acceptance needs a reproducible command. 1.5.1 later
