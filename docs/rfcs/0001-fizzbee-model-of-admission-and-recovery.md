@@ -606,6 +606,73 @@ These are to be settled by evidence, mostly in W1, rather than assumed:
 12. Whether supervisor crash and restart, with start-up accounting and
     barrier reclamation, belong in W2 or a later revision.
 
+## Open questions record
+
+This section records the evidence that settles the open questions above. Each
+entry states the question, the answer, and the evidence for it. An entry is
+added when the evidence exists, not when the question is raised.
+
+### Open question 8: the pre-fix revisions
+
+Incidents 1, 2 and 4 predate the import into this repository, so the question
+is whether their pre-fix behaviour survives in any history at all.
+
+**The dev-env-rocky history does not name it.** The package was vendored there
+whole in `d83f709` ("Add bounded recovery for starvation by detached cached
+work", 2026-10-14) and removed whole in `0eeebbe` (2026-10-19). Between those
+commits its source modules were never touched: the only changes under
+`python/build_limits/` are test-quality repairs in `0e60b80` and `5e1ee52`.
+Pickaxe searches of that history add nothing: `RECOVERY_COOLDOWN_SECONDS` and
+`_last_fault` appear only in the vendoring commit, and `cached_moving` and
+`cooling_for` appear nowhere at all. The vendored copy at `d024aaa`, the last
+commit that carries it, shows the pre-fix behaviour of all three incidents —
+one 900-second cooldown, no `cached_moving`, and an idle branch that drops
+`last_fault` — but it is a single snapshot, not three revisions.
+
+**The in-repository history names it.** PR #9 was squashed, but the staging
+branch `initial-import` keeps its individual commits, and that branch's tip
+`416b1ae` is tree-identical to the squashed import `eba08ad`:
+`git diff eba08ad initial-import` is empty. The revisions below are read from
+that branch, which is therefore the exact pre-squash history of the imported
+code rather than a reconstruction.
+
+| Incident         | Last pre-fix commit | Clauses it contributes                                                                                                                                                                       | Rest of its diff                                        |
+| ---------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| 1. Livelock      | `9f2c94f`           | `blocked` refuses while `counts.running or counts.draining` and then requires `held == server_drain`; the trigger's `_every_held_token_awaits_the_server` requires the same equality         | Spelling fixes in four files, none in a recovery module |
+| 2. Idle cooldown | `f1ee9aa`           | `_finish` always sets `now + RECOVERY_COOLDOWN_SECONDS`; `describe` has no `cooling_for`; the idle branch of `_recovery_lines` returns no line                                               | A migration guide, `docs/contents.md` and the README    |
+| 3. Capacity loss | `eba08ad`           | The trigger needs `zero_visible_roots` and no cached group moving in one reading, with no stale proof; `_try_stop` requires the zero-roots proof; `request` is refused while `blocked` holds | The imported package itself                             |
+| 4. Hidden fault  | `d91cd22`           | The idle branch of `status_render._recovery_lines` drops `last_fault`, so a faulted ending renders as a clean one                                                                            | Tests for the recovery rests                            |
+
+_Table 9: Pre-fix revisions of the four incidents._
+
+The five files the incidents turn on — `admission`, `admission_state`,
+`cache_recovery`, `recovery_starvation` and `status_render` — are unchanged
+between `a2f2413` and `9f2c94f`, so the import itself is an equally valid
+transcription point for incident 1. Each fix is the commit immediately after
+the revision named:
+
+- Incident 1: `846b1e3` adds `Counts.cached_moving`, makes `blocked` read it,
+  replaces the trigger clause with `_the_server_alone_holds_cached_work` and
+  drops the `held != server_drain` clause. Its 14-file diff changes one
+  production behaviour — the new snapshot field and the clauses that read it —
+  beside comments, documentation and tests.
+- Incident 2: `ab6796e` adds `cooldown_after` (900 seconds after a refused
+  restart, 60 after a clean one), reports `cooling_for`, and renders the rest.
+- Incident 4: `416b1ae` retains `last_fault` in the idle branch.
+- Incident 3: `37d08e5` and `7445bf0`; see "Production incidents" above.
+
+`846b1e3` is not an ancestor of `main`. PR #9 was squashed, so `main` carries
+the pre-fix and fixed states in one commit, `eba08ad`. That is why the
+known-bad configurations transcribe revisions from `initial-import` rather than
+annotating `main`.
+
+**Consequence for W1.** The known-bad configurations name `9f2c94f`, `f1ee9aa`
+and `d91cd22` in their `# transcribes:` comments. The vendored `d024aaa`
+snapshot is recorded beside them as corroboration, not as a revision: it agrees
+with `a2f2413` except for the import's mechanical changes — `from __future__`
+removal, `build_limits` to `buildlimits` renames, docstring paths, and the
+`_section` helper added to `status_render`.
+
 ## Recommendation
 
 Approve W1 now and decide the rest at G1. The incidents expose a class of
