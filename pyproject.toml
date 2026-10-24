@@ -1289,15 +1289,6 @@ reason = "These frozen records carry counters from separate domains and lifecycl
 [[tool.duplication_gate.allow]]
 members = [
     "tests/test_outcome_rules_behaviour.py::group_has_label",
-    "tests/test_outcome_rules_behaviour.py::all_groups_have_label",
-    "tests/test_outcome_rules_behaviour.py::group_has_reason",
-    "tests/test_outcome_rules_behaviour.py::outcome_has_reason",
-]
-reason = "Each BDD then-step checks that its preceding scenario produced a result. The guard documents the step precondition locally and prevents a later attribute error from obscuring the missing scenario result."
-
-[[tool.duplication_gate.allow]]
-members = [
-    "tests/test_outcome_rules_behaviour.py::group_has_label",
     "tests/test_outcome_rules_behaviour.py::group_has_reason",
 ]
 reason = "These BDD steps both assert the expected label for one group, then check a different attribution field. A shared assertion helper would conceal which feature phrase each step fulfils."

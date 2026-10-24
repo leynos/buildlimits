@@ -151,7 +151,7 @@ def parse_statistics(
     """
     try:
         document_value = json.loads(text)
-    except json.JSONDecodeError, TypeError:
+    except ValueError, TypeError, RecursionError:
         document_value = None
 
     document = _mapping(document_value)

@@ -1,15 +1,14 @@
 """Normalize pinned sccache statistics for the EP-M1 acceptance fixture."""
 
+import dataclasses as dc
 import json
 import typing as typ
 from pathlib import Path
 
 import pytest
 
-# Keep the acceptance fixture's field inventory aligned while preserving adv_counts.
+# Keep the acceptance fixture aligned to the parser's public value object.
 from buildlimits.outcome_stats import (
-    _CACHE_COUNTERS,
-    _SCALAR_COUNTERS,
     ReadFailure,
     StatsReading,
     parse_statistics,
@@ -19,6 +18,11 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 _WINDOWS_FIXTURE = Path(__file__).parent / "fixtures" / "sccache_0_14_0_windows.jsonl"
+_COUNTER_FIELDS = tuple(
+    field.name for field in dc.fields(StatsReading) if field.name != "version"
+)
+_CACHE_FIELDS = ("cache_hits", "cache_misses", "cache_errors")
+_SCALAR_FIELDS = tuple(name for name in _COUNTER_FIELDS if name not in _CACHE_FIELDS)
 
 
 def _stats_payload(document: cabc.Mapping[str, object]) -> cabc.Mapping[str, object]:
@@ -61,8 +65,7 @@ def _footprint(document: cabc.Mapping[str, object]) -> dict[str, int]:
             raise TypeError(message)
         case StatsReading() as validated_reading:
             return {
-                field: getattr(validated_reading, field)
-                for field in (*_SCALAR_COUNTERS, *_CACHE_COUNTERS)
+                field: getattr(validated_reading, field) for field in _COUNTER_FIELDS
             }
         case _:
             message = "sccache statistics parser returned an unexpected value"
@@ -83,8 +86,8 @@ def _fixture_reading(document: cabc.Mapping[str, object]) -> dict[str, object]:
         If a cache-result counter is not represented by an object.
     """
     stats = _stats_payload(document)
-    normalized: dict[str, object] = {name: stats[name] for name in _SCALAR_COUNTERS}
-    for name in _CACHE_COUNTERS:
+    normalized: dict[str, object] = {name: stats[name] for name in _SCALAR_FIELDS}
+    for name in _CACHE_FIELDS:
         value = stats[name]
         if not isinstance(value, dict):
             message = f"statistics field {name!r} is not an object"

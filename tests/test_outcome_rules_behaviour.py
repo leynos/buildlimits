@@ -84,6 +84,19 @@ def _finish_reading(world: OutcomeWorld, generation: str, **changes: int) -> Non
     world.result = attribute(world.before, world.after, world.window)
 
 
+def _result(world: OutcomeWorld) -> Attribution:
+    """Return the scenario's evaluated attribution.
+
+    Examples
+    --------
+    >>> result = Attribution(labels=(("g0", "hit"),), kind="solo", reason="none")
+    >>> _result(OutcomeWorld(result=result)).labels
+    (('g0', 'hit'),)
+    """
+    assert world.result is not None, "the scenario must have a classification result"
+    return world.result
+
+
 @given(parsers.parse('a baseline reading in generation "{generation}"'))
 def baseline_reading(world: OutcomeWorld, generation: str) -> None:
     """Establish a zero-counter baseline for one server generation."""
@@ -201,31 +214,29 @@ def declined_reading(world: OutcomeWorld) -> None:
 @then(parsers.parse('the group is labelled "{label}" with attribution "{kind}"'))
 def group_has_label(world: OutcomeWorld, label: str, kind: str) -> None:
     """Assert the solo result label and attribution kind."""
-    assert world.result is not None, "the scenario must have a classification result"
-    assert world.result.labels == (("g0", label),), (
+    result = _result(world)
+    assert result.labels == (("g0", label),), (
         "the solo group receives its expected label"
     )
-    assert world.result.kind == kind, "the solo result keeps its attribution kind"
+    assert result.kind == kind, "the solo result keeps its attribution kind"
 
 
 @then(parsers.parse('every group is "{label}" with attribution "{kind}"'))
 def all_groups_have_label(world: OutcomeWorld, label: str, kind: str) -> None:
     """Assert that a mixed window remains whole and unattributed."""
-    assert world.result is not None, "the scenario must have a classification result"
-    assert all(value == label for _, value in world.result.labels), (
+    result = _result(world)
+    assert all(value == label for _, value in result.labels), (
         "every group in the window receives the expected label"
     )
-    assert world.result.kind == kind, "the whole-window attribution kind is preserved"
+    assert result.kind == kind, "the whole-window attribution kind is preserved"
 
 
 @then(parsers.parse('the group is "{label}" with outcome reason "{reason}"'))
 def group_has_reason(world: OutcomeWorld, label: str, reason: str) -> None:
     """Assert the group fallback label and its generation or eligibility reason."""
-    assert world.result is not None, "the scenario must have a classification result"
-    assert world.result.labels == (("g0", label),), (
-        "the fallback group label is preserved"
-    )
-    assert world.result.reason == reason, (
+    result = _result(world)
+    assert result.labels == (("g0", label),), "the fallback group label is preserved"
+    assert result.reason == reason, (
         "the expected generation or eligibility reason is kept"
     )
 
@@ -233,5 +244,5 @@ def group_has_reason(world: OutcomeWorld, label: str, reason: str) -> None:
 @then(parsers.parse('the outcome reason is "{reason}"'))
 def outcome_has_reason(world: OutcomeWorld, reason: str) -> None:
     """Assert the reason for the entire unattributed window."""
-    assert world.result is not None, "the scenario must have a classification result"
-    assert world.result.reason == reason, "the whole-window failure reason is preserved"
+    result = _result(world)
+    assert result.reason == reason, "the whole-window failure reason is preserved"

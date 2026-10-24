@@ -5,6 +5,8 @@ are preconditions and later assertions are postconditions. ``test_crosshair``
 runs ``crosshair check`` over this module.
 """
 
+import dataclasses as dc
+
 from buildlimits.attributes import INFINITY, AttributeRefusalError, at_most, plan_limit
 from buildlimits.outcome_attribution import (
     Generation,
@@ -17,6 +19,20 @@ from buildlimits.outcome_stats import StatsReading
 _MIN_UNANIMOUS_LAUNCHES = 2
 _MAX_WINDOW_LAUNCHES = 4
 _MIN_MIXED_FOOTPRINTS = 1
+_EMPTY_STATS = StatsReading(
+    compile_requests=0,
+    requests_unsupported_compiler=0,
+    requests_not_compile=0,
+    requests_not_cacheable=0,
+    requests_executed=0,
+    cache_hits=0,
+    cache_misses=0,
+    cache_errors=0,
+    non_cacheable_compilations=0,
+    compilations=0,
+    compile_fails=0,
+    version="0.14.0",
+)
 
 
 def limit_order_is_total(left: int, right: int) -> None:
@@ -65,20 +81,12 @@ def unanimous_hit_windows_keep_the_hit_label(launch_count: int) -> None:
         "unanimity requires multiple launches"
     )
     generation = Generation("run", 1, 2)
-    baseline = StatsReading(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "0.14.0")
-    after = StatsReading(
-        launch_count,
-        0,
-        0,
-        0,
-        launch_count,
-        launch_count,
-        0,
-        0,
-        0,
-        0,
-        0,
-        "0.14.0",
+    baseline = _EMPTY_STATS
+    after = dc.replace(
+        baseline,
+        compile_requests=launch_count,
+        requests_executed=launch_count,
+        cache_hits=launch_count,
     )
     window = tuple(WindowEntry("g", is_clean=True) for _ in range(launch_count))
 
@@ -102,8 +110,13 @@ def cache_errors_are_not_dropped_from_a_solo_footprint(error_count: int) -> None
     """
     assert error_count == 1, "the solo cache-error footprint has one error"
     generation = Generation("run", 1, 2)
-    baseline = StatsReading(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "0.14.0")
-    after = StatsReading(1, 0, 0, 0, 1, 0, 0, error_count, 0, 0, 0, "0.14.0")
+    baseline = _EMPTY_STATS
+    after = dc.replace(
+        baseline,
+        compile_requests=1,
+        requests_executed=1,
+        cache_errors=error_count,
+    )
     window = (WindowEntry("g0", is_clean=True),)
 
     result = attribute(
@@ -128,20 +141,12 @@ def repeated_cache_errors_are_not_unanimous(launch_count: int) -> None:
         "a unanimous error requires several launches"
     )
     generation = Generation("run", 1, 2)
-    baseline = StatsReading(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "0.14.0")
-    after = StatsReading(
-        launch_count,
-        0,
-        0,
-        0,
-        launch_count,
-        0,
-        0,
-        launch_count,
-        0,
-        0,
-        0,
-        "0.14.0",
+    baseline = _EMPTY_STATS
+    after = dc.replace(
+        baseline,
+        compile_requests=launch_count,
+        requests_executed=launch_count,
+        cache_errors=launch_count,
     )
     window = tuple(WindowEntry("g", is_clean=True) for _ in range(launch_count))
 
@@ -170,20 +175,14 @@ def decoding_never_labels_mixed(hit_count: int) -> None:
     )
     miss_count = _MAX_WINDOW_LAUNCHES - hit_count
     generation = Generation("run", 1, 2)
-    baseline = StatsReading(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "0.14.0")
-    after = StatsReading(
-        _MAX_WINDOW_LAUNCHES,
-        0,
-        0,
-        0,
-        _MAX_WINDOW_LAUNCHES,
-        hit_count,
-        miss_count,
-        0,
-        0,
-        miss_count,
-        0,
-        "0.14.0",
+    baseline = _EMPTY_STATS
+    after = dc.replace(
+        baseline,
+        compile_requests=_MAX_WINDOW_LAUNCHES,
+        requests_executed=_MAX_WINDOW_LAUNCHES,
+        cache_hits=hit_count,
+        cache_misses=miss_count,
+        compilations=miss_count,
     )
     window = (
         WindowEntry("g0", is_clean=True),

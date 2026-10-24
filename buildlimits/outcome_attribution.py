@@ -84,31 +84,55 @@ def _footprint(label: CacheResult | None, **values: int) -> _Footprint:
     )
 
 
+_HIT_FOOTPRINT = _footprint("hit", cache_hits=1, requests_executed=1)
+_MISS_FOOTPRINT = _footprint(
+    "miss", compilations=1, cache_misses=1, requests_executed=1
+)
+_MISS_WITH_READ_ERROR_FOOTPRINT = _footprint(
+    "miss",
+    compilations=1,
+    cache_misses=1,
+    cache_errors=1,
+    requests_executed=1,
+)
+_NOT_CACHED_FOOTPRINT = _footprint("not_cached", compilations=1, requests_executed=1)
+_NOT_CACHEABLE_FOOTPRINT = _footprint(
+    "not_cacheable",
+    compilations=1,
+    non_cacheable_compilations=1,
+    requests_executed=1,
+)
+_FAILED_FOOTPRINT = _footprint(
+    "failed", compilations=1, compile_fails=1, requests_executed=1
+)
+_ERROR_FAILURE_FOOTPRINT = _footprint("error", compile_fails=1, requests_executed=1)
+_ERROR_CACHE_FOOTPRINT = _footprint("error", cache_errors=1, requests_executed=1)
+_FATAL_ERROR_FOOTPRINT = _footprint("error", cache_errors=1, requests_executed=1)
+_SILENT_FOOTPRINT = _footprint(None, requests_executed=1)
+_DECLINED_FOOTPRINT = _footprint("declined", requests_not_cacheable=1)
+_NOT_COMPILE_FOOTPRINT = _footprint("not_compile", requests_not_compile=1)
+_UNSUPPORTED_FOOTPRINT = _footprint("unsupported", requests_unsupported_compiler=1)
+
 FOOTPRINTS = (
-    _footprint("hit", cache_hits=1, requests_executed=1),
-    _footprint("miss", compilations=1, cache_misses=1, requests_executed=1),
-    _footprint(
-        "miss",
-        compilations=1,
-        cache_misses=1,
-        cache_errors=1,
-        requests_executed=1,
-    ),
-    _footprint("not_cached", compilations=1, requests_executed=1),
-    _footprint(
-        "not_cacheable",
-        compilations=1,
-        non_cacheable_compilations=1,
-        requests_executed=1,
-    ),
-    _footprint("failed", compilations=1, compile_fails=1, requests_executed=1),
-    _footprint("error", compile_fails=1, requests_executed=1),
-    _footprint("error", cache_errors=1, requests_executed=1),
-    _footprint("error", cache_errors=1, requests_executed=1),
-    _footprint(None, requests_executed=1),
-    _footprint("declined", requests_not_cacheable=1),
-    _footprint("not_compile", requests_not_compile=1),
-    _footprint("unsupported", requests_unsupported_compiler=1),
+    _HIT_FOOTPRINT,
+    _MISS_FOOTPRINT,
+    _MISS_WITH_READ_ERROR_FOOTPRINT,
+    _NOT_CACHED_FOOTPRINT,
+    _NOT_CACHEABLE_FOOTPRINT,
+    _FAILED_FOOTPRINT,
+    _ERROR_FAILURE_FOOTPRINT,
+    _ERROR_CACHE_FOOTPRINT,
+    _FATAL_ERROR_FOOTPRINT,
+    _SILENT_FOOTPRINT,
+    _DECLINED_FOOTPRINT,
+    _NOT_COMPILE_FOOTPRINT,
+    _UNSUPPORTED_FOOTPRINT,
+)
+_UNANIMOUS_FOOTPRINTS = (
+    _HIT_FOOTPRINT,
+    _NOT_CACHED_FOOTPRINT,
+    _NOT_CACHEABLE_FOOTPRINT,
+    _DECLINED_FOOTPRINT,
 )
 
 
@@ -211,11 +235,11 @@ def _unanimous_label(delta: tuple[int, ...], launch_count: int) -> CacheResult |
     """
     if launch_count < _MIN_UNANIMOUS_LAUNCHES:
         return None
-    for footprint in (FOOTPRINTS[0], FOOTPRINTS[3], FOOTPRINTS[4], FOOTPRINTS[10]):
+    for footprint in _UNANIMOUS_FOOTPRINTS:
         if delta == tuple(value * launch_count for value in footprint.values):
             return footprint.label
 
-    miss = FOOTPRINTS[1].values
+    miss = _MISS_FOOTPRINT.values
     is_repeated_miss = delta[:5] == tuple(
         value * launch_count for value in miss[:5]
     ) and delta[6:] == tuple(value * launch_count for value in miss[6:])

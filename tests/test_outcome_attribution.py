@@ -239,7 +239,7 @@ def test_only_approved_multi_launch_footprints_are_unanimous(
 
 def test_unanimous_error_window_remains_unattributed() -> None:
     """Do not turn repeated error footprints into a unanimous class."""
-    rows = tuple(_FOOTPRINTS[7] for _ in range(2))
+    rows = tuple(("error_cache", _FOOTPRINT_BY_NAME["error_cache"]) for _ in range(2))
 
     result = attribute(_reading(), _sum_rows(rows), _window(2))
 
@@ -288,8 +288,14 @@ def test_every_mixed_multiset_is_unattributed() -> None:
 
 def test_rfc_ambiguous_pair_has_one_shared_unattributed_delta() -> None:
     """Keep failed and not-cached mixes together when their counters collide."""
-    not_cached_and_error = _sum_rows((_FOOTPRINTS[3], _FOOTPRINTS[6]))
-    failed_and_silent = _sum_rows((_FOOTPRINTS[5], _FOOTPRINTS[9]))
+    not_cached_and_error = _sum_rows((
+        ("not_cached", _FOOTPRINT_BY_NAME["not_cached"]),
+        ("error_fails", _FOOTPRINT_BY_NAME["error_fails"]),
+    ))
+    failed_and_silent = _sum_rows((
+        ("failed", _FOOTPRINT_BY_NAME["failed"]),
+        ("silent", _FOOTPRINT_BY_NAME["silent"]),
+    ))
 
     assert not_cached_and_error.stats == failed_and_silent.stats, (
         "the documented ambiguous pair has one shared counter delta"

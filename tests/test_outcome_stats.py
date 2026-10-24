@@ -77,19 +77,31 @@ def test_cache_result_counts_sum_all_languages() -> None:
         ('{"version":"0.14.0","stats":{}}', "parse_error"),
         ('{"version":"0.14.0","stats":null}', "parse_error"),
         ('{"version":"0.14.0","stats":[]}', "parse_error"),
+        (
+            '{"version":"0.14.0","stats":{"compile_requests":' + "9" * 5000 + "}}",
+            "parse_error",
+        ),
+        ("[" * 2000 + "0" + "]" * 2000, "parse_error"),
     ],
-    ids=("empty", "partial", "null-stats", "wrong-stats-shape"),
+    ids=(
+        "empty",
+        "partial",
+        "null-stats",
+        "wrong-stats-shape",
+        "oversized-integer",
+        "deeply-nested",
+    ),
 )
 def test_invalid_documents_return_a_parse_failure(
     document: str, reason: typ.Literal["parse_error"]
 ) -> None:
-    """Return a typed failure for empty, partial and malformed documents."""
+    """Return a typed failure for malformed documents and decoder limits."""
     from buildlimits.outcome_stats import ReadFailure, parse_statistics
 
     reading = parse_statistics(document, supported=_SUPPORTED)
 
     assert reading == ReadFailure(reason=reason), (
-        "invalid JSON shapes return a parse failure"
+        "invalid documents return a typed parse failure"
     )
 
 
