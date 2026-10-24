@@ -9,7 +9,8 @@ Status: APPROVED FOR EXECUTION; IN PROGRESS (2026-10-24; EP-M0 is complete; r31
 documentation gates and review passed; EP-M1 validation, audit evidence and
 documentation gates and milestone review passed; EP-M1 commits are complete;
 EP-M2 is complete in `327ae5a` and `080d9c0`, with final gates and local
-CodeRabbit review passed; EP-M3 is next)
+CodeRabbit review passed; EP-M3 red contracts are committed as `195ff77` and
+their full gates passed; its implementation is in progress)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -476,6 +477,13 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   across eight files. It ran as
   `coderabbit review --agent --fresh --committed`; PR #24 remained a draft, so
   no formal review was queued and no PR state or remote branch was changed.
+- [x] (2026-10-24 17:11Z) EP-M3 red contracts were committed as `195ff77`.
+  Formatting, Markdown/spelling, Mermaid, lint, typecheck and full one-worker
+  tests passed in the isolated candidate. All 66 new EP-M3 test cases xfailed
+  against the absent modules; the suite reported 1,861 passed, 26 skipped and
+  66 xfailed. Dependency-audit evidence was reused because `uv.lock` was
+  unchanged. Logs use the
+  `/tmp/*-buildlimits-cache-hit-prediction-epm3-red-candidate-18.out` prefix.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
@@ -947,6 +955,9 @@ C-GATES.
   `groups.compiler_argv` only removes wrapper layers; it does not parse rustc
   options. Keep the pure predictor in its own `outcome_parser.py`, scoped to
   sccache 0.14 Rust H3 evidence and reused by record creation and replay only.
+  `ArgTarget::Unsure` may depend on a sibling `.json` file's existence, which
+  an argv-only pure predictor cannot inspect; it conservatively declines a
+  path-like target without that filesystem evidence and never retains its path.
 - D31. Review correction to D25. Decision: build a multimap from metadata to
   active entries at each child sample. A full-emit child marks an entry `seen`
   only when exactly one active entry has its metadata. If more than one active
