@@ -6,6 +6,7 @@ import shutil
 import socket
 import struct
 import subprocess
+import sys
 import time
 import typing as typ
 from contextlib import contextmanager
@@ -128,7 +129,7 @@ def _private_server(
     executable: str,
     environment: dict[str, str],
     log_path: Path,
-) -> cabc.Iterator[tuple[subprocess.Popen[bytes], bool]]:
+) -> cabc.Generator[tuple[subprocess.Popen[bytes], bool]]:
     """Run a private foreground server and stop it even when an assertion fails.
 
     Example
@@ -257,7 +258,7 @@ def _run_compile(
 
 
 def sccache_host_marks() -> list[pytest.MarkDecorator]:
-    """Mark an opt-in test and skip hosts without the pinned server binary.
+    """Mark a Linux-only opt-in test and skip hosts without the pinned binary.
 
     Example
     -------
@@ -268,8 +269,17 @@ def sccache_host_marks() -> list[pytest.MarkDecorator]:
     list[pytest.MarkDecorator]
         The opt-in and version-availability marks for the host check.
     """
-    enabled = os.environ.get("BUILD_LIMITS_SCCACHE_HOST_CHECK") == "1"
     marks = [pytest.mark.sccache_host_check, pytest.mark.timeout(600)]
+    if sys.platform != "linux":
+        marks.append(
+            pytest.mark.skipif(
+                condition=True,
+                reason="the host check requires Linux /proc and SO_PEERCRED",
+            )
+        )
+        return marks
+
+    enabled = os.environ.get("BUILD_LIMITS_SCCACHE_HOST_CHECK") == "1"
     if not enabled:
         marks.append(
             pytest.mark.skipif(

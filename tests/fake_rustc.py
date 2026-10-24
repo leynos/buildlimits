@@ -143,7 +143,7 @@ def _write_output(arguments: list[str], *, emit_dep_info: bool) -> None:
 
 
 def main(arguments: list[str]) -> int:
-    """Answer rustc probes or create the requested deterministic artifact.
+    """Answer rustc probes or create the requested deterministic artefact.
 
     Returns
     -------

@@ -648,6 +648,10 @@ Use these before writing a new arrange step; extend one rather than copying it.
 
 _Table 4: Shared test helper modules._
 
+Set `BUILD_LIMITS_SCCACHE_HOST_CHECK=1` when running `make test` to include the
+`sccache_host_check` test. It requires Linux and the exact `sccache 0.14.0`
+binary; pytest skips it when either precondition is absent.
+
 ### 11.3. Verification beyond examples
 
 Hypothesis state machines check the admission core (`tests/test_admission.py`)

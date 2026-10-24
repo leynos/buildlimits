@@ -515,7 +515,7 @@ filterwarnings = [
     "error::pytest.PytestUnraisableExceptionWarning",
 ]
 markers = [
-    "sccache_host_check: requires opt-in and sccache 0.14.0",
+    "sccache_host_check: requires opt-in, Linux, and sccache 0.14.0",
     "systemd_user: needs a running systemd user manager and busctl",
 ]
 

@@ -57,7 +57,8 @@ def _server_cgroup_pids(server_pid: int) -> tuple[int, ...]:
         None,
     )
     if unified_path is None:
-        raise AssertionError(f"server {server_pid} has no cgroup-v2 membership")
+        message = f"server {server_pid} has no cgroup-v2 membership"
+        raise AssertionError(message)
     process_file = Path("/sys/fs/cgroup") / unified_path.lstrip("/") / "cgroup.procs"
     return tuple(
         int(line)
@@ -204,7 +205,7 @@ def _check_cold_and_warm(
         _CacheMissProbe(source, output, "a1-shared", "cold-miss"),
         windows,
     )
-    cold_artifact = output.read_bytes()
+    cold_artefact = output.read_bytes()
 
     before_warm = _read_stats(executable, environment)
     warm = _run_compile(
@@ -216,8 +217,8 @@ def _check_cold_and_warm(
         cold.stdout,
         cold.stderr,
     ), "warm cache hit changed the client return code or output"
-    assert output.read_bytes() == cold_artifact, (
-        "cache-hit artifact differs from cold output"
+    assert output.read_bytes() == cold_artefact, (
+        "cache-hit artefact differs from cold output"
     )
     _assert_delta(
         before_warm,
