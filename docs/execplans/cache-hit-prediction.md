@@ -208,7 +208,7 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   - Severity: low.
   - Mitigation: recording is off by default, and the upgrade order is
     documented.
-- R8. The 10,000-record bound, not 30-day aging, sets how much history W2
+- R8. The 10,000-record bound, not 30-day ageing, sets how much history W2
   sees: about 1 to 3 days at this host's rate.
   - Severity: low.
   - Mitigation:
@@ -275,10 +275,10 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   `make markdownlint` and serial `make nixie` in the isolated container.
   Formatting output was copied into the worktree; a fresh exact-head review is
   the remaining EP-M0 gate.
-- [x] (2026-10-24 01:39Z) Fresh CodeRabbit review of `278cccb` completed with
-  nine findings. D33 and the linked RFC/ADR corrections reconcile the HMAC,
-  store, event-field, parser and toolchain contracts; documentation gates and a
-  fresh review were pending at that point.
+- [x] (2026-10-24 01:39Z) Fresh CodeRabbit review of `278cccb`
+  completed with nine findings. D33 and the linked RFC/ADR corrections
+  reconcile the HMAC, store, event-field, parser and toolchain contracts;
+  documentation gates and a fresh review were pending at that point.
 - [x] (2026-10-24 02:02Z) Isolated `make fmt` and `make check-fmt` passed.
   The first `make lint` run found 68 issues in EP-M1's new Python test support;
   later gates had not yet run. D34 separated pure statistics fixture handling
@@ -295,13 +295,17 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   wording, one on the RFC salt operation, and one grammar correction. The
   inventory omissions and salt-operation wording are corrected below; the
   earlier progress states are now explicitly historical.
+- [x] (2026-10-24) Fresh CodeRabbit review of `684fffde` completed with six
+  findings on en-GB spelling, grammar, 80-column wrapping, the 12 MiB trigger
+  wording and the store-port contract. The follow-up matches the RFC to
+  `OutcomeStorePort` and keeps load and compaction inside `StoreWriter`.
 - [ ] `make audit` remains a commit blocker: the isolated gate could not reach
   PyPI, and a separate metadata-only scan found six advisories in the
   pre-existing `filelock==4.2.0` lock entry, fixed in 4.2.1. Resolve this
   outside the approved feature scope before committing Python changes.
 - [ ] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
-  fixture; review corrections from `9098857` are complete, with a fresh
-  exact-head local CodeRabbit review pending.
+  fixture; review corrections from `9098857` and `684fffde` are applied, with
+  documentation gates and a fresh exact-head review pending.
 - [ ] EP-M1: real-binary feasibility and axiom check: **go**; implementation
   and validation passed, with the code commit held by the audit blocker above.
 - [ ] EP-M2: pure statistics, footprints, attribution and gate.
@@ -553,8 +557,8 @@ C-GATES.
     into a bounded queue of 4,096 entries; on overflow the append is dropped
     with `save_failed`.
   - Each serialized record is at most 16 KiB. Compaction runs on the thread,
-    at start, before an append would take the file above 12 MiB, and at stop.
-    It drops records aged 30 days by `observed_at`, keeps the 10,000 newest by
+    at start, when appending would take the file above 12 MiB, and at stop. It
+    drops records aged 30 days by `observed_at`, keeps the 10,000 newest by
     insertion sequence, then evicts the oldest remaining records until the
     file is at most 12 MiB. It then calls `fsync` and `os.replace` on a fixed
     temporary name.
@@ -717,8 +721,8 @@ C-GATES.
   authorizes W1 through EP-M8. EP-M9 remains gated on G1, and no later RFC
   workstream is authorized by this approval. Rationale: the explicit approval
   requested before implementation was supplied with the implementation request.
-- D27. Review correction to D17. Decision: compact on the writer thread before
-  an append would take the store above 12 MiB, retain at most 10,000 records
+- D27. Review correction to D17. Decision: compact on the writer thread when
+  appending would take the store above 12 MiB, retain at most 10,000 records
   within that byte budget, and cap serialized records at 16 KiB. If compaction
   fails, reject an append that would exceed the existing 16 MiB load limit.
   Rationale: start/stop-only compaction could make a valid long-running store
@@ -952,7 +956,7 @@ The traced identifiers are:
 - RFC-PORTS: the five ports (clock, statistics, server process, store and
   salt). D2 and D24 turn the unit-properties port into the server-process port.
 - RFC-OBS: the events, reasons, spans and report.
-- RFC-STORE: the store's path, bounds, aging, atomicity and single writer
+- RFC-STORE: the store's path, bounds, ageing, atomicity and single writer
   (refined by D17).
 - RFC-PRIV: the salt, the file modes and the ban on export.
 - RFC-KEY: §2's key as used by layer 1 records (refined by D10).
@@ -1165,14 +1169,14 @@ O8. Store bounds and durability:
 
 - After compaction, the file holds at most 10,000 records, none of them with
   `observed_at` older than 30 days.
-- Each record line is at most 16 KiB. Before an append would take the file
-  above 12 MiB, the writer compacts it to at most 12 MiB. A successful append
-  never takes the file above 16 MiB, including after a compaction failure.
+- Each record line is at most 16 KiB. When appending would take the file above
+  12 MiB, the writer compacts it to at most 12 MiB. A successful append never
+  takes the file above 16 MiB, including after a compaction failure.
 - Eviction follows insertion sequence.
 - A torn tail line is dropped.
 - A version mismatch moves the file aside, and a newer file is never
   overwritten.
-- A wall-clock jump of more than one day in either direction skips aging,
+- A wall-clock jump of more than one day in either direction skips ageing,
   with `clock_skew`.
 - A changed salt reports `salt_changed`.
 - A salt that exists but cannot be read is never regenerated.
@@ -1341,9 +1345,10 @@ The adapters form the shell.
     (EP-M5), and from EP-M8 the D24 child sample. Both are synchronous and
     bounded.
 - `outcome_store.py`:
-  - `StoreWriter(OutcomeStorePort)` is the writer thread, with a bounded
-    queue, `load`, `append`, `compact` and `close(timeout)`. A result queue
-    is drained by the loop each tick.
+  - `StoreWriter` implements `OutcomeStorePort` on a writer thread. The port
+    exposes non-blocking `append`, `results()` and `close(timeout)` calls. Its
+    bounded queue accepts appends; the writer performs bounded loading and
+    internal compaction. The loop drains writer results each tick.
   - `file_salt(path) -> Salt | StoreFailure` creates the salt with `O_EXCL`
     and a rename, checks its length, and never regenerates an unreadable
     salt. It runs on the writer thread at start. The loop receives the

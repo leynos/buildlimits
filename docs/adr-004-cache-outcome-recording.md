@@ -212,7 +212,7 @@ writer thread owns every file operation; the loop appends through a bounded
 queue of 4,096 entries and drops overflow with `save_failed`. Each serialized
 record is at most 16 KiB, which also bounds the queue's payload.
 
-Compact at start, when an append would take the file above 12 MiB, and at stop.
+Compact at start, when appending would take the file above 12 MiB, and at stop.
 Compaction drops records older than 30 days by `observed_at`, keeps the 10,000
 newest by insertion sequence, then evicts the oldest remaining records until
 the file is at most 12 MiB. It then calls `fsync` and `os.replace` on a fixed

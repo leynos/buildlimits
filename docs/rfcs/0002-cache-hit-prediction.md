@@ -464,42 +464,49 @@ keeps the count independent of the retry and scoring work layer 2 adds later:
   statistics document mentions one. This is the same ordering `outcome_reason`
   `generation_changed` reports, and the port's failure is `unavailable`, which
   the caller treats as an unavailable reading rather than a window;
-- an outcome-store port offering a bounded load, append and compaction, with
-  the JSON Lines path, single writer, size bounds and aging defined by ADR 004
-  D17; and
+- an outcome-store port with non-blocking `append(line)`, `results()` to drain
+  writer results each tick, and `close(timeout)`. Its single `StoreWriter`
+  performs bounded loading and compaction internally under ADR 004 D17's file
+  bounds and ageing rules; and
 - a salt port offering one per-host random value, which is the only source the
   path digest draws on.
 
 Each port declares its success and failure alternatives explicitly rather than
 raising a shared exception, so the reasons above stay the caller's to attach.
-Table 2 gives the alternatives each operation returns and the reason token its
-failure carries.
+Table 2 distinguishes the `OutcomeStorePort` methods from the writer's internal
+file operations and gives the reason token each failure carries.
 
-| Port            | Operation                                  | Success               | Failure reason                              |
-| --------------- | ------------------------------------------ | --------------------- | ------------------------------------------- |
-| clock           | monotonic reading                          | seconds, total        | none: the read cannot fail                  |
-| clock           | wall-clock reading                         | seconds, total        | none: the read cannot fail                  |
-| statistics      | read one document                          | bounded document      | `timeout`, `read_error`                     |
-| unit-properties | read the property                          | property value        | `unavailable`                               |
-| store           | load records                               | bounded JSONL records | `corrupt`, `unreadable`, `version_mismatch` |
-| store           | append or compact                          | saved                 | `save_failed`                               |
-| salt            | acquire the value (`store_operation=salt`) | per-host random value | `salt_unavailable`                          |
+| Surface          | Operation                              | Success               | Failure reason                              |
+| ---------------- | -------------------------------------- | --------------------- | ------------------------------------------- |
+| clock            | monotonic reading                      | seconds, total        | none: the read cannot fail                  |
+| clock            | wall-clock reading                     | seconds, total        | none: the read cannot fail                  |
+| statistics       | read one document                      | bounded document      | `timeout`, `read_error`                     |
+| unit-properties  | read the property                      | property value        | `unavailable`                               |
+| OutcomeStorePort | `append(line)` (non-blocking)          | queued                | `save_failed` via `results()`               |
+| OutcomeStorePort | `results()`                            | writer results        | none                                        |
+| OutcomeStorePort | `close(timeout)`                       | bounded close         | none                                        |
+| StoreWriter      | `load` (bounded, internal)             | bounded JSONL records | `corrupt`, `unreadable`, `version_mismatch` |
+| StoreWriter      | `append` or `compact` (internal)       | saved                 | `save_failed`                               |
+| SaltSource       | acquire value (`store_operation=salt`) | per-host random value | `salt_unavailable`                          |
 
-_Table 2: Port operations and the reason each failure carries._
+_Table 2: Port methods, writer operations and their failure reasons._
 
-The reason column names the vocabulary each failure is reported through, and a
-fault's vocabulary follows the operation that failed rather than the fault
-itself. The statistics row draws on `outcome_reason`, whose tokens §1 defines
-above. The load row names the store's read alternatives, and the save row names
-`save_failed`; both belong to `store_reason`, which §2's observability
-paragraph defines in full. `salt_unavailable` is one more `store_reason`
-because the salt lives in a file the store owns (§2 privacy), so the vocabulary
-that already names "the persistent state could not be read or written" is the
-one that should name this fault too. The `outcome_store` event reports this
-operation as `store_operation=salt`, even though the salt has a separate port.
-The layer adds one reason token and no new vocabulary, so the closed sets a
-reader must know stay at three: `outcome_reason`, `store_reason` and
-`evaluation_reason`.
+`OutcomeStorePort.append` only enqueues work; it never waits for file I/O. The
+loop drains asynchronous writer outcomes through `results()`, while
+`close(timeout)` bounds shutdown. `StoreWriter` performs the bounded load and
+compaction internally. The emitted `store_operation` vocabulary remains `load`,
+`append`, `compact` and `salt`; these values name file operations, not the
+port's `results()` or `close(timeout)` methods.
+
+The reason column names the vocabulary used to report each failure. The
+statistics row uses `outcome_reason`, whose tokens §1 defines. The internal
+load row names the store's read alternatives; the port append and writer
+compaction rows name `save_failed`. These store failures belong to
+`store_reason`, which §2's observability paragraph defines. `salt_unavailable`
+is also a `store_reason` because the store owns the salt file (§2 privacy). The
+`outcome_store` event reports salt acquisition as `store_operation=salt`, even
+though the salt has a separate port. A reader must know three closed
+vocabularies: `outcome_reason`, `store_reason` and `evaluation_reason`.
 
 Both clock reads are total: the two readings are the OS's, and neither can fail
 in a way the layer must handle, so a clock port has no failure alternative, and
@@ -643,7 +650,7 @@ it does not create a second file or become a second writer. The layer 1 writer
 owns every load, append and compaction in every mode. The journal keeps only
 the closed-vocabulary event; the file is the only place a key is written to
 disk, it never leaves the host, and it is read by `W2`'s offline replay and by
-nothing in `admission`. Its queue, size bounds, aging and atomic compaction
+nothing in `admission`. Its queue, size bounds, ageing and atomic compaction
 follow ADR 004 D17. Deleting it costs only the replay.
 
 **Measurement for the next layer.** After at least 2,000 attributed outcomes (a
@@ -709,7 +716,7 @@ records share the append-only JSON Lines file at
 origin, wall time and toolchain identity. Layer 2 reads this file to rebuild
 history and never writes a separate snapshot. The layer 1 writer owns the file
 in every mode. Its D17 contract uses a bounded append queue and compacts at
-startup, when an append would take the file above 12 MiB, and at stop. It drops
+startup, when appending would take the file above 12 MiB, and at stop. It drops
 records older than 30 days, keeps the 10,000 newest, and atomically replaces
 the file; the file remains at most 16 MiB. A record tagged with another
 toolchain identity is dropped from the in-memory history, not treated as a
@@ -777,17 +784,17 @@ scripted fake server. Each `store_reason` token is provoked and asserted, which
 covers the whole vocabulary rather than only the load paths: a store that fails
 on one path and not another is caught by the reason rather than by the fallback
 alone, and the same test set must provoke `save_failed` on a refused write and
-`expired` on the aging bound, so neither can be added to the vocabulary without
-a test that observes it. Each `evaluation_reason` token is provoked the same
-way, and a test asserts that `uncertain` and `no history` arrive with `none`
-rather than a reason, so a produced class can never be reported as a failed
-evaluation. A test also asserts that a request the evaluation could not key is
-still admitted unchanged — the isolation P2 requires — so a classification
-failure costs a class and never a token. The storage tests assert that layer 2
-rebuilds its in-memory index from layer 1's attributed records without writing
-a second store. They also exercise append and compaction bounds, and verify
-that an append failure is reported as `save_failed` while the previous file
-remains readable.
+`expired` on the ageing bound, so neither can be added to the vocabulary
+without a test that observes it. Each `evaluation_reason` token is provoked the
+same way, and a test asserts that `uncertain` and `no history` arrive with
+`none` rather than a reason, so a produced class can never be reported as a
+failed evaluation. A test also asserts that a request the evaluation could not
+key is still admitted unchanged — the isolation P2 requires — so a
+classification failure costs a class and never a token. The storage tests
+assert that layer 2 rebuilds its in-memory index from layer 1's attributed
+records without writing a second store. They also exercise append and
+compaction bounds, and verify that an append failure is reported as
+`save_failed` while the previous file remains readable.
 
 **Privacy.** Crate names and registry versions are public metadata. Local paths
 are stored only as digests salted with a per-host random value, kept in a file
@@ -797,7 +804,7 @@ exported, deleting it resets prediction, and records untouched for 30 days are
 dropped (a proposal). Status already shows the working directory, only to the
 same user (`SO_PEERCRED`, developer's guide §8), so the display discloses
 nothing new. These bounds are layer 1's as well because layer 1 writes the same
-file: the salt, the modes, the 30-day aging and the ban on export all apply
+file: the salt, the modes, the 30-day ageing and the ban on export all apply
 from the moment recording starts.
 
 **Measurement for the next layer.** Online accuracy and calibration (H6), and a
@@ -877,8 +884,8 @@ and S6 hold for 3B; without the bypass bound K, L2 fails through a lasso in
 which a busy queue of predicted hits starves a predicted miss; with the bound,
 L2 holds; and a known-bad 3A configuration violates S6 with one mispredicted
 miss, which keeps the model's discriminating power checked. The bound the model
-must exercise is K, not the store's 30-day aging, which is a different bound on
-a different thing.
+must exercise is K, not the store's 30-day ageing, which is a different bound
+on a different thing.
 
 **Observability, privacy and measurement.** `request_admitted` gains a
 `promoted` boolean, and `would_promote` in shadow mode; status shows each
