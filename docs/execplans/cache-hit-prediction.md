@@ -6,8 +6,8 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 be kept up to date as work proceeds.
 
 Status: APPROVED FOR EXECUTION; IN PROGRESS (2026-10-24; EP-M0 is complete; r31
-documentation gates and review passed; EP-M1 validation passed, but its Python
-commit remains gated by the unresolved audit blocker)
+documentation gates and review passed; EP-M1 validation, audit evidence and
+documentation gates and milestone review passed; atomic commits are pending)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -362,17 +362,47 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   documents against `278cccb` through `8e0bd40` and found zero issues.
 - [x] (2026-10-24 10:29Z) Confirmed D26's approval remains in effect and marked
   the plan approved for execution before resuming implementation.
-- [ ] `make audit` remains a commit blocker: the isolated gate could not reach
-  PyPI, and a separate metadata-only scan found six advisories in the
-  pre-existing `filelock==4.2.0` lock entry, fixed in 4.2.1. Resolve this
-  outside the approved feature scope before committing Python changes.
+- [x] (2026-10-24 11:56Z) EP-M1's current candidate passed isolated
+  `make check-fmt`, `make typecheck`, `make lint` and serial `make test` (1,776
+  passed, 26 skipped, 97 warnings). The opt-in real sccache 0.14.0 acceptance
+  check passed (1 passed). The locked development dependency set passed a
+  separate metadata-only `pip-audit` scan with no known vulnerabilities.
+  `make audit` itself could not reach PyPI from the required networkless
+  candidate sandbox; no lockfile change was needed.
+- [x] (2026-10-24 11:56Z) The first isolated test run exposed a temporary
+  environment issue in a nested `uv run --no-project` call; rerunning with the
+  seeded project-local cache addressed it. Serial execution avoided two
+  timing-sensitive launch-test timeouts seen with two workers. The final
+  candidate suite passed without source changes after the cache correction.
+- [x] (2026-10-24 11:56Z) DF12 findings in the new test support were resolved
+  with a small case dataclass and explicit assertions. Skylos then identified
+  `JournalSink.emit_trace` as unused; source tracing confirmed live protocol
+  dispatch through `JournalTracer` and `JournalSpanExporter`. A narrow,
+  evidence-backed entrypoint records this false positive in `pyproject.toml`.
+  After separately provisioning the pinned Nose tool, the isolated lint gate
+  passed, including the duplication check.
+- [x] (2026-10-24 12:06Z) The exact EP-M1 documentation candidate passed
+  isolated `make fmt`, `make check-fmt`, `make markdownlint` and serial
+  `make nixie`. The current shared dictionary input was copied into the
+  networkless sandbox and its SHA-256 verified; no formatting or generated
+  `typos.toml` diff resulted.
+- [x] (2026-10-24 12:17Z) The first fresh EP-M1 CodeRabbit review found one
+  minor fixture-instruction ordering issue in the developers' guide. The text
+  now directs maintainers to regenerate the fixture before inspecting its diff.
+  Focused documentation gates and a fresh review of the correction are pending.
+- [x] (2026-10-24 12:26Z) The correction passed all four isolated documentation
+  gates and a fresh CodeRabbit review. Two suggestions to remove examples from
+  private helper docstrings conflict with the repository's
+  function-documentation requirement; the examples remain. No actionable review
+  findings remain.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
   r6/r9/r13/r19 follow-up corrections and r21 formatter correction are recorded
   above; the r23 and r31 documentation gates and reviews passed.
 - [ ] EP-M1: real-binary feasibility and axiom check: **go**; implementation
-  and validation passed, with the code commit held by the audit blocker above.
+  and code gates passed. Documentation gates and milestone review passed;
+  atomic commits remain pending.
 - [ ] EP-M2: pure statistics, footprints, attribution and gate.
 - [ ] EP-M3: pure keys, records and the window ledger.
 - [ ] EP-M4: the reading sequencer over fake ports.
@@ -456,9 +486,17 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   with no source change between runs. Keep the candidate gate at one worker on
   this shared host.
 - S8. The isolated `make audit` could not resolve its PyPI service. A separate
-  metadata-only scan of the committed dependency set found six advisories in
-  `filelock==4.2.0`, all fixed by 4.2.1. This is pre-existing and unrelated to
-  W1; the lockfile change is outside the approved scope and is not included.
+  metadata-only scan of the locked development dependency set found no known
+  vulnerabilities (`filelock==4.2.4`). The Make target itself remains
+  unavailable in the networkless candidate sandbox; the dependency metadata
+  scan was performed separately, without installing or executing the candidate.
+  The older `filelock==4.2.0` advisories are no longer present in the current
+  lock.
+- S9. Skylos cannot resolve `JournalSink.emit_trace` through the cross-module
+  `_TraceSinkPort` protocol dispatch. `service` supplies the sink to
+  `JournalTracer`, which supplies it to `JournalSpanExporter`, whose `export`
+  calls the method. A precise `pyproject.toml` entrypoint records this live
+  call path and the tests that exercise it; no runtime code changed.
 
 ## Decision log
 

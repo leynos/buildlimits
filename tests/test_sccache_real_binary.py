@@ -18,7 +18,12 @@ from sccache_host import (
     _server_pid,
     sccache_host_marks,
 )
-from sccache_stats import _assert_delta, _record_window, _write_windows
+from sccache_stats import (
+    _assert_delta,
+    _assert_windows_match,
+    _record_window,
+    _write_windows,
+)
 
 pytestmark = sccache_host_marks()
 
@@ -354,4 +359,7 @@ def test_real_sccache_014_counter_and_child_contracts(tmp_path: Path) -> None:
     assert len(windows) == _WINDOW_COUNT + 4, (
         f"expected {_WINDOW_COUNT + 4} replay windows, got {len(windows)}"
     )
-    _write_windows(windows)
+    if os.environ.get("BUILD_LIMITS_SCCACHE_REGENERATE_FIXTURE") == "1":
+        _write_windows(windows)
+    else:
+        _assert_windows_match(windows)

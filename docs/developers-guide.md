@@ -650,7 +650,10 @@ _Table 4: Shared test helper modules._
 
 Set `BUILD_LIMITS_SCCACHE_HOST_CHECK=1` when running `make test` to include the
 `sccache_host_check` test. It requires Linux and the exact `sccache 0.14.0`
-binary; pytest skips it when either precondition is absent.
+binary; pytest skips it when either precondition is absent. The test compares
+its readings with the committed JSONL fixture. Set
+`BUILD_LIMITS_SCCACHE_REGENERATE_FIXTURE=1` to replace the fixture, then review
+the resulting diff before committing it.
 
 ### 11.3. Verification beyond examples
 

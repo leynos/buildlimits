@@ -20,6 +20,7 @@ _SCALAR_COUNTERS = (
     "compile_fails",
 )
 _CACHE_COUNTERS = ("cache_hits", "cache_misses", "cache_errors")
+_WINDOWS_FIXTURE = Path(__file__).parent / "fixtures" / "sccache_0_14_0_windows.jsonl"
 
 
 def _integer(value: object, *, field: str) -> int:
@@ -161,13 +162,62 @@ def _record_window(
     })
 
 
-def _write_windows(windows: cabc.Sequence[cabc.Mapping[str, object]]) -> None:
-    """Atomically persist controlled readings for EP-M2 fixture replay."""
-    fixture = Path(__file__).parent / "fixtures" / "sccache_0_14_0_windows.jsonl"
-    temporary = fixture.with_suffix(".jsonl.tmp")
-    payload = "".join(
+def _windows_payload(windows: cabc.Sequence[cabc.Mapping[str, object]]) -> str:
+    r"""Serialize replay windows using the fixture's stable JSONL format.
+
+    Example
+    -------
+    >>> _windows_payload([{"name": "cold", "truth": "miss"}])
+    '{"name":"cold","truth":"miss"}\n'
+
+    Returns
+    -------
+    str
+        Sorted, compact JSON objects with one trailing newline per window.
+    """
+    return "".join(
         json.dumps(window, sort_keys=True, separators=(",", ":")) + "\n"
         for window in windows
     )
+
+
+def _assert_windows_match(windows: cabc.Sequence[cabc.Mapping[str, object]]) -> None:
+    """Require observed windows to match the reviewed fixture exactly.
+
+    Example
+    -------
+    Pass the observations from the real-binary check to validate the committed
+    replay data::
+
+        _assert_windows_match(windows)
+
+    A changed observation raises an assertion with the explicit regeneration
+    command.
+
+    Raises
+    ------
+    AssertionError
+        If the observed windows differ from the reviewed fixture.
+    """
+    expected = _WINDOWS_FIXTURE.read_text(encoding="utf-8")
+    if _windows_payload(windows) != expected:
+        message = (
+            f"sccache readings differ from {_WINDOWS_FIXTURE}; set "
+            "BUILD_LIMITS_SCCACHE_REGENERATE_FIXTURE=1 to regenerate, then "
+            "review the diff"
+        )
+        raise AssertionError(message)
+
+
+def _write_windows(windows: cabc.Sequence[cabc.Mapping[str, object]]) -> None:
+    """Atomically persist reviewed readings for EP-M2 fixture replay.
+
+    Example
+    -------
+    After collecting new readings, call ``_write_windows(windows)`` to replace
+    the fixture atomically, then inspect the diff before committing it.
+    """
+    temporary = _WINDOWS_FIXTURE.with_suffix(".jsonl.tmp")
+    payload = _windows_payload(windows)
     temporary.write_text(payload, encoding="utf-8")
-    temporary.replace(fixture)
+    temporary.replace(_WINDOWS_FIXTURE)
