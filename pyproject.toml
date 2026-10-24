@@ -143,6 +143,9 @@ extend-ignore = [
 # tools and the vectors their tests supply, found on PATH as a build would.
 "tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 "tests/fixtures/fake_sccache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
+# This host acceptance helper must hold and inspect the pinned real sccache
+# process; it constructs fixed argv and confines writable paths to tmp_path.
+"tests/sccache_host.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
@@ -512,6 +515,7 @@ filterwarnings = [
     "error::pytest.PytestUnraisableExceptionWarning",
 ]
 markers = [
+    "sccache_host_check: requires opt-in and sccache 0.14.0",
     "systemd_user: needs a running systemd user manager and busctl",
 ]
 
