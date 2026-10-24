@@ -36,10 +36,47 @@ PASSED = "PASSED: Model checker completed successfully"
 """The line the checker prints when a model passes."""
 
 FAILED = "FAILED: Model checker failed"
-"""The prefix of the safety and deadlock failure lines."""
+"""The prefix of the safety and deadlock failure lines.
+
+A deadlock prints this line as well as ``DEADLOCK detected``, so an
+expectation that has to tell the two apart must name the invariant instead:
+see :func:`invariant`.
+"""
 
 FAILED_LIVENESS = "FAILED: Liveness check failed"
 """The line a liveness check prints when it finds a counterexample."""
+
+DEADLOCK = "DEADLOCK detected"
+"""The line a run prints when it finds a state with no enabled step."""
+
+
+def invariant(name: str) -> str:
+    """Return the verdict line that names *name* as the failed assertion.
+
+    A safety failure appends the invariant to the same line the deadlock
+    shares, so matching the invariant is what distinguishes a violated
+    assertion from a state that simply could not step. The checker separates
+    the label from the name with two spaces, which is why the fragment is
+    built rather than written out at each call site.
+
+    Parameters
+    ----------
+    name : str
+        The assertion's name, as written in the model.
+
+    Returns
+    -------
+    str
+        A fragment that only a failure of that assertion satisfies.
+
+    Examples
+    --------
+    >>> invariant("NeverFull") in "FAILED: Model checker failed. Invariant:  NeverFull"
+    True
+    >>> invariant("NeverFull") in "FAILED: Model checker failed"
+    False
+    """
+    return f"{FAILED}. Invariant:  {name}"
 
 
 class Expectation(typ.NamedTuple):

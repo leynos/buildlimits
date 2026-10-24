@@ -672,19 +672,20 @@ holds the shared runner, including the process-group kill on timeout.
 `tests/test_fizzbee_spike.py` asserts the language and checker behaviour RFC
 0001 records, `tests/test_fizzbee_graphs.py` pins the artefacts a run writes
 and the state counts the RFC quotes, and `tests/test_fizzbee_fixtures.py`
-re-runs every captured class and compares it with `tests/fixtures/fizzbee/`, so
-a checker version bump that changes an output format fails there. The three
-modules are split this way because a single one outgrew the 400-line limit.
-`tests/test_fizzbee_opt_in.py` pins the opt-in itself: which values enable it,
-that a missing binary fails rather than skips, and that the marker is
-registered. `tests/fizzbee_expectations.py` states what a run must show — the
-`PASSED` line, the `FAILED` line for safety and deadlock failures, or the
-separate `FAILED: Liveness check failed` line — together with the counts it
-must explore and, where the question turns on it, the actions its
-counterexample must step through, in one `Expectation` value. Each test then
-reads as its property rather than as repeated boilerplate. A test that poses a
-fairness or interleaving question as a pass/fail pair calls `paired`, which
-runs both models in their own subdirectories and returns the failing run.
+re-runs every captured class and compares its standard output, exit status and
+error graph with `tests/fixtures/fizzbee/`, so a checker version bump that
+changes any of them fails there. The three modules are split this way because a
+single one outgrew the 400-line limit. `tests/test_fizzbee_opt_in.py` pins the
+opt-in itself: which values enable it, that a missing binary fails rather than
+skips, and that the marker is registered. `tests/fizzbee_expectations.py`
+states what a run must show — the `PASSED` line, the `FAILED` line for safety
+and deadlock failures, or the separate `FAILED: Liveness check failed` line —
+together with the counts it must explore and, where the question turns on it,
+the actions its counterexample must step through, in one `Expectation` value.
+Each test then reads as its property rather than as repeated boilerplate. A
+test that poses a fairness or interleaving question as a pass/fail pair calls
+`paired`, which runs both models in their own subdirectories and returns the
+failing run.
 
 ### 11.4. Host acceptance
 
