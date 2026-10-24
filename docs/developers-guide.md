@@ -167,6 +167,10 @@ Each module owns one decision. This table is the single module inventory.
 | `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                             |
 | `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                      |
 | `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, native journal datagrams, journal queries and reports                         |
+| `outcome_vocabulary`                                                               | Closed cache-outcome and reading-reason vocabularies                                             |
+| `outcome_stats`                                                                    | Pure parsing of supported sccache statistics into validated counters                             |
+| `outcome_attribution`                                                              | Pure whole-window classification from sccache counter footprints                                 |
+| `outcome_gate`                                                                     | Pure quiet-point decision for starting an outcome statistics reading                             |
 | `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                        |
 
 _Table 2: Package modules._

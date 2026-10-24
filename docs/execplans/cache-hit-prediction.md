@@ -8,7 +8,9 @@ be kept up to date as work proceeds.
 Status: APPROVED FOR EXECUTION; IN PROGRESS (2026-10-24; EP-M0 is complete; r31
 documentation gates and review passed; EP-M1 validation, audit evidence and
 documentation gates and milestone review passed; EP-M1 commits are complete;
-EP-M2 is next)
+EP-M2 implementation, gates and O1 mutation controls passed; milestone review
+is complete with no actionable findings; final documentation gates, commit and
+post-commit CodeRabbit review are pending)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -399,6 +401,64 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] (2026-10-24 12:31Z) EP-M1 completed in commits `3455cee` and `e583fdc`.
   The first records the narrow Skylos protocol-dispatch entrypoint; the second
   commits the acceptance fixture checks, documentation and gate record.
+- [x] (2026-10-24 12:52Z) EP-M2's contract tests and pure domain modules are
+  drafted. The planned focused red command did not reach pytest because the
+  networkless image lacked locked `filelock==4.2.4`; a derived image now
+  carries the wheel verified against `uv.lock`. Run focused and milestone gates
+  before marking EP-M2 complete.
+- [x] (2026-10-24 14:40Z) O1 review found that the captured 0.14.0 windows
+  fixture was not yet replayed through `attribute()`. Added a test that checks
+  every fixture label and requires at least 200 controlled windows; it passed
+  in the third full-suite run.
+- [x] (2026-10-24 14:40Z) The first full-gate attempt used `/tmp/candidate`. Its
+  networkless dependency setup could not resolve cached `hatchling` or `typos`;
+  `make nixie` passed and markdownlint reported zero errors. Later runs use the
+  established `/workspace` candidate path and a verified cache.
+- [x] (2026-10-24 14:40Z) A second run from `/workspace` passed formatting,
+  typechecking and Nixie. Lint found two `typing.cast` annotations, now fixed.
+  The suite had 1,857 passes, 26 skips and one offline nested-`uv` cache
+  failure; audit could not reach PyPI. Markdownlint passed, but spelling is
+  inconclusive because the archive omitted ignored dictionary inputs and
+  regenerated `typos.toml` in the disposable container.
+- [x] (2026-10-24 14:40Z) The third sequential full run included the ignored
+  spelling inputs. Formatting, typechecking, Markdown lint and spelling, and
+  Nixie passed. Lint found one type-only import placement, now fixed. The full
+  suite had 1,856 passes, 26 skips and two failures: the nested standalone `uv`
+  command inherited a relative cache path, and a child-reap test hit its
+  1-second timeout under automatic xdist concurrency. The Makefile sets
+  `UV_CACHE_DIR=.uv-cache` inside `UV_ENV`, so a same-named make variable did
+  not override the child environment. Retry with an absolute cache path in
+  `UV_ENV` and one xdist worker. `make audit` could not resolve PyPI from the
+  networkless candidate; run a dependency-only audit against the unchanged lock
+  in a network-enabled container.
+- [x] (2026-10-24 15:00Z) EP-M2's candidate passed formatting, format check,
+  lint, typecheck, all tests (1,858 passed, 26 skipped), Markdown lint and
+  spelling, and Nixie. The first full suite failures came from a relative
+  nested-`uv` cache path and a 1-second child-reap timeout under automatic
+  xdist; an absolute `UV_CACHE_DIR` in `UV_ENV` and one xdist worker resolved
+  both. The final offline gates used rootless Podman, `Network=none`, no
+  mounts, and a candidate archive at
+  `c5c06e3d79ee975fe43c4263f8900f3aa890e9a51382a7b960bc141173fb2259`.
+- [x] (2026-10-24 15:00Z) A dependency-only `pip-audit==2.10.1` run over the
+  unchanged lock reported no known vulnerabilities. The rootless audit
+  container used host networking because `slirp4netns` was unavailable; it had
+  no mounts, no candidate source and only lock-derived requirements.
+- [x] (2026-10-24 15:00Z) All three O1 mutation controls failed at their named
+  assertions, with no collection or setup errors. Logs are
+  `/tmp/mutation-buildlimits-cache-hit-prediction-1.out` through `-3.out`;
+  `/tmp/mutation-buildlimits-cache-hit-prediction-index.md` records commands,
+  mutant hashes and verdicts. The disposable source was restored between
+  mutations and its final source hash matched its pre-mutation hash.
+- [x] (2026-10-24 15:03Z) A post-hoc baseline reconstruction over commit
+  `2c7c4abb630e782183788f7513663e850d87df05` plus the five M2 test/feature
+  files reached pytest collection and reproduced the expected missing-module
+  failure. It is recorded as reconstruction, not chronological TDD. Archive:
+  `5799295b9f6aba8bd7141599ed890cdd86182017e7a4334b85c435fd034d7592`; log:
+  `/tmp/o1-baseline-red-buildlimits-cache-hit-prediction.out`.
+- [x] (2026-10-24 15:03Z) Manual review of the M2 modules, contracts,
+  integration tests and documentation found no actionable defects.
+- [ ] Run final documentation gates after this evidence update, commit M2, and
+  complete the post-commit CodeRabbit review.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
@@ -1166,9 +1226,16 @@ window whose delta is a sum of two or more distinct footprints is
 - Artefacts:
   - `tests/test_outcome_attribution.py::test_truth_table`;
   - `tests/test_outcome_attribution.py::test_every_mixed_multiset_is_unattributed`;
-  - `tests/crosshair_contracts.py::decoding_never_labels_mixed`.
-- Evidence (red):
-  `ModuleNotFoundError: No module named 'buildlimits.outcome_attribution'`.
+  - `tests/test_outcome_attribution.py::test_captured_windows_replay_to_their_known_outcomes`;
+  - `tests/crosshair_contracts.py` contracts listed below.
+- Red-run evidence: the original command did not reach pytest during initial
+  sandbox setup because the networkless image lacked a locked dependency. A
+  post-hoc reconstruction against baseline commit
+  `2c7c4abb630e782183788f7513663e850d87df05`, with the five M2 test/feature
+  files overlaid, reached collection and failed with the expected missing
+  `buildlimits.outcome_attribution` module. This is not chronological TDD. The
+  first collected focused run passed after implementation; a later CrossHair
+  and boundary run exposed two test defects, which were fixed.
 - Non-vacuity:
   - The enumeration must produce at least one solo window of each class.
   - It must produce one unanimous window of each unanimous class (hit, miss,
@@ -1176,13 +1243,32 @@ window whose delta is a sum of two or more distinct footprints is
   - It must produce at least 500 mixed multisets.
   - The RFC's ambiguous pair is a named row, and a solo silent window must
     be `count_mismatch`.
-- Mutations: each of these must fail a named test:
-  - hits derived from `compilations`;
-  - the `cache_errors` footprint dropped;
-  - a unanimous `error` allowed.
+- CrossHair proof inventory in `tests/crosshair_contracts.py`:
+  - `unanimous_hit_windows_keep_the_hit_label` checks 2 to 4 identical hit
+    footprints through production `attribute()`.
+  - `cache_errors_are_not_dropped_from_a_solo_footprint` checks one
+    cache-error footprint retains the `error` label.
+  - `repeated_cache_errors_are_not_unanimous` checks 2 to 4 identical cache
+    errors remain unattributed.
+  - `decoding_never_labels_mixed` checks every four-launch hit/miss mixture
+    with 1 to 3 hits remains unattributed.
+  - `tests/test_crosshair.py` runs
+    `python -m crosshair check --analysis_kind=asserts --per_condition_timeout=20`
+    against `tests/crosshair_contracts.py`, with a 100-second subprocess
+    timeout. The lock pins `crosshair-tool` 0.0.111; the gate used Python
+    3.14.8. These bounded symbolic contracts are not unbounded proofs; the
+    separate exhaustive test enumerates multisets of up to four Table A rows.
+- Mutations and their failing tests:
+  - Relabel the compilation-only footprint as `hit`;
+    `test_truth_table[not_cached]` must fail.
+  - Drop the miss footprint with `cache_misses` and `cache_errors`;
+    `test_truth_table[miss_read_error]` must fail.
+  - Allow a unanimous `error`;
+    `test_unanimous_error_window_remains_unattributed` must fail.
 
-  The mutation log goes to `/tmp/mutation-buildlimits-cache-hit-prediction.out`
-  and is summarized in `Outcomes & retrospective`.
+  The three logs are `/tmp/mutation-buildlimits-cache-hit-prediction-1.out`
+  through `-3.out`; the index is
+  `/tmp/mutation-buildlimits-cache-hit-prediction-index.md`.
 
 O2. Exactly one event per launch. Every cached launch made while recording is
 on yields exactly one `cache_outcome`. It comes from its window's close, or from

@@ -6,69 +6,19 @@ from pathlib import Path
 
 import pytest
 
+# Keep the acceptance fixture's field inventory aligned while preserving adv_counts.
+from buildlimits.outcome_stats import (
+    _CACHE_COUNTERS,
+    _SCALAR_COUNTERS,
+    ReadFailure,
+    StatsReading,
+    parse_statistics,
+)
+
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-_SCALAR_COUNTERS = (
-    "compile_requests",
-    "requests_unsupported_compiler",
-    "requests_not_compile",
-    "requests_not_cacheable",
-    "requests_executed",
-    "non_cacheable_compilations",
-    "compilations",
-    "compile_fails",
-)
-_CACHE_COUNTERS = ("cache_hits", "cache_misses", "cache_errors")
 _WINDOWS_FIXTURE = Path(__file__).parent / "fixtures" / "sccache_0_14_0_windows.jsonl"
-
-
-def _integer(value: object, *, field: str) -> int:
-    """Require one JSON statistics value to be a non-negative integer.
-
-    Returns
-    -------
-    int
-        The validated counter value.
-
-    Raises
-    ------
-    TypeError
-        If the value is not an integer or is a boolean.
-    ValueError
-        If the counter value is negative.
-    """
-    if isinstance(value, bool) or not isinstance(value, int):
-        message = f"statistics field {field!r} is not an integer"
-        raise TypeError(message)
-    if value < 0:
-        message = f"statistics field {field!r} is negative"
-        raise ValueError(message)
-    return value
-
-
-def _cache_count(document: cabc.Mapping[str, object], field: str) -> int:
-    """Sum per-language counts for one cache result counter.
-
-    Returns
-    -------
-    int
-        The total count across all languages.
-
-    Raises
-    ------
-    TypeError
-        If the counter or its ``counts`` member is not an object.
-    """
-    value = document.get(field)
-    if not isinstance(value, dict):
-        message = f"statistics field {field!r} is not an object"
-        raise TypeError(message)
-    counts = value.get("counts")
-    if not isinstance(counts, dict):
-        message = f"statistics field {field!r}.counts is not an object"
-        raise TypeError(message)
-    return sum(_integer(count, field=f"{field}.counts") for count in counts.values())
 
 
 def _stats_payload(document: cabc.Mapping[str, object]) -> cabc.Mapping[str, object]:
@@ -98,11 +48,25 @@ def _footprint(document: cabc.Mapping[str, object]) -> dict[str, int]:
     -------
     dict[str, int]
         The scalar and cache-result counters in the statistics document.
+
+    Raises
+    ------
+    TypeError
+        If statistics fail validation or the parser returns an unexpected type.
     """
-    stats = _stats_payload(document)
-    result = {name: _integer(stats.get(name), field=name) for name in _SCALAR_COUNTERS}
-    result.update({name: _cache_count(stats, name) for name in _CACHE_COUNTERS})
-    return result
+    reading = parse_statistics(json.dumps(document), supported=frozenset({"0.14.0"}))
+    match reading:
+        case ReadFailure(reason=reason):
+            message = f"sccache statistics could not be parsed: {reason}"
+            raise TypeError(message)
+        case StatsReading() as validated_reading:
+            return {
+                field: getattr(validated_reading, field)
+                for field in (*_SCALAR_COUNTERS, *_CACHE_COUNTERS)
+            }
+        case _:
+            message = "sccache statistics parser returned an unexpected value"
+            raise TypeError(message)
 
 
 def _fixture_reading(document: cabc.Mapping[str, object]) -> dict[str, object]:

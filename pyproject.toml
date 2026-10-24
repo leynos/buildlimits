@@ -476,6 +476,10 @@ ignore_names = [
     "slice_dir",
     "limit_order_is_total",
     "planned_limits_are_reachable",
+    "unanimous_hit_windows_keep_the_hit_label",
+    "cache_errors_are_not_dropped_from_a_solo_footprint",
+    "repeated_cache_errors_are_not_unanimous",
+    "decoding_never_labels_mixed",
     # The recovery search's Events counters are read by name through EVENTS
     # and getattr in test_cache_recovery_properties, never as attributes.
     "opened_stale",
@@ -1225,3 +1229,82 @@ reason = "Matching imports: the host assertions and direct timing test have dist
 [[tool.duplication_gate.allow]]
 unit = "tests/test_rustc_query_host.py"
 reason = "The only matched fragments are separate optional Cargo Clippy and Dylint prerequisites with distinct skip messages. The one-line matches cannot be scoped to function names by this gate; this dedicated host acceptance module needs both checks so either linter can skip independently."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/crosshair_contracts.py::unanimous_hit_windows_keep_the_hit_label",
+    "tests/crosshair_contracts.py::cache_errors_are_not_dropped_from_a_solo_footprint",
+    "tests/crosshair_contracts.py::repeated_cache_errors_are_not_unanimous",
+    "tests/crosshair_contracts.py::decoding_never_labels_mixed",
+]
+reason = "CrossHair discovers each function by name as an independent symbolic contract. Keeping the counter values, preconditions and conclusions inside each entry point makes every proved invariant visible; a shared scenario runner would hide it from the contract boundary."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_attribution.py", "tests/crosshair_contracts.py"]
+reason = "Matching imports expose the attribution types each independent test module exercises; a re-export would hide those dependencies without sharing behaviour."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_rules_behaviour.py",
+    "tests/test_admission_on_systemd_behaviour.py",
+]
+reason = "Both pytest-bdd modules import the decorators needed for their own feature steps. Sharing framework imports would create a test utility module with no shared behaviour."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_stats.py::test_advanced_counts_are_not_part_of_the_result",
+    "tests/test_outcome_stats.py::test_cache_result_counts_sum_all_languages",
+]
+reason = "These parser contracts prepare the same pinned fixture but mutate different cache-count dimensions; keeping each mutation beside its distinct assertion makes the data shape under test explicit."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_rules_behaviour.py::cache_hit_reading",
+    "tests/test_outcome_rules_behaviour.py::compilations_only_reading",
+    "tests/test_outcome_rules_behaviour.py::miss_reading",
+]
+reason = "Each BDD step sends one named counter footprint through the shared _finish_reading helper. The repeated call shape keeps the scenario's distinct counters visible in its step definition."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_attribution.py",
+    "tests/test_outcome_rules_behaviour.py",
+]
+reason = "Matching imports name the domain values each module uses in its own contract and feature steps; sharing them through a re-export would hide real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_rules_behaviour.py::group_has_reason",
+    "tests/test_outcome_rules_behaviour.py::group_has_label",
+]
+reason = "Separate pytest-bdd steps assert different result dimensions for different feature language. Combining them would make each scenario step conditional on whether it is checking attribution or a failure reason."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_stats.py::StatsReading",
+    "buildlimits/recovery_starvation.py::StarvationReading",
+]
+reason = "These frozen records carry counters from separate domains and lifecycle boundaries. Their similar field documentation does not imply a shared value type or reusable parser."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_rules_behaviour.py::group_has_label",
+    "tests/test_outcome_rules_behaviour.py::all_groups_have_label",
+    "tests/test_outcome_rules_behaviour.py::group_has_reason",
+    "tests/test_outcome_rules_behaviour.py::outcome_has_reason",
+]
+reason = "Each BDD then-step checks that its preceding scenario produced a result. The guard documents the step precondition locally and prevents a later attribute error from obscuring the missing scenario result."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_rules_behaviour.py::group_has_label",
+    "tests/test_outcome_rules_behaviour.py::group_has_reason",
+]
+reason = "These BDD steps both assert the expected label for one group, then check a different attribution field. A shared assertion helper would conceal which feature phrase each step fulfils."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_rules_behaviour.py::one_clean_cached_group",
+    "tests/test_outcome_rules_behaviour.py::signalled_cached_group",
+]
+reason = "These BDD given-steps create the same one-group window with opposite cleanliness. Keeping each value next to its feature phrase makes the eligibility condition explicit."
