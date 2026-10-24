@@ -484,7 +484,7 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] EP-M1: real-binary feasibility and axiom check: **go**; implementation,
   code and documentation gates passed; milestone review passed; commits are
   `3455cee` and `e583fdc`.
-- [x] EP-M2: pure statistics, footprints, attribution and gate; implementation
+- [x] EP-M2: pure statistics, footprints, attribution, and gate; implementation
   commit `327ae5a`, review follow-up `080d9c0`, final gates and local
   CodeRabbit review complete.
 - [ ] EP-M3: pure keys, records and the window ledger.
