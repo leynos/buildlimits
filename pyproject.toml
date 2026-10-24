@@ -431,6 +431,12 @@ full_name = ["buildlimits.admission_state.snapshot"]
 path = ["buildlimits/admission_state.py"]
 reason = "Gauges.counts, the declared entry point above, builds every snapshot through it; the doctest and test_admission.py exercise it."
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.journal_native.JournalSink.emit_trace"]
+path = ["buildlimits/journal_native.py"]
+reason = "The service composition root passes JournalSink to JournalTracer; JournalTracer._get_tracer supplies it to JournalSpanExporter, whose export method calls emit_trace through _TraceSinkPort. Skylos cannot resolve this cross-module protocol dispatch; tests/test_tracing.py and tests/test_supervisor_effects.py exercise it."
+
 [tool.nose]
 version = "0.20.0"
 roots = ["."]
