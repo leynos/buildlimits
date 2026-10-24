@@ -1040,9 +1040,10 @@ EP-M2 conformance and evidence (2026-10-24):
   dependency-only audit result remains applicable.
 - The local CodeRabbit pass inspected the committed range from `327ae5a` to
   `080d9c0` and found no further issues. The draft PR's remote head was not
-  changed. A separate plan-documentation review found one serial-comma
-  correction, fixed in `6f3c40e`; its docs gates passed, and its local review
-  found no further issues. The draft PR's remote head remains unchanged.
+  changed. Follow-up plan reviews found a serial-comma correction and an
+  independent-clause comma, fixed in `6f3c40e` and `c72073c`. The docs gates
+  passed for both; the final local review of `c72073c` found no further issues.
+  The draft PR's remote head remains unchanged.
 
 ## Context and orientation
 
@@ -1514,18 +1515,34 @@ Domain modules are pure: no input or output, no `os`, `socket`, `subprocess` or
 - `outcome_attribution.py`: `FOOTPRINTS` (Table A as data),
   `attribute(before, after, window)`, and `confirm` (D12).
 - `outcome_gate.py`: `QuietInputs` and `quiet_point(inputs)`.
-- `outcome_key.py`: `crate_name`, `crate_origin`, `target`,
-  `argument_digest` and `toolchain_identity`. Each key derivation takes the
-  `Salt` as a value.
+- `outcome_key.py`: frozen `Salt`, `ToolchainIdentity` and `CacheKey` values,
+  plus `crate_name`, `crate_origin`, `target`, `argument_digest` and
+  `toolchain_identity`. The helpers receive the complete request argv, with the
+  compiler at index 0, the request environment and `Salt` as values.
+  `crate_origin` returns no value only when `CARGO_MANIFEST_DIR` is absent;
+  otherwise it produces the RFC's registry, git or HMAC-keyed path form.
+  `target` returns `host` when absent, preserves a target name, and HMACs a
+  JSON target path. `argument_digest` omits argv[0], applies sccache 0.14's
+  removals and cfg ordering, and includes its filtered, sorted `CARGO_*`
+  environment. `toolchain_identity` HMACs the compiler argument and
+  `RUSTUP_TOOLCHAIN`, and includes `CACHE_VERSION` and server version. The later
+  `outcome_ports` module re-exports `Salt` rather than owning a second
+  definition.
 - `outcome_parser.py` (EP-M3): `ParserClass` and `parser_class(argv)`, a pure
-  sccache 0.14 Rust-parser predictor used only for H3 evidence. It sees argv in
-  memory and returns one closed-vocabulary class; it never stores the arguments
-  or affects admission.
+  sccache 0.14 Rust-parser predictor used only for H3 evidence. `argv` is the
+  complete request vector; the predictor applies the pinned parser rules to
+  argv[1:]. It returns one closed-vocabulary class, never stores arguments and
+  never affects admission.
 - `outcome_records.py`: `OutcomeRecord` (including the bounded `parser_class`,
-  `child_sighting` and `child_samples` values), `WindowSummary` (including H3
-  class counts), `StoreHeader`, `encode_line`, `decode_lines` and `compact`.
+  `child_sighting` and `child_samples` values), `WindowSummary` (window size,
+  the two refusal-counter deltas, and predicted counts for all three parser
+  classes), `StoreHeader`, strict JSON Lines `encode_line`/`decode_lines`, and
+  pure `compact`. Records carry a `CacheKey`, result, origin class, runtime,
+  observation time and the bounded H3/H2 fields. `compact` receives time and
+  clock-skew status as values; it applies D17's age, count and byte limits.
 - `outcome_window.py`: `OutcomeWindow[P]`, a ledger generic over an opaque
-  payload. The recorder is its only owner.
+  payload. It retains at most 64 launch payloads; adding a 65th marks overflow
+  while keeping the retained tuple bounded. The recorder is its only owner.
 - `outcome_sightings.py` (EP-M8): `request_metadata(argv)`,
   `full_emit_metadata(argv)` and `ChildSightings`, which is the per-entry
   sample count and sighting, folded by the recorder on each `Sampled` event.
@@ -1826,19 +1843,19 @@ milestone that adds each module.
 - Outcome: `outcome_key.py`, `outcome_parser.py`, `outcome_records.py` and
   `outcome_window.py`. This discharges O7, the pure part of O8, and O10.
 - Red: `tests/test_outcome_key.py`, `tests/test_outcome_key_properties.py`,
-  `tests/test_outcome_parser.py` and `tests/test_outcome_records.py`.
-  Parser-class tests assert that metadata-only is cacheable with required
-  fields and a supported crate type; dep-info-only, asm-only and `--emit=`
-  predict `not_compile`; and `--emit=link,asm` predicts `declined`. Cover every
-  parser refusal branch: parse errors, `-`, `-o`, `--sysroot`, repeated
-  `--emit`, unsupported crate types, missing `-C extra-filename`, incremental
-  compilation, an unsure target, multiple inputs, missing required fields, no
-  supported crate type and unsupported emit kinds. Cover each `NotCompilation`
-  option and both argv orders for a `NotCompilation` option paired with a
-  `CannotCache` option.
-- Add the `outcome_parser` row to the module inventory in developer's guide §4;
-  document its source version, in-memory-only argv handling and H3-only reuse
-  in §9 when the integrated feature documentation lands in EP-M7.
+  `tests/test_outcome_parser.py`, `tests/test_outcome_records.py` and
+  `tests/test_outcome_window.py`. Parser-class tests assert that metadata-only
+  is cacheable with required fields and a supported crate type; dep-info-only,
+  asm-only and `--emit=` predict `not_compile`; and `--emit=link,asm` predicts
+  `declined`. Cover every parser refusal branch: parse errors, `-`, `-o`,
+  `--sysroot`, repeated `--emit`, unsupported crate types, missing
+  `-C extra-filename`, incremental compilation, an unsure target, multiple
+  inputs, missing required fields, no supported crate type and unsupported emit
+  kinds. Cover each `NotCompilation` option and both argv orders for a
+  `NotCompilation` option paired with a `CannotCache` option.
+- Add module inventory rows for all four modules in developer's guide §4;
+  document the parser's source version, in-memory-only argv handling and
+  H3-only reuse in §9 when the integrated feature documentation lands in EP-M7.
 - Snapshot: `tests/__snapshots__/test_outcome_records.ambr` pins one header
   line, one record line and one window-summary line under a fixed salt and
   fixed times, with a round-trip semantic assertion beside it.
