@@ -171,6 +171,10 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_stats`                                                                    | Pure parsing of supported sccache statistics into validated counters                             |
 | `outcome_attribution`                                                              | Pure whole-window classification from sccache counter footprints                                 |
 | `outcome_gate`                                                                     | Pure quiet-point decision for starting an outcome statistics reading                             |
+| `outcome_key`                                                                      | Pure, salted compile-request keys with paths hidden                                              |
+| `outcome_parser`                                                                   | In-memory sccache 0.14 Rust-parser prediction used for H3 evidence                               |
+| `outcome_records`                                                                  | Bounded JSON Lines values, validation and pure compaction                                        |
+| `outcome_window`                                                                   | Bounded immutable payload ledger for open statistics windows                                     |
 | `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                        |
 
 _Table 2: Package modules._
