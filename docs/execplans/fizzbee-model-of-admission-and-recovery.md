@@ -575,6 +575,25 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
 - **No technical design document exists.**
   - Observation: there is no `docs/*-design.md`.
   - Impact: D7.
+- **The spelling gate only reads tracked files, so new fixtures are invisible
+  to it until they are staged.**
+  - Observation: the first gate run after `bac76ce` reported 98 `color` and 26
+    `Writen` hits under `tests/fixtures/fizzbee/`, plus `normalise` in
+    `tests/fizzbee_spike.py` and one `artifacts` docstring. None had been
+    flagged in the four runs before that commit, because the gate enumerates
+    `git ls-files --stage` and Typos only walks an explicit file list.
+  - Evidence: `typos-config-builder gate --scope all` against the untracked
+    tree passes; the same command after `git add` reports every hit. The
+    fixtures are verbatim checker output compared byte for byte by
+    `test_captured_fixtures_match_the_live_output_and_exit_code`, so upstream's
+    `Writen` and Graphviz's `color=` cannot be corrected without breaking the
+    pin.
+  - Impact: `typos.local.toml` excludes `tests/fixtures/fizzbee/` as the one
+    place captured external output lives, and the exclusion is narrow enough
+    to pass the gate's own "too broad" check. The helper was renamed to
+    `normalize`, and the doctest now quotes a stable launcher line instead of
+    the misspelled one. Anyone adding a captured fixture must stage it before
+    the spelling gate can see it.
 
 ## Decision log
 

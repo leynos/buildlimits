@@ -62,3 +62,13 @@ def test_fizzbee_marker_is_registered(request: pytest.FixtureRequest) -> None:
     assert any(entry.startswith("fizzbee:") for entry in marker), (
         "the marker is registered in pyproject.toml"
     )
+
+
+def test_the_opt_in_variable_keeps_its_documented_name() -> None:
+    """The variable is spelled out here, so a rename cannot go unnoticed.
+
+    The developer's guide and every skip reason quote the name, and a rename
+    would otherwise agree with itself everywhere it was generated from the
+    constant.
+    """
+    assert OPT_IN == "BUILD_LIMITS_MODEL_CHECK", "the documented variable name"

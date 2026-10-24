@@ -21,4 +21,9 @@ ignore = [
 ]
 
 [files]
-exclude = []
+exclude = [
+  # Captured checker output, compared byte for byte against a live run. The
+  # launcher misspells "Written" and Graphviz writes `color=`; correcting
+  # either would make the fixture stop describing the run it records.
+  'tests/fixtures/fizzbee/',
+]
