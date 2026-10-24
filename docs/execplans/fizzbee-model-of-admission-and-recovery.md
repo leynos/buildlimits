@@ -395,7 +395,26 @@ explicitly.
     wording in `docs/repository-layout.md`, and the RFC 0001 answers above.
     The RFC's tables were renumbered into document order as Tables 9 to 13 as
     part of that record.
-- [ ] EP-M2: `modelcheck` pure domain.
+- [x] EP-M2: `modelcheck` pure domain.
+  - [x] `domain.py`, `expectations.py`, `materialize.py`, `frontmatter.py`,
+    `drift.py`, `trace.py` and `report.py`, each with its tests: 8 package
+    modules and 9 test modules, 95 tests passing and 2 skipped under
+    `tests/`, plus the `tests/modelcheck_cases.py` support module.
+  - [x] `lasso-prefix` captured and `models/spike/liveness_prefix.fizz`
+    added; `"."` and `"modelcheck"` in `pyproject.toml`'s pytest
+    configuration (D16).
+  - [x] (2026-10-24 23:52+02:00) Gates, all green and run sequentially:
+    `make check-fmt`, `make typecheck`, `make lint` (including `dead-code`,
+    `duplication` and `lint-actions`), `make test` (1,886 passed, 44 skipped,
+    47 snapshots), `make audit`, `make markdownlint` (including `make
+    spelling`) and `make nixie`. The first run of EP-M2's gate set was red on
+    four of them; the remediation is in D20.
+  - [x] Docstrings and doctests on every public function. `make test` runs
+    them via `--doctest-modules`.
+  - [ ] EP-M2-E1 is partially discharged (D20): the red failures were
+    observed in the working tree, but no log of that run survives and the
+    red and green halves are one commit. EP-M2-E2 and EP-M2-E3 are recorded
+    for the green state.
 - [ ] EP-M3: `modelcheck` ports, service, adapters and command-line interface.
 - [ ] EP-M4: minimal model with the busy queue (W1).
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
@@ -659,6 +678,44 @@ explicitly.
     changed. A branch that is green today can go red tomorrow for a reason
     outside its diff, so a gate rerun after any delay is worth reading rather
     than trusting the older result.
+- **EP-M2 exceeds the milestone's Python line budget, measured every way.**
+  - Observation: the milestone adds 1,568 net lines of Python code — 1,589 with
+    comments, 4,157 by physical lines — across 19 Python files. It exceeds the
+    1,500-line tolerance (Tolerances, "Scope") on the narrowest reading, so the
+    earlier note that the breach "depends on how lines is read" was wrong: the
+    delivered milestone is over the budget whatever is counted.
+  - Evidence: `git diff --cached --numstat` against `3c8e9a6`, with the added
+    and removed lines classified by an AST pass that separates docstrings,
+    comments, code and blanks. Added: 1,580 code, 1,771 docstring, 21 comment,
+    812 blank. Removed: 12 code, 10 docstring, 5 blank. The file count is 19
+    Python files against a budget of 25 — the 8 `modelcheck` modules, 9 test
+    modules, `tests/modelcheck_cases.py` and `tests/fizzbee_spike.py` — or 23
+    files counting `pyproject.toml` and both documentation files. The `.fizz`
+    model, the fixtures and the snapshot are excluded by the tolerance's own
+    scope rule.
+  - What the overrun is. Of the 1,568 net code lines, 1,139 are in `tests/`
+    and 429 in `modelcheck/`. The test share is the tolerance's real subject:
+    the plan's acceptance conditions (T2's generated truth table, T3 and T4's
+    Hypothesis properties plus a handwritten mutant control, T5's five captured
+    fixture classes) are exhaustive by construction, and `interrogate
+    --fail-under 100` with pydoclint's `ignore-one-line-docstrings = false`
+    requires a full numpy docstring on every helper including test helpers, so
+    each test carries 60 to 135 docstring lines on top of its code.
+    `AGENTS.md`'s 400-line module cap then splits the materializer's tests
+    across three modules.
+  - What was not done about it. No non-vacuity clause was dropped, no test was
+    merged away to suit a line count, and no docstring was cut — each would
+    have failed a gate or weakened an acceptance condition. The overrun is
+    reported rather than absorbed, which is what the tolerance asks for.
+  - Impact: EP-M3 to EP-M6 have comparable surface. EP-M3 alone adds the
+    ports, the service, the adapters and the CLI, and the remaining milestones
+    add the model and its fixtures. If the tolerance is enforced as written,
+    the whole workstream breaches it; if it is a warning threshold, the plan
+    should say so before EP-M3 sizes itself against it.
+  - Status: escalated to the user on 2026-10-24 before the EP-M2 commit. The
+    milestone is otherwise complete and gated, and the commit proceeds while
+    the tolerance question is open, so that the delivered work is recoverable
+    either way.
 
 ## Decision log
 
@@ -934,6 +991,71 @@ explicitly.
     mapping that no longer resolves) and one rendering obligation; a sorted
     tuple triple keeps the report comparable, printable and free of the
     mapping type the caller happened to use.
+- **D19. The layering tests carry no red marker.**
+  - `tests/test_modelcheck_layering.py` is the one EP-M2 test module without
+    the `_RED` marker. It walks the package's abstract syntax tree, and every
+    module it walks already exists in stub form under D17, so there is no
+    unimplemented function for it to trip over: the checks pass on the red
+    commit as they will on the green one.
+  - Marking it red would make the red run report a strict `XPASS` for all
+    seventeen of its tests. `xfail(strict=True)` treats an unexpected pass as
+    a failure, so `make test` would fail on the very commit the plan says must
+    show only `XFAIL` results.
+  - Rationale: the marker's purpose is to prove a test can fail before the
+    implementation exists. A structural test over the stub package cannot
+    demonstrate that, and pretending otherwise would either weaken the marker
+    to `strict=False` — which lets a genuinely broken test pass silently — or
+    fail the gate. The module's docstring records the exemption where a reader
+    of the tests will meet it, and the module's own non-vacuity clause (each
+    rule must reject a fixture module written to break it) is what shows a
+    later edit cannot narrow a check into uselessness.
+  - EP-M2-E1 reads "the red run shows only `XFAIL` results". The accurate
+    statement is "every test that exercises an unimplemented function reports
+    `XFAIL`, and the seventeen structural checks report `PASS`". The evidence
+    recorded below uses the accurate form.
+- **D20. EP-M2's delivered shape, and the defect the gates found.**
+  - _Red and green are one commit, and the red evidence is weaker than the
+    plan asked for._ The plan writes the stub commit and the implementation as
+    two steps, with EP-M2-E1 reading "the red run shows only `XFAIL` results".
+    The branch does not have that commit boundary: the tests were written and
+    their failures observed in the working tree before each module was
+    implemented, but the two halves are committed together. Splitting them
+    would have published a package that fails `make test`, which `AGENTS.md`
+    forbids. D17 and D19 record what the red state was; no log of that run
+    survives, so EP-M2-E1 is recorded below as partially discharged rather
+    than with the evidence the plan specifies.
+  - _`frontmatter.py` is a module the plan did not name._ It renders the YAML
+    frontmatter `materialize` writes, and it is pure: it opens no file and
+    imports nothing outside the standard library. Keeping it inside
+    `materialize.py` would have put that module over 400 lines, which the plan
+    and the repository both forbid. `MaterializeError` therefore lives in
+    `domain.py` rather than beside the function that first raised it: both the
+    rewriter and the renderer raise it, and either module importing it from the
+    other would invert the dependency between them. The plan's module tree
+    records the module, as does `docs/repository-layout.md`.
+  - _A retained assertion the source does not declare is now refused._
+    `_strip_assertions` originally stripped every unstripped assertion without
+    checking that a retained name existed. A configuration still declaring
+    `ReachesTen` against a model renamed to `ReachesTenV2` produced a
+    specification containing no assertions at all, which the checker would
+    report as a pass while the report read as the expectation being met. This
+    is exactly the failure D3 exists to prevent, and the gate remediation found
+    it: the original test asserted the caller-declaration check while its
+    docstring promised the source-existence check. `_strip_assertions` now
+    raises `MaterializeError` naming the absent assertion, and
+    `test_a_retained_assertion_must_exist` exercises the renamed source.
+  - _Dead code in `report.py` was a coverage gap, not lint noise._ Skylos
+    reported eight uncalled renderers. They are EP-M2 deliverables with a real
+    contract, so the fix was `tests/test_modelcheck_report.py` (twelve tests)
+    rather than eight `df12-skylos allow` entries. EP-M3's CLI is their first
+    production caller.
+  - _The duplication gate's remaining families are structural._ Five families
+    survived extraction and carry reasoned `[[tool.duplication_gate.allow]]`
+    entries in `pyproject.toml`: three are matching import lists, which the
+    repository already treats as a shared convention rather than duplication;
+    one is the truth-table row test against its non-vacuity sweep, which T2
+    requires as two tests; and one is two unrelated builders sharing only the
+    numpy `Returns` section.
 
 ## Outcomes & retrospective
 
@@ -961,6 +1083,38 @@ Not started. Completed at each gate and at completion.
   `Makefile` and the developer's guide's `ty` version lag `ty==0.0.89` in
   `pyproject.toml`; both are recorded for a separate change, not this plan.
   Open questions 7 and 9 to 12 stay open and none bears on W1.
+
+### EP-M2
+
+- **Delivered.** The seven pure modules — `domain.py`, `expectations.py`,
+  `materialize.py`, `frontmatter.py`, `drift.py`, `trace.py` and `report.py` —
+  with nine test modules and a shared case-builder support module. The
+  `lasso-prefix` output class and its model. D16's pytest configuration. ADR
+  readiness is unaffected: the architecture ADR belongs to EP-M3.
+- **What the tests pin.** T2's truth table is generated from the domain's own
+  unions, so a new result variant or expectation kind fails until it is
+  classified. T3's materializer is exercised by Hypothesis over generated
+  specifications, with explicit examples for each rewrite kind and a mutant
+  materializer that the properties must reject. T4's drift check keeps the
+  roadmap's negative control as a separate test. T5's trace tests are
+  parametrized over the captured fixtures, including the two non-vacuity
+  controls the cycle-start rule needs.
+- **What it cost.** No W1 revision budget: no W1 model exists yet. Two modules
+  the plan did not name were required: `frontmatter.py`, split out to keep
+  `materialize.py` within the 400-line limit, and `MaterializeError`'s home in
+  `domain.py` so that neither pure module imports the other (D20).
+- **What the gates found.** A real correctness defect in `_strip_assertions`:
+  a configuration declaring a retained assertion the source no longer declares
+  produced a specification with no assertions at all, which the checker would
+  pass while the report read as the expectation being met. The guard, the
+  rewritten test and the reasoning are in D20. The eight uncalled renderers
+  Skylos reported were missing coverage rather than dead code, and
+  `tests/test_modelcheck_report.py` now covers them. Five duplication families
+  survived extraction and carry reasoned allowances.
+- **Carried forward.** EP-M2-E1 is partially discharged (D20). The report
+  renderers have no production caller until EP-M3's CLI; their tests are the
+  only caller today. Skylos entries and Vulture names for the doubles belong to
+  EP-M3, per the plan's own budget.
 
 ## Context and orientation
 
@@ -2251,6 +2405,7 @@ modelcheck/
 ├── domain.py                Configuration, expectation kinds, result union, Verdict, MaterializedSpec
 ├── expectations.py          judge(): expectation x result -> Judgement
 ├── materialize.py           materialize(): source + configuration -> MaterializedSpec
+├── frontmatter.py           replace_frontmatter(), body_after_frontmatter()
 ├── drift.py                 parse_mappings(), drift() -> DriftReport
 ├── trace.py                 Trace, Step, cycle and stutter markers
 ├── report.py                render_report(), render_drift()

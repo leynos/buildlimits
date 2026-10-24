@@ -1210,3 +1210,23 @@ reason = "Both modules own an isolated real-systemd world and release it in the 
 [[tool.duplication_gate.allow]]
 members = ["tests/test_fizzbee_spike.py", "tests/test_fizzbee_graphs.py"]
 reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_group_drain_metrics.py", "modelcheck/expectations.py", "tests/test_cache_recovery_telemetry.py", "tests/test_recovery_roots_deadline.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/modelcheck_cases.py", "modelcheck/expectations.py"]
+reason = "Matching import lists: each module names the domain symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_modelcheck_expectations.py", "tests/test_modelcheck_report.py"]
+reason = "Matching import lists: each module names the case builders it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_modelcheck_expectations.py::test_the_truth_table_classifies_every_row", "tests/test_modelcheck_expectations.py::test_judge_returns_the_classified_verdict"]
+reason = "The parametrized row test states one row's full judgement, and the sweep states that every row is classified and every verdict reached; both judge through _judge_row, so only their docstrings and assertions repeat, and merging them would leave T2 with one test where the plan requires a row test and a non-vacuity sweep."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/modelcheck_cases.py::result_of", "tests/modelcheck_cases.py::trace"]
+reason = "Two unrelated builders share only the numpy Returns section and the deferred-import line the test-support module requires; extracting a helper from them would invent a shape neither has."
