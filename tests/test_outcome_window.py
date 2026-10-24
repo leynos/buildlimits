@@ -1,11 +1,6 @@
 """Bounded immutable launch accounting for statistics windows."""
 
-import pytest
 from outcome_test_helpers import outcome_module
-
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="EP-M3 red tests precede the outcome window implementation"
-)
 
 
 def test_window_bound_overflow_and_ignored_following_launches() -> None:

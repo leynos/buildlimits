@@ -12,10 +12,6 @@ from outcome_test_helpers import outcome_module
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="EP-M3 red tests precede the outcome records implementation"
-)
-
 _NOW = dt.datetime(2026, 10, 24, 12, tzinfo=dt.UTC)
 
 

@@ -3,10 +3,6 @@
 import pytest
 from outcome_test_helpers import expected_hmac, outcome_module
 
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="EP-M3 red tests precede the outcome key implementation"
-)
-
 
 def _salt() -> object:
     """Return a fixed test salt without importing a future module at collection."""

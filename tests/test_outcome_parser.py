@@ -3,10 +3,6 @@
 import pytest
 from outcome_test_helpers import outcome_module
 
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="EP-M3 red tests precede the outcome parser implementation"
-)
-
 
 def _argv(*arguments: str) -> tuple[str, ...]:
     """Build a complete request vector with the compiler in argv[0]."""

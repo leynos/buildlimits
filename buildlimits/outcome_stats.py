@@ -4,6 +4,8 @@ import dataclasses as dc
 import json
 import typing as typ
 
+from buildlimits.json_values import json_mapping as _mapping
+
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -47,26 +49,6 @@ class ReadFailure:
     """A statistics document that could not be admitted as a reading."""
 
     reason: typ.Literal["parse_error", "unsupported_version"]
-
-
-def _mapping(value: object) -> cabc.Mapping[str, object] | None:
-    """Return a string-keyed JSON object, if ``value`` has that shape.
-
-    Returns
-    -------
-    Mapping[str, object] or None
-        The JSON object's fields, or ``None`` when ``value`` is not an object.
-
-    Examples
-    --------
-    >>> _mapping({"stats": {}})["stats"]
-    {}
-    >>> _mapping([]) is None
-    True
-    """
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
-        return None
-    return typ.cast("cabc.Mapping[str, object]", value)
 
 
 def _integer(value: object) -> int:

@@ -1,0 +1,8 @@
+# serializer version: 1
+# name: test_header_outcome_and_window_summary_snapshot
+  tuple(
+    '{"format":"buildlimits-cache-outcomes","version":1,"salt_id":"fixed-salt","written_at":"2026-10-24T12:00:00Z"}',
+    '{"kind":"outcome","key":{"crate_name":"serde","crate_origin":"registry:serde@1.2.3","target":"host","argument_digest":"56b8cbe023d0c54b51d72dbbcc03339f5f9fefe765653c7dbb0a9b2cb99c39ee","toolchain_identity":{"compiler_digest":"c142437ba8c3da8b954a3391a370b1f925480c08cf24f48ce0c5a9df845cbdeb","rustup_toolchain_digest":"6617aa9e5d4ed23a75a66e659b7c817b8115595b008954d3b33fe2e60f9f8b2c","cache_version":"6","server_version":"0.14.0"}},"outcome":"hit","origin":"registry","runtime_seconds":0.25,"observed_at":"2026-10-24T12:00:00Z","parser_class":"cacheable","child_sighting":"seen","child_samples":3}',
+    '{"kind":"window_summary","observed_at":"2026-10-24T12:00:00Z","server_version":"0.14.0","window_groups":1,"requests_not_compile":0,"requests_not_cacheable":0,"predicted_not_compile":0,"predicted_declined":0,"predicted_cacheable":1}',
+  )
+# ---

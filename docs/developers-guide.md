@@ -171,10 +171,14 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_stats`                                                                    | Pure parsing of supported sccache statistics into validated counters                             |
 | `outcome_attribution`                                                              | Pure whole-window classification from sccache counter footprints                                 |
 | `outcome_gate`                                                                     | Pure quiet-point decision for starting an outcome statistics reading                             |
-| `outcome_key`                                                                      | Pure, salted compile-request keys with paths hidden                                              |
-| `outcome_parser`                                                                   | In-memory sccache 0.14 Rust-parser prediction used for H3 evidence                               |
-| `outcome_records`                                                                  | Bounded JSON Lines values, validation and pure compaction                                        |
-| `outcome_window`                                                                   | Bounded immutable payload ledger for open statistics windows                                     |
+| `json_values`                                             | Pure JSON object and non-negative integer validators shared by boundary adapters                |
+| `outcome_key`                                             | Pure, salted compile-request identity with local paths hidden                                   |
+| `outcome_key_arguments`                                   | Canonical compiler arguments and selected Cargo environment for key digests                     |
+| `outcome_parser`                                          | In-memory sccache 0.14 Rust-parser prediction used for H3 evidence                              |
+| `outcome_record_format`                                   | Typed outcome records and format-specific field validation                                      |
+| `outcome_record_codec`                                    | Strict JSON Lines encoding and decoding for outcome records                                     |
+| `outcome_records`                                         | Public record API and pure age, count and byte compaction                                       |
+| `outcome_window`                                          | Bounded immutable payload ledger for open statistics windows                                    |
 | `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                        |
 
 _Table 2: Package modules._

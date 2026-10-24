@@ -7,10 +7,6 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from outcome_test_helpers import outcome_module, record_generated_case
 
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="EP-M3 red tests precede the outcome key implementation"
-)
-
 _PATH_COMPONENT = st.text(
     alphabet="abcdefghijklmnopqrstuvwxyz0123456789", min_size=8, max_size=16
 )

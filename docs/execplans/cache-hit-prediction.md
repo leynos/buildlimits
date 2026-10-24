@@ -10,7 +10,7 @@ documentation gates and review passed; EP-M1 validation, audit evidence and
 documentation gates and milestone review passed; EP-M1 commits are complete;
 EP-M2 is complete in `327ae5a` and `080d9c0`, with final gates and local
 CodeRabbit review passed; EP-M3 red contracts are committed as `195ff77` and
-their full gates passed; its implementation is in progress)
+its implementation and full gates passed)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -484,6 +484,16 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   66 xfailed. Dependency-audit evidence was reused because `uv.lock` was
   unchanged. Logs use the
   `/tmp/*-buildlimits-cache-hit-prediction-epm3-red-candidate-18.out` prefix.
+- [x] (2026-10-24 18:28Z) EP-M3 implementation passed formatting,
+  Markdown/spelling, Mermaid, lint, typecheck and the full one-worker test
+  suite. The suite reported 1,942 passed, 26 skipped and 47 snapshots passed.
+  The generated record snapshot was copied from the disposable candidate and
+  its SHA-256 matched. Dependency-audit evidence was reused because `uv.lock`
+  was unchanged. The final validated candidate archive is
+  `/tmp/cache-hit-prediction-epm3-green-candidate-12-validated.tar`, SHA-256
+  `b1e5a66a25c1c358f10cc1f7f6f673f46129523d882fc35255ad83681f5d1f28`; gate logs
+  use the `/tmp/*-buildlimits-cache-hit-prediction-epm3-green-candidate-12.out`
+  prefix.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
@@ -495,7 +505,8 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] EP-M2: pure statistics, footprints, attribution, and gate; implementation
   commit `327ae5a`, review follow-up `080d9c0`, final gates and local
   CodeRabbit review complete.
-- [ ] EP-M3: pure keys, records and the window ledger.
+- [x] EP-M3: pure keys, records and the window ledger; implementation and
+  full gates passed.
 - [ ] EP-M4: the reading sequencer over fake ports.
 - [ ] EP-M5: adapters (non-blocking child, queries, generation, store
   writer).
@@ -1538,7 +1549,11 @@ Domain modules are pure: no input or output, no `os`, `socket`, `subprocess` or
   environment. `toolchain_identity` HMACs the compiler argument and
   `RUSTUP_TOOLCHAIN`, and includes `CACHE_VERSION` and server version. The later
   `outcome_ports` module re-exports `Salt` rather than owning a second
-  definition.
+  definition. `outcome_key_arguments.py` owns canonical argv normalization and
+  Cargo environment selection for the argument digest.
+- `json_values.py`: pure JSON object and non-negative integer validators for
+  the statistics, D-Bus property and outcome-store boundaries. Callers retain
+  responsibility for their vocabulary and error policy.
 - `outcome_parser.py` (EP-M3): `ParserClass` and `parser_class(argv)`, a pure
   sccache 0.14 Rust-parser predictor used only for H3 evidence. `argv` is the
   complete request vector; the predictor applies the pinned parser rules to
@@ -1547,10 +1562,15 @@ Domain modules are pure: no input or output, no `os`, `socket`, `subprocess` or
 - `outcome_records.py`: `OutcomeRecord` (including the bounded `parser_class`,
   `child_sighting` and `child_samples` values), `WindowSummary` (window size,
   the two refusal-counter deltas, and predicted counts for all three parser
-  classes), `StoreHeader`, strict JSON Lines `encode_line`/`decode_lines`, and
-  pure `compact`. Records carry a `CacheKey`, result, origin class, runtime,
-  observation time and the bounded H3/H2 fields. `compact` receives time and
-  clock-skew status as values; it applies D17's age, count and byte limits.
+  classes), `StoreHeader`, and pure `compact`. Records carry a `CacheKey`,
+  result, origin class, runtime, observation time and bounded H3/H2 fields.
+  `compact` receives time and clock-skew status as values; it applies D17's
+  age, count and byte limits. It re-exports the codec API for compatibility.
+- `outcome_record_format.py`: owns the typed record values and format-specific
+  field validation. `outcome_record_codec.py` owns strict JSON Lines
+  `encode_line`/`decode_lines`; `outcome_records.py` is the public facade and
+  sole compaction owner. These are format-specific boundaries, not a general
+  JSON utility.
 - `outcome_window.py`: `OutcomeWindow[P]`, a ledger generic over an opaque
   payload. It retains at most 64 launch payloads; adding a 65th marks overflow
   while keeping the retained tuple bounded. The recorder is its only owner.
@@ -1851,8 +1871,10 @@ milestone that adds each module.
 
 ### EP-M3: keys, records and the window ledger
 
-- Outcome: `outcome_key.py`, `outcome_parser.py`, `outcome_records.py` and
-  `outcome_window.py`. This discharges O7, the pure part of O8, and O10.
+- Outcome: `json_values.py`, `outcome_key.py`, `outcome_key_arguments.py`,
+  `outcome_parser.py`, `outcome_record_format.py`, `outcome_record_codec.py`,
+  `outcome_records.py` and `outcome_window.py`. This discharges O7, the pure
+  part of O8, and O10.
 - Red: `tests/test_outcome_key.py`, `tests/test_outcome_key_properties.py`,
   `tests/test_outcome_parser.py`, `tests/test_outcome_records.py` and
   `tests/test_outcome_window.py`. Parser-class tests assert that metadata-only
@@ -1864,7 +1886,7 @@ milestone that adds each module.
   inputs, missing required fields, no supported crate type and unsupported emit
   kinds. Cover each `NotCompilation` option and both argv orders for a
   `NotCompilation` option paired with a `CannotCache` option.
-- Add module inventory rows for all four modules in developer's guide §4;
+- Add module inventory rows for these modules in developer's guide §4;
   document the parser's source version, in-memory-only argv handling and
   H3-only reuse in §9 when the integrated feature documentation lands in EP-M7.
 - Snapshot: `tests/__snapshots__/test_outcome_records.ambr` pins one header
