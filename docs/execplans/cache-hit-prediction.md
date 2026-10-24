@@ -7,7 +7,8 @@ be kept up to date as work proceeds.
 
 Status: APPROVED FOR EXECUTION; IN PROGRESS (2026-10-24; EP-M0 is complete; r31
 documentation gates and review passed; EP-M1 validation, audit evidence and
-documentation gates and milestone review passed; atomic commits are pending)
+documentation gates and milestone review passed; EP-M1 commits are complete;
+EP-M2 is next)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -395,14 +396,17 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   private helper docstrings conflict with the repository's
   function-documentation requirement; the examples remain. No actionable review
   findings remain.
+- [x] (2026-10-24 12:31Z) EP-M1 completed in commits `3455cee` and `e583fdc`.
+  The first records the narrow Skylos protocol-dispatch entrypoint; the second
+  commits the acceptance fixture checks, documentation and gate record.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
   r6/r9/r13/r19 follow-up corrections and r21 formatter correction are recorded
   above; the r23 and r31 documentation gates and reviews passed.
-- [ ] EP-M1: real-binary feasibility and axiom check: **go**; implementation
-  and code gates passed. Documentation gates and milestone review passed;
-  atomic commits remain pending.
+- [x] EP-M1: real-binary feasibility and axiom check: **go**; implementation,
+  code and documentation gates passed; milestone review passed; commits are
+  `3455cee` and `e583fdc`.
 - [ ] EP-M2: pure statistics, footprints, attribution and gate.
 - [ ] EP-M3: pure keys, records and the window ledger.
 - [ ] EP-M4: the reading sequencer over fake ports.
