@@ -5,9 +5,9 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: IN PROGRESS (2026-10-24; EP-M0 is complete; r31 documentation gates and
-review passed; EP-M1 validation passed, but its Python commit remains gated by
-the unresolved audit blocker)
+Status: APPROVED FOR EXECUTION; IN PROGRESS (2026-10-24; EP-M0 is complete; r31
+documentation gates and review passed; EP-M1 validation passed, but its Python
+commit remains gated by the unresolved audit blocker)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -360,6 +360,8 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   `make fmt`, `make check-fmt`, `make markdownlint` and `make nixie`
   sequentially with an empty formatter diff. CodeRabbit 0.9.1 reviewed the four
   documents against `278cccb` through `8e0bd40` and found zero issues.
+- [x] (2026-10-24 10:29Z) Confirmed D26's approval remains in effect and marked
+  the plan approved for execution before resuming implementation.
 - [ ] `make audit` remains a commit blocker: the isolated gate could not reach
   PyPI, and a separate metadata-only scan found six advisories in the
   pre-existing `filelock==4.2.0` lock entry, fixed in 4.2.1. Resolve this
