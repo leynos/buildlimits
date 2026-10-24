@@ -160,7 +160,7 @@ prediction threshold and its falsification threshold are inconclusive.
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------- |
 | H1         | No attributed label disagrees with truth in at least 200 controlled windows; host coverage is at least 20% of cached requests. | Any wrong label, or coverage below 5%. |
 | H2         | Wall time plus a sighted child agrees with at least 95% of window labels.                                                      | Agreement below 90%.                   |
-| H3         | Every request with a C4 feature is declined as uncacheable, and none without one is.                                           | One counterexample.                    |
+| H3         | C4 features predict `NotCompilation` or `CannotCache`; each matching counter moves, and neither moves without a C4 feature.       | One counterexample.                    |
 | H4         | Registry crates at a pinned version with an unchanged argument digest hit at least 95% after their first observation.          | Below 90%.                             |
 | H5         | At most 5% of consecutive outcome pairs within one key flip without a toolchain change.                                        | Above 10%.                             |
 
@@ -245,15 +245,22 @@ clause prevents the next queued launch from straddling the query.
 
 ### D21-D23: define H3 evidence and deliver its replay in W1
 
-`cacheability_features(argv)` includes incremental compilation, crate type,
-multiple inputs, missing required arguments (`input`, `--emit`, `--crate-name`
-or `--out-dir`), and `--emit` sets that contain neither `link` nor `metadata`
-or contain an unsupported kind. A metadata-only emit is cacheable. It also
-includes Cargo's `-vV` probe and sccache's `NotCompilation` flags.
-For every balanced window, including mixed windows, store a summary with the
-launch count, delta of `requests_not_cacheable` and count classified as
-uncacheable. H3 uses those totals and per-request rows from solo windows; equal
-counts are necessary but not sufficient.
+`cacheability_features(argv)` predicts the parser result in sccache 0.14 order.
+It classifies `NotCompilation` flags and emit sets with neither `link` nor
+`metadata` as `not_compile`. This includes dep-info-only, asm-only and
+`--emit=`; splitting the empty value yields one empty member. It classifies
+incremental compilation, unsupported crate types, multiple inputs, missing
+required arguments (`input`, `--emit`, `--crate-name` or `--out-dir`), and an
+unsupported emit kind in a set that also contains `link` or `metadata` as
+`declined` (`CannotCache`). A metadata-only emit is cacheable. Cargo's `-vV`
+probe is `declined` as `missing input`.
+
+For every balanced window, including mixed windows, store the launch count,
+the `requests_not_compile` and `requests_not_cacheable` deltas, and the number
+of launches predicted in each class. Compare each prediction with its own
+counter and with per-request rows from solo windows; equal counts are
+necessary but not sufficient. `NotCompilation` maps to
+`requests_not_compile`, while `CannotCache` maps to `requests_not_cacheable`.
 
 Ship `build-limits-cache-replay h3` read-only over the store in W1 (EP-M7), so
 G1 has the H3 verdict. The owner's Q1 answer supersedes the earlier proposal to

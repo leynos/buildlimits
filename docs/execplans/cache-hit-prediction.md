@@ -558,22 +558,23 @@ C-GATES.
   because `cache_recovery.py` has no headroom for a property. The `queued == 0`
   clause is the panel's: with a queue, the next launch follows within a
   millisecond, and the reading would straddle.
-- D21. Deviation in the H3 evidence. Decision: the C4 predicate
-  `cacheability_features(argv)` covers two kinds of refusal:
-  - the RFC's features: incremental compilation, crate type, several inputs,
-    missing required arguments (`input`, `--emit`, `--crate-name` or
-    `--out-dir`), and `--emit` sets that contain neither `link` nor `metadata`
-    or contain an unsupported kind. A metadata-only emit is cacheable;
-  - S1's refusals: a missing input (Cargo's `-vV`) and the `NotCompilation`
-    flags.
+- D21. Deviation in the H3 evidence. Decision: `cacheability_features(argv)`
+  predicts the parser result in sccache 0.14 order. `not_compile` covers
+  `NotCompilation` flags and emit sets with neither `link` nor `metadata`,
+  including dep-info-only, asm-only and `--emit=` (one empty member).
+  `declined` covers `CannotCache`: incremental compilation, unsupported crate
+  types, several inputs, missing required arguments (`input`, `--emit`,
+  `--crate-name` or `--out-dir`), and unsupported emit kinds when `link` or
+  `metadata` is also present. Metadata-only is cacheable. Cargo's `-vV` probe
+  is `declined` as `missing input`.
 
   For every balanced window, mixed or not, the store also gets a _window
-  summary_ record. It holds the number of launches, Δ`requests_not_cacheable`,
-  and how many launches the predicate classes as uncacheable. H3 uses both the
-  per-request rows from solo windows and the window counts. Rationale: without
-  "missing input", Cargo's first probe falsifies H3 at once, and the window
-  counts widen the sample from quiet windows to every balanced window. Equal
-  counts are necessary but not sufficient, and the verdict says so.
+  summary_ record. It holds the launch count, Δ`requests_not_compile`,
+  Δ`requests_not_cacheable`, and the predicted launch count for each class.
+  Compare the two predictions with their counters separately, then use
+  per-request rows from solo windows as a second check. Rationale: equal counts
+  are necessary but not sufficient; the two refusal classes must not be
+  collapsed into one counter.
 - D22. Decision: `build-limits-cache-replay h3` ships in W1 (EP-M7), read
   only over the store. Rationale: G1 needs the H3 verdict, so it cannot wait
   for W2.
@@ -673,6 +674,17 @@ C-GATES.
   `metadata`, or contains an unsupported kind. Metadata-only is cacheable.
   Rationale: the parser explicitly accepts `--emit=metadata`; the previous
   “without `link`” predicate would produce a false H3 classification.
+- D29. Review correction to D21 and D28. Decision: classify `NotCompilation`
+  separately from `CannotCache`, following parser order. Emit sets without
+  `link` or `metadata`, including dep-info-only, asm-only and `--emit=`, predict
+  `not_compile`; the empty value splits to one empty member. Missing required
+  arguments, incremental compilation, unsupported crate types, multiple inputs
+  and unsupported emit kinds when `link` or `metadata` is present predict
+  `declined`. Compare `not_compile` with `requests_not_compile` and `declined`
+  with `requests_not_cacheable` separately. Rationale: sccache returns
+  `NotCompilation` before checking unsupported emit kinds when neither
+  `link` nor `metadata` is present; its server updates separate counters for
+  the two parser results. The empty value does not reach a cacheable path.
 
 ## Outcomes & retrospective
 
@@ -704,8 +716,9 @@ The pre-mortem scenarios, each with its mitigation now designed in:
 
 EP-M0 conformance and evidence (2026-10-24):
 
-- ADR 004 records D2 to D25 and fixes Table 1 before the live query; its
-  status remains Proposed until EP-M8 merges.
+- The initial ADR 004 commit, `ddfaeae`, recorded D2 to D25 and fixed Table 1
+  before the live query; its status remains Proposed until EP-M8 merges. Review
+  corrections D27 to D29 are recorded in this ExecPlan.
 - The sccache 0.14.0 fixture came from one read-only query to the managed
   socket. `cache_location` and `basedirs` were redacted before writing the
   fixture. G0's 4.5% solo-window bound remains the prior journal measurement in
@@ -824,9 +837,10 @@ compiles on a shared host. The terms below are used throughout this plan.
   - ADR 003 (bounded tracing) governs the spans. ADR 004 amends its scope
     for the new operations.
   - dev-env-rocky ADR 011 governs token coverage.
-  - This plan creates ADR 004 (`docs/adr-004-cache-outcome-recording.md`),
-    which records D2 to D25 and the fixed thresholds. Its decision was
-    committed as `ddfaeae` before the live stats fixture was captured.
+  - This plan creates ADR 004 (`docs/adr-004-cache-outcome-recording.md`). Its
+    initial commit `ddfaeae` recorded D2 to D25 and fixed the thresholds before
+    the live stats fixture was captured. Review corrections D27 to D29 are
+    recorded in this ExecPlan.
 - Standards: `AGENTS.md`, `docs/developers-guide.md`,
   `docs/documentation-style-guide.md` and `docs/scripting-standards.md`.
 
@@ -1330,9 +1344,10 @@ milestone that adds each module.
 
 - Outcome:
   - `docs/adr-004-cache-outcome-recording.md` (Status: Proposed; Accepted
-    when EP-M8 merges) records D2 to D28, the fixed thresholds of Table B,
+    when EP-M8 merges) records D2 to D25, the fixed thresholds of Table B,
     the 2,000-outcome minimum, the vocabulary and the ADR 003 scope
-    amendment. RFC 0002 links to it.
+    amendment. RFC 0002 links to it. This ExecPlan records review corrections
+    D27 to D29.
   - `docs/roadmap.md` gains a rewritten preamble covering both RFCs, with
     references qualified as in "RFC 0002 G1". It also gains phase 3,
     "Record and evaluate cache outcomes", with step 3.1 (W1: EP-M1 to
@@ -1460,8 +1475,8 @@ milestone that adds each module.
   This discharges O7, the pure part of O8, and O10.
 - Red: `tests/test_outcome_key.py`, `tests/test_outcome_key_properties.py`
   and `tests/test_outcome_records.py`. Cacheability tests assert that
-  metadata-only emit is accepted, while dep-info-only and unsupported emit
-  kinds are refusal features.
+  metadata-only is cacheable; dep-info-only, asm-only and `--emit=` predict
+  `not_compile`; and `--emit=link,asm` predicts `declined`.
 - Snapshot: `tests/__snapshots__/test_outcome_records.ambr` pins one header
   line, one record line and one window-summary line under a fixed salt and
   fixed times, with a round-trip semantic assertion beside it.
@@ -1843,7 +1858,7 @@ Table B gives the thresholds that EP-M0 fixes, verbatim from RFC 0002.
 | ---------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
 | H1         | No attributed label disagrees with truth in at least 200 controlled windows; host coverage at least 20% of cached requests | Any wrong label, or coverage <5% |
 | H2         | Wall time plus a sighted child agrees with at least 95% of window labels                                                   | Below 90%                        |
-| H3         | Every request with a C4 feature is declined, and none without one is                                                       | One counterexample               |
+| H3         | C4 features predict `NotCompilation` or `CannotCache`; each matching counter moves, and neither moves without a C4 feature | One counterexample               |
 | H4         | Registry crates at a pinned version with an unchanged argument digest hit at least 95% after their first observation       | Below 90%                        |
 | H5         | At most 5% of consecutive outcome pairs within one key flip without a toolchain change                                     | Above 10%                        |
 
@@ -2086,5 +2101,5 @@ Consult these documents:
 - 2026-10-23: the owner approved the whole plan, including deviations D2 to
   D25. EP-M0 is authorized; EP-M9 remains gated by G1.
 - 2026-10-24: CodeRabbit's EP-M0 review identified a long-run store-size gap
-  and an overbroad `--emit` refusal predicate. D27 and D28 record the resulting
-  corrections, checked against sccache v0.14.0 source before editing.
+  and H3 classification errors. D27 to D29 record the resulting corrections,
+  checked against sccache v0.14.0 source before editing.

@@ -123,9 +123,11 @@ behaves as its source reads.
   incremental compilation, unsupported crate types and several input files
   (`cannot_cache!("incremental")`, `cannot_cache!("crate-type", ...)`). It
   requires an input, `--emit`, `--crate-name` and `--out-dir`; the emit set
-  must include `link` or `metadata`. A metadata-only emit is accepted, while a
-  dep-info-only emit is classified as `NotCompilation` and unsupported emit
-  kinds are rejected[^6][^10]. A `NotCompilation` result produces
+  must include `link` or `metadata`. A metadata-only emit is accepted. A
+  non-empty emit set with neither `link` nor `metadata` is `NotCompilation`,
+  including dep-info-only, asm-only and `--emit=` (which splits to one empty
+  member)[^12]. An unsupported kind in a set that also includes `link` or
+  `metadata` is `CannotCache`[^6][^10]. A `NotCompilation` result produces
   `UnhandledCompile`, and the client then runs the compiler itself
   (`handle_compile_response`)[^7], inside the compiler scope, not the server's
   control group.
@@ -950,16 +952,16 @@ The thresholds below are proposals, to be approved before any data is read.
   compiles, apart from labels (I4); if falsified, keep wall time for display
   and stop sampling children.
 - **H3. Arguments decide non-cacheability.** _Prediction:_ every request with a
-  C4 feature is refused as uncacheable and none without one is, read from
-  `requests_not_cacheable` rather than from an outcome label. _Falsified if:_
-  one counterexample occurs. _Decision:_ if it survives, W6 may go to design
-  review; if falsified, drop the deterministic class. H3 tests the refusal
-  counter because a C4 refusal never reaches a `CompileResult`: the parser
-  declines the request, the client compiles it itself, and the server records
-  the refusal in `requests_not_cacheable` while moving neither
-  `non_cacheable_compilations` nor `compilations`. Reading the refusal from the
-  counter keeps it distinct from `not_cacheable`, which is only ever a server
-  result for a compile that ran. The two are different claims about different
+  C4 feature is refused in its predicted parser class, and none without one is.
+  `NotCompilation` moves `requests_not_compile`; `CannotCache` moves
+  `requests_not_cacheable`[^11]. The two counter deltas are compared separately,
+  not inferred from an outcome label. _Falsified if:_ one counterexample
+  occurs. _Decision:_ if it survives, W6 may go to design review; if falsified,
+  drop the deterministic class. Neither refusal reaches a `CompileResult`: the
+  parser declines the request and the client compiles it itself. These refusal
+  counters are distinct from `not_cacheable`, which is only a server result for
+  a compile that ran, and neither adds to `non_cacheable_compilations` or
+  `compilations`. The two classes are different claims about different
   observations, and a window label cannot stand in for a refusal count.
 - **H4. Registry crates are predictable.** _Prediction:_ registry crates at a
   pinned version with an unchanged argument digest hit at least 95% of the time
@@ -1153,3 +1155,9 @@ evidence is collected.
 
 [^10]: sccache v0.14.0, `src/compiler/rust.rs`, `parse_arguments`:
        <https://github.com/mozilla/sccache/blob/v0.14.0/src/compiler/rust.rs>
+
+[^11]: sccache v0.14.0, `src/server.rs`, request counter updates:
+       <https://github.com/mozilla/sccache/blob/v0.14.0/src/server.rs>
+
+[^12]: Rust standard library, `str::split`:
+       <https://doc.rust-lang.org/std/primitive.str.html#method.split>
