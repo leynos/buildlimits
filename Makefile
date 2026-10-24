@@ -51,8 +51,11 @@ PYLINT = $(UV_ENV) $(UV) tool run --managed-python --python $(PYLINT_PYTHON) --f
 # under the user's XDG cache, so every checkout shares one verified download.
 # FIZZBEE_HOME and FIZZBEE_STAMP are spelled with make's $(or ...) rather than
 # the shell's ${XDG_CACHE_HOME:-$HOME/.cache} because make must resolve the
-# stamp path to decide whether a refetch is needed. The asset name and the
-# digest move together: overriding one without the other fails the check.
+# stamp path to decide whether a refetch is needed. The cache path carries the
+# version as well as the digest, so overriding either one moves the stamp and
+# make re-verifies instead of silently keeping the release it already had. The
+# asset name and the digest still move together: a release change without its
+# digest fails the check inside the recipe, where make cannot skip it.
 FIZZBEE_VERSION ?= v0.5.4
 FIZZBEE_SHA256 ?= 8a1d0900f9ad920002151922337912e11f9e588a2f1196249fe40bf75370f782
 FIZZBEE_ASSET ?= fizzbee-$(FIZZBEE_VERSION)-linux_x86.tar.gz
@@ -63,7 +66,7 @@ FIZZBEE_URL ?= https://github.com/fizzbee-io/fizzbee/releases/download/$(FIZZBEE
 # verified digest. Its tag is 0.5.4; a v-prefixed tag does not exist.
 FIZZBEE_IMAGE ?= ghcr.io/fizzbee-io/fizzbee@sha256:e7b90a0157ab466283e96a9650ab9f91b8ab80a9db8ac6f1d868ecd2b2c687b8
 FIZZBEE_HOME ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/buildlimits/fizzbee/$(FIZZBEE_SHA256)
-FIZZBEE_STAMP ?= $(FIZZBEE_HOME)/.verified
+FIZZBEE_STAMP ?= $(FIZZBEE_HOME)/.verified-$(FIZZBEE_ASSET)
 FIZZ ?= .tools/fizzbee/fizz
 
 
@@ -217,12 +220,14 @@ duplication: install-nose ## Check every duplication family with the shared gate
 	$(DUPLICATION_GATE) check --repository .
 
 # The stamp carries the digest, so a cache entry left by an interrupted unpack,
-# or by another version, is never mistaken for a verified one. The recipe holds
-# a lock so two checkouts fetching at once still unpack once.
+# or by another version, is never mistaken for a verified one. Its name carries
+# the asset, so make re-verifies when either the release or its digest changes.
+# The recipe holds a lock so two checkouts fetching at once still unpack once.
 $(FIZZBEE_STAMP):
 	@set -eu; \
 	  want='$(FIZZBEE_SHA256)'; \
 	  home='$(FIZZBEE_HOME)'; \
+	  stamp='$(FIZZBEE_STAMP)'; \
 	  asset="$$home.tar.gz"; \
 	  case "$$home" in \
 	    */buildlimits/fizzbee/"$$want") ;; \
@@ -231,7 +236,7 @@ $(FIZZBEE_STAMP):
 	  mkdir -p "$$(dirname "$$home")"; \
 	  ( \
 	    flock 9; \
-	    if [ "$$(cat "$$home/.verified" 2>/dev/null || :)" = "$$want" ]; then exit 0; fi; \
+	    if [ "$$(cat "$$stamp" 2>/dev/null || :)" = "$$want" ]; then exit 0; fi; \
 	    printf 'Fetching %s\n' '$(FIZZBEE_URL)'; \
 	    rm -f "$$asset.part"; \
 	    curl --fail --location --retry 3 --retry-all-errors \
@@ -257,7 +262,7 @@ $(FIZZBEE_STAMP):
 	    rm -rf "$$home"; \
 	    mv -T "$$unpack/$(FIZZBEE_ASSET:.tar.gz=)" "$$home"; \
 	    rm -rf "$$unpack"; \
-	    printf '%s\n' "$$want" > "$$home/.verified"; \
+	    printf '%s\n' "$$want" > "$$stamp"; \
 	    rm -f "$$asset"; \
 	  ) 9>"$$home.lock"
 
