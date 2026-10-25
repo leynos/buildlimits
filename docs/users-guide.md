@@ -257,6 +257,8 @@ match this failure.
 ```bash
 build-limits-status
 build-limits-status --json
+build-limits-status --ready
+build-limits-status --ready --json
 journalctl --user --unit buildlimits-supervisor.service
 ```
 
@@ -268,12 +270,28 @@ adds descriptor limits, the open-descriptor sample, request-owned retention,
 the high-water mark and the budget. These are point-in-time diagnostics, not
 history; `build-limits-metrics` summarizes history.
 
-| Exit status | Meaning                                                     |
-| ----------- | ----------------------------------------------------------- |
-| `0`         | The supervisor answered and is healthy                      |
-| `1`         | The supervisor answered but is unhealthy, or did not answer |
+| Exit status | Default: health check                         | With `--ready`                                  |
+| ----------- | --------------------------------------------- | ----------------------------------------------- |
+| `0`         | Query succeeded and the supervisor is healthy | Healthy and `admission.ready` is exactly `true` |
+| `1`         | Query or health failure                       | Query or non-truthy health failure              |
+| `3`         | Not used                                      | Readiness is false, missing or malformed        |
 
 _Table 4: `build-limits-status` exit statuses._
+
+Success without `--ready`, or `healthy` alone, is not evidence of usable
+admission readiness. `healthy` describes supervisor and pool health; it is
+separate from cache reachability and admission readiness. The `caching` signal
+reports the cache reachability probe and does not determine whether direct
+compilation can be admitted.
+
+`--ready` uses the same plain-text or JSON output with the exit-status contract
+in Table 4. Use it for provisioning checks and monitoring that need usable
+admission:
+
+```bash
+build-limits-status --ready
+build-limits-status --json | jq -e '.admission.ready == true'
+```
 
 For an admission-specific readiness check, inspect `admission` in the JSON
 document. Its `state` is one of the values below, `ready` says whether
@@ -296,6 +314,9 @@ progress. The readiness result is independent of cache reachability: sccache
 may be unavailable while direct compilation can still be admitted. A `true`
 result does not promise that a queued compile can start immediately; a
 `saturated` pool still has to wait for current compiler work to release a slot.
+Readiness failure is an operational signal; it never authorizes releasing
+tokens or stopping sccache. Retained tokens remain held until verified
+stopped-and-empty accounting permits their release.
 
 Under `descriptors`, `open` is the sampled count of open descriptors, or `null`
 with a numeric `sampling_errno` when enumeration failed; the text summary says
