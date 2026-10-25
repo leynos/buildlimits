@@ -60,14 +60,40 @@ def main(
         print(f"build-limits-status: {error}", file=sys.stderr)
         return 1
     print(json.dumps(state, indent=2) if options.json else render(state))
-    if not options.ready:
-        return 0 if state.get("healthy") else 1
+    return _ready_exit(state) if options.ready else (0 if state.get("healthy") else 1)
+
+
+def _ready_exit(state: dict[str, object]) -> int:
+    """Map one status document to the readiness exit contract.
+
+    Parameters
+    ----------
+    state : dict[str, object]
+        The status document returned by the supervisor.
+
+    Returns
+    -------
+    int
+        1 for unhealthy status, 0 when ready, or 3 when not ready or unreported.
+
+    Examples
+    --------
+    >>> _ready_exit({"healthy": False})
+    1
+    >>> _ready_exit({"healthy": True, "admission": {"ready": True}})
+    0
+    >>> _ready_exit({"healthy": True, "admission": {"ready": False}})
+    3
+    """
     if not state.get("healthy"):
         return 1
     admission = state.get("admission")
-    if not isinstance(admission, dict) or not isinstance(admission.get("ready"), bool):
-        print(
-            "build-limits-status: admission readiness is not reported", file=sys.stderr
-        )
-        return 3
-    return 0 if admission["ready"] is True else 3
+    match admission:
+        case {"ready": bool() as ready}:
+            return 0 if ready else 3
+        case _:
+            print(
+                "build-limits-status: admission readiness is not reported",
+                file=sys.stderr,
+            )
+            return 3
