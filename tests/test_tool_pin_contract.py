@@ -11,7 +11,7 @@ PYPROJECT = ROOT / "pyproject.toml"
 MAKEFILE = ROOT / "Makefile"
 
 
-def read_dev_group_version(package_name: str) -> str:
+def _read_dev_group_version(package_name: str) -> str:
     """Read one exact package version from the project's dev dependency group."""
     project_metadata = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     try:
@@ -41,7 +41,7 @@ def read_dev_group_version(package_name: str) -> str:
     )
 
 
-def read_makefile_default(variable: str) -> str:
+def _read_makefile_default(variable: str) -> str:
     """Read a variable's default version from the Makefile."""
     pattern = rf"^{re.escape(variable)} \?= (\S+)$"
     match = re.search(pattern, MAKEFILE.read_text(encoding="utf-8"), re.MULTILINE)
@@ -61,8 +61,8 @@ def test_isolated_tool_default_matches_dev_group_pin(
     package_name: str, make_variable: str
 ) -> None:
     """Require each isolated tool's Make default to equal its dev-group pin."""
-    dev_version = read_dev_group_version(package_name)
-    makefile_version = read_makefile_default(make_variable)
+    dev_version = _read_dev_group_version(package_name)
+    makefile_version = _read_makefile_default(make_variable)
     if dev_version != makefile_version:
         raise AssertionError(
             f"{PYPROJECT.name} pins {package_name}=={dev_version}, but "
