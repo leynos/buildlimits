@@ -304,7 +304,7 @@ current admission-queue length, even before requester metadata is available.
 | ----------- | ------- | ----------------------------------------------------------------------- |
 | `ready`     | `true`  | The ledger reports capacity available for a compiler group.             |
 | `saturated` | `true`  | All slots are occupied; admission can continue when a slot is released. |
-| `draining`  | `true`  | Retained server-drain work has a current progress path.                 |
+| `draining`  | `true`  | Every slot is retained in server-drain, with a current progress path.   |
 | `blocked`   | `false` | Every slot is retained in server-drain and operator recovery is needed. |
 | `closing`   | `false` | The supervisor is winding down.                                         |
 | `unhealthy` | `false` | The supervisor or its token pool is unhealthy.                          |
@@ -314,9 +314,11 @@ progress. The readiness result is independent of cache reachability: sccache
 may be unavailable while direct compilation can still be admitted. A `true`
 result does not promise that a queued compile can start immediately; a
 `saturated` pool still has to wait for current compiler work to release a slot.
-Readiness failure is an operational signal; it never authorizes releasing
-tokens or stopping sccache. Retained tokens remain held until verified
-stopped-and-empty accounting permits their release.
+Partial server-drain retention remains `ready` when capacity is available or
+`saturated` when all slots are occupied; it is not `draining`. Readiness
+failure is an operational signal; it never authorizes releasing tokens or
+stopping sccache. Retained tokens remain held until verified stopped-and-empty
+accounting permits their release.
 
 Under `descriptors`, `open` is the sampled count of open descriptors, or `null`
 with a numeric `sampling_errno` when enumeration failed; the text summary says
@@ -646,6 +648,13 @@ already released and the last fault reported.
 _Table 5: `build-limits-recover` exit statuses._
 
 Verify the outcome from the supervisor, not from elapsed time:
+
+The `held`, `drain_fault`, `drain_fault_kind` and `caching` fields below are
+cache-recovery diagnostics, not generic admission readiness. For provisioning
+or general monitoring, use `build-limits-status --ready` or check
+`.admission.ready` in the JSON document. A successful status query or `healthy`
+alone reports process and pool health, not usable admission. Keep health-only
+checks where process health is the intended signal.
 
 ```bash
 build-limits-status --json | jq '{held, drain_fault, drain_fault_kind, caching}'
