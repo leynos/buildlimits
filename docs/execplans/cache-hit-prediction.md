@@ -11,7 +11,9 @@ documentation gates and milestone review passed; EP-M1 commits are complete;
 EP-M2 is complete in `327ae5a` and `080d9c0`, with final gates and local
 CodeRabbit review passed; EP-M3 red contracts are committed as `195ff77` and
 its implementation and full gates passed; EP-M4 implementation, full gates and
-clean review passed in `636f3ed`)
+clean review passed in `636f3ed`; EP-M5 query and child adapters passed gates
+and review in candidate 85 and were committed as `56bc46b`; outcome store work
+remains)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -814,7 +816,14 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   operation, and the polling test stopped before its query deadline. Candidate
   84 addresses those findings, passes formatting and documentation gates, then
   lint flags the new fixture writer's missing return documentation. Candidate
-  85 documents its zero return value.
+  85 documents its zero return value and passes all local gates (2,008 passed,
+  26 skipped, 97 warnings, 47 snapshots); matching audit evidence reported no
+  known vulnerabilities. The fresh archive-bound review found no issues across
+  seven paths. Archive SHA-256 is
+  `580e94cc01f451c27d2b0832cfce62a87384c059a20a09ca06a06621f1fa015d` with 367
+  files and manifest SHA-256
+  `a78885f0aa3eb4050aa925ef6538b74f32875cffc3cebb740e6a2e305a30e5ec`. The query
+  adapters and tests are committed as `56bc46b`.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
