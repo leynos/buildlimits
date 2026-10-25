@@ -224,8 +224,10 @@ def test_readiness_uses_the_admission_queue_not_request_metadata() -> None:
         SupervisorConfig(slots=2), typ.cast("UserManager", object()), clock=lambda: 0.0
     )
     supervisor.admission.queue.append(99)
-    with supervisor.selector:
+    try:
         document = status.describe(supervisor)
+    finally:
+        supervisor.close()
     admission = document["admission"]
     assert isinstance(admission, dict), "admission readiness is structured"
     assert admission["queued"] == 1, "the authoritative queue has one waiter"
