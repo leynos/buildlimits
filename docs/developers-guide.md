@@ -644,7 +644,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `adapter_doubles.py`               | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
 | `toolchain_trees.py`               | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler   |
 | `journal_fixtures.py`              | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
-| `listener_helpers.py`              | `watched_listener`, a listener under `ListenerPressure` control                                     |
+| `listener_helpers.py`              | `watched_listener` (under `ListenerPressure` control), `unix_listener` (scoped) and `open_unix_listener` (caller-managed) |
 | `cache_recovery_helpers.py`        | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
 | `cache_recovery_harness.py`        | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
 | `cache_recovery_machines.py`       | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |

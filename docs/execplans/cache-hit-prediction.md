@@ -779,7 +779,42 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   failure back-off. A regression test reproduced `OverflowError` at 1,024
   failures. Candidate 73 caps the exponent before calculating the delay; the
   review's unrelated import-style suggestion in `tests/test_tracing.py` remains
-  outside this change.
+  outside this change. Candidate 74 fixed the typed test construction and
+  passed all local gates (1,999 passed, 26 skipped, 47 snapshots); its four
+  trivial review suggestions are unrelated or scheduled for the EP-M7 docs set.
+  The retry fix and child adapter are committed as `8fc69b3` and `d96518c`.
+  Query-adapter tests now cover fixed argv/environment, fixture statistics,
+  peer credentials, `/proc` failures and refused sockets; they first failed at
+  collection because `outcome_queries.py` was not yet present. Candidate 75
+  implements `SccacheStatistics` and `PeerServerProcess`, extends the fake
+  client with the pinned statistics fixture, and bounds the proc environment
+  read to 64 KiB. Its focused query, child and fake-client tests pass (17).
+  Candidate 76 passed documentation gates, then Ruff reported excessive returns
+  and incomplete proc-helper documentation. Candidate 77 extracts result
+  mapping and documents the bounded socket and `/proc` failures. Its focused
+  run found that `socket.setblocking` does not accept a keyword; the peer
+  connect now uses zero-timeout non-blocking mode in candidate 78. Ruff then
+  requested clearer malformed-stat detection and removal of an implicit
+  `OSError` from the helper docstring; candidate 79 uses `rpartition` and the
+  explicit exception contract. Pylint then flagged the proc fixture writer's
+  six parameters; candidate 80 derives its PID and uses one missing-file
+  selector. Pylint then rejected the forwarding `poll_children` wrapper;
+  candidate 81 removes it because EP-M7's shell owns the injected reaper and
+  will poll that shared instance directly. Candidate 81's duplication gate
+  found repeated Unix-listener setup, query imports and equivalent generation
+  tests; candidate 82 consolidates these through the shared listener helper,
+  module-qualified types and one parameterized identity test. Candidate 82
+  passed formatting, Markdown and Nixie, then Ruff flagged the helper's type
+  imports; candidate 83 moves them into the type-checking block and uses
+  `collections.abc.Iterator`. Candidate 83 passed all local gates (2,008
+  passed, 26 skipped, 47 snapshots); matching audit evidence reported no
+  vulnerabilities. Its archive-bound review found four actionable findings: the
+  stale-socket test bypassed the shared listener helper, the helper table
+  obscured their different ownership, the fake stats branch lacked a named
+  operation, and the polling test stopped before its query deadline. Candidate
+  84 addresses those findings, passes formatting and documentation gates, then
+  lint flags the new fixture writer's missing return documentation. Candidate
+  85 documents its zero return value.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The

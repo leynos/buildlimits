@@ -12,6 +12,8 @@ reply. This fake keeps exactly that shape without needing a real compiler:
   relayed output to its own streams and exits with the server's status. If
   no server answers it runs the compiler itself, as sccache does with
   ``SCCACHE_IGNORE_SERVER_IO_ERROR``, and never starts a server of its own.
+- ``fake_sccache.py client --show-stats --stats-format json`` returns the
+  pinned 0.14.0 statistics fixture for the outcome-query adapter.
 
 The client may also name a jobserver FIFO and a ready marker, mirroring the
 point at which real sccache blocks: upstream acquires a jobserver slot before
@@ -35,6 +37,8 @@ import typing as typ
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+
+_STATISTICS_ARGUMENTS = ("--show-stats", "--stats-format", "json")
 
 
 def serve(path: str) -> None:
@@ -132,8 +136,25 @@ def request_fields(env: cabc.Mapping[str, str]) -> dict[str, str]:
     return fields
 
 
+def _write_statistics() -> int:
+    """Write the pinned 0.14.0 statistics fixture to stdout.
+
+    Returns
+    -------
+    int
+        Zero after writing the statistics fixture.
+
+    Examples
+    --------
+    For the fixed statistics query, this writes fixture JSON and returns zero.
+    """
+    fixture = pathlib.Path(__file__).with_name("sccache_0_14_0_stats.json")
+    sys.stdout.write(fixture.read_text(encoding="utf-8"))
+    return 0
+
+
 def client(argv: list[str], env: cabc.Mapping[str, str] | None = None) -> int:
-    """Send one request, falling back to a local run without a server.
+    """Return fixture statistics or send one compile request to the server.
 
     Parameters
     ----------
@@ -145,8 +166,15 @@ def client(argv: list[str], env: cabc.Mapping[str, str] | None = None) -> int:
     Returns
     -------
     int
-        The compilation's exit status.
+        The statistics path returns zero; compile paths return the exit status.
+
+    Examples
+    --------
+    ``client(["--show-stats", "--stats-format", "json"])`` writes the pinned
+    fixture and returns zero.
     """
+    if tuple(argv) == _STATISTICS_ARGUMENTS:
+        return _write_statistics()
     env = os.environ if env is None else env
     conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
