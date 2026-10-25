@@ -104,7 +104,10 @@ def _assert_queries_are_exempt(
         (
             "dylint-driver",
             (str(scenario.dylint), str(scenario.rustc), "-vV"),
-            {"RUSTC_WORKSPACE_WRAPPER": str(scenario.dylint)},
+            {
+                "RUSTC_WORKSPACE_WRAPPER": str(scenario.dylint),
+                "DYLINT_RUSTFLAGS": "",
+            },
         ),
     )
     for name, argv, extra_env in queries:

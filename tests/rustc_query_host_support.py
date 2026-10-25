@@ -86,6 +86,7 @@ class ProbeRecord(typ.TypedDict):
     started: float
     ended: float
     status: int
+    workspace_wrapper: str | None
     error: typ.NotRequired[str]
 
 

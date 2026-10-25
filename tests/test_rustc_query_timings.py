@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 from rustc_query_host_checks import (
-    _matching_dylint_driver,
-    _version,
+    matching_dylint_driver,
+    tool_version,
 )
 from rustc_query_host_support import (
     CLEAN_COMPILER_ENVIRONMENT,
@@ -64,8 +64,8 @@ def test_rustc_and_clippy_queries_finish_below_one_second(
     clippy_driver = shutil.which("clippy-driver")
     if clippy_driver is None:
         pytest.skip("Clippy driver absent from PATH")
-    rustc_version = _version([str(rustc), "--version", "--verbose"], "rustc")
-    clippy_version = _version([clippy_driver, "--version"], "clippy-driver")
+    rustc_version = tool_version([str(rustc), "--version", "--verbose"], "rustc")
+    clippy_version = tool_version([clippy_driver, "--version"], "clippy-driver")
     _run_timing_suite(
         commands={
             "rustc": (str(rustc),),
@@ -82,10 +82,10 @@ def test_dylint_queries_finish_below_one_second(
 ) -> None:
     """Measure an installed Dylint driver with its caller-supplied library."""
     library_path, library = caller_dylint_library()
-    driver, toolchain, _driver_root = _matching_dylint_driver(library)
+    driver, toolchain, _driver_root = matching_dylint_driver(library)
     rustc = _rustc_from_sysroot(toolchain)
-    driver_version = _version([str(driver), "--version"], "dylint-driver")
-    rustc_version = _version(
+    driver_version = tool_version([str(driver), "--version"], "dylint-driver")
+    rustc_version = tool_version(
         ["rustup", "run", toolchain, "rustc", "--version", "--verbose"],
         "Dylint toolchain rustc",
     )

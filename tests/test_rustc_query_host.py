@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 from rustc_linter_acceptance import LinterAcceptance, run_linter_acceptance
 from rustc_query_host_checks import (
-    _finish_barriers,
-    _finish_or_fail,
-    _matching_dylint_driver,
-    _record_observation,
-    _result_evidence,
-    _version,
+    finish_barriers,
+    finish_or_fail,
+    matching_dylint_driver,
+    record_observation,
+    result_evidence,
+    tool_version,
 )
 from rustc_query_host_support import (
     ObservedCommand,
@@ -58,11 +58,11 @@ def test_cold_cargo_metadata_finishes_while_every_slot_is_held(
     """Complete real metadata probes without entering the full supervisor queue."""
     record_property(
         "cargo_metadata_cargo_version",
-        _version([str(cargo_path), "--version", "--verbose"], "Cargo"),
+        tool_version([str(cargo_path), "--version", "--verbose"], "Cargo"),
     )
     record_property(
         "cargo_metadata_rustc_version",
-        _version(["rustc", "--version", "--verbose"], "rustc"),
+        tool_version(["rustc", "--version", "--verbose"], "rustc"),
     )
     with contextlib.ExitStack() as owned:
         harness = Harness(1)
@@ -90,11 +90,11 @@ def test_cold_cargo_metadata_finishes_while_every_slot_is_held(
                 stdout_path=harness.work / "metadata.json",
             ),
         )
-        result = _finish_or_fail(observed, 120, harness, timing_log)
+        result = finish_or_fail(observed, 120, harness, timing_log)
         entries = timing_entries(timing_log)
         version = [entry for entry in entries if is_version_query(entry)]
         target_info = [entry for entry in entries if is_target_info_query(entry)]
-        assert result.status == 0, _result_evidence(result, entries)
+        assert result.status == 0, result_evidence(result, entries)
         assert version and all(entry["status"] == 0 for entry in version), entries
         assert target_info and all(entry["status"] == 0 for entry in target_info), (
             entries
@@ -102,10 +102,10 @@ def test_cold_cargo_metadata_finishes_while_every_slot_is_held(
         assert "--no-deps" not in command, "metadata must resolve the full graph"
         status = harness.status()
         assert status["held"] == harness.slots and not status["queued"], status
-        _record_observation(record_property, "cargo_metadata", result, entries)
+        record_observation(record_property, "cargo_metadata", result, entries)
 
         release.touch()
-        _finish_barriers(barriers)
+        finish_barriers(barriers)
         assert wait_for(
             lambda: harness.status()["held"] == 0 and not harness.status()["queued"],
             timeout=60,
@@ -120,12 +120,14 @@ def test_clippy_resolution_and_second_metadata_pass_while_compile_waits(
     """Let Clippy resolve and run its probes while a real compile queues."""
     driver = _clippy_driver()
     versions = {
-        "cargo_version": _version([str(cargo_path), "--version", "--verbose"], "Cargo"),
-        "cargo_clippy_version": _version(
+        "cargo_version": tool_version(
+            [str(cargo_path), "--version", "--verbose"], "Cargo"
+        ),
+        "cargo_clippy_version": tool_version(
             [str(cargo_path), "clippy", "--version"], "Cargo Clippy"
         ),
-        "driver_version": _version([driver, "--version"], "clippy-driver"),
-        "rustc_version": _version(["rustc", "--version", "--verbose"], "rustc"),
+        "driver_version": tool_version([driver, "--version"], "clippy-driver"),
+        "rustc_version": tool_version(["rustc", "--version", "--verbose"], "rustc"),
     }
     run_linter_acceptance(
         LinterAcceptance(
@@ -151,17 +153,19 @@ def test_dylint_resolution_and_second_metadata_pass_while_compile_waits(
 ) -> None:
     """Resolve Dylint metadata and probes before its one real compile queues."""
     require_host_command("cargo-dylint", "cargo-dylint command absent from PATH")
-    cargo_version = _version([str(cargo_path), "--version", "--verbose"], "Cargo")
-    dylint_version = _version([str(cargo_path), "dylint", "--version"], "Cargo Dylint")
+    cargo_version = tool_version([str(cargo_path), "--version", "--verbose"], "Cargo")
+    dylint_version = tool_version(
+        [str(cargo_path), "dylint", "--version"], "Cargo Dylint"
+    )
     record_property("dylint_cargo_version", cargo_version)
     record_property("dylint_cargo_plugin_version", dylint_version)
     library_path, library = caller_dylint_library()
-    driver, toolchain, driver_root = _matching_dylint_driver(library)
+    driver, toolchain, driver_root = matching_dylint_driver(library)
     versions = {
         "cargo_version": cargo_version,
         "cargo_dylint_version": dylint_version,
-        "driver_version": _version([str(driver), "--version"], "dylint-driver"),
-        "rustc_version": _version(
+        "driver_version": tool_version([str(driver), "--version"], "dylint-driver"),
+        "rustc_version": tool_version(
             ["rustup", "run", toolchain, "rustc", "--version", "--verbose"],
             "Dylint toolchain rustc",
         ),

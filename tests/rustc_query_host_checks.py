@@ -36,7 +36,7 @@ class QueueWait:
     timeout: float
 
 
-def _require(*, condition: bool, message: str) -> None:
+def require(*, condition: bool, message: str) -> None:
     """Raise a stable assertion when a host observation misses its contract.
 
     Raises
@@ -48,7 +48,7 @@ def _require(*, condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def _version(command: list[str], label: str) -> str:
+def tool_version(command: list[str], label: str) -> str:
     """Require a host tool's version command to succeed and return its output.
 
     Returns
@@ -71,14 +71,14 @@ def _version(command: list[str], label: str) -> str:
         env=environment,
         timeout=60,
     )
-    _require(
+    require(
         condition=result.returncode == 0,
         message=f"{label} version failed: {result.stderr}",
     )
     return (result.stdout + result.stderr).strip()
 
 
-def _matching_dylint_driver(library: Path) -> tuple[Path, str, Path]:
+def matching_dylint_driver(library: Path) -> tuple[Path, str, Path]:
     """Locate an installed driver and Rust toolchain matching the library name.
 
     Returns
@@ -132,7 +132,7 @@ def _matching_dylint_driver(library: Path) -> tuple[Path, str, Path]:
     return driver, toolchain, driver_root
 
 
-def _wait_for_queued_compile(
+def wait_for_queued_compile(
     harness: Harness, wait: QueueWait
 ) -> tuple[dict[str, typ.Any], list[ProbeRecord]]:
     """Wait for resolution and exactly one queued real compile.
@@ -159,7 +159,7 @@ def _wait_for_queued_compile(
             return latest, entries
         if wait.observed.process.poll() is not None:
             result = wait.observed.finish(timeout=0)
-            raise AssertionError(_result_evidence(result, entries))
+            raise AssertionError(result_evidence(result, entries))
         time.sleep(0.05)
     raise AssertionError(
         f"{wait.driver_name} did not reach one queued compile: "
@@ -182,32 +182,32 @@ def _driver_probe_entries(
     return [
         entry
         for entry in entries
-        if Path(str(entry["argv"][0])).name == driver_name and _is_query(entry)
+        if Path(str(entry["argv"][0])).name == driver_name and is_query(entry)
     ]
 
 
-def _assert_driver_probes(entries: list[ProbeRecord], driver_name: str) -> None:
+def assert_driver_probes(entries: list[ProbeRecord], driver_name: str) -> None:
     """Require successful driver version and Cargo target-information probes."""
     driver_entries = _driver_probe_entries(entries, driver_name)
-    _require(
+    require(
         condition=bool(driver_entries),
         message=f"no completed {driver_name} query: {entries}",
     )
-    _require(
+    require(
         condition=all(entry["status"] == 0 for entry in driver_entries),
         message=str(driver_entries),
     )
-    _require(
+    require(
         condition=any(is_version_query(entry) for entry in driver_entries),
         message=str(driver_entries),
     )
-    _require(
+    require(
         condition=any(is_target_info_query(entry) for entry in driver_entries),
         message=str(driver_entries),
     )
 
 
-def _is_query(entry: ProbeRecord) -> bool:
+def is_query(entry: ProbeRecord) -> bool:
     """Recognize version, print and exact Cargo target-information records.
 
     Returns
@@ -226,7 +226,7 @@ def _is_query(entry: ProbeRecord) -> bool:
     )
 
 
-def _is_compile(entry: ProbeRecord) -> bool:
+def is_compile(entry: ProbeRecord) -> bool:
     """Recognize a completed compiler invocation that can generate artefacts.
 
     Returns
@@ -241,7 +241,7 @@ def _is_compile(entry: ProbeRecord) -> bool:
     )
 
 
-def _finish_or_fail(
+def finish_or_fail(
     observed: ObservedProcess,
     timeout: float,
     harness: Harness,
@@ -271,17 +271,17 @@ def _finish_or_fail(
         ) from error
 
 
-def _finish_barriers(processes: list[subprocess.Popen[bytes]]) -> None:
+def finish_barriers(processes: list[subprocess.Popen[bytes]]) -> None:
     """Reap every released barrier compiler and require it to exit normally."""
     for process in processes:
         stdout, stderr = process.communicate(timeout=60)
-        _require(
+        require(
             condition=process.returncode == 0,
             message=f"barrier failed: {stdout!r} {stderr!r}",
         )
 
 
-def _result_evidence(result: ProcessResult, entries: list[ProbeRecord]) -> str:
+def result_evidence(result: ProcessResult, entries: list[ProbeRecord]) -> str:
     """Render bounded command and probe evidence for a failed assertion.
 
     Returns
@@ -295,7 +295,7 @@ def _result_evidence(result: ProcessResult, entries: list[ProbeRecord]) -> str:
     )
 
 
-def _probe_summary(entries: list[ProbeRecord]) -> list[dict[str, object]]:
+def probe_summary(entries: list[ProbeRecord]) -> list[dict[str, object]]:
     """Keep argv, status and duration for every completed timing record.
 
     Returns
@@ -303,22 +303,21 @@ def _probe_summary(entries: list[ProbeRecord]) -> list[dict[str, object]]:
     list[dict[str, object]]
         Compact probe details suitable for JUnit properties.
     """
-    return [
-        {
+    summaries: list[dict[str, object]] = []
+    for entry in entries:
+        workspace_wrapper = entry["workspace_wrapper"]
+        summaries.append({
             "argv": entry["argv"],
             "status": entry["status"],
             "duration_seconds": round(
                 float(entry["ended"]) - float(entry["started"]), 6
             ),
-            "workspace_wrapper": typ.cast("dict[str, object]", entry).get(
-                "workspace_wrapper"
-            ),
-        }
-        for entry in entries
-    ]
+            "workspace_wrapper": workspace_wrapper,
+        })
+    return summaries
 
 
-def _package_cache_waits(result: ProcessResult) -> list[dict[str, object]]:
+def package_cache_waits(result: ProcessResult) -> list[dict[str, object]]:
     """Return package-cache lock waits with monotonic stderr arrival times.
 
     Returns
@@ -333,7 +332,7 @@ def _package_cache_waits(result: ProcessResult) -> list[dict[str, object]]:
     ]
 
 
-def _record_observation(
+def record_observation(
     record_property: cabc.Callable[[str, object], None],
     prefix: str,
     result: ProcessResult,
@@ -349,9 +348,9 @@ def _record_observation(
         f"{prefix}_duration_seconds", f"{result.ended - result.started:.6f}"
     )
     record_property(
-        f"{prefix}_probes", json.dumps(_probe_summary(entries), sort_keys=True)
+        f"{prefix}_probes", json.dumps(probe_summary(entries), sort_keys=True)
     )
     record_property(
         f"{prefix}_package_cache_waits",
-        json.dumps(_package_cache_waits(result), sort_keys=True),
+        json.dumps(package_cache_waits(result), sort_keys=True),
     )

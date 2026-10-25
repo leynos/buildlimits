@@ -538,13 +538,14 @@ tokens, repeated singleton fields, and duplicate crate types or print kinds.
 The compiler identity is either a basename of `rustc`, or exactly one
 `clippy-driver` or `dylint-driver` followed by an inner executable whose
 basename is `rustc`. When `RUSTC_WORKSPACE_WRAPPER` is present, the configured
-wrapper and invocation driver must resolve to the same file through
-`toolchain_env.locate_executable`; otherwise the closed driver-name allow-list
-applies. A Dylint invocation with non-whitespace `DYLINT_RUSTFLAGS` remains
-admitted because the driver would append unclassified arguments. Unknown or
-nested wrappers, argument files, input files, output redirection, compile
-indicators, unsupported print kinds, and any unconsumed argument also remain
-admitted.
+wrapper and invocation driver are resolved through
+`toolchain_env.locate_executable`; if they do not resolve to the same file, the
+classifier keeps admission. The closed driver-name allow-list applies only when
+the variable is absent. A Dylint invocation with non-whitespace
+`DYLINT_RUSTFLAGS` remains admitted because the driver would append
+unclassified arguments. Unknown or nested wrappers, argument files, input
+files, output redirection, compile indicators, unsupported print kinds, and any
+unconsumed argument also remain admitted.
 
 The classifier strips leading caller `sccache` layers only to inspect the
 compiler identity. The exempt execution retains recognized workspace drivers

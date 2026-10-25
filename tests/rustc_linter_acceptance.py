@@ -7,17 +7,17 @@ import typing as typ
 
 from rustc_query_host_checks import (
     QueueWait,
-    _assert_driver_probes,
-    _finish_barriers,
-    _finish_or_fail,
-    _is_compile,
-    _is_query,
-    _package_cache_waits,
-    _probe_summary,
-    _record_observation,
-    _require,
-    _result_evidence,
-    _wait_for_queued_compile,
+    assert_driver_probes,
+    finish_barriers,
+    finish_or_fail,
+    is_compile,
+    is_query,
+    package_cache_waits,
+    probe_summary,
+    record_observation,
+    require,
+    result_evidence,
+    wait_for_queued_compile,
 )
 from rustc_query_host_support import (
     ObservedCommand,
@@ -114,7 +114,7 @@ def _start_linter(
             stdout_path=harness.work / f"{scenario.name}.out",
         ),
     )
-    queue_status, probes = _wait_for_queued_compile(
+    queue_status, probes = wait_for_queued_compile(
         harness,
         QueueWait(
             observed=observed,
@@ -123,12 +123,12 @@ def _start_linter(
             timeout=scenario.queue_timeout,
         ),
     )
-    _assert_driver_probes(probes, scenario.driver_name)
-    _require(condition=queue_status["held"] == harness.slots, message=str(queue_status))
-    _require(condition=len(queue_status["queued"]) == 1, message=str(queue_status))
-    _require(condition=all(_is_query(entry) for entry in probes), message=str(probes))
-    _require(
-        condition=not any(_is_compile(entry) for entry in probes), message=str(probes)
+    assert_driver_probes(probes, scenario.driver_name)
+    require(condition=queue_status["held"] == harness.slots, message=str(queue_status))
+    require(condition=len(queue_status["queued"]) == 1, message=str(queue_status))
+    require(condition=all(is_query(entry) for entry in probes), message=str(probes))
+    require(
+        condition=not any(is_compile(entry) for entry in probes), message=str(probes)
     )
     return LinterRun(
         harness,
@@ -148,7 +148,7 @@ def _record_queue_evidence(scenario: LinterAcceptance, run: LinterRun) -> None:
         scenario.record_property(f"{scenario.name}_{version_name}", version)
     scenario.record_property(
         f"{scenario.name}_queued_probes",
-        json.dumps(_probe_summary(run.probes), sort_keys=True),
+        json.dumps(probe_summary(run.probes), sort_keys=True),
     )
 
 
@@ -184,27 +184,27 @@ def _prove_metadata_progress(
             stdout_path=run.harness.work / f"{scenario.name}-second-metadata.json",
         ),
     )
-    metadata_result = _finish_or_fail(metadata, 90, run.harness, run.timing_log)
-    _require(
+    metadata_result = finish_or_fail(metadata, 90, run.harness, run.timing_log)
+    require(
         condition=metadata_result.status == 0,
-        message=_result_evidence(metadata_result, timing_entries(run.timing_log)),
+        message=result_evidence(metadata_result, timing_entries(run.timing_log)),
     )
     current_status = run.harness.status()
-    _require(
+    require(
         condition=current_status["held"] == run.harness.slots,
         message=str(current_status),
     )
-    _require(condition=len(current_status["queued"]) == 1, message=str(current_status))
+    require(condition=len(current_status["queued"]) == 1, message=str(current_status))
     entries = timing_entries(run.timing_log)
-    _require(
-        condition=not any(_is_compile(entry) for entry in entries),
+    require(
+        condition=not any(is_compile(entry) for entry in entries),
         message=str(entries),
     )
     scenario.record_property(
         f"{scenario.name}_second_metadata_package_cache_waits",
-        json.dumps(_package_cache_waits(metadata_result), sort_keys=True),
+        json.dumps(package_cache_waits(metadata_result), sort_keys=True),
     )
-    _record_observation(
+    record_observation(
         scenario.record_property,
         f"{scenario.name}_second_metadata",
         metadata_result,
@@ -215,29 +215,29 @@ def _prove_metadata_progress(
 def _complete_linter(scenario: LinterAcceptance, run: LinterRun) -> None:
     """Release all held tokens and require the linter compile to finish."""
     run.release.touch()
-    linter_result = _finish_or_fail(
+    linter_result = finish_or_fail(
         run.observed, scenario.completion_timeout, run.harness, run.timing_log
     )
-    _require(
+    require(
         condition=linter_result.status == 0,
-        message=_result_evidence(linter_result, timing_entries(run.timing_log)),
+        message=result_evidence(linter_result, timing_entries(run.timing_log)),
     )
-    _finish_barriers(run.barriers)
+    finish_barriers(run.barriers)
     final_status = run.harness.status()
-    _require(condition=final_status["held"] == 0, message=str(final_status))
-    _require(condition=not final_status["queued"], message=str(final_status))
+    require(condition=final_status["held"] == 0, message=str(final_status))
+    require(condition=not final_status["queued"], message=str(final_status))
     completed = timing_entries(run.timing_log)
-    _require(
+    require(
         condition=any(
-            _is_compile(entry) and entry["status"] == 0 for entry in completed
+            is_compile(entry) and entry["status"] == 0 for entry in completed
         ),
         message=str(completed),
     )
     scenario.record_property(
         f"{scenario.name}_completed_probe_durations",
-        json.dumps(_probe_summary(completed), sort_keys=True),
+        json.dumps(probe_summary(completed), sort_keys=True),
     )
-    _record_observation(
+    record_observation(
         scenario.record_property, f"cargo_{scenario.name}", linter_result, completed
     )
 
