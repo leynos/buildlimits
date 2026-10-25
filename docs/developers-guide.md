@@ -149,6 +149,7 @@ Each module owns one decision. This table is the single module inventory.
 | `adapter_invocation`, `adapter_retry`                     | Invocation state and deadline-preserving busy and restart retries                               |
 | `tracing`, `tracing_export`, `tracing_sdk_export`         | Bounded spans, the fixed journal schema and synchronous native-journal export                   |
 | `toolchain_env`                                           | Pure, filesystem-only recognition of a real toolchain compiler and its loader-path prefix       |
+| `rustc_query`, `rustc_cargo_probe`                        | Fail-closed recognition of rustc queries that cannot compile a crate                            |
 | `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                 |
 | `status`, `status_client`, `status_render`, `status_cli`  | The status document, its transport, rendering and command                                       |
 | `admission_readiness`                                     | Pure admission-progress classification from health, ledger counts and recovery outlook          |
@@ -519,6 +520,48 @@ Keep these rules when changing it:
   that runs a real compiler, `test_toolchain_library_path_real.py`, only asks
   for `--version` and skips when no installed toolchain fails to start under
   its rustlib path.
+
+### 10.2. Rustc query admission
+
+`rustc_main` may run a narrowly allow-listed query without requesting a compile
+slot. `rustdoc_main` does not use this classifier. The exemption accepts one
+version query (`-V`, `--version`, or `-vV`, optionally with `--verbose`), one
+or more allow-listed `--print=KIND` queries without an input file, or Cargo's
+stdin-based target-information probe. The separate-value `--print KIND`
+spelling is accepted only for direct rustc invocations. The Cargo probe parser
+accepts recognized option/value pairs in any order, requires stdin, the
+synthetic crate name, at least one crate type, and `--print=file-names`, and
+permits additional allow-listed crate types and print kinds. It rejects unknown
+tokens, repeated singleton fields, and duplicate crate types or print kinds.
+
+The compiler identity is either a basename of `rustc`, or exactly one
+`clippy-driver` or `dylint-driver` followed by an inner executable whose
+basename is `rustc`. When `RUSTC_WORKSPACE_WRAPPER` is present, the configured
+wrapper and invocation driver must resolve to the same file through
+`toolchain_env.locate_executable`; otherwise the closed driver-name allow-list
+applies. A Dylint invocation with non-whitespace `DYLINT_RUSTFLAGS` remains
+admitted because the driver would append unclassified arguments. Unknown or
+nested wrappers, argument files, input files, output redirection, compile
+indicators, unsupported print kinds, and any unconsumed argument also remain
+admitted.
+
+The classifier strips leading caller `sccache` layers only to inspect the
+compiler identity. The exempt execution retains recognized workspace drivers
+and the inner rustc, but omits caller `sccache`: sccache v0.18.0 can connect to
+or start its server before deciding that a query is not a compilation. The
+supervisor-composed sccache path runs only after admission and is not involved
+in the exemption. These rules keep the exempt path outside both token waiting
+and cache-server waiting while leaving every uncertain invocation on normal
+admission.
+
+The grammar follows Rust commit `a293cc4af8b26701c42738381c0c6f9d2ba881e0` at
+`compiler/rustc_driver_impl/src/lib.rs`, Cargo commit
+`fe2f314aef06e688a9517da1ac0577bb1854d01f` at
+`src/cargo/core/compiler/build_context/target_info.rs`, and Dylint commit
+`9adfa398661273ca7dc99df9bf2c26ae6f61b1c5` at `driver/src/lib.rs`. Those source
+pins support query classification; they do not establish the exact interval for
+which Cargo holds `.package-cache` around each probe. That lock span remains an
+open host observation.
 
 ## 11. Tests
 

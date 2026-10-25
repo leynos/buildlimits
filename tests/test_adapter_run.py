@@ -243,12 +243,20 @@ def test_main_reports_known_failures_on_stderr(
         (
             adapter.rustc_main,
             ["build-limits-rustc", "rustc", "-vV"],
-            {"argv": ["rustc", "-vV"], "cacheable": True},
+            {
+                "argv": ["rustc", "-vV"],
+                "cacheable": True,
+                "exempt_queries": True,
+            },
         ),
         (
             adapter.rustdoc_main,
             ["build-limits-rustdoc", "--help"],
-            {"argv": ["/real/rustdoc", "--help"], "cacheable": False},
+            {
+                "argv": ["/real/rustdoc", "--help"],
+                "cacheable": False,
+                "exempt_queries": False,
+            },
         ),
     ],
     ids=["rustc", "rustdoc"],
@@ -264,9 +272,11 @@ def test_entry_points_hand_their_compiler_to_main(
     monkeypatch.setattr(adapter, "resolve_rustdoc", lambda env, cwd: "/real/rustdoc")
     captured: dict[str, object] = {}
 
-    def fake_main(argv: list[str], *, cacheable: bool) -> int:
+    def fake_main(
+        argv: list[str], *, cacheable: bool, exempt_queries: bool = False
+    ) -> int:
         """Record the arguments _main received."""
-        captured.update(argv=argv, cacheable=cacheable)
+        captured.update(argv=argv, cacheable=cacheable, exempt_queries=exempt_queries)
         return 7
 
     monkeypatch.setattr(adapter, "_main", fake_main)

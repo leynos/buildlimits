@@ -119,7 +119,7 @@ def toolchain_library_dir(
         never recognized.
     """
     compiler = compiler_argv(tuple(argv))
-    found = _locate(compiler[0], env, cwd) if compiler else None
+    found = locate_executable(compiler[0], env, cwd) if compiler else None
     if found is None:
         return None
     binary = Path(found).resolve()
@@ -131,8 +131,21 @@ def toolchain_library_dir(
     return library_dir
 
 
-def _locate(name: str, env: cabc.Mapping[str, str], cwd: str) -> str | None:
+def locate_executable(name: str, env: cabc.Mapping[str, str], cwd: str) -> str | None:
     """Resolve an executable as ``execvpe`` would, in the caller's directory.
+
+    This lookup is shared by loader-path repair and rustc query identity
+    checks. It deliberately returns the joined path for explicit paths, even
+    when it does not exist, so callers retain their own failure policy.
+
+    Parameters
+    ----------
+    name : str
+        Executable name or explicit relative or absolute path.
+    env : Mapping[str, str]
+        Environment supplying ``PATH`` entries.
+    cwd : str
+        Working directory for relative paths.
 
     Returns
     -------

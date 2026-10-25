@@ -83,26 +83,60 @@ class AdapterMetrics:
         self.outcome = "interrupted"
         self.finish()
 
+    def exempted(self) -> None:
+        """Emit an outcome-only summary for a query that skipped admission."""
+        with self._terminal_emission("exempt") as should_emit:
+            if should_emit:
+                with contextlib.suppress(Exception):
+                    self.metrics.emit("adapter_finished", outcome=self.outcome)
+
     def finish(self) -> None:
         """Emit at most once, shielding exit status and signals from failures."""
+        with self._terminal_emission() as should_emit:
+            if should_emit:
+                # Injected transports and clocks must be as harmless as the default.
+                with contextlib.suppress(Exception):
+                    now = self.clock()
+                    admitted = self.admitted
+                    self.metrics.emit(
+                        "adapter_finished",
+                        outcome=self.outcome,
+                        connection_attempts=self.attempts,
+                        busy_retries=self.busy_retries,
+                        restart_retries=self.restart_retries,
+                        wait_seconds=(
+                            (now if admitted is None else admitted) - self.started
+                        ),
+                        runtime_seconds=0.0 if admitted is None else now - admitted,
+                    )
+
+    @contextlib.contextmanager
+    def _terminal_emission(self, outcome: str | None = None) -> cabc.Generator[bool]:
+        """Claim one terminal emission and close the owned transport.
+
+        Parameters
+        ----------
+        outcome : str | None
+            Optional outcome to set only when this call claims finalization.
+
+        Yields
+        ------
+        bool
+            Whether the caller owns the terminal emission.
+        """
         if self._finished:
+            yield False
             return
         self._finished = True
-        # An injected transport or clock must be as harmless as the default sink.
+        if outcome is not None:
+            self.outcome = outcome
         try:
-            with contextlib.suppress(Exception):
-                now = self.clock()
-                admitted = self.admitted
-                self.metrics.emit(
-                    "adapter_finished",
-                    outcome=self.outcome,
-                    connection_attempts=self.attempts,
-                    busy_retries=self.busy_retries,
-                    restart_retries=self.restart_retries,
-                    wait_seconds=(now if admitted is None else admitted) - self.started,
-                    runtime_seconds=0.0 if admitted is None else now - admitted,
-                )
+            yield True
         finally:
-            if self._sink is not None:
-                with contextlib.suppress(Exception):
-                    self._sink.close()
+            self._close_owned_sink()
+
+    def _close_owned_sink(self) -> None:
+        """Close only the journal transport created by this summary."""
+        if self._sink is not None:
+            with contextlib.suppress(Exception):
+                self._sink.close()
