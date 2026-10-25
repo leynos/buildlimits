@@ -130,9 +130,18 @@ def test_the_default_transport_reaches_a_real_socket(tmp_path: Path) -> None:
     [
         ([], HEALTHY, "capacity 2, held 0, healthy", 0),
         ([], {**HEALTHY, "healthy": False}, "UNHEALTHY", 1),
+        (
+            [],
+            {
+                **HEALTHY,
+                "admission": {"state": "blocked", "ready": False},
+            },
+            "admission blocked:",
+            0,
+        ),
         (["--json"], HEALTHY, '"capacity": 2', 0),
     ],
-    ids=["healthy", "unhealthy", "json"],
+    ids=["healthy", "unhealthy", "healthy-blocked", "json"],
 )
 def test_the_command_prints_and_reports_health(
     capsys: pytest.CaptureFixture[str],
@@ -144,8 +153,10 @@ def test_the_command_prints_and_reports_health(
     assert expected in capsys.readouterr().out, "the document is printed"
 
 
+@pytest.mark.parametrize("argv", [[], ["--ready", "--json"]], ids=["default", "ready"])
 def test_the_command_reports_an_unreachable_supervisor(
     capsys: pytest.CaptureFixture[str],
+    argv: list[str],
 ) -> None:
     """A failed query prints the reason on standard error and exits 1."""
 
@@ -154,12 +165,104 @@ def test_the_command_reports_an_unreachable_supervisor(
         msg = "cannot query the supervisor at /x.sock: refused"
         raise StatusQueryError(msg)
 
-    assert status_cli.main([], query=fail) == 1, "the command fails"
+    assert status_cli.main(argv, query=fail) == 1, "the command fails"
     captured = capsys.readouterr()
     assert not captured.out, "nothing is printed as a status"
     assert captured.err == (
         "build-limits-status: cannot query the supervisor at /x.sock: refused\n"
     ), "the reason is named"
+
+
+@pytest.mark.parametrize(
+    ("state", "code", "diagnostic"),
+    [
+        (
+            {**HEALTHY, "admission": {"state": "ready", "ready": True}},
+            0,
+            "",
+        ),
+        (
+            {**HEALTHY, "admission": {"state": "blocked", "ready": False}},
+            3,
+            "",
+        ),
+        (HEALTHY, 3, "build-limits-status: admission readiness is not reported\n"),
+        (
+            {**HEALTHY, "admission": "malformed"},
+            3,
+            "build-limits-status: admission readiness is not reported\n",
+        ),
+        (
+            {**HEALTHY, "admission": {"state": "ready"}},
+            3,
+            "build-limits-status: admission readiness is not reported\n",
+        ),
+        (
+            {**HEALTHY, "admission": {"state": "ready", "ready": 1}},
+            3,
+            "build-limits-status: admission readiness is not reported\n",
+        ),
+        (
+            {
+                **HEALTHY,
+                "healthy": False,
+                "admission": {"state": "ready", "ready": True},
+            },
+            1,
+            "",
+        ),
+    ],
+    ids=[
+        "ready",
+        "blocked",
+        "missing-admission",
+        "malformed-admission",
+        "missing-ready-field",
+        "non-boolean-ready-field",
+        "unhealthy-precedes-readiness",
+    ],
+)
+def test_ready_exit_contract(
+    capsys: pytest.CaptureFixture[str],
+    state: dict[str, object],
+    code: int,
+    diagnostic: str,
+) -> None:
+    """Readiness exits preserve the document and distinguish bad health."""
+    assert status_cli.main(["--ready"], query=lambda: state) == code, (
+        "the readiness result has its documented exit code"
+    )
+    captured = capsys.readouterr()
+    assert captured.out == status_cli.render(state) + "\n", "status stays visible"
+    assert captured.err == diagnostic, "only unreported readiness adds a diagnostic"
+
+
+def test_ready_json_prints_the_full_document_unchanged(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The readiness exit option does not change JSON output."""
+    state = {**HEALTHY, "admission": {"state": "ready", "ready": True}}
+    assert status_cli.main(["--ready", "--json"], query=lambda: state) == 0, (
+        "ready JSON status exits successfully"
+    )
+    captured = capsys.readouterr()
+    assert captured.out == json.dumps(state, indent=2) + "\n", (
+        "JSON output remains the full, unchanged status document"
+    )
+    assert not captured.err, "reported readiness needs no diagnostic"
+
+
+def test_help_documents_readiness_exit_codes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Command help explains the distinct readiness results."""
+    with pytest.raises(SystemExit) as caught:
+        status_cli.main(["--help"])
+    assert caught.value.code == 0, "help exits successfully"
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert help_text.endswith(status_cli._READY_HELP), (
+        "help documents default and readiness exit codes"
+    )
 
 
 def test_an_idle_supervisor_describes_itself(

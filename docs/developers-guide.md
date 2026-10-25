@@ -311,6 +311,10 @@ the prompt zero-root proof or the retained-drain staleness proof described
 below. `status_render.render` is a pure function of that document, pinned by
 Syrupy snapshots.
 
+The status and recovery document commands share `document_cli.document_parser`
+for their program name and raw `--json` option. Each command adds its own
+operational flags after that common setup.
+
 Admission readiness is a separate, pure classification. `status.describe`
 passes the supervisor health and closing flags, one frozen `Counts` ledger
 snapshot, the immediate `drain_fault_kind`, and the recovery outlook fields
