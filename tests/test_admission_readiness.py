@@ -9,6 +9,8 @@ import pytest
 from buildlimits.admission_readiness import ReadinessFacts, classify
 from buildlimits.admission_state import Counts
 
+_IDENTIFIER_LEAK = re.compile(r"\bg\d+\b|\brequest\s+\d+\b|(?:^|\s)/\S+")
+
 _BASE_COUNTS = Counts(
     capacity=4,
     held=0,
@@ -161,6 +163,19 @@ CASES = [
     ),
     pytest.param(
         _facts(
+            held=4,
+            server_drain=4,
+            queued=1,
+            drain_fault_kind="live_work",
+            recovery_attempts=1,
+        ),
+        "blocked",
+        False,
+        "4 server-drain slots retained; recovery stopped after 1 attempt",
+        id="one-recovery-attempt",
+    ),
+    pytest.param(
+        _facts(
             healthy=False,
             closing=True,
             held=4,
@@ -219,8 +234,16 @@ def test_readiness_uses_health_ledger_and_recovery_outlook(
     assert (result.state, result.ready, result.reason) == (state, ready, reason), (
         "classification follows the specified precedence and counts"
     )
-    assert re.search(r"\b(?:g\d+|request\s+\d+|/[^ ]+)\b", result.reason) is None, (
+    assert _IDENTIFIER_LEAK.search(result.reason) is None, (
         "reasons do not expose identifiers or paths"
+    )
+
+
+@pytest.mark.parametrize("value", ["/home/x", "g12", "request 7"])
+def test_identifier_leak_pattern_detects_all_identifier_forms(value: str) -> None:
+    """The count-only reason guard catches paths and request identifiers."""
+    assert _IDENTIFIER_LEAK.search(value) is not None, (
+        "the pattern detects leaked values"
     )
 
 

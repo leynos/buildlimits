@@ -20,6 +20,23 @@ type AdmissionState = typ.Literal[
 _READY_STATES = frozenset({"ready", "saturated", "draining"})
 
 
+def _counted(count: int, noun: str) -> str:
+    """Render a count with the singular or plural form of a noun.
+
+    Returns
+    -------
+    str
+        The number followed by its grammatically matched noun.
+
+    Examples
+    --------
+    >>> _counted(1, "slot"), _counted(2, "slot")
+    ('1 slot', '2 slots')
+    """
+    plural = noun if count == 1 else f"{noun}s"
+    return f"{count} {plural}"
+
+
 @dc.dataclass(frozen=True, slots=True, kw_only=True)
 class ReadinessFacts:
     """Immutable ledger and recovery facts for one readiness decision.
@@ -165,26 +182,62 @@ def _classify_full_server_drain(facts: ReadinessFacts) -> AdmissionReadiness:
         or (not facts.recovery_pending and not automatic_waits_for_demand)
     )
     capacity = facts.counts.capacity
-    slot_word = "slot" if capacity == 1 else "slots"
-    retained = f"{capacity} server-drain {slot_word} retained"
+    retained = f"{_counted(capacity, 'server-drain slot')} retained"
     if operator_recovery_required:
         if facts.recovery_attempts > 0 and not facts.recovery_pending:
-            reason = (
-                f"{retained}; recovery stopped after {facts.recovery_attempts} attempts"
-            )
+            attempts = _counted(facts.recovery_attempts, "attempt")
+            reason = f"{retained}; recovery stopped after {attempts}"
         else:
             reason = f"{retained}; operator recovery required"
         return AdmissionReadiness("blocked", reason)
 
-    if facts.recovery_phase != "idle":
-        progress = f"recovery is in {facts.recovery_phase}"
-    elif facts.recovery_pending:
-        progress = "automatic recovery is pending"
-    elif automatic_waits_for_demand:
-        progress = "automatic recovery waits for demand"
-    else:
-        progress = "drain accounting is active"
+    progress = _drain_progress(
+        facts, automatic_waits_for_demand=automatic_waits_for_demand
+    )
     return AdmissionReadiness("draining", f"{retained}; {progress}")
+
+
+def _drain_progress(facts: ReadinessFacts, *, automatic_waits_for_demand: bool) -> str:
+    """Name the current progress path for a full server drain.
+
+    Parameters
+    ----------
+    facts : ReadinessFacts
+        The recovery phase and outlook at the classification instant.
+    automatic_waits_for_demand : bool
+        Whether the idle trigger waits for its first queued request.
+
+    Returns
+    -------
+    str
+        A stable explanation for the progress path.
+
+    Examples
+    --------
+    >>> _drain_progress(
+    ...     ReadinessFacts(
+    ...         healthy=True, closing=False,
+    ...         counts=Counts(
+    ...             capacity=1, held=1, running=0, draining=0,
+    ...             server_drain=1, queued=1, cached_moving=0,
+    ...         ),
+    ...         drain_fault_kind="live_work", recovery_automatic=True,
+    ...         recovery_phase="idle", recovery_attempts=0,
+    ...         recovery_pending=True,
+    ...     ),
+    ...     automatic_waits_for_demand=False,
+    ... )
+    'automatic recovery is pending'
+    """
+    if facts.recovery_phase != "idle":
+        return f"recovery is in {facts.recovery_phase}"
+    if facts.recovery_pending:
+        return "automatic recovery is pending"
+    return (
+        "automatic recovery waits for demand"
+        if automatic_waits_for_demand
+        else "drain accounting is active"
+    )
 
 
 def _classify_other_capacity(facts: ReadinessFacts) -> AdmissionReadiness:
@@ -211,19 +264,18 @@ def _classify_other_capacity(facts: ReadinessFacts) -> AdmissionReadiness:
     """
     counts = facts.counts
     if counts.capacity > 0 and counts.held >= counts.capacity:
-        reason = f"all {counts.capacity} slots are occupied"
+        reason = f"all {_counted(counts.capacity, 'slot')} are occupied"
         if counts.server_drain > 0:
-            retained_word = "slot" if counts.server_drain == 1 else "slots"
-            reason += f"; {counts.server_drain} server-drain {retained_word} retained"
+            retained = _counted(counts.server_drain, "server-drain slot")
+            reason += f"; {retained} retained"
         return AdmissionReadiness("saturated", reason)
 
     available = max(0, counts.capacity - counts.held)
     if counts.server_drain > 0:
-        retained_word = "slot" if counts.server_drain == 1 else "slots"
+        retained = _counted(counts.server_drain, "server-drain slot")
         reason = (
-            f"{counts.server_drain} server-drain {retained_word} retained; "
-            f"{available} of {counts.capacity} slots available"
+            f"{retained} retained; {available} of {counts.capacity} slots available"
         )
     else:
-        reason = f"{available} of {counts.capacity} slots available"
+        reason = f"{available} of {_counted(counts.capacity, 'slot')} available"
     return AdmissionReadiness("ready", reason)
