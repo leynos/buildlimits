@@ -5,15 +5,15 @@ This ExecPlan (execution plan) is a living document. The sections `Constraints`,
 `Outcomes & retrospective`, `Conformance basis`, and `Verification plan` must
 be kept up to date as work proceeds.
 
-Status: APPROVED FOR EXECUTION; IN PROGRESS (2026-10-24; EP-M0 is complete; r31
+Status: APPROVED FOR EXECUTION; IN PROGRESS (2026-10-25; EP-M0 is complete; r31
 documentation gates and review passed; EP-M1 validation, audit evidence and
 documentation gates and milestone review passed; EP-M1 commits are complete;
 EP-M2 is complete in `327ae5a` and `080d9c0`, with final gates and local
 CodeRabbit review passed; EP-M3 red contracts are committed as `195ff77` and
 its implementation and full gates passed; EP-M4 implementation, full gates and
-clean review passed in `636f3ed`; EP-M5 query and child adapters passed gates
-and review in candidate 85 and were committed as `56bc46b`; outcome store work
-remains)
+clean review passed in `636f3ed`; EP-M5 child and query adapters are committed
+as `d96518c` and `56bc46b`; the store writer is committed as `34ea33b`, with
+candidate98 full gates and archive-bound review passed)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -239,6 +239,15 @@ These are hard invariants. Violating one requires escalation, not a workaround.
     - The opt-in latency test measures the sample cost against the
       performance tolerance.
     - H2's falsification ends sampling (G1 runbook).
+
+- R10. An append can leave a partial tail if both the write and its rollback
+  fail.
+  - Severity: high if a later row makes the fragment a non-final line.
+  - Likelihood: low; both the write and `ftruncate` must fail.
+  - Mitigation: a failed append schedules compaction from the validated
+    in-memory records before another append is accepted. If that compaction
+    also fails, the later row is discarded and the failure is reported. The
+    injected write-and-rollback failure is covered by O8.
 
 ## Progress
 
@@ -824,6 +833,23 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   files and manifest SHA-256
   `a78885f0aa3eb4050aa925ef6538b74f32875cffc3cebb740e6a2e305a30e5ec`. The query
   adapters and tests are committed as `56bc46b`.
+- [x] (2026-10-25 06:30Z) The earlier stop-hook `FileNotFoundError` for
+  temporary-directory discovery did not recur once usable temporary storage
+  returned; candidate97 and candidate98 completed all temporary-file gates.
+  Candidate96 stopped at Ruff because the runtime `Salt` pattern import was
+  type-only; candidate97 corrected it and passed all deterministic gates. Its
+  archive-bound review identified a corruption path when both a partial append
+  and its `ftruncate` rollback fail. The new fault-injection test failed before
+  the repair and reproduced corruption before shutdown. The writer now
+  schedules compaction after append I/O errors. Candidate98 passed all gates,
+  with 2,039 passed, 26 skipped and 47 snapshots; the matching-lock audit
+  evidence reports no known vulnerabilities. Its archive-bound review found no
+  issues. The writer is committed as `34ea33b`. Archive SHA-256 is
+  `5f648f309cfb7898bc9131fa6d487cbafc2d959f8bfd336f1d45c24d0b84cd09`; its
+  374-file manifest SHA-256 is
+  `5718539323c8ce839586713d146a7cbbce78a4c68d953422898caf1cc6433b75`. Review
+  log:
+  `/tmp/buildlimits-coderabbit-candidate-98.fhUZ3T/coderabbit-buildlimits-cache-hit-prediction-candidate-98.out`.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
@@ -839,8 +865,9 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   full gates passed.
 - [x] EP-M4: the reading sequencer over fake ports; implementation, full
   gates and archive-bound review passed in commit `636f3ed` (candidate 64).
-- [ ] EP-M5: adapters (non-blocking child, queries, generation, store
-  writer).
+- [x] EP-M5: adapters (non-blocking child, queries, generation, store
+  writer). Implementation commit `34ea33b`; full gates and clean archive-bound
+  review passed in candidate98.
 - [ ] EP-M6: inert schema, configuration and tracing vocabulary
   (releasable).
 - [ ] EP-M7: supervisor wiring, status, report, `h3` replay, systemd
@@ -930,6 +957,12 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   `JournalTracer`, which supplies it to `JournalSpanExporter`, whose `export`
   calls the method. A precise `pyproject.toml` entrypoint records this live
   call path and the tests that exercise it; no runtime code changed.
+- S10. `append_line` attempts to truncate a partial write back to the previous
+  size, but the rollback can fail too. Without a pending-compaction marker, the
+  next append can make the fragment a non-final JSON Lines row, so the next
+  load rejects and moves aside the whole store. Candidate97's review exposed
+  this path; a fault-injection test reproduced it before the repair. The writer
+  now compacts its validated in-memory rows before accepting a later append.
 
 ## Decision log
 
@@ -1331,6 +1364,12 @@ C-GATES.
   not a runtime API. Rationale: the pinned check needs both process-lifecycle
   and counter-fixture support; keeping those responsibilities separate keeps
   each source file below 400 lines and the process harness focused.
+- D35. Store append recovery. Decision: any append I/O error marks compaction
+  pending; before accepting another row, the writer rebuilds the file from its
+  validated in-memory records. If the repair fails, it rejects the next row.
+  Rationale: a failed partial-write rollback must not let a later complete row
+  turn the fragment into a corrupt non-final line. This preserves D17's
+  single-writer and bounded-store design without changing the format or port.
 
 ## Outcomes & retrospective
 
@@ -1359,6 +1398,20 @@ The pre-mortem scenarios, each with its mitigation now designed in:
 - six weeks of empty data from failing generation reads, answered by
   `generation_unavailable`, back-off, the status line and a 24-hour check in
   the G1 runbook.
+
+EP-M5 implementation and evidence (2026-10-25):
+
+- The child adapter, query adapters and outcome store writer are committed as
+  `d96518c`, `56bc46b` and `34ea33b`. The developer's guide inventories the
+  three store modules; no dependency was added.
+- Candidate98 passed formatting, format checks, Markdown and spelling, Nixie,
+  full lint including duplication and action validation, typecheck, and the
+  one-worker test suite (2,039 passed, 26 skipped, 97 warnings and 47
+  snapshots). Matching-lock audit evidence reports no known vulnerabilities.
+- The append rollback regression failed before the fix because the second row
+  made the store corrupt before shutdown, and passed after compaction was
+  scheduled. The archive-bound review covered nine paths and found no issues.
+  Archive and manifest hashes are recorded in `Progress`.
 
 EP-M0 conformance and evidence (2026-10-24):
 
@@ -1529,6 +1582,7 @@ RFC-I3 -> C-ISOLATE, C-TOKEN -> EP-M7 -> tests/test_outcome_loop.py::test_loop_a
   tests/test_outcome_totality.py::test_raising_shell_never_strands_a_token
 RFC-PORTS -> EP-M4/EP-M5 -> tests/test_outcome_ports.py::test_every_port_failure_has_its_reason
 RFC-STORE, RFC-PRIV -> EP-M3/EP-M5 -> tests/test_outcome_records.py, tests/test_outcome_store.py,
+  tests/test_outcome_store_salt.py, tests/test_outcome_store_writes.py,
   tests/test_outcome_key_properties.py
 RFC-KEY -> EP-M3 -> tests/test_outcome_key.py
 RFC-OBS -> EP-M6/EP-M7 -> tests/test_outcome_metrics.py, tests/__snapshots__/test_metrics_report.ambr,
@@ -1551,6 +1605,11 @@ RFC-COMPAT -> C-DEFAULT, C-SCHEMA, D18 -> EP-M6 -> tests/test_outcome_config.py,
   redacts host-specific `cache_location` and `basedirs` values.
 - G0 is the existing read-only journal measurement recorded in S5; no new
   journal query was needed for EP-M0.
+- EP-M5 candidate98 passed the full sequential local gates and archive-bound
+  CodeRabbit review. Its 374-file candidate had exact before/after parity;
+  2,039 tests passed, 26 were skipped and 47 snapshots passed. Audit evidence
+  matches `uv.lock` and reports no known vulnerabilities. The archive and
+  manifest hashes and review log are recorded in `Progress`.
 - EP-M0's `make check-fmt`, `make markdownlint` including spelling, and
   `make nixie` passed sequentially. Nixie used the documented one-worker limit
   to avoid timeouts from the container's 24-CPU default. Exact logs are listed
@@ -1768,12 +1827,17 @@ Method and evidence:
 
 - Method: Hypothesis over append, compact, load, clock and salt sequences,
   plus fault-injected input and output.
-- Artefacts: `tests/test_outcome_records.py` and
-  `tests/test_outcome_store.py`.
+- Artefacts: `tests/test_outcome_records.py`, `tests/test_outcome_store.py`,
+  `tests/test_outcome_store_salt.py` and `tests/test_outcome_store_writes.py`.
 - Non-vacuity: the generator reaches the bound, an expiry and a torn tail.
 - The writer tests cross the 12 MiB high-water mark, verify byte-budget
   eviction, reject an oversized record, and preserve the 16 MiB hard bound when
   compaction fails.
+- Fault injection:
+  `test_failed_append_rollback_is_repaired_before_the_next_append` writes half
+  a record, makes `ftruncate` fail, then requires a later append to leave only
+  complete, decodable rows. The test failed with `corrupt` before D35's repair
+  and passes with it.
 
 O9. Restart baseline. After a restart, the first window in the new generation
 is attributed against the reading that exposed the restart. That reading is
@@ -1971,9 +2035,10 @@ The adapters form the shell.
     bounded `close(timeout)`. `StoreWriter` implements the port on a writer
     thread; its bounded queue accepts appends, and it performs bounded loading
     and internal compaction. The loop drains writer results each tick.
-  - `file_salt(path) -> Salt | StoreFailure` creates the salt with `O_EXCL`
-    and a rename, checks its length, and never regenerates an unreadable
-    salt. It runs on the writer thread at start. The loop receives the
+  - `file_salt(path) -> Salt | StoreFailure` creates the key in a private
+    `mkstemp` file and atomically installs it with a no-clobber hard link. It
+    checks its length and never regenerates an unreadable salt. It runs on the
+    writer thread at start. The loop receives the
     `Salt` through the result queue. Launches before it arrives have no key:
     their attribution is unchanged, and no record is written.
   - The store path resolver `store_path(env)` is shared with the replay
@@ -2251,9 +2316,9 @@ milestone that adds each module.
 
 ### EP-M5: adapters
 
-- Outcome: `nonblocking_child.py`, `outcome_queries.py` and
-  `outcome_store.py`. This discharges O5 at adapter level, the input and output
-  part of O8, and the port half of O6.
+- Outcome: `nonblocking_child.py`, `outcome_queries.py`, `outcome_store.py`,
+  `outcome_store_io.py` and `outcome_store_salt.py`. This discharges O5 at
+  adapter level, the input and output part of O8, and the port half of O6.
 - Red:
   - `tests/test_nonblocking_child.py`:
     - a slow script is killed at the deadline, reaped, and its pipe closed;
@@ -2273,6 +2338,8 @@ milestone that adds each module.
     - refused writes and a full queue;
     - a writer stalled for 5 seconds against the 1-second close bound;
     - salt creation, an unreadable salt and a changed salt.
+- `tests/test_outcome_store_writes.py` covers partial append failures, failed
+  rollback, repair before a later append, compaction retry and bounded close.
 - Compatibility decision: none.
 
 ### EP-M6: inert schema, configuration and vocabulary (releasable plateau)
@@ -2894,3 +2961,10 @@ Consult these documents:
   shared child metadata that could be assigned to multiple entries. D30 to D32
   define the complete parser-order predictor, ambiguous child sightings and RFC
   footnote order; the pinned source and fixture were checked before editing.
+- 2026-10-25: EP-M5's store writer and append-recovery test are complete.
+  - What changed: added the store adapters, repaired the salt-installation
+    description, and recorded candidate98's full gate and review evidence.
+  - Why: the store writer completes EP-M5, and review exposed a partial-write
+    rollback failure that had to be repaired before a later append.
+  - Effect on the remaining work: EP-M5 is complete. EP-M6 is next; G1 still
+    gates EP-M9, with no W1 or W2 acceptance criteria changed.
