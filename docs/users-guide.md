@@ -21,6 +21,15 @@ how to call: one stands in as `RUSTC_WRAPPER`, the other as `RUSTDOC`. Nested
 compilations inside an admitted group, such as the ones rustdoc starts, run
 directly and never ask for a second token.
 
+Real crate compilations still require a token. `build-limits-rustc` also runs a
+small allow-list of toolchain queries without admission: version queries,
+selected no-input `--print` queries, Cargo's stdin target-information query,
+and those queries behind the recognized Clippy and Dylint workspace drivers.
+Unknown wrappers, compile arguments and rustdoc invocations stay on their
+normal paths. The
+[query admission RFC](rfcs/0003-toolchain-query-admission-exemption.md) records
+the exact grammar and its evidence.
+
 | Command                   | Role                                                     |
 | ------------------------- | -------------------------------------------------------- |
 | `build-limits-rustc`      | `RUSTC_WRAPPER`: runs one compiler under admission       |
@@ -160,12 +169,18 @@ standard error. The adapter exits with the compiler's exit code, or ends itself
 with the same signal; a signal to the adapter closes its connection, and the
 supervisor then terminates that compiler group.
 
+An allow-listed query can finish while every token is held. That exception
+keeps a cheap toolchain probe from waiting for admission while Cargo may hold
+its host-wide package-cache lock. Outside an already admitted compiler scope,
+actual compilations and every uncertain invocation still request a token. Do
+not infer that an unfamiliar wrapper or query is safe; the classifier fails
+closed.
+
 Run each worktree's gates sequentially within that worktree. Independent
 repositories and worktrees may run their gates concurrently: start each gate
-once and let Cargo's package-cache lock and compile admission queue the work. A
-healthy pool with every slot held is normal operation. Check progress with
-`build-limits-status` rather than waiting for the whole host to go idle before
-submitting work.
+once and let real compiles use the admission queue. A healthy pool with every
+slot held is normal operation. Check progress with `build-limits-status` rather
+than waiting for the whole host to go idle before submitting work.
 
 ### Descriptor pressure
 
@@ -173,8 +188,8 @@ When the supervisor is short of file descriptors before it has recorded a
 request, it answers `busy`. The adapter retries that refusal with bounded,
 jittered backoff under the same unavailability deadline and prints one waiting
 line. Once a request is queued, it keeps reporting progress and stays
-cancellable. A persistent refusal is an infrastructure error: the adapter never
-bypasses admission to run a compiler directly.
+cancellable. A persistent refusal is an infrastructure error before admission;
+the adapter never bypasses admission to execute that compile request directly.
 
 A request whose complete, valid declaration needs more descriptors than the
 known total budget receives a final `descriptors` refusal naming the required
@@ -231,8 +246,9 @@ runs a real toolchain `rustc` or `rustdoc` (`<root>/bin/rustc` with a
 This applies to a compiler admitted by the supervisor and to one the adapter
 runs directly inside an admitted scope. Arguments are never changed, and the
 proxy, `clippy-driver` and unrecognized compilers see the environment
-unchanged. No operator action is needed. Processes that were already running
-keep their old environment.
+unchanged. The Clippy and Dylint query exemption affects admission only; it
+does not extend loader-path repair to either driver. No operator action is
+needed. Processes that were already running keep their old environment.
 
 **What they cannot do.** A build script that Cargo runs, and anything else that
 starts a real `rustc` without these adapters, still inherits the poisoned path.
@@ -780,6 +796,10 @@ p50, p90, p99 and maximum wait and runtime, queue-depth and held token
 summaries, cache-path counts and the direct-fallback ratio. They also summarize
 reachability and health transitions, pool failures, supervisor starts, and
 adapter outcomes and connection attempts.
+
+Adapter outcomes include `exempt` for a recognized toolchain query. The adapter
+records that outcome before exec without wait or runtime fields, so exempt
+queries add no samples to the admission wait or runtime distributions.
 
 The supervisor also writes OpenTelemetry `scope_placement` spans to the native
 journal. An adapter writes `adapter_restart_retry` only when it has to retry

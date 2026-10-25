@@ -80,9 +80,8 @@ The supervisor is a functional core with an imperative shell. Decisions live in
 `admission`, which performs no input or output and returns a list of effects;
 the shell carries those effects out.
 
-For screen readers: the following sequence diagram shows one compile request,
-from Cargo's call to the adapter through admission, scope placement and the
-return of the token.
+For screen readers: the following sequence diagram shows Cargo's call to the
+adapter, query classification or admission, scope placement and token return.
 
 ```mermaid
 sequenceDiagram
@@ -91,18 +90,26 @@ sequenceDiagram
     participant Supervisor
     participant Pool as /dev/guild
     participant Scope as compiler scope
+    participant Compiler
     Cargo->>Adapter: rustc arguments
-    Adapter->>Supervisor: compile request and passed descriptors
-    Supervisor->>Pool: read one token
-    Supervisor->>Scope: fork held child, start transient scope
-    Supervisor->>Scope: release child once placed
-    Scope-->>Supervisor: scope empties
-    Supervisor->>Pool: return token
-    Supervisor-->>Adapter: finished with exit status
-    Adapter-->>Cargo: same exit status or signal
+    Adapter->>Adapter: Check admitted scope, then classify exact query
+    alt Already admitted or allow-listed query
+        Adapter->>Compiler: exec directly
+        Compiler-->>Cargo: query or nested compile result
+    else Compile or uncertain invocation
+        Adapter->>Supervisor: compile request and passed descriptors
+        Supervisor->>Pool: read one token
+        Supervisor->>Scope: fork held child, start transient scope
+        Supervisor->>Scope: release child once placed
+        Scope-->>Supervisor: scope empties
+        Supervisor->>Pool: return token
+        Supervisor-->>Adapter: finished with exit status
+        Adapter-->>Cargo: same exit status or signal
+    end
 ```
 
-_Figure 1: The life of one admitted compile request._
+_Figure 1: Query dispatch and direct execution or admission of compile
+requests._
 
 Cargo runs `build-limits-rustc <compiler> <arguments...>` as `RUSTC_WRAPPER`, or
 `build-limits-rustdoc <arguments...>` as `RUSTDOC`. The adapter connects to
@@ -111,8 +118,12 @@ carrying its inheritable descriptors, and relays the result. The supervisor
 queues the request, reads one token for it, forks a held launch child, moves
 that child into a new transient scope under `buildlimits-compilers.slice`, and
 releases it to execute the compiler. It returns the token once the scope has no
-processes left. An adapter that finds itself inside an admitted scope runs the
-compiler directly, so nested tools never ask for a second token.
+processes left. Before requesting admission, `adapter._main` preserves the
+already-admitted-scope check and then classifies the rustc entry point. Only an
+exact query match runs directly outside a scope; every compile or uncertain
+invocation follows the token path. An adapter that finds itself inside an
+admitted scope runs the compiler directly, so nested tools never ask for a
+second token.
 
 ## 4. Package modules
 
@@ -148,8 +159,8 @@ Each module owns one decision. This table is the single module inventory.
 | `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`  | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc              |
 | `adapter_invocation`, `adapter_retry`                     | Invocation state and deadline-preserving busy and restart retries                               |
 | `tracing`, `tracing_export`, `tracing_sdk_export`         | Bounded spans, the fixed journal schema and synchronous native-journal export                   |
-| `toolchain_env`                                           | Pure, filesystem-only recognition of a real toolchain compiler and its loader-path prefix       |
-| `rustc_query`, `rustc_cargo_probe`                        | Fail-closed recognition of rustc queries that cannot compile a crate                            |
+| `toolchain_env`                                           | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper       |
+| `rustc_query`, `rustc_cargo_probe`                        | Fail-closed recognition of direct and verified workspace-driver rustc queries                   |
 | `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                 |
 | `status`, `status_client`, `status_render`, `status_cli`  | The status document, its transport, rendering and command                                       |
 | `admission_readiness`                                     | Pure admission-progress classification from health, ledger counts and recovery outlook          |
@@ -493,6 +504,15 @@ the compiler may have run. `adapter_replies` reads one reply and reports a
 closed or reset connection, or a reply cut off mid-frame
 (`framing.TruncatedFrameError`), as `SupervisorClosedError`.
 
+`adapter._main` accepts the keyword-only `exempt_queries` switch, defaulting to
+`False`; `rustc_main` enables it and `rustdoc_main` disables it explicitly.
+After the admitted-scope check, the rustc path calls
+`rustc_query.is_toolchain_query(argv, env, cwd)`. A match records the
+outcome-only exemption and execs `groups.compiler_argv(argv)` with the shared
+effective environment. An unrecognized vector goes through
+`run(Invocation(argv, cacheable, env))`. Exempt exec failures keep the ordinary
+adapter diagnostic prefix and failure status, and do not emit a second summary.
+
 ### 10.1. The adapter's environment contract
 
 The adapter forwards the caller's environment verbatim, with one exception.
@@ -511,7 +531,8 @@ Keep these rules when changing it:
   `run(Invocation(argv, cacheable, env))`, so all three launch paths use the
   same environment. `Invocation` defaults its `env` to a snapshot of
   `os.environ`; `_request_once` copies the mapping it is given and does not read
-  `os.environ`.
+  `os.environ`. The query classifier receives this explicit mapping and the
+  single `cwd` snapshot; it never reads process environment implicitly.
 - The helper must not run the compiler or rustup, because the compiler is what
   fails under the poisoned path, and it must not change `argv`.
 - The supervisor, `groups.launch_spec` and `launch` stay unaware of it: they
@@ -525,27 +546,31 @@ Keep these rules when changing it:
 ### 10.2. Rustc query admission
 
 `rustc_main` may run a narrowly allow-listed query without requesting a compile
-slot. `rustdoc_main` does not use this classifier. The exemption accepts one
-version query (`-V`, `--version`, or `-vV`, optionally with `--verbose`), one
-or more allow-listed `--print=KIND` queries without an input file, or Cargo's
-stdin-based target-information probe. The separate-value `--print KIND`
-spelling is accepted only for direct rustc invocations. The Cargo probe parser
-accepts recognized option/value pairs in any order, requires stdin, the
-synthetic crate name, at least one crate type, and `--print=file-names`, and
-permits additional allow-listed crate types and print kinds. It rejects unknown
-tokens, repeated singleton fields, and duplicate crate types or print kinds.
+slot. `rustdoc_main` does not use this classifier. The contract and source
+evidence are recorded in
+[RFC 0003](rfcs/0003-toolchain-query-admission-exemption.md). The exemption
+accepts one version query (`-V`, `--version`, or `-vV`, optionally with
+`--verbose`), one or more allow-listed `--print=KIND` queries without an input
+file, or Cargo's stdin-based target-information probe. The separate-value
+`--print KIND` spelling is accepted only for direct rustc invocations. The
+Cargo probe parser accepts recognized option/value pairs in any order, requires
+stdin, the synthetic crate name, at least one crate type, and
+`--print=file-names`, and permits additional allow-listed crate types and print
+kinds. It rejects unknown tokens, repeated singleton fields, and duplicate
+crate types or print kinds.
 
 The compiler identity is either a basename of `rustc`, or exactly one
 `clippy-driver` or `dylint-driver` followed by an inner executable whose
-basename is `rustc`. When `RUSTC_WORKSPACE_WRAPPER` is present, the configured
-wrapper and invocation driver are resolved through
-`toolchain_env.locate_executable`; if they do not resolve to the same file, the
-classifier keeps admission. The closed driver-name allow-list applies only when
-the variable is absent. A Dylint invocation with non-whitespace
-`DYLINT_RUSTFLAGS` remains admitted because the driver would append
-unclassified arguments. Unknown or nested wrappers, argument files, input
-files, output redirection, compile indicators, unsupported print kinds, and any
-unconsumed argument also remain admitted.
+basename is `rustc`. If `RUSTC_WORKSPACE_WRAPPER` is present, the classifier
+resolves both the configured wrapper and the invocation driver through the
+public `toolchain_env.locate_executable` helper, follows symlinks, and requires
+the same file. A missing, invalid or different resolved path keeps admission.
+Only when the variable is absent does the closed driver-name allow-list
+establish identity. Dylint with non-whitespace `DYLINT_RUSTFLAGS` remains
+admitted because the driver appends those unclassified arguments. Unknown or
+nested wrappers, argument files, input files, output redirection, compile
+indicators, unsupported print kinds, and any unconsumed argument also remain
+admitted.
 
 The classifier strips leading caller `sccache` layers only to inspect the
 compiler identity. The exempt execution retains recognized workspace drivers
@@ -556,12 +581,9 @@ in the exemption. These rules keep the exempt path outside both token waiting
 and cache-server waiting while leaving every uncertain invocation on normal
 admission.
 
-The grammar follows Rust commit `a293cc4af8b26701c42738381c0c6f9d2ba881e0` at
-`compiler/rustc_driver_impl/src/lib.rs`, Cargo commit
-`fe2f314aef06e688a9517da1ac0577bb1854d01f` at
-`src/cargo/core/compiler/build_context/target_info.rs`, and Dylint commit
-`9adfa398661273ca7dc99df9bf2c26ae6f61b1c5` at `driver/src/lib.rs`. Those source
-pins support query classification; they do not establish the exact interval for
+The pinned Rust, Clippy, Cargo and Dylint source findings, as well as the
+sccache v0.18.0 client ordering, are documented in RFC 0003. These source pins
+support the query classification; they do not establish the exact interval for
 which Cargo holds `.package-cache` around each probe. That lock span remains an
 open host observation.
 
@@ -608,7 +630,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `rustc_query_host_checks.py`  | Query and readiness assertions shared by host query and timing scenarios                            |
 | `rustc_query_host_support.py` | Private Cargo fixtures, held-token barriers and captured command output                             |
 | `rustc_query_support.py`      | `cargo_probe` and `temporary_executable` for rustc query and property tests                         |
-| `rustc_query_timing_shim.py`  | Timing shim installation and module-level probe timing wrapper                                      |
+| `rustc_query_timing_shim.py`  | Sibling-adapter timing shim with JSON-line probe records                                            |
 | `harness_units.py`            | Transient unit control and `unit_properties` over the public user bus                               |
 
 _Table 4: Shared test helper modules._
@@ -668,7 +690,19 @@ setup as `Harness.compile`. Register each process's kill and
 pool outside the compiler slice while real compile requests queue.
 `tests/test_rustc_query_host.py` covers cold metadata, Clippy and Dylint
 resolution against fresh crates; `tests/test_rustc_query_timings.py` records
-direct compiler and driver query timings while the pool remains held.
+direct compiler and driver query timings while the pool remains held. The
+held-pool systemd test also verifies that an ordinary compile and an
+unknown-wrapper query queue without execution, then finish after the barrier
+compilers are released. Host scenarios use private Cargo homes and fresh target
+directories. The Dylint host scenarios require the caller's prebuilt library
+path and skip with an explicit reason when it is absent; they do not build a
+driver or lint library.
+
+`tests/rustc_query_timing_shim.py` runs the sibling adapter as a child with the
+original argv and inherited standard streams. It writes one JSON line per
+completed probe with argv, monotonic start and end, status and the effective
+workspace-wrapper value. Keep that record schema aligned with
+`rustc_query_host_support.ProbeRecord` and the property summaries.
 
 ### 11.5. Closing what a test opens
 
