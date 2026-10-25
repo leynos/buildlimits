@@ -1207,3 +1207,11 @@ members = [
     "buildlimits/recovery_starvation.py::StarvationReading",
 ]
 reason = "These immutable snapshots feed different decisions: operator-facing readiness uses health, the authoritative ledger and recovery outlook, while automatic recovery uses trigger policy and timing proof. Sharing a record would couple those contracts without sharing classification logic."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/rustc_query_host_checks.py", "tests/test_rustc_query_timings.py"]
+reason = "Matching imports: the host assertions and direct timing test have distinct roles, and re-exporting their standard-library dependencies would hide each module's actual dependencies."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_rustc_query_host.py"
+reason = "The only matched fragments are separate optional Cargo Clippy and Dylint prerequisites with distinct skip messages. The one-line matches cannot be scoped to function names by this gate; this dedicated host acceptance module needs both checks so either linter can skip independently."

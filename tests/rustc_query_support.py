@@ -37,8 +37,15 @@ def cargo_probe(target: str | None = None) -> list[str]:
     return arguments
 
 
-def temporary_executable(path: Path) -> Path:
+def temporary_executable(path: Path, source: str = "#!/bin/sh\nexit 0\n") -> Path:
     """Create a hermetic executable path for wrapper identity tests.
+
+    Parameters
+    ----------
+    path : Path
+        Executable fixture location.
+    source : str
+        Script contents. The default is a successful no-op executable.
 
     Returns
     -------
@@ -46,6 +53,6 @@ def temporary_executable(path: Path) -> Path:
         The executable fixture path.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path.write_text(source, encoding="utf-8")
     path.chmod(0o755)
     return path

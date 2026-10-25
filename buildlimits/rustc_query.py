@@ -2,7 +2,7 @@
 
 Version queries and the allow-listed no-input ``--print`` queries follow
 ``rustc`` at commit
-`a293cc4af8b26701c42738381c0c6f9d2ba881e0
+`a293cc4af8b26701c42738381c0c6f9d2ba881e0`
 (``compiler/rustc_driver_impl/src/lib.rs``). The Cargo target-information
 grammar follows commit
 `fe2f314aef06e688a9517da1ac0577bb1854d01f`

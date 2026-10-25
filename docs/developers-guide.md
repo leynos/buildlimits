@@ -506,11 +506,12 @@ rustup source.
 
 Keep these rules when changing it:
 
-- `adapter._main` computes the effective environment once and passes it to both
-  the already-admitted `os.execvpe` and
-  `run(Invocation(argv, cacheable, env))`, so the two launch paths cannot
-  disagree. `Invocation` defaults its `env` to a snapshot of `os.environ`;
-  `_request_once` copies the mapping it is given and does not read `os.environ`.
+- `adapter._main` computes the effective environment once and passes it to the
+  already-admitted `os.execvpe`, the exempt `os.execvpe`, and
+  `run(Invocation(argv, cacheable, env))`, so all three launch paths use the
+  same environment. `Invocation` defaults its `env` to a snapshot of
+  `os.environ`; `_request_once` copies the mapping it is given and does not read
+  `os.environ`.
 - The helper must not run the compiler or rustup, because the compiler is what
   fails under the poisoned path, and it must not change `argv`.
 - The supervisor, `groups.launch_spec` and `launch` stay unaware of it: they
@@ -563,6 +564,11 @@ pins support query classification; they do not establish the exact interval for
 which Cargo holds `.package-cache` around each probe. That lock span remains an
 open host observation.
 
+Before exec, the adapter records an outcome-only `adapter_finished` event with
+outcome `exempt`. It has no wait or runtime fields, so it adds no samples to
+the admission distributions. The exempt `os.execvpe` receives the same
+effective environment as the already-admitted and normal admitted paths.
+
 ## 11. Tests
 
 ### 11.1. Layout and conventions
@@ -579,23 +585,29 @@ live in `tests/fixtures`.
 
 Use these before writing a new arrange step; extend one rather than copying it.
 
-| Module                       | Provides                                                                                            |
-| ---------------------------- | --------------------------------------------------------------------------------------------------- |
-| `conftest.py`                | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures |
-| `request_helpers.py`         | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
-| `pool_helpers.py`            | `FakePool` and `attach_pool`                                                                        |
-| `descriptor_helpers.py`      | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
-| `descriptor_guard.py`        | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                          |
-| `launch_helpers.py`          | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
-| `adapter_doubles.py`         | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
-| `toolchain_trees.py`         | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler   |
-| `journal_fixtures.py`        | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
-| `listener_helpers.py`        | `watched_listener`, a listener under `ListenerPressure` control                                     |
-| `cache_recovery_helpers.py`  | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
-| `cache_recovery_harness.py`  | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
-| `cache_recovery_machines.py` | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
-| `systemd_harness.py`         | Host acceptance `Harness`, `systemd_user_marks` and `wait_for`                                      |
-| `harness_units.py`           | Transient unit control and `unit_properties` over the public user bus                               |
+| Module                        | Provides                                                                                            |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `conftest.py`                 | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures |
+| `request_helpers.py`          | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
+| `pool_helpers.py`             | `FakePool` and `attach_pool`                                                                        |
+| `descriptor_helpers.py`       | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
+| `descriptor_guard.py`         | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                          |
+| `launch_helpers.py`           | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
+| `adapter_doubles.py`          | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
+| `toolchain_trees.py`          | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler   |
+| `journal_fixtures.py`         | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
+| `listener_helpers.py`         | `watched_listener`, a listener under `ListenerPressure` control                                     |
+| `cache_recovery_helpers.py`   | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
+| `cache_recovery_harness.py`   | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
+| `cache_recovery_machines.py`  | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
+| `harness_processes.py`        | `wait_for`, `start_adapter`, process cleanup and host process observations                          |
+| `host_acceptance.py`          | `user_manager_available` and `systemd_user_marks` with explicit host opt-in                         |
+| `systemd_harness.py`          | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling    |
+| `rustc_query_host_checks.py`  | Query and readiness assertions shared by host query and timing scenarios                            |
+| `rustc_query_host_support.py` | Private Cargo fixtures, held-token barriers and captured command output                             |
+| `rustc_query_support.py`      | `cargo_probe` and `temporary_executable` for rustc query and property tests                         |
+| `rustc_query_timing_shim.py`  | Timing shim installation and module-level probe timing wrapper                                      |
+| `harness_units.py`            | Transient unit control and `unit_properties` over the public user bus                               |
 
 _Table 4: Shared test helper modules._
 
@@ -643,6 +655,18 @@ proves the supervisor's own defence under the legacy `control-group` mode (the
 request is refused as `restarting` and retried, never `launch-failed`).
 `tests/cache_unit_fake.py` plays a cache unit through its states for unit tests
 that need the order of the barrier, stop and start.
+
+Use `Harness.invoke(argv, env=...)` when a host scenario must pass a compiler
+argument vector directly to the adapter. It merges the optional environment
+overlay with the harness environment and uses the same fresh session and pipe
+setup as `Harness.compile`. Register each process's kill and
+`reap_and_close_pipes` callbacks in the scenario's `ExitStack`.
+
+`tests/test_rustc_query_systemd.py` proves version queries bypass a fully held
+pool outside the compiler slice while real compile requests queue.
+`tests/test_rustc_query_host.py` covers cold metadata, Clippy and Dylint
+resolution against fresh crates; `tests/test_rustc_query_timings.py` records
+direct compiler and driver query timings while the pool remains held.
 
 ### 11.5. Closing what a test opens
 

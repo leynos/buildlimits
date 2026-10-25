@@ -18,13 +18,13 @@ import subprocess
 import sys
 import tempfile
 import termios
-import time
 import typing as typ
 import uuid
 from pathlib import Path
 
 from cached_unit_files import CachedUnits
 from harness_config import write_config
+from harness_processes import AdapterProcessOptions, start_adapter, wait_for
 from harness_processes import journal as journal
 from harness_processes import kill_group as kill_group
 from harness_processes import pid_alive as pid_alive
@@ -47,29 +47,19 @@ if typ.TYPE_CHECKING:
 
 FIXTURES = Path(__file__).with_name("fixtures")
 
-
-def wait_for(condition: cabc.Callable[[], bool], timeout: float = 15.0) -> bool:
-    """Poll until a condition holds or the timeout expires.
-
-    Parameters
-    ----------
-    condition : Callable[[], bool]
-        The condition.
-    timeout : float
-        The longest wait, in seconds.
-
-    Returns
-    -------
-    bool
-        Whether the condition held in time.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if condition():
-            return True
-        time.sleep(0.05)
-    return condition()
-
+__all__ = [
+    "Harness",
+    "Placement",
+    "journal",
+    "kill_group",
+    "listening",
+    "manager_env",
+    "pid_alive",
+    "run_unit",
+    "systemd_user_marks",
+    "user_manager_available",
+    "wait_for",
+]
 
 class Harness:
     """One supervisor, its pool and optionally a fake sccache server.
@@ -212,17 +202,50 @@ class Harness:
         subprocess.Popen[bytes]
             The running adapter.
         """
-        stream = subprocess.PIPE if piped else None
-        caller = self.env if env is None else {**self.env, **env}
-        return subprocess.Popen(
-            [str(self.adapter), "/bin/sh", "-c", script],
-            cwd=cwd or self.work,
-            env=caller,
-            start_new_session=True,
-            stdin=stream,
-            stdout=stream,
-            stderr=stream,
-            text=False,
+        return self.invoke(("/bin/sh", "-c", script), cwd=cwd, piped=piped, env=env)
+
+    def invoke(
+        self,
+        argv: cabc.Sequence[str],
+        *,
+        cwd: Path | None = None,
+        piped: bool = False,
+        env: cabc.Mapping[str, str] | None = None,
+    ) -> subprocess.Popen[bytes]:
+        """Start the adapter with arbitrary argv and an optional env overlay.
+
+        Parameters
+        ----------
+        argv : Sequence[str]
+            The argument vector passed to the adapter unchanged.
+        cwd : Path | None
+            The caller's working directory; the harness's work directory by default.
+        piped : bool
+            Whether to connect all three standard streams to pipes.
+        env : Mapping[str, str] | None
+            Overrides for this caller, merged over the harness environment.
+
+        Returns
+        -------
+        subprocess.Popen[bytes]
+            The running adapter in its own session.
+
+        Examples
+        --------
+        Run a version query with captured output::
+
+            process = harness.invoke(("rustc", "-vV"), piped=True)
+            stdout, stderr = process.communicate(timeout=2)
+        """
+        return start_adapter(
+            self.adapter,
+            argv,
+            AdapterProcessOptions(
+                cwd=cwd or self.work,
+                base_env=self.env,
+                piped=piped,
+                env=env,
+            ),
         )
 
     def status(self) -> dict[str, typ.Any]:
