@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import test_cache_recovery_systemd_readiness_steps as readiness_steps
 from harness_units import manager_env
 from pytest_bdd import given, scenarios, then, when
 from systemd_harness import (
@@ -17,25 +18,6 @@ from systemd_harness import (
     systemd_user_marks,
     wait_for,
 )
-from test_cache_recovery_systemd_readiness_steps import (
-    admission_readiness_restored,
-    automatic_demand,
-    automatic_recovered,
-    automatic_waits_for_demand,
-    manual_policy_blocked,
-    readiness_remains_saturated,
-    starved_supervisor,
-)
-
-__all__ = [
-    "admission_readiness_restored",
-    "automatic_demand",
-    "automatic_recovered",
-    "automatic_waits_for_demand",
-    "manual_policy_blocked",
-    "readiness_remains_saturated",
-    "starved_supervisor",
-]
 
 # The busy-host scenario waits out one stop retry (30 s of backoff) before the
 # cache can stop, so the default 30 s bound is too short for it.
@@ -43,6 +25,33 @@ pytestmark = [
     *systemd_user_marks("needs a systemd user manager and busctl"),
     pytest.mark.timeout(180),
 ]
+
+# pytest-bdd scopes step fixtures to the module where their decorators run.
+# Register the helper functions here because this module owns the scenarios.
+starved_supervisor = given(
+    "a supervisor with 2 slots using starved recovery and sccache"
+)(readiness_steps.starved_supervisor)
+manual_policy_blocked = then("manual recovery is required for admission readiness")(
+    readiness_steps.manual_policy_blocked
+)
+manual_policy_blocked = then("manual recovery remains required after a build queues")(
+    manual_policy_blocked
+)
+automatic_waits_for_demand = then(
+    "automatic recovery waits for demand and admission remains ready"
+)(readiness_steps.automatic_waits_for_demand)
+automatic_demand = when("a later build arrives to trigger automatic recovery")(
+    readiness_steps.automatic_demand
+)
+automatic_recovered = then(
+    "automatic recovery clears the drain fault and restores readiness"
+)(readiness_steps.automatic_recovered)
+readiness_remains_saturated = then("readiness remains true during ordinary saturation")(
+    readiness_steps.readiness_remains_saturated
+)
+admission_readiness_restored = then("admission readiness is restored")(
+    readiness_steps.admission_readiness_restored
+)
 
 scenarios("features/cache_recovery_on_systemd.feature")
 

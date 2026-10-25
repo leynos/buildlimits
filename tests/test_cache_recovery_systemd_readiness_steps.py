@@ -3,6 +3,7 @@
 import subprocess
 import typing as typ
 
+from harness_config import write_config
 from pytest_bdd import given, then, when
 from systemd_harness import Harness, wait_for
 
@@ -18,8 +19,11 @@ class RecoveryWorld(typ.Protocol):
 @given("a supervisor with 2 slots using starved recovery and sccache")
 def starved_supervisor(recovery_world: RecoveryWorld) -> None:
     """Start the isolated cache with automatic starvation recovery."""
-    recovery_world.harness.cache_recovery = "starved"
-    recovery_world.harness.start()
+    harness = recovery_world.harness
+    harness.cache_recovery = "starved"
+    # Harness construction writes the default manual policy before this step.
+    write_config(harness)
+    harness.start()
 
 
 def _assert_manual_readiness_is_blocked(world: RecoveryWorld) -> None:
