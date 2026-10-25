@@ -59,29 +59,13 @@ def _returned_token_effects(effects: cabc.Sequence[Effect]) -> list[ReturnToken]
     return [effect for effect in effects if isinstance(effect, ReturnToken)]
 
 
-def test_full_retention_blocks_readiness_until_verified_accounting(
-    recovery_harnesses: HarnessFactory,
-    monkeypatch: pytest.MonkeyPatch,
+def _assert_blocked_status_and_cli(
+    harness: Harness,
+    *,
+    query_snapshot: SnapshotAssertion,
     capsys: pytest.CaptureFixture[str],
-    snapshot: SnapshotAssertion,
-) -> None:
-    """A healthy, responsive supervisor can still require operator recovery."""
-    harness = recovery_harnesses.build(mode="manual", slots=1)
-    supervisor = harness.supervisor
-    _fill_with_drains(harness, tokens=(b"+",))
-    queue_request(supervisor)
-
-    applied: list[Effect] = []
-    apply = supervisor._apply
-
-    def record_effects(effects: list[Effect]) -> None:
-        """Observe effects while preserving the supervisor's real dispatch."""
-        applied.extend(effects)
-        apply(effects)
-
-    monkeypatch.setattr(supervisor, "_apply", record_effects)
-    harness.tick()
-
+) -> dict[str, object]:
+    """Check blocked status diagnostics and both CLI exit contracts."""
     blocked = _status(harness)
     admission = typ.cast("dict[str, object]", blocked["admission"])
     assert blocked["healthy"] is True, "the supervisor process remains healthy"
@@ -90,26 +74,35 @@ def test_full_retention_blocks_readiness_until_verified_accounting(
     assert "visible compiler roots=0" in str(blocked["drain_fault"]), (
         "the live service has no visible compiler roots"
     )
-    assert admission == snapshot, "the blocked admission fields stay stable"
+    assert admission == query_snapshot, "the blocked admission fields stay stable"
 
     assert (
         status_cli.main([], query=lambda: _query_through_status_frame(blocked)) == 0
     ), "health-only callers keep their historical exit"
-    captured = capsys.readouterr()
-    assert captured.out.splitlines()[0].startswith("admission blocked:"), (
+    assert capsys.readouterr().out.splitlines()[0].startswith("admission blocked:"), (
         "plain status leads with the admission block"
-    )
-    assert not captured.out.splitlines()[0].startswith("capacity"), (
-        "the healthy headline cannot obscure the block"
     )
     assert (
         status_cli.main(["--ready"], query=lambda: _query_through_status_frame(blocked))
         == 3
     ), "readiness callers receive the operator-action exit"
-    assert capsys.readouterr().out.splitlines()[0].startswith("admission blocked:"), (
+    first_line = capsys.readouterr().out.splitlines()[0]
+    assert first_line.startswith("admission blocked:"), (
         "the readiness invocation keeps the diagnostic visible"
     )
+    assert not first_line.startswith("capacity"), (
+        "the healthy headline cannot obscure the block"
+    )
+    return blocked
 
+
+def _assert_repeated_queries_keep_tokens(
+    harness: Harness,
+    *,
+    applied: cabc.Sequence[Effect],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Show repeated read-only status checks cannot return a retained token."""
     for _ in range(3):
         harness.tick()
         still_blocked = _status(harness)
@@ -120,12 +113,23 @@ def test_full_retention_blocks_readiness_until_verified_accounting(
             )
             == 3
         ), "repeated successful queries remain not ready"
-    assert not any(isinstance(effect, ReturnToken) for effect in applied), (
+        capsys.readouterr()
+    assert not _returned_token_effects(applied), (
         "readiness reads never dispatch a token return"
     )
     assert not harness.pool.returned, "the live cache keeps its token"
-    assert supervisor.admission.tokens_held() == 1, "held capacity stays unchanged"
+    assert harness.supervisor.admission.tokens_held() == 1, (
+        "held capacity stays unchanged"
+    )
 
+
+def _account_recovery_and_assert_readiness(
+    harness: Harness,
+    *,
+    applied: cabc.Sequence[Effect],
+) -> None:
+    """Verify accounted recovery restores readiness on the same supervisor."""
+    supervisor = harness.supervisor
     supervisor.recovery.request("manual", harness.now)
     harness.account()
     harness.tick()
@@ -151,6 +155,34 @@ def test_full_retention_blocks_readiness_until_verified_accounting(
         status_cli.main(["--ready"], query=lambda: _query_through_status_frame(ready))
         == 0
     ), "the CLI reports readiness after verified recovery"
+
+
+def test_full_retention_blocks_readiness_until_verified_accounting(
+    recovery_harnesses: HarnessFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    snapshot: SnapshotAssertion,
+) -> None:
+    """A healthy, responsive supervisor can still require operator recovery."""
+    harness = recovery_harnesses.build(mode="manual", slots=1)
+    supervisor = harness.supervisor
+    _fill_with_drains(harness, tokens=(b"+",))
+    queue_request(supervisor)
+
+    applied: list[Effect] = []
+    apply = supervisor._apply
+
+    def record_effects(effects: list[Effect]) -> None:
+        """Observe effects while preserving the supervisor's real dispatch."""
+        applied.extend(effects)
+        apply(effects)
+
+    monkeypatch.setattr(supervisor, "_apply", record_effects)
+    harness.tick()
+
+    _assert_blocked_status_and_cli(harness, query_snapshot=snapshot, capsys=capsys)
+    _assert_repeated_queries_keep_tokens(harness, applied=applied, capsys=capsys)
+    _account_recovery_and_assert_readiness(harness, applied=applied)
 
 
 @pytest.mark.parametrize(

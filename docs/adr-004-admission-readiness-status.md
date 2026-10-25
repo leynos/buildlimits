@@ -62,6 +62,8 @@ Keep the default `build-limits-status` exit status health-only. Add an opt-in
 | `1`         | Query or health failure     | Query or non-truthy health failure              |
 | `3`         | Not used                    | Readiness false, missing or malformed           |
 
+_Table 1: `build-limits-status` exit statuses by mode._
+
 Recovery guidance remains an operational diagnostic. It can be delayed until
 drain attempts reach their threshold and can change as automatic recovery
 becomes pending or stops. It is independent of the readiness classification,

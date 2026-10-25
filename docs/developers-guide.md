@@ -146,6 +146,8 @@ Each module owns one decision. This table is the single module inventory.
 | `toolchain_env`                                           | Pure, filesystem-only recognition of a real toolchain compiler and its loader-path prefix       |
 | `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                 |
 | `status`, `status_client`, `status_render`, `status_cli`  | The status document, its transport, rendering and command                                       |
+| `admission_readiness`                                     | Pure admission-progress classification from health, ledger counts and recovery outlook          |
+| `document_cli`                                            | Shared raw `--json` parser for status and recovery document commands                            |
 | `recover_client`, `recover_cli`                           | The recovery request and the `build-limits-recover` command                                     |
 | `metrics*`, `journal`, `journal_native`                   | Metric vocabulary, native journal datagrams, journal queries and reports                        |
 | `drain_loop`, `drain_metrics`                             | Paces drain-fault retries; observes drain progress without exit authority                       |
