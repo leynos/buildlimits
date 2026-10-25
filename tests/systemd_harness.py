@@ -23,63 +23,29 @@ import typing as typ
 import uuid
 from pathlib import Path
 
-import pytest
 from cached_unit_files import CachedUnits
 from harness_config import write_config
 from harness_processes import journal as journal
 from harness_processes import kill_group as kill_group
 from harness_processes import pid_alive as pid_alive
-from harness_units import Placement, listening, manager_env, run_unit
+from harness_units import (
+    Placement,
+    listening,
+    manager_env,
+    run_unit,
+)
+from harness_units import (
+    systemd_user_marks as systemd_user_marks,
+)
 from harness_units import unit_active as _unit_active
+from harness_units import (
+    user_manager_available as user_manager_available,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 FIXTURES = Path(__file__).with_name("fixtures")
-
-
-def user_manager_available() -> bool:
-    """Report whether a systemd user manager and busctl are usable.
-
-    Returns
-    -------
-    bool
-        Whether host acceptance was opted into and the manager is usable.
-    """
-    # Even collection-time readiness probes must be explicitly opted into.
-    if os.environ.get("BUILD_LIMITS_HOST_ACCEPTANCE") != "1":
-        return False
-    if not shutil.which("busctl") or not shutil.which("systemd-run"):
-        return False
-    result = subprocess.run(
-        ["systemctl", "--user", "is-system-running"],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=manager_env(),
-        timeout=30,
-    )
-    return result.stdout.strip() in {"running", "degraded"}
-
-
-def systemd_user_marks(reason: str) -> list[pytest.MarkDecorator]:
-    """Mark a module as host acceptance that skips without a user manager.
-
-    Parameters
-    ----------
-    reason : str
-        What the module needs from the host, shown when it is skipped.
-
-    Returns
-    -------
-    list[pytest.MarkDecorator]
-        The ``systemd_user`` selector and the availability skip, for
-        ``pytestmark``.
-    """
-    return [
-        pytest.mark.systemd_user,
-        pytest.mark.skipif(not user_manager_available(), reason=reason),
-    ]
 
 
 def wait_for(condition: cabc.Callable[[], bool], timeout: float = 15.0) -> bool:
@@ -276,6 +242,35 @@ class Harness:
             timeout=30,
         )
         return json.loads(result.stdout)
+
+    def readiness_status(self) -> tuple[int, dict[str, typ.Any]]:
+        """Read status with the admission-readiness exit contract.
+
+        Returns
+        -------
+        tuple[int, dict[str, Any]]
+            The ``--ready`` exit code and the decoded status document.
+        """
+        result = subprocess.run(
+            [str(self.status_command), "--ready", "--json"],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        return result.returncode, json.loads(result.stdout)
+
+    def drain_fault(self) -> str:
+        """Read the current retained-drain fault, if one is reported.
+
+        Returns
+        -------
+        str
+            The reported fault, or an empty string when no fault exists.
+        """
+        fault = self.status()["drain_fault"]
+        return fault if isinstance(fault, str) else ""
 
     def kill_supervisor(self) -> None:
         """Kill the supervisor outright, as a crash would."""

@@ -284,6 +284,12 @@ separate from cache reachability and admission readiness. The `caching` signal
 reports the cache reachability probe and does not determine whether direct
 compilation can be admitted.
 
+Plain status prepends `admission <state>: <reason>` when the state is `blocked`,
+`draining`, `closing` or `unhealthy`; `ready` and `saturated` add no line.
+Scripts that inspect the first line must account for this prefix. For
+provisioning and monitoring, use `--ready` or the JSON readiness field as shown
+below.
+
 `--ready` uses the same plain-text or JSON output with the exit-status contract
 in Table 4. Use it for provisioning checks and monitoring that need usable
 admission:

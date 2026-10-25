@@ -186,6 +186,20 @@ CASES = [
         _facts(
             held=4,
             server_drain=4,
+            drain_fault_kind="live_work",
+            recovery_automatic=True,
+            recovery_attempts=8,
+            recovery_pending=False,
+        ),
+        "blocked",
+        False,
+        "4 server-drain slots retained; recovery stopped after 8 attempts",
+        id="automatic-attempts-exhausted-without-demand",
+    ),
+    pytest.param(
+        _facts(
+            held=4,
+            server_drain=4,
             queued=1,
             drain_fault_kind="live_work",
             recovery_automatic=True,

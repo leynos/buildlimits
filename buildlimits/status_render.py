@@ -10,6 +10,10 @@ import typing as typ
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+_UNAVAILABLE_ADMISSION_LINE = (
+    "admission readiness unavailable: readiness is not reported"
+)
+
 
 def render(state: cabc.Mapping[str, object]) -> str:
     """Render a status document for people.
@@ -75,14 +79,14 @@ def _admission_lines(state: cabc.Mapping[str, object]) -> list[str]:
         return []
     admission_state = admission.get("state")
     if not isinstance(admission_state, str):
-        return ["admission readiness unavailable: readiness is not reported"]
+        return [_UNAVAILABLE_ADMISSION_LINE]
     if admission_state in {"ready", "saturated"}:
         return []
     reason = admission.get("reason")
     if admission_state in {"blocked", "draining", "closing", "unhealthy"}:
         detail = reason if isinstance(reason, str) else "readiness is not reported"
         return [f"admission {admission_state}: {detail}"]
-    return ["admission readiness unavailable: readiness is not reported"]
+    return [_UNAVAILABLE_ADMISSION_LINE]
 
 
 def _action_label(state: cabc.Mapping[str, object]) -> str:

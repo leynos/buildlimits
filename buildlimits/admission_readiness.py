@@ -114,7 +114,8 @@ def classify(facts: ReadinessFacts) -> AdmissionReadiness:
     Precedence is unhealthy, closing, operator-blocked full server drain,
     progressing full server drain, ordinary saturation, then available
     capacity. An automatic idle trigger with no queued demand is not treated as
-    blocked: its first waiter opens the starvation trigger.
+    blocked while attempts remain: its first waiter opens the starvation
+    trigger. A stopped recovery outlook remains blocked, even with no demand.
 
     Parameters
     ----------
@@ -176,6 +177,7 @@ def _classify_full_server_drain(facts: ReadinessFacts) -> AdmissionReadiness:
         facts.recovery_automatic
         and facts.recovery_phase == "idle"
         and facts.counts.queued == 0
+        and not _recovery_attempts_stopped(facts)
     )
     operator_recovery_required = facts.drain_fault_kind is not None and (
         facts.drain_fault_kind != "live_work"

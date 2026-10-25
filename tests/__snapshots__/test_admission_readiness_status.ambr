@@ -1,0 +1,12 @@
+# serializer version: 1
+# name: test_full_retention_blocks_readiness_until_verified_accounting
+  dict({
+    'draining': 0,
+    'queued': 1,
+    'ready': False,
+    'reason': '1 server-drain slot retained; operator recovery required',
+    'running': 0,
+    'server_drain': 1,
+    'state': 'blocked',
+  })
+# ---

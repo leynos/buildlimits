@@ -10,9 +10,12 @@ changing the parent manager's routing.
 
 import dataclasses as dc
 import os
+import shutil
 import socket
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed fixture argv, never a shell.
 import typing as typ
+
+import pytest
 
 from buildlimits.systemd import run
 
@@ -48,6 +51,51 @@ def manager_env() -> dict[str, str]:
     env.pop("XDG_RUNTIME_DIR", None)
     env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{os.getuid()}/bus"
     return env
+
+
+def user_manager_available() -> bool:
+    """Report whether opted-in systemd user-manager tests can run.
+
+    Returns
+    -------
+    bool
+        Whether host acceptance was opted into and the manager is usable.
+    """
+    if os.environ.get("BUILD_LIMITS_HOST_ACCEPTANCE") != "1":
+        return False
+    if not shutil.which("busctl") or not shutil.which("systemd-run"):
+        return False
+    try:
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "--user", "is-system-running"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=manager_env(),
+            timeout=30,
+        )
+    except OSError, subprocess.TimeoutExpired:
+        return False
+    return result.stdout.strip() in {"running", "degraded"}
+
+
+def systemd_user_marks(reason: str) -> list[pytest.MarkDecorator]:
+    """Mark host acceptance tests to skip without an opted-in user manager.
+
+    Parameters
+    ----------
+    reason : str
+        What the host acceptance test requires, shown when it is skipped.
+
+    Returns
+    -------
+    list[pytest.MarkDecorator]
+        The systemd selector and availability skip for ``pytestmark``.
+    """
+    return [
+        pytest.mark.systemd_user,
+        pytest.mark.skipif(not user_manager_available(), reason=reason),
+    ]
 
 
 def unit_properties(unit: str, *names: str) -> dict[str, str]:
