@@ -311,6 +311,24 @@ the prompt zero-root proof or the retained-drain staleness proof described
 below. `status_render.render` is a pure function of that document, pinned by
 Syrupy snapshots.
 
+Admission readiness is a separate, pure classification. `status.describe`
+passes the supervisor health and closing flags, one frozen `Counts` ledger
+snapshot, the immediate `drain_fault_kind`, and the recovery outlook fields
+`automatic`, `phase`, `attempts` and `pending` to
+`admission_readiness.classify`. The classifier does not inspect cache
+reachability or make supervisor calls. It applies this precedence: `unhealthy`,
+`closing`, `blocked`, `draining`, `saturated`, then `ready`. Only `ready`,
+`saturated` and `draining` set `admission.ready` to `true`.
+
+The `admission` status object publishes `state`, `ready`, a count-only
+`reason`, and the `running`, `draining`, `server_drain` and `queued` counts.
+The classifier's `Counts.queued` and the published `queued` value both come
+from the admission queue, not `Requests.pending`; the latter may not yet have
+requester metadata. A `draining` state means the snapshot shows a current
+progress path, not that the path is guaranteed to finish. The classifier is
+read-only: it never releases or reassigns a token. Only verified accounting
+after a service is stopped and empty can release a retained server-drain token.
+
 `cache_recovery.CacheRecovery` is a four-phase machine — `quiescing`,
 `stopping`, `accounting`, `restarting` — advancing at most one step per tick.
 Its calls are bounded and its retries delayed, but no path ends a transaction

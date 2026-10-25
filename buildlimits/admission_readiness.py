@@ -179,12 +179,16 @@ def _classify_full_server_drain(facts: ReadinessFacts) -> AdmissionReadiness:
     )
     operator_recovery_required = facts.drain_fault_kind is not None and (
         facts.drain_fault_kind != "live_work"
-        or (not facts.recovery_pending and not automatic_waits_for_demand)
+        or (
+            facts.recovery_phase == "idle"
+            and not facts.recovery_pending
+            and not automatic_waits_for_demand
+        )
     )
     capacity = facts.counts.capacity
     retained = f"{_counted(capacity, 'server-drain slot')} retained"
     if operator_recovery_required:
-        if facts.recovery_attempts > 0 and not facts.recovery_pending:
+        if _recovery_attempts_stopped(facts):
             attempts = _counted(facts.recovery_attempts, "attempt")
             reason = f"{retained}; recovery stopped after {attempts}"
         else:
@@ -195,6 +199,43 @@ def _classify_full_server_drain(facts: ReadinessFacts) -> AdmissionReadiness:
         facts, automatic_waits_for_demand=automatic_waits_for_demand
     )
     return AdmissionReadiness("draining", f"{retained}; {progress}")
+
+
+def _recovery_attempts_stopped(facts: ReadinessFacts) -> bool:
+    """Tell whether automatic recovery has finished all recorded attempts.
+
+    A non-idle phase still has a progress path, even after its attempt budget
+    reaches zero; only an idle, non-pending outlook has stopped.
+
+    Parameters
+    ----------
+    facts : ReadinessFacts
+        The recovery phase and retry outlook at the classification instant.
+
+    Returns
+    -------
+    bool
+        Whether the recovery outlook is idle after at least one attempt.
+
+    Examples
+    --------
+    >>> _recovery_attempts_stopped(ReadinessFacts(
+    ...     healthy=True, closing=False,
+    ...     counts=Counts(
+    ...         capacity=1, held=1, running=0, draining=0, server_drain=1,
+    ...         queued=1, cached_moving=0,
+    ...     ),
+    ...     drain_fault_kind="live_work", recovery_automatic=True,
+    ...     recovery_phase="idle", recovery_attempts=1,
+    ...     recovery_pending=False,
+    ... ))
+    True
+    """
+    if facts.recovery_phase != "idle":
+        return False
+    if facts.recovery_attempts <= 0:
+        return False
+    return not facts.recovery_pending
 
 
 def _drain_progress(facts: ReadinessFacts, *, automatic_waits_for_demand: bool) -> str:

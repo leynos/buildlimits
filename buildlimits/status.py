@@ -35,6 +35,14 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
         A JSON-compatible document with queue budgets and live descriptor gauges.
         Failed enumeration reports an unknown count and its errno; unlimited
         limits use ``-1``. Compatibility limit aliases share the same sample.
+        The ``admission`` object separates readiness from ``healthy``: it reports
+        ``state``, ``ready``, a count-only ``reason``, and the ``running``,
+        ``draining``, ``server_drain`` and ``queued`` counts. Its six states are
+        ``ready``, ``saturated``, ``draining``, ``blocked``, ``closing`` and
+        ``unhealthy``; only the first three set ``ready`` to true. The queued
+        count comes from the admission queue, and cache reachability does not
+        affect this classification. The function only reads this ledger; it
+        does not release tokens.
     """
     admission = supervisor.admission
     now = supervisor.clock()

@@ -275,6 +275,28 @@ history; `build-limits-metrics` summarizes history.
 
 _Table 4: `build-limits-status` exit statuses._
 
+For an admission-specific readiness check, inspect `admission` in the JSON
+document. Its `state` is one of the values below, `ready` says whether
+admission has a current progress path, and `reason` gives a short count-only
+explanation without request or group identifiers. `running`, `draining` and
+`server_drain` are compiler-group counts from the ledger; `queued` is the
+current admission-queue length, even before requester metadata is available.
+
+| State       | `ready` | Meaning                                                                 |
+| ----------- | ------- | ----------------------------------------------------------------------- |
+| `ready`     | `true`  | The ledger reports capacity available for a compiler group.             |
+| `saturated` | `true`  | All slots are occupied; admission can continue when a slot is released. |
+| `draining`  | `true`  | Retained server-drain work has a current progress path.                 |
+| `blocked`   | `false` | Every slot is retained in server-drain and operator recovery is needed. |
+| `closing`   | `false` | The supervisor is winding down.                                         |
+| `unhealthy` | `false` | The supervisor or its token pool is unhealthy.                          |
+
+`draining` reports a present progress path, not a guarantee of eventual
+progress. The readiness result is independent of cache reachability: sccache
+may be unavailable while direct compilation can still be admitted. A `true`
+result does not promise that a queued compile can start immediately; a
+`saturated` pool still has to wait for current compiler work to release a slot.
+
 Under `descriptors`, `open` is the sampled count of open descriptors, or `null`
 with a numeric `sampling_errno` when enumeration failed; the text summary says
 `unavailable`. Limits of `-1` mean unlimited. These gauges help track headroom;
