@@ -20,9 +20,10 @@ On 2026-10-10, a status query on rohga returned success and `healthy: true`
 while every slot was retained in `server-drain`, no compiler roots were visible
 under a live sccache service, and operator recovery was required. The queued
 request was admitted 664 seconds later, after an authorized cache-service
-drain. This observation shows that the status contract could report a blocked
-supervisor while reporting healthy. It does not show that any particular
-monitoring consumer declared the host ready.
+drain. This observation shows that the status contract could report a healthy
+supervisor while admission was unable to make progress and required operator
+action. It does not show that any particular monitoring consumer declared the
+host ready.
 
 ## Decision drivers
 
