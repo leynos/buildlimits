@@ -295,3 +295,34 @@ def test_backoff_escalates_only_for_repeated_identical_failures() -> None:
     assert changed.failure_count == 1, "a different failure starts a new sequence"
     assert changed.last_failure == "read_error", "the repeated cause is retained"
     assert changed.next_read_at == pytest.approx(4.3), "a new failure waits one second"
+
+
+def test_backoff_remains_capped_after_a_long_failure_streak() -> None:
+    """A long outage keeps the configured cap without overflowing exponentiation."""
+    recorder, querying, _ = begin_fresh_recorder_query()
+    previous_progress = recorder_progress(querying)
+    progress = recorder.Progress(
+        baseline=previous_progress.baseline,
+        window=previous_progress.window,
+        active=previous_progress.active,
+        next_read_at=0.0,
+        failure_count=1024,
+        last_failure="timeout",
+    )
+    state, _ = begin_query(
+        recorder.Idle(progress=progress), recorder, clear_gate_event(recorder, 1.0)
+    )
+
+    state, _ = recorder.advance(
+        state,
+        recorder.PollResult(
+            now=1.1,
+            result=outcome_module("outcome_ports").QueryFailure("timeout"),
+        ),
+    )
+
+    updated = recorder_progress(state)
+    assert updated.failure_count == 1025, "the failure streak remains observable"
+    assert updated.next_read_at == pytest.approx(61.1), (
+        "retry delay stays at 60 seconds"
+    )

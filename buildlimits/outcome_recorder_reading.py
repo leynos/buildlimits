@@ -252,7 +252,11 @@ def _schedule_next_read(
             last_failure=None,
         )
     failure_count = progress.failure_count + 1 if progress.last_failure == reason else 1
-    wait = min(OUTCOME_MAX_BACKOFF_SECONDS, 2.0 ** (failure_count - 1))
+    max_exponent = int(OUTCOME_MAX_BACKOFF_SECONDS).bit_length()
+    wait = min(
+        OUTCOME_MAX_BACKOFF_SECONDS,
+        2.0 ** min(failure_count - 1, max_exponent),
+    )
     return dc.replace(
         progress,
         next_read_at=now + wait,
