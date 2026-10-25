@@ -6,6 +6,7 @@ import typing as typ
 from outcome_test_helpers import (
     GENERATION,
     OBSERVED_AT,
+    _TimedGateEvent,
     cache_key,
     clear_gate_event,
     launch_payload,
@@ -56,6 +57,10 @@ class _Progress(typ.Protocol):
 
     baseline: _Reading | None
     window: _OutcomeWindow
+    active: tuple[object, ...]
+    next_read_at: float
+    failure_count: int
+    last_failure: str | None
 
 
 class _RecorderState(typ.Protocol):
@@ -203,8 +208,9 @@ def state_with_window(recorder: ModuleType, setup: WindowSetup) -> object:
 def begin_query(
     state: object,
     recorder: ModuleType,
-    gate_event: object,
-    now: float = 0.0,
+    gate_event: _TimedGateEvent,
+    *,
+    before_generation: object = GENERATION,
 ) -> tuple[object, _Outputs]:
     """Advance through a clear gate and the fake query-start reply.
 
@@ -216,16 +222,17 @@ def begin_query(
     Examples
     --------
     ``begin_query(recorder.Idle(), recorder, gate_event)[1]`` contains the
-    start command.
+    start command. Use ``before_generation=None`` to model a refused connection.
     """
     ports = outcome_module("outcome_ports")
+    query_at = gate_event.now
     state, started = recorder.advance(state, gate_event)
     state, _ = recorder.advance(
         state,
         recorder.PollResult(
-            now=now,
-            result=ports.Ticket(serial=1, deadline=now + 2.0),
-            before_generation=GENERATION,
+            now=query_at,
+            result=ports.Ticket(serial=1, deadline=query_at + 2.0),
+            before_generation=before_generation,
         ),
     )
     return state, started
@@ -247,7 +254,7 @@ def begin_single_cached_query(
     """
     payload = launch_payload(recorder, key)
     state = state_with_window(recorder, WindowSetup(payload))
-    return begin_query(state, recorder, clear_gate_event(recorder, now), now)
+    return begin_query(state, recorder, clear_gate_event(recorder, now))
 
 
 def begin_fresh_recorder_query() -> tuple[ModuleType, object, _Outputs]:

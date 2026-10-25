@@ -66,8 +66,11 @@ No later RFC 0002 workstream is included.
 
 This ADR refines the observation-only scope of
 [ADR 003](adr-003-bounded-restart-tracing.md): cache outcomes are local
-evidence, not admission hints. It adds no per-compile trace span and does not
-change the existing trace schema.
+evidence, not admission hints. It keeps ADR 003's fixed trace-record fields and
+extends its bounded vocabularies with `statistics_read`, `outcome_store_load`,
+`outcome_store_save` and `outcome_store_compact`; the `completed` outcome; and
+the `statistics_query`, `store_io` and `salt` failure categories. It adds no
+per-compile trace span.
 
 ### D2: identify the statistics server without spawning
 

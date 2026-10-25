@@ -143,10 +143,6 @@ extend-ignore = [
 # tools and the vectors their tests supply, found on PATH as a build would.
 "tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 "tests/fixtures/fake_sccache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
-# This host acceptance helper must hold and inspect the pinned real sccache
-# process; it constructs fixed argv and confines writable paths to tmp_path.
-"tests/sccache_host.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
-
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
 banned-from = [
@@ -370,6 +366,12 @@ exclude = [".venv", ".uv-cache", ".uv-tools", ".tools", ".git"]
 [tool.skylos.gate]
 strict = true
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.outcome_window.OutcomeWindow.append"]
+path = ["buildlimits/outcome_window.py"]
+reason = "OutcomeRecorder._launch appends through Progress.window, a generic dataclass field that Skylos does not resolve; the bounded-window and recorder overflow tests exercise this method."
+
 # The supervisor reaches these members through typed collaborators and
 # dataclass-held owners, which a static call graph cannot resolve. Entry-point
 # rules do not rescue private callees, so each verified callee is named too.
@@ -437,6 +439,12 @@ full_name = ["buildlimits.journal_native.JournalSink.emit_trace"]
 path = ["buildlimits/journal_native.py"]
 reason = "The service composition root passes JournalSink to JournalTracer; JournalTracer._get_tracer supplies it to JournalSpanExporter, whose export method calls emit_trace through _TraceSinkPort. Skylos cannot resolve this cross-module protocol dispatch; tests/test_tracing.py and tests/test_supervisor_effects.py exercise it."
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.tracing._OtelSpan.finish"]
+path = ["buildlimits/tracing.py"]
+reason = "AdmissionAttempt.finish_restart calls finish through its dataclass-held restart_span field; tests/test_adapter_restart_tracing.py exercises terminal span completion after admission and failure."
+
 [tool.nose]
 version = "0.20.0"
 roots = ["."]
@@ -461,6 +469,8 @@ ignore_names = [
     "pytest_plugins",
     "teardown",
     "descriptor_leak_guard",
+    # Vulture cannot resolve the quoted cast type imported only for type checks.
+    "RecorderEvent",
     "__call__",
     "return_value",
     "side_effect",
@@ -1242,6 +1252,14 @@ reason = "CrossHair discovers each function by name as an independent symbolic c
 [[tool.duplication_gate.allow]]
 members = ["tests/test_outcome_attribution.py", "tests/crosshair_contracts.py"]
 reason = "Matching imports expose the attribution types each independent test module exercises; a re-export would hide those dependencies without sharing behaviour."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_recorder.py", "tests/test_outcome_recorder_failures.py"]
+reason = "Matching imports from the recorder test helpers expose each module's direct fixture dependencies; a re-export would hide those dependencies without sharing behaviour."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_rules_behaviour.py", "tests/crosshair_contracts.py"]
+reason = "Matching imports expose the attribution values each independent behaviour or symbolic contract exercises; a re-export would hide those dependencies without sharing behaviour."
 
 [[tool.duplication_gate.allow]]
 members = [

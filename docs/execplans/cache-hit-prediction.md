@@ -10,7 +10,8 @@ documentation gates and review passed; EP-M1 validation, audit evidence and
 documentation gates and milestone review passed; EP-M1 commits are complete;
 EP-M2 is complete in `327ae5a` and `080d9c0`, with final gates and local
 CodeRabbit review passed; EP-M3 red contracts are committed as `195ff77` and
-its implementation and full gates passed)
+its implementation and full gates passed; EP-M4 implementation, full gates and
+clean review passed)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -527,6 +528,232 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   use the `/tmp/*-buildlimits-cache-hit-prediction-epm4-candidate-34.out`
   prefix; final exact-tree validation is pending after this progress entry is
   added.
+- [x] (2026-10-24 21:09Z) Candidate 35 passed the sequential formatting,
+  Markdown/spelling, Mermaid, lint, typecheck and full one-worker test gates.
+  The test suite reported 1,942 passed, 26 skipped, 18 strict xfails and 47
+  snapshots. Audit evidence was reused because `uv.lock` did not change. The
+  formatter-only plan wrapping was applied before committing the red contracts
+  as `eec3948`; the tested post-format candidate archive SHA-256 is
+  `eb8e97eb809cad12ec146dab26875a6a7cce060f4ff038ff40643b413910acc2`. Logs use
+  the `/tmp/*-buildlimits-cache-hit-prediction-epm4-candidate-35.out` prefix.
+- [ ] (2026-10-24 21:19Z) EP-M4 implementation is in progress. The port,
+  reducer, value, output and driver modules are drafted; 40 focused recorder
+  and port contracts pass after the terminal-output helper moved into the
+  output module to keep the reducer within the 400-line limit. `make fmt` and
+  `git diff --check` pass. Full sequential gates remain pending.
+- [ ] (2026-10-24 21:30Z) Candidate 36 formatting and format checks passed, but
+  the full gate run exposed 69 lint findings and three test type errors. Its
+  disposable environment also omitted tools from `PATH`, lacked one offline
+  test dependency, and copied bytecode containing host paths. The log records
+  1,973 passing tests, 12 skips, one dependency failure, and ten bytecode-based
+  collection errors. Candidate 37 will fix code findings and use a clean,
+  correctly seeded gate environment.
+- [ ] (2026-10-24 21:36Z) Candidate 37 fixes the reported lint and type
+  findings, splits terminal reading validation into a private helper, and
+  preserves the accepted baseline after each valid attribution. All 40 focused
+  recorder and port contracts pass; `git diff --check` is clean and every
+  changed code file remains within the 400-line limit.
+- [ ] (2026-10-24 21:43Z) Candidate 37's full sequential run passed formatting,
+  format checks, Markdown/spelling, Mermaid, typecheck and the one-worker test
+  suite (1,982 passed, 26 skipped, 47 snapshots). Audit evidence was reused
+  because `uv.lock` matched its recorded SHA-256. Lint found five diagnostics:
+  two unused imports, two unused unpacked names and one prohibited production
+  `assert`. Candidate 38 removes those findings; gates remain pending.
+- [ ] (2026-10-24 21:51Z) Candidate 38 passed formatting, format checks,
+  Markdown/spelling, Mermaid, typecheck and the full one-worker suite (1,982
+  passed, 26 skipped, 47 snapshots); audit evidence still matches `uv.lock`.
+  Lint found one `raise-vanilla-args` diagnostic on the terminal-reading
+  invariant. Candidate 39 uses the local message pattern, removes the EP-M8
+  sample-failure port from EP-M4, and records `LaunchFailed` in the reducer
+  event inventory. Full gates remain pending.
+- [ ] (2026-10-24 22:00Z) Candidate 39 passed formatting, format checks,
+  Markdown/spelling, Mermaid, typecheck and the one-worker test suite (1,980
+  passed, 26 skipped, 47 snapshots). Audit evidence matched the lock hash. Lint
+  found two Pylint C1803 findings for comparisons with empty lists. Candidate
+  40 uses truthiness checks; full gates remain pending.
+- [ ] (2026-10-24 22:07Z) Candidate 40 passed formatting, format checks,
+  Markdown/spelling, Mermaid, typecheck and the full one-worker suite (1,980
+  passed, 26 skipped, 47 snapshots); audit evidence matched `uv.lock`. Lint
+  found four R9101 dispatch suggestions and one R9104 trivial-wrapper finding.
+  Candidate 41 converts the dispatches to pattern matching and exposes the
+  fake's close-list append callable directly. Full gates remain pending.
+- [ ] (2026-10-24 22:17Z) Candidate 41 passed formatting, format checks,
+  Markdown/spelling, Mermaid, typecheck and the one-worker test suite (1,980
+  passed, 26 skipped, 47 snapshots); audit evidence matched the lock hash.
+  Pylint passed at 10/10. Skylos could not see `OutcomeWindow.append` or
+  `OutcomeRecorder` through the dynamic test imports. Candidate 42 imports both
+  directly in their tests; full gates remain pending.
+- [ ] (2026-10-24 22:26Z) Candidate 42 passed formatting, format checks,
+  Markdown/spelling, Mermaid and the one-worker test suite (1,980 passed, 26
+  skipped, 47 snapshots); audit evidence matched the lock hash. Typecheck found
+  eight fake-port/event annotation errors, while Skylos still missed
+  `OutcomeWindow.append` through the generic `Progress.window` field. Candidate
+  43 annotates the fake callable, narrows dynamic gate events, and records the
+  verified generic-field method entrypoint with its call path. Full gates
+  remain pending.
+- [ ] (2026-10-24 22:34Z) Candidate 43 passed formatting, format checks,
+  Markdown/spelling, Mermaid and the full one-worker suite (1,980 passed, 26
+  skipped, 47 snapshots); audit evidence matched the lock hash. Ruff found a
+  banned `typing.Callable` and four unquoted cast types. Typecheck found that
+  the port's `close` parameter was keyword-capable while the fake callable was
+  positional-only. Candidate 44 uses `collections.abc.Callable`, quoted cast
+  types and a positional-only port parameter. Pylint/Skylos remain unverified
+  for candidate 43 because Ruff stopped the lint target first.
+- [ ] (2026-10-24 22:43Z) Candidate 44 passed formatting, format checks,
+  Markdown/spelling, Mermaid, typecheck and the full one-worker suite (1,980
+  passed, 26 skipped, 47 snapshots); audit evidence matched the lock hash. Ruff
+  found one type-only first-party import in the driver test. Candidate 45 moves
+  `RecorderEvent` into `TYPE_CHECKING`; later lint stages remain unverified
+  until the full lint target reaches them.
+- [ ] (2026-10-24 22:52Z) Candidate 45 passed formatting, format checks,
+  Markdown/spelling, Mermaid, typecheck, Pylint/DF12, Ambrleaks, Skylos and the
+  full one-worker suite (1,980 passed, 26 skipped, 47 snapshots); audit
+  evidence matched the lock hash. Vulture alone flagged the `TYPE_CHECKING`
+  import referenced by a quoted `typing.cast` type. Candidate 46 adds a narrow,
+  documented Vulture ignore entry; duplication and action validation remain to
+  be reached by the full lint target.
+- [ ] (2026-10-24 23:05Z) Candidate 46 passed formatting, format checks,
+  Markdown/spelling, Mermaid, typecheck, Ruff/interrogate, both Pylint passes,
+  Ambrleaks, Skylos, Vulture and the full one-worker suite (1,980 passed, 26
+  skipped, 47 snapshots); audit evidence matched the lock hash. Duplication
+  found two matching-import families and two repeated test setups; action
+  validation was not reached. Candidate 47 documents the import overlaps and
+  extracts the repeated setup code before another full gate run.
+- [ ] (2026-10-24 23:15Z) Candidate 47 passed formatting, format checks,
+  Markdown/spelling, Mermaid, typecheck and the full one-worker suite (1,980
+  passed, 26 skipped, 47 snapshots); audit evidence matched the lock hash.
+  Baseline Pylint found that the extracted retry helper had five parameters.
+  Candidate 48 derives its controlled poll time from the query time, reducing
+  the helper to four parameters; later lint stages remain unverified.
+- [ ] (2026-10-24 23:27Z) Candidate 48 passed formatting, format checks,
+  Markdown/spelling, Mermaid, every lint and action check, typecheck and the
+  full one-worker suite (1,980 passed, 26 skipped, 47 snapshots); audit
+  evidence matched the lock hash. Source manifests matched before and after the
+  run. The fresh local CodeRabbit review is bound to this archive; its first
+  request hit the service limit and is awaiting the permitted retry. Commit
+  remains pending review.
+- [ ] (2026-10-24 23:52Z) CodeRabbit completed the review of candidate 48's
+  archive-derived snapshot (`2deaf17`) after its one rate-limit retry. It found
+  six actionable issues: attached short-option parsing can falsify H3, only
+  balanced windows may persist H3 summaries, mixed/ineligible readings should
+  reset back-off, compaction must be linear, the cache-result vocabulary must
+  have one source, and the tracing privacy assertion must inspect names and
+  values. Candidate 49 adds the fixes and regression coverage before a fresh
+  full gate and review pass. Review log:
+  `/tmp/buildlimits-coderabbit-candidate-48.Lhga0F/coderabbit-buildlimits-cache-hit-prediction-candidate-48-retry-2.out`.
+- [ ] (2026-10-25 00:04Z) Candidate 49 passed formatting, Markdown/spelling,
+  Mermaid, typecheck and the full one-worker suite (1,982 passed, 26 skipped,
+  47 snapshots). Ruff stopped `make lint` on the mock import form, so later
+  lint stages did not run; audit evidence matched the lock hash. Candidate 50
+  uses Ruff's requested `from unittest import mock` form before repeating the
+  full sequential gates. Gate report:
+  `/tmp/buildlimits-epm4-candidate-49-gate-logs/summary.md`.
+- [ ] (2026-10-25 00:14Z) Candidate 50 passed formatting, Markdown/spelling,
+  Mermaid, Ruff through Vulture, typecheck and the full one-worker suite (1,982
+  passed, 26 skipped, 47 snapshots). The duplication gate found one repeated
+  compactor-test setup, so action validation was not reached. Candidate 51
+  combines those checks while preserving the byte cap and one-encoding
+  assertions. Gate report:
+  `/tmp/buildlimits-epm4-candidate-50-gate-logs/summary.md`.
+- [ ] (2026-10-25 00:22Z) Candidate 51 passed formatting, Markdown/spelling,
+  Mermaid, all lint and action checks, typecheck, and the full one-worker suite
+  (1,981 passed, 26 skipped, 47 snapshots). Audit evidence matched the lock
+  hash. Archive SHA-256 is
+  `4d59135c617a345822e9dcf0e19f057c6408cf3d7b3eccf3274fd0f701a909a5`; the
+  source manifest matched before and after gates. A fresh review remains before
+  the EP-M4 commit. Gate report:
+  `/tmp/buildlimits-epm4-candidate-51-gate-logs/summary.md`.
+- [ ] (2026-10-25 00:35Z) Candidate 52's archive-bound review found eight
+  actionable findings: two generation-contract gaps, header format/version
+  classification, missing purity coverage, two sink-cleanup paths, and two
+  documentation corrections. Candidate 53 addresses these and narrows the
+  host-check subprocess suppressions. Review summary:
+  `/tmp/buildlimits-coderabbit-candidate-52.kp7iuE/summary.md`.
+- [ ] (2026-10-25 00:53Z) Candidate 53's full suite passed (1,987 passed,
+  26 skipped, 47 snapshots), and typecheck passed, but lint found eight Ruff
+  issues: one test-helper argument count and seven suppression comments naming
+  rule codes. The candidate runner also inventoried 367 workspace files for a
+  363-entry archive because `/workspace` contained image-side `.git`,
+  `.claude/scheduled_tasks.lock` and typos dictionary files. Candidate 54 fixes
+  the lint findings and will run from a clean candidate subdirectory. The
+  candidate 53 archive SHA-256 is
+  `6429574f5b8324d85b502d242ee16825464452571bffd612fcd6eca59641e0ce`.
+- [ ] (2026-10-25 00:53Z) Candidate 54 ran in a clean source subdirectory and
+  matched its archive manifest before and after the gates. Formatting,
+  Markdown/spelling and Nixie passed; Ruff rejected two dynamic timestamp
+  lookups in the recorder test helper. Typecheck and tests stopped at lint.
+  Candidate 55 gives the gate event a structural timestamp type. Report:
+  `/tmp/buildlimits-epm4-candidate-54-gate-logs/summary.md`; archive SHA-256:
+  `a9ca927ab9348727ce0ef1ec44c744ac66b9a20b9ef007ec9ce1f53e26f29b0f`.
+- [ ] (2026-10-25 00:56Z) Candidate 55 passed through Vulture, then the
+  offline duplication gate failed to find its pinned Nose executable in the
+  candidate-local tool cache and could not download it. Archive isolation
+  matched exactly, but duplication, action validation, typecheck and tests did
+  not run. Candidate 56 will seed the verified image Nose cache into the
+  ignored candidate tool-cache path. Report:
+  `/tmp/buildlimits-epm4-candidate-55-gate-logs/summary.md`; archive SHA-256:
+  `df6366bd4fd79ccb4c124190987bad86b634b51035cc3a0392f35cc56ce128fb`.
+- [ ] (2026-10-25 01:06Z) Candidate 56 passed all local gates in a clean
+  candidate directory. The one-worker suite reported 1,987 passed, 26 skipped
+  and 47 snapshots; the 363-entry source manifest matched before and after. The
+  Nose 0.20.0 cache was mounted read-only and accepted offline by the
+  duplication gate. A fresh archive-bound review remains. Report:
+  `/tmp/buildlimits-epm4-candidate-56-gate-logs/summary.md`; archive SHA-256:
+  `2a78e78c2e28a1b2ed38271a61bfc2709fe1d86347394c2da440dae4b03b820c`.
+- [ ] (2026-10-25 01:21Z) Candidate 57's documentation gates passed with exact
+  archive parity. Its archive-bound review found two minor discrepancies: a
+  restart-machine assertion used a zero counter baseline, and this ADR
+  described the trace schema as unchanged without naming the vocabulary
+  extensions. Candidate 58 seeds the restart baseline from retained counters
+  and clarifies that the fixed record fields remain stable while the bounded
+  vocabularies extend. Review log:
+  `/tmp/buildlimits-coderabbit-candidate-57.liwgAI/coderabbit-buildlimits-cache-hit-prediction-candidate-57.out`.
+- [ ] (2026-10-25 01:44Z) Candidate 58 passed all local gates with exact
+  archive parity: 1,987 tests passed, 26 skipped and 47 snapshots; audit
+  evidence matched the lock hash. Its archive-bound review reported three
+  trivial improvements: pattern-match decoder result unions, call `finish` on
+  the span instance, and use `PurePosixPath` for Cargo path boundaries.
+  Candidate 59 applies those changes and adds a root-path/boundary regression
+  check. Report: `/tmp/buildlimits-epm4-candidate-58-gate-logs/summary.md`;
+  review:
+  `/tmp/buildlimits-coderabbit-candidate-58.2Y0TI3/coderabbit-buildlimits-cache-hit-prediction-candidate-58.out`.
+- [ ] (2026-10-25 01:46Z) Candidate 59 passed formatting, docs/spelling and
+  Nixie with exact archive parity, then Ruff found that `JournalTracer` was
+  still imported at runtime despite being annotation-only. Typecheck and tests
+  stopped at lint. Candidate 60 moves both tracing types under `TYPE_CHECKING`.
+  Report: `/tmp/buildlimits-epm4-candidate-59-gate-logs/summary.md`; archive
+  SHA-256: `7a2dfd85bb3ae23b2528f1f7368efec7f9ad8a9374fc3e718e7583bc49963984`.
+- [ ] (2026-10-25 01:49Z) Candidate 60 passed formatting, documentation,
+  Ruff, Pylint and Ambrleaks, then Skylos could not resolve the instance call to
+  `_OtelSpan.finish` through `AdmissionAttempt.restart_span`. The existing
+  adapter restart tracing tests cover this path. Candidate 61 declares that
+  verified dataclass-field dispatch as a Skylos entry point. Report:
+  `/tmp/buildlimits-epm4-candidate-60-gate-logs/summary.md`; archive SHA-256:
+  `fb920ff5da0f2a9aa9d8f696526f329d518164d9b23d46b47b23beb1e5baab44`.
+- [ ] (2026-10-25 01:52Z) Candidate 61 passed formatting, documentation,
+  Nixie and lint through Vulture, then duplication found repeated setup across
+  Cargo-home boundary assertions and repeated AST import scans in the purity
+  guard. Candidate 62 shares one Cargo environment and inspects AST imports in
+  a single traversal. Typecheck and tests stopped at duplication. Report:
+  `/tmp/buildlimits-epm4-candidate-61-gate-logs/summary.md`; archive SHA-256:
+  `0856a80a08f9b91bb942e8b4d5901070de86e43bb87aa832686cca3ea2c3cbfe`.
+- [ ] (2026-10-25 02:29Z) Candidate 63 passed all local gates with exact
+  archive parity: 1,990 passed, 26 skipped and 47 snapshots; audit evidence
+  matched the lock hash. Its fresh review found that the driver changed the
+  opaque ticket deadline, a straddled reading could seed a new generation's
+  baseline, and sorting a trailing `--cfg` could raise `TypeError`. Regression
+  tests reproduced all three; the fixes passed the focused 24-test suite.
+  Candidate 64 full gates and review remain pending. Gate report:
+  `/tmp/buildlimits-epm4-candidate-63-gate-logs/summary.md`; archive SHA-256:
+  `2bf182381247b25f45ccfd6fb572b88a91210635eb394d1600d0f285f69dea1b`; review:
+  `/tmp/buildlimits-coderabbit-candidate-63.yJl3Zl/coderabbit-buildlimits-cache-hit-prediction-candidate-63-retry.out`.
+- [x] (2026-10-25 02:29Z) Candidate 64 passed every local gate with exact
+  archive parity: 1,993 passed, 26 skipped and 47 snapshots; matching audit
+  evidence reported no known vulnerabilities. The archive-bound review covered
+  107 files and found no issues. Report:
+  `/tmp/buildlimits-epm4-candidate-64-gate-logs/summary.md`; archive SHA-256:
+  `1f1e19d4e898e6a8a5c98141d4fbb7c62551db7e42478591e39997161afb9a8b`; review:
+  `/tmp/buildlimits-coderabbit-candidate-64.ktzLo9/coderabbit-buildlimits-cache-hit-prediction-candidate-64.out`.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
@@ -540,7 +767,8 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   CodeRabbit review complete.
 - [x] EP-M3: pure keys, records and the window ledger; implementation and
   full gates passed.
-- [ ] EP-M4: the reading sequencer over fake ports.
+- [x] EP-M4: the reading sequencer over fake ports; implementation, full
+  gates and archive-bound review passed in candidate 64.
 - [ ] EP-M5: adapters (non-blocking child, queries, generation, store
   writer).
 - [ ] EP-M6: inert schema, configuration and tracing vocabulary
@@ -1620,13 +1848,26 @@ Domain modules are pure: no input or output, no `os`, `socket`, `subprocess` or
   `OutcomeStorePort` (each a `typ.Protocol`), `SaltSource` (a `Callable`
   alias), and their result and failure types. The clock is `timing.Clock`,
   extended with an optional `wall` callable.
+- `outcome_recorder_types.py` owns immutable event, command, output and
+  typestate values. The private `outcome_recorder_outputs.py` module builds
+  journal and store values from completed windows and terminal transition
+  outputs. `outcome_recorder.py` owns the reducer; its private
+  `outcome_recorder_reading.py` helper validates terminal readings, updates
+  baselines and schedules retries. `outcome_recorder_driver.py` executes
+  statistics-port commands and returns effects without publishing or saving
+  them. These helpers are private to the outcome recorder and are not
+  general-purpose abstractions.
 
 The application service, `outcome_recorder.py`, is a typestate:
 
 - `RecorderState` is one of the frozen dataclasses `Idle` (which holds the
   back-off), `Querying` and `Disabled`.
 - A pure `advance(state, event) -> tuple[RecorderState, Outputs]` handles
-  the events `Launched`, `Ended`, `GateOpen`, `PollResult` and `Stopping`.
+  `LaunchFailed` alongside `Launched`, `Ended`, `GateOpen`, `PollResult` and
+  `Stopping`.
+- The loop emits `GateOpen` only when a baseline is missing or the bounded
+  window has an ended launch; the reducer independently checks quiet-point
+  inputs, in-flight exclusion and its minimum read interval.
 - `Outputs` carries events, records, span transitions (`QueryStarted`,
   `QueryFinished`) and port commands (`StartQuery`, `CloseQuery`).
 - A thin driver, `OutcomeRecorder`, executes the port commands. It emits and
@@ -1929,9 +2170,10 @@ milestone that adds each module.
 
 ### EP-M4: the reading sequencer over fake ports
 
-- Outcome: `outcome_ports.py` and `outcome_recorder.py`. This discharges O2,
-  O3, the reading reasons of O6, and O9 at unit level. D12's `confirm` stays
-  behind a flag.
+- Outcome: `outcome_ports.py`, `outcome_recorder.py`, the private terminal
+  reading helper `outcome_recorder_reading.py`, and the command driver
+  `outcome_recorder_driver.py`. This discharges O2, O3, the reading reasons of
+  O6, and O9 at unit level. D12's `confirm` stays behind a flag.
 - Red: `tests/test_outcome_recorder.py` (examples) and
   `tests/test_outcome_recorder_machine.py`.
 - Remaining gaps: the real adapters and the wiring.
@@ -2460,6 +2702,13 @@ class StoreFailure:
     reason: StoreReason
 
 @dc.dataclass(frozen=True, slots=True)
+class StoreResult:
+    operation: StoreOperation
+    reason: StoreReason      # "none" for success
+    records: int
+    discarded: int
+
+@dc.dataclass(frozen=True, slots=True)
 class Salt:
     key: bytes                 # 32 bytes
     salt_id: str               # HMAC(key, "buildlimits-salt-id"), hex
@@ -2467,7 +2716,7 @@ class Salt:
 class StatisticsPort(typ.Protocol):
     def start(self, now: float) -> Ticket | QueryFailure: ...
     def poll(self, ticket: Ticket, now: float) -> Pending | StatisticsText | QueryFailure: ...
-    def close(self, ticket: Ticket) -> None: ...   # idempotent; poll after a terminal result is an error
+    def close(self, ticket: Ticket, /) -> None: ... # idempotent; poll after a terminal result is an error
 
 @dc.dataclass(frozen=True, slots=True)
 class SampleFailure:                                                           # EP-M8

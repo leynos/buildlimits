@@ -123,6 +123,16 @@ def test_emit_shape_returns_its_expected_parser_class(emit: str, expected: str) 
     )
 
 
+def test_attached_codegen_setting_with_equals_remains_cacheable() -> None:
+    """Keep ``-Cname=value`` distinct from an unknown short option."""
+    parser = outcome_module("outcome_parser")
+    argv = _argv(*_compile_arguments()[1:], "-Ctarget-cpu=native")
+
+    assert parser.parser_class(argv) == "cacheable", (
+        "an attached codegen setting with an equals sign remains cacheable"
+    )
+
+
 @pytest.mark.parametrize(
     ("option", "case"),
     [
@@ -130,7 +140,7 @@ def test_emit_shape_returns_its_expected_parser_class(emit: str, expected: str) 
         (("--emit", "link"), "repeated-emit-separated"),
         (("-C", "extra-filename"), "extra-filename-missing-value"),
         (("--codegen=extra-filename",), "extra-filename-equals"),
-        (("-Cincremental=target/incremental",), "incremental"),
+        (("-Cincremental=x",), "incremental"),
         (("--codegen", "incremental"), "incremental-without-value"),
     ],
     ids=(

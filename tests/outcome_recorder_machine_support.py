@@ -2,7 +2,7 @@
 
 import typing as typ
 
-from outcome_recorder_test_helpers import OBSERVED_AT, stats_text
+from outcome_recorder_test_helpers import OBSERVED_AT, recorder_progress, stats_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -227,7 +227,10 @@ class RecorderReadings:
                 return True
         elif self.active_cached():
             return False
-        machine.now += 0.1
+        machine.now = max(
+            machine.now + 0.1,
+            recorder_progress(machine.state).next_read_at,
+        )
         machine._apply(self._gate_event())
         if not isinstance(machine.state, machine.recorder.Querying):
             return False

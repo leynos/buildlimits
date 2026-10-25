@@ -1,6 +1,5 @@
 """State transitions for the pure cache-outcome recording service."""
 
-import pytest
 from outcome_recorder_test_helpers import (
     GENERATION,
     OBSERVED_AT,
@@ -17,10 +16,6 @@ from outcome_recorder_test_helpers import (
     recorder_ticket,
     stats_reading,
     stats_text,
-)
-
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="EP-M4 red contracts precede the outcome recorder"
 )
 
 
@@ -67,6 +62,9 @@ def test_a_solo_window_emits_one_label_record_and_summary() -> None:
     assert recorder_progress(state).window.entries == (), (
         "the accepted window is consumed once"
     )
+    assert recorder_progress(state).active == (), (
+        "closed launches leave the retained active set"
+    )
 
 
 def test_restart_reading_is_rejected_then_used_as_the_new_baseline() -> None:
@@ -98,6 +96,47 @@ def test_restart_reading_is_rejected_then_used_as_the_new_baseline() -> None:
     assert new_baseline is not None, "the restart reading establishes a baseline"
     assert new_baseline.generation == next_generation, (
         "the reading that exposed the restart becomes the next baseline"
+    )
+
+
+def test_generation_change_during_straddled_reading_does_not_set_baseline() -> None:
+    """A changed generation cannot make a straddled reading a baseline."""
+    attribution = outcome_module("outcome_attribution")
+    recorder = outcome_module("outcome_recorder")
+    ports = outcome_module("outcome_ports")
+    next_generation = attribution.Generation("run-b", 11, 21)
+    state, _ = begin_query(
+        baseline_state(recorder), recorder, clear_gate_event(recorder, 0.0)
+    )
+    state, _ = recorder.advance(
+        state,
+        recorder.Launched(
+            group_id="straddled-after-restart",
+            is_cached=True,
+            payload=launch_payload(recorder, cache_key()),
+            now=0.5,
+        ),
+    )
+
+    state, output = recorder.advance(
+        state,
+        recorder.PollResult(
+            now=0.75,
+            result=ports.StatisticsText(
+                stats_text(compile_requests=1, requests_executed=1, cache_hits=1)
+            ),
+            after_generation=next_generation,
+        ),
+    )
+
+    assert output.reading_reasons == ("generation_changed",), (
+        "the generation change remains the primary refusal reason"
+    )
+    assert output.events[0].outcome_reason == "generation_changed", (
+        "the straddled launch remains unattributed across the restart"
+    )
+    assert recorder_progress(state).baseline is None, (
+        "a reading that straddles a launch cannot seed the new generation"
     )
 
 

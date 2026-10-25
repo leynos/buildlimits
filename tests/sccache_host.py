@@ -5,6 +5,8 @@ import os
 import shutil
 import socket
 import struct
+
+# ruff: ignore[suspicious-subprocess-import] - fixed argv, no shell.
 import subprocess
 import sys
 import time
@@ -38,6 +40,7 @@ def _read_stats(
     ValueError
         If the statistics document reports another sccache version.
     """
+    # ruff: ignore[subprocess-without-shell-equals-true] - supplied argv, no shell.
     completed = subprocess.run(
         [executable, "--show-stats", "--stats-format", "json"],
         check=True,
@@ -113,6 +116,7 @@ def _systemd_scope_prefix(environment: cabc.Mapping[str, str]) -> list[str] | No
         return None
 
     prefix = [systemd_run, "--user", "--scope", "--wait", "--quiet"]
+    # ruff: ignore[subprocess-without-shell-equals-true] - probe argv, no shell.
     probe = subprocess.run(
         [*prefix, true_program],
         check=False,
@@ -149,6 +153,7 @@ def _private_server(
         command = [*prefix, *command]
 
     with log_path.open("wb") as log_file:
+        # ruff: ignore[subprocess-without-shell-equals-true] - server argv, no shell.
         process = subprocess.Popen(
             command,
             env=server_environment,
@@ -172,6 +177,7 @@ def _private_server(
             else:
                 pytest.fail(f"sccache server did not become ready; see {log_path}")
         finally:
+            # ruff: ignore[subprocess-without-shell-equals-true] - stop argv, no shell.
             subprocess.run(
                 [executable, "--stop-server"],
                 check=False,
@@ -247,6 +253,7 @@ def _run_compile(
     subprocess.CompletedProcess[str]
         The compile request's captured output and exit status.
     """
+    # ruff: ignore[subprocess-without-shell-equals-true] - caller argv, no shell.
     return subprocess.run(
         command,
         check=False,
@@ -294,6 +301,7 @@ def sccache_host_marks() -> list[pytest.MarkDecorator]:
         reason = "sccache is not installed"
     else:
         try:
+            # ruff: ignore[subprocess-without-shell-equals-true] - fixed argv, no shell.
             version = subprocess.run(
                 [executable, "--version"],
                 check=False,

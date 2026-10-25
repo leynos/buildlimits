@@ -202,15 +202,15 @@ def _option_parts(argument: str) -> tuple[str, str | None]:
     tuple[str, str or None]
         Option name and attached value, if present.
     """
-    option, separator, value = argument.partition("=")
-    if separator:
-        return option, value
     short_option = argument[:_SHORT_OPTION_PREFIX_LENGTH]
     if (
         short_option in _SHORT_VALUE_OPTIONS
         and len(argument) > _SHORT_OPTION_PREFIX_LENGTH
     ):
         return short_option, argument[_SHORT_OPTION_PREFIX_LENGTH:]
+    option, separator, value = argument.partition("=")
+    if separator:
+        return option, value
     return argument, None
 
 

@@ -2,7 +2,6 @@
 
 import typing as typ
 
-import pytest
 from hypothesis import event, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import (
@@ -23,14 +22,11 @@ from outcome_recorder_test_helpers import (
     cache_key,
     outcome_module,
     recorder_progress,
+    stats_reading,
 )
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-
-pytestmark = pytest.mark.xfail(
-    strict=True, reason="EP-M4 red contracts precede the outcome recorder"
-)
 
 
 class RecorderMachine(RuleBasedStateMachine):
@@ -83,6 +79,7 @@ class RecorderMachine(RuleBasedStateMachine):
         assert abandoned_output is not None, "the timed-out ticket is accounted"
         self._expect(abandoned, "unattributed", "timeout")
         self._mark("abandonment")
+        self.readings.finish_read()
 
         old_baseline = recorder_progress(self.state).baseline
         straddled_case = self._launch_during_query("hit")
@@ -104,10 +101,9 @@ class RecorderMachine(RuleBasedStateMachine):
         assert self.cached_group_ids == set(self.outcomes), (
             "the restart model accounts for every earlier cached launch"
         )
-        self.state = baseline_state(self.recorder)
-        self.server_counters = {}
-        self.generation = GENERATION
         previous_counters = self.server_counters.copy()
+        self.state = baseline_state(self.recorder, stats_reading(**previous_counters))
+        self.generation = GENERATION
         restarted = self._launch("hit")
         self.readings.finish(restarted, is_clean=True)
         self.readings.start_query()
@@ -378,6 +374,9 @@ class RecorderMachine(RuleBasedStateMachine):
             "stop or an earlier close accounts for every cached launch exactly once"
         )
         assert not self.pending_groups, "no cached launch remains unaccounted"
+        assert recorder_progress(self.state).active == (), (
+            "closed launches do not accumulate in recorder progress"
+        )
         assert self.case_labels >= REQUIRED_CASES, (
             f"machine cases were not reached: {REQUIRED_CASES - self.case_labels}"
         )

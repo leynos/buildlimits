@@ -42,8 +42,6 @@ from buildlimits.outcome_record_format import (
 )
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
     from buildlimits.outcome_vocabulary import StoreReason
 
 MAX_COMPACT_BYTES = 12 * 1024 * 1024
@@ -116,28 +114,17 @@ def compact(
         records = [record for record in records if record.observed_at >= cutoff]
         reason = "expired" if len(records) < len(decoded.records) else "none"
     discarded = len(decoded.records) - len(records)
-    while (
-        len(records) > MAX_COMPACT_RECORDS
-        or _serialized_size(header, records) > MAX_COMPACT_BYTES
+    record_sizes = [len(encode_line(record).encode("utf-8")) + 1 for record in records]
+    total_size = len(encode_line(header).encode("utf-8")) + 1 + sum(record_sizes)
+    first_retained = 0
+    while first_retained < len(records) and (
+        len(records) - first_retained > MAX_COMPACT_RECORDS
+        or total_size > MAX_COMPACT_BYTES
     ):
-        if not records:
-            break
-        records.pop(0)
-        discarded += 1
-    return Compacted(header, tuple(records), discarded, reason)
-
-
-def _serialized_size(header: StoreHeader, records: cabc.Sequence[StoreRecord]) -> int:
-    """Measure the replacement JSON Lines document including line feeds.
-
-    Returns
-    -------
-    int
-        Full byte count, including each row's terminating newline.
-    """
-    return sum(
-        len(encode_line(value).encode("utf-8")) + 1 for value in (header, *records)
-    )
+        total_size -= record_sizes[first_retained]
+        first_retained += 1
+    discarded += first_retained
+    return Compacted(header, tuple(records[first_retained:]), discarded, reason)
 
 
 def _require_utc(value: dt.datetime) -> None:

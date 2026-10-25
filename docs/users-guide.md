@@ -425,12 +425,12 @@ systemctl --user restart buildlimits-supervisor.service
 
 There is no need to wait for an idle reading first. The supervisor unit must
 carry `KillMode=mixed`, described under
-[Units the restart relies on](#units-the-restart-relies-on). A supervisor older
-than the 2026-10-19 amendment to ADR 001 loses a build when a restart lands
-while that build is being placed in its scope and the unit lacks the directive;
-the adapter retries the request, but `KillMode=mixed` remains required because
-it also keeps the stop away from the supervisor's other helper commands. The
-restart works as follows.
+[Units the restart relies on](#units-the-restart-relies-on). Without the
+directive, a supervisor older than the 2026-10-19 amendment to ADR 001 loses a
+build when a restart lands while that build is being placed in its scope. A
+newer supervisor refuses such a build as `restarting`, and its adapter retries
+it. `KillMode=mixed` is still required because it also keeps the stop away from
+the supervisor's other helper commands. The restart works as follows.
 
 1. `systemctl` sends `SIGTERM`. The supervisor stops launching and requesting
    tokens but terminates nothing: every running compiler group runs to its own

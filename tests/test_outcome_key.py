@@ -107,11 +107,10 @@ def test_git_and_local_origins_never_retain_the_manifest_path() -> None:
     assert path_manifest not in path_origin, "the local path is not retained"
 
 
-def test_origin_uses_non_default_cargo_home_and_missing_manifest_is_unavailable() -> (
-    None
-):
-    """Cargo home selection is explicit and a missing manifest has no origin."""
+def test_crate_origin_uses_cargo_home_boundaries_and_missing_manifest() -> None:
+    """Use POSIX path components for Cargo-home and root boundaries."""
     key = outcome_module("outcome_key")
+    salt = _salt()
     env = {
         "CARGO_HOME": "/var/cache/cargo",
         "CARGO_MANIFEST_DIR": "/var/cache/cargo/registry/src/index/serde-1.2.3",
@@ -119,10 +118,24 @@ def test_origin_uses_non_default_cargo_home_and_missing_manifest_is_unavailable(
         "CARGO_PKG_VERSION": "1.2.3",
     }
 
-    assert key.crate_origin(env, _salt()) == "registry:serde@1.2.3", (
+    assert key.crate_origin(env, salt) == "registry:serde@1.2.3", (
         "the configured Cargo home identifies the registry origin"
     )
-    assert key.crate_origin({"HOME": "/home/alice"}, _salt()) is None, (
+    root_environment = env | {
+        "CARGO_HOME": "/",
+        "CARGO_MANIFEST_DIR": "/registry/src/index/serde-1.2.3",
+    }
+    assert key.crate_origin(root_environment, salt) == "registry:serde@1.2.3", (
+        "path components below the filesystem root retain the registry origin"
+    )
+
+    manifest = "/var/cache/cargo-extra/registry/src/index/serde-1.2.3"
+    nearby_environment = env | {"CARGO_MANIFEST_DIR": manifest}
+    expected = expected_hmac(manifest, b"s" * 32)
+    assert key.crate_origin(nearby_environment, salt) == f"path:{expected}", (
+        "a neighbouring path prefix does not become a Cargo registry identity"
+    )
+    assert key.crate_origin({"HOME": "/home/alice"}, salt) is None, (
         "a missing manifest has no origin"
     )
 
@@ -187,6 +200,23 @@ def test_argument_digest_applies_sccache_removals_and_cfg_ordering() -> None:
     assert key.argument_digest(first, {}, salt) == key.argument_digest(
         second, {}, salt
     ), "paths, removed flags and cfg order do not change the argument digest"
+
+
+def test_argument_digest_handles_trailing_cfg_without_value() -> None:
+    """Malformed trailing options still produce a total, privacy-safe digest."""
+    key = outcome_module("outcome_key")
+    salt = _salt()
+    argv = (
+        "/toolchain/bin/rustc",
+        "--crate-name=serde",
+        "--cfg=feature=beta",
+        "--cfg",
+    )
+
+    digest = key.argument_digest(argv, {}, salt)
+
+    assert len(digest) == 64, "a missing cfg value still produces an HMAC digest"
+    assert "feature=beta" not in digest, "the cfg value is never stored in clear text"
 
 
 def test_argument_digest_includes_filtered_cargo_environment_under_hmac() -> None:

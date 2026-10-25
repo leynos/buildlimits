@@ -13,6 +13,12 @@ if typ.TYPE_CHECKING:
     from types import ModuleType
 
 
+class _TimedGateEvent(typ.Protocol):
+    """The monotonic time carried by a fake recorder gate event."""
+
+    now: float
+
+
 def outcome_module(name: str) -> ModuleType:
     """Load an outcome module lazily so red tests collect before implementation.
 
@@ -161,7 +167,7 @@ def launch_payload(recorder: ModuleType, key: object) -> object:
     return recorder.LaunchPayload(key=key, origin="registry", parser_class="cacheable")
 
 
-def clear_gate_event(recorder: ModuleType, now: float) -> object:
+def clear_gate_event(recorder: ModuleType, now: float) -> _TimedGateEvent:
     """Build a gate event with every quiet-point clause satisfied.
 
     Returns

@@ -83,7 +83,8 @@ ______________________________________________________________________
   without ever releasing a token on a guess.
 - `build-limits-metrics` to summarize bounded, identifier-free journal
   metrics.
-- Admission uses the Python standard library; OpenTelemetry SDK supplies traces.
+- Admission uses only the Python standard library; the OpenTelemetry SDK
+  supplies traces.
 
 ______________________________________________________________________
 

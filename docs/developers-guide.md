@@ -179,6 +179,12 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_record_codec`                                    | Strict JSON Lines encoding and decoding for outcome records                                     |
 | `outcome_records`                                         | Public record API and pure age, count and byte compaction                                       |
 | `outcome_window`                                          | Bounded immutable payload ledger for open statistics windows                                    |
+| `outcome_ports`                                                                    | Domain-owned protocols and result types for statistics, server generation and storage            |
+| `outcome_recorder_types`                                                           | Immutable recorder events, outputs and typestate values                                          |
+| `outcome_recorder_outputs`                                                         | Pure construction of outcome events, records and terminal transition outputs                     |
+| `outcome_recorder`                                                                 | Pure quiet-point reading sequencer and attribution state transitions                             |
+| `outcome_recorder_reading`                                                         | Validates terminal readings, updates baselines and schedules bounded retries                     |
+| `outcome_recorder_driver`                                                          | Executes statistics-port commands and returns effects to the supervisor                          |
 | `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                        |
 
 _Table 2: Package modules._

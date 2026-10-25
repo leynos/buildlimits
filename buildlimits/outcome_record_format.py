@@ -6,6 +6,7 @@ import math
 import typing as typ
 
 from buildlimits.json_values import nonnegative_integer
+from buildlimits.metrics_schema import CACHE_RESULTS as _CACHE_RESULTS
 from buildlimits.outcome_key import CacheKey, ToolchainIdentity
 
 if typ.TYPE_CHECKING:
@@ -22,18 +23,6 @@ FORMAT_VERSION = 1
 MAX_RECORD_BYTES = 16 * 1024
 MAX_STORE_BYTES = 16 * 1024 * 1024
 _DIGEST_HEX_LENGTH = 64
-_CACHE_RESULTS = frozenset([
-    "hit",
-    "miss",
-    "not_cacheable",
-    "not_cached",
-    "failed",
-    "error",
-    "declined",
-    "not_compile",
-    "unsupported",
-    "unattributed",
-])
 _ORIGINS = frozenset({"registry", "git", "path", "unknown"})
 _CHILD_SIGHTINGS = frozenset({"seen", "ambiguous", "not_seen", "unavailable"})
 _PARSER_CLASSES = frozenset({"cacheable", "not_compile", "declined"})

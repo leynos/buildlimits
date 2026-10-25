@@ -65,9 +65,16 @@ def test_export_contains_only_bounded_attributes_and_fixed_width_trace_ids(
     assert len(record["BUILD_LIMITS_TRACE_SPAN_ID"]) == 16, (
         "the span identifier has a fixed hexadecimal width"
     )
+    leaked_names = ("REQUEST_PATH", "RAW_ERROR", "UNBOUNDED_IDENTIFIER")
+    assert not any(name in key for key in record for name in leaked_names), (
+        "unknown attribute names are omitted"
+    )
+    sensitive_values = ("private.rs", "socket path leaked", "caller supplied")
     assert not any(
-        "path" in key or "error" in key or "identifier" in key for key in record
-    ), "unknown and sensitive attributes are omitted"
+        sensitive in value
+        for value in record.values()
+        for sensitive in sensitive_values
+    ), "sensitive attribute values are omitted"
 
 
 def test_export_dispatches_through_the_injected_sink(
@@ -77,24 +84,27 @@ def test_export_dispatches_through_the_injected_sink(
     sink = JournalSink(tmp_path / "journal.sock")
     emit_trace = mock.Mock()
     monkeypatch.setattr(sink, "emit_trace", emit_trace)
-    tracer = JournalTracer("supervisor", sink)
-    span = tracer.start("scope_placement")
-    assert span is not None, "the known operation starts a span"
+    try:
+        tracer = JournalTracer("supervisor", sink)
+        span = tracer.start("scope_placement")
+        assert span is not None, "the known operation starts a span"
 
-    span.finish(
-        outcome="admitted",
-        failure_category="none",
-        stop_mode="graceful",
-    )
+        span.finish(
+            outcome="admitted",
+            failure_category="none",
+            stop_mode="graceful",
+        )
 
-    assert emit_trace.call_count == 1, "export uses the injected instance method"
-    record = emit_trace.call_args.args[0]
-    assert record["BUILD_LIMITS_TRACE_OPERATION"] == "scope_placement", (
-        "the override receives the fixed operation name"
-    )
-    assert record["BUILD_LIMITS_TRACE_OUTCOME"] == "admitted", (
-        "the override receives the bounded span outcome"
-    )
+        assert emit_trace.call_count == 1, "export uses the injected instance method"
+        record = emit_trace.call_args.args[0]
+        assert record["BUILD_LIMITS_TRACE_OPERATION"] == "scope_placement", (
+            "the override receives the fixed operation name"
+        )
+        assert record["BUILD_LIMITS_TRACE_OUTCOME"] == "admitted", (
+            "the override receives the bounded span outcome"
+        )
+    finally:
+        sink.close()
 
 
 def test_journal_export_failure_does_not_escape_span_completion(
@@ -104,23 +114,27 @@ def test_journal_export_failure_does_not_escape_span_completion(
     path = tmp_path / "journal-file"
     path.touch()
     sink = JournalSink(path)
-    tracer = JournalTracer("adapter", sink)
-    span = tracer.start("adapter_restart_retry")
-    assert span is not None, "the known operation starts a span"
-    span.finish(
-        outcome="admitted",
-        failure_category="restart_refusal",
-        stop_mode="graceful",
-        retry_attempt=1,
-    )
+    try:
+        tracer = JournalTracer("adapter", sink)
+        span = tracer.start("adapter_restart_retry")
+        assert span is not None, "the known operation starts a span"
+        span.finish(
+            outcome="admitted",
+            failure_category="restart_refusal",
+            stop_mode="graceful",
+            retry_attempt=1,
+        )
 
-    assert tracer.dropped_spans == 1, "the failed export is counted without escaping"
-    assert tracer.failure_counts == {
-        "transport": 1,
-        "invalid_record": 0,
-        "sdk": 0,
-    }, "the failure is classified without retaining the exception"
-    sink.close()
+        assert tracer.dropped_spans == 1, (
+            "the failed export is counted without escaping"
+        )
+        assert tracer.failure_counts == {
+            "transport": 1,
+            "invalid_record": 0,
+            "sdk": 0,
+        }, "the failure is classified without retaining the exception"
+    finally:
+        sink.close()
 
 
 def test_sdk_initialization_failure_does_not_escape_span_start(

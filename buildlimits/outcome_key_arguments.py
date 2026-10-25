@@ -84,7 +84,13 @@ def argument_digest(
             continue
         (cfgs if flag == "--cfg" else rest).append(argument)
     canonical = json.dumps(
-        {"argv": [*rest, *sorted(cfgs)], "env": _cargo_environment(env)},
+        {
+            "argv": [
+                *rest,
+                *sorted(cfgs, key=lambda pair: (pair[1] is None, pair[1] or "")),
+            ],
+            "env": _cargo_environment(env),
+        },
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,

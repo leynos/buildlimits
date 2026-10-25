@@ -4,6 +4,7 @@ import dataclasses as dc
 import hashlib
 import hmac
 import typing as typ
+from pathlib import PurePosixPath
 
 from buildlimits.outcome_key_arguments import (
     _normalized_arguments as _normalized_arguments,
@@ -105,7 +106,7 @@ def crate_origin(env: cabc.Mapping[str, str], salt: Salt) -> str | None:
         cargo_home = f"{home}/.cargo" if home else None
     relative = _relative_to(manifest, cargo_home) if cargo_home else None
     if relative is not None:
-        parts = tuple(part for part in relative.split("/") if part)
+        parts = PurePosixPath(relative).parts
         registry = _registry_origin(parts, env)
         if registry is not None:
             return registry
@@ -197,11 +198,15 @@ def _relative_to(path: str, parent: str) -> str | None:
     >>> _relative_to("/cache/pkg", "/cache")
     'pkg'
     """
-    normalized_parent = parent.rstrip("/") or "/"
-    if normalized_parent == "/":
-        return path.lstrip("/") if path.startswith("/") else None
-    prefix = f"{normalized_parent}/"
-    return path[len(prefix) :] if path.startswith(prefix) else None
+    parent_path = PurePosixPath(parent) if parent.strip("/") else PurePosixPath("/")
+    path_value = PurePosixPath(path)
+    if parent_path == PurePosixPath("/") and path_value.anchor == "//":
+        path_value = PurePosixPath("/", *path_value.parts[1:])
+    try:
+        relative = path_value.relative_to(parent_path)
+    except ValueError:
+        return None
+    return relative.as_posix() if relative.parts else None
 
 
 def _registry_origin(parts: tuple[str, ...], env: cabc.Mapping[str, str]) -> str | None:

@@ -87,13 +87,15 @@ def decode_lines(document: str) -> DecodedStore | RecordFailure:
     parsed = _parse_json_lines(document)
     if not parsed:
         return RecordFailure("corrupt")
-    header = _decode_header(parsed[0])
-    if isinstance(header, RecordFailure):
-        return header
-    records = _decode_records(parsed[1:])
-    if isinstance(records, RecordFailure):
-        return records
-    return DecodedStore(header, records)
+    match _decode_header(parsed[0]):
+        case RecordFailure() as failure:
+            return failure
+        case StoreHeader() as header:
+            match _decode_records(parsed[1:]):
+                case RecordFailure() as failure:
+                    return failure
+                case records:
+                    return DecodedStore(header, records)
 
 
 def _decode_records(
@@ -108,10 +110,11 @@ def _decode_records(
     """
     records: list[StoreRecord] = []
     for raw in raw_records:
-        record = _decode_record(raw)
-        if isinstance(record, RecordFailure):
-            return record
-        records.append(record)
+        match _decode_record(raw):
+            case RecordFailure() as failure:
+                return failure
+            case (OutcomeRecord() | WindowSummary()) as record:
+                records.append(record)
     return tuple(records)
 
 
@@ -225,6 +228,8 @@ def _decode_header(raw: object) -> StoreHeader | RecordFailure:
     """
     value = _mapping(raw)
     if value is None:
+        return RecordFailure("corrupt")
+    if value.get("format") != FORMAT_NAME:
         return RecordFailure("corrupt")
     if not _has_supported_version(value):
         return RecordFailure("version_mismatch")

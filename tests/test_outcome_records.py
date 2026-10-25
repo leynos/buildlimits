@@ -5,6 +5,7 @@ import datetime as dt
 import json
 import typing as typ
 from types import ModuleType
+from unittest import mock
 
 import pytest
 from outcome_test_helpers import outcome_module
@@ -94,12 +95,23 @@ def test_decoder_drops_only_a_torn_final_line() -> None:
 
 
 @pytest.mark.parametrize(
-    "document",
-    ["", "[]\n", '{"version":2}\n', '{"format":"wrong"}\n'],
-    ids=("empty", "wrong-shape", "partial-header", "wrong-format"),
+    ("document", "expected_reason"),
+    [
+        ("", "corrupt"),
+        ("[]\n", "corrupt"),
+        ('{"version":2}\n', "corrupt"),
+        ('{"format":"wrong"}\n', "corrupt"),
+        (
+            '{"format":"buildlimits-cache-outcomes","version":2}\n',
+            "version_mismatch",
+        ),
+    ],
+    ids=("empty", "wrong-shape", "missing-format", "wrong-format", "newer-version"),
 )
-def test_malformed_or_incompatible_documents_fail_closed(document: str) -> None:
-    """Malformed headers and unsupported versions never become empty history."""
+def test_malformed_or_incompatible_documents_fail_closed(
+    document: str, expected_reason: str
+) -> None:
+    """Classify malformed headers separately from recognized future versions."""
     records = outcome_module("outcome_records")
 
     result = records.decode_lines(document)
@@ -107,9 +119,7 @@ def test_malformed_or_incompatible_documents_fail_closed(document: str) -> None:
     assert isinstance(result, records.RecordFailure), (
         "malformed or incompatible documents fail closed"
     )
-    assert result.reason in {"corrupt", "version_mismatch"}, (
-        "the failure distinguishes corrupt data from version mismatch"
-    )
+    assert result.reason == expected_reason, "the header failure has its exact reason"
 
 
 def test_unknown_bounded_vocabulary_is_rejected_during_decode() -> None:
@@ -147,20 +157,27 @@ def test_compactor_expires_old_rows_and_skips_ageing_on_clock_skew() -> None:
     assert header.salt_id == skewed.header.salt_id, "compaction keeps salt identity"
 
 
-def test_compactor_applies_record_count_and_byte_limits(
+def test_compactor_applies_limits_and_encodes_each_row_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Compaction evicts oldest entries until both configured bounds hold."""
+    """Enforce both store bounds while encoding each candidate row once."""
     records, _, lines = _fixture()
     decoded = records.decode_lines("\n".join(lines) + "\n")
+    original_encode_line = records.encode_line
+    encode_line = mock.Mock(wraps=original_encode_line)
+    monkeypatch.setattr(records, "encode_line", encode_line)
     monkeypatch.setattr(records, "MAX_COMPACT_RECORDS", 1)
     monkeypatch.setattr(records, "MAX_COMPACT_BYTES", 512)
 
     compacted = records.compact(decoded, now=_NOW)
 
-    assert len(compacted.records) <= 1, "the record-count cap is enforced"
+    assert len(compacted.records) == 1, "the record-count cap keeps one row"
+    encode_count = encode_line.call_count
     encoded_size = sum(
-        len(records.encode_line(record).encode()) + 1
+        len(original_encode_line(record).encode()) + 1
         for record in (compacted.header, *compacted.records)
     )
     assert encoded_size <= 512, "the serialized byte cap is enforced"
+    assert encode_count == len(decoded.records) + 1, (
+        "each candidate row and the replacement header are encoded once"
+    )

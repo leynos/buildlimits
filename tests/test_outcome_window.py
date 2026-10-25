@@ -1,12 +1,11 @@
 """Bounded immutable launch accounting for statistics windows."""
 
-from outcome_test_helpers import outcome_module
+from buildlimits.outcome_window import OutcomeWindow
 
 
 def test_window_bound_overflow_and_ignored_following_launches() -> None:
     """Retain 64 payloads, then reject growth after the 65th launch."""
-    module = outcome_module("outcome_window")
-    window = module.OutcomeWindow()
+    window = OutcomeWindow()
 
     for payload in range(64):
         window = window.append(payload)
