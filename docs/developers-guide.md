@@ -333,6 +333,13 @@ progress path, not that the path is guaranteed to finish. The classifier is
 read-only: it never releases or reassigns a token. Only verified accounting
 after a service is stopped and empty can release a retained server-drain token.
 
+The `devhost.buildlimits` provisioning collection and its role live in
+dev-env-rocky, which owns host provisioning. That external consumer must use
+`build-limits-status --ready` or `.admission.ready` for generic admission
+readiness; command success or `healthy` alone is only a process and pool health
+signal. Keep `healthy` for health checks, `caching` for cache reachability, and
+drain and recovery fields for maintenance decisions.
+
 `cache_recovery.CacheRecovery` is a four-phase machine — `quiescing`,
 `stopping`, `accounting`, `restarting` — advancing at most one step per tick.
 Its calls are bounded and its retries delayed, but no path ends a transaction

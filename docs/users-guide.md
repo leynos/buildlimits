@@ -279,10 +279,30 @@ history; `build-limits-metrics` summarizes history.
 _Table 4: `build-limits-status` exit statuses._
 
 Success without `--ready`, or `healthy` alone, is not evidence of usable
-admission readiness. `healthy` describes supervisor and pool health; it is
-separate from cache reachability and admission readiness. The `caching` signal
-reports the cache reachability probe and does not determine whether direct
-compilation can be admitted.
+admission readiness. The status fields describe separate signals:
+
+- `healthy` reports supervisor and token-pool health. It does not say whether
+  admission can make progress.
+- `caching` reports whether the managed cache was reachable at its last probe.
+  Cache reachability does not determine readiness; direct compilation can be
+  admitted while sccache is unavailable.
+- `restarting` says the supervisor is winding down for a graceful stop. It can
+  remain healthy while running groups finish.
+- `drain_fault` gives the latest failed drain-accounting check; its retained
+  tokens stay held until accounting succeeds. `drain_fault_kind` classifies the
+  failure as `live_work`, `stopped_populated` or `manager`.
+- `drain_attempts` counts failed drain checks and resets when the drain fault
+  clears.
+- `recovery_action` gives operator guidance once the retry threshold is reached.
+  `recovery_action_is_fallback` is true when that command is only a fallback
+  because automatic recovery is pending. This guidance can be delayed and can
+  change independently of admission classification, which uses the immediate
+  fault and current recovery outlook.
+- `admission.state` is the readiness classification shown below.
+  `admission.ready` is true only for `ready`, `saturated` or `draining`.
+
+Each status document is a point-in-time snapshot. Readiness may change after a
+query and does not prove that a monitoring consumer observed or acted on it.
 
 Plain status prepends `admission <state>: <reason>` when the state is `blocked`,
 `draining`, `closing` or `unhealthy`; `ready` and `saturated` add no line.
