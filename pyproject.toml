@@ -366,6 +366,25 @@ exclude = [".venv", ".uv-cache", ".uv-tools", ".tools", ".git"]
 [tool.skylos.gate]
 strict = true
 
+# EP-M5 lands this adapter before EP-M7 wires the reaper into the supervisor.
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.nonblocking_child.NonBlockingChild.poll"]
+path = ["buildlimits/nonblocking_child.py"]
+reason = "EP-M7 OutcomeShell.on_tick polls ChildReaper on each loop tick, which polls NonBlockingChild; remove this staged-adapter exception once the wiring in docs/execplans/cache-hit-prediction.md#ep-m7-wiring-status-report-h3-and-documentation makes the call path visible."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.nonblocking_child.NonBlockingChild._read_available"]
+path = ["buildlimits/nonblocking_child.py"]
+reason = "NonBlockingChild.poll drains the owned pipe through this private helper; Skylos does not keep private callees reachable through the staged polling entry point. Remove this exception after the EP-M7 integration in docs/execplans/cache-hit-prediction.md#ep-m7-wiring-status-report-h3-and-documentation."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.nonblocking_child.ChildReaper.cancel"]
+path = ["buildlimits/nonblocking_child.py"]
+reason = "EP-M7 OutcomeShell.close cancels an outstanding helper and retains it until a later poll reaps it; remove this staged-adapter exception after close is wired as described in docs/execplans/cache-hit-prediction.md#ep-m7-wiring-status-report-h3-and-documentation."
+
 [[tool.skylos.dead_code.entrypoints]]
 type = "method"
 full_name = ["buildlimits.outcome_window.OutcomeWindow.append"]

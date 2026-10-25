@@ -789,7 +789,9 @@ reason when the code it names changes.
   collaborators and dataclass-held owners that a static call graph cannot
   resolve. Each is named by its full dotted path under
   `[[tool.skylos.dead_code.entrypoints]]`, with the call path that keeps it
-  alive.
+  alive. EP-M5's child adapter also has temporary entries until EP-M7 wires
+  polling and shutdown cancellation through `OutcomeShell`; their reasons link
+  to the implementation milestone that removes them.
 - **Vulture.** Only `tests/` is scanned, so attributes that tests set and
   production code reads, mock configuration, runner doubles' `__call__` and the
   CrossHair contracts are listed in `ignore_names`; pytest-bdd steps and

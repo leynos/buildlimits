@@ -754,6 +754,32 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   `/tmp/buildlimits-epm4-candidate-64-gate-logs/summary.md`; archive SHA-256:
   `1f1e19d4e898e6a8a5c98141d4fbb7c62551db7e42478591e39997161afb9a8b`; review:
   `/tmp/buildlimits-coderabbit-candidate-64.ktzLo9/coderabbit-buildlimits-cache-hit-prediction-candidate-64.out`.
+- [ ] (2026-10-25 02:51Z) EP-M5 begins with the bounded child adapter. The
+  existing `metrics_transport.run` is a blocking journal client and cannot
+  serve the selector loop; the repository has no equivalent non-blocking child
+  reaper. Red tests cover deadline cleanup, the output cap, the reaper bound
+  and the `Popen` launch contract.
+- [ ] (2026-10-25 02:52Z) The child adapter's red tests first failed at module
+  collection, as expected. The implementation now passes all four focused
+  contracts. Candidate 67 passed formatting, documentation and Nixie, then Ruff
+  stopped lint on the missing `ValueError` documentation, path API, exception
+  message and two property docstring forms. Candidate 68 applies those style
+  fixes; it passed Ruff, then Pylint flagged the intentionally long-lived
+  `Popen` handle. Candidate 69 documents that `ChildReaper` owns the process
+  across loop ticks and keeps it outside a constructor-scoped context manager.
+  Candidate 69 passed formatting, Markdown, and Nixie; Pylint required a
+  failure message on one assertion, which candidate 70 added. Candidate 70
+  passed those gates and the earlier lint stages, then Skylos identified the
+  staged polling and cancellation methods before EP-M7 integration. Candidate
+  71 records narrow entries linked to EP-M7 and adds explicit cancellation
+  coverage. It passed those checks through Vulture, then the duplication gate
+  found repeated long-running-child setup in two tests. Candidate 72 extracts
+  one shared test helper for that setup. Candidate 72 passed every local gate;
+  its archive-bound review exposed a real overflow in the existing repeated-
+  failure back-off. A regression test reproduced `OverflowError` at 1,024
+  failures. Candidate 73 caps the exponent before calculating the delay; the
+  review's unrelated import-style suggestion in `tests/test_tracing.py` remains
+  outside this change.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
@@ -2232,6 +2258,8 @@ milestone that adds each module.
 - Outcome:
   - `outcome_telemetry.py` and `supervisor_outcomes.py`;
   - the hooks (D19) and the moved emptied loop;
+  - `OutcomeShell.on_tick` polls the child reaper, and `close(timeout)` cancels
+    any outstanding helper, closes its pipe and reaps it within the close bound;
   - the status object and its line;
   - `outcome_replay.py` (H3 only) and `outcome_replay_cli.py h3`;
   - the documentation set below.
