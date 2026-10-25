@@ -178,6 +178,9 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_record_format`                                   | Typed outcome records and format-specific field validation                                      |
 | `outcome_record_codec`                                    | Strict JSON Lines encoding and decoding for outcome records                                     |
 | `outcome_records`                                         | Public record API and pure age, count and byte compaction                                       |
+| `outcome_store`                                           | Non-blocking writer port, asynchronous salt handoff and bounded result reporting                |
+| `outcome_store_io`                                        | Regular-file checks, bounded reads, append writes and atomic compaction replacement             |
+| `outcome_store_salt`                                      | XDG state-path resolution and private per-host salt creation                                    |
 | `outcome_window`                                          | Bounded immutable payload ledger for open statistics windows                                    |
 | `outcome_ports`                                                                    | Domain-owned protocols and result types for statistics, server generation and storage            |
 | `outcome_recorder_types`                                                           | Immutable recorder events, outputs and typestate values                                          |

@@ -1336,3 +1336,11 @@ members = [
     "tests/test_outcome_rules_behaviour.py::signalled_cached_group",
 ]
 reason = "These BDD given-steps create the same one-group window with opposite cleanliness. Keeping each value next to its feature phrase makes the eligibility condition explicit."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/cache_recovery.py",
+    "buildlimits/outcome_store.py",
+    "tests/outcome_store_helpers.py",
+]
+reason = "These TYPE_CHECKING blocks import different domain-owned annotation types for production and test contracts. Sharing a re-export would hide each module's dependencies without sharing runtime behaviour."
