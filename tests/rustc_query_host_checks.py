@@ -227,12 +227,12 @@ def _is_query(entry: ProbeRecord) -> bool:
 
 
 def _is_compile(entry: ProbeRecord) -> bool:
-    """Recognize a completed compiler invocation that can generate artifacts.
+    """Recognize a completed compiler invocation that can generate artefacts.
 
     Returns
     -------
     bool
-        Whether the invocation requests an output artifact.
+        Whether the invocation requests an output artefact.
     """
     argv = entry["argv"]
     return any(

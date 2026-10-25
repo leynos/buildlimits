@@ -603,6 +603,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `harness_processes.py`        | `wait_for`, `start_adapter`, process cleanup and host process observations                          |
 | `host_acceptance.py`          | `user_manager_available` and `systemd_user_marks` with explicit host opt-in                         |
 | `systemd_harness.py`          | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling    |
+| `rustc_linter_acceptance.py`  | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios       |
 | `rustc_query_host_checks.py`  | Query and readiness assertions shared by host query and timing scenarios                            |
 | `rustc_query_host_support.py` | Private Cargo fixtures, held-token barriers and captured command output                             |
 | `rustc_query_support.py`      | `cargo_probe` and `temporary_executable` for rustc query and property tests                         |

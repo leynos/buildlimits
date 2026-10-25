@@ -13,11 +13,15 @@ def test_host_manager_probe_requires_explicit_opt_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Return unavailable before probing executables or spawning a manager client."""
+    user_manager_available.cache_clear()
     monkeypatch.delenv("BUILD_LIMITS_HOST_ACCEPTANCE", raising=False)
     spawn = mock.Mock(side_effect=AssertionError("must not contact the host manager"))
     monkeypatch.setattr(subprocess, "run", spawn)
-    assert not user_manager_available(), "host readiness requires explicit opt-in"
-    spawn.assert_not_called()
+    try:
+        assert not user_manager_available(), "host readiness requires explicit opt-in"
+        spawn.assert_not_called()
+    finally:
+        user_manager_available.cache_clear()
 
 
 @pytest.mark.parametrize(
@@ -31,11 +35,16 @@ def test_host_manager_probe_requires_explicit_opt_in(
 def test_host_manager_probe_errors_skip_acceptance(
     monkeypatch: pytest.MonkeyPatch, failure: Exception
 ) -> None:
-    """Treat a missing or unresponsive manager as unavailable for collection."""
+    """Treat a failed manager probe as unavailable and reuse that result."""
+    user_manager_available.cache_clear()
     monkeypatch.setitem(os.environ, "BUILD_LIMITS_HOST_ACCEPTANCE", "1")
     monkeypatch.setattr(systemd_harness.shutil, "which", lambda _name: "available")
     probe = mock.Mock(side_effect=failure)
     monkeypatch.setattr(subprocess, "run", probe)
 
-    assert not user_manager_available(), "unavailable systemd skips host tests"
-    probe.assert_called_once()
+    try:
+        assert not user_manager_available(), "a failed manager probe must skip"
+        assert not user_manager_available(), "the cached failure should be reused"
+        probe.assert_called_once()
+    finally:
+        user_manager_available.cache_clear()

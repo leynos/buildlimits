@@ -60,7 +60,7 @@ class HeldPoolScenario:
 
 
 def test_queries_bypass_a_full_pool_but_compiles_still_queue(tmp_path: Path) -> None:
-    """Keep all tokens held while direct and recognised wrapped probes finish."""
+    """Keep all tokens held while direct and recognized wrapped probes finish."""
     with contextlib.ExitStack() as owned:
         harness = Harness(2)
         owned.callback(harness.close)
