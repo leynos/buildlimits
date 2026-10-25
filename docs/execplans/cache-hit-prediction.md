@@ -11,7 +11,7 @@ documentation gates and milestone review passed; EP-M1 commits are complete;
 EP-M2 is complete in `327ae5a` and `080d9c0`, with final gates and local
 CodeRabbit review passed; EP-M3 red contracts are committed as `195ff77` and
 its implementation and full gates passed; EP-M4 implementation, full gates and
-clean review passed)
+clean review passed in `636f3ed`)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -768,7 +768,7 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] EP-M3: pure keys, records and the window ledger; implementation and
   full gates passed.
 - [x] EP-M4: the reading sequencer over fake ports; implementation, full
-  gates and archive-bound review passed in candidate 64.
+  gates and archive-bound review passed in commit `636f3ed` (candidate 64).
 - [ ] EP-M5: adapters (non-blocking child, queries, generation, store
   writer).
 - [ ] EP-M6: inert schema, configuration and tracing vocabulary
