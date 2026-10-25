@@ -44,15 +44,15 @@ PYLINT_TARGETS ?= $(PYTHON_TARGETS)
 PYLINT = $(UV_ENV) $(UV) tool run --managed-python --python $(PYLINT_PYTHON) --from 'pylint==$(PYLINT_VERSION)' pylint
 
 
-.PHONY: help all audit clean build build-release lint lint-python fmt check-fmt \
-        check-python-sources \
+.PHONY: help all audit clean build build-release lint lint-python fmt \
+        check-fmt check-lock check-python-sources \
         markdownlint nixie spelling test test-systemd-user typecheck dead-code duplication install-nose lint-actions validate $(TOOLS) $(VENV_TOOLS)
 
 .DEFAULT_GOAL := all
 # Shared build caches require sequential gates even when make receives -j.
 .NOTPARALLEL:
 
-all: check-python-sources build check-fmt lint typecheck test
+all: check-lock check-python-sources build check-fmt lint typecheck test
 	+$(MAKE) spelling
 
 define ensure_uv
@@ -62,11 +62,14 @@ define ensure_uv
 	}
 endef
 
+check-lock: ## Check that uv.lock matches project metadata
+	$(UV_ENV) $(UV) lock --check
+
 .venv: pyproject.toml
 	$(call ensure_uv)
 	$(UV_ENV) $(UV) venv --clear
 
-build: .venv ## Build virtual-env and install deps
+build: check-lock .venv ## Build virtual-env and install deps
 	$(UV_ENV) $(UV) sync --group dev
 
 build-release: ## Build artefacts (sdist & wheel)

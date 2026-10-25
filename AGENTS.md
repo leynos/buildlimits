@@ -79,6 +79,7 @@
   - **Typechecking:** Passes type checking (`make typecheck`).
   - **Auditing:** Passes dependency vulnerability checks (`make audit`).
   - The generated Makefile wiring for these targets is:
+    - `make check-lock` runs `uv lock --check` before the mutable sync.
     - `make check-fmt` runs Ruff formatting checks with
       `ruff format --check $(PYTHON_TARGETS)`.
     - `make lint` runs `make lint-python`; `make lint-python` runs

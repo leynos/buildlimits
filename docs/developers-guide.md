@@ -31,13 +31,14 @@ package, its tests and the console scripts the collection installs.
 ## 2. Local workflow and quality gates
 
 `make all` is the aggregate gate. It runs, in order and never in parallel,
-`build`, `check-fmt`, `lint`, `typecheck`, `test` and `spelling`. Run
-`make markdownlint` and `make nixie` after documentation changes, and
+`check-lock`, `build`, `check-fmt`, `lint`, `typecheck`, `test` and `spelling`.
+Run `make markdownlint` and `make nixie` after documentation changes, and
 `make audit` for the dependency vulnerability check. Narrower targets are for
 investigating a specific failure; reconcile with `make all` before committing.
 
 | Target                   | What it runs                                                                                      |
 | ------------------------ | ------------------------------------------------------------------------------------------------- |
+| `make check-lock`        | `uv lock --check` before the mutable dependency sync                                              |
 | `make build`             | `uv sync --group dev` into `.venv`                                                                |
 | `make check-fmt`         | Ruff 0.16.8 format check and mdtablefix 0.6.1 table check                                         |
 | `make fmt`               | Applies Ruff formatting, import sorting and Markdown table fixes                                  |
@@ -50,11 +51,14 @@ investigating a specific failure; reconcile with `make all` before committing.
 _Table 1: Make targets and the gates behind them._
 
 Python sources are discovered through Git, tracked and untracked, so `git init`
-must have run before the first gate. The tool pins live in the `Makefile`; bump
-one deliberately, updating the pin and fixing any new diagnostics in the same
-change. `ty` runs as an isolated tool, so the `typecheck` target passes
-`--python .venv` to resolve imports from the project environment rather than
-from the tool's own.
+must have run before the first gate. `make all` starts with `make check-lock`,
+and `build` depends on it for direct build, format and format-check commands.
+The check fails on stale project metadata before `uv sync` can update the
+lockfile. The tool-pin contract requires the isolated `TY_VERSION` and
+`RUFF_VERSION` defaults to match their exact pins in the dev group. When
+bumping ty or Ruff, update its Makefile default in the same change and fix any
+new diagnostics. Both tools run in isolation; `typecheck` passes
+`--python .venv` so ty resolves imports from the project environment.
 
 ### 2.1. The Python 3.14 baseline
 
