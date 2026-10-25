@@ -104,7 +104,7 @@ def fixture_query(
 
 
 @contextlib.contextmanager
-def journal_receiver(path: Path, timeout: float = 1.0) -> cabc.Iterator[socket.socket]:
+def journal_receiver(path: Path, timeout: float = 1.0) -> cabc.Generator[socket.socket]:
     """Bind a datagram receiver where a sink sends its native records.
 
     Parameters

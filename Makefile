@@ -25,7 +25,7 @@ PYTEST_XDIST_WORKERS ?= auto
 PYTHON_TARGETS_FROM_GIT := $(if $(filter undefined,$(origin PYTHON_TARGETS)),1,0)
 PYTHON_TARGETS ?=
 RUFF_VERSION ?= 0.16.8
-TY_VERSION ?= 0.0.74
+TY_VERSION ?= 0.0.89
 LINT_PYTHON ?= 3.14
 RUFF = $(UV_ENV) $(UV) tool run --python $(LINT_PYTHON) --from 'ruff==$(RUFF_VERSION)' ruff
 TY = $(UV_ENV) $(UV) tool run --python $(LINT_PYTHON) --from 'ty==$(TY_VERSION)' ty

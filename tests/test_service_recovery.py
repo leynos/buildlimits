@@ -19,7 +19,7 @@ pytestmark = systemd_user_marks("needs a systemd user manager")
 
 
 @contextlib.contextmanager
-def _live_cache() -> cabc.Iterator[tuple[Harness, CachedUnits, str]]:
+def _live_cache() -> cabc.Generator[tuple[Harness, CachedUnits, str]]:
     """Run an isolated cached supervisor and yield its units and live cache id.
 
     Yields

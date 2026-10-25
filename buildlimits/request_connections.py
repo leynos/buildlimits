@@ -98,7 +98,7 @@ def _answer_once(
 
 
 @contextlib.contextmanager
-def unrecorded(conn: socket.socket, fds: list[int]) -> cabc.Iterator[None]:
+def unrecorded(conn: socket.socket, fds: list[int]) -> cabc.Generator[None]:
     """Reclaim unrecorded resources if dispatch fails before ownership transfers.
 
     Parameters

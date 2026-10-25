@@ -36,7 +36,9 @@ def test_error_reader_unregisters_before_close_after_complete_outcome(
         try:
             os.write(write, b"stage=exec")
             assert groups.exec_outcome("g1") is None, "partial data needs another event"
-            assert selector.get_key(read), "incomplete diagnostics retain their watch"
+            assert selector.get_key(read).data == ("exec", "g1"), (
+                "incomplete diagnostics retain their watch"
+            )
             assert not inspected, "partial data does not release selector ownership"
             os.close(write)
             write = -1

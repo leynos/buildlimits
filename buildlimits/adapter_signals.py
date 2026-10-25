@@ -40,7 +40,9 @@ def cancel_on_signal(interrupted: cabc.Callable[[], None] | None = None) -> None
 
 
 @contextlib.contextmanager
-def observe_signals(interrupted: cabc.Callable[[], None]) -> cabc.Iterator[None]:
+def observe_signals(
+    interrupted: cabc.Callable[[], None],
+) -> cabc.Generator[None]:
     """Install invocation-local cancellation handlers and restore them on return.
 
     Parameters

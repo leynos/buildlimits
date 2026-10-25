@@ -95,7 +95,7 @@
       Skylos and Vulture dead-code checks, shared Nose duplication gate, and
       action validation are also part of `make lint`.
     - `make typecheck` runs `ty check $(PYTHON_TARGETS)`.
-      `ty` 0.0.74 and Ruff 0.16.8 run in isolated Python 3.14 tools.
+      `ty` 0.0.89 and Ruff 0.16.8 run in isolated Python 3.14 tools.
       `make lint-actions` validates workflows and actions with actionlint,
       action-validator, yamllint 1.38.0, and shellcheck.
     - `make test` runs `pytest -v -n $(PYTEST_XDIST_WORKERS)` and honours

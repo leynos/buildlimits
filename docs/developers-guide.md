@@ -42,7 +42,7 @@ investigating a specific failure; reconcile with `make all` before committing.
 | `make check-fmt`         | Ruff 0.16.8 format check and mdtablefix 0.6.1 table check                                         |
 | `make fmt`               | Applies Ruff formatting, import sorting and Markdown table fixes                                  |
 | `make lint`              | Ruff, Interrogate (100%), Pylint and DF12 lints, Ambrleaks, Skylos, Vulture, duplication, actions |
-| `make typecheck`         | `ty` 0.0.74 against the project interpreter (`--python .venv`)                                    |
+| `make typecheck`         | `ty` 0.0.89 against the project interpreter (`--python .venv`)                                    |
 | `make test`              | pytest under xdist over `tests/` and the package's doctests                                       |
 | `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |

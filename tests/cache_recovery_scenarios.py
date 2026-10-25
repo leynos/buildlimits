@@ -48,7 +48,7 @@ def retained_counts(*, cached_moving: int) -> Counts:
 @contextlib.contextmanager
 def busy_supervisor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> cabc.Iterator[Harness]:
+) -> cabc.Generator[Harness]:
     """Build the production supervisor over a busy host with a visible root.
 
     A cached group keeps running and a visible root defeats the prompt proof,
