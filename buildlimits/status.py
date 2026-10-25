@@ -12,7 +12,7 @@ fetches it, :mod:`buildlimits.status_render` presents it, and
 import resource
 import typing as typ
 
-from buildlimits import descriptors
+from buildlimits import admission_readiness, descriptors
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -38,6 +38,20 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
     """
     admission = supervisor.admission
     now = supervisor.clock()
+    counts = admission.counts()
+    recovery = supervisor.recovery.describe(now)
+    readiness = admission_readiness.classify(
+        admission_readiness.ReadinessFacts(
+            healthy=admission.healthy,
+            closing=admission.closing,
+            counts=counts,
+            drain_fault_kind=supervisor.server.drain_fault_kind,
+            recovery_automatic=typ.cast("bool", recovery["automatic"]),
+            recovery_phase=typ.cast("str", recovery["phase"]),
+            recovery_attempts=typ.cast("int", recovery["attempts"]),
+            recovery_pending=typ.cast("bool", recovery["pending"]),
+        )
+    )
     groups: list[dict[str, object]] = []
     for group in admission.groups.values():
         entry = supervisor.requests.pending.get(group.request_id)
@@ -77,7 +91,16 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
         "caching": admission.cached,
         # Recovery never takes a waiting request's place, so the queue is
         # reported exactly as admission holds it.
-        "cache_recovery": supervisor.recovery.describe(now),
+        "cache_recovery": recovery,
+        "admission": {
+            "state": readiness.state,
+            "ready": readiness.ready,
+            "reason": readiness.reason,
+            "running": counts.running,
+            "draining": counts.draining,
+            "server_drain": counts.server_drain,
+            "queued": len(admission.queue),
+        },
         "queued": queued_requests(supervisor.requests.pending, admission.queue, now),
         "groups": groups,
         "descriptors": _descriptor_metrics(supervisor),

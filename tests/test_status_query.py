@@ -183,6 +183,15 @@ def test_an_idle_supervisor_describes_itself(
         assert json.loads(json.dumps(document)) == document, "the document is JSON"
         assert document["device"] == str(supervisor.settings.device), "device reported"
         assert (document["capacity"], document["held"]) == (3, 0), "nothing is held"
+        admission = document["admission"]
+        assert isinstance(admission, dict), "admission readiness is structured"
+        assert admission["state"] == "ready", "an idle supervisor is ready"
+        assert admission["ready"] is True, "the readiness result is explicit"
+        assert admission["reason"] == "3 of 3 slots available", "reason is stable"
+        assert admission["queued"] == 0, "the admission queue is empty"
+        assert admission["running"] == 0, "no compiler is running"
+        assert admission["draining"] == 0, "no compiler is draining"
+        assert admission["server_drain"] == 0, "no token awaits server accounting"
         assert not document["queued"], "no request waits"
         assert not document["groups"], "no group runs"
         assert document["health_reason"] is None, (
@@ -207,3 +216,17 @@ def test_an_idle_supervisor_describes_itself(
         )
         # The device path depends on configuration defaults, not on this contract.
         assert {**document, "device": "<device>"} == snapshot, "the document changed"
+
+
+def test_readiness_uses_the_admission_queue_not_request_metadata() -> None:
+    """A queued identifier remains visible before requester metadata exists."""
+    supervisor = Supervisor(
+        SupervisorConfig(slots=2), typ.cast("UserManager", object()), clock=lambda: 0.0
+    )
+    supervisor.admission.queue.append(99)
+    with supervisor.selector:
+        document = status.describe(supervisor)
+    admission = document["admission"]
+    assert isinstance(admission, dict), "admission readiness is structured"
+    assert admission["queued"] == 1, "the authoritative queue has one waiter"
+    assert document["queued"] == [], "missing request metadata is not invented"

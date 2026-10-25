@@ -1,0 +1,229 @@
+"""Purely classify whether the admission ledger can make progress.
+
+Supervisor health describes the process and its token pool. Admission
+readiness answers a separate question: whether a request can run now, is
+waiting for normal capacity, or is blocked on operator recovery. Cache
+reachability is deliberately absent because direct compilation can still
+admit work safely.
+"""
+
+import dataclasses as dc
+import typing as typ
+
+# CrossHair resolves this dataclass field annotation at runtime.
+from buildlimits.admission_state import Counts  # ruff: ignore[typing-only-first-party-import]
+
+type AdmissionState = typ.Literal[
+    "blocked", "closing", "draining", "ready", "saturated", "unhealthy"
+]
+
+_READY_STATES = frozenset({"ready", "saturated", "draining"})
+
+
+@dc.dataclass(frozen=True, slots=True, kw_only=True)
+class ReadinessFacts:
+    """Immutable ledger and recovery facts for one readiness decision.
+
+    Attributes
+    ----------
+    healthy : bool
+        Whether the supervisor and its token pool are healthy.
+    closing : bool
+        Whether the supervisor is winding down for a graceful stop.
+    counts : Counts
+        The authoritative token, compiler-group, and queue snapshot. Cache
+        composition is not used to classify readiness.
+    drain_fault_kind : str | None
+        The most recent failed accounting probe's kind, if one exists.
+    recovery_automatic : bool
+        Whether the configured policy can open recovery automatically.
+    recovery_phase : str
+        The current recovery phase, or ``idle`` when no transaction runs.
+    recovery_attempts : int
+        Failed attempts in the current recovery transaction.
+    recovery_pending : bool
+        Whether recovery is due or running with attempts remaining.
+
+    Examples
+    --------
+    >>> facts = ReadinessFacts(
+    ...     healthy=True, closing=False,
+    ...     counts=Counts(
+    ...         capacity=2, held=0, running=0, draining=0, server_drain=0,
+    ...         queued=0, cached_moving=0,
+    ...     ),
+    ...     drain_fault_kind=None,
+    ...     recovery_automatic=False, recovery_phase="idle",
+    ...     recovery_attempts=0, recovery_pending=False,
+    ... )
+    >>> classify(facts).state
+    'ready'
+    """
+
+    healthy: bool
+    closing: bool
+    counts: Counts
+    drain_fault_kind: str | None
+    recovery_automatic: bool
+    recovery_phase: str
+    recovery_attempts: int
+    recovery_pending: bool
+
+
+@dc.dataclass(frozen=True, slots=True)
+class AdmissionReadiness:
+    """The stable admission state and its short count-only explanation.
+
+    Attributes
+    ----------
+    state : AdmissionState
+        The readiness classification.
+    reason : str
+        A count-only explanation with no request or group identifiers.
+    """
+
+    state: AdmissionState
+    reason: str
+
+    @property
+    def ready(self) -> bool:
+        """Whether the classified state permits normal admission checks."""
+        return self.state in _READY_STATES
+
+
+def classify(facts: ReadinessFacts) -> AdmissionReadiness:
+    """Classify progress from one read-only admission snapshot.
+
+    Precedence is unhealthy, closing, operator-blocked full server drain,
+    progressing full server drain, ordinary saturation, then available
+    capacity. An automatic idle trigger with no queued demand is not treated as
+    blocked: its first waiter opens the starvation trigger.
+
+    Parameters
+    ----------
+    facts : ReadinessFacts
+        The ledger, immediate drain fault and recovery outlook at one instant.
+
+    Returns
+    -------
+    AdmissionReadiness
+        The state and stable explanation for status consumers.
+
+    Examples
+    --------
+    >>> classify(ReadinessFacts(
+    ...     healthy=True, closing=False,
+    ...     counts=Counts(
+    ...         capacity=2, held=2, running=2, draining=0, server_drain=0,
+    ...         queued=1, cached_moving=0,
+    ...     ),
+    ...     drain_fault_kind=None,
+    ...     recovery_automatic=False, recovery_phase="idle",
+    ...     recovery_attempts=0, recovery_pending=False,
+    ... )).ready
+    True
+    """
+    if not facts.healthy:
+        return AdmissionReadiness("unhealthy", "supervisor is unhealthy")
+    if facts.closing:
+        return AdmissionReadiness("closing", "supervisor is closing")
+
+    if facts.counts.capacity > 0 and facts.counts.server_drain >= facts.counts.capacity:
+        return _classify_full_server_drain(facts)
+    return _classify_other_capacity(facts)
+
+
+def _classify_full_server_drain(facts: ReadinessFacts) -> AdmissionReadiness:
+    """Tell a progressing retained drain from one that needs operator action.
+
+    Returns
+    -------
+    AdmissionReadiness
+        The retained-drain progress or operator-blocked state.
+
+    Examples
+    --------
+    >>> _classify_full_server_drain(ReadinessFacts(
+    ...     healthy=True, closing=False,
+    ...     counts=Counts(
+    ...         capacity=1, held=1, running=0, draining=0, server_drain=1,
+    ...         queued=1, cached_moving=0,
+    ...     ),
+    ...     drain_fault_kind="live_work", recovery_automatic=False,
+    ...     recovery_phase="idle", recovery_attempts=0,
+    ...     recovery_pending=False,
+    ... )).state
+    'blocked'
+    """
+    automatic_waits_for_demand = (
+        facts.recovery_automatic
+        and facts.recovery_phase == "idle"
+        and facts.counts.queued == 0
+    )
+    operator_recovery_required = facts.drain_fault_kind is not None and (
+        facts.drain_fault_kind != "live_work"
+        or (not facts.recovery_pending and not automatic_waits_for_demand)
+    )
+    capacity = facts.counts.capacity
+    slot_word = "slot" if capacity == 1 else "slots"
+    retained = f"{capacity} server-drain {slot_word} retained"
+    if operator_recovery_required:
+        if facts.recovery_attempts > 0 and not facts.recovery_pending:
+            reason = (
+                f"{retained}; recovery stopped after {facts.recovery_attempts} attempts"
+            )
+        else:
+            reason = f"{retained}; operator recovery required"
+        return AdmissionReadiness("blocked", reason)
+
+    if facts.recovery_phase != "idle":
+        progress = f"recovery is in {facts.recovery_phase}"
+    elif facts.recovery_pending:
+        progress = "automatic recovery is pending"
+    elif automatic_waits_for_demand:
+        progress = "automatic recovery waits for demand"
+    else:
+        progress = "drain accounting is active"
+    return AdmissionReadiness("draining", f"{retained}; {progress}")
+
+
+def _classify_other_capacity(facts: ReadinessFacts) -> AdmissionReadiness:
+    """Report normal saturation or the capacity left beside a partial drain.
+
+    Returns
+    -------
+    AdmissionReadiness
+        The normal capacity state and its count-only reason.
+
+    Examples
+    --------
+    >>> _classify_other_capacity(ReadinessFacts(
+    ...     healthy=True, closing=False,
+    ...     counts=Counts(
+    ...         capacity=2, held=2, running=2, draining=0, server_drain=0,
+    ...         queued=1, cached_moving=0,
+    ...     ),
+    ...     drain_fault_kind=None,
+    ...     recovery_automatic=False, recovery_phase="idle",
+    ...     recovery_attempts=0, recovery_pending=False,
+    ... )).state
+    'saturated'
+    """
+    counts = facts.counts
+    if counts.capacity > 0 and counts.held >= counts.capacity:
+        reason = f"all {counts.capacity} slots are occupied"
+        if counts.server_drain > 0:
+            retained_word = "slot" if counts.server_drain == 1 else "slots"
+            reason += f"; {counts.server_drain} server-drain {retained_word} retained"
+        return AdmissionReadiness("saturated", reason)
+
+    available = max(0, counts.capacity - counts.held)
+    if counts.server_drain > 0:
+        retained_word = "slot" if counts.server_drain == 1 else "slots"
+        reason = (
+            f"{counts.server_drain} server-drain {retained_word} retained; "
+            f"{available} of {counts.capacity} slots available"
+        )
+    else:
+        reason = f"{available} of {counts.capacity} slots available"
+    return AdmissionReadiness("ready", reason)
