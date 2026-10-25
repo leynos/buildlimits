@@ -288,8 +288,11 @@ def test_readiness_inputs_are_frozen() -> None:
     """A readiness decision cannot be changed through mutable input fields."""
     facts = _facts()
     mutable_facts = typ.cast("typ.Any", facts)
+    mutable_counts = typ.cast("typ.Any", facts.counts)
     with pytest.raises(dc.FrozenInstanceError):
-        mutable_facts.held = 4
+        mutable_facts.healthy = False
+    with pytest.raises(dc.FrozenInstanceError):
+        mutable_counts.held = 4
 
 
 def test_cache_reachability_is_not_a_readiness_input() -> None:
