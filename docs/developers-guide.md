@@ -784,6 +784,10 @@ composite actions.
   `make check-fmt`, `make lint`, `make typecheck`, `make markdownlint`,
   `make audit` (skipped for Dependabot) and coverage through the shared
   coverage action.
+- Both coverage workflows set `python-source: buildlimits,scripts`, keeping
+  the pull-request measurement and main-branch ratchet baseline on the same
+  scope. This measures application code and repository automation while
+  excluding the test harnesses.
 - `audit.yml` runs `make audit` weekly as the compensating control for the
   Dependabot bypass.
 - `act-validation.yml` runs `make test WITH_ACT=1` to exercise the workflows
