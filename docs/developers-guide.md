@@ -765,6 +765,10 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `outcome_vocabulary_test_support.py`      | Shared outcome-token aliases for schema and metrics-sink contract tests                                                   |
 | `fizzbee_spike.py`                 | The scratch-directory `run_model` runner, output masking and error-graph readers                    |
 | `fizzbee_expectations.py`          | `Expectation`, `check` and `paired`: what one run or a pass/fail pair must show, enforced per test  |
+| `modelcheck_cases.py`              | One expectation, result, configuration and trace of each kind, named once for the domain tests                    |
+| `modelcheck_doubles.py`            | `FakeChecker`, `Verbatim`, `Restated` and `FixedSource`: recorded checker output replayed through the real parser |
+| `modelcheck_scenarios.py`          | The model text, the `Matrix` one model-check scenario builds, and the readers its steps use                       |
+| `modelcheck_cli_cases.py`          | The command lines and expected exit statuses the CLI tests share                                                  |
 
 _Table 4: Shared test helper modules._
 
@@ -934,6 +938,31 @@ session- or module-scoped fixture is set up before the baseline and torn down
 after the comparison, so its descriptors are outside the guard and must be
 closed by that fixture's own teardown.
 
+### 11.6. Model checking
+
+`modelcheck/` is a top-level package beside `buildlimits/` and outside the
+wheel (ADR 004). It drives the pinned FizzBee checker over the admission model
+and turns one run into a verdict. Run it through the module:
+
+```sh
+uv run python -m modelcheck check models/admission --fizz .tools/fizzbee/fizz
+uv run python -m modelcheck drift models/admission
+```
+
+`check` exits 0 when every configuration meets its expectations, 1 when one
+does not, and 2 when the tool itself failed; `--bounds` selects the routine or
+nightly declaration, `--only` narrows the matrix, `--json` writes the records
+and `--save-traces` regenerates the reviewed trace files.
+
+The package is a hexagon: the pure modules hold the policy, `ports.py` names
+the collaborators, and `adapters/` are the only modules that touch a process, a
+file or `buildlimits`. `tests/test_modelcheck_layering.py` walks the pure
+modules' syntax trees so the boundary is checked rather than assumed. Tests
+marked `fizzbee` run the real checker and are skipped unless
+`BUILD_LIMITS_MODEL_CHECK=1`; the behavioural scenarios instead replay recorded
+output through the real parser, so a broken parser fails them without the
+binary.
+
 ## 12. Static-analysis exceptions
 
 Every exception is recorded in `pyproject.toml` with its reason; review the
@@ -960,6 +989,18 @@ reason when the code it names changes.
   fragment in that file, so add one only when no name is available. The
   outcome-shell test support has one such unit exception because the detector
   reports its two fake-port close-log fragments without unit names.
+- **`modelcheck`.** The package needed no Skylos entry point and no Vulture
+  name, and `make dead-code` passes with the exceptions here unchanged.
+  `__main__.py` reaches `main` through its `__main__` guard and constructs the
+  adapters inside a function `main` calls, so the call graph has no edge Skylos
+  cannot follow; the two test-support modules are ordinary helpers whose every
+  name a test calls. Its Ruff findings were each local to one line, so they are
+  inline `# ruff: ignore[...]` suppressions with a reason rather than per-file
+  ignores. Of its six duplication allowances, three are import lists shared
+  with the modules named beside them, one is the pair of tests that must both
+  judge through `_judge_row`, one is two builders that share only the numpy
+  Returns section, and one is a single `Path.mkdir` call two unrelated helpers
+  share.
 
 ## 13. Repository automation
 

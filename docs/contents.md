@@ -39,6 +39,9 @@
 - [ADR 005: cache-outcome recording](adr-005-cache-outcome-recording.md)
   records the fixed thresholds, local outcome store and observation-only design
   approved for RFC 0002 W1.
+- [ADR 004: model-check tooling outside the wheel](adr-004-model-check-outside-the-wheel.md)
+  records why the FizzBee tooling is a top-level hexagonal package excluded
+  from the wheel, and the boundaries that keeps.
 
 ## Conventions
 

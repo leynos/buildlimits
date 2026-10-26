@@ -1,4 +1,4 @@
-"""Render the matrices a human reads.
+"""Render the matrices a maintainer or a job reads.
 
 Two reports matter. The check report is one line per expectation — the
 configuration, the property, the verdict, then either the state count of a
@@ -7,15 +7,24 @@ assumptions the run carried — followed by a summary. The drift report names
 the production surface the model no longer accounts for, the mappings that no
 longer resolve, and the exclusions with their reasons.
 
-Both renderers take values and return text. They are pure so that the exact
-wording is pinned by a snapshot rather than by a subprocess's stream, and so
-that a report can be rendered in a test without a checker.
+Each has a machine-readable form beside it: :func:`render_records` writes the
+matrix as a JSON array, which is what ``--json`` produces and what a later
+milestone's tests read instead of re-running the model, and
+:func:`trace_record` turns one counterexample's path into the object
+``--save-traces`` stores. They live here rather than in the command-line
+module because they are the same statements in another notation, and a reader
+comparing the two should not have to hold two vocabularies.
+
+Every renderer takes values and returns text or plain data. They are pure so
+that the exact wording is pinned by a snapshot rather than by a subprocess's
+stream, and so that a report can be rendered in a test without a checker.
 
 Every line names its fairness, including ``none``: a reader has to be able to
 tell a run that made no assumption from a report that forgot to say, and an
 absent column reads as the second.
 """
 
+import json
 import typing as typ
 
 from modelcheck.domain import Counterexample, Passed, Reachable
@@ -25,6 +34,7 @@ if typ.TYPE_CHECKING:
 
     from modelcheck.domain import Expectation, Judgement
     from modelcheck.drift import DriftReport
+    from modelcheck.trace import Trace
 
 _CONFIGURATION_WIDTH = 32
 """The column the configuration name occupies before the property."""
@@ -90,7 +100,7 @@ def _line(judgement: Judgement) -> str:
     """
     columns = [
         f"{judgement.configuration:<{_CONFIGURATION_WIDTH}}",
-        f"{_subject(judgement.expectation):<{_PROPERTY_WIDTH}}",
+        f"{subject(judgement.expectation):<{_PROPERTY_WIDTH}}",
         f"{judgement.verdict!s:<{_VERDICT_WIDTH}}",
         *_evidence(judgement),
         _fairness(judgement),
@@ -100,6 +110,14 @@ def _line(judgement: Judgement) -> str:
 
 def _fairness(judgement: Judgement) -> str:
     """Return the fairness column one judgement contributes.
+
+    The column names the tags in force and nothing else. A level is not
+    printed: ``fairness_in_force`` already excludes a tag whose level is
+    ``unfair``, and the level a run used is the configuration's declaration
+    rather than a result, so quoting it here would print the same fact twice
+    and put a second copy of the configuration in the report. The plan's
+    earlier sample shows ``F1(weak)``; that spelling predates this reasoning
+    and is superseded by D23.
 
     Parameters
     ----------
@@ -115,7 +133,7 @@ def _fairness(judgement: Judgement) -> str:
     return f"fairness: {tags}"
 
 
-def _subject(expectation: Expectation) -> str:
+def subject(expectation: Expectation) -> str:
     """Return the property or probe name one expectation is about.
 
     Parameters
@@ -128,6 +146,12 @@ def _subject(expectation: Expectation) -> str:
     str
         The probe name for a ``Reachable`` expectation and the property name
         for the other two.
+
+    Examples
+    --------
+    >>> from modelcheck import domain
+    >>> subject(domain.Holds("L3")), subject(domain.Reachable("StopIssued"))
+    ('L3', 'StopIssued')
     """
     match expectation:
         case Reachable(probe_name=probe_name):
@@ -219,3 +243,111 @@ def render_drift(report: DriftReport) -> str:
         summary,
     ]
     return "\n".join(lines) + "\n"
+
+
+def render_records(judgements: cabc.Sequence[Judgement]) -> str:
+    """Render the matrix as the JSON array ``--json`` writes.
+
+    Parameters
+    ----------
+    judgements : collections.abc.Sequence[Judgement]
+        The judgements to render, in the same order a report shows them.
+
+    Returns
+    -------
+    str
+        A JSON array with one object per judgement, newline-terminated. Each
+        object names the configuration, the subject, the verdict and whether it
+        was met, and carries the fairness in force and the state count when the
+        run reported one — a result with no state count omits the field rather
+        than claiming zero.
+
+    Examples
+    --------
+    >>> import json
+    >>> from modelcheck import domain
+    >>> record = domain.Judgement(
+    ...     "head", domain.Holds("S1"), domain.Passed(4, 0.1, ()),
+    ...     domain.Verdict.HOLDS, ("F1",),
+    ... )
+    >>> rendered = json.loads(render_records([record]))
+    >>> rendered[0]["subject"], rendered[0]["verdict"], rendered[0]["states"]
+    ('S1', 'holds', 4)
+    """
+    return json.dumps([_record(judgement) for judgement in judgements], indent=2) + "\n"
+
+
+def _record(judgement: Judgement) -> dict[str, object]:
+    """Return one judgement as the object a report's record carries.
+
+    Parameters
+    ----------
+    judgement : Judgement
+        The judgement to render.
+
+    Returns
+    -------
+    dict[str, object]
+        The fields :func:`render_records` writes, with ``states`` present only
+        when the result carries a count.
+    """
+    record: dict[str, object] = {
+        "configuration": judgement.configuration,
+        "subject": subject(judgement.expectation),
+        "verdict": str(judgement.verdict),
+        "met": judgement.is_met,
+        "fairness": list(judgement.fairness_in_force),
+    }
+    states = _states(judgement.result)
+    if states is not None:
+        record["states"] = states
+    return record
+
+
+def _states(result: object) -> int | None:
+    """Return the state count a result carries, if any.
+
+    Parameters
+    ----------
+    result : CheckResult
+        The result to read.
+
+    Returns
+    -------
+    int | None
+        The count a pass or a counterexample reported, and ``None`` for a run
+        that reported none, so a record never claims a figure it lacks.
+    """
+    return result.states if isinstance(result, (Passed, Counterexample)) else None
+
+
+def trace_record(trace: Trace) -> dict[str, object]:
+    """Render one normalized counterexample path as the object a trace file holds.
+
+    Parameters
+    ----------
+    trace : Trace
+        The path to render.
+
+    Returns
+    -------
+    dict[str, object]
+        The initial state, every step's action and state, how the path ends and
+        where its cycle starts. The trace is already normalized, so the record
+        needs no further redaction: it carries names and states the model
+        declares, not addresses or timings.
+
+    Examples
+    --------
+    >>> from modelcheck.trace import Ending, Trace
+    >>> trace_record(Trace({"n": 0}, (), Ending.FINITE, None))["ending"]
+    'finite'
+    """
+    return {
+        "initial": dict(trace.initial),
+        "steps": [
+            {"action": step.action, "state": dict(step.state)} for step in trace.steps
+        ],
+        "ending": str(trace.ending),
+        "cycle_start": trace.cycle_start,
+    }
