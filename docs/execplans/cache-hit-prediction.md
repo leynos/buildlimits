@@ -888,13 +888,20 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] (2026-10-26) EP-M6 schema, config, startup warning, report aggregation
   and documentation are drafted. Its focused config, metrics, service and
   compatibility set passed (178 tests across M6, the two adapter/store fixes,
-  O8 and recorder O2/O3). Full milestone gates remain pending.
+  O8 and recorder O2/O3). Full milestone gates and the committed review are
+  recorded below.
 - [x] (2026-10-26) The `86dee82` worktree candidate passed the full sequential
   M6 gates: `make check-fmt`, `make lint`, `make typecheck`,
   `PYTEST_XDIST_WORKERS=1 make test` (2,123 passed, 26 skipped, 47 snapshots),
   `make markdownlint`, `make nixie` and `make audit`. The package itself was
   unavailable on PyPI for audit; no known vulnerabilities were found. The
-  committed milestone review remains pending.
+  plan-only follow-up initially found a table-formatting difference and the new
+  store machine's `modeled` spelling. `make fmt` corrected the table; the
+  docstring now uses the repository's Oxford spelling. Commit
+  `d0d04954472b4041134c93ff1b8c5d6a00a02b5c` received a clean CodeRabbit CLI
+  0.9.1 review from `86dee827965329e399d3ca827a30b0496e2962ce`:
+  `review_completed`, 0 findings, all 25 expected files reviewed. Review log:
+  `/tmp/coderabbit-ac9f6ac4-ab16-4230-a4f9-0b19d16fbf25-cache-hit-prediction.out`.
 - [x] (2026-10-26) Follow-up gate run `-11` found a Markdown table-formatting
   difference and one failure in the unrelated isolated queue-budget test
   (`DescriptorSendPressureError`, with no errno). `make fmt` fixed the plan
@@ -905,6 +912,13 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   `make markdownlint`, `make nixie` and `make audit`. Audit found no known
   vulnerabilities; the package was unavailable on PyPI. Logs use the `-11`,
   `-queue-budget` and `-12` prefixes under `/tmp`.
+- [x] (2026-10-26) The M6 closeout candidate at `d0d0495` corrected the store
+  machine's Oxford spelling and the plan table with `make fmt`. Its exact tree
+  passed the complete sequential gates: `make check-fmt`, lint, typecheck,
+  2,123 passed/26 skipped/47 snapshots, markdownlint, nixie and audit. The
+  check-fmt, markdownlint and nixie logs use the `-md-3` prefix; lint,
+  typecheck, test and audit use `-13`. The audit found no known vulnerabilities;
+  `buildlimits` was unavailable on PyPI.
 - [x] (2026-10-26) O8's clock-skew boundary is resolved by D37: only the
   compaction that observes a wall-clock jump skips ageing. A restarted writer
   begins with a fresh monotonic baseline and applies ordinary retention.
@@ -932,8 +946,10 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] EP-M5: adapters (non-blocking child, queries, generation, store
   writer). Implementation commit `34ea33b`; full gates and clean archive-bound
   review passed in candidate98.
-- [ ] EP-M6: inert schema, configuration and tracing vocabulary
-  (releasable).
+- [x] EP-M6: inert schema, configuration and tracing vocabulary
+  (releasable); commit `d0d0495`, full sequential gates passed, and committed
+  CodeRabbit review completed cleanly at the 25-file M6 boundary. Its
+  post-review spelling correction is covered by the gate run above.
 - [ ] EP-M7: supervisor wiring, status, report, `h3` replay, systemd
   scenarios and documentation.
 - [ ] EP-M8: H2 child sightings, the `h2` replay, and their documentation.

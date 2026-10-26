@@ -255,7 +255,7 @@ class OutcomeStoreMachine(RuleBasedStateMachine):
 
     @invariant()
     def persisted_rows_match_the_model(self) -> None:
-        """Every completed action leaves only the modeled complete records."""
+        """Every completed action leaves only the modelled complete records."""
         assert stored_records(self.path) == tuple(self.expected), (
             "persisted rows match the ordered reference model"
         )
