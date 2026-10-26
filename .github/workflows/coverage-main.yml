@@ -47,6 +47,9 @@ jobs:
         with:
           output-path: coverage.xml
           format: cobertura
+          # Keep the trunk baseline on the same application-source scope as
+          # pull-request coverage; test harnesses are not product code.
+          python-source: buildlimits,scripts
           artefact-name-suffix: buildlimits
           publish-artefact: ${{ env.ACT != 'true' }}
           with-ratchet: 'true'
