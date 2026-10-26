@@ -209,12 +209,13 @@ def wait_for_queued_compile(
             result = wait.observed.finish(timeout=0)
             raise AssertionError(result_evidence(result, entries))
         time.sleep(0.05)
-    raise AssertionError(
+    msg = (
         f"{wait.driver_name} did not reach one queued compile: "
         f"status={latest}; probes={entries}; stderr={wait.observed.stderr_lines}; "
         f"stdout={wait.observed.stdout_path.read_text(errors='replace')}\n"
         + harness.journal()
     )
+    raise AssertionError(msg)
 
 
 def _driver_probe_entries(
@@ -339,13 +340,14 @@ def finish_or_fail(
     try:
         return observed.finish(timeout)
     except subprocess.TimeoutExpired as error:
-        raise AssertionError(
+        msg = (
             f"host command exceeded {timeout}s: {error}; "
             f"status={harness.status()}; probes={timing_entries(timing_log)}; "
             f"stderr={observed.stderr_lines}; "
             f"stdout={observed.stdout_path.read_text(errors='replace')}\n"
             + harness.journal()
-        ) from error
+        )
+        raise AssertionError(msg) from error
 
 
 def finish_barriers(processes: list[subprocess.Popen[bytes]]) -> None:
