@@ -43,7 +43,7 @@ jobs:
 
 
       - name: Generate coverage
-        uses: leynos/shared-actions/.github/actions/generate-coverage@ec1432aa6fa5379b2dd8f4b3402fd5b250a597bd
+        uses: leynos/shared-actions/.github/actions/generate-coverage@05708ba58378ae2049a166d20192e81e3bbd7447
         with:
           output-path: coverage.xml
           format: cobertura
