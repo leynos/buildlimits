@@ -72,7 +72,7 @@ def _listen(path: Path) -> socket.socket:
 
 
 @contextlib.contextmanager
-def _serving_server(path: Path) -> cabc.Iterator[None]:
+def _serving_server(path: Path) -> cabc.Generator[None]:
     """Answer the reachability probe as a running server does.
 
     Parameters

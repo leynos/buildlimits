@@ -79,7 +79,7 @@ def crate_pending(
 
 
 @contextlib.contextmanager
-def recorded_request() -> cabc.Iterator[
+def recorded_request() -> cabc.Generator[
     tuple[selectors.BaseSelector, socket.socket, Requests, Pending]
 ]:
     """Record one validated direct request over a real connection.
