@@ -52,13 +52,14 @@ _Table 1: Make targets and the gates behind them._
 
 Python sources are discovered through Git, tracked and untracked, so `git init`
 must have run before the first gate. `make all` starts with `make check-lock`,
-and `build` depends on it for direct build, format and format-check commands.
-The check fails on stale project metadata before `uv sync` can update the
-lockfile. The tool-pin contract requires the isolated `TY_VERSION` and
-`RUFF_VERSION` defaults to match their exact pins in the dev group. When
-bumping ty or Ruff, update its Makefile default in the same change and fix any
-new diagnostics. Both tools run in isolation; `typecheck` passes
-`--python .venv` so ty resolves imports from the project environment.
+and both `build` and `build-release` depend on it. Direct builds, format and
+format-check commands, and release builds therefore fail on stale project
+metadata before `uv sync` or `uv run` can update the lockfile. The tool-pin
+contract requires the isolated `TY_VERSION` and `RUFF_VERSION` defaults to
+match their exact pins in the dev group. When bumping ty or Ruff, update its
+Makefile default in the same change and fix any new diagnostics. Both tools run
+in isolation; `typecheck` passes `--python .venv` so ty resolves imports from
+the project environment.
 
 ### 2.1. The Python 3.14 baseline
 

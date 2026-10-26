@@ -72,7 +72,7 @@ check-lock: ## Check that uv.lock matches project metadata
 build: check-lock .venv ## Build virtual-env and install deps
 	$(UV_ENV) $(UV) sync --group dev
 
-build-release: ## Build artefacts (sdist & wheel)
+build-release: check-lock ## Build artefacts (sdist & wheel)
 	$(call ensure_uv)
 	$(UV_ENV) $(UV) run python -m build --sdist --wheel
 
