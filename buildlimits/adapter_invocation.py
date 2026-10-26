@@ -63,7 +63,7 @@ class Invocation:
     argv : Sequence[str]
         The real compiler's argument vector.
     cacheable : bool
-        Whether the supervisor may compose the compiler with sccache.
+        Whether the supervisor may compose the compiler with the cache.
     env : Mapping[str, str]
         The environment to send and to read the adapter settings from; a
         snapshot of this process's own unless the caller computed another.

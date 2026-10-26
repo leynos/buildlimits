@@ -12,7 +12,7 @@ from buildlimits import supervisor as supervisor_module
 from buildlimits.admission import Group, GroupState, ReturnToken
 from buildlimits.config import SupervisorConfig
 from buildlimits.effects import Exit
-from buildlimits.groups import Running
+from buildlimits.groups import Groups, Running
 from buildlimits.supervisor import Supervisor
 
 if typ.TYPE_CHECKING:
@@ -61,8 +61,12 @@ def test_diagnostic_fault_cannot_lose_an_already_reaped_leader(
         )
         terminated: list[str] = []
         _silence_signal_pipe(monkeypatch)
-        monkeypatch.setattr(instance.groups, "reap", lambda: [(running, Exit(code=0))])
-        monkeypatch.setattr(instance.groups, "terminate", terminated.append)
+        # ``Groups`` is slotted, so a method is substituted on the class; the
+        # patch receives the instance the real method would have.
+        monkeypatch.setattr(Groups, "reap", lambda _groups: [(running, Exit(code=0))])
+        monkeypatch.setattr(
+            Groups, "terminate", lambda _groups, group_id: terminated.append(group_id)
+        )
 
         def fail(_group_id: str) -> None:
             """Fail after the operating-system exit has already been consumed."""
@@ -104,8 +108,10 @@ def test_tick_reconciles_only_lost_cancellation_effects(
                 typ.cast("HeldChild", object()),
             )
         terminated: list[str] = []
-        monkeypatch.setattr(instance.groups, "terminate", terminated.append)
-        monkeypatch.setattr(instance.groups, "advance", lambda _draining: [])
+        monkeypatch.setattr(
+            Groups, "terminate", lambda _groups, group_id: terminated.append(group_id)
+        )
+        monkeypatch.setattr(Groups, "advance", lambda _groups, _draining: [])
         instance._tick()
         assert terminated == ["cancelled"], (
             "reconciliation cannot interrupt normal work"
@@ -156,8 +162,10 @@ def test_one_diagnostic_fault_cannot_discard_other_collected_exits(
         terminated: list[str] = []
         diagnosed: list[str] = []
         _silence_signal_pipe(monkeypatch)
-        monkeypatch.setattr(instance.groups, "reap", lambda: ended)
-        monkeypatch.setattr(instance.groups, "terminate", terminated.append)
+        monkeypatch.setattr(Groups, "reap", lambda _groups: ended)
+        monkeypatch.setattr(
+            Groups, "terminate", lambda _groups, group_id: terminated.append(group_id)
+        )
 
         def diagnose(name: str) -> None:
             """Fault only the first group's diagnostic after both exits were collected."""

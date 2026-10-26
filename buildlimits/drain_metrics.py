@@ -3,8 +3,8 @@
 import contextlib
 import typing as typ
 
+from buildlimits.cache_backend import LiveCacheWorkError
 from buildlimits.metrics import MAX_COUNTER, VOCABULARIES, Metrics
-from buildlimits.sccache import LiveCacheWorkError
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

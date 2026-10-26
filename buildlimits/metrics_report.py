@@ -158,7 +158,7 @@ def _gauges(records: cabc.Sequence[Record]) -> dict[str, object]:
 
 
 def _cache(records: cabc.Sequence[Record]) -> dict[str, object]:
-    """Count admission cache paths and fallbacks among sccache-eligible groups.
+    """Count admission cache paths and fallbacks among cache-eligible groups.
 
     Returns
     -------

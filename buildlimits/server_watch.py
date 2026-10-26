@@ -1,12 +1,16 @@
-"""The supervisor's view of the managed sccache server.
+"""The supervisor's view of the configured cache backend.
 
-The supervisor asks three things of the managed server: whether a crashed
-predecessor left compilations running in it, how many compilations it is
-running while server-drain tokens wait, and whether new groups can be composed
-with it. :class:`ServerWatch` answers them through
-:class:`buildlimits.sccache.ManagedSccache` and turns a server whose state
+The supervisor asks three things of a detached cache: whether a crashed
+predecessor left compilations running in it, how many it is running while
+server-drain tokens wait, and whether new groups can be composed with it.
+:class:`ServerWatch` answers them through the detached adapter -- at present
+:class:`buildlimits.sccache.ManagedSccache` -- and turns a cache whose state
 cannot be read into the safe decision for each question: start-up fails, the
 tokens stay held, and new groups compile directly.
+
+A cache that keeps its work inside the compiler's scope has no detached work
+to account for, so nothing waits, nothing is drained, and composition is
+decided from the backend's own health.
 """
 
 import contextlib
@@ -16,6 +20,7 @@ import typing as typ
 
 from buildlimits import cache_quiesce
 from buildlimits.admission import GroupState, ReturnToken
+from buildlimits.cache_backend import CacheError, is_detached_mode, mode_name
 from buildlimits.drain_guidance import (
     FAULT_PREFIXES,
     MANDATORY_ACTIONS,
@@ -27,11 +32,7 @@ from buildlimits.drain_guidance import (
 from buildlimits.drain_metrics import DrainMetrics
 from buildlimits.journal import log
 from buildlimits.metrics import Metrics, gauge_fields
-from buildlimits.sccache import (
-    LiveCacheWorkError,
-    SccacheError,
-    StartupAccountingError,
-)
+from buildlimits.sccache import LiveCacheWorkError, StartupAccountingError
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -59,7 +60,8 @@ class ServerWatch:
         The admission state whose cache mode and server-drain tokens the
         server's state decides.
     cache_mode : str
-        The configured cache mode; only ``"sccache"`` composes with the server.
+        The configured cache mode. Only a detached mode composes with the
+        server and needs these questions answered.
     metrics : MetricsPort
         Failure-isolated port for cache and server-drain transitions.
     clock : Callable[[], float]
@@ -93,15 +95,11 @@ class ServerWatch:
     def hold_cache(self, seconds: float) -> None:
         """Deny cache composition for a bounded interval from now.
 
-        This is a denial deadline, never evidence. It cannot release a token
-        and it never establishes anything about the server: ``accounted_drain``
-        remains the sole authority for a server-drain token, and every reading
-        here still comes from a real probe. What the deadline buys is the one
-        interval in which the supervisor knows, without any probe, that a
-        composition would be wrong — between asking the cache to stop and
-        observing it back in service — which is exactly the interval in which a
-        reachability reading is stale evidence of a server that is about to go
-        away.
+        This is a denial deadline, never evidence: it cannot release a token,
+        ``accounted_drain`` remains the sole authority for a server-drain
+        token, and every other reading comes from a real probe. It buys the
+        interval between asking the cache to stop and observing it back in
+        service, in which a reachability reading would be stale.
 
         Parameters
         ----------
@@ -121,8 +119,7 @@ class ServerWatch:
         issuing it is no evidence that the server is back: the hold is retired
         and immediately replaced by a real reachability probe. A server that is
         still coming up reads as unreachable, and composition stays denied
-        until the loop's own cache poll observes it answering — so no group is
-        ever composed from the reading taken before the stop. Taking the
+        until the loop's own cache poll observes it answering. Taking the
         reading here rather than deferring it is what closes that window: the
         poll cadence is seconds wide, and the whole stop-and-restart can
         complete inside one interval.
@@ -136,10 +133,12 @@ class ServerWatch:
         Returns
         -------
         bool
-            Whether the configuration composes with sccache and no recovery
-            hold is outstanding.
+            Whether the configuration composes with a detached cache and no
+            recovery hold is outstanding.
         """
-        return self.cache_mode == "sccache" and self.clock() >= self._cache_hold_until
+        return (
+            is_detached_mode(self.cache_mode) and self.clock() >= self._cache_hold_until
+        )
 
     def quiesce_live_cache(self, barrier: RecoveryBarrier, timing: Clock) -> None:
         """Stop a live cache under the barrier so that start-up can account for it.
@@ -157,7 +156,7 @@ class ServerWatch:
             If the live cache cannot be stopped and verified; see
             :func:`buildlimits.cache_quiesce.quiesce_live_cache`.
         """  # ruff: ignore[docstring-extraneous-exception] - cache_quiesce raises it.
-        if self.cache_mode == "sccache":
+        if is_detached_mode(self.cache_mode):
             cache_quiesce.quiesce_and_report(
                 self.server, barrier, timing, self._report_quiesce
             )
@@ -178,15 +177,17 @@ class ServerWatch:
             verified. Coordinate a quiet server stop before restarting this
             supervisor; startup must not interrupt another build's work.
         """
-        if self.cache_mode != "sccache":
+        if not is_detached_mode(self.cache_mode):
             return
         try:
             self.server.accounted_drain()
-        except SccacheError as error:
+        except CacheError as error:
+            name = mode_name(self.cache_mode)
             msg = (
                 f"startup cannot account for managed cache work: {error}; "
-                "operator action: coordinate a quiet sccache stop, verify its "
-                "empty cgroup, then restart admission; do not interrupt active builds"
+                f"operator action: coordinate a quiet {name} stop, verify its "
+                "empty cgroup, then restart admission; "
+                "do not interrupt active builds"
             )
             raise StartupAccountingError(msg) from error
 
@@ -212,7 +213,7 @@ class ServerWatch:
             active = self.drain_metrics.call(
                 "accounted_cache", self.server.accounted_drain
             )
-        except SccacheError as error:
+        except CacheError as error:
             self._load_state(unknown=True)
             self._record_drain_fault(error)
             return []
@@ -223,9 +224,9 @@ class ServerWatch:
 
         Only reached once the manager has proved the cache stopped and empty,
         so this is where the earlier fault is retired and the tokens the server
-        is no longer covering go back. The reading is not re-derived here: the
-        composition flag is whatever :meth:`refresh_cache_mode` last decided
-        from a real reachability probe, and this method changes no part of it.
+        no longer covers go back. The composition flag is whatever
+        :meth:`refresh_cache_mode` last decided from a real probe; this method
+        changes no part of it.
 
         Returns
         -------
@@ -235,8 +236,8 @@ class ServerWatch:
         if self.drain_fault is not None:
             with contextlib.suppress(OSError):
                 log(
-                    "sccache service verified stopped and empty; "
-                    "drain tokens may return"
+                    f"{mode_name(self.cache_mode)} service verified stopped "
+                    "and empty; drain tokens may return"
                 )
         self._clear_drain_fault()
         self._load_state(unknown=False)
@@ -250,7 +251,7 @@ class ServerWatch:
             )
         return effects
 
-    def _record_drain_fault(self, error: SccacheError) -> None:
+    def _record_drain_fault(self, error: CacheError) -> None:
         """Keep unknown work accounted for and deduplicate drain diagnostics."""
         kind = classify(error)
         retained = kind == "live_work"
@@ -351,13 +352,13 @@ class ServerWatch:
         self._fault_roots = None
 
     def refresh_cache_mode(self) -> None:
-        """Compose new groups with sccache only while the server is reachable."""
-        if self.cache_mode != "sccache":
+        """Compose new groups with the cache only while it is reachable."""
+        if not is_detached_mode(self.cache_mode):
             self.admission.cached = False
             return
         try:
             reachable, fault = self.server.is_reachable(), None
-        except SccacheError as error:
+        except CacheError as error:
             reachable, fault = False, str(error)
         self._announce_reachability(reachable=reachable, fault=fault)
         self._fault = fault
@@ -368,11 +369,13 @@ class ServerWatch:
         if fault is not None and fault != self._fault:
             log(f"{fault}; compiling directly")
         elif fault is None and reachable != self.admission.cached:
-            log(
-                "the managed sccache server is reachable; caching compilations"
+            name = mode_name(self.cache_mode)
+            state = (
+                "reachable; caching compilations"
                 if reachable
-                else "the managed sccache server is unreachable; compiling directly"
+                else "unreachable; compiling directly"
             )
+            log(f"the managed {name} server is {state}")
         if reachable != self._reachable:
             self.metrics.emit(
                 "cache_reachability",

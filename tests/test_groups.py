@@ -8,10 +8,12 @@ import pytest
 
 from buildlimits import attributes, launch
 from buildlimits.attributes import ProcessAttributes
+from buildlimits.cache_backend import CacheBackend, DirectCache, is_cache
 from buildlimits.config import SupervisorConfig
 from buildlimits.groups import Groups, Running
 from buildlimits.protocol import CompileRequest
 from buildlimits.requesters import Pending
+from buildlimits.sccache import ManagedSccache
 from buildlimits.systemd import SystemdError
 
 if typ.TYPE_CHECKING:
@@ -44,17 +46,29 @@ def _entry(*, cacheable: bool) -> Pending:
 
 
 def _groups(selector: selectors.BaseSelector, cache_mode: str = "sccache") -> Groups:
-    """Build groups with a configuration and no user manager."""
+    """Build groups with a configuration, a backend and no user manager."""
     settings = SupervisorConfig(
         cache_mode=cache_mode,
         sccache_executable="/managed/sccache",
         sccache_socket=Path("/run/user/1/buildlimits/sccache.sock"),
+    )
+    # The composition root builds this from the mode; these tests exercise the
+    # sccache adapter's argv and environment, so they supply it explicitly.
+    backend: CacheBackend = (
+        ManagedSccache(
+            settings.sccache_unit,
+            settings.sccache_socket,
+            executable=settings.sccache_executable,
+        )
+        if is_cache(cache_mode)
+        else DirectCache()
     )
     return Groups(
         settings,
         typ.cast("UserManager", object()),
         selector,
         lambda: 0.0,
+        backend,
     )
 
 

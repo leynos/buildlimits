@@ -26,6 +26,7 @@ compiling directly.
 import contextlib
 import typing as typ
 
+from buildlimits.cache_backend import is_detached_mode
 from buildlimits.journal import log
 from buildlimits.recovery_barrier import RecoveryBarrier
 from buildlimits.systemd import SystemdError
@@ -91,8 +92,8 @@ def reclaim_after_accounting(
     Parameters
     ----------
     cache_mode : str
-        Only ``sccache`` owns the barrier and the managed server; any other
-        mode returns without touching either.
+        Only a detached mode owns the barrier and the managed server; any
+        other mode returns without touching either.
     barrier : RecoveryBarrier
         The restart barrier left by an interrupted transaction, if any.
     cache : ManagedSccache
@@ -103,7 +104,7 @@ def reclaim_after_accounting(
     Every failure is logged and swallowed: accounting has already succeeded,
     so admission must not wait on a cache that is only slow to return.
     """
-    if cache_mode != "sccache":
+    if not is_detached_mode(cache_mode):
         return
     try:
         # Stat the path rather than asking ``Path.exists``: from Python 3.14

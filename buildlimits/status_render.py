@@ -7,6 +7,8 @@ function of the document, so every variant can be pinned by a snapshot.
 
 import typing as typ
 
+from buildlimits.cache_backend import is_cache, mode_name
+
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -26,7 +28,13 @@ def render(state: cabc.Mapping[str, object]) -> str:
 
     Examples
     --------
-    >>> state = {"capacity": 2, "held": 1, "healthy": True, "caching": True}
+    >>> state = {
+    ...     "capacity": 2,
+    ...     "held": 1,
+    ...     "healthy": True,
+    ...     "caching": True,
+    ...     "cache_mode": "sccache",
+    ... }
     >>> print(render(state))
     capacity 2, held 1, healthy, caching through sccache
     no requests waiting
@@ -130,18 +138,23 @@ def _limit_text(value: object) -> str:
 
 
 def _cache_description(state: cabc.Mapping[str, object]) -> str:
-    """Say how new groups are composed with sccache.
+    """Say how new groups are composed with the configured cache backend.
+
+    The backend is named from the document's ``cache_mode``, so a kache
+    document says kache without the renderer knowing which caches exist.
 
     Returns
     -------
     str
         A short phrase for the summary line.
     """
+    mode = str(state.get("cache_mode", "direct"))
+    if not is_cache(mode):
+        return "compiling directly"
+    name = mode_name(mode)
     if state.get("caching"):
-        return "caching through sccache"
-    if state.get("cache_mode") == "sccache":
-        return "sccache unreachable, compiling directly"
-    return "compiling directly"
+        return f"caching through {name}"
+    return f"{name} unreachable, compiling directly"
 
 
 def _recovery_lines(state: cabc.Mapping[str, object]) -> list[str]:

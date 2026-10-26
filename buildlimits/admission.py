@@ -9,9 +9,10 @@ the RFC's invariants checkable without devices, sockets or processes:
   none;
 - a token returns only after its group's control group is empty, and exactly
   once;
-- a group composed with sccache that ends abnormally keeps its token until the
-  managed server's live compilations fit within the server-drain tokens that
-  remain after its return;
+- a group composed with a detached cache that ends abnormally keeps its token
+  until the cache's live compilations fit within the server-drain tokens that
+  remain after its return, while a group whose cache keeps its work inside the
+  scope returns its token as soon as the scope empties;
 - an unhealthy supervisor admits nothing and drains everything;
 - a closing supervisor launches nothing but lets running groups finish, then
   refuses what waits so that its requesters can try again.
@@ -67,8 +68,13 @@ class Admission(Gauges):
     Parameters
     ----------
     cached : bool
-        Whether new groups run through the managed sccache server. The
-        supervisor updates this as the server's health changes.
+        Whether new groups run through the configured cache. The supervisor
+        updates this as the backend's health changes.
+    cache_detached : bool
+        Whether that backend's accepted work may outlive a group's scope. The
+        supervisor projects it once from the backend, so admission never
+        reads a mode string; it defaults to ``True`` so a cached group whose
+        backend was never attributed keeps its token.
     capacity : int
         Configured pool capacity reported by the gauge seam.
     closing : bool
@@ -98,6 +104,11 @@ class Admission(Gauges):
     """
 
     cached: bool = False
+    # The composition root projects the backend's ``in_scope_work`` here. The
+    # default presumes detached, so a caller that composes a cached group and
+    # does not say otherwise retains its token rather than releasing it: an
+    # unattributed cache must never be the reason a token goes back early.
+    cache_detached: bool = True
     capacity: int = 0
     healthy: bool = True
     queue: collections.deque[RequestId] = dc.field(default_factory=collections.deque)
@@ -116,7 +127,7 @@ class Admission(Gauges):
         request_id : RequestId
             A request identifier unique for the supervisor's lifetime.
         cacheable : bool
-            Whether the request may run through the managed sccache server.
+            Whether the request may run through the configured cache.
             Rustdoc invocations are not cacheable.
 
         Returns
@@ -158,7 +169,13 @@ class Admission(Gauges):
         cached = cached and self.cache_allowed()
         group_id = f"g{self._next_group}"
         self._next_group += 1
-        self.groups[group_id] = Group(group_id, request_id, token, cached=cached)
+        self.groups[group_id] = Group(
+            group_id,
+            request_id,
+            token,
+            cached=cached,
+            detached=cached and self.cache_detached,
+        )
         effects: list[Effect] = [Launch(request_id, group_id, cached=cached)]
         effects.extend(self._positions())
         return effects + self._demand()
@@ -235,7 +252,7 @@ class Admission(Gauges):
         group = self.groups[group_id]
         group.exit = exit_
         group.state = GroupState.DRAINING
-        # Anything left after the leader is an orphan, such as an sccache server.
+        # Anything left after the leader is an orphan, such as a cache server.
         return [Terminate(group_id)]
 
     def group_emptied(self, group_id: GroupId) -> list[Effect]:
@@ -250,14 +267,18 @@ class Admission(Gauges):
         -------
         list[Effect]
             The requester's result, and the token's return unless the group
-            may have left a compilation running in the sccache server.
+            may have left a compilation running in a detached cache.
         """
         group = self.groups[group_id]
         # A group can empty before its leader's exit is reaped; report that
         # as an unknown ending rather than inventing a status.
         exit_ = group.exit if group.exit is not None else Exit()
         effects: list[Effect] = [NotifyFinished(group.request_id, exit_)]
-        if group.cached and group.may_orphan_server_work:
+        # Both halves are needed: a cached group whose backend works in scope
+        # cannot leave anything behind, and an uncached one never reached a
+        # cache. Only then does the ending itself have to be consulted.
+        may_hold = group.detached and group.may_orphan_server_work
+        if group.cached and may_hold:
             group.state = GroupState.SERVER_DRAIN
             return effects
         del self.groups[group_id]
@@ -274,7 +295,7 @@ class Admission(Gauges):
         Parameters
         ----------
         active_compiles : int
-            Compilations currently running in the managed sccache server.
+            Compilations currently running in the detached cache.
 
         Returns
         -------

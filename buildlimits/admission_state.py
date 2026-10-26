@@ -68,13 +68,20 @@ class Group:
     token : bytes
         The pool token the group holds.
     cached : bool
-        Whether the group runs through the managed sccache server.
+        Whether the group runs through a cache backend.
     state : GroupState
         Where the group is in its lifecycle.
     cancelled : bool
         Whether the requester cancelled the group.
     exit : Exit | None
         How the group's leading process ended, once known.
+    detached : bool
+        Whether the group's cache may hold accepted work outside the scope.
+        Only a detached cache needs the server-drain accounting that
+        :attr:`may_orphan_server_work` describes. It defaults to ``True`` so a
+        group built outside admission -- a test fixture, say -- keeps the
+        conservative behaviour; admission always states it explicitly from the
+        backend's capability.
     """
 
     group_id: GroupId
@@ -84,21 +91,22 @@ class Group:
     state: GroupState = GroupState.RUNNING
     cancelled: bool = False
     exit: Exit | None = None
+    detached: bool = True
 
     @property
     def may_orphan_server_work(self) -> bool:
-        """Whether this group's ending may have left work in the sccache server.
+        """Whether this group's ending may have left work in a detached cache.
 
         A cancelled group or one whose exit was never established is always
         suspect, because nothing observed how it ended; a known ending is
         suspect only for a signal, which the leader may not have passed on to
-        the server before it died. A clean exit is the one ending that proves
+        the cache before it died. A clean exit is the one ending that proves
         no such work remains.
 
         Returns
         -------
         bool
-            Whether the group's token requires server-work accounting.
+            Whether the group's token requires detached-work accounting.
         """
         if self.cancelled or self.exit is None:
             return True

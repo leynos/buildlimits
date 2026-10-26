@@ -22,6 +22,7 @@ from buildlimits import (
     supervisor_signals,
 )
 from buildlimits.admission import Admission, GroupState
+from buildlimits.cache_backend import CacheBackend, DirectCache, is_cache
 from buildlimits.drain_loop import MAX_INTERNAL_FAILURES as MAX_INTERNAL_FAILURES
 from buildlimits.drain_loop import DrainLoop, LoopEffects
 from buildlimits.groups import Groups
@@ -96,7 +97,15 @@ class Supervisor:
         )
         self.tracer = observations.tracer
 
-        self.admission = Admission(cached=False, capacity=settings.slots)
+        server = ManagedSccache(
+            settings.sccache_unit, settings.sccache_socket, self.manager
+        )
+        # Composition sites ask this object for argv, environment and capability.
+        self.backend: CacheBackend = (
+            server if is_cache(settings.cache_mode) else DirectCache()
+        )
+        detached = not self.backend.in_scope_work
+        self.admission = Admission(cache_detached=detached, capacity=settings.slots)
         self.selector = selectors.DefaultSelector()
         self.requests = Requests(
             self.selector,
@@ -104,9 +113,8 @@ class Supervisor:
             metrics=self.metrics,
             counts=self.admission.counts,
         )
-        self.groups = Groups(settings, self.manager, self.selector, self.clock)
-        server = ManagedSccache(
-            settings.sccache_unit, settings.sccache_socket, self.manager
+        self.groups = Groups(
+            settings, self.manager, self.selector, self.clock, self.backend
         )
         self.server = ServerWatch(
             server,
@@ -186,8 +194,8 @@ class Supervisor:
         self.selector.register(self.listener, selectors.EVENT_READ, "listener")
         self._watch_signals()
         self.server.refresh_cache_mode()
-        # Only the mode that owns the managed cache may run a recovery.
-        if self.settings.cache_mode == "sccache":
+        # Only a backend that owns a detached service may run a recovery.
+        if not self.backend.in_scope_work:
             self.requests.recovery = lambda: self.recovery.request(
                 "manual", self.clock()
             )

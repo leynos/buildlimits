@@ -17,6 +17,7 @@ open transaction holds new compiles off the cache.
 import dataclasses as dc
 
 from buildlimits import recovery_starvation
+from buildlimits.cache_backend import is_detached_mode
 from buildlimits.recovery_starvation import RECOVERY_STALE_DRAIN_SECONDS
 
 
@@ -109,7 +110,9 @@ def outlook(
     """
     wait = opens_in(reading) if is_idle else None
     return Outlook(
-        automatic=reading.cache_mode == "sccache" and reading.policy == "starved",
+        automatic=(
+            is_detached_mode(reading.cache_mode) and reading.policy == "starved"
+        ),
         opens_in=wait,
         pending=wait is not None if is_idle else has_attempts_left,
     )

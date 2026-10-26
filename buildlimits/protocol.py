@@ -87,7 +87,7 @@ class CompileRequest:
     label : str
         A short human label, normally the crate name, for diagnostics.
     cacheable : bool
-        Whether the invocation may run through the managed sccache server.
+        Whether the invocation may run through the configured cache backend.
         Rustdoc invocations are not cacheable.
     """
 

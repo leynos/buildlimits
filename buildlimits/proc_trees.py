@@ -1,7 +1,8 @@
 """Compiler-root tree counting from ``/proc``.
 
-A cache-miss compilation runs as a direct child of the sccache server, outside
-any compiler scope, and must stay covered by a held token. These helpers count
+A cache-miss compilation of a detached cache runs as a direct child of the
+cache's server, outside any compiler scope, and must stay covered by a held
+token. These helpers count
 the distinct process trees among a server cgroup's members without assuming
 the server still exists: a surviving orphan root is work even when its parent
 has gone. Counting is diagnostic only; no count here can authorize returning a

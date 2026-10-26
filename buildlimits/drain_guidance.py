@@ -10,9 +10,9 @@ the server rather than a catalogue of its wording.
 
 import typing as typ
 
-from buildlimits.sccache import (
+from buildlimits.cache_backend import (
+    CacheError,
     LiveCacheWorkError,
-    SccacheError,
     StoppedPopulatedCacheError,
 )
 
@@ -88,7 +88,7 @@ def journal_prefix(*, is_fallback: bool) -> str:
     return "drain requires operator action"
 
 
-def classify(error: SccacheError) -> FaultKind:
+def classify(error: CacheError) -> FaultKind:
     """Classify a drain-check failure for guidance and automatic recovery.
 
     Returns

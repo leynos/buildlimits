@@ -177,7 +177,7 @@ def _single_path(response: dict[str, object]) -> str:
 def service_properties(
     runner: Runner, unit: str, properties: tuple[str, ...]
 ) -> dict[str, str]:
-    """Query sccache service load properties through the public manager bus.
+    """Query a service's load properties through the public manager bus.
 
     Parameters
     ----------
