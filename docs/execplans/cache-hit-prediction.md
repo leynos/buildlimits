@@ -892,15 +892,16 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   recorded below.
 - [x] (2026-10-26) The `86dee82` worktree candidate passed the full sequential
   M6 gates: `make check-fmt`, `make lint`, `make typecheck`,
-  `PYTEST_XDIST_WORKERS=1 make test` (2,123 passed, 26 skipped, 47 snapshots),
-  `make markdownlint`, `make nixie` and `make audit`. The package itself was
-  unavailable on PyPI for audit; no known vulnerabilities were found. The
+  `PYTEST_XDIST_WORKERS=1 make test` (2,123 passed; 26 skipped; 47 snapshots);
+  then `make markdownlint`, `make nixie` and `make audit`. The package itself
+  was unavailable on PyPI for audit; no known vulnerabilities were found. The
   plan-only follow-up initially found a table-formatting difference and the new
   store machine's `modeled` spelling. `make fmt` corrected the table; the
   docstring now uses the repository's Oxford spelling. Commit
   `d0d04954472b4041134c93ff1b8c5d6a00a02b5c` received a clean CodeRabbit CLI
-  0.9.1 review from `86dee827965329e399d3ca827a30b0496e2962ce`:
-  `review_completed`, 0 findings, all 25 expected files reviewed. Review log:
+  0.9.1 review against base commit `86dee827965329e399d3ca827a30b0496e2962ce`.
+  Result: `review_completed`, 0 findings, all 25 expected files reviewed.
+  Review log is
   `/tmp/coderabbit-ac9f6ac4-ab16-4230-a4f9-0b19d16fbf25-cache-hit-prediction.out`.
 - [x] (2026-10-26) Follow-up gate run `-11` found a Markdown table-formatting
   difference and one failure in the unrelated isolated queue-budget test
