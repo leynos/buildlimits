@@ -156,10 +156,6 @@ def _request_once(
     ------
     AdapterError
         If descriptor capture and encoding exhaust the admission deadline.
-    BusyError
-        If the initial rights transfer is refused before any bytes are queued.
-    RestartingError
-        If the supervisor goes away before the request is admitted.
     """
     deadline, summary = attempt.deadline, attempt.summary
     env = dict(invocation.env)
@@ -174,32 +170,52 @@ def _request_once(
         summary.outcome = "connect_timeout"
         raise
     with conn:
-        fds = descriptors.inheritable_descriptors(exclude={conn.fileno()})
-        request = CompileRequest(
-            argv=tuple(invocation.argv),
-            cwd=str(Path.cwd()),
-            env=env,
-            attributes=attributes.capture(),
-            fd_targets=tuple(fds),
-            label=heartbeat.label,
-            cacheable=invocation.cacheable,
-        )
-        frame = encode_request(request)
-        remaining = deadline - heartbeat.clock()
-        if remaining <= 0:
-            msg = "compile admission request deadline expired"
-            raise AdapterError(msg)
-        conn.settimeout(remaining)
-        try:
-            send_frame(conn, frame, fds)
-        except DescriptorSendPressureError as error:
-            raise BusyError(str(error)) from error
-        except ConnectionError as error:
-            msg = f"the build-limits supervisor went away: {error}"
-            raise RestartingError(msg) from error
-        finally:
-            conn.settimeout(None)
+        _send_compile_request(conn, invocation, heartbeat, attempt)
         return _await_result(conn, heartbeat, attempt, deadline=deadline)
+
+
+def _send_compile_request(
+    conn: socket.socket,
+    invocation: Invocation,
+    heartbeat: Heartbeat,
+    attempt: AdmissionAttempt,
+) -> None:
+    """Encode and send one admission request within its deadline.
+
+    Raises
+    ------
+    AdapterError
+        If the deadline expires before the request is sent.
+    BusyError
+        If descriptor transfer is refused before any bytes are queued.
+    RestartingError
+        If the supervisor connection is lost while sending the request.
+    """
+    fds = descriptors.inheritable_descriptors(exclude={conn.fileno()})
+    request = CompileRequest(
+        argv=tuple(invocation.argv),
+        cwd=str(Path.cwd()),
+        env=dict(invocation.env),
+        attributes=attributes.capture(),
+        fd_targets=tuple(fds),
+        label=heartbeat.label,
+        cacheable=invocation.cacheable,
+    )
+    frame = encode_request(request)
+    remaining = attempt.deadline - heartbeat.clock()
+    if remaining <= 0:
+        msg = "compile admission request deadline expired"
+        raise AdapterError(msg)
+    conn.settimeout(remaining)
+    try:
+        send_frame(conn, frame, fds)
+    except DescriptorSendPressureError as error:
+        raise BusyError(str(error)) from error
+    except ConnectionError as error:
+        msg = f"the build-limits supervisor went away: {error}"
+        raise RestartingError(msg) from error
+    finally:
+        conn.settimeout(None)
 
 
 def _await_result(

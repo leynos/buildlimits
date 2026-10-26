@@ -3,6 +3,7 @@
 import collections.abc as cabc
 import contextlib
 import shutil
+import typing as typ
 from pathlib import Path
 
 import pytest
@@ -11,24 +12,29 @@ from rustc_query_host_checks import (
     finish_barriers,
     finish_or_fail,
     matching_dylint_driver,
-    record_observation,
-    result_evidence,
     tool_version,
 )
+from rustc_query_host_observations import record_observation, result_evidence
 from rustc_query_host_support import (
     ObservedCommand,
     caller_dylint_library,
     cargo_environment,
     dependency_free_crate,
     hold_pool,
-    is_target_info_query,
-    is_version_query,
     require_host_command,
     start_observed,
+)
+from rustc_query_probe_records import (
+    is_target_info_query,
+    is_version_query,
     timing_entries,
 )
 from rustc_query_timing_shim import install_timing_shim
 from systemd_harness import Harness, systemd_user_marks, wait_for
+
+if typ.TYPE_CHECKING:
+    from rustc_query_host_support import ProcessResult
+    from rustc_query_probe_records import ProbeRecord
 
 pytestmark = systemd_user_marks("needs a systemd user manager and host Cargo tools")
 
@@ -49,6 +55,23 @@ def _clippy_driver() -> str:
     if driver is None:
         pytest.skip("Clippy driver absent from PATH")
     return driver
+
+
+def _assert_metadata_probes_complete(
+    result: ProcessResult,
+    entries: list[ProbeRecord],
+    harness: Harness,
+    command: list[str],
+) -> None:
+    """Require metadata probes to finish outside the held compiler pool."""
+    version = [entry for entry in entries if is_version_query(entry)]
+    target_info = [entry for entry in entries if is_target_info_query(entry)]
+    assert result.status == 0, result_evidence(result, entries)
+    assert version and all(entry["status"] == 0 for entry in version), entries
+    assert target_info and all(entry["status"] == 0 for entry in target_info), entries
+    assert "--no-deps" not in command, "metadata must resolve the full graph"
+    status = harness.status()
+    assert status["held"] == harness.slots and not status["queued"], status
 
 
 def test_cold_cargo_metadata_finishes_while_every_slot_is_held(
@@ -92,16 +115,7 @@ def test_cold_cargo_metadata_finishes_while_every_slot_is_held(
         )
         result = finish_or_fail(observed, 120, harness, timing_log)
         entries = timing_entries(timing_log)
-        version = [entry for entry in entries if is_version_query(entry)]
-        target_info = [entry for entry in entries if is_target_info_query(entry)]
-        assert result.status == 0, result_evidence(result, entries)
-        assert version and all(entry["status"] == 0 for entry in version), entries
-        assert target_info and all(entry["status"] == 0 for entry in target_info), (
-            entries
-        )
-        assert "--no-deps" not in command, "metadata must resolve the full graph"
-        status = harness.status()
-        assert status["held"] == harness.slots and not status["queued"], status
+        _assert_metadata_probes_complete(result, entries, harness, command)
         record_observation(record_property, "cargo_metadata", result, entries)
 
         release.touch()

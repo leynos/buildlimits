@@ -18,6 +18,25 @@ _PRINT_KINDS = (
 )
 
 
+def _assert_query_stays_admitted(
+    argv: list[str], env: dict[str, str], cwd: Path
+) -> None:
+    """Assert that an uncertain wrapper query retains compile admission.
+
+    Parameters
+    ----------
+    argv
+        The compiler command under test.
+    env
+        The environment used for wrapper identity verification.
+    cwd
+        The working directory used to resolve relative executables.
+    """
+    assert not is_toolchain_query(argv, env, str(cwd)), (
+        "an uncertain wrapper query must remain admitted"
+    )
+
+
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -112,7 +131,7 @@ _NEAR_MISS_ARGUMENTS = [
     ]
     + [([], []), (["rustc"], [])],
     ids=[
-        f"{prefix[0] if prefix else 'empty'}-{index}"
+        f"{prefix}-{index}"
         for prefix in ("rustc", "clippy-driver", "dylint-driver")
         for index in range(len(_NEAR_MISS_ARGUMENTS))
     ]
@@ -211,9 +230,25 @@ def test_wrapper_identity_mismatch_fails_closed(
         "RUSTC_WORKSPACE_WRAPPER": str(configured),
     }
 
-    assert not is_toolchain_query([str(driver), "rustc", "-vV"], env, str(cwd)), (
-        "a mismatched or missing configured wrapper fails closed"
-    )
+    _assert_query_stays_admitted([str(driver), "rustc", "-vV"], env, cwd)
+
+
+def test_wrapper_identity_lookup_error_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filesystem error during identity verification keeps admission."""
+    driver = temporary_executable(tmp_path / "clippy-driver")
+    lookup_errors: list[tuple[Path, str | os.PathLike[str]]] = []
+
+    def fail_samefile(path: Path, other: str | os.PathLike[str]) -> bool:
+        lookup_errors.append((path, other))
+        raise OSError("injected identity lookup failure")
+
+    monkeypatch.setattr(Path, "samefile", fail_samefile)
+    env = {"RUSTC_WORKSPACE_WRAPPER": str(driver)}
+
+    _assert_query_stays_admitted([str(driver), "rustc", "-vV"], env, tmp_path)
+    assert lookup_errors, "the failure came from the identity check"
 
 
 def test_an_arbitrary_wrapper_does_not_gain_trust_from_environment(
@@ -222,9 +257,7 @@ def test_an_arbitrary_wrapper_does_not_gain_trust_from_environment(
     """A matching environment variable cannot promote an unknown wrapper name."""
     wrapper = temporary_executable(tmp_path / "my-wrapper")
     env = {"RUSTC_WORKSPACE_WRAPPER": str(wrapper)}
-    assert not is_toolchain_query([str(wrapper), "rustc", "-vV"], env, str(tmp_path)), (
-        "an arbitrary wrapper cannot gain trust from the environment"
-    )
+    _assert_query_stays_admitted([str(wrapper), "rustc", "-vV"], env, tmp_path)
 
 
 @pytest.mark.parametrize(

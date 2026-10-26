@@ -1,8 +1,6 @@
 """Assertions and readiness checks shared by host query scenarios."""
 
 import dataclasses as dc
-import datetime as dt
-import json
 import os
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed host probe argv.
@@ -11,18 +9,16 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from rustc_query_host_support import (
-    ObservedProcess,
+from rustc_query_host_observations import result_evidence
+from rustc_query_probe_records import (
     ProbeRecord,
-    ProcessResult,
     is_target_info_query,
     is_version_query,
     timing_entries,
 )
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
+    from rustc_query_host_support import ObservedProcess, ProcessResult
     from systemd_harness import Harness
 
 
@@ -50,6 +46,13 @@ def require(*, condition: bool, message: str) -> None:
 
 def tool_version(command: list[str], label: str) -> str:
     """Require a host tool's version command to succeed and return its output.
+
+    Parameters
+    ----------
+    command : list[str]
+        Executable and version-query arguments.
+    label : str
+        Tool label included in failure messages.
 
     Returns
     -------
@@ -81,6 +84,11 @@ def tool_version(command: list[str], label: str) -> str:
 def matching_dylint_driver(library: Path) -> tuple[Path, str, Path]:
     """Locate an installed driver and Rust toolchain matching the library name.
 
+    Parameters
+    ----------
+    library : Path
+        Prebuilt Dylint library whose toolchain determines the driver match.
+
     Returns
     -------
     tuple[Path, str, Path]
@@ -95,14 +103,42 @@ def matching_dylint_driver(library: Path) -> tuple[Path, str, Path]:
         (
             candidate
             for candidate in matches
-            if candidate.parent.name == suffix
-            or candidate.parent.name.startswith(f"{suffix}-")
-            or suffix.startswith(f"{candidate.parent.name}-")
+            if _driver_matches_library(candidate, suffix)
         ),
         None,
     )
     if driver is None:
         pytest.skip(f"no installed Dylint driver matches library toolchain {suffix}")
+    toolchain = _driver_toolchain(driver, _installed_toolchains())
+    if toolchain is None:
+        pytest.skip(f"Rust toolchain for Dylint driver {driver} is not installed")
+    return driver, toolchain, driver_root
+
+
+def _driver_matches_library(candidate: Path, suffix: str) -> bool:
+    """Match installed driver directory names against the library suffix.
+
+    Returns
+    -------
+    bool
+        Whether the directory and library suffix identify the same toolchain.
+    """
+    directory = candidate.parent.name
+    return (
+        directory == suffix
+        or directory.startswith(f"{suffix}-")
+        or suffix.startswith(f"{directory}-")
+    )
+
+
+def _installed_toolchains() -> list[str]:
+    """List rustup toolchains, retaining the existing readiness skip reasons.
+
+    Returns
+    -------
+    list[str]
+        Installed toolchain names.
+    """
     rustup = shutil.which("rustup")
     if rustup is None:
         pytest.skip("rustup is unavailable for the Dylint driver")
@@ -115,27 +151,39 @@ def matching_dylint_driver(library: Path) -> tuple[Path, str, Path]:
     )
     if result.returncode != 0:
         pytest.skip("rustup toolchain list is unavailable for the Dylint driver")
-    toolchain = next(
+    return [line.split()[0] for line in result.stdout.splitlines() if line.split()]
+
+
+def _driver_toolchain(driver: Path, toolchains: list[str]) -> str | None:
+    """Find the installed toolchain whose name matches the driver directory.
+
+    Returns
+    -------
+    str | None
+        Matching toolchain name, if the driver directory is installed.
+    """
+    directory = driver.parent.name
+    return next(
         (
-            line.split()[0]
-            for line in result.stdout.splitlines()
-            if line.split()
-            and (
-                line.split()[0] == driver.parent.name
-                or line.split()[0].startswith(f"{driver.parent.name}-")
-            )
+            toolchain
+            for toolchain in toolchains
+            if toolchain == directory or toolchain.startswith(f"{directory}-")
         ),
         None,
     )
-    if toolchain is None:
-        pytest.skip(f"Rust toolchain for Dylint driver {driver} is not installed")
-    return driver, toolchain, driver_root
 
 
 def wait_for_queued_compile(
     harness: Harness, wait: QueueWait
 ) -> tuple[dict[str, typ.Any], list[ProbeRecord]]:
     """Wait for resolution and exactly one queued real compile.
+
+    Parameters
+    ----------
+    harness : Harness
+        Running supervisor harness to inspect.
+    wait : QueueWait
+        Linter process, timing log and queue deadline.
 
     Returns
     -------
@@ -187,7 +235,15 @@ def _driver_probe_entries(
 
 
 def assert_driver_probes(entries: list[ProbeRecord], driver_name: str) -> None:
-    """Require successful driver version and Cargo target-information probes."""
+    """Require successful driver version and Cargo target-information probes.
+
+    Parameters
+    ----------
+    entries : list[ProbeRecord]
+        Completed probe records to inspect.
+    driver_name : str
+        Outer workspace-driver executable name.
+    """
     driver_entries = _driver_probe_entries(entries, driver_name)
     require(
         condition=bool(driver_entries),
@@ -210,6 +266,11 @@ def assert_driver_probes(entries: list[ProbeRecord], driver_name: str) -> None:
 def is_query(entry: ProbeRecord) -> bool:
     """Recognize version, print and exact Cargo target-information records.
 
+    Parameters
+    ----------
+    entry : ProbeRecord
+        Completed timing record to inspect.
+
     Returns
     -------
     bool
@@ -228,6 +289,11 @@ def is_query(entry: ProbeRecord) -> bool:
 
 def is_compile(entry: ProbeRecord) -> bool:
     """Recognize a completed compiler invocation that can generate artefacts.
+
+    Parameters
+    ----------
+    entry : ProbeRecord
+        Completed timing record to inspect.
 
     Returns
     -------
@@ -248,6 +314,17 @@ def finish_or_fail(
     timing_log: Path,
 ) -> ProcessResult:
     """Add output and supervisor state if a host command exceeds its deadline.
+
+    Parameters
+    ----------
+    observed : ObservedProcess
+        Host command and its captured streams.
+    timeout : float
+        Maximum seconds to wait for completion.
+    harness : Harness
+        Supervisor harness included in timeout evidence.
+    timing_log : Path
+        Probe log included in timeout evidence.
 
     Returns
     -------
@@ -272,85 +349,16 @@ def finish_or_fail(
 
 
 def finish_barriers(processes: list[subprocess.Popen[bytes]]) -> None:
-    """Reap every released barrier compiler and require it to exit normally."""
+    """Reap every released barrier compiler and require it to exit normally.
+
+    Parameters
+    ----------
+    processes : list[Popen[bytes]]
+        Released barrier compiler processes to reap.
+    """
     for process in processes:
         stdout, stderr = process.communicate(timeout=60)
         require(
             condition=process.returncode == 0,
             message=f"barrier failed: {stdout!r} {stderr!r}",
         )
-
-
-def result_evidence(result: ProcessResult, entries: list[ProbeRecord]) -> str:
-    """Render bounded command and probe evidence for a failed assertion.
-
-    Returns
-    -------
-    str
-        Status, output and completed probe records.
-    """
-    return (
-        f"status={result.status}; probes={entries}; stderr={result.stderr}; "
-        f"stdout={result.stdout!r}"
-    )
-
-
-def probe_summary(entries: list[ProbeRecord]) -> list[dict[str, object]]:
-    """Keep argv, status and duration for every completed timing record.
-
-    Returns
-    -------
-    list[dict[str, object]]
-        Compact probe details suitable for JUnit properties.
-    """
-    summaries: list[dict[str, object]] = []
-    for entry in entries:
-        workspace_wrapper = entry["workspace_wrapper"]
-        summaries.append({
-            "argv": entry["argv"],
-            "status": entry["status"],
-            "duration_seconds": round(
-                float(entry["ended"]) - float(entry["started"]), 6
-            ),
-            "workspace_wrapper": workspace_wrapper,
-        })
-    return summaries
-
-
-def package_cache_waits(result: ProcessResult) -> list[dict[str, object]]:
-    """Return package-cache lock waits with monotonic stderr arrival times.
-
-    Returns
-    -------
-    list[dict[str, object]]
-        Timestamped lock-related Cargo stderr lines.
-    """
-    return [
-        {"monotonic_at": timestamp, "line": line.rstrip()}
-        for timestamp, line in result.stderr_lines
-        if "lock" in line.casefold() and "cache" in line.casefold()
-    ]
-
-
-def record_observation(
-    record_property: cabc.Callable[[str, object], None],
-    prefix: str,
-    result: ProcessResult,
-    entries: list[ProbeRecord],
-) -> None:
-    """Attach host, UTC date, process timing and shim records to JUnit output."""
-    record_property(f"{prefix}_host", os.uname().nodename)
-    record_property(f"{prefix}_date_utc", dt.datetime.now(dt.UTC).isoformat())
-    record_property(f"{prefix}_status", str(result.status))
-    record_property(f"{prefix}_started_monotonic", f"{result.started:.6f}")
-    record_property(f"{prefix}_ended_monotonic", f"{result.ended:.6f}")
-    record_property(
-        f"{prefix}_duration_seconds", f"{result.ended - result.started:.6f}"
-    )
-    record_property(
-        f"{prefix}_probes", json.dumps(probe_summary(entries), sort_keys=True)
-    )
-    record_property(
-        f"{prefix}_package_cache_waits",
-        json.dumps(package_cache_waits(result), sort_keys=True),
-    )

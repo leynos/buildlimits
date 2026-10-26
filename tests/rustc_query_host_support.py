@@ -1,7 +1,6 @@
 """Helpers for host acceptance of rustc query admission behaviour."""
 
 import dataclasses as dc
-import json
 import os
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed argv, no shell.
@@ -74,20 +73,17 @@ def caller_dylint_library() -> tuple[str, Path]:
 
 
 def require_host_command(command: str, reason: str) -> None:
-    """Skip host acceptance when a required command is absent from PATH."""
+    """Skip host acceptance when a required command is absent from PATH.
+
+    Parameters
+    ----------
+    command : str
+        Executable name to find on PATH.
+    reason : str
+        Explanation reported when the executable is unavailable.
+    """
     if shutil.which(command) is None:
         pytest.skip(reason)
-
-
-class ProbeRecord(typ.TypedDict):
-    """One complete JSON-line record from the timing shim."""
-
-    argv: list[str]
-    started: float
-    ended: float
-    status: int
-    workspace_wrapper: str | None
-    error: typ.NotRequired[str]
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -219,6 +215,13 @@ def cargo_environment(
 def dependency_free_crate(directory: Path, name: str) -> Path:
     """Write a small library crate and return its manifest path.
 
+    Parameters
+    ----------
+    directory : Path
+        Parent directory for the crate files.
+    name : str
+        Cargo package name written to the manifest.
+
     Returns
     -------
     Path
@@ -240,27 +243,45 @@ def hold_pool(
 ) -> tuple[Path, list[subprocess.Popen[bytes]]]:
     """Occupy every token with an isolated compiler waiting for one release file.
 
+    Parameters
+    ----------
+    owned : ExitStack
+        Resource stack that owns processes and the release file.
+    harness : Harness
+        Running supervisor harness whose tokens are occupied.
+
     Returns
     -------
     tuple[Path, list[subprocess.Popen[bytes]]]
         The release file and all barrier processes.
 
-    Raises
-    ------
-    AssertionError
-        If any barrier is outside the dedicated compiler slice.
-    RuntimeError
-        If the pool and its barrier processes do not become ready.
     """
     release = harness.work / "release-barriers"
     owned.callback(release.unlink, missing_ok=True)
+    processes, markers = _start_barrier_compilers(owned, harness, release)
+    _wait_for_barrier_compilers(harness, markers)
+    _assert_barrier_compilers_are_contained(harness, markers)
+    return release, processes
+
+
+def _start_barrier_compilers(
+    owned: contextlib.ExitStack, harness: Harness, release: Path
+) -> tuple[list[subprocess.Popen[bytes]], list[Path]]:
+    """Start one release-blocked compiler for each supervisor slot.
+
+    Returns
+    -------
+    tuple[list[Popen[bytes]], list[Path]]
+        Owned barrier processes and their cgroup marker paths.
+    """
     processes: list[subprocess.Popen[bytes]] = []
     markers: list[Path] = []
+    python = shutil.which("python3") or "python3"
     for index in range(harness.slots):
         marker = harness.work / f"barrier-{index}.cgroup"
         markers.append(marker)
         process = harness.invoke(
-            (shutil.which("python3") or "python3", "-c", _BARRIER_COMPILER),
+            (python, "-c", _BARRIER_COMPILER),
             env={
                 "HOST_BARRIER_MARKER": str(marker),
                 "HOST_BARRIER_RELEASE": str(release),
@@ -268,19 +289,43 @@ def hold_pool(
             piped=True,
         )
         processes.append(own_process(owned, process))
-    if not wait_for(
+
+    return processes, markers
+
+
+def _wait_for_barrier_compilers(harness: Harness, markers: list[Path]) -> None:
+    """Wait until every token is held by a barrier compiler.
+
+    Raises
+    ------
+    RuntimeError
+        If all barriers do not become ready before the deadline.
+    """
+    ready = wait_for(
         lambda: (
             harness.status()["held"] == harness.slots
             and all(marker.exists() for marker in markers)
         ),
         timeout=60,
-    ):
+    )
+    if not ready:
         raise RuntimeError(harness.journal())
+
+
+def _assert_barrier_compilers_are_contained(
+    harness: Harness, markers: list[Path]
+) -> None:
+    """Require each barrier marker to name the dedicated compiler slice.
+
+    Raises
+    ------
+    AssertionError
+        If a barrier compiler is outside the dedicated compiler slice.
+    """
     for marker in markers:
         if harness.compilers_slice not in marker.read_text():
             msg = f"barrier compiler was outside {harness.compilers_slice}: {marker}"
             raise AssertionError(msg)
-    return release, processes
 
 
 def start_observed(
@@ -331,51 +376,6 @@ def start_observed(
     owned.callback(reader.join, 30)
     own_process(owned, process)
     return ObservedProcess(process, command.stdout_path, stderr_lines, reader, started)
-
-
-def timing_entries(path: Path) -> list[ProbeRecord]:
-    """Read completed JSON-lines records from the timing shim.
-
-    Returns
-    -------
-    list[ProbeRecord]
-        Timing records written by completed shim invocations.
-    """
-    if not path.exists():
-        return []
-    return [
-        typ.cast("ProbeRecord", json.loads(line))
-        for line in path.read_text().splitlines()
-    ]
-
-
-def is_version_query(entry: cabc.Mapping[str, object]) -> bool:
-    """Recognize the version query shapes used in host probe logs.
-
-    Returns
-    -------
-    bool
-        Whether any argument is a supported version query flag.
-    """
-    argv = typ.cast("list[str]", entry["argv"])
-    return any(argument in {"-vV", "-V", "--version"} for argument in argv)
-
-
-def is_target_info_query(entry: cabc.Mapping[str, object]) -> bool:
-    """Recognize Cargo's stdin target-information query in shim logs.
-
-    Returns
-    -------
-    bool
-        Whether the arguments match Cargo's stdin probe shape.
-    """
-    argv = typ.cast("list[str]", entry["argv"])
-    return (
-        "-" in argv
-        and "--crate-name" in argv
-        and "___" in argv
-        and "--print=file-names" in argv
-    )
 
 
 def _capture_stderr(

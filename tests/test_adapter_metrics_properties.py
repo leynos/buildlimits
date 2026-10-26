@@ -3,10 +3,11 @@
 from pathlib import Path
 
 import pytest
+from adapter_metrics_support import expected_record
 from conftest import RecordingSink
 from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
-from rustc_query_support import cargo_probe, temporary_executable
+from rustc_query_support import cargo_probe, path_spellings, temporary_executable
 
 from buildlimits.adapter_metrics import AdapterMetrics
 from buildlimits.metrics import MAX_COUNTER, Metrics
@@ -43,6 +44,7 @@ _SAFE_QUERY_ARGS = [
     ["-vV"],
     ["--print=cfg"],
     ["--print=target-features"],
+    ["--print=cfg", "--print=sysroot"],
     cargo_probe("x86_64-unknown-linux-gnu"),
 ]
 _COMPILE_INDICATORS = [
@@ -57,51 +59,17 @@ _COMPILER_PREFIXES = [
     ["rustc"],
     ["clippy-driver", "rustc"],
     ["dylint-driver", "rustc"],
+    ["other-wrapper", "rustc"],
 ]
-
-
-def _path_spellings(path: Path, cwd: Path) -> list[str]:
-    """Return absolute, relative, dot-segment and trailing-slash spellings."""
-    relative_path = path.relative_to(cwd)
-    relative = relative_path.as_posix()
-    parent = relative_path.parent.as_posix()
-    name = relative_path.name
-    return [
-        str(path),
-        relative,
-        f"./{relative}",
-        f"./{parent}/../{parent}/{name}/",
-    ]
-
-
-def _expected_record(
-    history: list[str], initial_attempts: int, step: int
-) -> dict[str, str]:
-    """Derive a summary from the immutable prefix ending at the first exit."""
-    terminal = next(
-        index
-        for index, action in enumerate(history)
-        if action in {"finish", "interrupt"}
-    )
-    prefix = history[:terminal]
-    admissions = [index for index, action in enumerate(prefix) if action == "admit"]
-    wait = (admissions[0] + 1) * step if admissions else (terminal + 1) * step
-    runtime = (terminal - admissions[0]) * step if admissions else 0
-    return {
-        "BUILD_LIMITS_SCHEMA": "1",
-        "BUILD_LIMITS_SOURCE": "adapter",
-        "BUILD_LIMITS_EVENT": "adapter_finished",
-        "BUILD_LIMITS_OUTCOME": "interrupted"
-        if history[terminal] == "interrupt"
-        else "completed",
-        "BUILD_LIMITS_CONNECTION_ATTEMPTS": str(
-            min(MAX_COUNTER, initial_attempts + prefix.count("attempt"))
-        ),
-        "BUILD_LIMITS_BUSY_RETRIES": "0",
-        "BUILD_LIMITS_RESTART_RETRIES": "0",
-        "BUILD_LIMITS_WAIT_SECONDS": f"{wait:.3f}",
-        "BUILD_LIMITS_RUNTIME_SECONDS": f"{runtime:.3f}",
-    }
+_TOTALITY_PREFIXES = [
+    [],
+    *_COMPILER_PREFIXES,
+    ["sccache", "rustc"],
+    ["sccache", "clippy-driver", "rustc"],
+    ["sccache", "dylint-driver", "rustc"],
+    ["clippy-driver", "dylint-driver", "rustc"],
+    ["sccache", "other-wrapper", "rustc"],
+]
 
 
 @given(
@@ -143,7 +111,7 @@ def test_invocation_history(
             case "finish":
                 summary.finish()
     assert len(sink.records) == 1, "at most one terminal record across repeated exits"
-    assert sink.records[0] == _expected_record(history, initial_attempts, step), (
+    assert sink.records[0] == expected_record(history, initial_attempts, step), (
         "the first terminal prefix alone determines the summary"
     )
     assert summary.attempts == min(
@@ -160,21 +128,25 @@ def test_invocation_history(
         assert summary.admitted is None, "no admission was observed"
 
 
-@given(rest=st.lists(st.sampled_from(_QUERY_RESTS), max_size=20))
+@given(
+    rest=st.one_of(
+        st.sampled_from(_SAFE_QUERY_ARGS),
+        st.lists(st.sampled_from(_QUERY_RESTS), max_size=20),
+    )
+)
 @example(rest=["-vV"])
 @example(rest=["--print=cfg", "--emit=link"])
 @example(rest=["-", "--crate-name", "___", "--print=file-names", "@args"])
+@example(rest=["--print", "cfg"])
+@example(rest=cargo_probe("x86_64-unknown-linux-gnu"))
 def test_workspace_wrapper_changes_only_compiler_identity(rest: list[str]) -> None:
-    """Recognized drivers preserve rustc's result outside direct-only syntax."""
-    # Separated ``--print KIND`` is intentionally a direct-rustc-only spelling.
-    assert "--print" not in rest, (
-        "the property isolates wrapper identity from direct-only grammar"
-    )
+    """Drivers share rustc's grammar except for direct-only print spelling."""
     direct = is_toolchain_query(["rustc", *rest], {}, "/")
     for driver in ("clippy-driver", "dylint-driver"):
-        assert is_toolchain_query([driver, "rustc", *rest], {}, "/") is direct, (
-            "recognized workspace wrapper preserves the bare rustc result"
-        )
+        wrapped = is_toolchain_query([driver, "rustc", *rest], {}, "/")
+        assert not wrapped or direct, "a wrapper never exempts a queued rustc form"
+        if "--print" not in rest:
+            assert wrapped is direct, "shared grammar preserves rustc's result"
 
 
 @given(
@@ -219,30 +191,34 @@ def test_wrapper_environment_mismatch_never_skips(
 
 
 @given(
-    query=st.sampled_from(_SAFE_QUERY_ARGS),
-    indicator=st.sampled_from(_COMPILE_INDICATORS),
-    position=st.integers(min_value=0, max_value=30),
-    prefix=st.sampled_from(_COMPILER_PREFIXES),
+    case=st.tuples(
+        st.sampled_from(_SAFE_QUERY_ARGS),
+        st.sampled_from(_COMPILE_INDICATORS),
+        st.integers(min_value=0, max_value=30),
+        st.sampled_from(_COMPILER_PREFIXES),
+        st.integers(min_value=0, max_value=4),
+    )
 )
-@example(query=["-vV"], indicator="lib.rs", position=0, prefix=["rustc"])
+@example(case=(["-vV"], "lib.rs", 0, ["rustc"], 0))
+@example(case=(["--print=cfg"], "--emit=obj", 1, ["clippy-driver", "rustc"], 0))
 @example(
-    query=["--print=cfg"],
-    indicator="--emit=obj",
-    position=1,
-    prefix=["clippy-driver", "rustc"],
+    case=(
+        ["-", "--crate-name", "___", "--print=file-names"],
+        "@args",
+        3,
+        ["dylint-driver", "rustc"],
+        2,
+    )
 )
-@example(
-    query=["-", "--crate-name", "___", "--print=file-names"],
-    indicator="@args",
-    position=3,
-    prefix=["dylint-driver", "rustc"],
-)
+@example(case=(["-vV"], "native-static-libs", 0, ["other-wrapper", "rustc"], 3))
 def test_compile_indicators_never_skip_admission(
-    query: list[str], indicator: str, position: int, prefix: list[str]
+    case: tuple[list[str], str, int, list[str], int],
 ) -> None:
     """Adding a source, output or compiler flag invalidates every query form."""
+    query, indicator, position, prefix, layers = case
     inserted = [*query[:position], indicator, *query[position:]]
-    assert not is_toolchain_query([*prefix, *inserted], {}, "/"), (
+    argv = [*(["sccache"] * layers), *prefix, *inserted]
+    assert not is_toolchain_query(argv, {}, "/"), (
         "compile indicators always force admission"
     )
 
@@ -267,19 +243,31 @@ def test_sccache_does_not_change_query_classification(
     assert actual is expected, "leading sccache layers do not change classification"
 
 
-@given(query=st.sampled_from(_SAFE_QUERY_ARGS))
-def test_two_workspace_wrappers_always_queue(query: list[str]) -> None:
+@given(
+    outer=st.sampled_from(["clippy-driver", "dylint-driver"]),
+    inner=st.sampled_from(["clippy-driver", "dylint-driver"]),
+    query=st.sampled_from(_SAFE_QUERY_ARGS),
+    layers=st.integers(min_value=0, max_value=4),
+)
+@example(outer="clippy-driver", inner="clippy-driver", query=["-vV"], layers=1)
+@example(
+    outer="dylint-driver",
+    inner="dylint-driver",
+    query=cargo_probe("x86_64-unknown-linux-gnu"),
+    layers=3,
+)
+def test_two_workspace_wrappers_always_queue(
+    outer: str, inner: str, query: list[str], layers: int
+) -> None:
     """The classifier permits one driver layer and rejects nested drivers."""
-    assert not is_toolchain_query(
-        ["clippy-driver", "dylint-driver", "rustc", *query], {}, "/"
-    ), "nested Clippy and Dylint wrappers remain admitted"
-    assert not is_toolchain_query(
-        ["dylint-driver", "clippy-driver", "rustc", *query], {}, "/"
-    ), "nested Dylint and Clippy wrappers remain admitted"
+    argv = [*(["sccache"] * layers), outer, inner, "rustc", *query]
+    assert not is_toolchain_query(argv, {}, "/"), (
+        "nested and same-driver wrappers remain admitted"
+    )
 
 
 @given(
-    path_spellings=st.tuples(
+    spelling_indices=st.tuples(
         st.integers(min_value=0, max_value=3),
         st.integers(min_value=0, max_value=3),
     ),
@@ -287,11 +275,11 @@ def test_two_workspace_wrappers_always_queue(query: list[str]) -> None:
     same_file=st.booleans(),
 )
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], deadline=None)
-@example(path_spellings=(0, 3), use_symlink=True, same_file=True)
-@example(path_spellings=(3, 1), use_symlink=False, same_file=False)
+@example(spelling_indices=(0, 3), use_symlink=True, same_file=True)
+@example(spelling_indices=(3, 1), use_symlink=False, same_file=False)
 def test_wrapper_path_spelling_preserves_file_identity(
     tmp_path: Path,
-    path_spellings: tuple[int, int],
+    spelling_indices: tuple[int, int],
     use_symlink: bool,
     same_file: bool,
 ) -> None:
@@ -317,9 +305,9 @@ def test_wrapper_path_spelling_preserves_file_identity(
     invoked_paths = [actual, invoked_alias]
     configured_paths = [configured_file, configured_alias]
     path_index = 1 if use_symlink else 0
-    argv_spelling, configured_spelling = path_spellings
-    invoked = _path_spellings(invoked_paths[path_index], cwd)[argv_spelling]
-    configured = _path_spellings(configured_paths[path_index], cwd)[configured_spelling]
+    argv_spelling, configured_spelling = spelling_indices
+    invoked = path_spellings(invoked_paths[path_index], cwd)[argv_spelling]
+    configured = path_spellings(configured_paths[path_index], cwd)[configured_spelling]
     assert (
         is_toolchain_query(
             [invoked, "rustc", "-vV"],
@@ -331,28 +319,36 @@ def test_wrapper_path_spelling_preserves_file_identity(
 
 
 @given(
-    argv=st.lists(st.one_of(st.text(max_size=24), st.binary(max_size=24)), max_size=12),
-    wrapper=st.one_of(st.none(), st.text(max_size=24)),
-    path=st.text(max_size=24),
-    dylint_flags=st.text(max_size=24),
+    case=st.tuples(
+        st.sampled_from(_TOTALITY_PREFIXES),
+        st.lists(st.one_of(st.text(max_size=24), st.binary(max_size=24)), max_size=12),
+        st.one_of(st.none(), st.text(max_size=24)),
+        st.text(max_size=24),
+        st.text(max_size=24),
+    )
 )
-@example(argv=[b"rustc", b"\xff"], wrapper=None, path="", dylint_flags="")
+@example(case=(["rustc"], [b"\xff"], None, "", ""))
+@example(case=(["rustc"], ["--print=cfg"], None, "", ""))
+@example(case=(["clippy-driver", "rustc"], ["--print", "cfg"], None, "", ""))
+@example(case=(["dylint-driver", "rustc"], ["-vV", "-vV"], None, "", ""))
 @example(
-    argv=["clippy-driver", "rustc", "-vV"],
-    wrapper="\x00",
-    path="",
-    dylint_flags="",
+    case=(
+        ["sccache", "clippy-driver", "rustc"],
+        ["", "-not-a-known-flag"],
+        "\x00",
+        "",
+        "",
+    )
 )
 def test_query_classifier_is_total(
-    argv: list[str | bytes],
-    wrapper: str | None,
-    path: str,
-    dylint_flags: str,
+    case: tuple[list[str], list[str | bytes], str | None, str, str],
 ) -> None:
-    """Every generated argv and string environment returns one boolean result."""
+    """Generated raw and recognized-prefix argv always return one result."""
+    prefix, rest, wrapper, path, dylint_flags = case
     env = {"PATH": path, "DYLINT_RUSTFLAGS": dylint_flags}
     if wrapper is not None:
         env["RUSTC_WORKSPACE_WRAPPER"] = wrapper
+    argv = [*prefix, *rest]
     assert isinstance(is_toolchain_query(argv, env, "/"), bool), (
         "every argv and environment returns one classifier outcome"
     )

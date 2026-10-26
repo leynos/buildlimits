@@ -56,3 +56,30 @@ def temporary_executable(path: Path, source: str = "#!/bin/sh\nexit 0\n") -> Pat
     path.write_text(source, encoding="utf-8")
     path.chmod(0o755)
     return path
+
+
+def path_spellings(path: Path, cwd: Path) -> list[str]:
+    """Return absolute, relative, dot-segment and trailing-slash spellings.
+
+    Parameters
+    ----------
+    path : Path
+        Executable path to render in different forms.
+    cwd : Path
+        Working directory used for relative spellings.
+
+    Returns
+    -------
+    list[str]
+        Equivalent absolute, relative, and dot-segment path strings.
+    """
+    relative_path = path.relative_to(cwd)
+    relative = relative_path.as_posix()
+    parent = relative_path.parent.as_posix()
+    name = relative_path.name
+    return [
+        str(path),
+        relative,
+        f"./{relative}",
+        f"./{parent}/../{parent}/{name}/",
+    ]

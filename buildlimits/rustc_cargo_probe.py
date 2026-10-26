@@ -24,11 +24,10 @@ _WARNINGS_FLAG = "-W" + "warnings"
 class _ProbeState:
     """Collect the required identity and output fields for Cargo's probe."""
 
-    has_stdin: bool = False
-    has_crate_name: bool = False
+    seen_flags: set[str] = dataclasses.field(default_factory=set)
+    crate_names: set[str] = dataclasses.field(default_factory=set)
     crate_types: set[str] = dataclasses.field(default_factory=set)
     print_kinds: set[str] = dataclasses.field(default_factory=set)
-    has_warnings: bool = False
     has_target: bool = False
 
     def is_complete(self) -> bool:
@@ -40,8 +39,8 @@ class _ProbeState:
             Whether all required Cargo query fields were seen.
         """
         return all((
-            self.has_stdin,
-            self.has_crate_name,
+            "-" in self.seen_flags,
+            "___" in self.crate_names,
             bool(self.crate_types),
             "file-names" in self.print_kinds,
         ))
@@ -87,54 +86,66 @@ def _consume_probe_argument(
     int | None
         The first unconsumed index, or ``None`` for an unsupported token.
     """
-    single_token_parsers = (
-        _consume_stdin,
-        _consume_warnings,
-        _consume_print,
-    )
-    for parser in single_token_parsers:
-        if parser(arguments, index, state):
-            return index + 1
-    value_parsers = (
-        _consume_crate_name,
-        _consume_crate_type,
-        _consume_target,
-    )
-    for parser in value_parsers:
-        next_index = parser(arguments, index, state)
-        if next_index is not None:
-            return next_index
-    return None
+    if _consume_unique_flag(arguments, index, "-", state.seen_flags):
+        return index + 1
+    if _consume_unique_flag(arguments, index, _WARNINGS_FLAG, state.seen_flags):
+        return index + 1
+    if _consume_print(arguments, index, state):
+        return index + 1
+    if arguments[index] == "--crate-name":
+        return _consume_unique_value_option(
+            arguments,
+            index,
+            ("--crate-name", frozenset({"___"})),
+            state.crate_names,
+        )
+    if arguments[index] == "--crate-type":
+        return _consume_unique_value_option(
+            arguments,
+            index,
+            ("--crate-type", CRATE_TYPES),
+            state.crate_types,
+        )
+    return _consume_target(arguments, index, state)
 
 
-def _consume_stdin(arguments: tuple[str, ...], index: int, state: _ProbeState) -> bool:
-    """Consume Cargo's single stdin marker once.
-
-    Returns
-    -------
-    bool
-        Whether this parser consumed the stdin marker.
-    """
-    if arguments[index] != "-" or state.has_stdin:
-        return False
-    state.has_stdin = True
-    return state.has_stdin
-
-
-def _consume_warnings(
-    arguments: tuple[str, ...], index: int, state: _ProbeState
+def _consume_unique_flag(
+    arguments: tuple[str, ...], index: int, flag: str, seen: set[str]
 ) -> bool:
-    """Consume Cargo's warnings flag once.
+    """Consume one allow-listed single token once.
 
     Returns
     -------
     bool
-        Whether this parser consumed the warnings flag.
+        Whether the token was consumed and recorded.
     """
-    if arguments[index] != _WARNINGS_FLAG or state.has_warnings:
+    if arguments[index] != flag or flag in seen:
         return False
-    state.has_warnings = True
-    return state.has_warnings
+    seen.add(flag)
+    return True
+
+
+def _consume_unique_value_option(
+    arguments: tuple[str, ...],
+    index: int,
+    rule: tuple[str, frozenset[str]],
+    seen: set[str],
+) -> int | None:
+    """Consume one value option while rejecting unknown or repeated values.
+
+    Returns
+    -------
+    int | None
+        The next argv index, or ``None`` when the token or value is invalid.
+    """
+    option, allowed_values = rule
+    if arguments[index] != option:
+        return None
+    value = following_argument(arguments, index)
+    if value not in allowed_values or value in seen:
+        return None
+    seen.add(value)
+    return index + 2
 
 
 def _consume_print(arguments: tuple[str, ...], index: int, state: _ProbeState) -> bool:
@@ -149,48 +160,21 @@ def _consume_print(arguments: tuple[str, ...], index: int, state: _ProbeState) -
     if not argument.startswith("--print="):
         return False
     kind = argument.removeprefix("--print=")
-    if kind not in PROBE_PRINT_KINDS or kind in state.print_kinds:
+    return _record_unique_value(kind, PROBE_PRINT_KINDS, state.print_kinds)
+
+
+def _record_unique_value(value: str, allowed: frozenset[str], seen: set[str]) -> bool:
+    """Record one allowed value once for either print or value options.
+
+    Returns
+    -------
+    bool
+        Whether the value was allowed and had not already been seen.
+    """
+    if value not in allowed or value in seen:
         return False
-    state.print_kinds.add(kind)
-    return kind in state.print_kinds
-
-
-def _consume_crate_name(
-    arguments: tuple[str, ...], index: int, state: _ProbeState
-) -> int | None:
-    """Consume Cargo's synthetic crate name once.
-
-    Returns
-    -------
-    int | None
-        The next index, or ``None`` when the token or value is invalid.
-    """
-    if arguments[index] != "--crate-name" or state.has_crate_name:
-        return None
-    crate_name = following_argument(arguments, index)
-    if crate_name != "___":
-        return None
-    state.has_crate_name = True
-    return index + 2
-
-
-def _consume_crate_type(
-    arguments: tuple[str, ...], index: int, state: _ProbeState
-) -> int | None:
-    """Consume one allow-listed Cargo crate type.
-
-    Returns
-    -------
-    int | None
-        The next index, or ``None`` when the token or value is invalid.
-    """
-    if arguments[index] != "--crate-type":
-        return None
-    crate_type = following_argument(arguments, index)
-    if crate_type not in CRATE_TYPES or crate_type in state.crate_types:
-        return None
-    state.crate_types.add(crate_type)
-    return index + 2
+    seen.add(value)
+    return True
 
 
 def _consume_target(

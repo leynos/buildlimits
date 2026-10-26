@@ -129,45 +129,45 @@ second token.
 
 Each module owns one decision. This table is the single module inventory.
 
-| Module                                                    | Responsibility                                                                                  |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `admission`, `effects`                                    | Pure state machine: queue, tokens, draining                                                     |
-| `admission_state`                                         | Group lifecycle values; the identifier-free `Counts` snapshot and the `Gauges` read-only views  |
-| `supervisor`                                              | Event loop that carries out admission's effects                                                 |
-| `supervisor_polling`                                      | Poll cadence and ordered server, pool and cache checks; no token-release decisions              |
-| `supervisor_signals`, `supervisor_shutdown`               | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                             |
-| `supervisor_observability`                                | Wires cached pressure and drain observers into existing owners                                  |
-| `effect_dispatch`                                         | Effect handlers and their metric and health mappings                                            |
-| `requesters`, `pending_request`                           | Connections, queued requests and replies; recorded request data                                 |
-| `request_connections`                                     | Unrecorded sockets, received rights and refusals                                                |
-| `request_validation`, `requester_metrics`                 | Pure validation over explicit context; terminal metric fields                                   |
-| `request_state`                                           | Compatibility re-export of `pending_request.Pending`                                            |
-| `descriptor_policy`, `descriptor_budget`                  | Pure budget arithmetic; OS sampling, retention accounting and status                            |
-| `listener_pressure`                                       | Listener backpressure after accept-time exhaustion                                              |
-| `groups`, `group_drain`, `group_recovery`                 | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                   |
-| `supervisor_placement`                                    | Admitted compiler placement, terminal scope outcome and stop-mode classification                |
-| `launch`, `launch_setup`                                  | Held launch child and bounded setup diagnostics                                                 |
-| `relocation`, `descriptors`                               | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution              |
-| `attributes`                                              | The caller's umask, niceness and resource limits                                                |
-| `pool`                                                    | The token device, read on a thread of its own                                                   |
-| `sccache`, `server_watch`                                 | The managed cache's reachability and accounting; start-up and `SERVER_DRAIN` release            |
-| `cache_recovery`, `recovery_*`                            | The recovery transaction, its barrier, reclamation, trigger and guidance                        |
-| `cache_quiesce`                                           | Start-up stop of a live managed cache under the barrier, before the strict accounting           |
-| `bus_properties`, `systemd`                               | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl` |
-| `cgroups`, `startup`, `proc_trees`                        | Control-group reads, the restart barrier and diagnostic process-tree counts                     |
-| `protocol`, `replies`, `framing`, `frame_payload`, `wire` | Versioned JSON frames with passed descriptors                                                   |
-| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`  | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc              |
-| `adapter_invocation`, `adapter_retry`                     | Invocation state and deadline-preserving busy and restart retries                               |
-| `tracing`, `tracing_export`, `tracing_sdk_export`         | Bounded spans, the fixed journal schema and synchronous native-journal export                   |
-| `toolchain_env`                                           | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper       |
-| `rustc_query`, `rustc_cargo_probe`                        | Fail-closed recognition of direct and verified workspace-driver rustc queries                   |
-| `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                 |
-| `status`, `status_client`, `status_render`, `status_cli`  | The status document, its transport, rendering and command                                       |
-| `admission_readiness`                                     | Pure admission-progress classification from health, ledger counts and recovery outlook          |
-| `document_cli`                                            | Shared raw `--json` parser for status and recovery document commands                            |
-| `recover_client`, `recover_cli`                           | The recovery request and the `build-limits-recover` command                                     |
-| `metrics*`, `journal`, `journal_native`                   | Metric vocabulary, native journal datagrams, journal queries and reports                        |
-| `drain_loop`, `drain_metrics`                             | Paces drain-fault retries; observes drain progress without exit authority                       |
+| Module                                                                             | Responsibility                                                                                   |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `admission`, `effects`                                                             | Pure state machine: queue, tokens, draining                                                      |
+| `admission_state`                                                                  | Group lifecycle values; the identifier-free `Counts` snapshot and the `Gauges` read-only views   |
+| `supervisor`                                                                       | Event loop that carries out admission's effects                                                  |
+| `supervisor_polling`                                                               | Poll cadence and ordered server, pool and cache checks; no token-release decisions               |
+| `supervisor_signals`, `supervisor_shutdown`                                        | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                              |
+| `supervisor_observability`                                                         | Wires cached pressure and drain observers into existing owners                                   |
+| `effect_dispatch`                                                                  | Effect handlers and their metric and health mappings                                             |
+| `requesters`, `pending_request`                                                    | Connections, queued requests and replies; recorded request data                                  |
+| `request_connections`                                                              | Unrecorded sockets, received rights and refusals                                                 |
+| `request_validation`, `requester_metrics`                                          | Pure validation over explicit context; terminal metric fields                                    |
+| `request_state`                                                                    | Compatibility re-export of `pending_request.Pending`                                             |
+| `descriptor_policy`, `descriptor_budget`                                           | Pure budget arithmetic; OS sampling, retention accounting and status                             |
+| `listener_pressure`                                                                | Listener backpressure after accept-time exhaustion                                               |
+| `groups`, `group_drain`, `group_recovery`                                          | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                    |
+| `supervisor_placement`                                                             | Admitted compiler placement, terminal scope outcome and stop-mode classification                 |
+| `launch`, `launch_setup`                                                           | Held launch child and bounded setup diagnostics                                                  |
+| `relocation`, `descriptors`                                                        | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution               |
+| `attributes`                                                                       | The caller's umask, niceness and resource limits                                                 |
+| `pool`                                                                             | The token device, read on a thread of its own                                                    |
+| `sccache`, `server_watch`                                                          | The managed cache's reachability and accounting; start-up and `SERVER_DRAIN` release             |
+| `cache_recovery`, `recovery_*`                                                     | The recovery transaction, its barrier, reclamation, trigger and guidance                         |
+| `cache_quiesce`                                                                    | Start-up stop of a live managed cache under the barrier, before the strict accounting            |
+| `bus_properties`, `systemd`                                                        | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl`  |
+| `cgroups`, `startup`, `proc_trees`                                                 | Control-group reads, the restart barrier and diagnostic process-tree counts                      |
+| `protocol`, `replies`, `framing`, `frame_payload`, `wire`                          | Versioned JSON frames with passed descriptors                                                    |
+| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`                           | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc               |
+| `adapter_invocation`, `adapter_retry`                                              | Invocation state and deadline-preserving busy and restart retries                                |
+| `tracing`, `tracing_export`, `tracing_sdk_export`                                  | Bounded spans, the fixed journal schema and synchronous native-journal export                    |
+| `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper        |
+| `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar |
+| `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                  |
+| `status`, `status_client`, `status_render`, `status_cli`                           | The status document, its transport, rendering and command                                        |
+| `admission_readiness`                                                              | Pure admission-progress classification from health, ledger counts and recovery outlook           |
+| `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                             |
+| `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                      |
+| `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, native journal datagrams, journal queries and reports                         |
+| `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                        |
 
 _Table 2: Package modules._
 
@@ -558,6 +558,13 @@ stdin, the synthetic crate name, at least one crate type, and
 `--print=file-names`, and permits additional allow-listed crate types and print
 kinds. It rejects unknown tokens, repeated singleton fields, and duplicate
 crate types or print kinds.
+
+The module boundaries follow those grammars: `rustc_query.py` exports
+`is_toolchain_query` and normalizes compiler argv; `rustc_query_workspace.py`
+verifies workspace-driver identity; `rustc_query_grammar.py` recognizes direct
+rustc version and print forms; and `rustc_cargo_probe.py` owns Cargo's stdin
+probe grammar. These parsers remain private to adapter admission. They are not
+general validation helpers for compile commands.
 
 The compiler identity is either a basename of `rustc`, or exactly one
 `clippy-driver` or `dylint-driver` followed by an inner executable whose

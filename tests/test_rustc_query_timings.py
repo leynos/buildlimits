@@ -1,4 +1,4 @@
-"""Measure real rustc and workspace-driver query latency outside admission."""
+"""Measure direct compiler-query latency while all admission slots are held."""
 
 import collections.abc as cabc
 import contextlib
@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from rustc_query_host_checks import (
+    finish_barriers,
     matching_dylint_driver,
     tool_version,
 )
@@ -47,9 +48,8 @@ class TimingScenario:
 
 @dc.dataclass(frozen=True, slots=True)
 class ProbeRun:
-    """One query sample and the held-pool state it must preserve."""
+    """One direct compiler-query sample."""
 
-    harness: Harness
     label: str
     query_name: str
     argv: list[str]
@@ -130,8 +130,9 @@ def _run_timing_suite(
             )
         )
         _record_timing_properties(record_property, measurements)
+        _assert_pool_is_held(harness)
         release.touch()
-        _finish_barriers(barriers)
+        finish_barriers(barriers)
         status = harness.status()
         assert status["held"] == 0 and not status["queued"], status
 
@@ -175,16 +176,17 @@ def _measure_commands(scenario: TimingScenario) -> dict[str, list[dict[str, obje
         for query_name, query in _QUERY_FORMS.items():
             argv = [*prefix, *query]
             probe = ProbeRun(
-                scenario.harness,
                 label,
                 query_name,
                 argv,
                 scenario.environment,
             )
             _run_probe(probe)
+            _assert_pool_is_held(scenario.harness)
             samples: list[dict[str, object]] = []
             for _ in range(_SAMPLES):
                 sample = _run_probe(probe)
+                _assert_pool_is_held(scenario.harness)
                 samples.append(sample)
                 _record_json_property(
                     scenario.record_property,
@@ -208,7 +210,7 @@ def _measure_with_evidence(
 
 
 def _run_probe(probe: ProbeRun) -> dict[str, object]:
-    """Run one bounded raw query and confirm no slot was released or queued."""
+    """Run one direct compiler query as a bounded latency baseline."""
     started = time.monotonic()
     try:
         result = subprocess.run(
@@ -237,8 +239,6 @@ def _run_probe(probe: ProbeRun) -> dict[str, object]:
         f"{probe.label} {probe.query_name} took {elapsed:.6f}s: {probe.argv}; "
         f"stdout={result.stdout!r}; stderr={result.stderr!r}"
     )
-    status = probe.harness.status()
-    assert status["held"] == probe.harness.slots and not status["queued"], status
     return {
         "argv": probe.argv,
         "duration_seconds": round(elapsed, 6),
@@ -273,8 +273,7 @@ def _record_timing_context(
     _record_json_property(record_property, "rustc_query_tool_versions", versions)
 
 
-def _finish_barriers(processes: list[subprocess.Popen[bytes]]) -> None:
-    """Reap every released barrier compiler and require it to exit normally."""
-    for process in processes:
-        stdout, stderr = process.communicate(timeout=60)
-        assert process.returncode == 0, (stdout, stderr)
+def _assert_pool_is_held(harness: Harness) -> None:
+    """Confirm the direct timing baseline leaves every harness token held."""
+    status = harness.status()
+    assert status["held"] == harness.slots and not status["queued"], status

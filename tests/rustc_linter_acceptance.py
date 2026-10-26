@@ -12,23 +12,23 @@ from rustc_query_host_checks import (
     finish_or_fail,
     is_compile,
     is_query,
-    package_cache_waits,
+    require,
+    wait_for_queued_compile,
+)
+from rustc_query_host_observations import (
     probe_summary,
     record_observation,
-    require,
     result_evidence,
-    wait_for_queued_compile,
 )
 from rustc_query_host_support import (
     ObservedCommand,
     ObservedProcess,
-    ProbeRecord,
     cargo_environment,
     dependency_free_crate,
     hold_pool,
     start_observed,
-    timing_entries,
 )
+from rustc_query_probe_records import ProbeRecord, timing_entries
 from rustc_query_timing_shim import install_timing_shim
 from systemd_harness import Harness
 
@@ -199,10 +199,6 @@ def _prove_metadata_progress(
     require(
         condition=not any(is_compile(entry) for entry in entries),
         message=str(entries),
-    )
-    scenario.record_property(
-        f"{scenario.name}_second_metadata_package_cache_waits",
-        json.dumps(package_cache_waits(metadata_result), sort_keys=True),
     )
     record_observation(
         scenario.record_property,

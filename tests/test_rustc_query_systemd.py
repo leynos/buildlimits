@@ -68,7 +68,7 @@ def test_queries_bypass_a_full_pool_but_compiles_still_queue(tmp_path: Path) -> 
         scenario = _prepare_scenario(harness, owned, tmp_path)
         _assert_queries_are_exempt(owned, scenario)
         queued, markers = _queue_compile_and_unknown_wrapper(owned, scenario)
-        _wait_for_both_queued(scenario)
+        _wait_for_both_queued(scenario, markers)
         _release_and_verify(scenario, queued, markers)
 
 
@@ -176,16 +176,12 @@ def _queue_compile_and_unknown_wrapper(
     return processes, markers
 
 
-def _wait_for_both_queued(scenario: HeldPoolScenario) -> None:
+def _wait_for_both_queued(scenario: HeldPoolScenario, markers: list[Path]) -> None:
     """Prove neither queued invocation ran before barriers are released."""
-    marker_paths = [
-        scenario.harness.work / "ordinary-compile.json",
-        scenario.harness.work / "unknown-wrapper.json",
-    ]
     assert wait_for(
         lambda: len(scenario.harness.status()["queued"]) == 2, timeout=30
     ), scenario.harness.journal()
-    assert not any(marker.exists() for marker in marker_paths), (
+    assert not any(marker.exists() for marker in markers), (
         "neither queued compiler has started"
     )
 
