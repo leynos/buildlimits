@@ -173,8 +173,13 @@ Cargo was `1.99.1`, commit `5f94df4789f005f9a352888e8355ffc645b7ed0e`. Rustc was
 | Concurrent `cargo metadata` while that Clippy compile was queued    | Status 0 in 0.264717 s, before the compile barrier was released                                          | No package-cache lock-wait lines; metadata probes completed while the real compile remained queued                                                |
 | Dylint readiness                                                    | `cargo-dylint --version` returned `6.0.1`                                                                | Real Dylint resolution and timing were skipped because caller-supplied `DYLINT_LIBRARY_PATH` was unset; the fake-driver held-pool scenario passed |
 
-The following five measured samples all exited with status 0 while every pool
-slot remained held. One warm-up preceded each set. Every value is in seconds.
+The following five samples are direct-compiler baselines from
+`tests/test_rustc_query_timings.py::_run_probe`; they invoke rustc and its
+workspace drivers without `build-limits-rustc`. All returned status 0 while
+every pool slot remained held, so they bound query cost only. The held-pool
+systemd test in `tests/test_rustc_query_systemd.py` establishes that the
+adapter dispatches these queries without a token. One warm-up preceded each
+set. Every value is in seconds.
 
 | Query                                  | Five samples                                     |
 | -------------------------------------- | ------------------------------------------------ |
