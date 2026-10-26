@@ -158,9 +158,17 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     once.
 - **Memory.** If any single checker run exceeds 8 GiB peak resident memory,
   stop.
-- **Scope.** If any milestone touches more than 25 files or adds more than
-  1,500 net lines of Python, stop and escalate. The count excludes `.fizz`
-  models, fixtures and snapshots.
+- **Scope.** If any milestone touches more than 25 files, stop and escalate.
+  The count excludes `.fizz` models, fixtures and snapshots.
+  - The 1,500-net-Python-line figure is a **reporting threshold, not a stop**
+    (D21). A milestone that exceeds it records the measurement in this plan's
+    Risks section and in its commit message, and carries on. The figure makes
+    an overrun visible while the work is still cheap to redirect; it does not
+    outrank the acceptance conditions that drive the size, and EP-M2 showed
+    the two can conflict.
+  - Report the measurement by kind, with docstrings, comments and blank lines
+    separated from code, because the width of the gap between readings is
+    itself a finding. The code-only figure is the one compared with 1,500.
 - **Production code.** If any change to a file under `buildlimits/` appears
   necessary, stop.
   - This includes adding a metric gauge (RFC 0001 open question 9, deferred to
@@ -716,15 +724,18 @@ explicitly.
     add the model and its fixtures. If the tolerance is enforced as written,
     the whole workstream breaches it; if it is a warning threshold, the plan
     should say so before EP-M3 sizes itself against it.
-  - Status: **blocking, awaiting a user decision.** EP-M2 is committed
-    (`b38adaf`) and gated, so the delivered work is recoverable. EP-M3 has not
-    started and sizes itself against the same tolerance, so it waits on the
-    answer. The question was raised twice through the interactive question
-    tool on 2026-10-24 and aborted at the permission step both times without
-    reaching the user; it is therefore carried in the session report and in
-    this note instead. The options put to the user were: treat 1,500 as a
-    reporting threshold, raise it to 2,000, trim EP-M2, or stop the
-    workstream at EP-M2.
+  - Status: **closed on 2026-10-26.** The user decided that 1,500 net Python
+    lines is a reporting threshold rather than a stop; D21 records the
+    decision and its rationale, and Tolerances, "Scope" now states it. EP-M2
+    was over the figure on every reading — 1,568 code, 1,589 with comments,
+    4,157 physical — and the overrun is reported here rather than absorbed.
+    The 25-file limit is unchanged and still stops the work; EP-M2's 23 files
+    were inside it.
+  - What this risk was for: the overrun comes from exhaustive acceptance
+    conditions, so a future milestone's figure should be read against the
+    obligations it discharges rather than against a target. A milestone that
+    exceeds the threshold with no such obligation behind it is the case worth
+    questioning.
 
 ## Decision log
 
@@ -1065,6 +1076,34 @@ explicitly.
     one is the truth-table row test against its non-vacuity sweep, which T2
     requires as two tests; and one is two unrelated builders sharing only the
     numpy `Returns` section.
+
+- **D21. The 1,500-line figure is a reporting threshold, not a hard stop.**
+  - Decision: the user decided on 2026-10-26 that a milestone exceeding 1,500
+    net Python lines records the measurement and proceeds, rather than
+    stopping the workstream. The 25-file limit stays a hard stop, because file
+    count is a structural signal about where work landed rather than a proxy
+    for its size.
+  - Rationale: EP-M2 exceeded the figure on every reading — 1,568 net code
+    lines, 1,589 with comments, 4,157 physical — and the overrun was driven by
+    obligations the plan itself fixes as exhaustive. T2 requires a truth table
+    generated from the domain's own unions; T3 and T4 require Hypothesis
+    properties plus a handwritten mutant control; T5 requires five captured
+    fixture classes parametrized. `AGENTS.md`'s 400-line module cap then
+    splits the materializer's tests across three modules, and
+    `interrogate --fail-under 100` with pydoclint's
+    `ignore-one-line-docstrings = false` requires a full numpy docstring on
+    every helper, including test helpers. Meeting 1,500 would therefore have
+    meant dropping non-vacuity clauses or seeking lint waivers, both of which
+    weaken acceptance evidence to satisfy a number that is not itself a
+    requirement.
+  - What the threshold still buys: an overrun is reported while the work is
+    cheap to redirect, so a milestone that doubles in size is visible in the
+    plan's Risks section rather than discovered at G1. The measurement is
+    reported by kind, with the code-only figure compared against 1,500,
+    because the gap between that figure and the physical total — 1,568 against
+    4,157 in EP-M2 — is itself worth seeing.
+  - Scope: this amends Tolerances, "Scope". The other tolerances are
+    unchanged, and the 25-file limit still stops the work.
 
 ## Outcomes & retrospective
 
