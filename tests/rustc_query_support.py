@@ -12,6 +12,7 @@ _CRATE_TYPES = ("bin", "rlib", "dylib", "cdylib", "staticlib", "proc-macro")
 _DIRECT_PRINT_KINDS = (
     "cfg",
     "sysroot",
+    "target-libdir",
     "target-list",
     "target-cpus",
     "target-features",
