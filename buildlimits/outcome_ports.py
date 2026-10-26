@@ -47,6 +47,13 @@ class GenerationFailure:
 
 
 @dc.dataclass(frozen=True, slots=True)
+class SampleFailure:
+    """A bounded failure while sampling full-emit compiler children."""
+
+    reason: typ.Literal["server_unknown", "group_unreadable"]
+
+
+@dc.dataclass(frozen=True, slots=True)
 class StoreFailure:
     """A bounded store or salt operation failure."""
 
@@ -109,9 +116,27 @@ class ServerProcessPort(typ.Protocol):
         """
         ...
 
+    def full_emit_metadata(self) -> frozenset[str] | SampleFailure:
+        """Return metadata values from the current server's full-emit children.
+
+        Returns
+        -------
+        frozenset[str] | SampleFailure
+            In-memory child metadata or a closed sampling failure.
+        """
+        ...
+
 
 class OutcomeStorePort(typ.Protocol):
     """Append bounded records and drain asynchronous writer results."""
+
+    def salt_result(self) -> Salt | StoreFailure | None:
+        """Return the asynchronous, one-shot salt handoff without waiting.
+
+        Example:
+            Before writer startup completes, ``salt_result()`` returns None.
+        """
+        ...
 
     def append(self, record: StoreRecord) -> None:
         """Enqueue a record without waiting for file I/O.

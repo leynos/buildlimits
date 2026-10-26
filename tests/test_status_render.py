@@ -331,6 +331,30 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
         },
         "g3 running (cached): tokio in <project>, 40.0s",
     ),
+    "outcomes-enabled": (
+        {
+            "capacity": 2,
+            "held": 0,
+            "healthy": True,
+            "caching": True,
+            "cache_outcomes": {
+                "enabled": True,
+                "attributed": 1,
+                "readings": 2,
+            },
+        },
+        "cache outcomes recording: 1 attributed, 2 readings",
+    ),
+    "outcomes-disabled": (
+        {
+            "capacity": 2,
+            "held": 0,
+            "healthy": True,
+            "caching": True,
+            "cache_outcomes": {"enabled": False, "reason": "recorder_disabled"},
+        },
+        "cache outcomes disabled after an internal failure",
+    ),
 }
 
 

@@ -60,8 +60,6 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         log(str(error))
         return 2
     try:
-        if settings.cache_outcomes == "record":
-            log("cache outcome recording is not available in this build")
         return _supervise(settings)
     finally:
         os.close(lock)

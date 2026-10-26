@@ -111,12 +111,12 @@ def test_an_invalid_config_file_exits_two(
     assert "slots" in err, err
 
 
-def test_recording_configuration_is_accepted_but_reported_as_unavailable(
+def test_recording_configuration_is_accepted_without_the_old_unavailable_warning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The schema-only plateau accepts record mode and warns once at start."""
+    """The integrated record mode no longer reports the old staged warning."""
     config_path = tmp_path / "supervisor.toml"
     config_path.write_text(
         f'lock_path = "{tmp_path / "lock"}"\ncache_outcomes = "record"\n',
@@ -127,12 +127,9 @@ def test_recording_configuration_is_accepted_but_reported_as_unavailable(
     status = service.main(["--config", str(config_path)])
 
     assert status == 0, "the inert plateau starts normally"
-    assert (
-        capsys.readouterr().err.count(
-            "cache outcome recording is not available in this build"
-        )
-        == 1
-    ), "the unsupported mode is reported once"
+    assert "cache outcome recording is not available" not in capsys.readouterr().err, (
+        'recording_configuration_is_...: "cache outcome recording is not avai'
+    )
 
 
 def test_off_is_the_default_outcome_recording_mode() -> None:

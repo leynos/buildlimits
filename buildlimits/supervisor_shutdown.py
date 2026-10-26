@@ -259,4 +259,5 @@ def close(supervisor: Supervisor) -> None:
         release.callback(supervisor_signals.release_signals, supervisor)
         for running in supervisor.groups.running.values():
             release.callback(running.child.close)
+        release.callback(supervisor.outcomes.close, 1.0)
         release.callback(supervisor.requests.close_all)

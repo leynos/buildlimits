@@ -46,7 +46,7 @@ PYLINT = $(UV_ENV) $(UV) tool run --managed-python --python $(PYLINT_PYTHON) --f
 
 .PHONY: help all audit clean build build-release lint lint-python fmt \
         check-fmt check-lock check-python-sources \
-        markdownlint nixie spelling test test-systemd-user typecheck dead-code duplication install-nose lint-actions validate $(TOOLS) $(VENV_TOOLS)
+        markdownlint nixie spelling test test-systemd-user test-sccache-host typecheck dead-code duplication install-nose lint-actions validate $(TOOLS) $(VENV_TOOLS)
 
 .DEFAULT_GOAL := all
 # Shared build caches require sequential gates even when make receives -j.
@@ -172,6 +172,9 @@ test: build $(VENV_TOOLS) ## Run tests
 # uniquely named units, so it runs only when asked for and never under xdist.
 test-systemd-user: build $(VENV_TOOLS) ## Run host acceptance against the systemd user manager
 	BUILD_LIMITS_HOST_ACCEPTANCE=1 $(UV_ENV) $(UV) run pytest -v -m systemd_user tests
+
+test-sccache-host: build $(VENV_TOOLS) ## Run opt-in checks against sccache 0.14.0
+	BUILD_LIMITS_SCCACHE_HOST_CHECK=1 $(UV_ENV) $(UV) run pytest -v -m sccache_host_check tests
 
 
 validate: ## Validate the Makefile

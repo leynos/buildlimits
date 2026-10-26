@@ -61,6 +61,11 @@ class FakeServer:
         """Return the model server identity."""
         return GENERATION
 
+    @staticmethod
+    def full_emit_metadata() -> frozenset[str]:
+        """Return no compiler children for query-driver examples."""
+        return frozenset()
+
 
 def _started_query(now: float) -> tuple[OutcomeRecorder, FakeStatistics, Ticket]:
     """Start one bounded statistics query for a driver contract.

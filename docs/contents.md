@@ -6,8 +6,8 @@
 ## Guides
 
 - [User's guide](users-guide.md) explains how to install, configure and
-  operate compile admission: status, cache recovery, metrics and capacity
-  changes.
+  operate compile admission: status, cache recovery, outcome recording, metrics
+  and capacity changes.
 - [Developer's guide](developers-guide.md) is the maintainer's manual: quality
   gates, the supervisor's internal interfaces, the test helpers and the
   repository's static-analysis exceptions.

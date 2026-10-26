@@ -1,0 +1,13 @@
+# serializer version: 1
+# name: test_store_cli_text_and_json_snapshots_include_semantic_sample_sizes[h2-json]
+  '''
+  {"attributed_outcomes": 2000, "child_only": {"agreement": 0.94898, "correct": 93, "evaluable_records": 98}, "child_sightings": {"ambiguous": 1, "not_seen": 50, "seen": 48, "unavailable": 1}, "combined": {"agreement": 0.95, "correct": 95}, "evaluable_records": 100, "hypothesis": "h2", "miss_sightings": {"observed": 49, "seen": 46, "share": 0.938776}, "runtime_only": {"agreement": 0.97, "correct": 97}, "schema": 1, "verdict": "supported"}
+  
+  '''
+# ---
+# name: test_store_cli_text_and_json_snapshots_include_semantic_sample_sizes[h2-text]
+  '''
+  H2 child/runtime prediction: supported; 100 evaluable of 2000 attributed outcomes; combined 95.0%; runtime 97.0%; child-only 94.9%; misses seen 46/49
+  
+  '''
+# ---

@@ -133,21 +133,14 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
 - Scope: escalate if W1 needs more than 32 changed or new production source
   files, or more than 3,200 net added lines of production code.
-- Scope escalation D36: candidate `86dee82` against `42f40e4` has 26 changed
+- Scope escalation D36: the reviewed candidate was reported as 26 changed
   production files and 5,164 net added production lines. The line trigger was
   exceeded by 1,964 lines; the file trigger was not. The owner's 2026-10-26
-  direction to address these findings and deliver EP-M6 to EP-M8 authorizes
-  continuing only the approved W1 scope. At the gated EP-M6 boundary, the
-  candidate has 30 changed production files and 5,268 net added production
-  lines against `42f40e4`; EP-M6 and the two review fixes add eight touched
-  files and 104 net lines over `86dee82`. This is two files beyond the initial
-  4-to-6-file EP-M6 estimate, including the adapter and torn-tail repairs. The
-  remaining EP-M7 estimate is 8 to 12 touched production files and 1,200 to
-  2,000 net lines; EP-M8 is 7 to 11 files and 1,000 to 1,600 lines. With
-  overlap, the remaining estimate is 15 to 23 unique files and 2,200 to 3,600
-  net lines, for a W1 total of 49 to 57 files and 7,468 to 8,868 net lines.
-  These ranges are inferred from the milestone deliverables; refresh actuals at
-  each boundary. No work beyond W1 is authorized by this decision.
+  direction to address the findings and deliver EP-M6 to EP-M8 authorizes
+  continuing only the approved W1 scope. The contemporaneous M6 inventory and
+  M7/M8 forecast were provisional; D38 records the final source recount at the
+  integrated M8 candidate and replaces that forecast. No work beyond W1 is
+  authorized by this decision.
 - Interface: escalate before changing any of the following:
   - the wire protocol (`protocol.py`);
   - any existing status-document key;
@@ -920,6 +913,13 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   check-fmt, markdownlint and nixie logs use the `-md-3` prefix; lint,
   typecheck, test and audit use `-13`. The audit found no known vulnerabilities;
   `buildlimits` was unavailable on PyPI.
+- [x] (2026-10-26) The two minor punctuation findings from the incremental
+  review of `4abaef8` were corrected in `a77ca78`; `make check-fmt`,
+  `make markdownlint` and `make nixie` passed. The reassessment was
+  rate-limited before review began (`waitTime: 4 minutes`; all 10 included
+  reviews used). Following the required buffer and `shuf` policy, the 61-minute
+  cooldown runs from 16:48:21 CET to 17:49:21 CET. No clean reassessment is
+  claimed; retry only after that time against the then-current exact candidate.
 - [x] (2026-10-26) O8's clock-skew boundary is resolved by D37: only the
   compaction that observes a wall-clock jump skips ageing. A restarted writer
   begins with a fresh monotonic baseline and applies ordinary retention.
@@ -927,8 +927,35 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   the accepted O8 contract. Shared torn-tail fixture and model helpers now
   remove duplicated generated and example setup; the exact candidate passed
   full gates as recorded above.
-- [ ] O4, O5 and O11 await EP-M7; O12 and the H2 portion of O13 await EP-M8.
-  Reconcile every prescribed control before W1 acceptance.
+- [x] (2026-10-26) O4, O5 and O11's named negative controls fail as expected:
+  delaying a token changes the differential trace, the blocking-query control
+  makes loop progress zero, and removing the shell guard fails the totality
+  test. Green controls are in `/tmp/test-outcome-negative-controls-green.out`;
+  the bounded O11 mutation is in
+  `/tmp/mutation-control-cache-hit-prediction-o11_no_guard-bounded.out`.
+- [x] (2026-10-26) O12's three mutations were detected: admitting dep-info,
+  matching same-crate children instead of exact metadata, and sampling an ended
+  request. Logs use the `/tmp/mutation-control-cache-hit-prediction-o12_`
+  prefix.
+- [x] (2026-10-26) O13's H2 95%, below-90%, 100-row and 2,000-outcome
+  boundaries, single-outcome-key exclusion, and H3 2,000-outcome boundary each
+  detected a deliberate mutation. Logs use the
+  `/tmp/mutation-control-cache-hit-prediction-o13_` prefix. The matching replay
+  tests pass on the unmodified implementation.
+- [x] (2026-10-26) O7's raw-path mutant failed the generated path privacy
+  property at the full-manifest assertion. The test reports registry and Git
+  cases as passing and the local-path case as failing; log:
+  `/tmp/mutation-control-cache-hit-prediction-o7_raw_path.out`. The temporary
+  `outcome_key.py` edit was restored byte-for-byte (SHA-256
+  `41aee3d4e5904456a84375e4a8d4d60b8216da5bba52e1d4cc1ff860c131482c`); the
+  unmutated generated case then passed all three origin variants.
+- [x] (2026-10-26) O9's stale-baseline mutant failed the real user-manager
+  restart scenario: the post-restart outcome remained `none` instead of `solo`.
+  Log: `/tmp/mutation-control-cache-hit-prediction-o9_old_baseline.out`. The
+  temporary `outcome_recorder_reading.py` edit was restored byte-for-byte
+  (SHA-256 `9539c0dae0a0dd73d43949e712614bda0449537c67ec92b3447838a6991c6feb`);
+  the unmutated restart scenario then passed. Pytest emitted the known
+  `cache_outcome_systemd_support` assert-rewrite warning.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
@@ -947,16 +974,245 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] EP-M5: adapters (non-blocking child, queries, generation, store
   writer). Implementation commit `34ea33b`; full gates and clean archive-bound
   review passed in candidate98.
-- [x] EP-M6: inert schema, configuration and tracing vocabulary
-  (releasable); commit `d0d0495`, full sequential gates passed, and committed
-  CodeRabbit review completed cleanly at the 25-file M6 boundary. Its
-  post-review spelling correction is covered by the gate run above.
+- [ ] EP-M6: inert schema, configuration and tracing vocabulary
+  (releasable). Its earlier standalone gates passed in `d0d0495`; the
+  integrated M6-M8 candidate remains open for final acceptance, as directed in
+  the review findings.
 - [ ] EP-M7: supervisor wiring, status, report, `h3` replay, systemd
   scenarios and documentation.
 - [ ] EP-M8: H2 child sightings, the `h2` replay, and their documentation.
 - [ ] G1 (owner): release, enable, collect, record H1, H2 and H3, and
   decide.
 - [ ] EP-M9: W2 offline replay (H4 and H5), gated on G1.
+
+- [x] (2026-10-26) EP-M7's implementation is integrated but not yet accepted:
+  the focused outcome suite passed (115 passed, 5 skipped), the five real
+  systemd-user scenarios passed, and the opt-in latency sample measured 0.014
+  ms p99 tick lengthening and 0.064 ms p99 append enqueue. Full sequential
+  gates and the milestone review remain pending.
+- [x] (2026-10-26) EP-M7 and EP-M8 focused tests pass together: 408 passed,
+  10 host-gated tests skipped and 26 snapshots passed. The run covers the O8
+  store machine, H2/H3 replay, sighting properties, process sampling, status,
+  metrics and fake-sccache scripting. The real-manager M8 scenarios were
+  skipped in this focused run; the sequential candidate gates remain the
+  acceptance boundary.
+- [x] (2026-10-26) First full sequential EP-M7/EP-M8 candidate gates completed
+  on `a77ca78` plus its then-dirty tree. Validation, formatting, all 2,187
+  tests, Markdown, Nixie, audit and the sccache host gate passed. Lint reported
+  84 diagnostics, typecheck reported 12, and the systemd gate exposed two
+  unregistered M8 BDD steps plus a separate 30-second `systemctl daemon-reload`
+  timeout in an existing admission test. The source diagnostics and step
+  registration are being repaired; the timed-out manager operation remains
+  environmental evidence unless it reproduces after those repairs. Logs are
+  under
+  `/tmp/*-ac9f6ac4-ab16-4230-a4f9-0b19d16fbf25-cache-hit-prediction-3.out`.
+- [x] (2026-10-26) The next frozen candidate passed validation, formatting,
+  typecheck, 2,186 tests (34 skipped; 52 snapshots), Markdown, Nixie, audit,
+  and the sccache host gate. Lint still had 14 diagnostics. The newly loaded
+  systemd BDD steps ran, and 29 host scenarios passed; two M8 assertions showed
+  that the fake compiler's Python process was not visible as a `rustc` argv and
+  the request-only sleep environment did not reach the server-side child. The
+  test harness will model the executable name and controlled child delay at the
+  fake server boundary; no production classifier relaxation is planned. The
+  earlier daemon-reload timeout did not recur. Logs are under
+  `/tmp/*-ac9f6ac4-ab16-4230-a4f9-0b19d16fbf25-cache-hit-prediction-4.out`.
+- [x] (2026-10-26) The follow-up repairs remove the remaining import and
+  complexity diagnostics, preserve the fake compiler's `rustc` process name and
+  server-side delay controls, and add a no-selector-wait regression for an
+  in-progress generation connection. Formatting completed; fresh full gates and
+  both real-manager sighting scenarios remain pending.
+- [x] (2026-10-26) The first fresh gate run found one remaining dataclass field
+  call after its import was removed. Lint and typecheck failed, and three test
+  targets stopped during pytest configuration before collection; the other
+  gates passed. The call now uses the existing `dataclasses` alias. Logs are
+  under
+  `/tmp/*-ac9f6ac4-ab16-4230-a4f9-0b19d16fbf25-cache-hit-prediction-5.out`.
+- [x] (2026-10-26) The next sequential run passed validation, formatting,
+  typecheck, Markdown, Nixie, audit and the sccache host gate. The 2,185-pass
+  test run exposed a stale `LaunchFailed` module export and a differential
+  oracle that did not advance its observation clock; the real-manager run
+  showed H2 counts sightings only for paired keys, while the test had no paired
+  history. `interrogate -vv` identified two undocumented nested test functions.
+  The repairs preserve the public event alias, advance the fake clock, seed a
+  same-key hit/miss pair before the overlap scenario and document both nested
+  functions. Logs use the `-6` prefix under `/tmp`.
+- [ ] EP-M7/EP-M8 integrated acceptance remains open until local CodeRabbit
+  review findings, if any, are resolved on the committed candidate. The
+  sequential gates, real-manager M8 scenarios and opt-in latency check now
+  pass; do not mark M6 to M8 complete before that review is reconciled.
+- [x] (2026-10-26) Gate run `-7` passed validation, formatting, typecheck,
+  2,187 tests (34 skipped; 52 snapshots), Markdown, Nixie, audit and the
+  sccache host gate. Lint found one composite assertion, and the real-manager
+  overlap scenario exposed an incorrect H2 expectation: mixed miss/hit
+  statistics leave the overlapping rows `unattributed`, so H2 correctly
+  excludes them before counting ambiguous sightings. The scenario now asserts
+  those rows are sampled and unattributed, while its earlier paired records
+  remain H2 evidence; a paired-key unit test covers ambiguous child-only
+  exclusion. The updated systemd assertions and lint repair require a fresh
+  full gate run. Logs use the `-7` prefix under `/tmp`.
+- [x] (2026-10-26) Gate run `-8` passed validation, formatting, typecheck,
+  2,187 tests (34 skipped; 52 snapshots), Markdown, Nixie, audit, all 31
+  systemd-user scenarios and the sccache host gate. Lint reported three Pylint
+  findings in test helpers: truth-value checks for an empty mapping and string,
+  and an oversized test-builder signature. The helpers are simplified; the
+  exact revised candidate needs another full sequential gate run. Logs use the
+  `-8` prefix under `/tmp`.
+- [x] (2026-10-26) Gate run `-9` passed validation, formatting, standard
+  Pylint, typecheck, 2,187 tests (34 skipped; 52 snapshots), Markdown, Nixie,
+  audit, all 31 systemd-user scenarios and the sccache host gate. The pinned
+  project lint plugin then reported 116 further diagnostics: missing messages
+  on assertions, redundant future imports for the Python 3.14 baseline, and
+  several forwarding wrappers or style boundaries. These are being resolved
+  before the next full gate run. Logs use the `-9` prefix under `/tmp`.
+- [x] (2026-10-26) Gate run `-10` passed validation, formatting, typecheck,
+  2,187 tests (34 skipped; 52 snapshots), Markdown, Nixie, audit, all 31
+  systemd-user scenarios and the sccache host gate. The custom lint diagnostics
+  were cleared; Ruff found eight issues in the re-export and fake-port cleanup.
+  The re-export list is now explicit, and fake-port contracts use assertion
+  messages rather than raising new exceptions. The revised candidate needs a
+  fresh full sequential run. Logs use the `-10` prefix under `/tmp`.
+- [x] (2026-10-26) Gate run `-11` passed validation, formatting, typecheck,
+  2,187 tests (34 skipped; 52 snapshots), Markdown, Nixie, audit, all 31
+  systemd-user scenarios and the sccache host gate. Ruff rejected three
+  assertions in the shared test-port module, which is not covered by the
+  `test_*.py` assertion exception. Replace them with documented explicit
+  failures, then run the complete sequential set again. Logs use the `-11`
+  prefix under `/tmp`.
+- [x] (2026-10-26) Gate run `-12` passed validation, formatting, typecheck,
+  2,187 tests (34 skipped; 52 snapshots), Markdown, Nixie, audit, all 31
+  systemd-user scenarios and the sccache host gate. Pylint found the integrated
+  systemd module at 403 lines, above the 400-line limit. Move the
+  child-sighting scenarios into a focused BDD module with shared harness
+  support, then rerun all gates. Logs use the `-12` prefix under `/tmp`.
+- [x] (2026-10-26) Gate run `-13` passed validation, formatting, typecheck,
+  2,187 tests (34 skipped; 52 snapshots), Markdown, Nixie, audit, all 31
+  systemd-user scenarios and the sccache host gate. The split H2 child-sighting
+  scenarios passed. Ruff then found missing docs and test-harness subprocess
+  and type-only import diagnostics in the extracted support module. Keep the
+  fixed argv lint boundary scoped to that harness, add the missing contracts,
+  then run the full sequential set again. Logs use the `-13` prefix under
+  `/tmp`.
+- [x] (2026-10-26) Gate run `-14` passed validation, formatting, typecheck,
+  2,187 tests (34 skipped; 52 snapshots), Markdown, Nixie, audit, all 31
+  systemd-user scenarios and the sccache host gate. Ruff required unquoted
+  `OutcomeWorld` annotations while the imported class remains in the
+  type-checking block. Remove the quotes and verify runtime test collection in
+  the next complete run. Logs use the `-14` prefix under `/tmp`.
+- [x] (2026-10-26) Gate run `-15` passed validation, formatting, typecheck,
+  2,187 tests (34 skipped; 52 snapshots), Markdown, Nixie, audit and the
+  sccache host gate. Skylos reported live callback methods and the null-shell
+  protocol's unused no-op arguments; the systemd gate confirmed pytest-bdd
+  resolves step annotations at runtime, so `OutcomeWorld` must be imported
+  there. Reconcile the exact call paths with narrow Skylos entries, retain the
+  runtime import with a file-scoped annotation-rule exception, and rerun the
+  systemd scenarios and full gates. Logs use the `-15` prefix under `/tmp`.
+- [x] (2026-10-26) Focused candidate `-15` verification passed the pinned
+  Skylos scan, its scratch unused-sibling control, and 36 focused tests with
+  three snapshots. The combined dead-code target reached Vulture and reported
+  ten findings: an unused constant and observation field, plus TypedDict keys,
+  protocol type references, and production fields Vulture cannot resolve. The
+  focused runner did not run systemd tests while the user manager was degraded
+  with unrelated failed scopes; the full host gate remains pending. Logs use the
+  `-focused-1` prefix under `/tmp`.
+- [x] (2026-10-26) Vulture triage removed the unused statistics-argument
+  constant and differential observation field. Runtime casts now name their
+  actual Protocol types, while exact `ignore_names` document the JSON-backed
+  TypedDict fields and `Pending.cache_path` that Vulture cannot follow from its
+  tests-only scan.
+- [x] (2026-10-26) The refreshed focused checks passed: `make dead-code`
+  (Skylos 4.33.2, Vulture 2.16), 45 focused unit tests with three snapshots,
+  and five real-manager outcome scenarios. The manager reported `degraded` from
+  unrelated old scopes; `systemd_harness` accepted that state, both buildlimits
+  services were active, and the outcome scenarios used only their uniquely
+  owned units. Logs use the `-refresh-1` prefix under `/tmp`. Full sequential
+  gates and the local milestone review remain pending.
+- [x] (2026-10-26) Full sequential gate run `-16` passed validation,
+  formatting checks, 2,192 tests (34 skipped; 52 snapshots), Markdown/spelling,
+  Nixie, audit, all 31 systemd-user scenarios, and both sccache-host checks.
+  Lint found two quoted-`typing.cast` diagnostics; typecheck found four shell
+  port errors because the ignored null-shell timeout argument differed from a
+  keyword-capable protocol parameter. The next candidate will quote the cast
+  types and make the port timeout positional-only. Logs are under
+  `/tmp/*-cache-hit-prediction-16.out`.
+- [x] (2026-10-26) Candidate `-17` applies those lint/type fixes: cast types
+  are again quoted, and `OutcomeShellPort.close` is positional-only so the null
+  shell can keep its ignored `_timeout` name. `TMPDIR=/tmp make fmt` passed;
+  focused checks and fresh full gates remain pending.
+- [x] (2026-10-26) Focused candidate `-17` removed the cast diagnostics and
+  passed 13 targeted tests, but Pylint required messages for two test
+  assertions and typecheck found the same keyword-name mismatch on `emptied`.
+  The null-shell callback port now makes all event arguments positional-only;
+  the tests provide explicit assertion messages. Formatting and focused checks
+  remain pending.
+- [x] (2026-10-26) Focused candidate `-18` passed typecheck and the targeted
+  runtime checks, but lint stopped at 19 newly reported duplication families.
+  Exact test-step and test-double overlaps are being recorded under the
+  repository's named-member policy; shared `/proc` start-time parsing, the
+  disabled status mapping and H2/H3 CLI invocation are being extracted.
+- [x] (2026-10-26) Candidate `-19` applies those focused duplication repairs,
+  adds malformed-stat parser coverage, and documents the shared status helper's
+  scope. `TMPDIR=/tmp make fmt` and `git diff --check` pass. Fresh candidate
+  gates remain pending.
+- [x] (2026-10-26) Focused candidate `-19` passed check-fmt, typecheck and
+  22 targeted tests (7 host-gated skips), while lint found seven new
+  documentation, typing and exception-assertion issues in the extracted
+  helpers. Candidate `-20` corrects those findings; its fresh checks remain
+  pending.
+- [x] (2026-10-26) Focused candidate `-20` passed check-fmt and typecheck, but
+  lint preferred `TypeError` for a non-object replay response. Its targeted
+  tests found that the negative start-time diagnostic needed a broader expected
+  message match. Candidate `-21` corrects both precise findings; checks remain
+  pending.
+- [x] (2026-10-26) Focused candidate `-21` passed check-fmt, typecheck and the
+  targeted tests, but the duplication tool rejected a single-member allow
+  entry. Candidate `-22` removes that entry and shares the origin-prefix
+  classifier through its typed local table; fresh lint remains pending.
+- [x] (2026-10-26) Focused candidate `-22` passed check-fmt, typecheck and
+  22 targeted tests (7 host-gated skips); lint's prior phases passed but the
+  duplication parser rejected the remaining one-member close-fragment entry.
+  Candidate `-23` records it as a unit exception because the detector supplies
+  no member names, and documents that narrow exception. Fresh lint is pending.
+- [x] (2026-10-26) Focused candidate `-23` passed check-fmt, typecheck and
+  22 targeted tests (7 host-gated skips), but duplication reported ten
+  unhandled families and sixteen stale allowances. Candidate `-24` shares the
+  `/proc` start-time reader and real-manager cache-result BDD step, removes the
+  redundant disabled-description wrapper, and narrows policy exceptions to
+  files where the detector reports unnamed scenario fragments. Fresh format,
+  lint and focused checks remain pending.
+- [x] (2026-10-26) Candidate `-24` passed check-fmt, typecheck and 23 focused
+  tests (7 host-gated skips). Ruff requested a propagated-exception annotation
+  and the pytest-bdd type-import exception on the new shared step module;
+  candidate `-25` records both. Fresh focused checks remain pending.
+- [x] (2026-10-26) Candidate `-25` replaces the shared BDD step's imported
+  fixture class with a local structural protocol, keeping plugin registration
+  independent while satisfying pytest-bdd's runtime annotation resolution.
+  Format and focused gates remain pending.
+- [x] (2026-10-26) Candidate `-26` passed check-fmt, typecheck and the focused
+  unit set (23 passed, 7 host-gated skips). Lint found only two repeated
+  fragments across the real-manager BDD modules: the common supervisor step and
+  feature-specific compile/wait assertions. Candidate `-27` moves the shared
+  supervisor step to the common plugin and records the cross-file
+  scenario-fragment exception. Fresh format and focused gates remain pending.
+- [x] (2026-10-26) Candidate `-27` passed check-fmt, typecheck and 23 focused
+  tests (7 host-gated skips). Lint reached Ruff after the duplication families
+  were reconciled and found one unused `given` import left by the moved step.
+  Candidate `-28` removes it; fresh format and focused checks remain pending.
+- [x] (2026-10-26) Candidate `-28` passed check-fmt, lint (including the
+  duplication gate), typecheck, and 23 focused tests (7 host-gated skips). The
+  lint gate reported 155 reasoned allow entries; only the two new BDD modules
+  use the cross-file exception added for their unnamed scenario fragments. Full
+  sequential gates and an integrated local review remain pending. Keep EP-M6 to
+  EP-M8 open until that evidence is reconciled.
+- [x] (2026-10-27) Frozen candidate
+      `9e9648fcc60fcc8d894d1c2382a1d75a6d8ddae7205088be485c1b5340f9b6d6`
+  passed all ten sequential gates. Results: validation, formatting check, lint,
+  typecheck, 2,199 tests (34 skipped; 52 snapshots), Markdown/spelling, Nixie,
+  audit, 31 systemd-user scenarios, and two sccache-host checks passed. Pytest
+  reported 100 warnings; both host-gated suites reported three warnings. Lint
+  reported 155 reasoned duplication allowances and 12 unmatched entries. Audit
+  found no known vulnerabilities; the local `buildlimits` package is not
+  available on PyPI. Logs use the `-gates-30` suffix in `/tmp`. The final local
+  CodeRabbit review remains pending; EP-M6 to EP-M8 stay open.
 
 ## Surprises & discoveries
 
@@ -1473,6 +1729,28 @@ C-GATES.
   requires the detecting compaction to report `clock_skew`; it does not require
   a persisted marker. Adding one would change the on-disk format without an
   acceptance requirement, so restart does not preserve the skip.
+- D38. Final scope inventory at EP-M8. Decision: keep the owner's W1-only
+  authorization and replace the outstanding estimate with a corrected recount
+  against the PR base `42f40e4c96e7c9349203a1e0ca92432e64187e46`. The
+  integrated candidate changes 47 production Python files and adds 7,098 net
+  source lines, including untracked production modules. The M7/M8 diff from
+  `a77ca78` changes 26 production files and adds 1,830 net lines. M7/M8 are
+  three files above their 15-to-23-file estimate and 370 lines below their
+  2,200-to-3,600-line estimate. W1 is two files below its 49-to-57-file
+  estimate and 370 lines below its 7,468-to-8,868-line estimate. These counts
+  use `git diff --numstat` plus line counts for untracked production modules.
+  The corrected recount does not alter the owner's decision to finish only W1;
+  EP-M9 remains gated on G1.
+- D39. Shared process identity and disabled-status helpers. Decision: parse
+  `/proc/<pid>/stat` start time once through
+  `proc_trees.read_process_starttime` and `process_starttime`, while each
+  adapter keeps its existing failure policy for I/O and malformed data. Keep
+  the disabled recorder status mapping in the startup/setup module and share
+  the installed H2/H3 replay invocation through the real-manager test support.
+  The common systemd BDD plugin also owns the shared supervisor-start and
+  scripted-cache steps. These helpers remove repeated representations without
+  merging the generation and sampling contracts or the separate replay
+  assertions.
 
 ## Outcomes & retrospective
 
@@ -2004,7 +2282,7 @@ attributed outcomes. The evaluable set is exactly as D25 defines it.
 - Method: parameterized synthetic stores at, just above and just below each
   boundary, plus a test that pins the constants to ADR 004's text.
 - Artefacts: `tests/test_outcome_replay_h2.py`,
-  `tests/test_outcome_replay.py`.
+  `tests/test_outcome_replay_h3.py`.
 - Non-vacuity: every verdict token is reached for every hypothesis that can
   produce it.
 - Mutation: off-by-one on any boundary, or counting a key that holds only
@@ -3077,3 +3355,8 @@ Consult these documents:
     rollback failure that had to be repaired before a later append.
   - Effect on the remaining work: EP-M5 is complete. EP-M6 is next; G1 still
     gates EP-M9, with no W1 or W2 acceptance criteria changed.
+- 2026-10-26: EP-M7 and EP-M8 implementation is integrated; D38 records the
+  source recount, the O4/O5/O7/O9/O11/O12/O13 mutation controls are reconciled,
+  and users' and developers' guidance now describes H2. Focused tests pass,
+  while the final sequential gates, real-manager M8 scenarios and local review
+  remain pending before either milestone is marked complete.

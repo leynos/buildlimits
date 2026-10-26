@@ -12,6 +12,8 @@ from hypothesis import event
 if typ.TYPE_CHECKING:
     from types import ModuleType
 
+    from buildlimits.outcome_key import CacheKey
+
 
 class _TimedGateEvent(typ.Protocol):
     """The monotonic time carried by a fake recorder gate event."""
@@ -133,7 +135,7 @@ def stats_text(**changes: int) -> str:
     return json.dumps({"version": "0.14.0", "stats": raw})
 
 
-def cache_key() -> object:
+def cache_key() -> CacheKey:
     """Return one stable key whose values contain no local path.
 
     Returns

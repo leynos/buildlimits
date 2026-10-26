@@ -20,6 +20,9 @@ from pathlib import Path
 
 from harness_processes import reap_and_close_pipes
 
+if typ.TYPE_CHECKING:
+    import pytest
+
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_sccache.py"
 
 
@@ -36,7 +39,11 @@ assert _SPEC is not None and _SPEC.loader is not None, (
     "the fixture module must be loadable by path"
 )
 fake_sccache = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(fake_sccache)
+sys.path.insert(0, str(FIXTURE.parent))
+try:
+    _SPEC.loader.exec_module(fake_sccache)
+finally:
+    sys.path.remove(str(FIXTURE.parent))
 
 
 def _wait_for_content(path: Path, expected: str, timeout: float = 10.0) -> None:
@@ -120,6 +127,41 @@ def test_request_fields_are_only_present_when_configured() -> None:
     assert fields == {"jobserver": "/run/jobserver", "ready": "/run/ready"}, (
         "configured paths are carried into the request"
     )
+
+
+def test_scripted_server_results_feed_live_statistics(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Scripted hits and misses change the server's cumulative counters."""
+    socket_path = tmp_path / "sccache.sock"
+    config_path = tmp_path / "fake-sccache-config.json"
+    config_path.write_text(
+        json.dumps({"script": ["hit", "miss"]}),
+        encoding="utf-8",
+    )
+    server = _server(socket_path)
+    environment = {**os.environ, "SCCACHE_SERVER_UDS": str(socket_path)}
+    command = [sys.executable, "-c", "print('compiler ran')"]
+    try:
+        hit = _send(socket_path, {"argv": command, "cwd": str(tmp_path)})
+        miss = _send(socket_path, {"argv": command, "cwd": str(tmp_path)})
+        assert hit["code"] == 0 and not hit["stdout"], (
+            "a scripted hit returns without invoking the compiler"
+        )
+        assert "compiler ran" in miss["stdout"], "a miss invokes its compiler"
+
+        assert (
+            fake_sccache.client(["--show-stats", "--stats-format", "json"], environment)
+            == 0
+        ), "the statistics client reads live server counters"
+        stats = json.loads(capsys.readouterr().out)["stats"]
+    finally:
+        _stop_server(server)
+
+    assert stats["compile_requests"] == 2, "both scripted requests are counted"
+    assert stats["cache_hits"]["counts"]["Rust"] == 1, "the hit delta is visible"
+    assert stats["cache_misses"]["counts"]["Rust"] == 1, "the miss delta is visible"
+    assert stats["compilations"] == 1, "only the miss runs a compiler"
 
 
 def test_accepted_work_survives_client_disconnect_and_waits_for_a_jobserver_slot(

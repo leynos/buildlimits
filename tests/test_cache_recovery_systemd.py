@@ -14,6 +14,7 @@ from harness_units import manager_env
 from pytest_bdd import given, scenarios, then, when
 from systemd_harness import (
     Harness,
+    HarnessOptions,
     kill_group,
     systemd_user_marks,
     wait_for,
@@ -69,7 +70,11 @@ class RecoveryWorld:
 
     def __init__(self) -> None:
         """Create only fixture ownership; units start in the scenario."""
-        self.harness = Harness(2, cached=True, cache_recovery="manual")
+        self.harness = Harness(
+            2,
+            cached=True,
+            options=HarnessOptions(cache_recovery="manual"),
+        )
         self.fifos: list[Path] = []
         self.holders: list[int] = []
         self.processes: list[subprocess.Popen[bytes]] = []

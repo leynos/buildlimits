@@ -10,6 +10,7 @@ from buildlimits.outcome_recorder_outputs import (
     _with_progress,
 )
 from buildlimits.outcome_recorder_reading import _finish_failure, _finish_reading
+from buildlimits.outcome_recorder_sampling import sampled as _sampled
 from buildlimits.outcome_recorder_types import (
     CloseQuery,
     Disabled,
@@ -17,7 +18,6 @@ from buildlimits.outcome_recorder_types import (
     GateOpen,
     Idle,
     Launched,
-    LaunchFailed,
     Outputs,
     PollResult,
     QueryFinished,
@@ -25,9 +25,13 @@ from buildlimits.outcome_recorder_types import (
     QueryStarted,
     RecorderEvent,
     RecorderState,
+    Sampled,
     StartQuery,
     Stopping,
     _Launch,
+)
+from buildlimits.outcome_recorder_types import (
+    LaunchFailed as LaunchFailed,
 )
 from buildlimits.outcome_recorder_types import (
     LaunchPayload as LaunchPayload,
@@ -35,6 +39,10 @@ from buildlimits.outcome_recorder_types import (
 from buildlimits.outcome_recorder_types import (
     Progress as Progress,
 )
+from buildlimits.outcome_recorder_types import (
+    SampleFailed as SampleFailed,
+)
+from buildlimits.outcome_sightings import ChildSightings
 from buildlimits.outcome_stats import ReadFailure, parse_statistics
 from buildlimits.outcome_window import OutcomeWindow
 
@@ -56,19 +64,35 @@ def advance(
     --------
     ``advance(Idle(), LaunchFailed("g"))[1]`` is ``Outputs()``.
     """
+    if isinstance(event, (Stopping, Launched, Ended, GateOpen, PollResult, Sampled)):
+        return _advance_enabled(state, event)
+    return state, Outputs()
+
+
+def _advance_enabled(
+    state: RecorderState,
+    event: Stopping | Launched | Ended | GateOpen | PollResult | Sampled,
+) -> tuple[RecorderState, Outputs]:
+    """Dispatch events that can change recorder state or emit effects.
+
+    Returns
+    -------
+    tuple[RecorderState, Outputs]
+        The next typestate and its commands, records, or tracing effects.
+    """
     match event:
         case Stopping():
             return _stop(state, event)
         case Launched():
             return _launch(state, event)
-        case LaunchFailed():
-            return state, Outputs()
         case Ended():
             return _ended(state, event)
         case GateOpen():
             return _open_gate(state, event)
         case PollResult():
             return _poll_result(state, event)
+        case Sampled():
+            return _sample(state, event)
 
 
 def _launch(state: RecorderState, event: Launched) -> tuple[RecorderState, Outputs]:
@@ -86,7 +110,12 @@ def _launch(state: RecorderState, event: Launched) -> tuple[RecorderState, Outpu
     if not event.is_cached or isinstance(state, Disabled):
         return state, Outputs()
 
-    launch = _Launch(event.group_id, event.payload, event.now)
+    launch = _Launch(
+        event.group_id,
+        event.payload,
+        event.now,
+        sightings=ChildSightings(has_metadata=event.payload.metadata is not None),
+    )
     progress = state.progress
     window = progress.window.append(launch)
     active = (*progress.active, launch)
@@ -153,6 +182,19 @@ def _ended(state: RecorderState, event: Ended) -> tuple[RecorderState, Outputs]:
         ),
     )
     return _with_progress(state, progress), Outputs()
+
+
+def _sample(state: RecorderState, event: Sampled) -> tuple[RecorderState, Outputs]:
+    """Fold one child sample into running launches, never into ended ones.
+
+    Returns
+    -------
+    tuple[RecorderState, Outputs]
+        Updated active sightings and no shell effects.
+    """
+    if isinstance(state, Disabled):
+        return state, Outputs()
+    return _with_progress(state, _sampled(state.progress, event.metadata)), Outputs()
 
 
 def _open_gate(state: RecorderState, event: GateOpen) -> tuple[RecorderState, Outputs]:

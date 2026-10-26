@@ -60,6 +60,7 @@ def render(state: cabc.Mapping[str, object]) -> str:
             if state.get(key)
         ],
         *_recovery_lines(state),
+        *_outcome_lines(state),
         *([_waiting_line(item) for item in queued] or ["no requests waiting"]),
         *([_group_line(item) for item in groups] or ["no compiler groups"]),
     ])
@@ -87,6 +88,28 @@ def _admission_lines(state: cabc.Mapping[str, object]) -> list[str]:
         detail = reason if isinstance(reason, str) else "readiness is not reported"
         return [f"admission {admission_state}: {detail}"]
     return [_UNAVAILABLE_ADMISSION_LINE]
+
+
+def _outcome_lines(state: cabc.Mapping[str, object]) -> list[str]:
+    """Render the optional outcome-recording state without private values.
+
+    Returns
+    -------
+    list[str]
+        The fixed optional section, or an empty list when absent.
+    """
+    section = _section(state, "cache_outcomes")
+    if section is None:
+        return []
+    if section.get("enabled") is not True:
+        return ["cache outcomes disabled after an internal failure"]
+    return [
+        (
+            "cache outcomes recording: "
+            f"{section.get('attributed', 0)} attributed, "
+            f"{section.get('readings', 0)} readings"
+        )
+    ]
 
 
 def _action_label(state: cabc.Mapping[str, object]) -> str:

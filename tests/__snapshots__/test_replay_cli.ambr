@@ -1,0 +1,7 @@
+# serializer version: 1
+# name: test_h3_text_output_snapshot
+  '''
+  H3 parser prediction: insufficient; 1 attributed outcomes, 1 windows, 0 counterexamples
+  
+  '''
+# ---

@@ -172,6 +172,8 @@ def _event_for(launch: _Launch, details: _EventDetails) -> OutcomeEvent:
         outcome_reason=details.reason,
         runtime_seconds=runtime,
         window_groups=details.group_count,
+        child_sighting=launch.sightings.sighting(),
+        child_samples=launch.sightings.samples,
     )
 
 
@@ -205,8 +207,8 @@ def _record_for(
         runtime_seconds=runtime,
         observed_at=observed_at,
         parser_class=launch.payload.parser_class,
-        child_sighting="unavailable",
-        child_samples=0,
+        child_sighting=launch.sightings.sighting(),
+        child_samples=launch.sightings.samples,
     )
 
 

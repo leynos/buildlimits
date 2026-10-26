@@ -6,6 +6,7 @@ the OS group port retains processes until their scopes are verified empty.
 
 import typing as typ
 
+from buildlimits import supervisor_outcome_setup
 from buildlimits.admission import GroupState
 
 if typ.TYPE_CHECKING:
@@ -13,6 +14,7 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.admission import Admission, Effect
     from buildlimits.groups import Groups
+    from buildlimits.supervisor import Supervisor
 
 
 def reap_leaders(
@@ -76,3 +78,27 @@ def retry_termination(groups: Groups, admission: Admission) -> None:
             continue
         if group.state is GroupState.DRAINING or group.cancelled:
             groups.terminate(group.group_id)
+
+
+def empty_groups(supervisor: Supervisor) -> None:
+    """Remove verified empty scopes, then report their captured outcome facts.
+
+    The frozen ending is read before ``group_emptied`` can delete its
+    admission entry. Outcome observation runs only after the admission effects
+    have returned any token, so it has no authority over the next launch.
+    """
+    draining = {
+        group.group_id
+        for group in supervisor.admission.groups.values()
+        if group.state is GroupState.DRAINING
+    }
+    for group_id in supervisor.groups.advance(draining):
+        group = supervisor.admission.groups[group_id]
+        ending = supervisor_outcome_setup.GroupEnding(
+            group_id,
+            is_cached=group.cached,
+            is_clean=not group.may_orphan_server_work,
+        )
+        supervisor.groups.remove(group_id)
+        supervisor._apply(supervisor.admission.group_emptied(group_id))
+        supervisor.outcomes.emptied(ending)

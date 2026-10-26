@@ -8,7 +8,13 @@ import struct
 import typing as typ
 from pathlib import Path
 
-from buildlimits import nonblocking_child, outcome_attribution, outcome_ports
+from buildlimits import (
+    nonblocking_child,
+    outcome_attribution,
+    outcome_ports,
+    proc_trees,
+)
+from buildlimits.outcome_process_sampler import ProcessSampler
 from buildlimits.outcome_recorder import OUTCOME_QUERY_SECONDS
 
 if typ.TYPE_CHECKING:
@@ -17,7 +23,6 @@ if typ.TYPE_CHECKING:
 _STATISTICS_ARGUMENTS = ("--show-stats", "--stats-format", "json")
 _PROCESS_ENVIRONMENT_KEYS = ("PATH", "HOME", "XDG_RUNTIME_DIR")
 _MAX_PROC_ENVIRONMENT_BYTES = 64 * 1024
-_STARTTIME_FIELD_AFTER_COMM = 19
 _CONNECT_IN_PROGRESS = frozenset({
     errno.EINPROGRESS,
     errno.EALREADY,
@@ -184,10 +189,20 @@ class PeerServerProcess:
     A refused connection returns ``None`` because no managed server is present.
     """
 
-    def __init__(self, socket_path: Path, *, proc_root: Path = Path("/proc")) -> None:
+    def __init__(
+        self,
+        socket_path: Path,
+        *,
+        proc_root: Path = Path("/proc"),
+        cgroup_root: Path = Path("/sys/fs/cgroup"),
+        sampler: ProcessSampler | None = None,
+    ) -> None:
         """Retain the managed socket and proc root used by D2."""
         self._socket_path = socket_path
         self._proc_root = proc_root
+        self._sampler = (
+            ProcessSampler(proc_root, cgroup_root) if sampler is None else sampler
+        )
 
     def generation(
         self,
@@ -209,6 +224,19 @@ class PeerServerProcess:
         except OSError, ValueError, UnicodeError, struct.error, TimeoutError:
             return outcome_ports.GenerationFailure("generation_unavailable")
         return outcome_attribution.Generation(invocation, pid, starttime)
+
+    def full_emit_metadata(self) -> frozenset[str] | outcome_ports.SampleFailure:
+        """Sample bounded full-emit compiler metadata in the server's group.
+
+        Returns
+        -------
+        frozenset[str] | SampleFailure
+            In-memory metadata values or a closed sampling failure.
+        """
+        generation = self.generation()
+        if not isinstance(generation, outcome_attribution.Generation):
+            return outcome_ports.SampleFailure("server_unknown")
+        return self._sampler.full_emit_metadata(generation)
 
     def _peer_pid(self) -> int | None:
         """Connect without blocking and return the peer PID from credentials.
@@ -255,25 +283,10 @@ class PeerServerProcess:
         int
             The process start time in clock ticks.
 
-        Raises
-        ------
-        ValueError
-            If the stat record omits or malforms field 22.
+        A malformed field 22 propagates as ``ValueError`` from the shared
+        process-stat parser.
         """
-        text = (self._proc_root / str(pid) / "stat").read_text(encoding="ascii")
-        _command, separator, after_command = text.rpartition(")")
-        if not separator:
-            msg = "process stat omitted its parenthesized command"
-            raise ValueError(msg)
-        fields = after_command.split()
-        if len(fields) <= _STARTTIME_FIELD_AFTER_COMM:
-            msg = "process stat omitted its start time"
-            raise ValueError(msg)
-        starttime = int(fields[_STARTTIME_FIELD_AFTER_COMM])
-        if starttime < 0:
-            msg = "process start time cannot be negative"
-            raise ValueError(msg)
-        return starttime
+        return proc_trees.read_process_starttime(pid, self._proc_root)
 
     def _invocation_id(self, pid: int) -> str:
         """Read the optional systemd invocation identifier from proc environ.

@@ -157,6 +157,7 @@ def _cache_outcomes(records: cabc.Sequence[Record]) -> dict[str, object]:
         if cached_admissions
         else None,
         "reasons": counts_by(outcome_records, "outcome_reason"),
+        "child_sightings": counts_by(outcome_records, "child_sighting"),
         "readings": {
             "reasons": counts_by(reading_records, "outcome_reason"),
             "skipped": sum(
@@ -165,6 +166,14 @@ def _cache_outcomes(records: cabc.Sequence[Record]) -> dict[str, object]:
             ),
             "failed": sum(
                 int(record.fields.get("readings_failed", "0"))
+                for record in reading_records
+            ),
+            "child_samples_taken": sum(
+                int(record.fields.get("child_samples_taken", "0"))
+                for record in reading_records
+            ),
+            "child_sample_failures": sum(
+                int(record.fields.get("child_sample_failures", "0"))
                 for record in reading_records
             ),
         },

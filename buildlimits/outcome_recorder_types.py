@@ -3,6 +3,7 @@
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.outcome_sightings import ChildSightings
 from buildlimits.outcome_window import OutcomeWindow
 
 if typ.TYPE_CHECKING:
@@ -16,6 +17,7 @@ if typ.TYPE_CHECKING:
         GenerationFailure,
         Pending,
         QueryFailure,
+        SampleFailure,
         StatisticsText,
         Ticket,
     )
@@ -32,6 +34,7 @@ class LaunchPayload:
     key: CacheKey | None
     origin: Origin
     parser_class: ParserClass
+    metadata: str | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -101,7 +104,30 @@ class Stopping:
     observed_at: dt.datetime
 
 
-type RecorderEvent = Launched | LaunchFailed | Ended | GateOpen | PollResult | Stopping
+@dc.dataclass(frozen=True, slots=True)
+class Sampled:
+    """One successful in-memory sample of full-emit child metadata."""
+
+    metadata: frozenset[str]
+
+
+@dc.dataclass(frozen=True, slots=True)
+class SampleFailed:
+    """One failed child sample, retained only as an aggregate reason."""
+
+    failure: SampleFailure
+
+
+type RecorderEvent = (
+    Launched
+    | LaunchFailed
+    | Ended
+    | GateOpen
+    | PollResult
+    | Stopping
+    | Sampled
+    | SampleFailed
+)
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -155,6 +181,8 @@ class _Launch:
     group_id: str
     payload: LaunchPayload
     started_at: float
+    metadata: str | None = None
+    sightings: ChildSightings = dc.field(default_factory=ChildSightings)
     runtime_seconds: float | None = None
     is_clean: bool = False
     observed_at: dt.datetime | None = None

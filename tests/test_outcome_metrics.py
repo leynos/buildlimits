@@ -80,6 +80,7 @@ def test_outcome_report_counts_attribution_and_reasons() -> None:
             "BUILD_LIMITS_CACHE_RESULT": "miss",
             "BUILD_LIMITS_OUTCOME_ATTRIBUTION": "solo",
             "BUILD_LIMITS_OUTCOME_REASON": "none",
+            "BUILD_LIMITS_CHILD_SIGHTING": "seen",
         },
         {
             **common,
@@ -87,11 +88,18 @@ def test_outcome_report_counts_attribution_and_reasons() -> None:
             "BUILD_LIMITS_CACHE_RESULT": "unknown-result",
             "BUILD_LIMITS_OUTCOME_ATTRIBUTION": "none",
             "BUILD_LIMITS_OUTCOME_REASON": "timeout",
+            "BUILD_LIMITS_CHILD_SIGHTING": "unavailable",
         },
         {
             **common,
             "BUILD_LIMITS_EVENT": "request_admitted",
             "BUILD_LIMITS_CACHE_PATH": "cached",
+        },
+        {
+            **common,
+            "BUILD_LIMITS_EVENT": "outcome_reading",
+            "BUILD_LIMITS_CHILD_SAMPLES_TAKEN": "2",
+            "BUILD_LIMITS_CHILD_SAMPLE_FAILURES": "1",
         },
         {
             **common,
@@ -108,6 +116,15 @@ def test_outcome_report_counts_attribution_and_reasons() -> None:
         "coverage uses cached launch admissions"
     )
     assert outcomes["reasons"] == {"none": 1, "timeout": 1}, "reasons are counted"
+    assert outcomes["child_sightings"] == {"seen": 1, "unavailable": 1}, (
+        "the report counts the closed child-sighting vocabulary"
+    )
+    assert outcomes["readings"]["child_samples_taken"] == 2, (
+        'outcome_report_counts_attri...: outcomes["readings"]["child_samples_'
+    )
+    assert outcomes["readings"]["child_sample_failures"] == 1, (
+        'outcome_report_counts_attri...: outcomes["readings"]["child_sample_f'
+    )
 
 
 def test_outcome_tracing_vocabulary_is_registered() -> None:
@@ -116,6 +133,7 @@ def test_outcome_tracing_vocabulary_is_registered() -> None:
 
     assert {
         "statistics_read",
+        "admission_selection",
         "outcome_store_load",
         "outcome_store_save",
         "outcome_store_compact",

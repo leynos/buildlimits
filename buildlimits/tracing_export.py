@@ -9,6 +9,7 @@ OPERATIONS = frozenset({
     "scope_placement",
     "adapter_restart_retry",
     "statistics_read",
+    "admission_selection",
     "outcome_store_load",
     "outcome_store_save",
     "outcome_store_compact",

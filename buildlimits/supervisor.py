@@ -16,12 +16,14 @@ from buildlimits import (
     startup,
     status,
     supervisor_observability,
+    supervisor_outcome_setup,
+    supervisor_outcomes,
     supervisor_placement,
     supervisor_polling,
     supervisor_shutdown,
     supervisor_signals,
 )
-from buildlimits.admission import Admission, GroupState
+from buildlimits.admission import Admission
 from buildlimits.drain_loop import MAX_INTERNAL_FAILURES as MAX_INTERNAL_FAILURES
 from buildlimits.drain_loop import DrainLoop, LoopEffects
 from buildlimits.groups import Groups
@@ -156,6 +158,9 @@ class Supervisor:
             ),
         )
         self.health_reason: str | None = None
+        self.outcomes: supervisor_outcome_setup.OutcomeShellPort = (
+            supervisor_outcomes.NullOutcomeShell()
+        )
         self._next_server_poll = 0.0
         self._next_health_poll = 0.0
         self._next_cache_poll = 0.0
@@ -186,6 +191,7 @@ class Supervisor:
         self.selector.register(self.listener, selectors.EVENT_READ, "listener")
         self._watch_signals()
         self.server.refresh_cache_mode()
+        self.outcomes = supervisor_outcomes.build_shell(self)
         # Only the mode that owns the managed cache may run a recovery.
         if self.settings.cache_mode == "sccache":
             self.requests.recovery = lambda: self.recovery.request(
@@ -218,6 +224,7 @@ class Supervisor:
         result = self.loop.run(self.selector, effects, tick_seconds=TICK_SECONDS)
         supervisor_shutdown.settle_token_request(self)
         self.requests.close_all()
+        self.outcomes.close(1.0)
         return result
 
     def _dispatch(self, tag: object) -> None:
@@ -332,15 +339,8 @@ class Supervisor:
         if self._signals_read >= 0:
             self._reap_leaders()
         self.requests.prune_completed(self.admission.groups)
-        draining = {
-            group.group_id
-            for group in self.admission.groups.values()
-            if group.state is GroupState.DRAINING
-        }
         group_recovery.retry_termination(self.groups, self.admission)
-        for group_id in self.groups.advance(draining):
-            self.groups.remove(group_id)
-            self._apply(self.admission.group_emptied(group_id))
+        group_recovery.empty_groups(self)
         supervisor_polling.poll_services(self, self.clock())
         if not self.admission.healthy and not self.admission.groups:
             self._shutdown()

@@ -297,6 +297,7 @@ def test_generated_compaction_reaches_the_retention_bound() -> None:
     @settings(max_examples=1, deadline=None)
     @given(seed=st.integers(min_value=0, max_value=10_000))
     def verify(seed: int) -> None:
+        """Generate a valid store just beyond its real retention bound."""
         now = _BASE_TIME
         header = outcome_records.StoreHeader("generated-salt", now)
         records = tuple(

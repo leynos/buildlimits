@@ -13,7 +13,7 @@ import typing as typ
 import pytest
 from harness_processes import reap_and_close_pipes
 from harness_units import manager_env, unit_properties
-from systemd_harness import Harness, journal, kill_group, wait_for
+from systemd_harness import Harness, HarnessOptions, journal, kill_group, wait_for
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -58,7 +58,11 @@ class RestartWorld:
         Harness
             The started harness.
         """
-        harness = Harness(slots, cached=True, cache_recovery=recovery)
+        harness = Harness(
+            slots,
+            cached=True,
+            options=HarnessOptions(cache_recovery=recovery),
+        )
         if slow_busctl is not None:
             harness.path_prefix = slow_busctl.directory
         harness.kill_mode = kill_mode

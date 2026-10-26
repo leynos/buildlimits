@@ -46,6 +46,7 @@ investigating a specific failure; reconcile with `make all` before committing.
 | `make typecheck`         | `ty` 0.0.89 against the project interpreter (`--python .venv`)                                    |
 | `make test`              | pytest under xdist over `tests/` and the package's doctests                                       |
 | `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
+| `make test-sccache-host` | Opt-in real-binary and outcome latency checks; see §11.4                                          |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
 
 _Table 1: Make targets and the gates behind them._
@@ -136,6 +137,7 @@ Each module owns one decision. This table is the single module inventory.
 | `supervisor`                                                                       | Event loop that carries out admission's effects                                                  |
 | `supervisor_polling`                                                               | Poll cadence and ordered server, pool and cache checks; no token-release decisions               |
 | `supervisor_signals`, `supervisor_shutdown`                                        | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                              |
+| `supervisor_outcome_setup`, `supervisor_outcomes`         | Resource-free disabled shell and failure-isolated recording shell                                      |
 | `supervisor_observability`                                                         | Wires cached pressure and drain observers into existing owners                                   |
 | `effect_dispatch`                                                                  | Effect handlers and their metric and health mappings                                             |
 | `requesters`, `pending_request`                                                    | Connections, queued requests and replies; recorded request data                                  |
@@ -154,11 +156,13 @@ Each module owns one decision. This table is the single module inventory.
 | `cache_recovery`, `recovery_*`                                                     | The recovery transaction, its barrier, reclamation, trigger and guidance                         |
 | `cache_quiesce`                                                                    | Start-up stop of a live managed cache under the barrier, before the strict accounting            |
 | `bus_properties`, `systemd`                                                        | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl`  |
-| `cgroups`, `startup`, `proc_trees`                                                 | Control-group reads, the restart barrier and diagnostic process-tree counts                      |
+| `cgroups`, `startup`, `proc_trees`                        | Control-group reads, the restart barrier, diagnostic process trees and shared `/proc` identity parsing |
 | `protocol`, `replies`, `framing`, `frame_payload`, `wire`                          | Versioned JSON frames with passed descriptors                                                    |
 | `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`                           | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc               |
 | `adapter_invocation`, `adapter_retry`                                              | Invocation state and deadline-preserving busy and restart retries                                |
 | `tracing`, `tracing_export`, `tracing_sdk_export`                                  | Bounded spans, the fixed journal schema and synchronous native-journal export                    |
+| `outcome_telemetry`                                       | Maps recorder effects to bounded metrics and spans                                                     |
+| `outcome_replay`, `outcome_replay_cli`                    | Read-only H2 and H3 evaluation over the local outcome store                                            |
 | `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper        |
 | `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar |
 | `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                  |
@@ -188,6 +192,9 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_recorder`                                                                 | Pure quiet-point reading sequencer and attribution state transitions                             |
 | `outcome_recorder_reading`                                                         | Validates terminal readings, updates baselines and schedules bounded retries                     |
 | `outcome_recorder_driver`                                                          | Executes statistics-port commands and returns effects to the supervisor                          |
+| `outcome_process_sampler`                                 | Bounded control-group inspection and per-process metadata caching                                      |
+| `outcome_sampling`, `outcome_recorder_sampling`           | Sampling cadence, failure back-off and pure recorder sample folding                                    |
+| `outcome_sightings`, `outcome_shell_keys`                 | In-memory child matching and privacy-safe supervisor key assembly                                      |
 | `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                        |
 
 _Table 2: Package modules._
@@ -473,6 +480,30 @@ inputs), and `metrics_report` and `metrics_pressure_report` aggregate.
 High-water values are producer-lifetime maxima; drain counters are cumulative
 snapshots and are never summed.
 
+The outcome event schema is registered before the supervisor integration is
+enabled. `cache_outcome` carries one bounded classification per cached launch;
+`outcome_reading` and `outcome_store` carry aggregate failure and operation
+counts. `metrics_report` leaves `cache_outcomes` empty until one of these event
+types is present, and computes attributed coverage from `outcome_attribution`
+over cached `request_admitted` records rather than trusting a separate count
+field. `tracing_export` reserves `statistics_read` and the three store
+operations with the fixed `statistics_query`, `store_io` and `salt` failure
+categories.
+
+`OutcomeTelemetry` maps reducer outputs to those metrics and owns the bounded
+`statistics_read` span. The recorder's pure transitions stay in
+`outcome_recorder`; `supervisor_outcomes` owns the server identity probe,
+statistics child, privacy-safe key construction and asynchronous store. Both
+`PeerServerProcess` and `ProcessSampler` read field 22 through
+`proc_trees.read_process_starttime`; that shared reader owns `/proc` decoding
+and validation, while each adapter keeps its own failure policy. The process
+sampler reads the managed server's control group through `PeerServerProcess`;
+raw argv and metadata remain in memory. Samples run every 250 ms only while
+cached groups move, inspect at most 64 processes and back off after failures.
+H2 and H3 replay read only the local store; neither queries journald nor feeds
+a result back to admission. An optional `cache_outcomes` object is added to
+status only when recording is enabled.
+
 The restart path adds three bounded observations. The adapter's one
 `adapter_finished` summary carries `restart_retries`, the attempts spent
 because the supervisor refused as `restarting` or went away before admission,
@@ -656,6 +687,9 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `sccache_host.py`                  | `sccache_host_marks` and private-server helpers for the opt-in real-binary check                    |
 | `sccache_stats.py`                 | Test-only sccache 0.14.0 counter validation and redacted replay-window fixtures                       |
 | `systemd_harness.py`               | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling    |
+| `cache_outcome_harness.py`                | Cacheable fake-rustc requests, scripted statistics and outcome-store observations                                         |
+| `cache_outcome_sighting_systemd_steps.py` | Real-manager child-sighting and H2 replay scenario steps                                                                  |
+| `systemd_harness_tokens.py`               | Read-only FIFO token counts for systemd acceptance tests                                                                  |
 | `rustc_linter_acceptance.py`       | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios       |
 | `rustc_query_host_checks.py`       | Query and readiness assertions shared by host query and timing scenarios                            |
 | `rustc_query_host_observations.py` | Compact host acceptance evidence and package-cache lock-wait observations                           |
@@ -665,8 +699,10 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `rustc_query_timing_shim.py`       | Sibling-adapter timing shim with JSON-line probe records                                            |
 | `harness_units.py`                 | User-manager readiness, acceptance marks, transient unit control and properties                     |
 | `fake_rustc.py`                    | Scripted Rust compiler for the opt-in real-sccache host check                                       |
+| `fixtures/fake_sccache_statistics.py`     | Fake sccache counter format and statistics-query behaviour                                                                |
 | `test_sccache_real_binary.py`      | Opt-in sccache 0.14.0 acceptance test; `_RefusalProbe` is local to this test and is not shared API    |
 | `outcome_store_helpers.py`         | Store rows, salts and asynchronous writer outcomes for outcome-store tests                            |
+| `outcome_shell_test_support.py`           | Pending statistics, fake server and writer ports for shell-loop tests                                                     |
 | `outcome_store_fixture_helpers.py` | Single-row reader fixtures and torn UTF-8 tails for outcome-store tests                               |
 | `outcome_vocabulary_test_support.py` | Shared outcome-token aliases for schema and metrics-sink contract tests                               |
 
@@ -691,6 +727,25 @@ treat a repeat as a signal to raise the search budget, not to delete the
 assertion. CrossHair proves the contracts in `tests/crosshair_contracts.py`.
 Snapshot tests pin rendered status, recovery and metrics output; pair any new
 snapshot with semantic assertions for the behaviour it represents.
+
+The cache-outcome store has its own generated model in
+`tests/test_outcome_store_machine.py`. It drives append, compaction, reload,
+clock movement and salt replacement through the real writer, and asserts that
+expiry, clock skew, torn-tail recovery and salt changes are reached. A
+generated compaction check reaches the actual 10,000-record bound; named store
+tests keep the filesystem fault cases readable.
+
+`tests/test_outcome_loop.py`, `test_outcome_noninterference.py`,
+`test_outcome_totality.py` and `test_outcome_null_shell.py` pin the poll order,
+admission independence, failure boundary and default-off resource boundary. The
+latency check is separately opt-in because its percentile thresholds are host
+measurements; its p99 tick lengthening and append enqueue time are recorded
+against the 5 ms and 1 ms limits.
+
+The `outcome_store_helpers.py`, `outcome_store_fixture_helpers.py` and
+`outcome_vocabulary_test_support.py` modules are test-only APIs. Reuse them for
+cache-outcome store fixtures and token vocabularies; do not import them from
+production code.
 
 ### 11.4. Host acceptance
 

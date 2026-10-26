@@ -17,6 +17,7 @@ build-limits-supervisor = "buildlimits.service:main"
 build-limits-status = "buildlimits.status_cli:main"
 build-limits-recover = "buildlimits.recover_cli:main"
 build-limits-metrics = "buildlimits.metrics_cli:main"
+build-limits-cache-replay = "buildlimits.outcome_replay_cli:main"
 
 [dependency-groups]
 dev = [
@@ -129,7 +130,30 @@ extend-ignore = [
     "typing-only-standard-library-import",
     "raise-vanilla-args",
 ]
-"tests/steps/*.py" = ["assert", "too-many-arguments", "too-many-positional-arguments", "magic-value-comparison", "no-self-use"]
+"tests/steps/*.py" = [
+    "assert",
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "magic-value-comparison",
+    "no-self-use",
+    "subprocess-without-shell-equals-true",
+]
+# These helpers execute fixed argv vectors owned by the current systemd test
+# harness; the test inputs never select an executable or shell command.
+"tests/cache_outcome_harness.py" = [
+    "subprocess-without-shell-equals-true",
+    "suspicious-subprocess-import",
+]
+"tests/cache_outcome_systemd_support.py" = [
+    "subprocess-without-shell-equals-true",
+    "suspicious-subprocess-import",
+]
+# pytest-bdd resolves step parameter annotations while it collects scenarios.
+"tests/test_cache_outcomes_systemd.py" = ["typing-only-third-party-import"]
+# This step invokes the owned replay command with a fixed Python module vector.
+"tests/steps/cache_outcome_sighting_systemd_steps.py" = [
+    "suspicious-subprocess-import",
+]
 # CrossHair proves the ``assert`` statements in these contracts; they are the
 # specification, not debugging aids.
 "tests/crosshair_contracts.py" = ["assert"]
@@ -366,30 +390,43 @@ exclude = [".venv", ".uv-cache", ".uv-tools", ".tools", ".git"]
 [tool.skylos.gate]
 strict = true
 
-# EP-M5 lands this adapter before EP-M7 wires the reaper into the supervisor.
-[[tool.skylos.dead_code.entrypoints]]
-type = "method"
-full_name = ["buildlimits.nonblocking_child.NonBlockingChild.poll"]
-path = ["buildlimits/nonblocking_child.py"]
-reason = "EP-M7 OutcomeShell.on_tick polls ChildReaper on each loop tick, which polls NonBlockingChild; remove this staged-adapter exception once the wiring in docs/execplans/cache-hit-prediction.md#ep-m7-wiring-status-report-h3-and-documentation makes the call path visible."
-
-[[tool.skylos.dead_code.entrypoints]]
-type = "method"
-full_name = ["buildlimits.nonblocking_child.NonBlockingChild._read_available"]
-path = ["buildlimits/nonblocking_child.py"]
-reason = "NonBlockingChild.poll drains the owned pipe through this private helper; Skylos does not keep private callees reachable through the staged polling entry point. Remove this exception after the EP-M7 integration in docs/execplans/cache-hit-prediction.md#ep-m7-wiring-status-report-h3-and-documentation."
-
-[[tool.skylos.dead_code.entrypoints]]
-type = "method"
-full_name = ["buildlimits.nonblocking_child.ChildReaper.cancel"]
-path = ["buildlimits/nonblocking_child.py"]
-reason = "EP-M7 OutcomeShell.close cancels an outstanding helper and retains it until a later poll reaps it; remove this staged-adapter exception after close is wired as described in docs/execplans/cache-hit-prediction.md#ep-m7-wiring-status-report-h3-and-documentation."
-
 [[tool.skylos.dead_code.entrypoints]]
 type = "method"
 full_name = ["buildlimits.outcome_window.OutcomeWindow.append"]
 path = ["buildlimits/outcome_window.py"]
 reason = "OutcomeRecorder._launch appends through Progress.window, a generic dataclass field that Skylos does not resolve; the bounded-window and recorder overflow tests exercise this method."
+
+# These collaborator calls are live, but Skylos cannot resolve the stored
+# supervisor, child-list, or report-union dispatch. Keep each allowance exact.
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.groups.Groups.remove"]
+path = ["buildlimits/groups.py"]
+reason = "group_recovery.empty_groups calls supervisor.groups.remove after advance confirms the group is empty; Supervisor._tick owns that typed collaborator. Recovery and graceful-restart systemd scenarios exercise the cleanup."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.nonblocking_child.NonBlockingChild.poll"]
+path = ["buildlimits/nonblocking_child.py"]
+reason = "ChildReaper.poll dispatches poll through each child in its owned list; Skylos does not resolve that collection dispatch. The nonblocking-child and stalled-query tests exercise it."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.nonblocking_child.NonBlockingChild._read_available"]
+path = ["buildlimits/nonblocking_child.py"]
+reason = "NonBlockingChild.poll drains its nonblocking pipe through this private helper; Skylos does not retain private callees through the child-list entry point. The nonblocking-child and stalled-query tests exercise it."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.outcome_replay.H2Report.as_dict"]
+path = ["buildlimits/outcome_replay.py"]
+reason = "outcome_replay_cli._write_report serializes this method through the H2/H3 report union; Skylos does not resolve the union dispatch. H2 replay and CLI tests exercise the JSON shape."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.outcome_replay.H3Report.as_dict"]
+path = ["buildlimits/outcome_replay.py"]
+reason = "outcome_replay_cli._write_report serializes this method through the H2/H3 report union; Skylos does not resolve the union dispatch. H3 replay and CLI tests exercise the JSON shape."
 
 # The supervisor reaches these members through typed collaborators and
 # dataclass-held owners, which a static call graph cannot resolve. Entry-point
@@ -488,8 +525,15 @@ ignore_names = [
     "pytest_plugins",
     "teardown",
     "descriptor_leak_guard",
-    # Vulture cannot resolve the quoted cast type imported only for type checks.
+    # Vulture cannot resolve quoted cast types imported only for type checks.
     "RecorderEvent",
+    "OutcomeStorePort",
+    "ServerProcessPort",
+    # TypedDict fields are read via JSON-key subscripting in the fake servers.
+    "script_index",
+    "statistics_queries",
+    # Production reads this field from Pending; test scenarios set it directly.
+    "cache_path",
     "__call__",
     "return_value",
     "side_effect",
@@ -1344,3 +1388,62 @@ members = [
     "tests/outcome_store_helpers.py",
 ]
 reason = "These TYPE_CHECKING blocks import different domain-owned annotation types for production and test contracts. Sharing a re-export would hide each module's dependencies without sharing runtime behaviour."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_recorder_types.py",
+    "buildlimits/outcome_recorder_outputs.py",
+    "tests/outcome_shell_test_support.py",
+]
+reason = "Matching TYPE_CHECKING imports name each module's direct outcome types; a re-export would hide the annotation dependencies without sharing behaviour."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_outcome_server_process.py"
+reason = "These process-sampling tests keep each failure boundary beside its distinct fixture and assertion; the detector reports their shared short assertion fragments without function names, so a narrower member key cannot match."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/outcome_shell_test_support.py::generation",
+    "tests/test_outcome_sampling.py::generation",
+]
+reason = "Each test double supplies the same fixed generation through its own port; sharing the doubles would couple independent shell and sampler tests."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_cache_outcomes_systemd.py",
+    "tests/steps/cache_outcome_sighting_systemd_steps.py",
+]
+reason = "These two real-manager BDD modules own separate scenario suites. Their repeated compile, wait and assertion fragments stay beside the feature clauses so the distinct barrier, restart, query, reporting and child-sighting timing is visible; the shared supervisor and fake-result steps live in one common plugin."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_store.py",
+    "tests/test_outcome_noninterference.py",
+]
+reason = "Matching TYPE_CHECKING imports name direct production and test annotation dependencies; sharing them through a re-export would hide those dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission.py::health_fails",
+    "tests/test_outcome_totality.py::fail_health",
+]
+reason = "These are separate single-purpose test callbacks for admission and recorder-totality contracts, with different owners and assertions."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/cache_outcome_systemd_support.py",
+    "tests/test_cache_recovery_systemd.py",
+    "tests/test_pressure_systemd.py",
+]
+reason = "These real-manager modules own separate harness worlds; repeated constructor, start and close fragments refer to different cache modes, manager limits and process sets, and teardown order follows each world's ownership. A shared world abstraction would couple independent fixtures."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/cache_outcome_harness.py::state_home",
+    "tests/cache_outcome_harness.py::fake_rustc",
+]
+reason = "These similarly shaped properties resolve distinct fixture resources, the private state directory and fake compiler executable."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/outcome_shell_test_support.py"
+reason = "The detector reports both one-line close-log fragments without a unit name, so a member key cannot distinguish them. They belong to separate statistics and writer fakes with independent close arguments and lifecycle contracts."
