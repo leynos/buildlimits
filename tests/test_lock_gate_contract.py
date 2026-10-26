@@ -1,4 +1,4 @@
-"""Keep lock checks ahead of every local and CI project synchronisation."""
+"""Keep lock checks ahead of every local and CI project synchronization."""
 
 import pathlib
 import subprocess
