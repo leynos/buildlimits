@@ -69,9 +69,9 @@ cache **and** a detached backend. Composition alone is not enough.
 - kache must be usable as a second backend without changing sccache behaviour,
   status output, metrics or snapshots.
 - A kache group must never hold a token for work that cannot escape its scope.
-- No kache daemon may remain in an admitted scope, because the scope would
-  never empty and the token would never return, or the daemon would be killed
-  on cancellation.
+- No kache daemon may remain in an admitted scope. The scope would never empty
+  and the token would never return; cancellation would also kill a daemon the
+  supervisor does not own.
 - The supervisor must not take on ownership of a daemon that holds no admitted
   compile work.
 - Admission must remain the only place that limits compile concurrency.
@@ -246,7 +246,7 @@ The v2 client and engine share one process: the client `exec`s
 `kache-engine --kache-forwarded-argv-v1 <version> <micros> <client path>
 <identity> <args…>`,
 so a snapshot may see either executable at the wrapper's process identifier.
-Both are recognised as wrapper processes.
+Both are recognized as wrapper processes.
 
 Neither version runs a miss compiler in its daemon, so no version needs to be
 excluded from the supported range:
@@ -323,8 +323,9 @@ buildlimits' pool accounting. The duplicate misses are the price of a single
 admission layer, and they are bounded by Cargo's own unit graph rather than by
 the number of worktrees, since only identical keys collide.
 
-An operator who re-enables the scheduler on such a host gets both layers, and
-the users' guide says so.
+An operator who re-enables the scheduler on such a host gets both layers. The
+users' guide records that interaction with the other kache settings when the
+backend lands, as step 5 of the migration plan requires.
 
 ### What recovery means in each mode
 
@@ -505,15 +506,17 @@ recorded here. The model needs one new dimension to say so: a group can be
 cached and in scope, and such a group neither enters `SERVER_DRAIN` nor is
 subject to the cache hold. The starvation incidents RFC 0001 analyses cannot
 arise in kache mode, because the retained-drain token that caused them does not
-exist there. RFC 0001 gains a short amendment note recording this; its
-properties are not rewritten.
+exist there. RFC 0001 therefore gains a short amendment note, delivered with
+the rest of the documentation in step 5 of the migration plan; its properties
+are not rewritten.
 
 RFC 0002 records hit rates and predicts hits for sccache 0.14.0 specifically.
 Its counters and its `cache_path` vocabulary are already backend-neutral, but
 its data source (`status.queued_requests`, sccache's own statistics), its
 analysis and its predictive model are not. It does not apply to kache. A kache
 successor would need kache's own hit signal and is out of scope for this
-record; RFC 0002 gains a pointer saying it is sccache-specific.
+record. Step 5 adds a pointer to RFC 0002 saying it is sccache-specific, so a
+reader does not carry its conclusions across to kache.
 
 ## Goals and non-goals
 
@@ -534,11 +537,11 @@ record; RFC 0002 gains a pointer saying it is sccache-specific.
 
 1. **Record the decision.** This document, indexed from
    [Documentation contents](contents.md).
-2. **Extract the backend seam.** `CacheBackend`, backend-neutral exception
-   names, the capability projection into `Admission`, backend-named wording,
-   and the `sccache.py` and `cache_recovery.py` splits. Landed as its own
-   behaviour-preserving pull request, with sccache status, metrics and
-   snapshots unchanged.
+2. **Extract the backend seam.** Add the `CacheBackend` protocol,
+   backend-neutral exception names, the capability projection into `Admission`,
+   backend-named wording, and the `sccache.py` and `cache_recovery.py` splits.
+   Land the extraction as its own behaviour-preserving pull request, with
+   sccache status, metrics and snapshots unchanged.
 3. **Add the kache backend.** Configuration and per-mode key validation,
    composition and environment, the caller's `kache` and `sccache` layer
    stripping, health and the external-daemon requirement, the stray-process
@@ -592,7 +595,7 @@ record; RFC 0002 gains a pointer saying it is sccache-specific.
 - Whether a kache-specific successor to RFC 0002 is worth its own record.
 - Whether a later kache version offers a supported switch to disable daemon
   auto-start, which would relax the external-daemon requirement to an
-  optimisation.
+  optimization.
 - Whether the stray-process guard should ever terminate what it finds outside
   an admitted scope, or remain a report.
 
