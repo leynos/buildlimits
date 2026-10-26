@@ -58,7 +58,7 @@ class Launch:
     group_id : GroupId
         The new group's identifier.
     cached : bool
-        Whether to run the compiler through the managed sccache server.
+        Whether to run the compiler through the configured cache backend.
     """
 
     request_id: RequestId

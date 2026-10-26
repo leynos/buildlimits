@@ -34,7 +34,7 @@ class Admitted:
     group : str
         The compiler group's identifier, also its transient scope name.
     cached : bool
-        Whether the group runs through the managed sccache server.
+        Whether the group runs through the configured cache backend.
     notice : str
         A line for the build's standard error, such as why the group is not
         cached; empty when there is nothing to say.

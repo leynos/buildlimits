@@ -19,10 +19,10 @@ import typing as typ
 from pathlib import Path
 
 from buildlimits import cgroups, config, startup
+from buildlimits.cache_backend import CacheError, StartupAccountingError
 from buildlimits.journal import log
 from buildlimits.journal_native import JournalSink
 from buildlimits.metrics import Metrics
-from buildlimits.sccache import SccacheError, StartupAccountingError
 from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 from buildlimits.systemd import SystemdError
 from buildlimits.tracing import JournalTracer
@@ -121,7 +121,7 @@ def _serve(supervisor: Supervisor, own: PurePosixPath) -> int:
     except StartupAccountingError as error:
         log(f"start-up requires operator action: {error}")
         return 2
-    except (startup.StartupError, OSError, SystemdError, SccacheError) as error:
+    except (startup.StartupError, OSError, SystemdError, CacheError) as error:
         log(f"start-up failed: {error}")
         return 1
     # SIGTERM is what ``systemctl stop`` and ``restart`` send, so it must not

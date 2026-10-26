@@ -14,6 +14,7 @@ from pathlib import Path
 from test_server_watch import FakeServer, _draining, _scripted, _watch
 
 from buildlimits import sccache as sccache_module
+from buildlimits import sccache_cgroup
 from buildlimits.proc_trees import count_children
 from buildlimits.sccache import LiveCacheWorkError, ManagedSccache, SccacheError
 from buildlimits.server_watch import ServerWatch
@@ -164,7 +165,7 @@ def _scripted_live_cache(
     (tmp_path / "cgroup.procs").write_text(procs, encoding="ascii")
     proc = tmp_path / "proc"
     _procfs(proc, stats)
-    monkeypatch.setattr(sccache_module.cgroups, "directory", lambda _path: tmp_path)
+    monkeypatch.setattr(sccache_cgroup.cgroups, "directory", lambda _path: tmp_path)
     wired = functools.partial(count_children, proc=proc)
     monkeypatch.setattr(sccache_module, "count_children", wired, raising=True)
     return _scripted({

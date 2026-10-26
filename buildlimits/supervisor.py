@@ -24,6 +24,7 @@ from buildlimits import (
     supervisor_wiring,
 )
 from buildlimits.admission import Admission
+from buildlimits.cache_backend import CacheBackend, DirectCache, is_cache
 from buildlimits.drain_loop import MAX_INTERNAL_FAILURES as MAX_INTERNAL_FAILURES
 from buildlimits.drain_loop import DrainLoop, LoopEffects
 from buildlimits.groups import Groups
@@ -31,6 +32,7 @@ from buildlimits.journal import log
 from buildlimits.metrics import Metrics, MetricsPort, gauge_fields
 from buildlimits.pool import PoolFailure, Token, TokenPool
 from buildlimits.requesters import Requests, listen
+from buildlimits.sccache import ManagedSccache
 from buildlimits.service_readiness import notify_ready
 from buildlimits.systemd import UserManager
 from buildlimits.timing import Clock, as_clock
@@ -96,7 +98,15 @@ class Supervisor:
         )
         self.tracer = observations.tracer
 
-        self.admission = Admission(cached=False, capacity=settings.slots)
+        server = ManagedSccache(
+            settings.sccache_unit, settings.sccache_socket, self.manager
+        )
+        # Composition sites ask this object for argv, environment and capability.
+        self.backend: CacheBackend = (
+            server if is_cache(settings.cache_mode) else DirectCache()
+        )
+        detached = not self.backend.in_scope_work
+        self.admission = Admission(cache_detached=detached, capacity=settings.slots)
         self.selector = selectors.DefaultSelector()
         self.requests = Requests(
             self.selector,
@@ -104,9 +114,14 @@ class Supervisor:
             metrics=self.metrics,
             counts=self.admission.counts,
         )
-        self.groups = Groups(settings, self.manager, self.selector, self.clock)
+        self.groups = Groups(
+            settings, self.manager, self.selector, self.clock, self.backend
+        )
+        # The watch and the recovery machine are wired together in one place;
+        # the server they both drive is the instance the backend was built on,
+        # so composition and the detached lifecycle never diverge.
         wiring = supervisor_wiring.Wiring(
-            settings, self.manager, self.clock, self.admission, self.metrics
+            settings, self.manager, self.clock, self.admission, self.metrics, server
         )
         self.server, self.recovery = supervisor_wiring.watch_and_recovery(wiring)
         self.pool: TokenPool | None = None
@@ -159,8 +174,8 @@ class Supervisor:
         self._watch_signals()
         self.server.refresh_cache_mode()
         self.outcomes = supervisor_outcomes.build_shell(self)
-        # Only the mode that owns the managed cache may run a recovery.
-        if self.settings.cache_mode == "sccache":
+        # Only a backend that owns a detached service may run a recovery.
+        if not self.backend.in_scope_work:
             self.requests.recovery = lambda: self.recovery.request(
                 "manual", self.clock()
             )

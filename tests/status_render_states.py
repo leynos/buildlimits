@@ -54,7 +54,13 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
         "open descriptors 12, soft limit unlimited, hard limit unlimited",
     ),
     "cached": (
-        {"capacity": 4, "held": 0, "healthy": True, "caching": True},
+        {
+            "capacity": 4,
+            "held": 0,
+            "healthy": True,
+            "caching": True,
+            "cache_mode": "sccache",
+        },
         "capacity 4, held 0, healthy, caching through sccache",
     ),
     "blocked-admission": (
@@ -131,7 +137,13 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
         "admission unhealthy: supervisor is unhealthy",
     ),
     "legacy-missing-admission": (
-        {"capacity": 4, "held": 0, "healthy": True, "caching": True},
+        {
+            "capacity": 4,
+            "held": 0,
+            "healthy": True,
+            "caching": True,
+            "cache_mode": "sccache",
+        },
         "capacity 4, held 0, healthy, caching through sccache",
     ),
     "legacy-non-dictionary-admission": (

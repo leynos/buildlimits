@@ -55,6 +55,8 @@ nor the policy.
 import dataclasses
 import typing as typ
 
+from buildlimits.cache_backend import is_detached_mode
+
 if typ.TYPE_CHECKING:
     from buildlimits.admission_state import Counts
 
@@ -316,7 +318,7 @@ def permits_but_for_time(reading: StarvationReading) -> bool:
         Whether the cache mode, the policy, the fault, the retained token, the
         waiting request and the manager transport all permit an opening.
     """
-    if reading.cache_mode != "sccache" or reading.policy != "starved":
+    if not is_detached_mode(reading.cache_mode) or reading.policy != "starved":
         return False
     if reading.fault_kind != "live_work" or refusal(reading.fault_kind):
         return False

@@ -15,6 +15,7 @@ import typing as typ
 from pathlib import Path
 
 from buildlimits import cgroups, group_drain, launch
+from buildlimits.cache_backend import CacheBackend, DirectCache, is_cache
 from buildlimits.descriptors import close_all
 from buildlimits.drain_metrics import DrainMetrics
 from buildlimits.effects import Exit
@@ -59,8 +60,14 @@ class Running:
     exec_error: str | None = None
 
 
+@dc.dataclass(slots=True)
 class Groups:
     """Every admitted group whose scope has not yet emptied.
+
+    Slots keep each group record's layout closed, matching the rest of the
+    package. A suite that substitutes ``reap``, ``terminate`` or ``advance``
+    patches the class rather than the instance: a slotted instance refuses a
+    method rebound on it, while the class attribute is still replaceable.
 
     Parameters
     ----------
@@ -73,23 +80,25 @@ class Groups:
         pipe.
     clock : Callable[[], float]
         A monotonic clock.
+    backend : CacheBackend
+        The cache every cached group is composed with. The composition root
+        supplies it, so this module names no product.
+    drain_metrics : DrainMetrics
+        Shared operation observer for scope control.
+    running : dict[str, Running]
+        Groups whose scope has not yet emptied, by group identifier.
+    slice_dir : Path or None
+        The compilers' slice, known once the supervisor passes its barrier.
     """
 
-    def __init__(
-        self,
-        settings: SupervisorConfig,
-        manager: UserManager,
-        selector: selectors.BaseSelector,
-        clock: cabc.Callable[[], float],
-    ) -> None:
-        """Start with no groups; the slice is known once the barrier passes."""
-        self.settings = settings
-        self.manager = manager
-        self.selector = selector
-        self.clock = clock
-        self.drain_metrics = DrainMetrics()
-        self.running: dict[str, Running] = {}
-        self.slice_dir: Path | None = None
+    settings: SupervisorConfig
+    manager: UserManager
+    selector: selectors.BaseSelector
+    clock: cabc.Callable[[], float]
+    backend: CacheBackend = dc.field(default_factory=DirectCache)
+    drain_metrics: DrainMetrics = dc.field(default_factory=DrainMetrics)
+    running: dict[str, Running] = dc.field(default_factory=dict)
+    slice_dir: Path | None = None
 
     def place(self, entry: Pending, group_id: str, *, cached: bool) -> Running | None:
         """Start a held launch child for a request and move it into a scope.
@@ -104,7 +113,7 @@ class Groups:
         group_id : str
             The admission group identifier.
         cached : bool
-            Whether to compose the compiler with the managed sccache server.
+            Whether to compose the compiler with the cache backend.
 
         Returns
         -------
@@ -288,7 +297,7 @@ class Groups:
         entry : Pending
             The admitted request.
         cached : bool
-            Whether to compose the compiler with the managed sccache server.
+            Whether to compose the compiler with the cache backend.
 
         Returns
         -------
@@ -297,12 +306,10 @@ class Groups:
         """
         request = entry.request
         argv = compiler_argv(request.argv)
-        env = dict(request.env)
         if cached:
-            argv = (self.settings.sccache_executable, *argv)
-            env["SCCACHE_SERVER_UDS"] = str(self.settings.sccache_socket)
-            # Losing the server mid-build falls back to compiling in scope.
-            env["SCCACHE_IGNORE_SERVER_IO_ERROR"] = "1"
+            argv, env = self.backend.compose(argv, request.env)
+        else:
+            env = dict(request.env)
         return launch.LaunchSpec(
             argv=argv,
             env=env,
@@ -326,20 +333,21 @@ class Groups:
         entry : Pending
             The admitted request.
         cached : bool
-            Whether the group runs through the managed sccache server.
+            Whether the group runs through the configured cache backend.
 
         Returns
         -------
         str
             A line for the build's standard error, or an empty string.
         """
-        wanted = self.settings.cache_mode == "sccache" and entry.request.cacheable
+        # Rustdoc and configured direct mode never meant to be cached, and a
+        # cached group is serving the request as asked. Only the remaining case
+        # -- a request that wanted a cache and did not get one -- has anything
+        # to tell the build.
+        wanted = entry.request.cacheable and is_cache(self.settings.cache_mode)
         if cached or not wanted:
             return ""
-        return (
-            "the managed sccache server is not serving compilations; "
-            "compiling without the cache"
-        )
+        return self.backend.fallback_notice()
 
     def _place_in_scope(self, child: launch.HeldChild, unit: str) -> str | None:
         """Move a held child into a new scope and confirm that it moved.

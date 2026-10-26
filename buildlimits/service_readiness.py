@@ -1,7 +1,7 @@
 """Signal service readiness only after admission startup has accounted for work.
 
-Only Supervisor owns this boundary. The notification orders a new managed
-sccache server after admission's restart barrier without changing token state.
+Only Supervisor owns this boundary. The notification orders a new detached
+cache service after admission's restart barrier without changing token state.
 """
 
 import contextlib

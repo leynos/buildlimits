@@ -11,7 +11,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from buildlimits import bus_properties, config, sccache, systemd
+from buildlimits import bus_properties, config, sccache_cgroup, systemd
 from buildlimits.proc_trees import count_children, parent_pid
 from buildlimits.sccache import ManagedSccache, SccacheError
 from buildlimits.systemd import SystemdError, UserManager
@@ -274,7 +274,9 @@ def test_an_unreadable_server_group_is_an_unknown_load(
         UserManager(FakeRunner(stdout="MainPID=7\nControlGroup=/srv\n")),
     )
     monkeypatch.setattr(
-        sccache.cgroups, "directory", lambda path: tmp_path / path.relative_to("/")
+        sccache_cgroup.cgroups,
+        "directory",
+        lambda path: tmp_path / path.relative_to("/"),
     )
     with pytest.raises(SccacheError, match=r"cannot read s\.service's load"):
         server.active_compiles()

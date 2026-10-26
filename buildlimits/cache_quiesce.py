@@ -22,12 +22,12 @@ return.
 
 import typing as typ
 
-from buildlimits.journal import log
-from buildlimits.sccache import (
+from buildlimits.cache_backend import (
+    CacheError,
     LiveCacheWorkError,
-    SccacheError,
     StartupAccountingError,
 )
+from buildlimits.journal import log
 from buildlimits.systemd import SystemdError
 
 if typ.TYPE_CHECKING:
@@ -134,7 +134,7 @@ def quiesce_live_cache(
         cache.accounted_drain()
     except LiveCacheWorkError:
         pass
-    except SccacheError:
+    except CacheError:
         return False
     else:
         return False
@@ -174,7 +174,7 @@ def _await_stopped(cache: ManagedSccache, clock: Clock, timeout: float) -> None:
     while True:
         try:
             cache.accounted_drain()
-        except SccacheError as error:
+        except CacheError as error:
             last = error
         else:
             return

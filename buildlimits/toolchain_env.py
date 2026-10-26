@@ -53,7 +53,7 @@ def toolchain_environment(
     Parameters
     ----------
     argv : Sequence[str]
-        The compiler's argument vector; a leading ``sccache`` layer is ignored.
+        The compiler's argument vector; a leading cache layer is ignored.
     env : Mapping[str, str]
         The caller's environment, which supplies ``PATH`` and the loader path.
     cwd : str

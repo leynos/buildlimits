@@ -1503,3 +1503,17 @@ members = [
     "buildlimits/outcome_attribution.py::_failure_reason",
 ]
 reason = "The matched subdag is the shared reading-failure gate: attribute asks _failure_reason to classify the window before it reads counters, so the second call site is the delegation itself rather than a copy of the rule. The identical doctest preambles construct the same empty statistics value the two examples both start from."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/requesters.py",
+    "buildlimits/supervisor.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_drain_control_faults.py",
+    "tests/test_unreleased_disconnect.py",
+]
+reason = "Matching import lists: both suites drive the supervisor through the same Group and Groups ports, and the shared lines name those dependencies rather than any shared behaviour. Each module's cases test a different control fault, so a common helper module would only relocate the import list."
