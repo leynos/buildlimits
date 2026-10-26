@@ -1227,7 +1227,7 @@ members = ["tests/test_fizzbee_spike.py", "tests/test_fizzbee_graphs.py"]
 reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
 
 [[tool.duplication_gate.allow]]
-members = ["tests/test_group_drain_metrics.py", "modelcheck/expectations.py", "tests/test_cache_recovery_telemetry.py", "tests/test_recovery_roots_deadline.py"]
+members = ["tests/modelcheck_cases.py", "tests/test_group_drain_metrics.py", "modelcheck/expectations.py", "tests/test_cache_recovery_telemetry.py", "tests/test_recovery_roots_deadline.py", "modelcheck/report.py", "tests/modelcheck_doubles.py"]
 reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
 
 [[tool.duplication_gate.allow]]
@@ -1245,3 +1245,10 @@ reason = "The parametrized row test states one row's full judgement, and the swe
 [[tool.duplication_gate.allow]]
 members = ["tests/modelcheck_cases.py::result_of", "tests/modelcheck_cases.py::trace"]
 reason = "Two unrelated builders share only the numpy Returns section and the deferred-import line the test-support module requires; extracting a helper from them would invent a shape neither has."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/fizzbee_spike.py",
+    "tests/test_modelcheck_fizzbee_process.py",
+]
+reason = "Both helpers create a scratch directory before writing into it, and the match is that one stdlib call; a helper around Path.mkdir would name the stdlib rather than a shared behaviour, and the two functions have nothing else in common. The detector reports the fragment unnamed, so the entry names the files."

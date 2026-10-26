@@ -16,10 +16,13 @@ import typing as typ
 from hypothesis import strategies as st
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from modelcheck.domain import (
         CheckResult,
         Configuration,
         Expectation,
+        Judgement,
         MaterializedSpec,
     )
     from modelcheck.trace import Trace
@@ -197,6 +200,24 @@ def spec(
     from modelcheck import domain
 
     return domain.MaterializedSpec(configuration_name, text, fairness)
+
+
+def render(judgements: cabc.Sequence[Judgement]) -> str:
+    """Render judgements through the module under test.
+
+    Parameters
+    ----------
+    judgements : collections.abc.Sequence[Judgement]
+        The judgements to render.
+
+    Returns
+    -------
+    str
+        The rendered report, exactly as a maintainer would see it.
+    """
+    from modelcheck import report
+
+    return report.render_report(judgements)
 
 
 def trace() -> Trace:

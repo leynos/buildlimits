@@ -106,10 +106,16 @@ class Counterexample:
 class Stopped:
     """A run the checker cut short, so its verdict proves nothing.
 
+    The checker reports this when a signal interrupts it: exploration ends
+    early, and it says so rather than claiming a verdict. A run cut short by
+    its ``max_actions`` bound is *not* one of these — the checker prints no
+    marker for that, so bound truncation is caught by the configuration's
+    ``min_states`` floor instead (D22).
+
     Attributes
     ----------
     detail : str
-        The line the truncation was read from.
+        The line the interruption was read from.
     """
 
     detail: str

@@ -33,6 +33,9 @@
   status](adr-004-admission-readiness-status.md) records how readiness differs
   from supervisor health and cache reachability, while preserving health-only
   status checks and token accounting.
+- [ADR 004: model-check tooling outside the wheel](adr-004-model-check-outside-the-wheel.md)
+  records why the FizzBee tooling is a top-level hexagonal package excluded
+  from the wheel, and the boundaries that keeps.
 
 ## Conventions
 

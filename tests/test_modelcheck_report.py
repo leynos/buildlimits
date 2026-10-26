@@ -21,13 +21,12 @@ from modelcheck_cases import (
     PROPERTY,
     configuration,
     expectation_of,
+    render,
     result_of,
     spec,
 )
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
     from modelcheck.domain import CheckResult, Expectation, Judgement
 
 CONFIGURATION_WIDTH = 32
@@ -55,24 +54,6 @@ recovery exact.
 
 _GAP = re.compile(r" {2,}")
 """A run of two or more spaces, which is always a column boundary."""
-
-
-def _render(judgements: cabc.Sequence[Judgement]) -> str:
-    """Render judgements through the module under test.
-
-    Parameters
-    ----------
-    judgements : collections.abc.Sequence[Judgement]
-        The judgements to render.
-
-    Returns
-    -------
-    str
-        The rendered report.
-    """
-    from modelcheck import report
-
-    return report.render_report(judgements)
 
 
 def _judge(
@@ -140,7 +121,7 @@ def _line_of(kind: str, variant: str, *, fairness: tuple[str, ...] = ()) -> str:
         The rendered report line, without its newline.
     """
     judgement = _judge(expectation_of(kind), result_of(variant), fairness=fairness)
-    return _render([judgement]).splitlines()[0]
+    return render([judgement]).splitlines()[0]
 
 
 def test_a_met_expectation_renders_its_evidence_and_fairness() -> None:
@@ -150,7 +131,7 @@ def test_a_met_expectation_renders_its_evidence_and_fairness() -> None:
     large enough to mean anything, so it is a column rather than commentary.
     """
     line = _line_of("holds", "passed", fairness=("F1",))
-    summary = _render([
+    summary = render([
         _judge(expectation_of("holds"), result_of("passed"), fairness=("F1",))
     ]).splitlines()[1]
 
@@ -229,7 +210,7 @@ def test_a_probe_name_longer_than_the_column_is_not_truncated() -> None:
         expectation_of("reachable"), result_of("passed"), fairness=(long_name,)
     )
 
-    line = _render([judgement]).splitlines()[0]
+    line = render([judgement]).splitlines()[0]
 
     assert PROBE in line, "the whole name survives"
     assert line.index("reached") > CONFIGURATION_WIDTH + PROPERTY_WIDTH, (
@@ -249,7 +230,7 @@ def test_the_summary_counts_every_judgement() -> None:
         _judge(expectation_of("fails_as"), result_of("counterexample")),
     ]
 
-    summary = _render(judgements).splitlines()[-1]
+    summary = render(judgements).splitlines()[-1]
 
     assert summary == "model check: 2 expectations met, 1 unmet", "the whole tally"
 
@@ -260,7 +241,7 @@ def test_an_empty_matrix_still_renders_a_summary() -> None:
     A tool that printed nothing would be indistinguishable from one that
     crashed before it ran anything.
     """
-    assert _render([]) == "model check: 0 expectations met, 0 unmet\n", (
+    assert render([]) == "model check: 0 expectations met, 0 unmet\n", (
         "the summary alone is still a report"
     )
 
