@@ -624,14 +624,14 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `cache_recovery_harness.py`   | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
 | `cache_recovery_machines.py`  | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
 | `harness_processes.py`        | `wait_for`, `start_adapter`, process cleanup and host process observations                          |
-| `host_acceptance.py`          | `user_manager_available` and `systemd_user_marks` with explicit host opt-in                         |
+| `harness_status.py`           | `HarnessStatus`, the status document, readiness and drain-fault queries                             |
 | `systemd_harness.py`          | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling    |
 | `rustc_linter_acceptance.py`  | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios       |
 | `rustc_query_host_checks.py`  | Query and readiness assertions shared by host query and timing scenarios                            |
 | `rustc_query_host_support.py` | Private Cargo fixtures, held-token barriers and captured command output                             |
 | `rustc_query_support.py`      | `cargo_probe` and `temporary_executable` for rustc query and property tests                         |
 | `rustc_query_timing_shim.py`  | Sibling-adapter timing shim with JSON-line probe records                                            |
-| `harness_units.py`            | Transient unit control and `unit_properties` over the public user bus                               |
+| `harness_units.py`            | User-manager readiness, acceptance marks, transient unit control and properties                     |
 
 _Table 4: Shared test helper modules._
 

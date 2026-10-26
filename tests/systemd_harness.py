@@ -11,7 +11,6 @@ it created.
 import array
 import contextlib
 import fcntl
-import json
 import os
 import shutil
 import subprocess
@@ -28,6 +27,7 @@ from harness_processes import AdapterProcessOptions, start_adapter, wait_for
 from harness_processes import journal as journal
 from harness_processes import kill_group as kill_group
 from harness_processes import pid_alive as pid_alive
+from harness_status import HarnessStatus
 from harness_units import (
     Placement,
     listening,
@@ -61,7 +61,8 @@ __all__ = [
     "wait_for",
 ]
 
-class Harness:
+
+class Harness(HarnessStatus):
     """One supervisor, its pool and optionally a fake sccache server.
 
     Parameters
@@ -247,53 +248,6 @@ class Harness:
                 env=env,
             ),
         )
-
-    def status(self) -> dict[str, typ.Any]:
-        """Read the supervisor's status document.
-
-        Returns
-        -------
-        dict[str, Any]
-            The status.
-        """
-        result = subprocess.run(
-            [str(self.status_command), "--json"],
-            env=self.env,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-        return json.loads(result.stdout)
-
-    def readiness_status(self) -> tuple[int, dict[str, typ.Any]]:
-        """Read status with the admission-readiness exit contract.
-
-        Returns
-        -------
-        tuple[int, dict[str, Any]]
-            The ``--ready`` exit code and the decoded status document.
-        """
-        result = subprocess.run(
-            [str(self.status_command), "--ready", "--json"],
-            env=self.env,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-        return result.returncode, json.loads(result.stdout)
-
-    def drain_fault(self) -> str:
-        """Read the current retained-drain fault, if one is reported.
-
-        Returns
-        -------
-        str
-            The reported fault, or an empty string when no fault exists.
-        """
-        fault = self.status()["drain_fault"]
-        return fault if isinstance(fault, str) else ""
 
     def kill_supervisor(self) -> None:
         """Kill the supervisor outright, as a crash would."""
