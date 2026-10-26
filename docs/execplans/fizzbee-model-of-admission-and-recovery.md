@@ -428,6 +428,63 @@ explicitly.
     milestone's line count is escalated in Risks; the commit was made so the
     delivered work is recoverable while that question is open.
 - [ ] EP-M3: `modelcheck` ports, service, adapters and command-line interface.
+  - [x] `ports.py`, `service.py`, `cli.py`, `__main__.py` and the three
+    adapters (`fizzbee_process.py`, `configuration.py`, `inventory.py`).
+  - [x] EP-M3-E1: the twelve scenarios were written red under a strict
+    module-level `xfail`, which reported `9 failed, 3 xfailed` against the
+    empty ports and `13 passed --runxfail` afterwards; the marker is now
+    removed and the file passes unmarked. Two scenarios needed D24's restated
+    property name, and the drift scenario needed the bare effect name
+    qualified to the inventory's dotted path.
+  - [x] EP-M3-E2: `uv run python -m modelcheck --help` lists `check` and
+    `drift`.
+  - [x] The drift path and the check path were exercised end to end against
+    the real `buildlimits` (24 findings, exit 1) and a bash stub `fizz`
+    (`head S1 holds`, exit 0, correct `--json` record), with
+    `git status --porcelain` empty afterwards.
+  - [x] The process-control tests: `tests/test_modelcheck_fizzbee_process.py`
+    (14 tests) covers the scratch directory, the named output directory, the
+    Go runtime caps, the missing launcher, the replayed lasso, the group kill
+    and the released pipe, the timeout detail, and the argv list with no shell.
+    Two production defects it found were fixed: a timed-out run's output was
+    discarded despite the docstring, and a relative launcher path was never
+    found (D25).
+  - [x] EP-M3-E3 (end-to-end): `tests/test_modelcheck_cli_e2e.py` runs
+    `uv run python -m modelcheck check tests/fixtures/modelcheck/model
+    --fizz tests/fixtures/modelcheck/fizz` as a subprocess. Six tests: exit 0
+    for the met matrix, the scratch directory and the absence of the scratch
+    directory afterwards, the `--json` records field by field, exit 1 when the
+    known-bad configuration loses its counterexample, the fixture tree
+    unchanged, and exit 2 with the offending option named on a usage error.
+    The stub writes nothing into the fixture tree: its record goes to a
+    `MODELCHECK_E2E_LOG` path in the test's own scratch directory, which is
+    what lets the scratch-path assertion be made at all.
+  - [x] The 400-line cap was the gate that shaped EP-M3's file layout, not a
+    later tidy-up. Four modules crossed it as written and were split along
+    responsibility seams, each split's module docstring stating why the
+    boundary is where it is:
+    `adapters/configuration.py` (the file layout) from
+    `adapters/configuration_fields.py` (the table shapes and assembly) and
+    `adapters/configuration_values.py` (the substituted values);
+    `adapters/fizzbee_output.py` (verdict classification) from
+    `adapters/fizzbee_measurements.py` (state counts and durations); and
+    `tests/test_model_check_behaviour.py` (the steps) from
+    `tests/modelcheck_scenarios.py` (the model, the scenario state and the
+    readers). Every module in `modelcheck/` and `tests/` is now under 400
+    lines.
+  - [x] The duplication gate was run before the milestone's gate set and drove
+    real consolidations rather than allowances. `_sequence` and `_names`
+    collapsed into one generic `_shape` reader in
+    `adapters/configuration_fields.py`; five test modules gained shared
+    arrange steps (`_refusal`, `_run_and_record`, `_checked`/`_checked_in`/
+    `_files`), and three pairs of near-identical tests became parametrized
+    tests or a fixture. EP-M3's only new allowance is the single `Path.mkdir`
+    call `tests/fizzbee_spike.py` and `tests/test_modelcheck_fizzbee_process.py`
+    share. Ruff, Skylos and Vulture needed no new exception at all; see
+    "Configuration and gates" above for the measurements.
+  - [ ] EP-M3-E4: the gate set (`check-fmt`, `lint`, `typecheck`, `test`,
+    `markdownlint`, `nixie`) run sequentially by the scrutineer.
+
 - [ ] EP-M4: minimal model with the busy queue (W1).
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
@@ -1105,6 +1162,134 @@ explicitly.
   - Scope: this amends Tolerances, "Scope". The other tolerances are
     unchanged, and the 25-file limit still stops the work.
 
+- **D22. T1's marker enumeration is re-derived from the checker's source.**
+  - Decision: the enumeration is **seven** classes and the sweep is **128**
+    rows (each class present or absent, crossed with exit status 0 or 1). The
+    plan's five-class list is replaced, because it was wrong in two
+    independent ways.
+  - **First, truncation is not a marker.** `processor.go:1555` cuts
+    exploration silently: `if node.actionDepth >
+    int(p.config.Options.MaxActions) { // Add a node to indicate why this
+    node was not processed \n continue }`. The comment promises a marker the
+    code does not write. `tests/fixtures/fizzbee/truncation-safety/` is the
+    decisive capture: captioned `max_actions: 2`, it prints `PASSED: Model
+    checker completed successfully` with `Valid Nodes: 3`. There is no
+    truncation line to detect, so the plan's five-class sweep could never
+    have classified one. Truncation is caught by `min_states`
+    (`Verdict.BELOW_FLOOR`) and the `max_actions` fixpoint check, which is
+    what A1 already says. A parser searching for a truncation string would
+    match nothing, and the row would be vacuous — proving only that a pattern
+    never fires.
+  - **Second, `FAILED` is not one class.** The checker prints three distinct
+    `FAILED:` verdicts, and one of them is not a failure at all:
+    - `FAILED: Model checker failed` — an invariant violation;
+    - `FAILED: Liveness check failed` — a liveness violation, whose property
+      is named on the following `Invariant:` line;
+    - `FAILED: Expected states never reached` — an `exists` probe that was
+      never satisfied. `main.go:819` and `:867` print it and then `return
+      nil` **without** printing the pass line.
+  - The third is why a single `FAILED` marker cannot be fatal. The domain
+    models it as `Passed` with `unsatisfied_probes` populated, and EP-M3's own
+    "An unsatisfied reachability probe fails" scenario requires that shape:
+    `Verdict.UNREACHABLE` is only reachable from `_pass_verdict` on a
+    `Passed` result. Treating every `FAILED:` as fatal would make the
+    scenario unimplementable.
+  - The seven classes are therefore: `passed`, `never_reached`, `safety`,
+    `liveness`, `deadlock`, `stopped`, `error`. `DEADLOCK detected` is its own
+    class even though the capture also prints a safety line, because it is
+    what selects `CounterexampleKind.DEADLOCK`.
+  - Precedence, which is the fail-closed rule the sweep pins: a non-zero exit
+    or an error line is `Errored`; a safety, liveness or deadlock marker is a
+    `Counterexample`; a stop marker is `Stopped`; a pass or never-reached
+    marker is `Passed`; and output carrying none of them is `Errored`, never
+    `Passed`. The last clause is asserted separately, because it is the one
+    row a presence sweep cannot generate — it means removing a line rather
+    than adding one.
+  - `Model checker stopped` is real but rare: `main.go:1023-1035` sets it only
+    from `setupSignalHandler` on SIGINT/SIGTERM. No capture can produce one
+    without signalling a live run, so that verdict's coverage is the sweep
+    (where a synthetic marker _is_ faithful, because the checker really does
+    print that line), the T2 truth table, and the every-`Verdict` snapshots.
+  - Consequence for the T1 artefact: `tests/test_modelcheck_fizzbee_output.py`
+    also parametrizes over every captured fixture, including both truncation
+    classes. `truncation-safety` must classify as `Passed` — because the
+    checker really says so — and the floor, not the parser, is what rejects
+    it. A separate test pins that division: the parser is faithful to the
+    output, and `judge` applies the floor.
+  - Consequence for the feature file: the "A truncated exploration is not a
+    pass" scenario names the fixture `truncation-safety` rather than an
+    invented `truncated` class, and expects `state space below floor` rather
+    than `stopped`, because that is the verdict the floor produces. The
+    scenario count stays at twelve.
+  - Scope: this amends T1 under Tooling obligations and one scenario in
+    EP-M3's feature specification. No other obligation changes, and A1 and A2
+    are unchanged — A2 in particular says the pass line means the retained
+    assertions held, which is consistent: the never-reached marker is a
+    different completion, and the domain records it as a pass with unsatisfied
+    probes rather than as a held pass.
+
+- **D23. The report's fairness column names tags, never levels.**
+  - Decision: the column prints the tags in force, joined with `", "`, or
+    `none` when the run carried none. It does not print the level; the plan's
+    earlier sample spelling `F1(weak)` / `F1(strong)` is withdrawn.
+  - Reason: `judge` already excludes a tag whose configured level is `unfair`
+    from `Judgement.fairness_in_force`, so every tag the column prints is
+    understood. The level is a _configuration declaration_ — what the variant
+    asked for — rather than a result of the run, and a report is a statement
+    of results. Printing it would also invite a reader to compare levels
+    across configurations, which the checker does not do: it either honours a
+    `fair` annotation or it does not.
+  - Scope: this corrects the sample report block under `Concrete steps` and
+    the `report._fairness` docstring, which records the reasoning at the point
+    of use. The feature scenario is unaffected: it asserts that the named tags
+    appear, and they do.
+
+- **D24. The behavioural double restates the counterexample's property name.**
+  - Decision: `tests/modelcheck_doubles.FakeChecker` replaces the
+    `property_name` of a replayed counterexample with the name the scenario
+    declared, and only that field.
+  - Reason: a recording is a _shape_, captured from an EP-M1 spike model whose
+    assertions were called `BEventually`, `Served` and `NeverFull`. A
+    known-bad configuration retains only its own assertions (D3), so a real run
+    of a scenario's model could never print another model's invariant name;
+    replaying the capture unchanged would fail two scenarios for the fixture's
+    reason rather than their own. The alternative — renaming the scenarios'
+    properties to the spike model's names — would make the feature file read
+    as though the admission model declared `BEventually`, and would tie every
+    scenario to one model's vocabulary. The double replaces nothing else: the
+    trace, the kind and the state count stay the capture's, so a broken parser
+    or a broken comparator still fails the scenario, which is what the double
+    exists to guarantee.
+  - The `FakeChecker` docstring records the same reasoning where the
+    substitution is made.
+  - Scope: this amends EP-M3's "Red first" description of `FakeChecker`, which
+    said only that it applies `parse_output` to a named fixture.
+
+- **D25. The end-to-end test found a relative `--fizz` path was never found.**
+  - Decision: `FizzbeeChecker` resolves the launcher path when it is built,
+    rather than passing the caller's string through to `Popen`.
+  - Reason: the adapter runs the checker with `cwd` set to its scratch
+    directory, deliberately, so a run cannot write into the tracked tree. A
+    relative `--fizz` is then resolved against _that_ directory, not against
+    the caller's, and every run reported `the checker could not be started:
+    [Errno 2] No such file or directory`. The plan's own command line
+    (`uv run python -m modelcheck check ... --fizz .tools/fizzbee/fizz`) is
+    exactly this form, and the whole matrix read as un-met with an `error` on
+    every line. Resolving at construction is the fix: it is where the caller's
+    working directory is still meaningful, and it leaves the run's isolation
+    untouched.
+  - Why no test saw it first: every adapter test either passed an absolute
+    stub path (`tmp_path` is absolute) or never started a process. Nothing had
+    run the command line with a relative launcher until EP-M3-E3, which is why
+    the plan requires an end-to-end test rather than only in-process ones.
+  - Evidence: `tests/test_modelcheck_cli_e2e.py` runs `uv run python -m
+    modelcheck check` with the fixture-relative `--fizz`, and
+    `test_a_relative_launcher_is_resolved_before_the_run_starts` pins the
+    adapter's own behaviour so the defect cannot return through another
+    caller.
+  - Scope: one line of `fizzbee_process.__init__` and its docstring. No other
+    module changes; the scratch-directory isolation is unchanged.
+
 ## Outcomes & retrospective
 
 Not started. Completed at each gate and at completion.
@@ -1461,19 +1646,26 @@ repository-owned logic built on them is verified against the real interface.
 - **Obligation T1: classification fails closed.**
   - Statement: a run is classified `Passed` only if:
     - the exit status is 0;
-    - a pass line is present;
-    - no `FAILED`, `DEADLOCK`, truncation, `Model checker stopped` or error
-      line is present.
-  - Method: an exhaustive parametrized test over all 32 presence combinations
-    of the five marker classes, with the oracle derived from which markers
-    were inserted. Hypothesis only injects noise lines that cannot start with
-    a marker. Parametrized tests also cover the captured EP-M1 fixtures.
+    - a pass line (`PASSED: Model checker completed successfully`) or a
+      never-reached line (`FAILED: Expected states never reached`) is present;
+    - no safety, liveness, deadlock, stopped or error line is present.
+    - Truncation is _not_ in this list, because the checker prints no
+      truncation marker; A1's `min_states` floor and `max_actions` fixpoint
+      catch it instead (D22).
+  - Method: an exhaustive parametrized test over all 128 presence combinations
+    of the seven marker classes crossed with both exit statuses, with the
+    oracle derived from which markers were inserted. Parametrized tests also
+    cover the captured EP-M1 fixtures, including both truncation classes,
+    whose correct classification is recorded rather than assumed. The
+    no-marker-at-all case is a separate test, because a presence sweep cannot
+    generate the absence of every line.
   - Artefact: `tests/test_modelcheck_fizzbee_output.py`.
   - Evidence: red under a strict `xfail`, then green.
-  - Non-vacuity: the 32 rows are generated from the marker enumeration, so a
-    new marker fails the test until it is classified. A hand-applied mutation
-    that ignores the `FAILED` line was rejected; it is recorded in a closing
-    comment, in the style of `tests/test_cache_recovery_properties.py`.
+  - Non-vacuity: the rows are generated from the seven-member marker
+    enumeration, so a new marker fails the test until it is classified. A
+    hand-applied mutation that ignores the safety line was rejected; it is
+    recorded in a closing comment, in the style of
+    `tests/test_cache_recovery_properties.py`.
 - **Obligation T2: the judgement truth table.**
   - Statement: `judge` returns a `Verdict` for every combination of
     expectation kind and result variant.
@@ -1909,8 +2101,10 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
     `tests/test_model_check_behaviour.py`, with a module-level `pytestmark`
     strict `xfail`.
   - `tests/modelcheck_doubles.py` holds `FakeChecker`, which returns
-    `parse_output` applied to a named fixture from `tests/fixtures/fizzbee/`.
-    The scenarios therefore exercise the real parser against real output.
+    `parse_output` applied to a named fixture from `tests/fixtures/fizzbee/`,
+    restating the counterexample's property name to the one the scenario
+    declared (D24). The scenarios therefore exercise the real parser against
+    real output.
   - Write `tests/test_modelcheck_fizzbee_output.py` (T1),
     `tests/test_modelcheck_cli.py` and `tests/test_modelcheck_report.py`.
   - Run
@@ -1959,10 +2153,10 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
       And the model check exits with status 1
 
     Scenario: A truncated exploration is not a pass
-      Given a configuration "head" expected to satisfy "S2"
-      And the checker output is the fixture "truncated"
+      Given a configuration "head" with a floor of 10 states expected to satisfy "S2"
+      And the checker output is the fixture "truncation-safety"
       When the model check runs
-      Then the report shows "head" "S2" as "stopped"
+      Then the report shows "head" "S2" as "state space below floor"
       And the model check exits with status 1
 
     Scenario: Uninterpretable checker output fails closed
@@ -2041,6 +2235,33 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
   - Add Skylos entry points for the `modelcheck.__main__` path, and Vulture
     `ignore_names` for the doubles' Protocol methods, each with its call path.
   - Add duplication allowances only if the gate reports them.
+  - **Measured outcome (EP-M3-E4).** Three of the four anticipated
+    exceptions were unnecessary, and no per-file ignore was added.
+    - Ruff: every finding was local to one line, so each is an inline
+      `# ruff: ignore[rule] - reason.` at the definition rather than a
+      file-wide entry — `suspicious-subprocess-import` and
+      `subprocess-without-shell-equals-true` in
+      `adapters/fizzbee_process.py`, and `docstring-extraneous-exception`
+      where a private reader raises what its public caller documents.
+      `cli.py` needed no `TC` ignore: the `Path` annotations are runtime
+      values, so `TC` never fired. `tests/test_*.py` already carries the
+      per-file ignores its own naming needs.
+    - Skylos: no entry point was needed. `__main__.py` reaches `main` through
+      its `__main__` guard and constructs the adapters inside a function that
+      `main` calls, so every module resolves from there by static call graph;
+      `make dead-code` passes with the existing entry-point rules unchanged.
+    - Vulture: no name was needed. The doubles are `tests/modelcheck_doubles.py`
+      and `tests/modelcheck_cli_cases.py`, which are not `test_*.py` and so are
+      scanned as helpers; every name they define is called by a test module, so
+      the existing `ignore_names` covers them unchanged.
+    - Duplication: the gate did report families, and every one that was real
+      duplication was extracted — a generic field-shape reader replacing two
+      near-identical readers, and shared arrange/assert helpers across the CLI,
+      configuration, fixture, process and snapshot tests. EP-M3 itself added
+      one allowance, for the single `Path.mkdir` call two unrelated helpers
+      share, and extended EP-M2's import-list entry to name
+      `modelcheck/report.py`. The families EP-M2 recorded stand unchanged. The
+      final gate reports no unsuppressed family.
 - **Documentation.**
   - Write ADR 004, "Model-check tooling as a hexagonal package outside the
     wheel", in the format of ADR 003, and add it to `docs/contents.md`.
@@ -2364,11 +2585,13 @@ followed by a summary line. The exact wording is pinned by the Syrupy snapshot.
 ```plaintext
 head                              S1   holds                        states 41210  fairness: none
 head                              L3   holds                        states 41210  fairness: F1, F2, F5, F6
-incident-1-cap3-weak              L3   counterexample as expected   lasso, 9 steps  fairness: F1(weak), F2, F5, F6
-incident-1-cap2-strong-nobackoff  L3   holds                        states 18034  fairness: F1(strong), F2, F5, F6
+incident-1-cap3-weak              L3   counterexample as expected   lasso, 9 steps  fairness: F1, F2, F5, F6
+incident-1-cap2-strong-nobackoff  L3   holds                        states 18034  fairness: F1, F2, F5, F6
 incident-3                        L4a  counterexample as expected   finite, 6 steps
 model check: 23 expectations met, 0 unmet
 ```
+
+The fairness column names the tags in force and not their levels, per D23.
 
 Commit after each green step, once the gates pass, with a message in the
 imperative mood. Push to the draft pull request.
@@ -2460,9 +2683,12 @@ modelcheck/
 ├── ports.py                 ModelChecker, CodeInventory, ConfigurationSource
 ├── service.py               run_matrix(): the application service over the ports
 └── adapters/
-    ├── fizzbee_output.py    parse_output(), normalize_trace(): pure translation of FizzBee output
+    ├── fizzbee_output.py    parse_output(): pure translation of FizzBee output
+    ├── fizzbee_measurements.py  states(), elapsed(): the scalars a run printed
     ├── fizzbee_process.py   FizzbeeChecker: scratch directory, Popen, process-group timeout
-    ├── configuration.py     TomlConfigurations: tomllib over configurations.toml
+    ├── configuration.py     TomlConfigurations: the model directory's file layout
+    ├── configuration_fields.py  configuration(): the table shapes and their assembly
+    ├── configuration_values.py  constants, fairness and floor readers: the substituted values
     └── inventory.py         BuildlimitsInventory: importlib and typing.get_args over buildlimits
 models/
 ├── spike/                   EP-M1 toy models, kept as language checks

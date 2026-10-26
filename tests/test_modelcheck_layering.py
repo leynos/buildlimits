@@ -32,12 +32,20 @@ PURE = (
     "drift",
     "trace",
     "report",
+    "ports",
+    "service",
 )
 """The modules with no input, output, clock or production import.
 
 ``frontmatter`` renders YAML text from a configuration's already-parsed
 options; it reads no file and writes none, so it obeys the same rules as the
 materializer that calls it.
+
+``ports`` and ``service`` are pure by construction rather than by accident:
+the service reads the model text, the configurations and the checker through
+the protocols, so it has nothing to open and no process to start. Listing them
+is what keeps that true — a later shortcut that read a file in the service
+would be caught here rather than in a review.
 """
 
 ALLOWED = frozenset({"enum", "dataclasses", "typing", "collections", "re", "json"})

@@ -1,0 +1,25 @@
+# A model directory for the command line's end-to-end test.
+#
+# It is deliberately not the real admission model: the test runs the real
+# command against a stub launcher, and its assertions are about the wiring
+# rather than about what the model proves.
+#
+# ``BEventually`` is named as the recorded lasso fixture names it. A recording
+# is replayed unchanged here — the stub is the real adapter's collaborator, not
+# the behavioural double — so a configuration expecting a counterexample for
+# ``L3`` would be answered by a report about a property the model never
+# declared. Naming the assertion the recording is about is what lets the
+# recording stand in for a run of this model.
+
+atomic action Init:  # maps: buildlimits.admission.Admission.submit
+  n = 0
+
+atomic fair action Bump:  # fairness: F1
+  # maps: buildlimits.admission.Admission.token_arrived
+  n = n + 1
+
+always assertion S1:
+  return n < 10
+
+always eventually assertion BEventually:
+  return n >= 1

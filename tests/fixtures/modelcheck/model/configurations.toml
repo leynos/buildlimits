@@ -1,0 +1,17 @@
+# Two configurations: one that must hold, and one that must keep failing.
+#
+# The second is what makes the exit status worth asserting. A run that reported
+# only the first would pass whether or not the incident was still reproduced,
+# and the stub answers the two differently only because the known-bad run
+# retains a single assertion (D3).
+
+[configurations.head]
+min_states = 1
+holds = ["S1", "BEventually"]
+
+[configurations.head.fairness]
+F1 = "weak"
+
+[configurations.incident-1]
+min_states = 1
+fails_as = { BEventually = "lasso" }

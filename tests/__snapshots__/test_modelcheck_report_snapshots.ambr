@@ -1,0 +1,55 @@
+# serializer version: 1
+# name: test_a_met_matrix_exits_zero
+  '''
+  incident-1-cap2-strong-nobackoff  L3   holds                        states 120  fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  StopIssued  reached                      states 120  fairness: F1, F2, F5, F6
+  model check: 2 expectations met, 0 unmet
+  
+  '''
+# ---
+# name: test_every_verdict_renders_a_line
+  '''
+  incident-1-cap2-strong-nobackoff  L3   holds                        states 120  fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  L3   counterexample as expected   lasso, 1 step  fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  StopIssued  reached                      states 120  fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  L3   expected counterexample missing  states 120  fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  L3   wrong counterexample kind    finite, 1 step  fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  L3   unexpected counterexample    lasso, 1 step  fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  StopIssued  unreachable                  states 120  fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  L3   state space below floor      states 120  fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  L3   stopped                      fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  L3   error                        fairness: F1, F2, F5, F6
+  model check: 3 expectations met, 7 unmet
+  
+  '''
+# ---
+# name: test_the_drift_report_is_pinned[clean]
+  '''
+  model drift: the model accounts for every production path it names
+  
+  '''
+# ---
+# name: test_the_drift_report_is_pinned[excluded]
+  '''
+  excluded: buildlimits.effects.Exit
+  model drift: the model accounts for every production path it names
+  
+  '''
+# ---
+# name: test_the_drift_report_is_pinned[stale]
+  '''
+  stale: buildlimits.recovery_stop.request
+  model drift: 1 finding
+  
+  '''
+# ---
+# name: test_the_drift_report_is_pinned[unmapped]
+  '''
+  unmapped: buildlimits.effects.Pause
+  model drift: 1 finding
+  
+  '''
+# ---
+# name: test_the_summary_counts_unmet_verdicts
+  'model check: 3 expectations met, 7 unmet'
+# ---

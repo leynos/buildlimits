@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# The stub launcher the command line's end-to-end test runs.
+#
+# It answers from the recordings EP-M1 made, choosing between them by what the
+# specification retains: a run materialized for a configuration that expects a
+# failure drops every other assertion (D3), so a specification that no longer
+# declares ``S1`` is the known-bad run and is answered with the recorded lasso.
+# Every other run is answered with the recorded pass.
+#
+# ``MODELCHECK_E2E_ANSWER=pass`` makes it answer a pass to every run, which is
+# how the test reproduces the failure this tooling exists to catch: the defect
+# is gone and the configuration that expected it must report that it is.
+#
+# ``MODELCHECK_E2E_LOG`` names the file each invocation appends its working
+# directory and arguments to. The test points it at its own scratch directory,
+# so running the command line never writes into the tracked fixture tree. The
+# log is what proves the run happened in a scratch directory rather than beside
+# the model.
+#
+# The ``--output-dir`` argument is honoured, so a graph lands where the adapter
+# said it would and an adapter that stopped naming the directory would be
+# caught by a missing graph rather than by a passing test.
+
+set -euo pipefail
+
+directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+log="${MODELCHECK_E2E_LOG:-$directory/seen.log}"
+printf '%s\n' "$PWD" >> "$log"
+printf 'args: %s\n' "$*" >> "$log"
+
+output=""
+spec=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output-dir)
+      output="$2"
+      shift 2
+      ;;
+    *)
+      spec="$1"
+      shift
+      ;;
+  esac
+done
+
+if [ "${MODELCHECK_E2E_ANSWER:-recorded}" = "pass" ]; then
+  cat "$directory/pass-stdout.txt"
+  exit 0
+fi
+
+if grep -q 'assertion S1' "$spec"; then
+  cat "$directory/pass-stdout.txt"
+else
+  if [ -n "$output" ]; then
+    mkdir -p "$output"
+    cp "$directory/lasso-error-graph.json" "$output/error-graph.json"
+  fi
+  cat "$directory/lasso-stdout.txt"
+fi
