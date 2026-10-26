@@ -7,7 +7,12 @@ from adapter_metrics_support import expected_record
 from conftest import RecordingSink
 from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
-from rustc_query_support import cargo_probe, path_spellings, temporary_executable
+from rustc_query_support import (
+    _safe_query_arguments,
+    cargo_probe,
+    path_spellings,
+    temporary_executable,
+)
 
 from buildlimits.adapter_metrics import AdapterMetrics
 from buildlimits.metrics import MAX_COUNTER, Metrics
@@ -55,10 +60,13 @@ _COMPILE_INDICATORS = [
     "@args",
     "native-static-libs",
 ]
-_COMPILER_PREFIXES = [
+_RECOGNIZED_COMPILER_PREFIXES = [
     ["rustc"],
     ["clippy-driver", "rustc"],
     ["dylint-driver", "rustc"],
+]
+_COMPILER_PREFIXES = [
+    *_RECOGNIZED_COMPILER_PREFIXES,
     ["other-wrapper", "rustc"],
 ]
 _TOTALITY_PREFIXES = [
@@ -67,9 +75,23 @@ _TOTALITY_PREFIXES = [
     ["sccache", "rustc"],
     ["sccache", "clippy-driver", "rustc"],
     ["sccache", "dylint-driver", "rustc"],
+    ["sccache", "clippy-driver", "clippy-driver", "rustc"],
+    ["sccache", "dylint-driver", "dylint-driver", "rustc"],
     ["clippy-driver", "dylint-driver", "rustc"],
+    ["dylint-driver", "clippy-driver", "rustc"],
+    ["sccache", "clippy-driver", "dylint-driver", "rustc"],
+    ["sccache", "dylint-driver", "clippy-driver", "rustc"],
     ["sccache", "other-wrapper", "rustc"],
 ]
+_EXEMPTABLE_PREFIXES = [
+    *_RECOGNIZED_COMPILER_PREFIXES,
+    ["sccache", "rustc"],
+    ["sccache", "clippy-driver", "rustc"],
+    ["sccache", "dylint-driver", "rustc"],
+]
+_SAFE_QUERY_STRATEGY = st.one_of(
+    _safe_query_arguments(), st.sampled_from(_SAFE_QUERY_ARGS)
+)
 
 
 @given(
@@ -130,7 +152,7 @@ def test_invocation_history(
 
 @given(
     rest=st.one_of(
-        st.sampled_from(_SAFE_QUERY_ARGS),
+        _SAFE_QUERY_STRATEGY,
         st.lists(st.sampled_from(_QUERY_RESTS), max_size=20),
     )
 )
@@ -150,7 +172,10 @@ def test_workspace_wrapper_changes_only_compiler_identity(rest: list[str]) -> No
 
 
 @given(
-    rest=st.lists(st.sampled_from(_QUERY_RESTS), max_size=16),
+    rest=st.one_of(
+        _SAFE_QUERY_STRATEGY,
+        st.lists(st.sampled_from(_QUERY_RESTS), max_size=16),
+    ),
     wrapper=st.one_of(
         st.sampled_from([
             "/tooling/clippy-driver.sh",
@@ -172,7 +197,12 @@ def test_unrecognized_wrapper_names_never_skip(rest: list[str], wrapper: str) ->
     )
 
 
-@given(rest=st.lists(st.sampled_from(_QUERY_RESTS), max_size=16))
+@given(
+    rest=st.one_of(
+        _SAFE_QUERY_STRATEGY,
+        st.lists(st.sampled_from(_QUERY_RESTS), max_size=16),
+    )
+)
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture], deadline=None)
 @example(rest=["-vV"])
 @example(rest=["--print=cfg"])
@@ -190,27 +220,31 @@ def test_wrapper_environment_mismatch_never_skips(
     )
 
 
-@given(
-    case=st.tuples(
-        st.sampled_from(_SAFE_QUERY_ARGS),
-        st.sampled_from(_COMPILE_INDICATORS),
-        st.integers(min_value=0, max_value=30),
-        st.sampled_from(_COMPILER_PREFIXES),
-        st.integers(min_value=0, max_value=4),
-    )
-)
+@st.composite
+def _compile_indicator_case(
+    draw: st.DrawFn,
+) -> tuple[list[str], str, int, list[str], int]:
+    """Generate an exempt query and insert a compile indicator at any index."""
+    query = draw(_SAFE_QUERY_STRATEGY)
+    indicator = draw(st.sampled_from(_COMPILE_INDICATORS))
+    position = draw(st.integers(min_value=0, max_value=len(query)))
+    prefix = draw(st.sampled_from(_TOTALITY_PREFIXES[1:]))
+    layers = draw(st.integers(min_value=0, max_value=4))
+    return query, indicator, position, prefix, layers
+
+
+@given(case=_compile_indicator_case())
 @example(case=(["-vV"], "lib.rs", 0, ["rustc"], 0))
 @example(case=(["--print=cfg"], "--emit=obj", 1, ["clippy-driver", "rustc"], 0))
 @example(
     case=(
-        ["-", "--crate-name", "___", "--print=file-names"],
+        cargo_probe("x86_64-unknown-linux-gnu"),
         "@args",
         3,
         ["dylint-driver", "rustc"],
         2,
     )
 )
-@example(case=(["-vV"], "native-static-libs", 0, ["other-wrapper", "rustc"], 3))
 def test_compile_indicators_never_skip_admission(
     case: tuple[list[str], str, int, list[str], int],
 ) -> None:
@@ -218,6 +252,10 @@ def test_compile_indicators_never_skip_admission(
     query, indicator, position, prefix, layers = case
     inserted = [*query[:position], indicator, *query[position:]]
     argv = [*(["sccache"] * layers), *prefix, *inserted]
+    if prefix in _EXEMPTABLE_PREFIXES:
+        assert is_toolchain_query([*prefix, *query], {}, "/"), (
+            "recognized compiler prefixes start in an exempt scope"
+        )
     assert not is_toolchain_query(argv, {}, "/"), (
         "compile indicators always force admission"
     )
@@ -225,7 +263,7 @@ def test_compile_indicators_never_skip_admission(
 
 @given(
     argv=st.one_of(
-        st.sampled_from(_SAFE_QUERY_ARGS),
+        _SAFE_QUERY_STRATEGY,
         st.lists(st.sampled_from(_QUERY_RESTS), min_size=1, max_size=12),
     ),
     prefix=st.sampled_from(_COMPILER_PREFIXES),
@@ -246,7 +284,7 @@ def test_sccache_does_not_change_query_classification(
 @given(
     outer=st.sampled_from(["clippy-driver", "dylint-driver"]),
     inner=st.sampled_from(["clippy-driver", "dylint-driver"]),
-    query=st.sampled_from(_SAFE_QUERY_ARGS),
+    query=_SAFE_QUERY_STRATEGY,
     layers=st.integers(min_value=0, max_value=4),
 )
 @example(outer="clippy-driver", inner="clippy-driver", query=["-vV"], layers=1)
