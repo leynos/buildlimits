@@ -3,7 +3,7 @@
 Scope
 -----
 These parsers are private to ``rustc_query.is_toolchain_query``. Add a query
-form only after its pinned compiler behavior and complete token grammar have
+form only after its pinned compiler behaviour and complete token grammar have
 been reviewed; callers must not use these helpers to validate compile argv.
 """
 
@@ -28,10 +28,25 @@ PRINT_KINDS = frozenset({
 def is_query(arguments: tuple[str, ...], *, has_driver: bool) -> bool:
     """Accept one complete version, print or Cargo query grammar.
 
+    Parameters
+    ----------
+    arguments : tuple[str, ...]
+        Arguments following the inner rustc executable.
+    has_driver : bool
+        Whether a workspace driver wraps rustc. Drivers reject the separate-
+        value ``--print KIND`` spelling.
+
     Returns
     -------
     bool
         Whether the complete vector matches one supported query grammar.
+
+    Examples
+    --------
+    >>> is_query(("-vV",), has_driver=False)
+    True
+    >>> is_query(("--print", "cfg"), has_driver=True)
+    False
     """
     if not arguments:
         return False

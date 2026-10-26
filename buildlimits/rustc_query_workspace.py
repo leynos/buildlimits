@@ -18,10 +18,26 @@ def is_workspace_query(
 ) -> bool:
     """Recognize a query behind one verified Clippy or Dylint driver.
 
+    Parameters
+    ----------
+    argv : tuple[str, ...]
+        Normalized argv with leading ``sccache`` layers removed.
+    env : Mapping[str, str]
+        Effective environment used to verify the workspace wrapper identity.
+    cwd : str
+        Directory used to resolve relative executable paths.
+
     Returns
     -------
     bool
         Whether the single workspace wrapper and inner query are allow-listed.
+
+    Examples
+    --------
+    >>> is_workspace_query(("clippy-driver", "rustc", "-vV"), {}, "/")
+    True
+    >>> is_workspace_query(("other-wrapper", "rustc", "-vV"), {}, "/")
+    False
     """
     parts = _workspace_query_parts(argv)
     if parts is None:
