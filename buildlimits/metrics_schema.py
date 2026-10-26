@@ -29,6 +29,9 @@ EVENTS = frozenset({
     "drain_progress",
     "cache_recovery",
     "cache_quiesce",
+    "cache_outcome",
+    "outcome_reading",
+    "outcome_store",
 })
 OUTCOMES = frozenset({
     "completed",
@@ -141,6 +144,15 @@ VOCABULARIES = {
     "phase": frozenset({"idle", "quiescing", "stopping", "accounting", "restarting"}),
     # How a start-up stop of a live cache ended; see ``cache_quiesce``.
     "quiesce_outcome": frozenset({"stopped", "refused", "timed_out"}),
+    "cache_result": CACHE_RESULTS,
+    "outcome_attribution": frozenset({"solo", "unanimous", "inferred", "none"}),
+    "crate_origin": frozenset({"registry", "git", "path", "unknown"}),
+    "outcome_reason": OUTCOME_REASONS,
+    "store_reason": STORE_REASONS,
+    "evaluation_reason": EVALUATION_REASONS,
+    "store_operation": STORE_OPERATIONS,
+    "gate_reason": GATE_REASONS,
+    "child_sighting": frozenset({"seen", "not_seen", "ambiguous", "unavailable"}),
 }
 DURATIONS = frozenset({
     "wait_seconds",
@@ -173,6 +185,15 @@ COUNTERS = frozenset({
     "recovery_completions",
     "recovery_stale_openings",
     "recovery_roots_deadline_stops",
+    "readings",
+    "readings_skipped",
+    "readings_failed",
+    "window_groups",
+    "store_records",
+    "store_discarded",
+    "child_samples",
+    "child_samples_taken",
+    "child_sample_failures",
 })
 BOOLEANS = frozenset({"reachable", "load_unknown", "fd_budget_known", "accept_paused"})
 FIELD_KINDS = {

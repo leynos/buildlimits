@@ -90,6 +90,7 @@ def report(window: Window) -> dict[str, object]:
         "gauges": _gauges(supervisor),
         "cache": _cache(supervisor),
         "transitions": _transitions(supervisor),
+        "cache_outcomes": _cache_outcomes(supervisor),
         "adapters": {
             "self_reported": True,
             "outcomes": counts_by(adapters, "outcome"),
@@ -119,6 +120,65 @@ def report(window: Window) -> dict[str, object]:
             )
         ],
         **pressure_sections(window.records, percentiles),
+    }
+
+
+def _cache_outcomes(records: cabc.Sequence[Record]) -> dict[str, object]:
+    """Summarize outcome labels and their reading and store diagnostics.
+
+    Returns
+    -------
+    dict[str, object]
+        An empty mapping when no outcome telemetry exists, otherwise bounded
+        counts and attribution coverage.
+
+    Examples
+    --------
+    A reading without ``cache_outcome`` rows has no outcome section data.
+    """
+    outcome_records = of_event(records, "cache_outcome")
+    cached_admissions = sum(
+        record.fields.get("cache_path") == "cached"
+        for record in of_event(records, "request_admitted")
+    )
+    reading_records = of_event(records, "outcome_reading")
+    store_records = of_event(records, "outcome_store")
+    if not any((outcome_records, reading_records, store_records)):
+        return {}
+    attributed = sum(
+        record.fields.get("outcome_attribution") in {"solo", "unanimous"}
+        for record in outcome_records
+    )
+    return {
+        "outcomes": counts_by(outcome_records, "cache_result"),
+        "attributions": counts_by(outcome_records, "outcome_attribution"),
+        "attributed": attributed,
+        "coverage": round(attributed / cached_admissions, 6)
+        if cached_admissions
+        else None,
+        "reasons": counts_by(outcome_records, "outcome_reason"),
+        "readings": {
+            "reasons": counts_by(reading_records, "outcome_reason"),
+            "skipped": sum(
+                int(record.fields.get("readings_skipped", "0"))
+                for record in reading_records
+            ),
+            "failed": sum(
+                int(record.fields.get("readings_failed", "0"))
+                for record in reading_records
+            ),
+        },
+        "store": {
+            "operations": counts_by(store_records, "store_operation"),
+            "reasons": counts_by(store_records, "store_reason"),
+            "records": sum(
+                int(record.fields.get("store_records", "0")) for record in store_records
+            ),
+            "discarded": sum(
+                int(record.fields.get("store_discarded", "0"))
+                for record in store_records
+            ),
+        },
     }
 
 

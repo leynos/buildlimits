@@ -115,6 +115,7 @@ with exit status 2, and nothing is half-applied.
 | `cancel_grace_seconds`  | `10.0`                                         | Seconds between `SIGTERM` and `SIGKILL` for a terminated group                                                                             |
 | `drain_timeout_seconds` | `120.0`                                        | The longest start-up waits for surviving groups to drain                                                                                   |
 | `cache_mode`            | `sccache`                                      | `sccache` composes admitted compilers with the managed cache; `direct` runs them without it, and recovery then answers `no-cache-recovery` |
+| `cache_outcomes`        | `off`                                          | `off` disables outcome recording; `record` opts in when the installed build supports it                                                    |
 | `sccache_executable`    | `sccache`                                      | The sccache client used in `sccache` mode                                                                                                  |
 | `sccache_unit`          | `buildlimits-sccache.service`                  | The managed cache's user unit                                                                                                              |
 | `sccache_socket`        | `$XDG_RUNTIME_DIR/buildlimits/sccache.sock`    | The managed cache's socket                                                                                                                 |
@@ -131,7 +132,15 @@ paths are limited to about 108 bytes.
 slots = 4
 cache_mode = "sccache"
 cache_recovery = "manual"
+cache_outcomes = "off"
 ```
+
+`cache_outcomes = "record"` is accepted by the inert compatibility release, but
+recording is unavailable there; the supervisor logs that once at start-up. This
+release adds the journal vocabulary and report section so readers can be
+upgraded before a later build enables recording. Keep the setting at `off`
+until the recording integration is installed. Recording requires
+`cache_mode = "sccache"`.
 
 ### Adapter environment
 

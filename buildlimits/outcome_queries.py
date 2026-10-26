@@ -2,7 +2,6 @@
 
 import errno
 import os
-import selectors
 import shutil
 import socket
 import struct
@@ -17,7 +16,6 @@ if typ.TYPE_CHECKING:
 
 _STATISTICS_ARGUMENTS = ("--show-stats", "--stats-format", "json")
 _PROCESS_ENVIRONMENT_KEYS = ("PATH", "HOME", "XDG_RUNTIME_DIR")
-_CONNECT_TIMEOUT_SECONDS = 0.1
 _MAX_PROC_ENVIRONMENT_BYTES = 64 * 1024
 _STARTTIME_FIELD_AFTER_COMM = 19
 _CONNECT_IN_PROGRESS = frozenset({
@@ -225,7 +223,7 @@ class PeerServerProcess:
         OSError
             If the connection or peer credentials cannot be read.
         TimeoutError
-            If the non-blocking connect does not complete within its bound.
+            If the non-blocking connect would need a later tick to complete.
         ValueError
             If peer credentials report an invalid process identifier.
         """
@@ -236,14 +234,8 @@ class PeerServerProcess:
             if error == errno.ECONNREFUSED:
                 return None
             if error in _CONNECT_IN_PROGRESS:
-                with selectors.DefaultSelector() as selector:
-                    selector.register(peer, selectors.EVENT_WRITE)
-                    if not selector.select(_CONNECT_TIMEOUT_SECONDS):
-                        msg = "managed socket connect timed out"
-                        raise TimeoutError(msg)
-                error = peer.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
-                if error == errno.ECONNREFUSED:
-                    return None
+                msg = "managed socket connect is still in progress"
+                raise TimeoutError(msg)
             if error not in {0, errno.EISCONN}:
                 raise OSError(error, os.strerror(error))
             credentials = peer.getsockopt(

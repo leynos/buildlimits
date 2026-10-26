@@ -143,6 +143,9 @@ class RecorderMachine(RuleBasedStateMachine):
 
     def _consume(self, outcome: _Outcome) -> None:
         """Match an output row to the oldest cached request and check its truth."""
+        assert outcome.outcome_attribution != "inferred", (
+            "W1 never emits an inferred attribution"
+        )
         assert self.pending_groups, "the recorder emitted an unowned outcome"
         group_id = self.pending_groups.pop(0)
         assert group_id not in self.outcomes, "a cached launch was emitted twice"

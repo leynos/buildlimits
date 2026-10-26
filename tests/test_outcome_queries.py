@@ -1,5 +1,6 @@
 """Bounded statistics queries and server-generation reads."""
 
+import errno
 import json
 import os
 import sys
@@ -234,3 +235,26 @@ def test_refused_generation_connect_means_no_server(tmp_path: Path) -> None:
     generation = PeerServerProcess(socket_path).generation()
 
     assert generation is None, "a refused peer connect means the server is absent"
+
+
+def test_stalled_generation_connect_returns_without_waiting(
+    tmp_path: Path,
+) -> None:
+    """An in-progress peer connect cannot hold the caller for selector I/O."""
+    peer = mock.MagicMock()
+    peer.__enter__.return_value = peer
+    peer.connect_ex.return_value = errno.EINPROGRESS
+    selector = mock.MagicMock()
+    selector.__enter__.return_value = selector
+    selector.select.side_effect = lambda timeout: (time.sleep(timeout), [])[1]
+
+    with (
+        mock.patch("buildlimits.outcome_queries.socket.socket", return_value=peer),
+        mock.patch("selectors.DefaultSelector", return_value=selector),
+    ):
+        generation = PeerServerProcess(tmp_path / "server.sock").generation()
+
+    assert generation == ports_api.GenerationFailure("generation_unavailable"), (
+        "an in-progress connect is unavailable without waiting"
+    )
+    selector.select.assert_not_called()

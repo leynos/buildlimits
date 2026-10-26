@@ -666,6 +666,9 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `harness_units.py`                 | User-manager readiness, acceptance marks, transient unit control and properties                     |
 | `fake_rustc.py`                    | Scripted Rust compiler for the opt-in real-sccache host check                                       |
 | `test_sccache_real_binary.py`      | Opt-in sccache 0.14.0 acceptance test; `_RefusalProbe` is local to this test and is not shared API    |
+| `outcome_store_helpers.py`         | Store rows, salts and asynchronous writer outcomes for outcome-store tests                            |
+| `outcome_store_fixture_helpers.py` | Single-row reader fixtures and torn UTF-8 tails for outcome-store tests                               |
+| `outcome_vocabulary_test_support.py` | Shared outcome-token aliases for schema and metrics-sink contract tests                               |
 
 _Table 4: Shared test helper modules._
 

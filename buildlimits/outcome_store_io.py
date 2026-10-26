@@ -62,7 +62,10 @@ def read_store(
     if len(document) > outcome_records.MAX_STORE_BYTES:
         return outcome_records.RecordFailure("corrupt")
     try:
-        return outcome_records.decode_lines(document.decode("utf-8"))
+        complete_document = document[: document.rfind(b"\n") + 1]
+        # An interrupted append can end inside a multibyte character. Discard
+        # that unterminated byte sequence before strict UTF-8 decoding.
+        return outcome_records.decode_lines(complete_document.decode("utf-8"))
     except UnicodeError:
         return outcome_records.RecordFailure("corrupt")
 

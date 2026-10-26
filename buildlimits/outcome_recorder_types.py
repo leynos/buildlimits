@@ -22,7 +22,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import ChildSighting, Origin, StoreRecord
     from buildlimits.outcome_vocabulary import CacheResult, OutcomeReason
 
-type AttributionKind = typ.Literal["solo", "unanimous", "none"]
+type AttributionKind = typ.Literal["solo", "unanimous", "inferred", "none"]
 
 
 @dc.dataclass(frozen=True, slots=True)

@@ -6,6 +6,12 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from outcome_store_fixture_helpers import (
+    append_torn_utf8_tail as _append_torn_utf8_tail,
+)
+from outcome_store_fixture_helpers import (
+    seed_one_record_store as _seed_one_record_store,
+)
 from outcome_store_helpers import append_and_wait as _append_and_wait
 from outcome_store_helpers import assert_failed_append as _assert_failed_append
 from outcome_store_helpers import assert_load_result as _assert_load_result
@@ -186,10 +192,7 @@ def test_compaction_failure_obeys_the_16_mib_hard_limit(
 def test_writer_drops_only_a_torn_final_line_on_load(tmp_path: Path) -> None:
     """Startup compaction preserves complete rows and removes a torn tail."""
     path = tmp_path / "cache-outcomes.jsonl"
-    salt = file_salt(_salt_path(path))
-    assert isinstance(salt, Salt), "the fixture uses the active salt"
-    record = _window_summary()
-    _seed_store(path, salt, (record,), torn_tail='{"kind":"window_summary"')
+    record = _seed_one_record_store(path, torn_tail='{"kind":"window_summary"')
 
     writer = _start_writer(path)
     _wait_for_salt(writer)
@@ -200,16 +203,49 @@ def test_writer_drops_only_a_torn_final_line_on_load(tmp_path: Path) -> None:
     assert path.read_bytes().endswith(b"\n"), "compaction leaves a complete final line"
 
 
+def test_reader_keeps_complete_rows_before_a_utf8_torn_tail(
+    tmp_path: Path,
+) -> None:
+    """An interrupted multibyte tail cannot discard valid earlier rows."""
+    path = tmp_path / "cache-outcomes.jsonl"
+    record = _seed_one_record_store(path, server_version="sccache-é")
+    torn_record = _window_summary(server_version="partial-é")
+    _append_torn_utf8_tail(path, torn_record)
+
+    result = outcome_store_io.read_store(path)
+
+    assert isinstance(result, outcome_records.DecodedStore), (
+        "the incomplete UTF-8 bytes are confined to the final row"
+    )
+    assert result.records == (record,), "the complete non-ASCII row is retained"
+
+
+def test_reader_rejects_invalid_utf8_in_a_complete_line(tmp_path: Path) -> None:
+    """Invalid encoding in a newline-terminated row remains store corruption."""
+    path = tmp_path / "cache-outcomes.jsonl"
+    _seed_one_record_store(path, server_version="sccache-é")
+    original = path.read_bytes()
+    malformed = original.replace("é".encode(), b"\xff\xa9", 1)
+    _write_private_file(path, malformed)
+
+    result = outcome_store_io.read_store(path)
+
+    assert result == outcome_records.RecordFailure("corrupt"), (
+        "a complete line still undergoes strict UTF-8 validation"
+    )
+
+
 def test_startup_compaction_is_retried_before_appending_after_failure(
     tmp_path: Path,
 ) -> None:
     """A transient compaction fault cannot join a record to a torn tail."""
     path = tmp_path / "cache-outcomes.jsonl"
-    salt = file_salt(_salt_path(path))
-    assert isinstance(salt, Salt), "the fixture has the active salt"
-    previous = _window_summary(server_version="0.13.0")
+    previous = _seed_one_record_store(
+        path,
+        server_version="0.13.0",
+        torn_tail='{"kind":"window_summary"',
+    )
     appended = _window_summary(server_version="0.14.0")
-    _seed_store(path, salt, (previous,), torn_tail='{"kind":"window_summary"')
 
     replace_store = outcome_store._replace_store
     compaction_attempts = 0

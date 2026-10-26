@@ -8,6 +8,7 @@ import pytest
 
 from buildlimits import attributes, cgroups, journal, service, startup
 from buildlimits.attributes import ProcessAttributes
+from buildlimits.config import SupervisorConfig
 from buildlimits.protocol import CompileRequest
 from buildlimits.requesters import Pending
 from buildlimits.sccache import SccacheError
@@ -108,6 +109,35 @@ def test_an_invalid_config_file_exits_two(
     err = capsys.readouterr().err
     assert "build-limits-supervisor:" in err, err
     assert "slots" in err, err
+
+
+def test_recording_configuration_is_accepted_but_reported_as_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The schema-only plateau accepts record mode and warns once at start."""
+    config_path = tmp_path / "supervisor.toml"
+    config_path.write_text(
+        f'lock_path = "{tmp_path / "lock"}"\ncache_outcomes = "record"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(service, "_supervise", lambda _settings: 0)
+
+    status = service.main(["--config", str(config_path)])
+
+    assert status == 0, "the inert plateau starts normally"
+    assert (
+        capsys.readouterr().err.count(
+            "cache outcome recording is not available in this build"
+        )
+        == 1
+    ), "the unsupported mode is reported once"
+
+
+def test_off_is_the_default_outcome_recording_mode() -> None:
+    """Outcome recording remains disabled without an explicit setting."""
+    assert SupervisorConfig().cache_outcomes == "off", "recording defaults off"
 
 
 def test_a_held_singleton_lock_exits_two(

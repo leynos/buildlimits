@@ -5,7 +5,14 @@ import typing as typ
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-OPERATIONS = frozenset({"scope_placement", "adapter_restart_retry"})
+OPERATIONS = frozenset({
+    "scope_placement",
+    "adapter_restart_retry",
+    "statistics_read",
+    "outcome_store_load",
+    "outcome_store_save",
+    "outcome_store_compact",
+})
 OUTCOMES = frozenset({
     "admitted",
     "restarting",
@@ -16,6 +23,7 @@ OUTCOMES = frozenset({
     "failed",
     "cancelled",
     "unknown",
+    "completed",
 })
 FAILURE_CATEGORIES = frozenset({
     "none",
@@ -28,6 +36,9 @@ FAILURE_CATEGORIES = frozenset({
     "cancelled",
     "internal_error",
     "unknown",
+    "statistics_query",
+    "store_io",
+    "salt",
 })
 STOP_MODES = frozenset({"none", "graceful", "immediate", "unknown"})
 MAX_TRACE_COUNT = 1_000_000

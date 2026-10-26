@@ -13,7 +13,10 @@ CodeRabbit review passed; EP-M3 red contracts are committed as `195ff77` and
 its implementation and full gates passed; EP-M4 implementation, full gates and
 clean review passed in `636f3ed`; EP-M5 child and query adapters are committed
 as `d96518c` and `56bc46b`; the store writer is committed as `34ea33b`, with
-candidate98 full gates and archive-bound review passed)
+candidate98 full gates and archive-bound review passed; 2026-10-26 review
+follow-up is in progress: the generation wait and UTF-8 torn-tail defects have
+red-green regression evidence, O8 generated coverage is in place, and EP-M6 to
+EP-M8 remain open)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -130,6 +133,21 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
 - Scope: escalate if W1 needs more than 32 changed or new production source
   files, or more than 3,200 net added lines of production code.
+- Scope escalation D36: candidate `86dee82` against `42f40e4` has 26 changed
+  production files and 5,164 net added production lines. The line trigger was
+  exceeded by 1,964 lines; the file trigger was not. The owner's 2026-10-26
+  direction to address these findings and deliver EP-M6 to EP-M8 authorizes
+  continuing only the approved W1 scope. At the gated EP-M6 boundary, the
+  candidate has 30 changed production files and 5,268 net added production
+  lines against `42f40e4`; EP-M6 and the two review fixes add eight touched
+  files and 104 net lines over `86dee82`. This is two files beyond the initial
+  4-to-6-file EP-M6 estimate, including the adapter and torn-tail repairs. The
+  remaining EP-M7 estimate is 8 to 12 touched production files and 1,200 to
+  2,000 net lines; EP-M8 is 7 to 11 files and 1,000 to 1,600 lines. With
+  overlap, the remaining estimate is 15 to 23 unique files and 2,200 to 3,600
+  net lines, for a W1 total of 49 to 57 files and 7,468 to 8,868 net lines.
+  These ranges are inferred from the milestone deliverables; refresh actuals at
+  each boundary. No work beyond W1 is authorized by this decision.
 - Interface: escalate before changing any of the following:
   - the wire protocol (`protocol.py`);
   - any existing status-document key;
@@ -850,6 +868,52 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   `5718539323c8ce839586713d146a7cbbce78a4c68d953422898caf1cc6433b75`. Review
   log:
   `/tmp/buildlimits-coderabbit-candidate-98.fhUZ3T/coderabbit-buildlimits-cache-hit-prediction-candidate-98.out`.
+- [x] (2026-10-26) The reviewed `86dee82` candidate has 26 changed production
+  files and 5,164 net added production lines against `42f40e4`. The line
+  tolerance was crossed in EP-M5. The owner directed completion of the already
+  approved W1 scope through EP-M8; D36 records that scope decision and the
+  revised forecast.
+- [x] (2026-10-26) The generation adapter's selector wait and whole-file UTF-8
+  decode defects each had a failing regression before their fixes. The focused
+  query and store suites passed (29 tests). O8 now has a generated store
+  machine, an actual-bound compaction check, forward and backward clock
+  coverage, and D37's settled reload semantics.
+- [x] (2026-10-26) O2's straddled-reading mutation failed the recorder-machine
+  setup assertion as required; log:
+  `/tmp/mutation-O2-buildlimits-cache-hit-prediction.out`. The O3 composite
+  generation-check mutation failed the machine's high-counter restart
+  expectation; log: `/tmp/mutation-O3-buildlimits-cache-hit-prediction.out`.
+  Both production modules were restored byte-for-byte and the focused test run
+  passed.
+- [x] (2026-10-26) EP-M6 schema, config, startup warning, report aggregation
+  and documentation are drafted. Its focused config, metrics, service and
+  compatibility set passed (178 tests across M6, the two adapter/store fixes,
+  O8 and recorder O2/O3). Full milestone gates remain pending.
+- [x] (2026-10-26) The `86dee82` worktree candidate passed the full sequential
+  M6 gates: `make check-fmt`, `make lint`, `make typecheck`,
+  `PYTEST_XDIST_WORKERS=1 make test` (2,123 passed, 26 skipped, 47 snapshots),
+  `make markdownlint`, `make nixie` and `make audit`. The package itself was
+  unavailable on PyPI for audit; no known vulnerabilities were found. The
+  committed milestone review remains pending.
+- [x] (2026-10-26) Follow-up gate run `-11` found a Markdown table-formatting
+  difference and one failure in the unrelated isolated queue-budget test
+  (`DescriptorSendPressureError`, with no errno). `make fmt` fixed the plan
+  formatting; the focused test rerun passed (1 passed, 1 warning), so the
+  pressure report did not reproduce. The corrected exact candidate passed the
+  full sequential rerun: `make check-fmt`, `make lint`, `make typecheck`,
+  `PYTEST_XDIST_WORKERS=1 make test` (2,123 passed, 26 skipped, 47 snapshots),
+  `make markdownlint`, `make nixie` and `make audit`. Audit found no known
+  vulnerabilities; the package was unavailable on PyPI. Logs use the `-11`,
+  `-queue-budget` and `-12` prefixes under `/tmp`.
+- [x] (2026-10-26) O8's clock-skew boundary is resolved by D37: only the
+  compaction that observes a wall-clock jump skips ageing. A restarted writer
+  begins with a fresh monotonic baseline and applies ordinary retention.
+  Persisting a skip marker would change the store format and is not required by
+  the accepted O8 contract. Shared torn-tail fixture and model helpers now
+  remove duplicated generated and example setup; the exact candidate passed
+  full gates as recorded above.
+- [ ] O4, O5 and O11 await EP-M7; O12 and the H2 portion of O13 await EP-M8.
+  Reconcile every prescribed control before W1 acceptance.
 - [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
@@ -963,6 +1027,11 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   load rejects and moves aside the whole store. Candidate97's review exposed
   this path; a fault-injection test reproduced it before the repair. The writer
   now compacts its validated in-memory rows before accepting a later append.
+- S11. The O8 model distinguishes a compaction that observes a clock jump from
+  a later startup compaction. The accepted contract specifies a skip for the
+  compaction that detects the jump and does not require persisting that state.
+  D37 records the restart boundary; the test model now shares its retention
+  helper across both compaction paths.
 
 ## Decision log
 
@@ -1370,6 +1439,23 @@ C-GATES.
   Rationale: a failed partial-write rollback must not let a later complete row
   turn the fragment into a corrupt non-final line. This preserves D17's
   single-writer and bounded-store design without changing the format or port.
+- D36. Scope escalation after EP-M5. Decision: continue the already approved W1
+  through EP-M8, following the owner's 2026-10-26 instruction to address the
+  findings and deliver EP-M6 to EP-M8. The reviewed candidate had 26 changed
+  production files and 5,164 net added production lines against `42f40e4`, so
+  the 3,200-line escalation trigger had been crossed. At the gated EP-M6
+  boundary, the candidate has 30 files and 5,268 net added lines; M6 and the
+  two review fixes add eight touched files and 104 net lines. The remaining
+  estimate is 15 to 23 unique production files and 2,200 to 3,600 net lines,
+  making W1 approximately 49 to 57 files and 7,468 to 8,868 net lines. Refresh
+  this estimate at each milestone boundary. EP-M9 remains gated on G1; this
+  decision does not extend scope beyond W1.
+- D37. Clock-skew marker lifetime for O8. Decision: skip ageing for the
+  compaction that detects a wall-clock jump, then apply ordinary retention on a
+  later startup compaction using the new writer's monotonic baseline. O8
+  requires the detecting compaction to report `clock_skew`; it does not require
+  a persisted marker. Adding one would change the on-disk format without an
+  acceptance requirement, so restart does not preserve the skip.
 
 ## Outcomes & retrospective
 
@@ -1828,8 +1914,13 @@ Method and evidence:
 - Method: Hypothesis over append, compact, load, clock and salt sequences,
   plus fault-injected input and output.
 - Artefacts: `tests/test_outcome_records.py`, `tests/test_outcome_store.py`,
-  `tests/test_outcome_store_salt.py` and `tests/test_outcome_store_writes.py`.
-- Non-vacuity: the generator reaches the bound, an expiry and a torn tail.
+  `tests/test_outcome_store_salt.py`, `tests/test_outcome_store_writes.py` and
+  `tests/test_outcome_store_machine.py`.
+- Non-vacuity: the generated state machine reaches an expiry, forward and
+  backward clock jumps, a torn UTF-8 tail and a salt change. A separate
+  generated compaction input contains 10,001 rows and proves the actual
+  10,000-record bound evicts only the oldest row. A complete newline-terminated
+  line with invalid UTF-8 remains corrupt.
 - The writer tests cross the 12 MiB high-water mark, verify byte-budget
   eviction, reject an oversized record, and preserve the 16 MiB hard bound when
   compaction fails.
@@ -2078,7 +2169,8 @@ Changes to existing modules:
   - the counters `window_groups`, `readings`, `readings_skipped`,
     `readings_failed`, `store_records` and `store_discarded`.
 - `metrics_report.py`: an optional `cache_outcomes` section. The coverage
-  denominator is `request_admitted` records with `cache_path=cached`.
+  numerator is derived from `outcome_attribution`; the denominator is
+  `request_admitted` records with `cache_path=cached`.
 - `tracing_export.py`:
   - EP-M6 registers `statistics_read` (one span per statistics query),
     `outcome_store_load`, `outcome_store_save` and `outcome_store_compact`;
