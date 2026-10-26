@@ -36,7 +36,8 @@ def timing_entries(path: Path) -> list[ProbeRecord]:
         return []
     return [
         typ.cast("ProbeRecord", json.loads(line))
-        for line in path.read_text().splitlines()
+        for line in path.read_text().splitlines(keepends=True)
+        if line.endswith("\n")
     ]
 
 

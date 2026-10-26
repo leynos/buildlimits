@@ -88,6 +88,7 @@ _NEAR_MISS_ARGUMENTS = [
     ["--print=cfg", "--emit=link"],
     ["-vV", "-vV"],
     [""],
+    ["-not-a-known-flag"],
     ["@path"],
     ["-vV", "@path"],
     ["--print=file-names"],
@@ -146,9 +147,13 @@ def test_near_misses_stay_admitted(prefix: list[str], arguments: list[str]) -> N
 
 def test_driver_rejects_separate_print_spelling() -> None:
     """Drivers allow only the equals spelling to keep their grammar narrow."""
-    assert not is_toolchain_query(
-        ["clippy-driver", "rustc", "--print", "cfg"], {}, "/"
-    ), "workspace wrappers reject the direct-only separate print spelling"
+    assert is_toolchain_query(["rustc", "--print", "cfg"], {}, "/"), (
+        "direct rustc accepts the separate print spelling"
+    )
+    for driver in ("clippy-driver", "dylint-driver"):
+        assert not is_toolchain_query([driver, "rustc", "--print", "cfg"], {}, "/"), (
+            "workspace wrappers reject the direct-only separate print spelling"
+        )
 
 
 @pytest.mark.parametrize(

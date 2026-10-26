@@ -615,30 +615,32 @@ live in `tests/fixtures`.
 
 Use these before writing a new arrange step; extend one rather than copying it.
 
-| Module                        | Provides                                                                                            |
-| ----------------------------- | --------------------------------------------------------------------------------------------------- |
-| `conftest.py`                 | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures |
-| `request_helpers.py`          | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
-| `pool_helpers.py`             | `FakePool` and `attach_pool`                                                                        |
-| `descriptor_helpers.py`       | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
-| `descriptor_guard.py`         | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                          |
-| `launch_helpers.py`           | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
-| `adapter_doubles.py`          | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
-| `toolchain_trees.py`          | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler   |
-| `journal_fixtures.py`         | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
-| `listener_helpers.py`         | `watched_listener`, a listener under `ListenerPressure` control                                     |
-| `cache_recovery_helpers.py`   | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
-| `cache_recovery_harness.py`   | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
-| `cache_recovery_machines.py`  | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
-| `harness_processes.py`        | `wait_for`, `start_adapter`, process cleanup and host process observations                          |
-| `harness_status.py`           | `HarnessStatus`, the status document, readiness and drain-fault queries                             |
-| `systemd_harness.py`          | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling    |
-| `rustc_linter_acceptance.py`  | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios       |
-| `rustc_query_host_checks.py`  | Query and readiness assertions shared by host query and timing scenarios                            |
-| `rustc_query_host_support.py` | Private Cargo fixtures, held-token barriers and captured command output                             |
-| `rustc_query_support.py`      | `cargo_probe` and `temporary_executable` for rustc query and property tests                         |
-| `rustc_query_timing_shim.py`  | Sibling-adapter timing shim with JSON-line probe records                                            |
-| `harness_units.py`            | User-manager readiness, acceptance marks, transient unit control and properties                     |
+| Module                             | Provides                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `conftest.py`                      | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures |
+| `request_helpers.py`               | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
+| `pool_helpers.py`                  | `FakePool` and `attach_pool`                                                                        |
+| `descriptor_helpers.py`            | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
+| `descriptor_guard.py`              | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                          |
+| `launch_helpers.py`                | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
+| `adapter_doubles.py`               | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
+| `toolchain_trees.py`               | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler   |
+| `journal_fixtures.py`              | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
+| `listener_helpers.py`              | `watched_listener`, a listener under `ListenerPressure` control                                     |
+| `cache_recovery_helpers.py`        | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
+| `cache_recovery_harness.py`        | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
+| `cache_recovery_machines.py`       | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
+| `harness_processes.py`             | `wait_for`, `start_adapter`, process cleanup and host process observations                          |
+| `harness_status.py`                | `HarnessStatus`, the status document, readiness and drain-fault queries                             |
+| `systemd_harness.py`               | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling    |
+| `rustc_linter_acceptance.py`       | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios       |
+| `rustc_query_host_checks.py`       | Query and readiness assertions shared by host query and timing scenarios                            |
+| `rustc_query_host_observations.py` | Compact host acceptance evidence and package-cache lock-wait observations                           |
+| `rustc_query_host_support.py`      | Private Cargo fixtures, held-token barriers and captured command output                             |
+| `rustc_query_probe_records.py`     | `ProbeRecord` and JSON-line parsing for completed timing-shim observations                          |
+| `rustc_query_support.py`           | `cargo_probe` and `temporary_executable` for rustc query and property tests                         |
+| `rustc_query_timing_shim.py`       | Sibling-adapter timing shim with JSON-line probe records                                            |
+| `harness_units.py`                 | User-manager readiness, acceptance marks, transient unit control and properties                     |
 
 _Table 4: Shared test helper modules._
 
@@ -709,7 +711,7 @@ driver or lint library.
 original argv and inherited standard streams. It writes one JSON line per
 completed probe with argv, monotonic start and end, status and the effective
 workspace-wrapper value. Keep that record schema aligned with
-`rustc_query_host_support.ProbeRecord` and the property summaries.
+`rustc_query_probe_records.ProbeRecord` and the property summaries.
 
 ### 11.5. Closing what a test opens
 

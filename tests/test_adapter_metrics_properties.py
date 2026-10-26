@@ -167,7 +167,7 @@ def test_workspace_wrapper_changes_only_compiler_identity(rest: list[str]) -> No
     for driver in ("clippy-driver", "dylint-driver"):
         wrapped = is_toolchain_query([driver, "rustc", *rest], {}, "/")
         assert not wrapped or direct, "a wrapper never exempts a queued rustc form"
-        if "--print" not in rest:
+        if not any(argument == "--print" for argument in rest):
             assert wrapped is direct, "shared grammar preserves rustc's result"
 
 
