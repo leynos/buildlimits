@@ -29,6 +29,10 @@
 - [ADR 003: bounded restart tracing](adr-003-bounded-restart-tracing.md)
   records the local OpenTelemetry spans, bounded journal schema and failure
   isolation used at process boundaries.
+- [ADR 004: expose admission readiness in
+  status](adr-004-admission-readiness-status.md) records how readiness differs
+  from supervisor health and cache reachability, while preserving health-only
+  status checks and token accounting.
 
 ## Conventions
 

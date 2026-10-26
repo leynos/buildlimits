@@ -10,6 +10,10 @@ import typing as typ
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+_UNAVAILABLE_ADMISSION_LINE = (
+    "admission readiness unavailable: readiness is not reported"
+)
+
 
 def render(state: cabc.Mapping[str, object]) -> str:
     """Render a status document for people.
@@ -42,6 +46,7 @@ def render(state: cabc.Mapping[str, object]) -> str:
     queued = _entries(state, "queued")
     groups = _entries(state, "groups")
     return "\n".join([
+        *_admission_lines(state),
         summary,
         *_descriptor_lines(state),
         *[
@@ -58,6 +63,30 @@ def render(state: cabc.Mapping[str, object]) -> str:
         *([_waiting_line(item) for item in queued] or ["no requests waiting"]),
         *([_group_line(item) for item in groups] or ["no compiler groups"]),
     ])
+
+
+def _admission_lines(state: cabc.Mapping[str, object]) -> list[str]:
+    """Put non-ready admission state before the process-health headline.
+
+    Returns
+    -------
+    list[str]
+        One diagnostic for a known non-ready state, or no line for a ready,
+        saturated, absent or legacy non-dictionary admission section.
+    """
+    admission = _section(state, "admission")
+    if admission is None:
+        return []
+    admission_state = admission.get("state")
+    if not isinstance(admission_state, str):
+        return [_UNAVAILABLE_ADMISSION_LINE]
+    if admission_state in {"ready", "saturated"}:
+        return []
+    reason = admission.get("reason")
+    if admission_state in {"blocked", "draining", "closing", "unhealthy"}:
+        detail = reason if isinstance(reason, str) else "readiness is not reported"
+        return [f"admission {admission_state}: {detail}"]
+    return [_UNAVAILABLE_ADMISSION_LINE]
 
 
 def _action_label(state: cabc.Mapping[str, object]) -> str:

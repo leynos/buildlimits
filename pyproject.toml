@@ -1200,3 +1200,10 @@ reason = "Matching import lists: each module names the protocol or port symbols 
 [[tool.duplication_gate.allow]]
 members = ["tests/test_cache_recovery_systemd.py", "tests/test_graceful_restart_systemd.py"]
 reason = "Both modules own an isolated real-systemd world and release it in the same try/finally fixture; the matching lines are the repository's fixture idiom for host acceptance, not shared logic, and a shared fixture would have to know both worlds' different resources."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/admission_readiness.py::ReadinessFacts",
+    "buildlimits/recovery_starvation.py::StarvationReading",
+]
+reason = "These immutable snapshots feed different decisions: operator-facing readiness uses health, the authoritative ledger and recovery outlook, while automatic recovery uses trigger policy and timing proof. Sharing a record would couple those contracts without sharing classification logic."

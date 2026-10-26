@@ -1,6 +1,15 @@
 # serializer version: 1
 # name: test_an_idle_supervisor_describes_itself
   dict({
+    'admission': dict({
+      'draining': 0,
+      'queued': 0,
+      'ready': True,
+      'reason': '3 of 3 slots available',
+      'running': 0,
+      'server_drain': 0,
+      'state': 'ready',
+    }),
     'cache_mode': 'sccache',
     'cache_recovery': dict({
       'attempts': 0,

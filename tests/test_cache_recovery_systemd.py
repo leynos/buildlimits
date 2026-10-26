@@ -1,13 +1,4 @@
-"""Real-systemd acceptance for recovery of shared admission after cancellation.
-
-This scenario is the end-to-end counterpart of :mod:`test_cache_recovery`: the
-supervisor runs as a user service over a fixture token pool and the fixture
-cache, requesters are killed while the cache holds their accepted work in a
-pre-spawn jobserver wait, and the operator's own ``build-limits-recover``
-command has to clear the fault. Nothing here infers completion from elapsed
-time, idle CPU or a missing compiler process; a token may only return once the
-drain probe has verified the cache stopped and empty.
-"""
+"""Opt-in systemd acceptance for retained sccache work and recovery."""
 
 import collections.abc as cabc
 import contextlib
@@ -18,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import test_cache_recovery_systemd_readiness_steps as readiness_steps
 from harness_units import manager_env
 from pytest_bdd import given, scenarios, then, when
 from systemd_harness import (
@@ -34,11 +26,34 @@ pytestmark = [
     pytest.mark.timeout(180),
 ]
 
-scenarios("features/cache_recovery_on_systemd.feature")
+# pytest-bdd scopes step fixtures to the module where their decorators run.
+# Register the helper functions here because this module owns the scenarios.
+starved_supervisor = given(
+    "a supervisor with 2 slots using starved recovery and sccache"
+)(readiness_steps.starved_supervisor)
+manual_policy_blocked = then("manual recovery is required for admission readiness")(
+    readiness_steps.manual_policy_blocked
+)
+manual_policy_blocked = then("manual recovery remains required after a build queues")(
+    manual_policy_blocked
+)
+automatic_waits_for_demand = then(
+    "automatic recovery waits for demand and admission remains ready"
+)(readiness_steps.automatic_waits_for_demand)
+automatic_demand = when("a later build arrives to trigger automatic recovery")(
+    readiness_steps.automatic_demand
+)
+automatic_recovered = then(
+    "automatic recovery clears the drain fault and restores readiness"
+)(readiness_steps.automatic_recovered)
+readiness_remains_saturated = then("readiness remains true during ordinary saturation")(
+    readiness_steps.readiness_remains_saturated
+)
+admission_readiness_restored = then("admission readiness is restored")(
+    readiness_steps.admission_readiness_restored
+)
 
-# The prefix the supervisor uses for a drain fault it cannot yet account for;
-# its presence is the evidence that the held tokens are still explained.
-_RETAINED = "retained detached work"
+scenarios("features/cache_recovery_on_systemd.feature")
 
 
 class RecoveryWorld:
@@ -47,9 +62,9 @@ class RecoveryWorld:
     Every build gets its own jobserver FIFO, held open read-write by this
     world. The fixture cache blocks acquiring that FIFO before it spawns its
     compiler, so an empty FIFO *is* the pre-spawn wait and the fixture's own
-    ``.waiting`` marker proves the wait is armed. The supervisor runs with the
-    ``manual`` recovery policy, so the only transaction in this scenario is
-    the one the operator's command opens.
+    ``.waiting`` marker proves the wait is armed. Most scenarios use the
+    ``manual`` recovery policy; one selects ``starved`` before start to check
+    automatic progress once demand arrives.
     """
 
     def __init__(self) -> None:
@@ -152,12 +167,6 @@ def recovery_world() -> cabc.Iterator[RecoveryWorld]:
         world.close()
 
 
-def _drain_fault(world: RecoveryWorld) -> str:
-    """Read the supervisor's drain fault, or the empty string when accounted."""
-    fault = world.harness.status()["drain_fault"]
-    return fault if isinstance(fault, str) else ""
-
-
 @given("a supervisor with 2 slots composing builds with sccache")
 def _supervisor(recovery_world: RecoveryWorld) -> None:
     """Start the isolated supervisor with its ready managed cache."""
@@ -205,7 +214,7 @@ def _held_without_visible_work(recovery_world: RecoveryWorld) -> None:
     """Hold every token on unaccounted work, with no compiler root to point at."""
     harness = recovery_world.harness
     assert wait_for(lambda: harness.status()["held"] == 2), harness.journal()
-    assert wait_for(lambda: _RETAINED in _drain_fault(recovery_world)), (
+    assert wait_for(lambda: "retained detached work" in harness.drain_fault()), (
         harness.journal()
     )
     status = harness.status()
@@ -263,10 +272,11 @@ def _one_killed(recovery_world: RecoveryWorld) -> None:
 def _one_retained(recovery_world: RecoveryWorld) -> None:
     """Wait for the retained-work fault with a cached build still admitted."""
     harness = recovery_world.harness
-    assert wait_for(lambda: _RETAINED in _drain_fault(recovery_world)), (
+    assert wait_for(lambda: "retained detached work" in harness.drain_fault()), (
         harness.journal()
     )
-    assert harness.status()["held"] == 2, "the live build keeps its own token"
+    status = harness.status()
+    assert status["held"] == 2, "the live build keeps its own token"
 
 
 @when("the operator asks for recovery without waiting")
@@ -326,7 +336,7 @@ def _recovered(recovery_world: RecoveryWorld) -> None:
     assert result is not None, "the operator command must have run"
     assert result.returncode == 0, (result.stdout, result.stderr)
     harness = recovery_world.harness
-    assert not _drain_fault(recovery_world), "the retained-work fault is cleared"
+    assert not harness.drain_fault(), "the retained-work fault is cleared"
     assert harness.status()["held"] <= 1, harness.journal()
 
 

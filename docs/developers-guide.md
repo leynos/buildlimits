@@ -146,6 +146,8 @@ Each module owns one decision. This table is the single module inventory.
 | `toolchain_env`                                           | Pure, filesystem-only recognition of a real toolchain compiler and its loader-path prefix       |
 | `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                 |
 | `status`, `status_client`, `status_render`, `status_cli`  | The status document, its transport, rendering and command                                       |
+| `admission_readiness`                                     | Pure admission-progress classification from health, ledger counts and recovery outlook          |
+| `document_cli`                                            | Shared raw `--json` parser for status and recovery document commands                            |
 | `recover_client`, `recover_cli`                           | The recovery request and the `build-limits-recover` command                                     |
 | `metrics*`, `journal`, `journal_native`                   | Metric vocabulary, native journal datagrams, journal queries and reports                        |
 | `drain_loop`, `drain_metrics`                             | Paces drain-fault retries; observes drain progress without exit authority                       |
@@ -310,6 +312,35 @@ automatic recovery trigger requires a `live_work` fault and then accepts either
 the prompt zero-root proof or the retained-drain staleness proof described
 below. `status_render.render` is a pure function of that document, pinned by
 Syrupy snapshots.
+
+The status and recovery document commands share `document_cli.document_parser`
+for their program name and raw `--json` option. Each command adds its own
+operational flags after that common setup.
+
+Admission readiness is a separate, pure classification. `status.describe`
+passes the supervisor health and closing flags, one frozen `Counts` ledger
+snapshot, the immediate `drain_fault_kind`, and the recovery outlook fields
+`automatic`, `phase`, `attempts` and `pending` to
+`admission_readiness.classify`. The classifier does not inspect cache
+reachability or make supervisor calls. It applies this precedence: `unhealthy`,
+`closing`, `blocked`, `draining`, `saturated`, then `ready`. Only `ready`,
+`saturated` and `draining` set `admission.ready` to `true`.
+
+The `admission` status object publishes `state`, `ready`, a count-only
+`reason`, and the `running`, `draining`, `server_drain` and `queued` counts.
+The classifier's `Counts.queued` and the published `queued` value both come
+from the admission queue, not `Requests.pending`; the latter may not yet have
+requester metadata. A `draining` state means the snapshot shows a current
+progress path, not that the path is guaranteed to finish. The classifier is
+read-only: it never releases or reassigns a token. Only verified accounting
+after a service is stopped and empty can release a retained server-drain token.
+
+The `devhost.buildlimits` provisioning collection and its role live in
+dev-env-rocky, which owns host provisioning. That external consumer must use
+`build-limits-status --ready` or `.admission.ready` for generic admission
+readiness; command success or `healthy` alone is only a process and pool health
+signal. Keep `healthy` for health checks, `caching` for cache reachability, and
+drain and recovery fields for maintenance decisions.
 
 `cache_recovery.CacheRecovery` is a four-phase machine — `quiescing`,
 `stopping`, `accounting`, `restarting` — advancing at most one step per tick.

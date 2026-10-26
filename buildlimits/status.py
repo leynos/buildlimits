@@ -12,11 +12,12 @@ fetches it, :mod:`buildlimits.status_render` presents it, and
 import resource
 import typing as typ
 
-from buildlimits import descriptors
+from buildlimits import admission_readiness, descriptors
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from buildlimits.admission_state import Counts
     from buildlimits.pending_request import Pending
     from buildlimits.supervisor import Supervisor
 
@@ -35,25 +36,19 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
         A JSON-compatible document with queue budgets and live descriptor gauges.
         Failed enumeration reports an unknown count and its errno; unlimited
         limits use ``-1``. Compatibility limit aliases share the same sample.
+        The ``admission`` object separates readiness from ``healthy``: it reports
+        ``state``, ``ready``, a count-only ``reason``, and the ``running``,
+        ``draining``, ``server_drain`` and ``queued`` counts. Its six states are
+        ``ready``, ``saturated``, ``draining``, ``blocked``, ``closing`` and
+        ``unhealthy``; only the first three set ``ready`` to true. The queued
+        count comes from the admission queue, and cache reachability does not
+        affect this classification. The function only reads this ledger; it
+        does not release tokens.
     """
     admission = supervisor.admission
     now = supervisor.clock()
-    groups: list[dict[str, object]] = []
-    for group in admission.groups.values():
-        entry = supervisor.requests.pending.get(group.request_id)
-        metadata = supervisor.requests.completed_metadata.get(group.group_id, {})
-        admitted = entry.admitted if entry else metadata.get("admitted")
-        if not isinstance(admitted, (float, int)):
-            admitted = None
-        groups.append({
-            "group": group.group_id,
-            "state": group.state.value,
-            "cached": group.cached,
-            "metadata_available": entry is not None or bool(metadata),
-            "label": entry.request.label if entry else metadata.get("label"),
-            "directory": entry.request.cwd if entry else metadata.get("directory"),
-            "running_seconds": None if admitted is None else round(now - admitted, 1),
-        })
+    counts = admission.counts()
+    recovery = supervisor.recovery.describe(now)
     settings = supervisor.settings
     return {
         "capacity": settings.slots,
@@ -77,11 +72,118 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
         "caching": admission.cached,
         # Recovery never takes a waiting request's place, so the queue is
         # reported exactly as admission holds it.
-        "cache_recovery": supervisor.recovery.describe(now),
+        "cache_recovery": recovery,
+        "admission": _admission_document(supervisor, counts, recovery),
         "queued": queued_requests(supervisor.requests.pending, admission.queue, now),
-        "groups": groups,
+        "groups": _group_documents(supervisor, now),
         "descriptors": _descriptor_metrics(supervisor),
     }
+
+
+def _admission_document(
+    supervisor: Supervisor, counts: Counts, recovery: dict[str, object]
+) -> dict[str, object]:
+    """Build readiness fields from the already sampled admission ledger.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        The current supervisor, read for health and immediate drain facts.
+    counts : Counts
+        The authoritative group and queue counts sampled for this snapshot.
+    recovery : dict[str, object]
+        The recovery outlook sampled once by :func:`describe`.
+
+    Returns
+    -------
+    dict[str, object]
+        The admission state, readiness, reason and operational counts.
+
+    Examples
+    --------
+    >>> from types import SimpleNamespace as Namespace
+    >>> supervisor = Namespace(
+    ...     admission=Namespace(healthy=True, closing=False, queue=[]),
+    ...     server=Namespace(drain_fault_kind=None),
+    ... )
+    >>> counts = admission_readiness.Counts(
+    ...     capacity=1, held=0, running=0, draining=0, server_drain=0,
+    ...     queued=0, cached_moving=0,
+    ... )
+    >>> recovery = {
+    ...     "automatic": False, "phase": "idle", "attempts": 0,
+    ...     "pending": False,
+    ... }
+    >>> _admission_document(supervisor, counts, recovery)["ready"]
+    True
+    """
+    recovery_pending = typ.cast("bool", recovery["pending"])
+    readiness = admission_readiness.classify(
+        admission_readiness.ReadinessFacts(
+            healthy=supervisor.admission.healthy,
+            closing=supervisor.admission.closing,
+            counts=counts,
+            drain_fault_kind=supervisor.server.drain_fault_kind,
+            recovery_automatic=typ.cast("bool", recovery["automatic"]),
+            recovery_phase=typ.cast("str", recovery["phase"]),
+            recovery_attempts=typ.cast("int", recovery["attempts"]),
+            recovery_pending=recovery_pending,
+        )
+    )
+    return {
+        "state": readiness.state,
+        "ready": readiness.ready,
+        "reason": readiness.reason,
+        "running": counts.running,
+        "draining": counts.draining,
+        "server_drain": counts.server_drain,
+        "queued": counts.queued,
+    }
+
+
+def _group_documents(supervisor: Supervisor, now: float) -> list[dict[str, object]]:
+    """Build the detailed group view without mutating request accounting.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        The current supervisor and its read-only group metadata.
+    now : float
+        The monotonic timestamp sampled for the snapshot.
+
+    Returns
+    -------
+    list[dict[str, object]]
+        Group details in the ledger's existing iteration order.
+
+    Examples
+    --------
+    >>> from types import SimpleNamespace as Namespace
+    >>> from buildlimits.admission import Group
+    >>> supervisor = Namespace(
+    ...     admission=Namespace(groups={"g1": Group("g1", 1, b"+", cached=False)}),
+    ...     requests=Namespace(pending={}, completed_metadata={}),
+    ... )
+    >>> _group_documents(supervisor, 1.0)[0]["running_seconds"] is None
+    True
+    """
+    groups: list[dict[str, object]] = []
+    for group in supervisor.admission.groups.values():
+        entry = supervisor.requests.pending.get(group.request_id)
+        metadata = supervisor.requests.completed_metadata.get(group.group_id, {})
+        admitted = entry.admitted if entry else metadata.get("admitted")
+        if not isinstance(admitted, (float, int)):
+            admitted = None
+        groups.append({
+            "group": group.group_id,
+            "state": group.state.value,
+            "cached": group.cached,
+            "metadata_available": entry is not None or bool(metadata),
+            "label": entry.request.label if entry else metadata.get("label"),
+            "directory": entry.request.cwd if entry else metadata.get("directory"),
+            "running_seconds": None if admitted is None else round(now - admitted, 1),
+        })
+    return groups
 
 
 def _descriptor_metrics(supervisor: Supervisor) -> dict[str, int | None]:
