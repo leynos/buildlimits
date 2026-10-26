@@ -28,7 +28,7 @@ dev = [
     "pyyaml==6.0.3",
     "types-pyyaml",
     "pyright",
-    "ty==0.0.89",
+    "ty==0.0.91",
     "pytest-timeout",
     "pytest-xdist",
     "crosshair-tool>=0.0.80",
