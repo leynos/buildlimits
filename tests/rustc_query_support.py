@@ -25,26 +25,42 @@ _CARGO_TARGETS = (
 
 
 @st.composite
-def _safe_query_arguments(draw: st.DrawFn) -> list[str]:
-    """Generate accepted shared queries with varied valid token layouts.
+def _version_query_arguments(draw: st.DrawFn) -> list[str]:
+    """Generate supported rustc version-query spellings.
 
     Returns
     -------
     st.SearchStrategy[list[str]]
-        Strategy that yields one complete, safe rustc query argument vector.
+        Strategy that yields one accepted version-query argument vector.
     """
-    query_kind = draw(st.sampled_from(("version", "print", "cargo")))
-    if query_kind == "version":
-        version = draw(st.sampled_from(("-V", "--version", "-vV")))
-        if not draw(st.booleans()):
-            return [version]
-        return [version, "--verbose"] if draw(st.booleans()) else ["--verbose", version]
-    if query_kind == "print":
-        kinds = draw(
-            st.lists(st.sampled_from(_DIRECT_PRINT_KINDS), min_size=1, max_size=5)
-        )
-        return [f"--print={kind}" for kind in kinds]
+    version = draw(st.sampled_from(("-V", "--version", "-vV")))
+    if not draw(st.booleans()):
+        return [version]
+    return [version, "--verbose"] if draw(st.booleans()) else ["--verbose", version]
 
+
+@st.composite
+def _print_query_arguments(draw: st.DrawFn) -> list[str]:
+    """Generate repeated allow-listed no-input print queries.
+
+    Returns
+    -------
+    st.SearchStrategy[list[str]]
+        Strategy that yields a safe sequence of print-query arguments.
+    """
+    kinds = draw(st.lists(st.sampled_from(_DIRECT_PRINT_KINDS), min_size=1, max_size=5))
+    return [f"--print={kind}" for kind in kinds]
+
+
+@st.composite
+def _cargo_query_arguments(draw: st.DrawFn) -> list[str]:
+    """Generate Cargo's stdin target-information query with valid variations.
+
+    Returns
+    -------
+    st.SearchStrategy[list[str]]
+        Strategy that yields one complete Cargo probe argument vector.
+    """
     crate_types = draw(st.sets(st.sampled_from(_CRATE_TYPES), min_size=1))
     extra_prints = draw(st.sets(st.sampled_from(_CARGO_EXTRA_PRINT_KINDS)))
     groups: list[tuple[str, ...]] = [("-",), ("--crate-name", "___")]
@@ -62,6 +78,24 @@ def _safe_query_arguments(draw: st.DrawFn) -> list[str]:
 
     ordered_groups = draw(st.permutations(groups))
     return [argument for group in ordered_groups for argument in group]
+
+
+@st.composite
+def _safe_query_arguments(draw: st.DrawFn) -> list[str]:
+    """Generate accepted shared queries with varied valid token layouts.
+
+    Returns
+    -------
+    st.SearchStrategy[list[str]]
+        Strategy that yields one complete, safe rustc query argument vector.
+    """
+    return draw(
+        st.one_of(
+            _version_query_arguments(),
+            _print_query_arguments(),
+            _cargo_query_arguments(),
+        )
+    )
 
 
 def cargo_probe(target: str | None = None) -> list[str]:
