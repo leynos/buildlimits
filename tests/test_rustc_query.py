@@ -247,7 +247,8 @@ def test_wrapper_identity_lookup_error_fails_closed(
 
     def fail_samefile(path: Path, other: str | os.PathLike[str]) -> bool:
         lookup_errors.append((path, other))
-        raise OSError("injected identity lookup failure")
+        msg = "injected identity lookup failure"
+        raise OSError(msg)
 
     monkeypatch.setattr(Path, "samefile", fail_samefile)
     env = {"RUSTC_WORKSPACE_WRAPPER": str(driver)}
