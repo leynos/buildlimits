@@ -190,9 +190,34 @@ def find(slice_dir: Path, admitted: cabc.Iterable[Path]) -> tuple[int, ...]:
     for scope in admitted:
         covered.update(_members(scope))
     candidates: list[int] = []
-    for scope in cgroups.child_scopes(slice_dir):
+    for scope in _child_scopes(slice_dir):
         candidates.extend(_members(scope))
     return kache.stray_processes(candidates, admitted=covered)
+
+
+def _child_scopes(slice_dir: Path) -> list[Path]:
+    """List the slice's scopes, or none when the slice cannot be read.
+
+    The slice can be removed between ``child_scopes`` checking that it exists
+    and listing it, which raises ``OSError``. This guard only reports, so an
+    unreadable slice is treated exactly as an unreadable scope is: as nothing
+    found. Raising here would turn a diagnostic into a poll fault and, on the
+    status path, into a failed status query.
+
+    Parameters
+    ----------
+    slice_dir : Path
+        The compilers slice's directory.
+
+    Returns
+    -------
+    list[Path]
+        The scope directories, empty when the slice has gone.
+    """
+    try:
+        return cgroups.child_scopes(slice_dir)
+    except OSError:
+        return []
 
 
 def _members(scope_dir: Path) -> list[int]:
