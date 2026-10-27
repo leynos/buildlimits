@@ -170,6 +170,27 @@ def test_an_unreadable_scope_does_not_fail_the_reading(
     assert not kache_guard.find(tmp_path, []), "an unreadable scope reads as empty"
 
 
+def test_an_unreadable_slice_does_not_fail_the_reading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The slice can vanish between the existence check and the listing.
+
+    ``child_scopes`` returns ``[]`` for a slice that is not there, but its
+    ``iterdir`` is not guarded, so a slice removed in between raises. The guard
+    only reports; a reading it cannot take is no strays, not a poll fault and
+    not a failed status query.
+    """
+    slice_dir = tmp_path / "buildlimits-compilers.slice"
+    slice_dir.mkdir()
+
+    def _vanish(_path: Path) -> list[Path]:
+        raise OSError("the slice went away")
+
+    monkeypatch.setattr(kache_guard.cgroups, "child_scopes", _vanish)
+
+    assert not kache_guard.find(slice_dir, []), "an unreadable slice reads as empty"
+
+
 @pytest.mark.parametrize(
     ("cache_mode", "in_scope", "expected"),
     [
