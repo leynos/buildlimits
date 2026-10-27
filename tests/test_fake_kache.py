@@ -146,7 +146,7 @@ def test_the_compiler_is_the_wrappers_own_child(tmp_path: Path) -> None:
         )
 
 
-def test_the_wrapper_relays_its_childs_streams_and_status() -> None:
+def test_the_wrapper_relays_the_compiler_streams_and_status() -> None:
     """Compilers talk to the caller through kache, including when they fail."""
     process = subprocess.run(
         [

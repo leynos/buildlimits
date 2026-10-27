@@ -30,7 +30,7 @@ from harness_units import manager_env, wait_for
 #: alive for far longer than any scenario runs.
 SLEEP_SECONDS = "300"
 
-#: The names the supervisor's executable test recognises. Restated here because
+#: The names the supervisor's executable test recognizes. Restated here because
 #: the scenario must be able to say the fixture presented one, not merely that
 #: the guard stayed quiet.
 STRAY_NAMES = frozenset({"kache", "kache-engine"})
