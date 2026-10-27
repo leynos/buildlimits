@@ -7,6 +7,7 @@ individual transitions. This module checks those transitions in combination.
 import typing as typ
 
 import hypothesis
+from admission_operations import first, first_uncancelled, step
 from hypothesis import strategies
 
 import buildlimits.admission as admission_core
@@ -32,24 +33,6 @@ class _Before(typ.NamedTuple):
     ]
     queued: list[int]
     cancellation: tuple[str, bool] | None
-
-
-def _first(
-    admission: admission_core.Admission, state: admission_core.GroupState
-) -> str | None:
-    """Pick the oldest group in ``state``, if any."""
-    return next(
-        (group.group_id for group in admission.groups.values() if group.state is state),
-        None,
-    )
-
-
-def _first_uncancelled(admission: admission_core.Admission) -> str | None:
-    """Pick the oldest group whose requester has not disconnected."""
-    return next(
-        (group.group_id for group in admission.groups.values() if not group.cancelled),
-        None,
-    )
 
 
 def _group_snapshot(
@@ -86,9 +69,9 @@ def _snapshot(
     graceful_close_requested: bool,
 ) -> _Before:
     """Record the independent model inputs needed to check this transition."""
-    running_group = _first(admission, admission_core.GroupState.RUNNING)
+    running_group = first(admission, admission_core.GroupState.RUNNING)
     cancellation_group = (
-        _first_uncancelled(admission) if operation == "cancel-group" else None
+        first_uncancelled(admission) if operation == "cancel-group" else None
     )
     target = admission.groups.get(running_group) if running_group else None
     cancellation = (
@@ -109,51 +92,6 @@ def _snapshot(
             cancellation.state is admission_core.GroupState.RUNNING,
         ),
     )
-
-
-def _step(
-    admission: admission_core.Admission,
-    operation: str,
-    sequence_number: int,
-) -> list[effect_model.Effect]:
-    """Apply one scripted operation, doing nothing if it does not apply."""
-    running_group = _first(admission, admission_core.GroupState.RUNNING)
-    first_group = next(iter(admission.groups), None)
-    effects: list[effect_model.Effect] = []
-    match operation:
-        case "submit":
-            effects = admission.submit(sequence_number)
-        case "token" if admission.token_requested:
-            effects = admission.token_arrived(bytes([sequence_number]))
-        case "exit" if running_group:
-            group = admission.groups[running_group]
-            exit_ = (
-                effect_model.Exit(signal=15)
-                if group.cancelled
-                else effect_model.Exit(code=0)
-            )
-            effects = admission.leader_exited(running_group, exit_)
-        case "empty" if first_group is not None:
-            effects = admission.group_emptied(first_group)
-        case "cancel-queued" | "cancel-group":
-            effects = _cancel(admission, operation)
-        case "close":
-            effects = admission.begin_closing()
-        case "fail" if running_group:
-            effects = admission.launch_failed(running_group)
-    return effects
-
-
-def _cancel(
-    admission: admission_core.Admission, operation: str
-) -> list[effect_model.Effect]:
-    """Cancel the first matching queued request or running group, if present."""
-    if operation == "cancel-queued" and admission.queue:
-        return admission.cancel(admission.queue[0])
-    group_id = _first_uncancelled(admission)
-    if operation == "cancel-group" and group_id is not None:
-        return admission.cancel(admission.groups[group_id].request_id)
-    return []
 
 
 def _assert_failed_placement(
@@ -322,7 +260,7 @@ def test_graceful_close_preserves_admission_invariants(operations: list[str]) ->
     shutdowns = 0
     for sequence_number, operation in enumerate(operations, start=1):
         before = _snapshot(admission, operation, graceful_close_requested)
-        effects = _step(admission, operation, sequence_number)
+        effects = step(admission, operation, sequence_number).effects
         if operation == "close":
             graceful_close_requested = True
 

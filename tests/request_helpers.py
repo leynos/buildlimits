@@ -39,6 +39,45 @@ def compile_request(targets: tuple[int, ...] = ()) -> CompileRequest:
     )
 
 
+def launch_pending(
+    argv: tuple[str, ...],
+    env: cabc.Mapping[str, str] | None = None,
+    *,
+    cacheable: bool = True,
+    label: str = "rustc",
+) -> Pending:
+    """Build an already-admitted request for composition tests.
+
+    Parameters
+    ----------
+    argv : tuple[str, ...]
+        The argument vector the caller handed the wrapper.
+    env : Mapping[str, str] | None
+        The caller's environment, copied; ``None`` means an empty one.
+    cacheable : bool
+        Whether the request asked for the cache.
+    label : str
+        The request's journal label.
+
+    Returns
+    -------
+    Pending
+        A request admitted at time zero with neutral attributes and no
+        descriptors.
+    """
+    request = CompileRequest(
+        argv=argv,
+        cwd="/",
+        env={} if env is None else dict(env),
+        attributes=ProcessAttributes(umask=0o22, nice=0, rlimits={}),
+        fd_targets=(),
+        label=label,
+        cacheable=cacheable,
+    )
+    plan = AttributePlan(umask=0o22, nice=0, rlimits={})
+    return Pending(1, None, request, [], plan, arrived=0.0)
+
+
 def crate_pending(
     request_id: int, group_id: str | None = None, *, admitted: float | None = None
 ) -> Pending:
