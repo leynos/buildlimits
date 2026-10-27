@@ -113,6 +113,7 @@ with exit status 2, and nothing is half-applied.
 | `recovery_marker`       | `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`  | The restart barrier the managed cache unit honours                                                                                                                                                          |
 | `kache_executable`      | `kache`                                        | The kache client used in `kache` mode; see [Choose a cache backend](#choose-a-cache-backend)                                                                                                                |
 | `kache_socket`          | unset                                          | The separately managed kache daemon's socket, exported as `KACHE_SOCKET_PATH`                                                                                                                               |
+| `kache_cache_dir`       | unset                                          | The kache store, exported as `KACHE_CACHE_DIR` and checked by health                                                                                                                                        |
 
 _Table 2: Supervisor configuration keys._
 
@@ -180,17 +181,22 @@ in that mode.
 - kache `1.2.2` or `2.0.0-rc.1`. Other versions are unsupported until the
   verification recorded in ADR 004 is repeated for them.
 - A daemon already listening on `kache_socket`, or on kache's own default when
-  that key is unset. **The supervisor never starts, stops or owns it.** Install
-  and run it as your own unit; the repository does not ship one.
+  that key is unset. **The supervisor never starts, stops or owns it.** The
+  operator installs and runs it as a separate unit; the repository does not
+  ship one.
 - A `kache_executable` the supervisor can run. A bare name is resolved on the
   supervisor's `PATH`, so configure an absolute path when the supervisor runs
   under a minimal service environment.
+- The store kache writes. Name it in `kache_cache_dir` when it is not kache's
+  own default of `$XDG_CACHE_HOME/kache` or `~/.cache/kache`: health checks
+  only a path the supervisor was told, and a group is only ever pointed at the
+  store health checked.
 
 `KACHE_SCHEDULER=0` and `KACHE_LOCAL_ONLY=1` are set in every admitted kache
 group. The first stops kache's own scheduler from admitting a compile a second
 time under memory pressure, which the pool would never see; the second keeps
-its remote backends out of scope. Both are buildlimits's settings, not tuning
-knobs you configure.
+its remote backends out of scope. Both are fixed settings of the supervisor,
+not tuning knobs.
 
 If health fails -- the client does not resolve, the store cannot be written, or
 no daemon answers on the configured socket -- the build compiles directly with
@@ -198,9 +204,12 @@ a notice on standard error and `direct_fallback` as its `cache_path`. Nothing
 is held up waiting for a daemon to appear.
 
 A `kache` or `kache-engine` process found outside every admitted scope is
-reported as `stray_kache_processes` in status and as the `stray_kache_process`
-journal event. The guard reports; it never kills. In kache mode no such process
-ever holds a token, because no second admission layer exists to account for.
+listed in `stray_kache_processes` in the status document, always present so
+that an empty list means "none found" rather than "not guarded". When the
+reading changes, the guard also writes a plain line to the journal, beginning
+`stray kache process outside admitted scopes:`. The guard reports; it never
+kills. In kache mode no such process ever holds a token, because no second
+admission layer exists to account for.
 
 ### What recovery means in each mode
 

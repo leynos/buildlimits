@@ -213,6 +213,7 @@ sccache's wording, its metric values and its snapshots do not change.
 | `cache_recovery`     | sccache | `manual` or `starved`; inert in other modes                |
 | `kache_executable`   | kache   | The kache client; see the resolution rule below            |
 | `kache_socket`       | kache   | The externally managed daemon's socket, if not the default |
+| `kache_cache_dir`    | kache   | The store, if not kache's own default                      |
 
 _Table 2: Configuration by mode._
 
@@ -225,6 +226,13 @@ as `KACHE_SOCKET_PATH`; when it is unset the group exports nothing and health
 asks kache to resolve its own default socket. `KACHE_SOCKET_PATH` is an
 operational variable, so `[cache] ignore_env` in a host kache configuration
 does not suppress it.
+
+`kache_cache_dir` is the store half of the same argument. Health checks the
+directory it was configured with, so the group must write that directory, or
+the probe would verify one filesystem while builds filled another. When the key
+is set the group exports `KACHE_CACHE_DIR`; when it is unset the group exports
+nothing and health cannot check a path it was never told, leaving the store to
+kache's own resolution under `$XDG_CACHE_HOME/kache` or `~/.cache/kache`.
 
 `kache_executable` may be an absolute path or a bare name. A bare name is
 resolved once, on the supervisor's own `PATH`, and the resolved file is what
@@ -299,17 +307,22 @@ The supervisor's obligations are then:
   with `daemon_running: false` when none is running, so it is safe to call on
   every admission cycle. The executable health runs is the one resolution of
   `kache_executable` described under Configuration, and it is that same
-  resolved file that the composed argv names.
+  resolved file that the composed argv names. The directory health checks is
+  `kache_cache_dir`, and the group it admits exports that same directory as
+  `KACHE_CACHE_DIR`; without the key the directory is kache's own and health
+  cannot check it.
 - If health fails, the compile runs directly, with the notice on standard
   error and `direct_fallback` in `cache_path`.
 - A `kache` or `kache-engine` process found in `buildlimits-compilers.slice`
   outside an admitted scope, or one that outlives its group's scope, is
-  reported as a distinct fault (`stray_kache_process`) in status and the
-  journal. Status carries the identifiers in `stray_kache_processes`, always
-  present so that a reader can tell "no strays" from "not guarded". The fault
-  never holds a token. The in-scope case cannot normally arise because the
-  external daemon is required, but the guard covers a daemon that dies
-  mid-build and a group that then auto-starts a replacement.
+  reported as a distinct fault. Status carries the identifiers in
+  `stray_kache_processes`, always present so that a reader can tell "no strays"
+  from "not guarded". A change in the reading also writes a plain journal line,
+  which begins `stray kache process outside admitted scopes:` and is journalled
+  once per appearance or clearance rather than once per poll. The fault never
+  holds a token. The in-scope case cannot normally arise because the external
+  daemon is required, but the guard covers a daemon that dies mid-build and a
+  group that then auto-starts a replacement.
 
 The guard is a report, not a killer. A stray process inside a group's scope is
 removed by the ordinary terminate-on-leader-exit path; a stray process outside
