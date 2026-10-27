@@ -5,37 +5,26 @@ import typing as typ
 from pathlib import Path
 
 import pytest
+from request_helpers import launch_pending
 
-from buildlimits import attributes, launch
-from buildlimits.attributes import ProcessAttributes
+from buildlimits import launch
 from buildlimits.cache_backend import CacheBackend, DirectCache
 from buildlimits.cache_modes import is_cache
 from buildlimits.config import SupervisorConfig
 from buildlimits.groups import Groups, Running
 from buildlimits.kache import Kache
-from buildlimits.protocol import CompileRequest
-from buildlimits.requesters import Pending
 from buildlimits.sccache import ManagedSccache
 from buildlimits.systemd import SystemdError
 
 if typ.TYPE_CHECKING:
     from buildlimits.launch import HeldChild
+    from buildlimits.requesters import Pending
     from buildlimits.systemd import UserManager
 
 
 def _entry(*, cacheable: bool) -> Pending:
     """Build an admitted request for ``rustc``."""
-    request = CompileRequest(
-        argv=("/bin/sccache", "rustc", "-vV"),
-        cwd="/",
-        env={},
-        attributes=ProcessAttributes(umask=0o22, nice=0, rlimits={}),
-        fd_targets=(),
-        label="rustc",
-        cacheable=cacheable,
-    )
-    plan = attributes.AttributePlan(umask=0o22, nice=0, rlimits={})
-    return Pending(1, None, request, [], plan, arrived=0.0)
+    return launch_pending(("/bin/sccache", "rustc", "-vV"), cacheable=cacheable)
 
 
 def _groups(selector: selectors.BaseSelector, cache_mode: str = "sccache") -> Groups:
