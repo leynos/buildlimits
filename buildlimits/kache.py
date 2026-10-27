@@ -52,8 +52,11 @@ LOCAL_ONLY = "1"
 STRAY_EXECUTABLES = frozenset({"kache", "kache-engine"})
 
 #: The health probe runs on every admission cycle, so it must not hold the
-#: supervisor open when a daemon accepts the connection and then stalls.
-STATUS_TIMEOUT_SECONDS = 2.0
+#: supervisor open when a daemon accepts the connection and then stalls. It is
+#: the same budget as sccache's socket probe: a slow probe reads as unavailable
+#: and the build compiles directly, which is a safe degradation that the next
+#: poll reverses, whereas a long timeout stalls reaping and token returns.
+STATUS_TIMEOUT_SECONDS = 0.5
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -237,11 +240,14 @@ def _reports_running(stdout: str, socket_path: Path | None) -> bool:
         document = json.loads(stdout)
     except json.JSONDecodeError:
         return False
-    if not isinstance(document, dict):
-        return False
-    if document.get("daemon_running") is not True:
-        return False
-    return socket_path is None or document.get("socket") == str(socket_path)
+    # A mapping pattern is a total test here: a document that is not a mapping
+    # at all -- a list, a bare string -- falls through to the final case rather
+    # than needing a separate type guard.
+    match document:
+        case {"daemon_running": True}:
+            return socket_path is None or document.get("socket") == str(socket_path)
+        case _:
+            return False
 
 
 def _is_writable(directory: Path) -> bool:
@@ -310,7 +316,7 @@ def _is_kache(pid: int) -> bool:
     The executable link is what the kernel actually ran, so it distinguishes
     kache from a process that merely carries a similar name. A v2 wrapper that
     has ``exec``ed its engine links to ``kache-engine``, which is why both
-    names are recognised.
+    names are recognized.
 
     Returns
     -------
