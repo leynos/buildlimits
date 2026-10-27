@@ -130,8 +130,9 @@ class Kache:
         ('/b/kache', '/t/rustc', '-vV')
         >>> cache.compose(("/t/clippy-driver", "/t/rustc"), {})[0][:2]
         ('/b/kache', '/t/clippy-driver')
-        >>> store = Kache("/b/kache", cache_dir=Path("/s")).compose(("/t/rustc",), {})[1]
-        >>> store["KACHE_CACHE_DIR"], "KACHE_SOCKET_PATH" in store
+        >>> stored = Kache("/b/kache", cache_dir=Path("/s"))
+        >>> env = stored.compose(("/t/rustc",), {})[1]
+        >>> env["KACHE_CACHE_DIR"], "KACHE_SOCKET_PATH" in env
         ('/s', False)
         """
         composed = {
