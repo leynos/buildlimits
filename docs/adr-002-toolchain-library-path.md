@@ -143,7 +143,7 @@ leaves an unset or empty variable alone: an empty path cannot shadow `RUNPATH`,
 and adding a loader entry to a clean environment would change what the
 compiler's children (linkers, proc-macro hosts) inherit for no gain.
 
-### Why sccache is unaffected
+### Why sccache and kache are unaffected
 
 sccache 0.14.0 hashes the compilation from the source files, the dependency
 information's `# env-dep:` variables and the variables beginning `CARGO_`
@@ -152,6 +152,12 @@ libraries in the compiler's sysroot. `LD_LIBRARY_PATH` is not an input. Its
 server caches compiler detection by executable path and modification time, not
 by environment. The forwarded environment reaches the server's `rustc` probes
 (`--print=sysroot`), where the repaired path helps rather than splits the cache.
+
+kache is unaffected for the same reasons, and one more. Its key is built from
+the compilation and the environment it hashes, none of which this repair
+touches; and because kache wraps the compiler inside the group's own scope
+([ADR 004](adr-004-kache-cache-backend.md)), the repaired path reaches exactly
+the process that composes the cache key, with no server-side probe in between.
 
 ## Consequences
 
