@@ -54,6 +54,9 @@ from fake_sccache_statistics import (
 from fake_sccache_statistics import (
     statistics_delay as _statistics_delay_impl,
 )
+from fake_sccache_statistics import (
+    write_json_atomic as _write_json_atomic,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -214,9 +217,7 @@ def _load_state(socket_path: str) -> ServerState:
 def _save_state(socket_path: str, state: ServerState) -> None:
     """Persist counters and script position for tests and service restarts."""
     path = pathlib.Path(socket_path).with_name("fake-sccache-state.json")
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}")
-    temporary.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
-    temporary.replace(path)
+    _write_json_atomic(path, state)
 
 
 def _configuration(socket_path: str) -> dict[str, object]:

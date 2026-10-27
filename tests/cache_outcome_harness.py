@@ -4,6 +4,8 @@ import dataclasses as dc
 import json
 import shlex
 import shutil
+
+# ruff: ignore[suspicious-subprocess-import] - fixture-owned argv vectors never request a shell.
 import subprocess
 import sys
 import typing as typ
@@ -117,6 +119,7 @@ class CacheOutcomeHarnessMixin:
             The running adapter with captured output streams.
         """
         caller = self.env if env is None else {**self.env, **env}
+        # ruff: ignore[subprocess-without-shell-equals-true] - fixed adapter argv, no shell.
         return subprocess.Popen(
             [str(self.adapter), str(compiler), *arguments],
             cwd=self.work,
@@ -139,6 +142,7 @@ class CacheOutcomeHarnessMixin:
         list[dict[str, str]]
             Matching records emitted by this owned user unit.
         """
+        # ruff: ignore[subprocess-without-shell-equals-true] - fixed journalctl argv.
         result = subprocess.run(
             [
                 "/usr/bin/journalctl",

@@ -156,10 +156,13 @@ def _differential_run(
 
     tick(0.0)
     tick(0.1)
+    # A completed cached request makes the next statistics read relevant.
+    shell.launched(_cached_entry(), "previous")
+    shell.emptied(GroupEnding("previous", True, True))
     tick(1.1)
     if recording:
         assert isinstance(typ.cast("OutcomeShell", shell)._recorder.state, Querying), (
-            '_differential_run: isinstance(typ.cast("OutcomeShell", shell)._recor'
+            "the recorder starts a due statistics query"
         )
     observe("submit", (1,), admission.submit(1))
 
@@ -187,7 +190,7 @@ def _differential_run(
     group_states.append(admission.groups[launch.group_id].state.value)
     shell.emptied(GroupEnding(launch.group_id, True, False))
     assert not any(isinstance(effect, ReturnToken) for effect in empty_effects), (
-        "_differential_run: not any(isinstance(effect, ReturnToken) for effec"
+        "admission keeps the token while its group drains"
     )
     observe("server_activity", (0,), admission.server_activity(0))
 

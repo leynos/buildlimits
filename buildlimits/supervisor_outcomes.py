@@ -22,6 +22,7 @@ from buildlimits.outcome_ports import SampleFailure
 from buildlimits.outcome_queries import PeerServerProcess, SccacheStatistics
 from buildlimits.outcome_recorder_driver import OutcomeRecorder
 from buildlimits.outcome_recorder_types import (
+    Disabled,
     Ended,
     GateOpen,
     Launched,
@@ -79,12 +80,7 @@ class OutcomeDependencies:
 
 
 class OutcomeShell:
-    """Own outcome queries, privacy-safe keys and asynchronous store writes.
-
-    The shell is called only after admission has made its decision. Every
-    public entry point catches failures and disables recording for this process
-    lifetime, leaving token and compiler ownership with the supervisor.
-    """
+    """Record outcomes after admission without owning tokens or compilers."""
 
     def __init__(
         self,
@@ -246,8 +242,15 @@ class OutcomeShell:
         else:
             self._reaper.poll(now)
         self._drain_writer()
+        if isinstance(self._recorder.state, Disabled):
+            return
         self._sample_children(now)
         progress = self._recorder.state.progress
+        has_ended_launch = any(
+            entry.runtime_seconds is not None for entry in progress.window.entries
+        )
+        if progress.baseline is not None and not has_ended_launch:
+            return
         if now < max(progress.next_read_at, self._next_gate_at):
             return
         inputs = self._quiet_inputs(now)
@@ -339,7 +342,7 @@ class OutcomeShell:
             Bounded counters and the last closed reason.
         """
         return {
-            "enabled": True,
+            "enabled": not isinstance(self._recorder.state, Disabled),
             "attributed": self._attributed,
             "outcomes": self._outcomes,
             "readings": self._readings,

@@ -18,10 +18,8 @@ import time
 import typing as typ
 from pathlib import Path
 
+import pytest
 from harness_processes import reap_and_close_pipes
-
-if typ.TYPE_CHECKING:
-    import pytest
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_sccache.py"
 
@@ -81,6 +79,30 @@ def _wait_for_content(path: Path, expected: str, timeout: float = 10.0) -> None:
         time.sleep(0.02)
     msg = f"{path} never held {expected!r}; last content was {seen!r}"
     raise AssertionError(msg)
+
+
+def test_fake_configuration_replacement_keeps_previous_document_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed atomic replacement cannot expose a partial configuration."""
+    path = tmp_path / "fake-sccache-config.json"
+    path.write_text('{"previous":true}', encoding="utf-8")
+    replace = Path.replace
+
+    def fail_replacement(candidate: Path, target: Path) -> Path:
+        """Refuse publication while preserving the old configuration."""
+        if target == path:
+            raise OSError("injected atomic config replacement failure")
+        return replace(candidate, target)
+
+    monkeypatch.setattr(Path, "replace", fail_replacement)
+    with pytest.raises(OSError, match="injected atomic config replacement failure"):
+        fake_sccache._write_json_atomic(path, {"next": True})
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"previous": True}, (
+        "the prior complete config remains visible"
+    )
+    assert list(tmp_path.iterdir()) == [path], "the failed temporary file is removed"
 
 
 def _server(socket_path: Path) -> subprocess.Popen[bytes]:

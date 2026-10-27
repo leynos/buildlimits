@@ -161,6 +161,21 @@ def _restart_cache(outcome_world: OutcomeWorld) -> None:
 @when("one cached compile runs")
 def _compile_after_restart(outcome_world: OutcomeWorld) -> None:
     """Advance the cumulative counters beyond their saved pre-restart values."""
+    before = outcome_world.harness.fake_cache_state()["counters"]["compile_requests"]
+    outcome_world.compile()
+    assert wait_for(
+        lambda: (
+            outcome_world.harness.fake_cache_state()["counters"]["compile_requests"]
+            > before
+        ),
+        timeout=10,
+    ), outcome_world.harness.journal()
+    outcome_world.wait_for_outcomes(3)
+
+
+@when("a cached compile establishes the new generation baseline")
+def _compile_for_generation_baseline(outcome_world: OutcomeWorld) -> None:
+    """Use one post-restart compile to expose the new generation baseline."""
     outcome_world.compile()
     assert wait_for(
         lambda: (
@@ -169,12 +184,23 @@ def _compile_after_restart(outcome_world: OutcomeWorld) -> None:
         ),
         timeout=10,
     ), outcome_world.harness.journal()
-    outcome_world.wait_for_outcomes(2)
+    outcome_world.wait_for_generation_change()
 
 
 @then("that compile is attributed against the new generation")
 def _new_generation_result(outcome_world: OutcomeWorld) -> None:
     """Ensure the post-restart window has a fresh, usable baseline."""
+    readings = outcome_world.harness.read_metric_events("outcome_reading")
+    generation_indexes = [
+        index
+        for index, row in enumerate(readings)
+        if row.get("BUILD_LIMITS_OUTCOME_REASON") == "generation_changed"
+    ]
+    assert generation_indexes, "the cache restart changes the statistics generation"
+    assert any(
+        row.get("BUILD_LIMITS_OUTCOME_REASON") == "none"
+        for row in readings[generation_indexes[-1] + 1 :]
+    ), "the next cached compile establishes an accepted reading after the restart"
     event = outcome_world.harness.read_metric_events("cache_outcome")[-1]
     assert event["BUILD_LIMITS_OUTCOME_ATTRIBUTION"] == "solo", (
         "the new generation yields a fresh single-group attribution"

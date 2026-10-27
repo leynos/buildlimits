@@ -136,24 +136,9 @@ extend-ignore = [
     "too-many-positional-arguments",
     "magic-value-comparison",
     "no-self-use",
-    "subprocess-without-shell-equals-true",
-]
-# These helpers execute fixed argv vectors owned by the current systemd test
-# harness; the test inputs never select an executable or shell command.
-"tests/cache_outcome_harness.py" = [
-    "subprocess-without-shell-equals-true",
-    "suspicious-subprocess-import",
-]
-"tests/cache_outcome_systemd_support.py" = [
-    "subprocess-without-shell-equals-true",
-    "suspicious-subprocess-import",
 ]
 # pytest-bdd resolves step parameter annotations while it collects scenarios.
 "tests/test_cache_outcomes_systemd.py" = ["typing-only-third-party-import"]
-# This step invokes the owned replay command with a fixed Python module vector.
-"tests/steps/cache_outcome_sighting_systemd_steps.py" = [
-    "suspicious-subprocess-import",
-]
 # CrossHair proves the ``assert`` statements in these contracts; they are the
 # specification, not debugging aids.
 "tests/crosshair_contracts.py" = ["assert"]

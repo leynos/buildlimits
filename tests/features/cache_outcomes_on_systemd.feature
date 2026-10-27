@@ -15,9 +15,10 @@ Feature: Recording cache outcomes under a real user manager
     When a cached compile finishes
     Then no statistics query was started
 
-  Scenario: The first window after a restart uses the new generation
+  Scenario: The first attributed window after a restart uses the new generation
     Given one attributed compile in the first invocation
     When the cache unit restarts with its previous counters intact
+    And a cached compile establishes the new generation baseline
     And one cached compile runs
     Then that compile is attributed against the new generation
 

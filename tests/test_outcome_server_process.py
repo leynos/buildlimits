@@ -68,7 +68,7 @@ def test_peer_server_returns_metadata_from_its_cached_server_group(
         side_effect=(generation, generation, Generation("run-b", 900, 13)),
     ):
         assert server.full_emit_metadata() == frozenset({"meta-a"}), (
-            "peer_server_returns_metadat...: server.full_emit_metadata() == froze"
+            "the cached peer group remains stable within one generation"
         )
         (proc_root / "900" / "cgroup").write_text(
             "0::/user.slice/other.service\n", encoding="utf-8"
@@ -78,9 +78,7 @@ def test_peer_server_returns_metadata_from_its_cached_server_group(
         )
         next_group = _write_group(cgroup_root, "/user.slice/other.service", [102])
         _write_process(proc_root, 102, 34, "meta-b")
-        assert next_group.exists(), (
-            "peer_server_returns_metadat...: next_group.exists()"
-        )
+        assert next_group.exists(), "the new peer group directory exists"
         assert server.full_emit_metadata() == frozenset({"meta-b"}), (
             "a new generation resolves a fresh group"
         )
@@ -102,7 +100,7 @@ def test_generation_does_not_wait_for_a_pending_socket_connection(
         result = server.generation()
 
     assert result == GenerationFailure("generation_unavailable"), (
-        'generation_does_not_wait_fo...: result == GenerationFailure("generat'
+        "an unfinished peer connection is unavailable immediately"
     )
     selector.assert_not_called()
     peer.getsockopt.assert_not_called()
@@ -185,7 +183,7 @@ def test_unreadable_group_and_unknown_server_have_closed_failures(
     monkeypatch.setattr(cgroups, "member_pids", mock.Mock(side_effect=PermissionError))
     assert sampler.full_emit_metadata(Generation("run-a", 900, 12)) == SampleFailure(
         "group_unreadable"
-    ), "unreadable_group_and_unknow...: sampler.full_emit_metadata(Generatio"
+    ), "an unreadable group returns its closed failure reason"
 
     (proc_root / "900" / "cgroup").write_text(
         "1:name=legacy:/sccache\n", encoding="utf-8"
@@ -195,5 +193,5 @@ def test_unreadable_group_and_unknown_server_have_closed_failures(
     )
     with mock.patch.object(peer, "generation", return_value=None):
         assert peer.full_emit_metadata() == SampleFailure("server_unknown"), (
-            "unreadable_group_and_unknow...: peer.full_emit_metadata() == SampleF"
+            "an unknown peer returns its closed failure reason"
         )

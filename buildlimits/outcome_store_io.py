@@ -53,7 +53,7 @@ def read_store(
 
     """
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor, metadata = open_private_regular(path, flags)
+    descriptor, metadata = open_private_regular(path, flags, enforce_mode=False)
     if metadata.st_size > outcome_records.MAX_STORE_BYTES:
         os.close(descriptor)
         return outcome_records.RecordFailure("corrupt")
@@ -113,8 +113,10 @@ def replace_store(
     replace_temp(temporary, path)
 
 
-def open_private_regular(path: Path, flags: int) -> tuple[int, os.stat_result]:
-    """Open a regular file without following links and enforce private mode.
+def open_private_regular(
+    path: Path, flags: int, *, enforce_mode: bool = True
+) -> tuple[int, os.stat_result]:
+    """Open a regular file without following links, optionally enforcing mode.
 
     Returns
     -------
@@ -124,13 +126,14 @@ def open_private_regular(path: Path, flags: int) -> tuple[int, os.stat_result]:
     Raises
     ------
     OSError
-        If opening, validating or changing the file mode fails.
+        If opening, validating or enforcing the private file mode fails.
     """
     descriptor = os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
     try:
         metadata = os.fstat(descriptor)
         _require_regular(metadata)
-        os.fchmod(descriptor, _FILE_MODE)
+        if enforce_mode:
+            os.fchmod(descriptor, _FILE_MODE)
     except OSError:
         with contextlib.suppress(OSError):
             os.close(descriptor)

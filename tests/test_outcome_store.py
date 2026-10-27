@@ -220,6 +220,20 @@ def test_reader_keeps_complete_rows_before_a_utf8_torn_tail(
     assert result.records == (record,), "the complete non-ASCII row is retained"
 
 
+def test_reader_preserves_store_permissions(tmp_path: Path) -> None:
+    """Read-only store inspection leaves caller-owned mode unchanged."""
+    path = tmp_path / "cache-outcomes.jsonl"
+    _seed_one_record_store(path)
+    path.chmod(0o640)
+
+    result = outcome_store_io.read_store(path)
+
+    assert isinstance(result, outcome_records.DecodedStore), "the store is readable"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640, (
+        "read-only inspection does not change the file mode"
+    )
+
+
 def test_reader_rejects_invalid_utf8_in_a_complete_line(tmp_path: Path) -> None:
     """Invalid encoding in a newline-terminated row remains store corruption."""
     path = tmp_path / "cache-outcomes.jsonl"

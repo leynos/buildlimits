@@ -1,6 +1,7 @@
 """Statistics protocol and counters for the fake sccache process tree."""
 
 import json
+import os
 import pathlib
 import socket
 import sys
@@ -33,6 +34,16 @@ COUNTER_NAMES = (
     "compile_fails",
 )
 STATE_LOCK = threading.Lock()
+
+
+def write_json_atomic(path: pathlib.Path, value: object) -> None:
+    """Replace a JSON fixture file without exposing a partial document."""
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}")
+    try:
+        temporary.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def write_statistics() -> int:
@@ -86,7 +97,7 @@ def statistics_delay(
         delay = options.get("statistics_delay_seconds", 0.0)
         if isinstance(remaining, int) and remaining > 0:
             options["statistics_delay_count"] = remaining - 1
-            path.write_text(json.dumps(options), encoding="utf-8")
+            write_json_atomic(path, options)
             return float(delay) if isinstance(delay, (int, float)) else 0.0
     return 0.0
 

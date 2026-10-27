@@ -81,6 +81,10 @@ The supervisor is a functional core with an imperative shell. Decisions live in
 `admission`, which performs no input or output and returns a list of effects;
 the shell carries those effects out.
 
+The admission core uses only Python's standard library. The package's
+OpenTelemetry SDK dependency supplies traces; the adapter loads it only when a
+restart requires a retry.
+
 For screen readers: the following sequence diagram shows Cargo's call to the
 adapter, query classification or admission, scope placement and token return.
 
@@ -185,6 +189,8 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_store`                                           | Non-blocking writer port, asynchronous salt handoff and bounded result reporting                |
 | `outcome_store_io`                                        | Regular-file checks, bounded reads, append writes and atomic compaction replacement             |
 | `outcome_store_salt`                                      | XDG state-path resolution and private per-host salt creation                                    |
+| `nonblocking_child`                                       | Non-blocking helper-process pipes and bounded child reaping for supervisor-loop work                   |
+| `outcome_queries`                                         | Statistics child execution and non-blocking managed-server generation reads                            |
 | `outcome_window`                                          | Bounded immutable payload ledger for open statistics windows                                    |
 | `outcome_ports`                                                                    | Domain-owned protocols and result types for statistics, server generation and storage            |
 | `outcome_recorder_types`                                                           | Immutable recorder events, outputs and typestate values                                          |
@@ -198,6 +204,10 @@ Each module owns one decision. This table is the single module inventory.
 | `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                        |
 
 _Table 2: Package modules._
+
+`nonblocking_child` is the supervisor loop's only sanctioned helper-process
+mechanism. Its live query pipe uses the reserve in
+`descriptor_budget.DESCRIPTOR_RESERVE`.
 
 ## 5. Admission core
 

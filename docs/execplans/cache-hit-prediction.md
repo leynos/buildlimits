@@ -13,10 +13,9 @@ CodeRabbit review passed; EP-M3 red contracts are committed as `195ff77` and
 its implementation and full gates passed; EP-M4 implementation, full gates and
 clean review passed in `636f3ed`; EP-M5 child and query adapters are committed
 as `d96518c` and `56bc46b`; the store writer is committed as `34ea33b`, with
-candidate98 full gates and archive-bound review passed; 2026-10-26 review
-follow-up is in progress: the generation wait and UTF-8 torn-tail defects have
-red-green regression evidence, O8 generated coverage is in place, and EP-M6 to
-EP-M8 remain open)
+candidate98 full gates and archive-bound review passed; 2026-10-27 local review
+fixes are implemented, with full gates and a fresh committed review pending;
+EP-M6 to EP-M8 remain open)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -2792,9 +2791,10 @@ milestone that adds each module.
       When a cached compile finishes
       Then no statistics query was started
 
-    Scenario: The first window after a restart uses the new generation
+    Scenario: The first attributed window after a restart uses the new generation
       Given one attributed compile in the first invocation
       When the cache unit restarts and its counters climb past the old values
+      And a cached compile establishes the new generation baseline
       And one cached compile runs
       Then that compile is attributed against the new generation
 
@@ -3360,3 +3360,91 @@ Consult these documents:
   and users' and developers' guidance now describes H2. Focused tests pass,
   while the final sequential gates, real-manager M8 scenarios and local review
   remain pending before either milestone is marked complete.
+- 2026-10-27: the committed local review found an idle-query loop, disabled
+  recorder work after terminal failure, fixture configuration writes that could
+  expose partial JSON, read-only store mode changes and gaps in loop and
+  systemd restart assertions. The candidate now guards idle and disabled
+  polling, preserves modes during replay, atomically replaces fake-server JSON,
+  waits for a fresh accepted baseline after restart, and covers the negative
+  blocking control through `OutcomeShell`. The module inventory and operator
+  fallback prose were corrected, and subprocess exceptions moved from broad
+  Ruff file entries to exact call-site comments. Focused verification and the
+  next committed review remain pending; EP-M6 to EP-M8 stay open. Against the
+  pre-fix `HEAD` source, the idle-poll, disabled-status and store-mode
+  regressions failed as expected (31 reads instead of one, enabled status
+  instead of disabled, and mode 0600 instead of 0640). The complete focused
+  selection passed after the fixes: 28 tests.
+- The first sequential review-fix gate attempt (`reviewfix-33`) passed
+  `make validate`, `make check-fmt` and `make typecheck`; `make lint` found
+  three helper diagnostics and one unused suppression. All four were fixed. The
+  runner stopped before tests or later gates. Fresh full gates remain pending
+  for the revised candidate.
+- The second sequential review-fix gate attempt (`reviewfix-34`) passed
+  `make validate` and `make typecheck`; formatting found a table layout issue,
+  and lint found an overlong module plus a brittle fault-injection test. The
+  table was reformatted, the module shortened, and the test now injects atomic
+  replacement failure. The runner stopped before tests or later gates. Fresh
+  sequential gates remain pending for this candidate.
+- The third sequential review-fix gate attempt (`reviewfix-35`) passed
+  validation, formatting and typechecking; Vulture found two test-only direct
+  writes to the telemetry tracer. The tests now inject that tracer through the
+  existing outcome-world options, matching the production composition path. The
+  runner stopped before tests or later gates. Restart all sequential gates for
+  the revised candidate.
+- The fourth attempt (`reviewfix-36`) passed validation and formatting; lint
+  found one duplicated test setup and four intentional fixture or timing
+  similarities. Typechecking passed, but pytest was stopped after the lint
+  failure and produced no summary. The shared setup is now a helper; the
+  remaining distinct test contracts will have exact duplication exceptions.
+  Restart the full sequential gate set for the revised candidate.
+- The fifth attempt (`reviewfix-37`) confirmed those member exceptions do not
+  apply to fragment-level reports. They were removed. The duplicate fake ticket
+  and poll bookkeeping now share test-only helpers; the tracer double records
+  counts directly, and the blocking negative control waits on an unsignalled
+  event. Fresh sequential gates remain pending.
+- The sixth attempt (`reviewfix-38`) passed validation and formatting; lint
+  found one similar poll-recording fragment between the pending and immediate
+  fakes. The immediate fake now configures the shared pending fake's result,
+  reusing its start, poll and close behaviour. No later gate ran; restart the
+  sequential gates for this candidate.
+- The seventh attempt (`reviewfix-39`) passed validation and formatting; Ruff
+  rejected constructing `Pending()` in the shared fake's default argument.
+  Initialization now constructs that default inside `__init__`. No later gate
+  ran; restart the sequential gates for this candidate.
+- The eighth attempt (`reviewfix-40`) passed validation, formatting, lint and
+  typechecking; pytest found two non-interference fixtures that expected a due
+  query while the recorder had no completed launch. They now include a
+  completed cached warm-up before asserting the next query is in flight. The
+  focused rerun of both affected tests passed. The remaining gates did not run;
+  restart the full sequence.
+- The ninth attempt (`reviewfix-41`) passed validation, formatting, lint,
+  typechecking and the full test suite (2,203 passed, 34 skipped). Markdown
+  lint was clean; the spelling gate exposed truncated assertion messages and
+  one US spelling. These messages now use complete words, and the plan follows
+  en-GB spelling. Fresh sequential gates remain pending.
+- The tenth attempt (`reviewfix-43`) passed the full unit/property suite
+  (2,203 passed, 34 skipped), Markdown/spelling, Nixie and audit. The systemd
+  suite exposed an overstrict restart fixture: it demanded another idle read
+  before the post-restart compile, while D8 permits reads only for a missing
+  baseline or an ended launch. The scenario now uses one compile to expose the
+  new generation, then checks a second compile's accepted reading against it.
+  The generation-change window is recorded as unattributed, so the final step
+  waits for three records: the old result, the generation-change result and the
+  new attributed result. A separate cached-recovery harness timed out during
+  unit startup; rerun that host gate after this fixture correction.
+- The focused cache-outcome systemd feature now passes all five scenarios. Its
+  post-restart path verifies the generation-change reading and waits for the
+  later attributed result before inspecting the store. The full user-systemd
+  target passed with 31 scenarios; the earlier startup timeout did not recur.
+  Final sequential gates, including the sccache-host check, remain pending.
+- The eleventh attempt (`reviewfix-45`) passed validation and formatting; lint
+  found that the restart scenario saved the pre-restart compile counter but no
+  longer used it. The baseline-establishing compile now verifies it exceeded
+  that saved value, preserving O9's non-vacuity check. Restart all gates.
+- Final candidate tree `2c93397e1679b86f8e923a20db2bb584d79be2ca` passed all
+  ten sequential gates (`reviewfix-46`): validation, formatting, lint,
+  typechecking, the full test suite (2,203 passed, 34 skipped),
+  Markdown/spelling, Nixie, audit, user-systemd (31 passed) and sccache-host (2
+  passed). Audit found no known vulnerabilities. The logs are under `/tmp` with
+  the `reviewfix-46` suffix. EP-M6 to EP-M8 remain open for their recorded
+  acceptance evidence and reconciliation; EP-M9 remains gated by G1.

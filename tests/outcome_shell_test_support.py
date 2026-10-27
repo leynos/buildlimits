@@ -8,7 +8,7 @@ from buildlimits.admission import Admission
 from buildlimits.metrics import Metrics
 from buildlimits.outcome_attribution import Generation
 from buildlimits.outcome_key import Salt
-from buildlimits.outcome_ports import Pending, StoreResult, Ticket
+from buildlimits.outcome_ports import Pending, StatisticsText, StoreResult, Ticket
 from buildlimits.supervisor_outcome_setup import NullOutcomeShell, OutcomeShellPort
 from buildlimits.supervisor_outcomes import (
     OutcomeDependencies,
@@ -27,6 +27,7 @@ if typ.TYPE_CHECKING:
     )
     from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.supervisor import Supervisor
+    from buildlimits.tracing import JournalTracer
 
 
 class RecordingMetrics(Metrics):
@@ -46,12 +47,13 @@ class RecordingMetrics(Metrics):
 class PendingStatistics:
     """Return a stable query ticket whose poll remains pending."""
 
-    def __init__(self) -> None:
-        """Create empty call records."""
+    def __init__(self, poll_result: Pending | StatisticsText | None = None) -> None:
+        """Create call records for a pending or immediate query result."""
         self.starts: list[float] = []
         self.polls: list[float] = []
         self.issued: list[Ticket] = []
         self.closed: list[Ticket] = []
+        self.poll_result = Pending() if poll_result is None else poll_result
 
     def start(self, now: float) -> Ticket:
         """Start one pending query with a two-second deadline.
@@ -66,17 +68,17 @@ class PendingStatistics:
         self.issued.append(ticket)
         return ticket
 
-    def poll(self, ticket: Ticket, now: float) -> Pending:
+    def poll(self, ticket: Ticket, now: float) -> Pending | StatisticsText:
         """Keep the scripted ticket outstanding without waiting.
 
         Returns
         -------
-        Pending
-            The query's non-terminal state.
+        Pending | StatisticsText
+            The configured pending state or immediate statistics document.
         """
         del ticket
         self.polls.append(now)
-        return Pending()
+        return self.poll_result
 
     def close(self, ticket: Ticket) -> None:
         """Record cancellation of an outstanding query.
@@ -194,6 +196,7 @@ class OutcomeWorldOptions:
     statistics_port: StatisticsPort | None = None
     reaper: ChildReaper | None = None
     clock: cabc.Callable[[], float] | None = None
+    tracer: JournalTracer | None = None
 
 
 _DEFAULT_OUTCOME_WORLD_OPTIONS = OutcomeWorldOptions()
@@ -234,7 +237,7 @@ def make_outcome_world(
             cache_outcomes="record" if options.recording else "off",
         ),
         metrics=metrics,
-        tracer=None,
+        tracer=options.tracer,
         clock=lambda: 0.0,
         admission=admission,
         server=SimpleNamespace(cache_allowed=lambda: True),

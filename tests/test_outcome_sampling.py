@@ -87,4 +87,4 @@ def test_failures_back_off_from_quarter_second_to_eight_seconds() -> None:
     )
     assert (
         sampler.poll(now + 8.0 + CHILD_SAMPLE_SECONDS - 0.001, cached_moving=1) is None
-    ), "failures_back_off_from_quar...: sampler.poll(now + 8.0 + CHILD_SAMPL"
+    ), "the next child sample is not due yet"

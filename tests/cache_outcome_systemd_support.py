@@ -2,6 +2,8 @@
 
 import contextlib
 import json
+
+# ruff: ignore[suspicious-subprocess-import] - fixture-owned argv vectors never request a shell.
 import subprocess
 import sys
 import time
@@ -42,6 +44,7 @@ def replay_report(
     TypeError
         If the command does not return a JSON object.
     """
+    # ruff: ignore[subprocess-without-shell-equals-true] - fixed Python module argv.
     result = subprocess.run(
         [
             sys.executable,
@@ -76,6 +79,7 @@ class OutcomeWorld:
         )
         self.processes: list[subprocess.Popen[bytes]] = []
         self.old_compile_requests = 0
+        self.old_reading_events = 0
         self.second_elapsed: float | None = None
         self.barrier_queries_before = 0
 
@@ -159,31 +163,31 @@ class OutcomeWorld:
         ]
 
     def restart_cache(self) -> None:
-        """Restart only this world's fake server and observe its new baseline."""
+        """Restart only this world's fake server and save reading position."""
         state = self.harness.fake_cache_state()
         self.old_compile_requests = state["counters"]["compile_requests"]
-        old_queries = state["statistics_queries"]
+        old_events = self.harness.read_metric_events("outcome_reading")
+        self.old_reading_events = len(old_events)
+        # ruff: ignore[subprocess-without-shell-equals-true] - fixed systemctl argv.
         subprocess.run(
             ["/usr/bin/systemctl", "--user", "restart", self.harness.sccache_unit],
             env=manager_env(),
             check=True,
             timeout=45,
         )
-        has_queries = wait_for(
-            lambda: (
-                self.harness.fake_cache_state().get("statistics_queries", 0)
-                > old_queries
-            ),
-            timeout=15,
-        )
+
+    def wait_for_generation_change(self) -> None:
+        """Wait for a post-restart compile to observe the new identity."""
         has_new_generation = wait_for(
             lambda: any(
                 row.get("BUILD_LIMITS_OUTCOME_REASON") == "generation_changed"
-                for row in self.harness.read_metric_events("outcome_reading")
+                for row in self.harness.read_metric_events("outcome_reading")[
+                    self.old_reading_events :
+                ]
             ),
             timeout=15,
         )
-        if not has_queries or not has_new_generation:
+        if not has_new_generation:
             pytest.fail(self.harness.journal())
 
     def close(self) -> None:

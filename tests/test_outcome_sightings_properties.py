@@ -97,31 +97,31 @@ class SightingMachine(RuleBasedStateMachine):
         for group, model in self.models.items():
             item = actual[group]
             assert item.sightings.samples == model.samples, (
-                "reducer_matches_the_generat...: item.sightings.samples == model.samp"
+                "the reducer preserves generated sample counts"
             )
             if model.metadata is None:
                 assert item.sightings.sighting() == "unavailable", (
-                    'reducer_matches_the_generat...: item.sightings.sighting() == "unavai'
+                    "missing metadata is unavailable"
                 )
                 event("unavailable")
             elif model.seen:
                 assert item.sightings.sighting() == "seen", (
-                    'reducer_matches_the_generat...: item.sightings.sighting() == "seen"'
+                    "observed process metadata is seen"
                 )
                 event("seen")
             elif model.ambiguous:
                 assert item.sightings.sighting() == "ambiguous", (
-                    'reducer_matches_the_generat...: item.sightings.sighting() == "ambigu'
+                    "multiple process matches are ambiguous"
                 )
                 event("ambiguous")
             elif model.samples:
                 assert item.sightings.sighting() == "not_seen", (
-                    'reducer_matches_the_generat...: item.sightings.sighting() == "not_se'
+                    "sampled absence is classified as not seen"
                 )
                 event("not_seen")
             else:
                 assert item.sightings.sighting() == "unavailable", (
-                    'reducer_matches_the_generat...: item.sightings.sighting() == "unavai'
+                    "zero samples leave the sighting unavailable"
                 )
                 event("unavailable")
 
