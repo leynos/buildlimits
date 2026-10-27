@@ -147,6 +147,16 @@ observations of the outside world, which suits model checking.
 
 The model has two parts: the supervisor, whose actions transcribe code, and an
 environment, whose actions are everything the supervisor only observes.
+
+The model is scoped to detached cache work, which after
+[ADR 004](adr-004-kache-cache-backend.md) is `cache_mode = "sccache"` alone. An
+in-scope backend such as `kache` runs the compiler inside the group's own
+scope, so it has no managed cache, no detached work, no drain and no recovery
+transaction; the state below -- the managed cache, its control group and its
+retained tokens -- does not exist there, and F3 is a claim about sccache only.
+Modelling the in-scope case would be a different model, not an extension of
+this one.
+
 Supervisor state is kept as identifier-free counts by group class, as `Counts`
 is, which keeps the state space small and matches the metrics:
 
@@ -185,15 +195,15 @@ Liveness is checked only under the assumptions in Table 2, each stated in the
 model beside the action it constrains. FizzBee documents weak (`fair` or
 `fair<weak>`) and strong (`fair<strong>`) fairness on actions[^2].
 
-| ID  | Assumption                                  | Basis                                                                 |
-| --- | ------------------------------------------- | --------------------------------------------------------------------- |
-| F1  | Supervisor poll steps are weakly fair       | Weak, not strong: the 1 s poll is not synchronized with group endings |
-| F2  | Leaders exit and draining scopes empty      | Termination escalates to `SIGKILL` after `cancel_grace_seconds`       |
-| F3  | Detached server work finishes or is stopped | A claim about sccache, not buildlimits                                |
-| F4  | Accepted jobs complete; faults are finite   | A claim about the systemd user manager                                |
-| F5  | Requested tokens arrive and are returned    | A claim about guildmaster and other users                             |
-| F6  | Armed timers expire, in no set order        | Time is abstract; the checker orders expiries                         |
-| F7  | The environment is otherwise free           | Submissions possible, never forced; cancellations bounded             |
+| ID  | Assumption                                  | Basis                                                                   |
+| --- | ------------------------------------------- | ----------------------------------------------------------------------- |
+| F1  | Supervisor poll steps are weakly fair       | Weak, not strong: the 1 s poll is not synchronized with group endings   |
+| F2  | Leaders exit and draining scopes empty      | Termination escalates to `SIGKILL` after `cancel_grace_seconds`         |
+| F3  | Detached server work finishes or is stopped | A claim about sccache, not buildlimits; inapplicable to in-scope caches |
+| F4  | Accepted jobs complete; faults are finite   | A claim about the systemd user manager                                  |
+| F5  | Requested tokens arrive and are returned    | A claim about guildmaster and other users                               |
+| F6  | Armed timers expire, in no set order        | Time is abstract; the checker orders expiries                           |
+| F7  | The environment is otherwise free           | Submissions possible, never forced; cancellations bounded               |
 
 _Table 2: Fairness assumptions under which liveness is checked._
 

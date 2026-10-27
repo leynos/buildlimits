@@ -135,6 +135,9 @@ Each module owns one decision. This table is the single module inventory.
 | `attributes`                                              | The caller's umask, niceness and resource limits                                                |
 | `pool`                                                    | The token device, read on a thread of its own                                                   |
 | `sccache`, `server_watch`                                 | The managed cache's reachability and accounting; start-up and `SERVER_DRAIN` release            |
+| `cache_backend`, `cache_backends`, `cache_modes`          | The backend protocols, the composition root that turns a mode into adapters, and the vocabulary |
+| `kache`, `kache_guard`, `compiler_argv`                   | The in-scope cache's composition and health; stray-process reports; leading cache-layer removal |
+| `server_drain`                                            | The `SERVER_DRAIN` lifecycle, reachable only for a backend that leaves detached work            |
 | `cache_recovery`, `recovery_*`                            | The recovery transaction, its barrier, reclamation, trigger and guidance                        |
 | `cache_quiesce`                                           | Start-up stop of a live managed cache under the barrier, before the strict accounting           |
 | `bus_properties`, `systemd`                               | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl` |
@@ -258,6 +261,49 @@ and descriptor counts, never argument or environment values.
 `attributes.plan_attributes` refuses a request that needs higher priority or a
 soft limit beyond the supervisor's hard limit; the child never falls back to
 the supervisor's own attributes.
+
+### 7.1. The cache backend seam
+
+A cache backend is what turns the bare compiler invocation into the one the
+group runs. `buildlimits.cache_backend` defines it as two protocols, and
+`buildlimits.cache_backends.select` is the single place a `cache_mode` string
+becomes an adapter. Every other module receives a `CacheBackend` and cannot see
+the mode, so a setting the root forgets to pass is invisible everywhere else;
+`tests/test_cache_backends.py` exists to catch exactly that, by driving
+`select` with a non-default setting and asking the adapter what it would
+actually run.
+
+`ComposingCacheBackend` is what admission needs: `compose(argv, env)` returns
+the composed vector and environment, `is_reachable()` answers health,
+`fallback_notice()` words the line an uncached build sees, `name` provides the
+journal and status wording, and `in_scope_work` states the capability.
+`DetachedCacheBackend` adds the lifecycle only a detached backend has:
+`accounted_drain`, `stop` and `start`. `DirectCache` implements the first with
+no cache and `ManagedSccache` implements both; `Kache` implements only the
+first, and its absence from the second is the type-level statement that an
+in-scope cache has no managed service to drain or stop.
+
+`in_scope_work` is the capability every conditional path reads. `Supervisor`
+projects it once into `Admission(cache_detached=...)`, and the start-up
+quiesce, the drain-token release, `SERVER_DRAIN` and the recovery transaction
+are all gated on that value rather than on a mode string, so a backend that
+cannot leave work behind cannot reach them. `kache_guard.guarded` reads the
+same capability to decide whether the compilers' slice needs reading for stray
+cache processes.
+
+To add a backend:
+
+1. Add the mode to `CACHE_MODES` in `buildlimits.config`, and its keys to
+   `_MODE_KEYS` so that writing another backend's setting is an error.
+2. Write the adapter in its own module beside `sccache.py` and `kache.py`,
+   implementing `ComposingCacheBackend` and, only if its work can outlive a
+   group, `DetachedCacheBackend`.
+3. Add one branch to `cache_backends.select`, passing every configuration
+   value the adapter reads -- the tests above will notice a dropped one.
+4. If the backend can start a cache process inside a group, extend
+   `kache_guard`'s executable test to recognize it; the guard is gated on the
+   capability rather than the mode for that reason.
+5. Record the decision in an ADR and link it from the design documents.
 
 ## 8. Wire protocol
 

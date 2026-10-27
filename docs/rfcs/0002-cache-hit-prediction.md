@@ -11,7 +11,11 @@
   and is on `main`[^1].
 - **Scope:** observation and advisory prediction first. Any change to the
   order or cost of admission is gated behind recorded evidence and a model
-  check, and none is proposed for immediate implementation.
+  check, and none is proposed for immediate implementation. Everything here is
+  specific to sccache: it reads that server's own outcome signals, and none of
+  it applies to `cache_mode = "kache"`, whose compile runs inside the group's
+  scope and whose backend has no managed server to record against. See
+  [ADR 004](adr-004-kache-cache-backend.md).
 
 ## Summary
 

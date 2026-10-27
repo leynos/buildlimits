@@ -23,6 +23,8 @@ one build at a time.
   buildlimits slots in there.
 - **Honest accounting**: a token returns only once every process in its
   compiler scope has exited, including work detached into sccache.
+- **A choice of cache backend**: `sccache` with a server this supervisor
+  manages, `kache` with a daemon somebody else runs, or no cache at all.
 - **Visible queueing**: waiting builds say so, and `build-limits-status` shows
   who holds what.
 
@@ -33,7 +35,9 @@ ______________________________________________________________________
 ### Installation
 
 buildlimits needs Python 3.14, a systemd user manager and a guildmaster pool at
-`/dev/guild`.
+`/dev/guild`. A cache backend is optional: `sccache` is the default and needs
+its user unit; `kache` needs a daemon the operator runs separately; `direct`
+needs neither.
 
 ```bash
 uv tool install --python 3.14 git+https://github.com/leynos/buildlimits
@@ -76,7 +80,8 @@ ______________________________________________________________________
 - `build-limits-rustc` and `build-limits-rustdoc` adapters that preserve the
   caller's streams, exit status, umask, niceness and resource limits.
 - `build-limits-supervisor`, a systemd user service that places each compiler
-  group in its own transient scope and composes it with a managed sccache.
+  group in its own transient scope and composes it with the configured cache
+  backend.
 - `build-limits-status` for capacity, held tokens, the queue and drain faults.
 - `build-limits-recover` to account for cache work that outlived its build,
   without ever releasing a token on a guess.
