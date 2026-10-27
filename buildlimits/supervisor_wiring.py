@@ -17,6 +17,7 @@ if typ.TYPE_CHECKING:
 
     from buildlimits import config
     from buildlimits.admission import Admission
+    from buildlimits.cache_backend import CacheBackend
     from buildlimits.metrics import MetricsPort
     from buildlimits.sccache import ManagedSccache
     from buildlimits.systemd import UserManager
@@ -41,6 +42,10 @@ class Wiring:
     server : ManagedSccache
         The managed server the composition root built. The watch probes it and
         recovery drives its lifecycle, so both must see the same instance.
+    backend : CacheBackend
+        The backend the configured mode selected. The watch reads it for the
+        composition answer, which every cache mode asks, including the
+        in-scope ones whose work never leaves its group.
     """
 
     settings: config.SupervisorConfig
@@ -49,6 +54,7 @@ class Wiring:
     admission: Admission
     metrics: MetricsPort
     server: ManagedSccache
+    backend: CacheBackend
 
 
 def watch_and_recovery(
@@ -67,9 +73,9 @@ def watch_and_recovery(
 
     Examples
     --------
-    ``watch_and_recovery(Wiring(settings, manager, clock, admission, metrics, server))``
-    returns a watch whose ``automatic_recovery_pending`` reads the recovery
-    machine built in the same call.
+    ``watch_and_recovery(Wiring(settings, manager, clock, admission, metrics,
+    server, backend))`` returns a watch whose ``automatic_recovery_pending``
+    reads the recovery machine built in the same call.
     """
     settings = wiring.settings
     server = wiring.server
@@ -89,6 +95,7 @@ def watch_and_recovery(
         server,
         wiring.admission,
         settings.cache_mode,
+        wiring.backend,
         clock=wiring.clock,
         metrics=wiring.metrics,
         automatic_recovery_pending=automatic_recovery_pending,

@@ -8,26 +8,19 @@ import pytest
 
 from buildlimits import attributes, launch
 from buildlimits.attributes import ProcessAttributes
-from buildlimits.cache_backend import CacheBackend, DirectCache, is_cache
+from buildlimits.cache_backend import CacheBackend, DirectCache
+from buildlimits.cache_modes import is_cache
 from buildlimits.config import SupervisorConfig
 from buildlimits.groups import Groups, Running
+from buildlimits.kache import Kache
 from buildlimits.protocol import CompileRequest
 from buildlimits.requesters import Pending
 from buildlimits.sccache import ManagedSccache
 from buildlimits.systemd import SystemdError
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
     from buildlimits.launch import HeldChild
     from buildlimits.systemd import UserManager
-
-
-@pytest.fixture
-def selector() -> cabc.Iterator[selectors.BaseSelector]:
-    """Close each test selector deterministically before its descriptors recycle."""
-    with selectors.DefaultSelector() as owned:
-        yield owned
 
 
 def _entry(*, cacheable: bool) -> Pending:
@@ -51,18 +44,24 @@ def _groups(selector: selectors.BaseSelector, cache_mode: str = "sccache") -> Gr
         cache_mode=cache_mode,
         sccache_executable="/managed/sccache",
         sccache_socket=Path("/run/user/1/buildlimits/sccache.sock"),
+        kache_executable="/managed/kache",
+        kache_socket=Path("/run/user/1/buildlimits/kache.sock"),
     )
     # The composition root builds this from the mode; these tests exercise the
-    # sccache adapter's argv and environment, so they supply it explicitly.
-    backend: CacheBackend = (
-        ManagedSccache(
-            settings.sccache_unit,
-            settings.sccache_socket,
-            executable=settings.sccache_executable,
-        )
-        if is_cache(cache_mode)
-        else DirectCache()
-    )
+    # adapter's argv and environment, so they supply it explicitly.
+    match cache_mode:
+        case "kache":
+            backend: CacheBackend = Kache(
+                settings.kache_executable, settings.kache_socket
+            )
+        case _ if is_cache(cache_mode):
+            backend = ManagedSccache(
+                settings.sccache_unit,
+                settings.sccache_socket,
+                executable=settings.sccache_executable,
+            )
+        case _:
+            backend = DirectCache()
     return Groups(
         settings,
         typ.cast("UserManager", object()),
@@ -80,7 +79,13 @@ def test_an_unavailable_cache_is_announced(selector: selectors.BaseSelector) -> 
 
 @pytest.mark.parametrize(
     ("cache_mode", "cacheable", "cached"),
-    [("sccache", True, True), ("sccache", False, False), ("direct", True, False)],
+    [
+        ("sccache", True, True),
+        ("sccache", False, False),
+        ("kache", True, True),
+        ("kache", False, False),
+        ("direct", True, False),
+    ],
 )
 def test_intended_composition_is_not_announced(
     selector: selectors.BaseSelector, cache_mode: str, cacheable: bool, cached: bool

@@ -9,43 +9,41 @@ cannot be read into the safe decision for each question: start-up fails, the
 tokens stay held, and new groups compile directly.
 
 A cache that keeps its work inside the compiler's scope has no detached work
-to account for, so nothing waits, nothing is drained, and composition is
-decided from the backend's own health.
+to account for, so nothing waits and nothing is drained. Only one question is
+left, whether new groups can be composed with it, and that is asked of
+whichever backend the mode selected.
+
+``server`` is therefore the detached adapter and is touched only under
+:func:`buildlimits.cache_modes.is_detached_mode`, while ``backend`` is the
+health port every cache mode has.
 """
 
-import contextlib
 import dataclasses as dc
 import time
 import typing as typ
 
-from buildlimits import cache_quiesce
-from buildlimits.admission import GroupState, ReturnToken
-from buildlimits.cache_backend import CacheError, is_detached_mode, mode_name
-from buildlimits.drain_guidance import (
-    FAULT_PREFIXES,
-    MANDATORY_ACTIONS,
-    PENDING_LIVE_WORK_ACTION,
-    FaultKind,
-    classify,
-    journal_prefix,
+from buildlimits import cache_quiesce, server_drain
+from buildlimits.cache_backend import CacheBackend, CacheError, DirectCache
+from buildlimits.cache_modes import (
+    is_cache,
+    is_detached_mode,
+    mode_name,
+    mode_unavailable,
 )
 from buildlimits.drain_metrics import DrainMetrics
 from buildlimits.journal import log
 from buildlimits.metrics import Metrics, gauge_fields
-from buildlimits.sccache import LiveCacheWorkError, StartupAccountingError
+from buildlimits.sccache import StartupAccountingError
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-    from buildlimits.admission import Admission, Effect
+    from buildlimits.admission import Admission
+    from buildlimits.drain_guidance import FaultKind
     from buildlimits.metrics import MetricsPort
     from buildlimits.recovery_barrier import RecoveryBarrier
     from buildlimits.sccache import ManagedSccache
     from buildlimits.timing import Clock
-
-
-DRAIN_FAILURE_LIMIT = 8
-DRAIN_RETRY_SECONDS = 30.0
 
 
 @dc.dataclass(slots=True)
@@ -55,13 +53,17 @@ class ServerWatch:
     Parameters
     ----------
     server : ManagedSccache
-        The managed server.
+        The managed server. Only a detached mode touches it.
     admission : Admission
         The admission state whose cache mode and server-drain tokens the
         server's state decides.
     cache_mode : str
-        The configured cache mode. Only a detached mode composes with the
-        server and needs these questions answered.
+        The configured cache mode. Only a detached mode needs the drain
+        questions answered; every cache mode asks whether it can compose.
+    backend : CacheBackend
+        The health port of the backend the mode selected. It is read for
+        composition permission in every cache mode, including the in-scope
+        ones that have no managed server.
     metrics : MetricsPort
         Failure-isolated port for cache and server-drain transitions.
     clock : Callable[[], float]
@@ -76,6 +78,7 @@ class ServerWatch:
     server: ManagedSccache
     admission: Admission
     cache_mode: str
+    backend: CacheBackend = dc.field(default_factory=DirectCache)
     metrics: MetricsPort = dc.field(default_factory=Metrics)
     _fault: str | None = None
     _reachable: bool | None = None
@@ -130,15 +133,19 @@ class ServerWatch:
     def cache_allowed(self) -> bool:
         """Report whether cache composition is permitted right now.
 
+        Only a recovery transaction takes a hold, and only a detached backend
+        has one to recover, so the deadline answers for every mode: it is never
+        moved in a mode that has no transaction. What differs is the mode gate,
+        which asks whether a cache was configured at all rather than whether it
+        is detached -- an in-scope cache composes while its health holds.
+
         Returns
         -------
         bool
-            Whether the configuration composes with a detached cache and no
-            recovery hold is outstanding.
+            Whether the configuration names a cache and no recovery hold is
+            outstanding.
         """
-        return (
-            is_detached_mode(self.cache_mode) and self.clock() >= self._cache_hold_until
-        )
+        return is_cache(self.cache_mode) and self.clock() >= self._cache_hold_until
 
     def quiesce_live_cache(self, barrier: RecoveryBarrier, timing: Clock) -> None:
         """Stop a live cache under the barrier so that start-up can account for it.
@@ -191,173 +198,27 @@ class ServerWatch:
             )
             raise StartupAccountingError(msg) from error
 
-    def drained_tokens(self) -> list[Effect]:
-        """Decide which server-drain tokens the server's load releases.
-
-        Returns
-        -------
-        list[Effect]
-            The returns admission decides on, or nothing while no token waits
-            or the load cannot be read.
-        """
-        waiting = any(
-            group.state is GroupState.SERVER_DRAIN
-            for group in self.admission.groups.values()
-        )
-        if not waiting:
-            self._clear_drain_fault()
-            return []
-        if self.clock() < self._next_drain:
-            return []
-        try:
-            active = self.drain_metrics.call(
-                "accounted_cache", self.server.accounted_drain
-            )
-        except CacheError as error:
-            self._load_state(unknown=True)
-            self._record_drain_fault(error)
-            return []
-        return self._release_accounted(active)
-
-    def _release_accounted(self, active: int) -> list[Effect]:
-        """Release what a verified stopped-and-empty cache leaves unaccounted.
-
-        Only reached once the manager has proved the cache stopped and empty,
-        so this is where the earlier fault is retired and the tokens the server
-        no longer covers go back. The composition flag is whatever
-        :meth:`refresh_cache_mode` last decided from a real probe; this method
-        changes no part of it.
-
-        Returns
-        -------
-        list[Effect]
-            The returns admission decides on for ``active`` live compilations.
-        """
-        if self.drain_fault is not None:
-            with contextlib.suppress(OSError):
-                log(
-                    f"{mode_name(self.cache_mode)} service verified stopped "
-                    "and empty; drain tokens may return"
-                )
-        self._clear_drain_fault()
-        self._load_state(unknown=False)
-        effects = self.admission.server_activity(active)
-        released = sum(isinstance(effect, ReturnToken) for effect in effects)
-        if released:
-            self.metrics.emit(
-                "server_drain_released",
-                **gauge_fields(self.admission.counts()),
-                released=released,
-            )
-        return effects
-
-    def _record_drain_fault(self, error: CacheError) -> None:
-        """Keep unknown work accounted for and deduplicate drain diagnostics."""
-        kind = classify(error)
-        retained = kind == "live_work"
-        detail = ascii(str(error)[:400])[1:-1]
-        fault = f"retained detached work: {detail}" if retained else detail
-        self.drain_attempts += 1
-        changed = fault != self.drain_fault or kind != self.drain_fault_kind
-        self.drain_fault = fault
-        self.drain_fault_kind = kind
-        is_live = isinstance(error, LiveCacheWorkError)
-        self._fault_roots = error.roots if is_live else None
-        if changed:
-            with contextlib.suppress(OSError):
-                log(f"{FAULT_PREFIXES[kind]}{fault}")
-        if self.drain_attempts >= DRAIN_FAILURE_LIMIT:
-            self._next_drain = self.clock() + DRAIN_RETRY_SECONDS
-            self._action_kind = kind
-            self._journal_recovery_action()
-
-    @property
-    def recovery_action(self) -> str | None:
-        """The guidance for the current fault, once its retries are exhausted.
-
-        Read live rather than stored, because whether the operator is needed
-        changes while the fault stands: a live-work fault is the supervisor's
-        to recover while its own recovery is pending, and the operator's once
-        that cannot happen.
-
-        Returns
-        -------
-        str | None
-            The guidance, or ``None`` before the retries are exhausted.
-        """
-        if self._action_kind is None:
-            return None
-        if self.recovery_action_is_fallback:
-            return PENDING_LIVE_WORK_ACTION
-        return MANDATORY_ACTIONS[self._action_kind]
-
-    @property
-    def recovery_action_is_fallback(self) -> bool:
-        """Whether the operator command is only a fallback for the supervisor.
-
-        Returns
-        -------
-        bool
-            True only for a live-work fault whose automatic recovery is
-            pending. A manager or stopped-populated fault, the manual policy
-            and exhausted attempts all answer False.
-        """
-        return self._action_kind == "live_work" and self.automatic_recovery_pending()
-
-    def _journal_recovery_action(self) -> None:
-        """Journal the guidance once per wording, not once per retry."""
-        action = self.recovery_action
-        if action is None or action == self._journaled_action:
-            return
-        self._journaled_action = action
-        prefix = journal_prefix(is_fallback=self.recovery_action_is_fallback)
-        with contextlib.suppress(OSError):
-            log(f"{prefix}: {action}")
-
-    @property
-    def zero_visible_roots(self) -> bool:
-        """Whether the current live-work fault proved zero visible compiler roots.
-
-        Returns
-        -------
-        bool
-            True only for a live-work fault whose root count was established
-            as zero. An unknown count and a manager fault both answer False,
-            so the automatic trigger cannot act on an unproven reading.
-        """
-        return self.drain_fault_kind == "live_work" and self._fault_roots == 0
-
-    @property
-    def roots_are_visible(self) -> bool:
-        """Whether the current live-work fault established a visible root.
-
-        Returns
-        -------
-        bool
-            True only for a live-work fault whose root count was established
-            as positive; an unknown count answers False, as it does for the
-            zero-root proof, so neither proof is ever guessed.
-        """
-        roots = self._fault_roots
-        return self.drain_fault_kind == "live_work" and roots is not None and roots > 0
-
-    def _clear_drain_fault(self) -> None:
-        """End the query fault only after a successful check or no waiting work."""
-        self.drain_fault = None
-        self.drain_fault_kind = None
-        self.drain_attempts = 0
-        self._action_kind = None
-        self._journaled_action = None
-        self._next_drain = 0.0
-        self._fault_roots = None
+    # The drain-token policy and its readings are bound here rather than
+    # defined, so the release decision lives in ``server_drain`` beside the
+    # guidance it journals. A bound method keeps the signature and the ``self``
+    # binding every caller already uses. The annotations are what tell a reader
+    # and a type checker these are members of the class, not fields; they add
+    # no value, because the bindings above are the ones the methods use.
+    drained_tokens: typ.ClassVar = server_drain.drained_tokens
+    recovery_action: typ.ClassVar = property(server_drain.recovery_action)
+    recovery_action_is_fallback: typ.ClassVar = property(
+        server_drain.recovery_action_is_fallback
+    )
+    zero_visible_roots: typ.ClassVar = property(server_drain.zero_visible_roots)
+    roots_are_visible: typ.ClassVar = property(server_drain.roots_are_visible)
 
     def refresh_cache_mode(self) -> None:
-        """Compose new groups with the cache only while it is reachable."""
-        if not is_detached_mode(self.cache_mode):
+        """Compose new groups with the cache only while it can serve work."""
+        if not is_cache(self.cache_mode):
             self.admission.cached = False
             return
         try:
-            reachable, fault = self.server.is_reachable(), None
+            reachable, fault = self.backend.is_reachable(), None
         except CacheError as error:
             reachable, fault = False, str(error)
         self._announce_reachability(reachable=reachable, fault=fault)
@@ -369,13 +230,7 @@ class ServerWatch:
         if fault is not None and fault != self._fault:
             log(f"{fault}; compiling directly")
         elif fault is None and reachable != self.admission.cached:
-            name = mode_name(self.cache_mode)
-            state = (
-                "reachable; caching compilations"
-                if reachable
-                else "unreachable; compiling directly"
-            )
-            log(f"the managed {name} server is {state}")
+            log(_reachability_line(self.cache_mode, reachable=reachable))
         if reachable != self._reachable:
             self.metrics.emit(
                 "cache_reachability",
@@ -384,12 +239,41 @@ class ServerWatch:
             )
             self._reachable = reachable
 
-    def _load_state(self, *, unknown: bool) -> None:
-        """Emit one transition per change in server-load readability."""
-        if unknown != self._load_unknown:
-            self._load_unknown = unknown
-            self.metrics.emit(
-                "cache_load_unknown",
-                **gauge_fields(self.admission.counts()),
-                load_unknown=unknown,
-            )
+
+def _reachability_line(cache_mode: str, *, reachable: bool) -> str:
+    """Word a composition change for the configured backend.
+
+    A detached backend is a service this supervisor owns, so the line says so.
+    An in-scope backend is not, and calling it a managed server would send the
+    operator looking for a unit that does not exist.
+
+    Parameters
+    ----------
+    cache_mode : str
+        The configured cache mode.
+    reachable : bool
+        The reading the line reports.
+
+    Returns
+    -------
+    str
+        The journal line.
+
+    Examples
+    --------
+    >>> _reachability_line("sccache", reachable=False)
+    'the managed sccache server is unreachable; compiling directly'
+    >>> _reachability_line("kache", reachable=False)
+    'kache is unavailable; compiling directly'
+    >>> _reachability_line("kache", reachable=True)
+    'kache is caching compilations'
+    """
+    name = mode_name(cache_mode)
+    state = (
+        "caching compilations"
+        if reachable
+        else f"{mode_unavailable(cache_mode)}; compiling directly"
+    )
+    if is_detached_mode(cache_mode):
+        return f"the managed {name} server is {state}"
+    return f"{name} is {state}"

@@ -2,14 +2,17 @@
 
 The recording fixtures (``metric_sink``, ``metrics``, ``telemetry``) give
 compile-admission metric tests a transport that keeps bounded native records.
-``socket_pair`` yields a connected stream pair. The teardown fixtures keep a
-test from leaving descriptors to the garbage collector: ``recovery_harnesses``
-builds recovery supervisors and closes each one's resources, and ``owned``
-unwinds whatever a test enters into it, such as sockets, pools and
-``contextlib.closing`` supervisors, in reverse order after the test.
+``socket_pair`` yields a connected stream pair, and ``selector`` yields a
+selector closed before its descriptors can be recycled. The teardown fixtures
+keep a test from leaving descriptors to the garbage collector:
+``recovery_harnesses`` builds recovery supervisors and closes each one's
+resources, and ``owned`` unwinds whatever a test enters into it, such as
+sockets, pools and ``contextlib.closing`` supervisors, in reverse order after
+the test.
 """
 
 import contextlib
+import selectors
 import socket
 import typing as typ
 
@@ -147,6 +150,19 @@ def observed_supervisor(metrics: Metrics) -> cabc.Iterator[Supervisor]:
     )
     yield instance
     instance.selector.close()
+
+
+@pytest.fixture
+def selector() -> cabc.Iterator[selectors.BaseSelector]:
+    """Close each test selector deterministically before its descriptors recycle.
+
+    Yields
+    ------
+    selectors.BaseSelector
+        A selector owned by one test, closed at teardown.
+    """
+    with selectors.DefaultSelector() as owned:
+        yield owned
 
 
 @pytest.fixture

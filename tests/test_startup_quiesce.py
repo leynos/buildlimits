@@ -284,7 +284,9 @@ def test_the_watch_emits_the_quiesce_event_with_bounded_fields(
     unit = CacheUnit(barrier=tmp_path / "run" / "cache-recovery")
     manager = UserManager(unit.runner)
     server = ManagedSccache("c.service", tmp_path / "c.sock", manager)
-    watch = ServerWatch(server, Admission(), "sccache", metrics=Metrics(metric_sink))
+    watch = ServerWatch(
+        server, Admission(), "sccache", server, metrics=Metrics(metric_sink)
+    )
     watch.quiesce_live_cache(RecoveryBarrier(unit.barrier), FakeClock().timing())
     assert metric_sink.records[0]["BUILD_LIMITS_EVENT"] == "cache_quiesce", (
         "the event is the cache_quiesce record"

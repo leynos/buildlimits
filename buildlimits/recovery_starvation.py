@@ -55,7 +55,7 @@ nor the policy.
 import dataclasses
 import typing as typ
 
-from buildlimits.cache_backend import is_detached_mode
+from buildlimits.cache_modes import is_detached_mode
 
 if typ.TYPE_CHECKING:
     from buildlimits.admission_state import Counts

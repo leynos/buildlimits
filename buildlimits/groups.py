@@ -14,8 +14,10 @@ import selectors
 import typing as typ
 from pathlib import Path
 
-from buildlimits import cgroups, group_drain, launch
-from buildlimits.cache_backend import CacheBackend, DirectCache, is_cache
+from buildlimits import cgroups, group_drain, kache_guard, launch
+from buildlimits.cache_backend import CacheBackend, DirectCache
+from buildlimits.cache_modes import is_cache
+from buildlimits.compiler_argv import compiler_argv
 from buildlimits.descriptors import close_all
 from buildlimits.drain_metrics import DrainMetrics
 from buildlimits.effects import Exit
@@ -89,6 +91,10 @@ class Groups:
         Groups whose scope has not yet emptied, by group identifier.
     slice_dir : Path or None
         The compilers' slice, known once the supervisor passes its barrier.
+    guard : kache_guard.Strays
+        The last reading of kache processes no admitted scope covers. It is
+        only refreshed when the configured backend is in-scope, because only
+        such a backend can start a kache process from inside a group.
     """
 
     settings: SupervisorConfig
@@ -99,6 +105,7 @@ class Groups:
     drain_metrics: DrainMetrics = dc.field(default_factory=DrainMetrics)
     running: dict[str, Running] = dc.field(default_factory=dict)
     slice_dir: Path | None = None
+    guard: kache_guard.Strays = dc.field(default_factory=kache_guard.Strays)
 
     def place(self, entry: Pending, group_id: str, *, cached: bool) -> Running | None:
         """Start a held launch child for a request and move it into a scope.
@@ -366,34 +373,3 @@ class Groups:
         if not joined:
             return f"the launch child did not join {unit}"
         return None
-
-
-def compiler_argv(argv: tuple[str, ...]) -> tuple[str, ...]:
-    """Strip a caller's own sccache layer from a compiler argument vector.
-
-    A caller that already wraps the compiler in sccache, for example through
-    ``RUSTC_WORKSPACE_WRAPPER``, would have its client talk to whatever server
-    it finds, or start one inside the compiler's scope. The supervisor
-    decides the composition itself: the managed server when caching, and the
-    bare compiler otherwise.
-
-    Parameters
-    ----------
-    argv : tuple[str, ...]
-        The requested argument vector.
-
-    Returns
-    -------
-    tuple[str, ...]
-        The vector without leading sccache layers.
-
-    Examples
-    --------
-    >>> compiler_argv(("/b/sccache", "/t/rustc", "-vV"))
-    ('/t/rustc', '-vV')
-    >>> compiler_argv(("/t/clippy-driver", "/t/rustc", "-vV"))
-    ('/t/clippy-driver', '/t/rustc', '-vV')
-    """
-    while len(argv) > 1 and Path(argv[0]).name == "sccache":
-        argv = argv[1:]
-    return argv

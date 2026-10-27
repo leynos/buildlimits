@@ -8,6 +8,7 @@ import time
 import typing as typ
 
 from buildlimits import (
+    cache_backends,
     cgroups,
     config,
     effect_dispatch,
@@ -24,7 +25,6 @@ from buildlimits import (
     supervisor_wiring,
 )
 from buildlimits.admission import Admission
-from buildlimits.cache_backend import CacheBackend, DirectCache, is_cache
 from buildlimits.drain_loop import MAX_INTERNAL_FAILURES as MAX_INTERNAL_FAILURES
 from buildlimits.drain_loop import DrainLoop, LoopEffects
 from buildlimits.groups import Groups
@@ -32,7 +32,6 @@ from buildlimits.journal import log
 from buildlimits.metrics import Metrics, MetricsPort, gauge_fields
 from buildlimits.pool import PoolFailure, Token, TokenPool
 from buildlimits.requesters import Requests, listen
-from buildlimits.sccache import ManagedSccache
 from buildlimits.service_readiness import notify_ready
 from buildlimits.systemd import UserManager
 from buildlimits.timing import Clock, as_clock
@@ -43,6 +42,7 @@ if typ.TYPE_CHECKING:
     from pathlib import PurePosixPath
 
     from buildlimits.admission import Effect
+    from buildlimits.cache_backend import CacheBackend
     from buildlimits.tracing import JournalTracer
 TICK_SECONDS = 0.1
 
@@ -98,13 +98,11 @@ class Supervisor:
         )
         self.tracer = observations.tracer
 
-        server = ManagedSccache(
-            settings.sccache_unit, settings.sccache_socket, self.manager
-        )
+        built = cache_backends.select(settings, self.manager)
         # Composition sites ask this object for argv, environment and capability.
-        self.backend: CacheBackend = (
-            server if is_cache(settings.cache_mode) else DirectCache()
-        )
+        self.backend: CacheBackend = built.composition
+        # The managed server, touched only by the detached-only lifecycle.
+        server = built.managed
         detached = not self.backend.in_scope_work
         self.admission = Admission(cache_detached=detached, capacity=settings.slots)
         self.selector = selectors.DefaultSelector()
@@ -121,7 +119,13 @@ class Supervisor:
         # the server they both drive is the instance the backend was built on,
         # so composition and the detached lifecycle never diverge.
         wiring = supervisor_wiring.Wiring(
-            settings, self.manager, self.clock, self.admission, self.metrics, server
+            settings,
+            self.manager,
+            self.clock,
+            self.admission,
+            self.metrics,
+            server,
+            self.backend,
         )
         self.server, self.recovery = supervisor_wiring.watch_and_recovery(wiring)
         self.pool: TokenPool | None = None

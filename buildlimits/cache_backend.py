@@ -19,6 +19,10 @@ The backend-neutral exceptions are declared here too, so a caller can catch a
 composition or health failure without naming one product. The admission core
 catches :class:`CacheError` and never asks which backend raised it.
 
+What a *mode string* alone can say -- its name, whether it caches, and whether
+its work is detached -- lives in :mod:`buildlimits.cache_modes`, because those
+readers hold no backend object and so must not depend on this module's ports.
+
 Examples
 --------
 >>> direct = DirectCache()
@@ -28,10 +32,6 @@ Examples
 (('/t/rustc', '-vV'), {'PATH': '/t'})
 >>> direct.fallback_notice()
 ''
->>> is_detached_mode("kache"), is_detached_mode("sccache")
-(False, True)
->>> is_cache("direct"), is_cache("sccache")
-(False, True)
 """
 
 import typing as typ
@@ -88,6 +88,12 @@ class StartupAccountingError(CacheError):
 class CacheBackend(typ.Protocol):
     """What admission needs from a cache backend to compose a group.
 
+    ``name`` and ``in_scope_work`` are declared as read-only properties rather
+    than as attributes. A writable attribute member would require every
+    implementation to accept writes, which a frozen dataclass does not; every
+    backend answers these two questions from configuration it was built with,
+    so nothing ever assigns them.
+
     Attributes
     ----------
     name : str
@@ -99,8 +105,15 @@ class CacheBackend(typ.Protocol):
         lifecycle.
     """
 
-    name: str
-    in_scope_work: bool
+    @property
+    def name(self) -> str:
+        """The backend's name, for the journal and status wording."""
+        ...
+
+    @property
+    def in_scope_work(self) -> bool:
+        """Whether every compilation the backend accepts runs in the scope."""
+        ...
 
     def is_reachable(self) -> bool:
         """Report whether the backend can accept a compilation right now.
@@ -243,108 +256,3 @@ class DirectCache:
             Always an empty string.
         """
         return ""
-
-
-class ModeFacts(typ.NamedTuple):
-    """What the configured-mode string alone can say about a backend.
-
-    Some readers hold a mode string but no backend object: the frozen readings
-    the recovery trigger judges, the server watch, and the status renderer.
-    Those values cross a boundary, so the facts they need are projected into
-    this value rather than the reader re-deriving them from the string.
-
-    Attributes
-    ----------
-    name : str
-        The backend's name, for the journal and status wording.
-    in_scope_work : bool
-        Whether every compilation the backend accepts runs inside the
-        compiler group's own scope.
-    cached : bool
-        Whether the mode asks for a cache at all. It is independent of
-        ``in_scope_work``: ``direct`` is in scope and caches nothing, while a
-        future in-scope cache would be both in scope and cached.
-    """
-
-    name: str
-    in_scope_work: bool
-    cached: bool
-
-
-# One row per configured mode. This table is the only place a mode string is
-# read; every other question is answered from a backend object or from the
-# :class:`ModeFacts` projected out of this row. A mode absent from the table
-# was never configured, so it is treated as ``direct``.
-MODES = {
-    "direct": ModeFacts("direct", in_scope_work=True, cached=False),
-    "sccache": ModeFacts("sccache", in_scope_work=False, cached=True),
-}
-
-CACHE_MODES = frozenset(mode for mode, facts in MODES.items() if facts.cached)
-
-
-def is_cache(mode: str) -> bool:
-    """Report whether a configured cache mode names a cache.
-
-    Parameters
-    ----------
-    mode : str
-        A configured cache mode.
-
-    Returns
-    -------
-    bool
-        ``True`` for a mode composed with a cache, ``False`` for ``direct``.
-
-    Examples
-    --------
-    >>> is_cache("sccache"), is_cache("direct")
-    (True, False)
-    """
-    return mode in CACHE_MODES
-
-
-def mode_name(mode: str) -> str:
-    """Return the backend name that wording for a configured mode uses.
-
-    Parameters
-    ----------
-    mode : str
-        A configured cache mode.
-
-    Returns
-    -------
-    str
-        The backend's name, or ``direct`` when the mode names no cache.
-
-    Examples
-    --------
-    >>> mode_name("sccache"), mode_name("direct")
-    ('sccache', 'direct')
-    """
-    return MODES.get(mode, MODES["direct"]).name
-
-
-def is_detached_mode(mode: str) -> bool:
-    """Report whether a configured cache mode may leave work outside a scope.
-
-    Used where only the configured mode is available -- the frozen readings
-    the recovery trigger judges, and the status document -- because those
-    values cross a boundary without carrying the backend object.
-
-    Parameters
-    ----------
-    mode : str
-        A configured cache mode.
-
-    Returns
-    -------
-    bool
-        ``True`` only for a mode whose backend is detached.
-
-    Examples
-    --------
-    >>> is_detached_mode("sccache"), is_detached_mode("direct")
-    (True, False)
-    """
-    return not MODES.get(mode, MODES["direct"]).in_scope_work

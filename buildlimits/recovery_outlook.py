@@ -17,7 +17,7 @@ open transaction holds new compiles off the cache.
 import dataclasses as dc
 
 from buildlimits import recovery_starvation
-from buildlimits.cache_backend import is_detached_mode
+from buildlimits.cache_modes import is_detached_mode
 from buildlimits.recovery_starvation import RECOVERY_STALE_DRAIN_SECONDS
 
 

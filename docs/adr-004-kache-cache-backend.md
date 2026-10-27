@@ -293,9 +293,11 @@ The supervisor's obligations are then:
 - A `kache` or `kache-engine` process found in `buildlimits-compilers.slice`
   outside an admitted scope, or one that outlives its group's scope, is
   reported as a distinct fault (`stray_kache_process`) in status and the
-  journal. It never holds a token. The in-scope case cannot normally arise
-  because the external daemon is required, but the guard covers a daemon that
-  dies mid-build and a group that then auto-starts a replacement.
+  journal. Status carries the identifiers in `stray_kache_processes`, always
+  present so that a reader can tell "no strays" from "not guarded". The fault
+  never holds a token. The in-scope case cannot normally arise because the
+  external daemon is required, but the guard covers a daemon that dies
+  mid-build and a group that then auto-starts a replacement.
 
 The guard is a report, not a killer. A stray process inside a group's scope is
 removed by the ordinary terminate-on-leader-exit path; a stray process outside
