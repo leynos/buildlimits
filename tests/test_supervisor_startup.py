@@ -173,21 +173,23 @@ def test_the_refusal_of_a_recovery_request_names_the_mode(
     ``direct`` mode runs every compiler without a cache and requires the
     managed server to be stopped, so its recovery transaction has nothing to
     coordinate: the supervisor must refuse rather than stop and start a service
-    it does not manage. An ``sccache`` supervisor over the same scripted
-    manager is the control, proving the refusal comes from the mode rather than
-    from the shape of the request.
+    it does not manage. ``kache`` mode is refused for the neighbouring reason:
+    it caches, but its daemon is managed elsewhere, so there is still no unit
+    for this supervisor to stop or start. An ``sccache`` supervisor over the
+    same scripted manager is the control, proving the refusal comes from the
+    mode rather than from the shape of the request.
     """
-    for mode in ("direct", "sccache"):
+    for mode in ("direct", "kache", "sccache"):
         started = _started(mode, tmp_path, monkeypatch)
         try:
             marker = tmp_path / mode / "cache-recovery"
             supervisor = started.supervisor
             reply = _recover_over_the_wire(supervisor)
-            if mode == "direct":
+            if mode != "sccache":
                 assert reply == Refused(
                     reason="no-cache-recovery",
                     message="this supervisor manages no sccache service",
-                ), "the mode that owns no cache refuses rather than acting"
+                ), "the mode that owns no service refuses rather than acting"
             else:
                 assert isinstance(reply, RecoverReport), (
                     "a mode with a managed cache does run the transaction"

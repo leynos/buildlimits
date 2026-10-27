@@ -143,6 +143,7 @@ extend-ignore = [
 # tools and the vectors their tests supply, found on PATH as a build would.
 "tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 "tests/fixtures/fake_sccache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
+"tests/fixtures/fake_kache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
@@ -1234,3 +1235,17 @@ members = [
     "tests/test_unreleased_disconnect.py",
 ]
 reason = "Matching import lists: both suites drive the supervisor through the same Group and Groups ports, and the shared lines name those dependencies rather than any shared behaviour. Each module's cases test a different control fault, so a common helper module would only relocate the import list."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/fixtures/fake_kache.py",
+    "tests/fixtures/fake_sccache.py",
+]
+reason = "The two fixtures are standalone scripts the systemd harness executes by path, so neither may import a shared helper module; each has to be self-contained for its process to start. What they share is only the socket plumbing a fake daemon needs, and the parts that differ -- a threaded compile server versus a connection-and-close probe -- are the whole of each fake's contract."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_kache_detached_events.py::active_compiles",
+    "tests/test_kache_detached_events.py::accounted_drain",
+]
+reason = "Both methods exist to fail: they are the two detached-only questions a kache supervisor must never ask, and each names its own question in the assertion. Sharing one body that takes the message as a parameter would make the test double assert nothing specific about which call was reached."
