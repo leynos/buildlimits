@@ -109,6 +109,9 @@ jobs:
         with:
           output-path: coverage.xml
           format: cobertura
+          # Measure application and repository automation code, not the test
+          # harnesses that host acceptance deliberately skips in CI.
+          python-source: buildlimits,scripts
           artefact-name-suffix: buildlimits
           publish-artefact: ${{ env.ACT != 'true' }}
           with-ratchet: 'true'

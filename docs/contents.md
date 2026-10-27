@@ -67,3 +67,7 @@
   compilation's real outcome, adding an advisory hit prediction to status and
   metrics, and conducting a gated analysis of hit-first admission. Accepted
   2026-10-23.
+- [RFC 0003: Exempting safe rustc queries from compile
+  admission](rfcs/0003-toolchain-query-admission-exemption.md) records the
+  package-cache lock hazard, the fail-closed query contract and its host
+  evidence. It replaces issue #27's reference to a nonexistent RFC path.

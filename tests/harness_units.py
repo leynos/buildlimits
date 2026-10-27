@@ -9,6 +9,7 @@ changing the parent manager's routing.
 """
 
 import dataclasses as dc
+import functools
 import os
 import shutil
 import socket
@@ -53,6 +54,7 @@ def manager_env() -> dict[str, str]:
     return env
 
 
+@functools.cache
 def user_manager_available() -> bool:
     """Report whether opted-in systemd user-manager tests can run.
 

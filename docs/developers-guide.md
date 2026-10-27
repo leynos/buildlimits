@@ -80,9 +80,8 @@ The supervisor is a functional core with an imperative shell. Decisions live in
 `admission`, which performs no input or output and returns a list of effects;
 the shell carries those effects out.
 
-For screen readers: the following sequence diagram shows one compile request,
-from Cargo's call to the adapter through admission, scope placement and the
-return of the token.
+For screen readers: the following sequence diagram shows Cargo's call to the
+adapter, query classification or admission, scope placement and token return.
 
 ```mermaid
 sequenceDiagram
@@ -91,18 +90,26 @@ sequenceDiagram
     participant Supervisor
     participant Pool as /dev/guild
     participant Scope as compiler scope
+    participant Compiler
     Cargo->>Adapter: rustc arguments
-    Adapter->>Supervisor: compile request and passed descriptors
-    Supervisor->>Pool: read one token
-    Supervisor->>Scope: fork held child, start transient scope
-    Supervisor->>Scope: release child once placed
-    Scope-->>Supervisor: scope empties
-    Supervisor->>Pool: return token
-    Supervisor-->>Adapter: finished with exit status
-    Adapter-->>Cargo: same exit status or signal
+    Adapter->>Adapter: Check admitted scope, then classify exact query
+    alt Already admitted or allow-listed query
+        Adapter->>Compiler: exec directly
+        Compiler-->>Cargo: query or nested compile result
+    else Compile or uncertain invocation
+        Adapter->>Supervisor: compile request and passed descriptors
+        Supervisor->>Pool: read one token
+        Supervisor->>Scope: fork held child, start transient scope
+        Supervisor->>Scope: release child once placed
+        Scope-->>Supervisor: scope empties
+        Supervisor->>Pool: return token
+        Supervisor-->>Adapter: finished with exit status
+        Adapter-->>Cargo: same exit status or signal
+    end
 ```
 
-_Figure 1: The life of one admitted compile request._
+_Figure 1: Query dispatch and direct execution or admission of compile
+requests._
 
 Cargo runs `build-limits-rustc <compiler> <arguments...>` as `RUSTC_WRAPPER`, or
 `build-limits-rustdoc <arguments...>` as `RUSTDOC`. The adapter connects to
@@ -111,51 +118,56 @@ carrying its inheritable descriptors, and relays the result. The supervisor
 queues the request, reads one token for it, forks a held launch child, moves
 that child into a new transient scope under `buildlimits-compilers.slice`, and
 releases it to execute the compiler. It returns the token once the scope has no
-processes left. An adapter that finds itself inside an admitted scope runs the
-compiler directly, so nested tools never ask for a second token.
+processes left. Before requesting admission, `adapter._main` preserves the
+already-admitted-scope check and then classifies the rustc entry point. Only an
+exact query match runs directly outside a scope; every compile or uncertain
+invocation follows the token path. An adapter that finds itself inside an
+admitted scope runs the compiler directly, so nested tools never ask for a
+second token.
 
 ## 4. Package modules
 
 Each module owns one decision. This table is the single module inventory.
 
-| Module                                                    | Responsibility                                                                                  |
-| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `admission`, `effects`                                    | Pure state machine: queue, tokens, draining                                                     |
-| `admission_state`                                         | Group lifecycle values; the identifier-free `Counts` snapshot and the `Gauges` read-only views  |
-| `supervisor`                                              | Event loop that carries out admission's effects                                                 |
-| `supervisor_polling`                                      | Poll cadence and ordered server, pool and cache checks; no token-release decisions              |
-| `supervisor_signals`, `supervisor_shutdown`               | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                             |
-| `supervisor_observability`                                | Wires cached pressure and drain observers into existing owners                                  |
-| `effect_dispatch`                                         | Effect handlers and their metric and health mappings                                            |
-| `requesters`, `pending_request`                           | Connections, queued requests and replies; recorded request data                                 |
-| `request_connections`                                     | Unrecorded sockets, received rights and refusals                                                |
-| `request_validation`, `requester_metrics`                 | Pure validation over explicit context; terminal metric fields                                   |
-| `request_state`                                           | Compatibility re-export of `pending_request.Pending`                                            |
-| `descriptor_policy`, `descriptor_budget`                  | Pure budget arithmetic; OS sampling, retention accounting and status                            |
-| `listener_pressure`                                       | Listener backpressure after accept-time exhaustion                                              |
-| `groups`, `group_drain`, `group_recovery`                 | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                   |
-| `supervisor_placement`                                    | Admitted compiler placement, terminal scope outcome and stop-mode classification                |
-| `launch`, `launch_setup`                                  | Held launch child and bounded setup diagnostics                                                 |
-| `relocation`, `descriptors`                               | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution              |
-| `attributes`                                              | The caller's umask, niceness and resource limits                                                |
-| `pool`                                                    | The token device, read on a thread of its own                                                   |
-| `sccache`, `server_watch`                                 | The managed cache's reachability and accounting; start-up and `SERVER_DRAIN` release            |
-| `cache_recovery`, `recovery_*`                            | The recovery transaction, its barrier, reclamation, trigger and guidance                        |
-| `cache_quiesce`                                           | Start-up stop of a live managed cache under the barrier, before the strict accounting           |
-| `bus_properties`, `systemd`                               | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl` |
-| `cgroups`, `startup`, `proc_trees`                        | Control-group reads, the restart barrier and diagnostic process-tree counts                     |
-| `protocol`, `replies`, `framing`, `frame_payload`, `wire` | Versioned JSON frames with passed descriptors                                                   |
-| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`  | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc              |
-| `adapter_invocation`, `adapter_retry`                     | Invocation state and deadline-preserving busy and restart retries                               |
-| `tracing`, `tracing_export`, `tracing_sdk_export`         | Bounded spans, the fixed journal schema and synchronous native-journal export                   |
-| `toolchain_env`                                           | Pure, filesystem-only recognition of a real toolchain compiler and its loader-path prefix       |
-| `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                 |
-| `status`, `status_client`, `status_render`, `status_cli`  | The status document, its transport, rendering and command                                       |
-| `admission_readiness`                                     | Pure admission-progress classification from health, ledger counts and recovery outlook          |
-| `document_cli`                                            | Shared raw `--json` parser for status and recovery document commands                            |
-| `recover_client`, `recover_cli`                           | The recovery request and the `build-limits-recover` command                                     |
-| `metrics*`, `journal`, `journal_native`                   | Metric vocabulary, native journal datagrams, journal queries and reports                        |
-| `drain_loop`, `drain_metrics`                             | Paces drain-fault retries; observes drain progress without exit authority                       |
+| Module                                                                             | Responsibility                                                                                   |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `admission`, `effects`                                                             | Pure state machine: queue, tokens, draining                                                      |
+| `admission_state`                                                                  | Group lifecycle values; the identifier-free `Counts` snapshot and the `Gauges` read-only views   |
+| `supervisor`                                                                       | Event loop that carries out admission's effects                                                  |
+| `supervisor_polling`                                                               | Poll cadence and ordered server, pool and cache checks; no token-release decisions               |
+| `supervisor_signals`, `supervisor_shutdown`                                        | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                              |
+| `supervisor_observability`                                                         | Wires cached pressure and drain observers into existing owners                                   |
+| `effect_dispatch`                                                                  | Effect handlers and their metric and health mappings                                             |
+| `requesters`, `pending_request`                                                    | Connections, queued requests and replies; recorded request data                                  |
+| `request_connections`                                                              | Unrecorded sockets, received rights and refusals                                                 |
+| `request_validation`, `requester_metrics`                                          | Pure validation over explicit context; terminal metric fields                                    |
+| `request_state`                                                                    | Compatibility re-export of `pending_request.Pending`                                             |
+| `descriptor_policy`, `descriptor_budget`                                           | Pure budget arithmetic; OS sampling, retention accounting and status                             |
+| `listener_pressure`                                                                | Listener backpressure after accept-time exhaustion                                               |
+| `groups`, `group_drain`, `group_recovery`                                          | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                    |
+| `supervisor_placement`                                                             | Admitted compiler placement, terminal scope outcome and stop-mode classification                 |
+| `launch`, `launch_setup`                                                           | Held launch child and bounded setup diagnostics                                                  |
+| `relocation`, `descriptors`                                                        | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution               |
+| `attributes`                                                                       | The caller's umask, niceness and resource limits                                                 |
+| `pool`                                                                             | The token device, read on a thread of its own                                                    |
+| `sccache`, `server_watch`                                                          | The managed cache's reachability and accounting; start-up and `SERVER_DRAIN` release             |
+| `cache_recovery`, `recovery_*`                                                     | The recovery transaction, its barrier, reclamation, trigger and guidance                         |
+| `cache_quiesce`                                                                    | Start-up stop of a live managed cache under the barrier, before the strict accounting            |
+| `bus_properties`, `systemd`                                                        | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl`  |
+| `cgroups`, `startup`, `proc_trees`                                                 | Control-group reads, the restart barrier and diagnostic process-tree counts                      |
+| `protocol`, `replies`, `framing`, `frame_payload`, `wire`                          | Versioned JSON frames with passed descriptors                                                    |
+| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`                           | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc               |
+| `adapter_invocation`, `adapter_retry`                                              | Invocation state and deadline-preserving busy and restart retries                                |
+| `tracing`, `tracing_export`, `tracing_sdk_export`                                  | Bounded spans, the fixed journal schema and synchronous native-journal export                    |
+| `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper        |
+| `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar |
+| `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                  |
+| `status`, `status_client`, `status_render`, `status_cli`                           | The status document, its transport, rendering and command                                        |
+| `admission_readiness`                                                              | Pure admission-progress classification from health, ledger counts and recovery outlook           |
+| `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                             |
+| `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                      |
+| `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, native journal datagrams, journal queries and reports                         |
+| `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                        |
 
 _Table 2: Package modules._
 
@@ -492,6 +504,15 @@ the compiler may have run. `adapter_replies` reads one reply and reports a
 closed or reset connection, or a reply cut off mid-frame
 (`framing.TruncatedFrameError`), as `SupervisorClosedError`.
 
+`adapter._main` accepts the keyword-only `exempt_queries` switch, defaulting to
+`False`; `rustc_main` enables it and `rustdoc_main` disables it explicitly.
+After the admitted-scope check, the rustc path calls
+`rustc_query.is_toolchain_query(argv, env, cwd)`. A match records the
+outcome-only exemption and execs `groups.compiler_argv(argv)` with the shared
+effective environment. An unrecognized vector goes through
+`run(Invocation(argv, cacheable, env))`. Exempt exec failures keep the ordinary
+adapter diagnostic prefix and failure status, and do not emit a second summary.
+
 ### 10.1. The adapter's environment contract
 
 The adapter forwards the caller's environment verbatim, with one exception.
@@ -505,11 +526,13 @@ rustup source.
 
 Keep these rules when changing it:
 
-- `adapter._main` computes the effective environment once and passes it to both
-  the already-admitted `os.execvpe` and
-  `run(Invocation(argv, cacheable, env))`, so the two launch paths cannot
-  disagree. `Invocation` defaults its `env` to a snapshot of `os.environ`;
-  `_request_once` copies the mapping it is given and does not read `os.environ`.
+- `adapter._main` computes the effective environment once and passes it to the
+  already-admitted `os.execvpe`, the exempt `os.execvpe`, and
+  `run(Invocation(argv, cacheable, env))`, so all three launch paths use the
+  same environment. `Invocation` defaults its `env` to a snapshot of
+  `os.environ`; `_request_once` copies the mapping it is given and does not read
+  `os.environ`. The query classifier receives this explicit mapping and the
+  single `cwd` snapshot; it never reads process environment implicitly.
 - The helper must not run the compiler or rustup, because the compiler is what
   fails under the poisoned path, and it must not change `argv`.
 - The supervisor, `groups.launch_spec` and `launch` stay unaware of it: they
@@ -519,6 +542,62 @@ Keep these rules when changing it:
   that runs a real compiler, `test_toolchain_library_path_real.py`, only asks
   for `--version` and skips when no installed toolchain fails to start under
   its rustlib path.
+
+### 10.2. Rustc query admission
+
+`rustc_main` may run a narrowly allow-listed query without requesting a compile
+slot. `rustdoc_main` does not use this classifier. The contract and source
+evidence are recorded in
+[RFC 0003](rfcs/0003-toolchain-query-admission-exemption.md). The exemption
+accepts one version query (`-V`, `--version`, or `-vV`, optionally with
+`--verbose`), one or more allow-listed `--print=KIND` queries without an input
+file, or Cargo's stdin-based target-information probe. The separate-value
+`--print KIND` spelling is accepted only for direct rustc invocations. The
+Cargo probe parser accepts recognized option/value pairs in any order, requires
+stdin, the synthetic crate name, at least one crate type, and
+`--print=file-names`, and permits additional allow-listed crate types and print
+kinds. It rejects unknown tokens, repeated singleton fields, and duplicate
+crate types or print kinds.
+
+The module boundaries follow those grammars: `rustc_query.py` exports
+`is_toolchain_query` and normalizes compiler argv; `rustc_query_workspace.py`
+verifies workspace-driver identity; `rustc_query_grammar.py` recognizes direct
+rustc version and print forms; and `rustc_cargo_probe.py` owns Cargo's stdin
+probe grammar. These parsers remain private to adapter admission. They are not
+general validation helpers for compile commands.
+
+The compiler identity is either a basename of `rustc`, or exactly one
+`clippy-driver` or `dylint-driver` followed by an inner executable whose
+basename is `rustc`. If `RUSTC_WORKSPACE_WRAPPER` is present, the classifier
+resolves both the configured wrapper and the invocation driver through the
+public `toolchain_env.locate_executable` helper, follows symlinks, and requires
+the same file. A missing, invalid or different resolved path keeps admission.
+Only when the variable is absent does the closed driver-name allow-list
+establish identity. Dylint with non-whitespace `DYLINT_RUSTFLAGS` remains
+admitted because the driver appends those unclassified arguments. Unknown or
+nested wrappers, argument files, input files, output redirection, compile
+indicators, unsupported print kinds, and any unconsumed argument also remain
+admitted.
+
+The classifier strips leading caller `sccache` layers only to inspect the
+compiler identity. The exempt execution retains recognized workspace drivers
+and the inner rustc, but omits caller `sccache`: sccache v0.18.0 can connect to
+or start its server before deciding that a query is not a compilation. The
+supervisor-composed sccache path runs only after admission and is not involved
+in the exemption. These rules keep the exempt path outside both token waiting
+and cache-server waiting while leaving every uncertain invocation on normal
+admission.
+
+The pinned Rust, Clippy, Cargo and Dylint source findings, as well as the
+sccache v0.18.0 client ordering, are documented in RFC 0003. These source pins
+support the query classification; they do not establish the exact interval for
+which Cargo holds `.package-cache` around each probe. That lock span remains an
+open host observation.
+
+Before exec, the adapter records an outcome-only `adapter_finished` event with
+outcome `exempt`. It has no wait or runtime fields, so it adds no samples to
+the admission distributions. The exempt `os.execvpe` receives the same
+effective environment as the already-admitted and normal admitted paths.
 
 ## 11. Tests
 
@@ -536,23 +615,32 @@ live in `tests/fixtures`.
 
 Use these before writing a new arrange step; extend one rather than copying it.
 
-| Module                       | Provides                                                                                            |
-| ---------------------------- | --------------------------------------------------------------------------------------------------- |
-| `conftest.py`                | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures |
-| `request_helpers.py`         | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
-| `pool_helpers.py`            | `FakePool` and `attach_pool`                                                                        |
-| `descriptor_helpers.py`      | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
-| `descriptor_guard.py`        | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                          |
-| `launch_helpers.py`          | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
-| `adapter_doubles.py`         | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
-| `toolchain_trees.py`         | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler   |
-| `journal_fixtures.py`        | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
-| `listener_helpers.py`        | `watched_listener`, a listener under `ListenerPressure` control                                     |
-| `cache_recovery_helpers.py`  | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
-| `cache_recovery_harness.py`  | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
-| `cache_recovery_machines.py` | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
-| `systemd_harness.py`         | Host acceptance `Harness`, `systemd_user_marks` and `wait_for`                                      |
-| `harness_units.py`           | Transient unit control and `unit_properties` over the public user bus                               |
+| Module                             | Provides                                                                                            |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `conftest.py`                      | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures |
+| `request_helpers.py`               | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
+| `pool_helpers.py`                  | `FakePool` and `attach_pool`                                                                        |
+| `descriptor_helpers.py`            | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
+| `descriptor_guard.py`              | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                          |
+| `launch_helpers.py`                | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
+| `adapter_doubles.py`               | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
+| `toolchain_trees.py`               | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler   |
+| `journal_fixtures.py`              | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
+| `listener_helpers.py`              | `watched_listener`, a listener under `ListenerPressure` control                                     |
+| `cache_recovery_helpers.py`        | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
+| `cache_recovery_harness.py`        | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
+| `cache_recovery_machines.py`       | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
+| `harness_processes.py`             | `wait_for`, `start_adapter`, process cleanup and host process observations                          |
+| `harness_status.py`                | `HarnessStatus`, the status document, readiness and drain-fault queries                             |
+| `systemd_harness.py`               | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling    |
+| `rustc_linter_acceptance.py`       | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios       |
+| `rustc_query_host_checks.py`       | Query and readiness assertions shared by host query and timing scenarios                            |
+| `rustc_query_host_observations.py` | Compact host acceptance evidence and package-cache lock-wait observations                           |
+| `rustc_query_host_support.py`      | Private Cargo fixtures, held-token barriers and captured command output                             |
+| `rustc_query_probe_records.py`     | `ProbeRecord` and JSON-line parsing for completed timing-shim observations                          |
+| `rustc_query_support.py`           | `cargo_probe` and `temporary_executable` for rustc query and property tests                         |
+| `rustc_query_timing_shim.py`       | Sibling-adapter timing shim with JSON-line probe records                                            |
+| `harness_units.py`                 | User-manager readiness, acceptance marks, transient unit control and properties                     |
 
 _Table 4: Shared test helper modules._
 
@@ -600,6 +688,30 @@ proves the supervisor's own defence under the legacy `control-group` mode (the
 request is refused as `restarting` and retried, never `launch-failed`).
 `tests/cache_unit_fake.py` plays a cache unit through its states for unit tests
 that need the order of the barrier, stop and start.
+
+Use `Harness.invoke(argv, env=...)` when a host scenario must pass a compiler
+argument vector directly to the adapter. It merges the optional environment
+overlay with the harness environment and uses the same fresh session and pipe
+setup as `Harness.compile`. Register each process's kill and
+`reap_and_close_pipes` callbacks in the scenario's `ExitStack`.
+
+`tests/test_rustc_query_systemd.py` proves version queries bypass a fully held
+pool outside the compiler slice while real compile requests queue.
+`tests/test_rustc_query_host.py` covers cold metadata, Clippy and Dylint
+resolution against fresh crates; `tests/test_rustc_query_timings.py` records
+direct compiler and driver query timings while the pool remains held. The
+held-pool systemd test also verifies that an ordinary compile and an
+unknown-wrapper query queue without execution, then finish after the barrier
+compilers are released. Host scenarios use private Cargo homes and fresh target
+directories. The Dylint host scenarios require the caller's prebuilt library
+path and skip with an explicit reason when it is absent; they do not build a
+driver or lint library.
+
+`tests/rustc_query_timing_shim.py` runs the sibling adapter as a child with the
+original argv and inherited standard streams. It writes one JSON line per
+completed probe with argv, monotonic start and end, status and the effective
+workspace-wrapper value. Keep that record schema aligned with
+`rustc_query_probe_records.ProbeRecord` and the property summaries.
 
 ### 11.5. Closing what a test opens
 
@@ -672,6 +784,10 @@ composite actions.
   `make check-fmt`, `make lint`, `make typecheck`, `make markdownlint`,
   `make audit` (skipped for Dependabot) and coverage through the shared
   coverage action.
+- Both coverage workflows set `python-source: buildlimits,scripts`, keeping
+  the pull-request measurement and main-branch ratchet baseline on the same
+  scope. This measures application code and repository automation while
+  excluding the test harnesses.
 - `audit.yml` runs `make audit` weekly as the compensating control for the
   Dependabot bypass.
 - `act-validation.yml` runs `make test WITH_ACT=1` to exercise the workflows

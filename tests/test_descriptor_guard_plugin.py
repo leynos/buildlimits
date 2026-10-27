@@ -36,6 +36,9 @@ def test_a_leaking_doctest_fails_at_teardown(pytester: pytest.Pytester) -> None:
         """
     )
     pytester.makepyfile(leaky=_LEAKING_DOCTEST)
-    result = pytester.runpytest_subprocess("-p", "no:cacheprovider")
+    # The parent coverage run's SlipCover plugin is inherited by this child.
+    result = pytester.runpytest_subprocess(
+        "-p", "no:cacheprovider", "-p", "no:slipcover"
+    )
     result.assert_outcomes(passed=1, errors=1)
     result.stdout.fnmatch_lines(["*left 1 descriptor(s) open*eventpoll*"])

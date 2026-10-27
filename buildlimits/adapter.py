@@ -32,6 +32,7 @@ from buildlimits.adapter_retry import retry_request as _retry_request
 from buildlimits.adapter_signals import _reproduce as _reproduce
 from buildlimits.adapter_signals import observe_signals
 from buildlimits.framing import DescriptorSendPressureError
+from buildlimits.groups import compiler_argv
 from buildlimits.heartbeat import (
     Heartbeat,
     crate_label,
@@ -49,6 +50,7 @@ from buildlimits.protocol import (
     encode_request,
     send_frame,
 )
+from buildlimits.rustc_query import is_toolchain_query
 from buildlimits.rustdoc import RustdocError, resolve_rustdoc
 from buildlimits.timing import SYSTEM_RETRY_WAIT, RetryWait
 from buildlimits.toolchain_env import toolchain_environment
@@ -154,10 +156,6 @@ def _request_once(
     ------
     AdapterError
         If descriptor capture and encoding exhaust the admission deadline.
-    BusyError
-        If the initial rights transfer is refused before any bytes are queued.
-    RestartingError
-        If the supervisor goes away before the request is admitted.
     """
     deadline, summary = attempt.deadline, attempt.summary
     env = dict(invocation.env)
@@ -172,32 +170,52 @@ def _request_once(
         summary.outcome = "connect_timeout"
         raise
     with conn:
-        fds = descriptors.inheritable_descriptors(exclude={conn.fileno()})
-        request = CompileRequest(
-            argv=tuple(invocation.argv),
-            cwd=str(Path.cwd()),
-            env=env,
-            attributes=attributes.capture(),
-            fd_targets=tuple(fds),
-            label=heartbeat.label,
-            cacheable=invocation.cacheable,
-        )
-        frame = encode_request(request)
-        remaining = deadline - heartbeat.clock()
-        if remaining <= 0:
-            msg = "compile admission request deadline expired"
-            raise AdapterError(msg)
-        conn.settimeout(remaining)
-        try:
-            send_frame(conn, frame, fds)
-        except DescriptorSendPressureError as error:
-            raise BusyError(str(error)) from error
-        except ConnectionError as error:
-            msg = f"the build-limits supervisor went away: {error}"
-            raise RestartingError(msg) from error
-        finally:
-            conn.settimeout(None)
+        _send_compile_request(conn, invocation, heartbeat, attempt)
         return _await_result(conn, heartbeat, attempt, deadline=deadline)
+
+
+def _send_compile_request(
+    conn: socket.socket,
+    invocation: Invocation,
+    heartbeat: Heartbeat,
+    attempt: AdmissionAttempt,
+) -> None:
+    """Encode and send one admission request within its deadline.
+
+    Raises
+    ------
+    AdapterError
+        If the deadline expires before the request is sent.
+    BusyError
+        If descriptor transfer is refused before any bytes are queued.
+    RestartingError
+        If the supervisor connection is lost while sending the request.
+    """
+    fds = descriptors.inheritable_descriptors(exclude={conn.fileno()})
+    request = CompileRequest(
+        argv=tuple(invocation.argv),
+        cwd=str(Path.cwd()),
+        env=dict(invocation.env),
+        attributes=attributes.capture(),
+        fd_targets=tuple(fds),
+        label=heartbeat.label,
+        cacheable=invocation.cacheable,
+    )
+    frame = encode_request(request)
+    remaining = attempt.deadline - heartbeat.clock()
+    if remaining <= 0:
+        msg = "compile admission request deadline expired"
+        raise AdapterError(msg)
+    conn.settimeout(remaining)
+    try:
+        send_frame(conn, frame, fds)
+    except DescriptorSendPressureError as error:
+        raise BusyError(str(error)) from error
+    except ConnectionError as error:
+        msg = f"the build-limits supervisor went away: {error}"
+        raise RestartingError(msg) from error
+    finally:
+        conn.settimeout(None)
 
 
 def _await_result(
@@ -289,7 +307,7 @@ def _reply_or_restart(
         raise progress.restart(str(error)) from error
 
 
-def _main(argv: list[str], *, cacheable: bool) -> int:
+def _main(argv: list[str], *, cacheable: bool, exempt_queries: bool = False) -> int:
     """Run an adapter entry point.
 
     Returns
@@ -301,11 +319,17 @@ def _main(argv: list[str], *, cacheable: bool) -> int:
         _stderr("build-limits: no compiler given")
         return USAGE_STATUS
     try:
-        # One effective environment serves both paths, so a launch under
-        # admission and a direct exec see the same compiler lookup.
-        env = toolchain_environment(argv, os.environ, str(Path.cwd()))
+        # One effective environment serves all paths, so a launch under
+        # admission and either direct exec see the same compiler lookup.
+        cwd = str(Path.cwd())
+        env = toolchain_environment(argv, os.environ, cwd)
         if in_admitted_scope(env):
             os.execvpe(argv[0], argv, env)  # ruff: ignore[start-process-with-no-shell] - already admitted; become the compiler.
+        if exempt_queries and is_toolchain_query(argv, env, cwd):
+            heartbeat = Heartbeat(crate_label(argv), heartbeat_seconds(env))
+            AdapterMetrics(heartbeat.clock, heartbeat.phase_started).exempted()
+            compiler = compiler_argv(tuple(argv))
+            os.execvpe(compiler[0], compiler, env)  # ruff: ignore[start-process-with-no-shell] - query is proven not to compile; become rustc directly.
         return run(Invocation(argv, cacheable, env))
     except (
         AdapterError,
@@ -325,7 +349,7 @@ def rustc_main() -> int:
     int
         The compiler's exit status.
     """
-    return _main(sys.argv[1:], cacheable=True)
+    return _main(sys.argv[1:], cacheable=True, exempt_queries=True)
 
 
 def rustdoc_main() -> int:
@@ -341,7 +365,7 @@ def rustdoc_main() -> int:
     except RustdocError as error:
         _stderr(f"build-limits: {error}")
         return FAILURE_STATUS
-    return _main([real, *sys.argv[1:]], cacheable=False)
+    return _main([real, *sys.argv[1:]], cacheable=False, exempt_queries=False)
 
 
 if __name__ == "__main__":

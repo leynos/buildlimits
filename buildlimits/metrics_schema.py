@@ -40,6 +40,7 @@ OUTCOMES = frozenset({
     "connect_timeout",
     "supervisor_lost",
     "interrupted",
+    "exempt",
 })
 REASONS = frozenset({
     "none",

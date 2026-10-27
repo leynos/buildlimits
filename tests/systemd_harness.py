@@ -11,23 +11,23 @@ it created.
 import array
 import contextlib
 import fcntl
-import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import termios
-import time
 import typing as typ
 import uuid
 from pathlib import Path
 
 from cached_unit_files import CachedUnits
 from harness_config import write_config
+from harness_processes import AdapterProcessOptions, start_adapter, wait_for
 from harness_processes import journal as journal
 from harness_processes import kill_group as kill_group
 from harness_processes import pid_alive as pid_alive
+from harness_status import HarnessStatus
 from harness_units import (
     Placement,
     listening,
@@ -47,31 +47,22 @@ if typ.TYPE_CHECKING:
 
 FIXTURES = Path(__file__).with_name("fixtures")
 
-
-def wait_for(condition: cabc.Callable[[], bool], timeout: float = 15.0) -> bool:
-    """Poll until a condition holds or the timeout expires.
-
-    Parameters
-    ----------
-    condition : Callable[[], bool]
-        The condition.
-    timeout : float
-        The longest wait, in seconds.
-
-    Returns
-    -------
-    bool
-        Whether the condition held in time.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if condition():
-            return True
-        time.sleep(0.05)
-    return condition()
+__all__ = [
+    "Harness",
+    "Placement",
+    "journal",
+    "kill_group",
+    "listening",
+    "manager_env",
+    "pid_alive",
+    "run_unit",
+    "systemd_user_marks",
+    "user_manager_available",
+    "wait_for",
+]
 
 
-class Harness:
+class Harness(HarnessStatus):
     """One supervisor, its pool and optionally a fake sccache server.
 
     Parameters
@@ -212,65 +203,51 @@ class Harness:
         subprocess.Popen[bytes]
             The running adapter.
         """
-        stream = subprocess.PIPE if piped else None
-        caller = self.env if env is None else {**self.env, **env}
-        return subprocess.Popen(
-            [str(self.adapter), "/bin/sh", "-c", script],
-            cwd=cwd or self.work,
-            env=caller,
-            start_new_session=True,
-            stdin=stream,
-            stdout=stream,
-            stderr=stream,
-            text=False,
-        )
+        return self.invoke(("/bin/sh", "-c", script), cwd=cwd, piped=piped, env=env)
 
-    def status(self) -> dict[str, typ.Any]:
-        """Read the supervisor's status document.
+    def invoke(
+        self,
+        argv: cabc.Sequence[str],
+        *,
+        cwd: Path | None = None,
+        piped: bool = False,
+        env: cabc.Mapping[str, str] | None = None,
+    ) -> subprocess.Popen[bytes]:
+        """Start the adapter with arbitrary argv and an optional env overlay.
 
-        Returns
-        -------
-        dict[str, Any]
-            The status.
-        """
-        result = subprocess.run(
-            [str(self.status_command), "--json"],
-            env=self.env,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
-        )
-        return json.loads(result.stdout)
-
-    def readiness_status(self) -> tuple[int, dict[str, typ.Any]]:
-        """Read status with the admission-readiness exit contract.
+        Parameters
+        ----------
+        argv : Sequence[str]
+            The argument vector passed to the adapter unchanged.
+        cwd : Path | None
+            The caller's working directory; the harness's work directory by default.
+        piped : bool
+            Whether to connect all three standard streams to pipes.
+        env : Mapping[str, str] | None
+            Overrides for this caller, merged over the harness environment.
 
         Returns
         -------
-        tuple[int, dict[str, Any]]
-            The ``--ready`` exit code and the decoded status document.
+        subprocess.Popen[bytes]
+            The running adapter in its own session.
+
+        Examples
+        --------
+        Run a version query with captured output::
+
+            process = harness.invoke(("rustc", "-vV"), piped=True)
+            stdout, stderr = process.communicate(timeout=2)
         """
-        result = subprocess.run(
-            [str(self.status_command), "--ready", "--json"],
-            env=self.env,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=30,
+        return start_adapter(
+            self.adapter,
+            argv,
+            AdapterProcessOptions(
+                cwd=cwd or self.work,
+                base_env=self.env,
+                piped=piped,
+                env=env,
+            ),
         )
-        return result.returncode, json.loads(result.stdout)
-
-    def drain_fault(self) -> str:
-        """Read the current retained-drain fault, if one is reported.
-
-        Returns
-        -------
-        str
-            The reported fault, or an empty string when no fault exists.
-        """
-        fault = self.status()["drain_fault"]
-        return fault if isinstance(fault, str) else ""
 
     def kill_supervisor(self) -> None:
         """Kill the supervisor outright, as a crash would."""
