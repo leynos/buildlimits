@@ -78,6 +78,10 @@ def select(settings: SupervisorConfig, manager: UserManager) -> Backends:
     if not is_cache(settings.cache_mode):
         return Backends(DirectCache(), managed)
     if settings.cache_mode == "kache":
-        kache = Kache(settings.kache_executable, settings.kache_socket)
+        kache = Kache(
+            settings.kache_executable,
+            socket_path=settings.kache_socket,
+            cache_dir=settings.kache_cache_dir,
+        )
         return Backends(kache, managed)
     return Backends(managed, managed)

@@ -29,7 +29,7 @@ _CACHE_MODE_ERROR = f"cache_mode must be one of {', '.join(CACHE_MODES)}"
 # stays accepted and inert instead; see ADR 004.
 _MODE_KEYS: dict[str, frozenset[str]] = {
     "sccache": frozenset({"sccache_executable", "sccache_unit", "sccache_socket"}),
-    "kache": frozenset({"kache_executable", "kache_socket"}),
+    "kache": frozenset({"kache_executable", "kache_socket", "kache_cache_dir"}),
 }
 
 
@@ -117,6 +117,12 @@ class SupervisorConfig:
         The separately managed kache daemon's socket, exported to every
         admitted group as ``KACHE_SOCKET_PATH``. ``None`` lets kache resolve
         its own default socket.
+    kache_cache_dir : Path or None
+        The kache store health checks, exported to every admitted group as
+        ``KACHE_CACHE_DIR``. ``None`` leaves the check to kache's own
+        resolution, under ``$XDG_CACHE_HOME/kache`` or ``~/.cache/kache``.
+        Health cannot check a path the supervisor was never told, so a host
+        that moves the store should name it here.
     """
 
     device: Path = Path("/dev/guild")
@@ -142,6 +148,9 @@ class SupervisorConfig:
     # None means "let kache find its own daemon"; the probe and every composed
     # group export nothing, so kache's own resolution order applies.
     kache_socket: Path | None = None
+    # None means "kache's own store"; health cannot check it, so a host that
+    # moves the store between filesystems must name it here.
+    kache_cache_dir: Path | None = None
 
 
 def load(path: Path | None) -> SupervisorConfig:

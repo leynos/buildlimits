@@ -347,6 +347,39 @@ def test_invalid_files_are_rejected(tmp_path: Path, text: str, fragment: str) ->
         config.load(path)
 
 
+@pytest.mark.parametrize(
+    ("text", "key"),
+    [
+        ('cache_mode = "kache"\nsccache_unit = "x.service"\n', "sccache_unit"),
+        ('cache_mode = "kache"\nsccache_socket = "/x.sock"\n', "sccache_socket"),
+        ('cache_mode = "sccache"\nkache_socket = "/x.sock"\n', "kache_socket"),
+        ('cache_mode = "sccache"\nkache_cache_dir = "/x"\n', "kache_cache_dir"),
+    ],
+)
+def test_a_setting_the_chosen_mode_cannot_use_is_rejected(
+    tmp_path: Path, text: str, key: str
+) -> None:
+    """A written setting that would do nothing is an error, not a silent no-op.
+
+    Only a clash between two cache backends is rejected: ``direct`` names no
+    backend, so a backend's settings are merely inert there.
+    """
+    path = tmp_path / "s.toml"
+    path.write_text(text)
+    with pytest.raises(config.ConfigError, match=f"{key}.*only valid"):
+        config.load(path)
+
+
+def test_a_backend_setting_is_inert_in_direct_mode(tmp_path: Path) -> None:
+    """``direct`` owns no keys, so it does not reject another backend's."""
+    path = tmp_path / "s.toml"
+    path.write_text('cache_mode = "direct"\nkache_cache_dir = "/x"\n')
+
+    assert config.load(path).cache_mode == "direct", (
+        "direct names no backend and so has no key to clash with"
+    )
+
+
 def test_sockets_live_under_the_runtime_directory() -> None:
     """Socket paths stay short by living under XDG_RUNTIME_DIR."""
     assert config.supervisor_socket({"XDG_RUNTIME_DIR": "/run/user/5"}) == Path(

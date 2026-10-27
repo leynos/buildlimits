@@ -75,7 +75,9 @@ class Kache:
         and named in the health probe. ``None`` lets kache resolve its own
         default socket.
     cache_dir : Path or None
-        The store kache writes, checked by :meth:`is_reachable`.
+        The store kache writes, checked by :meth:`is_reachable` and passed to
+        every admitted group as ``KACHE_CACHE_DIR``. ``None`` lets kache
+        resolve its own store, which health then cannot check.
 
     Attributes
     ----------
@@ -128,6 +130,9 @@ class Kache:
         ('/b/kache', '/t/rustc', '-vV')
         >>> cache.compose(("/t/clippy-driver", "/t/rustc"), {})[0][:2]
         ('/b/kache', '/t/clippy-driver')
+        >>> store = Kache("/b/kache", cache_dir=Path("/s")).compose(("/t/rustc",), {})[1]
+        >>> store["KACHE_CACHE_DIR"], "KACHE_SOCKET_PATH" in store
+        ('/s', False)
         """
         composed = {
             key: value for key, value in env.items() if not key.startswith("SCCACHE_")
@@ -136,6 +141,10 @@ class Kache:
         composed["KACHE_LOCAL_ONLY"] = LOCAL_ONLY
         if self.socket_path is not None:
             composed["KACHE_SOCKET_PATH"] = str(self.socket_path)
+        if self.cache_dir is not None:
+            # The group must write the store health checked; otherwise the
+            # probe verifies one filesystem while builds fill another.
+            composed["KACHE_CACHE_DIR"] = str(self.cache_dir)
         return (self._client() or self.executable, *argv), composed
 
     def _client(self) -> str | None:

@@ -98,3 +98,27 @@ def test_the_composed_client_is_the_resolved_one(tmp_path: Path) -> None:
     argv, _env = built.composition.compose(("/t/rustc", "-vV"), {})
 
     assert argv[0] == str(client), "the composed client is the file that was probed"
+
+
+def test_the_configured_daemon_and_store_reach_a_kache_group() -> None:
+    """Health and composition must name the same daemon and the same store.
+
+    The probe checks the socket and directory this configuration names, so a
+    group that let kache resolve its own would write somewhere nothing checked.
+    """
+    built = cache_backends.select(
+        SupervisorConfig(
+            cache_mode="kache",
+            kache_socket=Path("/run/user/1/buildlimits/kache.sock"),
+            kache_cache_dir=Path("/var/cache/kache"),
+        ),
+        MANAGER,
+    )
+    _argv, env = built.composition.compose(("/t/rustc", "-vV"), {})
+
+    assert env["KACHE_SOCKET_PATH"] == "/run/user/1/buildlimits/kache.sock", (
+        "the group names the daemon health probed"
+    )
+    assert env["KACHE_CACHE_DIR"] == "/var/cache/kache", (
+        "the group writes the store health checked"
+    )
