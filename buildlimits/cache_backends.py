@@ -69,7 +69,12 @@ def select(settings: SupervisorConfig, manager: UserManager) -> Backends:
     >>> built.composition.name, built.managed.name
     ('direct', 'sccache')
     """
-    managed = ManagedSccache(settings.sccache_unit, settings.sccache_socket, manager)
+    managed = ManagedSccache(
+        settings.sccache_unit,
+        settings.sccache_socket,
+        manager,
+        executable=settings.sccache_executable,
+    )
     if not is_cache(settings.cache_mode):
         return Backends(DirectCache(), managed)
     if settings.cache_mode == "kache":
