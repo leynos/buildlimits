@@ -6,6 +6,8 @@ then cache order. A failed check propagates through the existing drain loop.
 
 import typing as typ
 
+from buildlimits import kache_guard
+
 if typ.TYPE_CHECKING:
     from buildlimits.pool import TokenPool
     from buildlimits.supervisor import Supervisor
@@ -55,7 +57,13 @@ def _poll_pool(supervisor: Supervisor, now: float) -> None:
 
 
 def _poll_cache(supervisor: Supervisor, now: float) -> None:
-    """Refresh cache readiness after server-drain and pool checks."""
+    """Refresh cache readiness and the stray-process guard.
+
+    The guard runs on this cadence rather than the one-second server poll
+    because it reads every scope in the slice: a stray is a report, and a
+    report half a minute late is the same report.
+    """
     if now >= supervisor._next_cache_poll:
         supervisor._next_cache_poll = now + CACHE_POLL_SECONDS
         supervisor.server.refresh_cache_mode()
+        kache_guard.refresh_guard(supervisor.groups)

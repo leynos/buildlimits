@@ -3,7 +3,7 @@
 import typing as typ
 
 from buildlimits.admission_state import GroupState
-from buildlimits.cache_backend import is_cache
+from buildlimits.cache_modes import is_cache
 from buildlimits.effects import (
     Launch,
     NotifyFinished,
@@ -82,6 +82,7 @@ def record_admitted(supervisor: Supervisor, entry: Pending, *, cached: bool) -> 
     supervisor._metric(
         "request_admitted",
         cache_path=entry.cache_path,
+        cache_backend=supervisor.backend.name,
         wait_seconds=0.0 if entry.admitted is None else entry.admitted - entry.arrived,
     )
 

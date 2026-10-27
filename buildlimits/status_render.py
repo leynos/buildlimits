@@ -7,7 +7,7 @@ function of the document, so every variant can be pinned by a snapshot.
 
 import typing as typ
 
-from buildlimits.cache_backend import is_cache, mode_name
+from buildlimits.cache_modes import is_cache, mode_name, mode_unavailable
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -62,10 +62,40 @@ def render(state: cabc.Mapping[str, object]) -> str:
             )
             if state.get(key)
         ],
+        *_stray_lines(state),
         *_recovery_lines(state),
         *([_waiting_line(item) for item in queued] or ["no requests waiting"]),
         *([_group_line(item) for item in groups] or ["no compiler groups"]),
     ])
+
+
+def _stray_lines(state: cabc.Mapping[str, object]) -> list[str]:
+    """Render the stray cache processes no admitted scope covers.
+
+    A stray is a fault, so it is named rather than counted, and the line says
+    what it means for accounting: its work is not covered by a held token.
+
+    Returns
+    -------
+    list[str]
+        One line when the guard reported a stray, otherwise none.
+
+    Examples
+    --------
+    >>> _stray_lines({"stray_kache_processes": [4242]})
+    ['stray kache process outside admitted scopes: 4242; no token covers it']
+    >>> _stray_lines({"stray_kache_processes": []})
+    []
+    >>> _stray_lines({})
+    []
+    """
+    strays = state.get("stray_kache_processes")
+    if not strays:
+        return []
+    listed = ", ".join(str(pid) for pid in typ.cast("list[int]", strays))
+    return [
+        f"stray kache process outside admitted scopes: {listed}; no token covers it"
+    ]
 
 
 def _action_label(state: cabc.Mapping[str, object]) -> str:
@@ -140,13 +170,23 @@ def _limit_text(value: object) -> str:
 def _cache_description(state: cabc.Mapping[str, object]) -> str:
     """Say how new groups are composed with the configured cache backend.
 
-    The backend is named from the document's ``cache_mode``, so a kache
-    document says kache without the renderer knowing which caches exist.
+    The backend and the word for its absence both come from the document's
+    ``cache_mode``, so a kache document says kache is *unavailable* without
+    the renderer knowing which caches exist.
 
     Returns
     -------
     str
         A short phrase for the summary line.
+
+    Examples
+    --------
+    >>> _cache_description({"cache_mode": "sccache", "caching": False})
+    'sccache unreachable, compiling directly'
+    >>> _cache_description({"cache_mode": "kache", "caching": False})
+    'kache unavailable, compiling directly'
+    >>> _cache_description({"cache_mode": "direct"})
+    'compiling directly'
     """
     mode = str(state.get("cache_mode", "direct"))
     if not is_cache(mode):
@@ -154,7 +194,7 @@ def _cache_description(state: cabc.Mapping[str, object]) -> str:
     name = mode_name(mode)
     if state.get("caching"):
         return f"caching through {name}"
-    return f"{name} unreachable, compiling directly"
+    return f"{name} {mode_unavailable(mode)}, compiling directly"
 
 
 def _recovery_lines(state: cabc.Mapping[str, object]) -> list[str]:

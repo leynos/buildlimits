@@ -58,6 +58,10 @@ VOCABULARIES = {
     "reason": REASONS,
     "cancellation": frozenset({"none", "disconnect", "health"}),
     "cache_path": frozenset({"direct", "cached", "direct_fallback"}),
+    # Which backend an admission was composed with. It is a field of its own
+    # rather than a ``cache_path`` value, so ``cached`` and ``direct_fallback``
+    # keep their meaning in every mode and one query can count either.
+    "cache_backend": frozenset({"direct", "sccache", "kache"}),
     "health": frozenset({"healthy", "unhealthy", "stopping", "restarting"}),
     "operation": frozenset({"read", "return", "device"}),
     "accept_state": frozenset({"paused", "resume_failed", "resumed"}),

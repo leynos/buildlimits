@@ -19,8 +19,18 @@ from pathlib import Path
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-CACHE_MODES = ("sccache", "direct")
+CACHE_MODES = ("sccache", "kache", "direct")
 CACHE_RECOVERY_POLICIES = ("manual", "starved")
+_CACHE_MODE_ERROR = f"cache_mode must be one of {', '.join(CACHE_MODES)}"
+
+# Settings that only mean something in one cache mode. ``cache_recovery`` is
+# deliberately absent: ``starved`` is the default, so rejecting it in kache
+# mode would make the default configuration invalid on every kache host. It
+# stays accepted and inert instead; see ADR 004.
+_MODE_KEYS: dict[str, frozenset[str]] = {
+    "sccache": frozenset({"sccache_executable", "sccache_unit", "sccache_socket"}),
+    "kache": frozenset({"kache_executable", "kache_socket"}),
+}
 
 
 class ConfigError(Exception):
@@ -84,7 +94,8 @@ class SupervisorConfig:
         The longest start-up waits for surviving groups to drain.
     cache_mode : str
         ``sccache`` to compose admitted compilers with the managed server,
-        or ``direct``.
+        ``kache`` to compose them with an unowned kache daemon, or ``direct``
+        to run them without a cache.
     sccache_executable : str
         The sccache client, when ``cache_mode`` is ``sccache``.
     sccache_unit : str
@@ -94,11 +105,18 @@ class SupervisorConfig:
     cache_recovery : str
         ``manual`` to recover the managed server only when an operator asks,
         or ``starved`` to also recover it when a waiting request cannot
-        progress because the server retains detached work.
+        progress because the server retains detached work. It is accepted and
+        inert in every mode but ``sccache``.
     recovery_marker : Path
         The restart barrier. The managed service refuses to start while this
         path exists, so recovery cannot leave the cache running with its
         detached work unaccounted.
+    kache_executable : str
+        The kache client, when ``cache_mode`` is ``kache``.
+    kache_socket : Path or None
+        The separately managed kache daemon's socket, exported to every
+        admitted group as ``KACHE_SOCKET_PATH``. ``None`` lets kache resolve
+        its own default socket.
     """
 
     device: Path = Path("/dev/guild")
@@ -120,6 +138,10 @@ class SupervisorConfig:
     recovery_marker: Path = dc.field(
         default_factory=lambda: runtime_dir() / "cache-recovery"
     )
+    kache_executable: str = "kache"
+    # None means "let kache find its own daemon"; the probe and every composed
+    # group export nothing, so kache's own resolution order applies.
+    kache_socket: Path | None = None
 
 
 def load(path: Path | None) -> SupervisorConfig:
@@ -181,8 +203,48 @@ def from_mapping(raw: cabc.Mapping[str, object]) -> SupervisorConfig:
             msg = f"unknown setting {key!r}"
             raise ConfigError(msg)
         values[key] = _coerce(key, fields[key].type, value)
+    _reject_foreign_keys(values)
     # _coerce has converted each value to its field's declared type.
     return SupervisorConfig(**typ.cast("dict[str, typ.Any]", values))
+
+
+def _reject_foreign_keys(values: cabc.Mapping[str, object]) -> None:
+    """Reject a written setting that the chosen cache mode cannot use.
+
+    Every key is optional, so what is invalid is decided by the keys the
+    operator actually wrote, not by a difference from the defaults. A key that
+    would look accepted and then do nothing is worse than an error: it hides a
+    mode that was not the one intended.
+
+    Only a clash between two cache backends is an error. ``direct`` names no
+    backend, so it owns no keys and a backend's settings are merely inert
+    there, as ``sccache_socket`` has always been.
+
+    Parameters
+    ----------
+    values : Mapping[str, object]
+        The converted settings, keyed as written in the document.
+
+    Raises
+    ------
+    ConfigError
+        If one backend's setting was written while another backend is
+        selected.
+    """
+    mode = values.get("cache_mode", "sccache")
+    if mode not in _MODE_KEYS:
+        # ``validate`` owns an unknown mode's message, and ``direct`` owns no
+        # keys to clash with.
+        return
+    for owner, keys in _MODE_KEYS.items():
+        if owner == mode:
+            continue
+        for key in keys & values.keys():
+            msg = (
+                f"setting {key!r} is only valid when cache_mode is "
+                f"{owner!r}, not {mode!r}"
+            )
+            raise ConfigError(msg)
 
 
 def validate(config: SupervisorConfig) -> SupervisorConfig:
@@ -211,10 +273,7 @@ def validate(config: SupervisorConfig) -> SupervisorConfig:
 
 _RANGE_RULES: tuple[tuple[cabc.Callable[[SupervisorConfig], bool], str], ...] = (
     (lambda config: config.slots >= 1, "slots must be a positive integer"),
-    (
-        lambda config: config.cache_mode in CACHE_MODES,
-        f"cache_mode must be one of {', '.join(CACHE_MODES)}",
-    ),
+    (lambda config: config.cache_mode in CACHE_MODES, _CACHE_MODE_ERROR),
     (
         lambda config: config.cache_recovery in CACHE_RECOVERY_POLICIES,
         (f"cache_recovery must be one of {', '.join(CACHE_RECOVERY_POLICIES)}"),
@@ -246,8 +305,10 @@ def _coerce(key: str, annotation: object, value: object) -> object:
         If the value does not have the field's type.
     """
     # Python 3.14 evaluates annotations lazily, so dataclass fields carry the
-    # field's type object rather than its source text.
-    converter = _CONVERTERS.get(annotation) if isinstance(annotation, type) else None
+    # field's type object rather than its source text. A ``X | None`` field
+    # carries a ``types.UnionType``, which is not a ``type``, so membership is
+    # asked of the table rather than gated on ``isinstance``.
+    converter = _CONVERTERS.get(annotation)
     converted = converter(value) if converter is not None else None
     if converted is None:
         msg = f"setting {key!r} has the wrong type"
@@ -267,9 +328,11 @@ def _is_number(value: object) -> bool:
 
 
 # Each converter returns None for a value of the wrong type; no setting is
-# ever None, so None cannot be confused with a converted value.
-_CONVERTERS: dict[type, cabc.Callable[[object], object]] = {
+# ever None, so None cannot be confused with a converted value. The key type is
+# ``object`` because a ``X | None`` field's annotation is a union object.
+_CONVERTERS: dict[object, cabc.Callable[[object], object]] = {
     Path: lambda value: Path(value) if isinstance(value, str) else None,
+    Path | None: lambda value: Path(value) if isinstance(value, str) else None,
     int: lambda value: value if _is_number(value) and isinstance(value, int) else None,
     float: lambda value: float(typ.cast("float", value)) if _is_number(value) else None,
     str: lambda value: value if isinstance(value, str) else None,

@@ -2,7 +2,7 @@
 
 import pytest
 
-from buildlimits.groups import compiler_argv
+from buildlimits.compiler_argv import compiler_argv
 from buildlimits.heartbeat import Heartbeat, crate_label, heartbeat_seconds
 
 
@@ -68,13 +68,17 @@ def test_crate_labels() -> None:
     [
         (("/t/rustc", "-vV"), ("/t/rustc", "-vV")),
         (("/b/sccache", "/t/rustc", "x.rs"), ("/t/rustc", "x.rs")),
+        (("/b/kache", "/t/rustc", "x.rs"), ("/t/rustc", "x.rs")),
         (("sccache", "sccache", "/t/rustc"), ("/t/rustc",)),
+        (("kache", "kache", "/t/rustc"), ("/t/rustc",)),
+        (("kache", "sccache", "/t/rustc"), ("/t/rustc",)),
         (("/t/clippy-driver", "/t/rustc"), ("/t/clippy-driver", "/t/rustc")),
         (("sccache",), ("sccache",)),
+        (("kache",), ("kache",)),
     ],
 )
-def test_a_callers_own_sccache_layer_is_removed(
+def test_a_callers_own_cache_layer_is_removed(
     argv: tuple[str, ...], expected: tuple[str, ...]
 ) -> None:
-    """The supervisor, not the caller, decides whether sccache runs."""
-    assert compiler_argv(argv) == expected, "the caller's own sccache layer is stripped"
+    """The supervisor, not the caller, decides whether a cache runs."""
+    assert compiler_argv(argv) == expected, "the caller's own cache layer is stripped"

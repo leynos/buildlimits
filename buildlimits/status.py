@@ -12,7 +12,7 @@ fetches it, :mod:`buildlimits.status_render` presents it, and
 import resource
 import typing as typ
 
-from buildlimits import descriptors
+from buildlimits import descriptors, kache_guard
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -55,6 +55,7 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
             "running_seconds": None if admitted is None else round(now - admitted, 1),
         })
     settings = supervisor.settings
+    strays = _stray_kache_processes(supervisor)
     return {
         "capacity": settings.slots,
         "held": admission.tokens_held(),
@@ -75,6 +76,10 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
         "device": str(settings.device),
         "cache_mode": settings.cache_mode,
         "caching": admission.cached,
+        # A fault, not a token holder: a stray cache process outside every
+        # admitted scope is reported and nothing else. Always present, so a
+        # reader can distinguish "no strays" from "not guarded".
+        "stray_kache_processes": strays,
         # Recovery never takes a waiting request's place, so the queue is
         # reported exactly as admission holds it.
         "cache_recovery": supervisor.recovery.describe(now),
@@ -82,6 +87,27 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
         "groups": groups,
         "descriptors": _descriptor_metrics(supervisor),
     }
+
+
+def _stray_kache_processes(supervisor: Supervisor) -> list[int]:
+    """Read the current stray cache processes, when this mode can have any.
+
+    Only an in-scope cache runs inside an admitted group, so only it can leave
+    a process behind there; every other mode reports an empty list without
+    touching ``/proc`` or the slice. The read is taken here rather than reused
+    from the last poll because status is an operator asking *now*.
+
+    Returns
+    -------
+    list[int]
+        The uncovered kache process identifiers, empty when the mode is not
+        guarded or the guard found none.
+    """
+    groups = supervisor.groups
+    if not kache_guard.guarded(groups):
+        return []
+    groups.guard.observe(groups.slice_dir, kache_guard.admitted_scopes(groups))
+    return groups.guard.describe()
 
 
 def _descriptor_metrics(supervisor: Supervisor) -> dict[str, int | None]:

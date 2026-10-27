@@ -428,6 +428,26 @@ full_name = ["buildlimits.admission_state.snapshot"]
 path = ["buildlimits/admission_state.py"]
 reason = "Gauges.counts, the declared entry point above, builds every snapshot through it; the doctest and test_admission.py exercise it."
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = [
+    "buildlimits.cache_backend.DirectCache.fallback_notice",
+    "buildlimits.cache_backend.DirectCache.is_reachable",
+    "buildlimits.kache.Kache._daemon_running",
+    "buildlimits.kache.Kache.fallback_notice",
+    "buildlimits.kache.Kache.is_reachable",
+]
+reason = "Groups.cache_notice explains an uncached group through Groups.backend, and ServerWatch.refresh_cache_mode asks that same backend whether it can serve; both call the protocol the composition root fills in, so no static call edge reaches the concrete backend. Kache._daemon_running is the third part of that health answer, reached only from Kache.is_reachable. The per-mode rows of test_groups.py exercise the notice and test_server_watch.py exercises the health answer."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "function"
+full_name = [
+    "buildlimits.kache._is_writable",
+    "buildlimits.kache._reports_running",
+]
+path = ["buildlimits/kache.py"]
+reason = "Kache.is_reachable, the protocol method declared above, checks the store through _is_writable and reads the daemon's status document through _reports_running; the _reports_running doctest exercises the parsing decision."
+
 [tool.nose]
 version = "0.20.0"
 roots = ["."]

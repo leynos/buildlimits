@@ -42,7 +42,11 @@ from buildlimits.recovery_starvation import StarvationReading, starvation
 # The finite categories, each named for the clause it exercises. They are
 # tuples rather than sets so the generated case ids read in the order the
 # clauses appear in ``starvation``.
-CACHE_MODES = ("sccache", "direct")
+# `kache` is in scope, so it owns no barrier for this trigger to cross: its
+# every combination is expected to answer None. It is in the table rather than
+# omitted so that a capability regression -- kache reading as detached -- is a
+# disagreement at every one of its points instead of an untested mode.
+CACHE_MODES = ("sccache", "kache", "direct")
 POLICIES = ("starved", "manual")
 # A cooldown the instant has passed, and one it has not. ``now`` is 100.0 in
 # every case below.

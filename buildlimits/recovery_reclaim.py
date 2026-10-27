@@ -26,7 +26,7 @@ compiling directly.
 import contextlib
 import typing as typ
 
-from buildlimits.cache_backend import is_detached_mode
+from buildlimits.cache_modes import is_detached_mode
 from buildlimits.journal import log
 from buildlimits.recovery_barrier import RecoveryBarrier
 from buildlimits.systemd import SystemdError

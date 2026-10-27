@@ -28,7 +28,7 @@ import os
 import typing as typ
 from pathlib import Path
 
-from buildlimits.groups import compiler_argv
+from buildlimits.compiler_argv import compiler_argv
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

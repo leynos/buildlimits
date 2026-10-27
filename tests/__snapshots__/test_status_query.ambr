@@ -40,5 +40,7 @@
     'recovery_action': None,
     'recovery_action_is_fallback': False,
     'restarting': False,
+    'stray_kache_processes': list([
+    ]),
   })
 # ---

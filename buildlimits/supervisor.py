@@ -8,6 +8,7 @@ import time
 import typing as typ
 
 from buildlimits import (
+    cache_backends,
     cache_recovery,
     cgroups,
     config,
@@ -22,7 +23,6 @@ from buildlimits import (
     supervisor_signals,
 )
 from buildlimits.admission import Admission, GroupState
-from buildlimits.cache_backend import CacheBackend, DirectCache, is_cache
 from buildlimits.drain_loop import MAX_INTERNAL_FAILURES as MAX_INTERNAL_FAILURES
 from buildlimits.drain_loop import DrainLoop, LoopEffects
 from buildlimits.groups import Groups
@@ -30,7 +30,6 @@ from buildlimits.journal import log
 from buildlimits.metrics import Metrics, MetricsPort, gauge_fields
 from buildlimits.pool import PoolFailure, Token, TokenPool
 from buildlimits.requesters import Requests, listen
-from buildlimits.sccache import ManagedSccache
 from buildlimits.server_watch import ServerWatch
 from buildlimits.service_readiness import notify_ready
 from buildlimits.systemd import UserManager
@@ -42,6 +41,7 @@ if typ.TYPE_CHECKING:
     from pathlib import PurePosixPath
 
     from buildlimits.admission import Effect
+    from buildlimits.cache_backend import CacheBackend
     from buildlimits.tracing import JournalTracer
 TICK_SECONDS = 0.1
 
@@ -97,13 +97,11 @@ class Supervisor:
         )
         self.tracer = observations.tracer
 
-        server = ManagedSccache(
-            settings.sccache_unit, settings.sccache_socket, self.manager
-        )
+        built = cache_backends.select(settings, self.manager)
         # Composition sites ask this object for argv, environment and capability.
-        self.backend: CacheBackend = (
-            server if is_cache(settings.cache_mode) else DirectCache()
-        )
+        self.backend: CacheBackend = built.composition
+        # The managed server, touched only by the detached-only lifecycle.
+        server = built.managed
         detached = not self.backend.in_scope_work
         self.admission = Admission(cache_detached=detached, capacity=settings.slots)
         self.selector = selectors.DefaultSelector()
@@ -120,6 +118,7 @@ class Supervisor:
             server,
             self.admission,
             settings.cache_mode,
+            self.backend,
             clock=self.clock,
             metrics=self.metrics,
             # Read live, and resolved late: the recovery machine is built from

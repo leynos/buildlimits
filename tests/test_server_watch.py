@@ -17,6 +17,8 @@ from buildlimits.systemd import UserManager
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from buildlimits.cache_backend import CacheBackend
+
 
 @dc.dataclass(slots=True)
 class FakeServer:
@@ -65,9 +67,16 @@ class FakeServer:
 def _watch(
     server: FakeServer, admission: Admission | None = None, mode: str = "sccache"
 ) -> ServerWatch:
-    """Watch a fake server for an admission state."""
+    """Watch a fake server for an admission state.
+
+    The fake answers both ports: it is the detached adapter the drain paths
+    query, and the health port :meth:`ServerWatch.refresh_cache_mode` probes.
+    """
     return ServerWatch(
-        typ.cast("ManagedSccache", server), admission or Admission(cached=False), mode
+        typ.cast("ManagedSccache", server),
+        admission or Admission(cached=False),
+        mode,
+        typ.cast("CacheBackend", server),
     )
 
 
@@ -140,17 +149,45 @@ def test_no_waiting_token_means_no_query() -> None:
         (True, "sccache", True),
         (False, "sccache", False),
         (SccacheError("cannot probe s.sock: EACCES"), "sccache", False),
+        (True, "kache", True),
+        (False, "kache", False),
+        (SccacheError("cannot probe /run/kache/kache.sock"), "kache", False),
         (True, "direct", False),
     ],
-    ids=["reachable", "stopped", "probe-fault", "direct"],
+    ids=[
+        "reachable",
+        "stopped",
+        "probe-fault",
+        "kache",
+        "kache-unavailable",
+        "kache-fault",
+        "direct",
+    ],
 )
 def test_new_groups_cache_only_through_a_reachable_server(
     reachable: bool | SccacheError, mode: str, cached: bool
 ) -> None:
-    """A probe fault falls back to direct compilation like a stopped server."""
+    """A probe fault falls back to direct compilation like a stopped server.
+
+    The probe is asked of whichever backend the mode selected, so an in-scope
+    cache is composed on its own health rather than on a server this supervisor
+    does not own.
+    """
     admission = Admission(cached=not cached)
     _watch(FakeServer(reachable=reachable), admission, mode).refresh_cache_mode()
     assert admission.cached is cached, "the cache mode follows the probe"
+
+
+def test_an_in_scope_cache_is_never_drained() -> None:
+    """Only a detached backend has work outside a scope to account for.
+
+    kache's compiler is a child of the wrapper inside the group, so there is
+    nothing for start-up to account for and nothing for a stop to find. Asking
+    the detached adapter here would be asking the wrong port.
+    """
+    server = FakeServer(load=SccacheError("nothing should read the server"))
+    _watch(server, mode="kache").drain_orphans()
+    assert server.drain_queries == 0, "an in-scope cache is never accounted for"
 
 
 def test_a_probe_fault_is_reported_once(capsys: pytest.CaptureFixture[str]) -> None:
@@ -238,7 +275,7 @@ def test_live_cache_drain_diagnostic_does_not_report_a_manager_query_failure(
             FakeRunner(stdout="MainPID=1\nControlGroup=\nActiveState=active\n")
         ),
     )
-    watch = ServerWatch(server, _draining(b"a"), "sccache")
+    watch = ServerWatch(server, _draining(b"a"), "sccache", server)
     assert not watch.drained_tokens(), "a live cache cannot prove completed work"
     assert watch.drain_fault is not None, "the retained-work reason stays visible"
     assert "retained detached work" in watch.drain_fault, (
@@ -274,7 +311,7 @@ def test_a_live_idle_cache_reports_the_live_work_kind(
     """A live service with zero visible roots is live-work, never transport."""
     fixture_cgroup(tmp_path, monkeypatch)
     server = _scripted(LIVE)
-    watch = ServerWatch(server, _draining(b"a"), "sccache")
+    watch = ServerWatch(server, _draining(b"a"), "sccache", server)
     assert not watch.drained_tokens(), "a live cache cannot prove completed work"
     assert watch.drain_fault_kind == "live_work", "live work is classified as such"
     assert watch.admission.tokens_held() == 1, "the kind never releases a token"
@@ -286,7 +323,7 @@ def test_a_stopped_but_populated_cache_reports_its_own_kind(
     """A stopped service that still holds work needs cgroup inspection, not a stop."""
     fixture_cgroup(tmp_path, monkeypatch)
     server = _scripted(STOPPED)
-    watch = ServerWatch(server, _draining(b"a"), "sccache")
+    watch = ServerWatch(server, _draining(b"a"), "sccache", server)
     assert not watch.drained_tokens(), "surviving work keeps the token held"
     assert watch.drain_fault_kind == "stopped_populated", (
         "a stopped populated service is its own kind"
@@ -304,7 +341,7 @@ def test_an_unavailable_manager_reports_the_manager_kind() -> None:
     server = ManagedSccache(
         "fixture.service", Path("/fixture/socket"), UserManager(runner)
     )
-    watch = ServerWatch(server, _draining(b"a"), "sccache")
+    watch = ServerWatch(server, _draining(b"a"), "sccache", server)
     assert not watch.drained_tokens(), "an unreadable state keeps the token held"
     assert watch.drain_fault_kind == "manager", "transport faults are manager faults"
     assert watch.drain_attempts == 1, "one failed attempt is recorded"
@@ -317,11 +354,8 @@ def test_kind_specific_guidance_names_the_right_operator_action(
 ) -> None:
     """Live work and manager faults must not share one recovery instruction."""
     fixture_cgroup(tmp_path, monkeypatch)
-    live = ServerWatch(
-        _scripted(LIVE),
-        _draining(b"a"),
-        "sccache",
-    )
+    server = _scripted(LIVE)
+    live = ServerWatch(server, _draining(b"a"), "sccache", server)
     now = [0.0]
     live.clock = lambda: now[0]
     # The first eight failures exhaust the limit and install the backoff.
@@ -336,11 +370,10 @@ def test_kind_specific_guidance_names_the_right_operator_action(
         """Refuse every private and public manager query."""
         return subprocess.CompletedProcess(list(argv), 1, "", "Connection refused")
 
-    manager = ServerWatch(
-        ManagedSccache("fixture.service", Path("/fixture/socket"), UserManager(refuse)),
-        _draining(b"a"),
-        "sccache",
+    unreadable = ManagedSccache(
+        "fixture.service", Path("/fixture/socket"), UserManager(refuse)
     )
+    manager = ServerWatch(unreadable, _draining(b"a"), "sccache", unreadable)
     manager.clock = lambda: now[0]
     for _ in range(8):
         manager.drained_tokens()
