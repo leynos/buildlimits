@@ -6,17 +6,27 @@ and descriptor limits instead of guessing from a bare process. Only the units a
 harness names are ever touched, and every command runs under
 :func:`manager_env`, which selects the reachable public user bus without
 changing the parent manager's routing.
+
+:func:`user_manager_available` and :func:`systemd_user_marks` live here because
+they answer the same question the rest of the module acts on: whether this host
+can run a unit at all. The harness module re-exports them for the suites that
+ask through it.
 """
 
 import dataclasses as dc
 import os
+import shutil
 import socket
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed fixture argv, never a shell.
+import time
 import typing as typ
+
+import pytest
 
 from buildlimits.systemd import run
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
 
@@ -34,6 +44,76 @@ class Placement:
 
     parent_slice: str
     nofile: tuple[int, int] | None = None
+
+
+def wait_for(condition: cabc.Callable[[], bool], timeout: float = 15.0) -> bool:
+    """Poll until a condition holds or the timeout expires.
+
+    It lives here rather than with the harness so that the fixtures the harness
+    owns can wait without importing the module that owns them.
+
+    Parameters
+    ----------
+    condition : Callable[[], bool]
+        The condition.
+    timeout : float
+        The longest wait, in seconds.
+
+    Returns
+    -------
+    bool
+        Whether the condition held in time.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.05)
+    return condition()
+
+
+def user_manager_available() -> bool:
+    """Report whether a systemd user manager and busctl are usable.
+
+    Returns
+    -------
+    bool
+        Whether host acceptance was opted into and the manager is usable.
+    """
+    # Even collection-time readiness probes must be explicitly opted into.
+    if os.environ.get("BUILD_LIMITS_HOST_ACCEPTANCE") != "1":
+        return False
+    if not shutil.which("busctl") or not shutil.which("systemd-run"):
+        return False
+    result = subprocess.run(
+        ["/usr/bin/systemctl", "--user", "is-system-running"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=manager_env(),
+        timeout=30,
+    )
+    return result.stdout.strip() in {"running", "degraded"}
+
+
+def systemd_user_marks(reason: str) -> list[pytest.MarkDecorator]:
+    """Mark a module as host acceptance that skips without a user manager.
+
+    Parameters
+    ----------
+    reason : str
+        What the module needs from the host, shown when it is skipped.
+
+    Returns
+    -------
+    list[pytest.MarkDecorator]
+        The ``systemd_user`` selector and the availability skip, for
+        ``pytestmark``.
+    """
+    return [
+        pytest.mark.systemd_user,
+        pytest.mark.skipif(not user_manager_available(), reason=reason),
+    ]
 
 
 def manager_env() -> dict[str, str]:
@@ -132,6 +212,29 @@ def listening(runtime: Path) -> bool:
         except OSError:
             return False
     return True
+
+
+def stop_units(units: cabc.Iterable[str]) -> None:
+    """Stop and un-fail harness-owned units, in the order given.
+
+    Stopping is synchronous, so the caller's next command sees the state this
+    left rather than one the manager has only queued. A unit that was never
+    started is stopped harmlessly.
+
+    Parameters
+    ----------
+    units : Iterable[str]
+        The units to stop, outermost last.
+    """
+    for unit in units:
+        for arguments, timeout in ((("stop", unit), 90), (("reset-failed", unit), 30)):
+            subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - owned fixture units.
+                ["/usr/bin/systemctl", "--user", *arguments],
+                capture_output=True,
+                check=False,
+                env=manager_env(),
+                timeout=timeout,
+            )
 
 
 def unit_active(unit: str) -> bool:
