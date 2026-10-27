@@ -195,14 +195,36 @@ def find(slice_dir: Path, admitted: cabc.Iterable[Path]) -> tuple[int, ...]:
     return kache.stray_processes(candidates, admitted=covered)
 
 
+def _or_nothing[T](read: cabc.Callable[[Path], list[T]], path: Path) -> list[T]:
+    """Read one control-group directory, or none when it cannot be read.
+
+    The slice and its scopes can both disappear between the check that they
+    exist and the read that follows, which raises ``OSError``. This guard only
+    reports, so an unreadable directory is treated exactly as a missing one:
+    as nothing found. Raising would turn a diagnostic into a poll fault and,
+    on the status path, into a failed status query, for a reading that can
+    only ever add a line to the journal.
+
+    Parameters
+    ----------
+    read : Callable[[Path], list[T]]
+        The control-group reading to take.
+    path : Path
+        The directory to read.
+
+    Returns
+    -------
+    list[T]
+        What the reading found, empty when the directory has gone.
+    """
+    try:
+        return read(path)
+    except OSError:
+        return []
+
+
 def _child_scopes(slice_dir: Path) -> list[Path]:
     """List the slice's scopes, or none when the slice cannot be read.
-
-    The slice can be removed between ``child_scopes`` checking that it exists
-    and listing it, which raises ``OSError``. This guard only reports, so an
-    unreadable slice is treated exactly as an unreadable scope is: as nothing
-    found. Raising here would turn a diagnostic into a poll fault and, on the
-    status path, into a failed status query.
 
     Parameters
     ----------
@@ -212,21 +234,14 @@ def _child_scopes(slice_dir: Path) -> list[Path]:
     Returns
     -------
     list[Path]
-        The scope directories, empty when the slice has gone.
+        The scope directories, empty when the slice has gone. See
+        :func:`_or_nothing` for why an unreadable slice is no finding.
     """
-    try:
-        return cgroups.child_scopes(slice_dir)
-    except OSError:
-        return []
+    return _or_nothing(cgroups.child_scopes, slice_dir)
 
 
 def _members(scope_dir: Path) -> list[int]:
     """List a scope's processes, or none when the scope cannot be read.
-
-    An unreadable scope is one the drain path is already terminating, and this
-    guard only reports. Raising would turn a diagnostic into a poll fault that
-    the event loop then has to survive, for a reading that can only ever add a
-    line to the journal.
 
     Parameters
     ----------
@@ -236,12 +251,10 @@ def _members(scope_dir: Path) -> list[int]:
     Returns
     -------
     list[int]
-        The process identifiers, empty when the scope has gone.
+        The process identifiers, empty when the scope has gone. An unreadable
+        scope is one the drain path is already terminating.
     """
-    try:
-        return cgroups.member_pids(scope_dir)
-    except OSError:
-        return []
+    return _or_nothing(cgroups.member_pids, scope_dir)
 
 
 def _line(found: tuple[int, ...]) -> str:

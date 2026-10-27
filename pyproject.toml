@@ -141,7 +141,10 @@ extend-ignore = [
 "tests/cache_recovery_state_machine.py" = ["assert"]
 # The acceptance harness and the fake sccache drive the user's own systemd
 # tools and the vectors their tests supply, found on PATH as a build would.
-"tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
+# Its constructor is the one keyword switchboard every scenario configures, so
+# it names each backend and seam separately rather than through a config object
+# a reader would have to look up.
+"tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "too-many-arguments"]
 "tests/fixtures/fake_sccache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 "tests/fixtures/fake_kache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 
@@ -1065,6 +1068,7 @@ reason = "Recurring short test steps: these fragments arrange or check the same 
 members = [
     "tests/test_adapter_metrics.py::reject",
     "tests/test_exec_reader_ownership.py::fail",
+    "tests/test_kache_guard.py::_vanish",
 ]
 reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
 
@@ -1249,3 +1253,59 @@ members = [
     "tests/test_kache_detached_events.py::accounted_drain",
 ]
 reason = "Both methods exist to fail: they are the two detached-only questions a kache supervisor must never ask, and each names its own question in the assertion. Sharing one body that takes the message as a parameter would make the test double assert nothing specific about which call was reached."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/kache.py::_is_kache",
+    "tests/kache_stray_fixture.py::is_observable",
+]
+reason = "The fixture oracle restates the guard's executable test independently so that a change to what counts as a kache binary is caught, not mirrored. Sharing the production predicate would let the fixture agree with a broken guard."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_fake_kache.py",
+    "tests/test_fake_sccache.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_on_systemd_behaviour.py",
+    "tests/test_kache_on_systemd_behaviour.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_on_systemd_behaviour.py::_cancel_running",
+    "tests/test_kache_on_systemd_behaviour.py::_cancel",
+]
+reason = "Recurring short test steps: both features cancel a build with a background child, so both call the one World.cancel_background_build helper. What remains is the decorator's step text and the docstring, which must differ because each is bound to its own feature file."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_on_systemd_behaviour.py::_group_gone",
+    "tests/test_kache_on_systemd_behaviour.py::_gone",
+]
+reason = "Recurring short test steps: both features check that a cancelled group's compiler and background child ended, so both call the one World.assert_background_group_gone helper. Each step's text and docstring belong to its own feature."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_on_systemd_behaviour.py::_free",
+    "tests/test_kache_on_systemd_behaviour.py::_free",
+]
+reason = "The same sentence appears in both feature files because a cached group and an in-scope group return their token the same way; both steps call World.assert_slot_free. pytest-bdd binds steps per feature module, so the one-line delegation cannot be registered outside the feature that owns it."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_on_systemd_behaviour.py::_new_build",
+    "tests/test_kache_on_systemd_behaviour.py::_build_beside_stray",
+]
+reason = "Recurring short test steps: both run an ordinary build and wait for it through World.run_ok. The scenarios check different contracts -- a restart's successor versus a stray's non-effect on admission -- and each step's text says which."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission_on_systemd_behaviour.py::_not_through_client",
+    "tests/test_kache_on_systemd_behaviour.py::_no_client",
+]
+reason = "Recurring short test steps: both check the compiler's parent command line through World.assert_parent_lacks, naming their own backend's client as the text that must not appear. Sharing the step would lose which backend each feature is about."

@@ -18,7 +18,7 @@ import time
 import typing as typ
 from pathlib import Path
 
-from harness_processes import reap_and_close_pipes
+from harness_processes import kill_and_reap, start_bound
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_sccache.py"
 
@@ -81,23 +81,12 @@ def _server(socket_path: Path) -> subprocess.Popen[bytes]:
     env = {**os.environ, "SCCACHE_SERVER_UDS": str(socket_path)}
     # The caller keeps the server alive across a client disconnect and kills it
     # in a finally block, so the handle deliberately outlives this helper.
-    process = subprocess.Popen(  # pylint: disable=consider-using-with
-        [sys.executable, str(FIXTURE), "server"], env=env, stderr=subprocess.PIPE
+    return start_bound(
+        [sys.executable, str(FIXTURE), "server"],
+        env,
+        socket_path,
+        stderr=subprocess.PIPE,
     )
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline:
-        if socket_path.exists():
-            return process
-        time.sleep(0.02)
-    _stop_server(process)
-    msg = "the fixture server never bound its socket"
-    raise AssertionError(msg)
-
-
-def _stop_server(process: subprocess.Popen[bytes]) -> None:
-    """Kill the fixture server, reap it and close its ``stderr`` pipe."""
-    process.kill()
-    reap_and_close_pipes(process, timeout=10)
 
 
 def _send(socket_path: Path, request: dict[str, object]) -> Reply:
@@ -179,7 +168,7 @@ def test_accepted_work_survives_client_disconnect_and_waits_for_a_jobserver_slot
         assert "second" in reply["stdout"], "later requests still work"
     finally:
         os.close(holder)
-        _stop_server(server)
+        kill_and_reap(server, timeout=10)
 
 
 def test_a_result_is_read_only_after_the_child_finishes_writing(
@@ -226,7 +215,7 @@ def test_a_result_is_read_only_after_the_child_finishes_writing(
         )
     finally:
         client.close()
-        _stop_server(server)
+        kill_and_reap(server, timeout=10)
 
 
 def _children(pid: int) -> list[int]:

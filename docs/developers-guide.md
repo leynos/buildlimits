@@ -539,8 +539,10 @@ All tests live in `tests/`; pytest also collects the package's doctests through
 sit beside them and are linted like production code, so they raise
 `AssertionError` or `TypeError` explicitly rather than using bare `assert`. BDD
 scenarios live in `tests/features` with `pytest-bdd` step modules; Syrupy
-snapshots live in `tests/__snapshots__`; journal fixtures and the fake sccache
-live in `tests/fixtures`.
+snapshots live in `tests/__snapshots__`; journal fixtures and the two cache
+backend stand-ins live in `tests/fixtures`. Host acceptance scenarios run only
+when `BUILD_LIMITS_HOST_ACCEPTANCE=1`, because they create transient user units
+on the developer's own manager.
 
 ### 11.2. Shared helpers
 
@@ -561,8 +563,12 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `cache_recovery_helpers.py`  | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
 | `cache_recovery_harness.py`  | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
 | `cache_recovery_machines.py` | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
-| `systemd_harness.py`         | Host acceptance `Harness`, `systemd_user_marks` and `wait_for`                                      |
-| `harness_units.py`           | Transient unit control and `unit_properties` over the public user bus                               |
+| `systemd_harness.py`         | Host acceptance `Harness`, which re-exports the unit helpers it is asked through                    |
+| `harness_units.py`           | Transient unit control, `unit_properties`, `wait_for`, `systemd_user_marks` and its skip gate       |
+| `harness_config.py`          | `KacheSettings` and `write_config`, the supervisor document a harness runs against                  |
+| `harness_processes.py`       | `journal`, `journal_records`, `pid_alive`, `kill_group`, `reap_and_close_pipes` and limit probing   |
+| `kache_unit_files.py`        | `start_kache_daemon`, the separately managed daemon a kache scenario points its groups at           |
+| `kache_stray_fixture.py`     | `stray_kache_scope` and `remove`: a kache-named process parked in a scope admission never held      |
 
 _Table 4: Shared test helper modules._
 
