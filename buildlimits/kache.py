@@ -67,7 +67,9 @@ class Kache:
     ----------
     executable : str
         The client that composes a cached group. It may be an absolute path or
-        a name resolved on the build's ``PATH``.
+        a bare name, which is resolved on the supervisor's own ``PATH`` by
+        both the health probe and composition, so a group runs the file
+        health verified rather than a second lookup of its own.
     socket_path : Path or None
         The separately managed daemon's socket, passed to every admitted group
         and named in the health probe. ``None`` lets kache resolve its own
@@ -101,6 +103,11 @@ class Kache:
         ``kache kache rustc``. A workspace wrapper stays in place: kache wraps
         the wrapper, which then runs the compiler.
 
+        A bare name is written out as the absolute path health resolved, so the
+        group runs the file that was probed. Otherwise the launch would search
+        the requesting build's ``PATH``, which can differ from the supervisor's
+        and would make the health answer describe a different executable.
+
         Parameters
         ----------
         argv : tuple[str, ...]
@@ -129,7 +136,23 @@ class Kache:
         composed["KACHE_LOCAL_ONLY"] = LOCAL_ONLY
         if self.socket_path is not None:
             composed["KACHE_SOCKET_PATH"] = str(self.socket_path)
-        return (self.executable, *argv), composed
+        return (self._client() or self.executable, *argv), composed
+
+    def _client(self) -> str | None:
+        """Resolve the configured client to the file the supervisor can run.
+
+        ``shutil.which`` searches the supervisor's own ``PATH``, and for a
+        value that carries a directory component it checks that exact file.
+        Health, the daemon probe and composition all read this one answer, so
+        they cannot disagree about which executable they mean: a bare name
+        cannot resolve for the probe and then fail to resolve for the build.
+
+        Returns
+        -------
+        str or None
+            The resolved client, or ``None`` when nothing runnable matches.
+        """
+        return shutil.which(self.executable)
 
     def fallback_notice(self) -> str:  # ruff: ignore[no-self-use] - protocol member.
         """Explain an uncached group that the configuration meant to cache.
@@ -169,19 +192,26 @@ class Kache:
             ``False`` when the client cannot be run, the store is unusable or
             no daemon answers on the configured socket.
         """
-        if shutil.which(self.executable) is None:
+        client = self._client()
+        if client is None:
             return False
         if self.cache_dir is not None and not _is_writable(self.cache_dir):
             return False
-        return self._daemon_running()
+        return self._daemon_running(client)
 
-    def _daemon_running(self) -> bool:
+    def _daemon_running(self, client: str) -> bool:
         """Ask kache whether a daemon answers on the configured socket.
 
         The probe runs with the configured socket in its environment, so kache
-        resolves the same endpoint the group will use even when it is not the
-        built-in default. The supervisor's own environment is inherited, which
-        is how an operator's kache configuration reaches the probe.
+        resolves the same endpoint the group uses even when it is not the
+        built-in default. The supervisor's own environment is inherited, so an
+        operator's kache configuration reaches the probe.
+
+        Parameters
+        ----------
+        client : str
+            The resolved client, as :meth:`_client` returned it, so the probe
+            runs the same file the group will.
 
         Returns
         -------
@@ -194,7 +224,7 @@ class Kache:
             env["KACHE_SOCKET_PATH"] = str(self.socket_path)
         try:
             finished = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed argument vector.
-                [self.executable, "daemon", "status", "--json"],
+                [client, "daemon", "status", "--json"],
                 capture_output=True,
                 text=True,
                 check=False,

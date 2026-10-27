@@ -211,7 +211,7 @@ sccache's wording, its metric values and its snapshots do not change.
 | `sccache_unit`       | sccache | The managed server's user unit                             |
 | `sccache_socket`     | sccache | The managed server's socket                                |
 | `cache_recovery`     | sccache | `manual` or `starved`; inert in other modes                |
-| `kache_executable`   | kache   | The kache client; default `kache`                          |
+| `kache_executable`   | kache   | The kache client; see the resolution rule below            |
 | `kache_socket`       | kache   | The externally managed daemon's socket, if not the default |
 
 _Table 2: Configuration by mode._
@@ -225,6 +225,16 @@ as `KACHE_SOCKET_PATH`; when it is unset the group exports nothing and health
 asks kache to resolve its own default socket. `KACHE_SOCKET_PATH` is an
 operational variable, so `[cache] ignore_env` in a host kache configuration
 does not suppress it.
+
+`kache_executable` may be an absolute path or a bare name. A bare name is
+resolved once, on the supervisor's own `PATH`, and the resolved file is what
+the health probe runs and what composition puts in the group's argv. Resolving
+once is what keeps the two from disagreeing: `launch.py` executes the composed
+vector with the requesting build's environment, so a name left in argv would be
+searched a second time against a different `PATH`. That could admit a group
+whose client the build cannot find, or reject a client it could. A supervisor
+started by systemd has a minimal `PATH`, so a host that installs kache outside
+the usual directories should configure an absolute path.
 
 ### Supported versions and their process models
 
@@ -287,7 +297,9 @@ The supervisor's obligations are then:
   `kache daemon status --json` naming the configured socket with
   `daemon_running: true`. That subcommand never starts a daemon and exits zero
   with `daemon_running: false` when none is running, so it is safe to call on
-  every admission cycle.
+  every admission cycle. The executable health runs is the one resolution of
+  `kache_executable` described under Configuration, and it is that same
+  resolved file that the composed argv names.
 - If health fails, the compile runs directly, with the notice on standard
   error and `direct_fallback` in `cache_path`.
 - A `kache` or `kache-engine` process found in `buildlimits-compilers.slice`
