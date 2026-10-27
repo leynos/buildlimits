@@ -97,7 +97,8 @@ class _KacheServer:
             work and there is no server to census.
         """
         self.server_queries += 1
-        raise AssertionError("kache mode asked how much detached work runs")
+        msg = "kache mode asked how much detached work runs"
+        raise AssertionError(msg)
 
     def accounted_drain(self) -> int:
         """Verify the server is empty before releasing its token.
@@ -113,7 +114,8 @@ class _KacheServer:
             Always, naming the accounting a kache supervisor must not request.
         """
         self.server_queries += 1
-        raise AssertionError("kache mode asked a server to account for its work")
+        msg = "kache mode asked a server to account for its work"
+        raise AssertionError(msg)
 
 
 def _assert_not_metered(sink: RecordingSink, event: str, why: str) -> None:
