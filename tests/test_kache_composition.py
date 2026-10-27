@@ -13,7 +13,7 @@ and forwarding one would point kache's compiler at a server this supervisor
 never accounted for.
 
 The last cases check the adapter side, which is the other place an argument
-vector is read: it recognises a toolchain behind a leading cache layer, and it
+vector is read: it recognizes a toolchain behind a leading cache layer, and it
 must never rewrite the vector it was given.
 """
 
@@ -142,7 +142,7 @@ def test_an_uncached_group_forwards_the_callers_lines(
 
 
 @pytest.mark.parametrize("layer", ["kache", "sccache"])
-def test_the_adapter_recognises_the_compiler_behind_a_cache_layer(
+def test_the_adapter_recognizes_the_compiler_behind_a_cache_layer(
     tmp_path: Path, layer: str
 ) -> None:
     """Recognition sees through the layer, and leaves the vector as it found it.
