@@ -35,13 +35,16 @@ def _groups(selector: selectors.BaseSelector, cache_mode: str = "sccache") -> Gr
         sccache_socket=Path("/run/user/1/buildlimits/sccache.sock"),
         kache_executable="/managed/kache",
         kache_socket=Path("/run/user/1/buildlimits/kache.sock"),
+        kache_cache_dir=Path("/var/cache/kache"),
     )
     # The composition root builds this from the mode; these tests exercise the
     # adapter's argv and environment, so they supply it explicitly.
     match cache_mode:
         case "kache":
             backend: CacheBackend = Kache(
-                settings.kache_executable, settings.kache_socket
+                settings.kache_executable,
+                settings.kache_socket,
+                settings.kache_cache_dir,
             )
         case _ if is_cache(cache_mode):
             backend = ManagedSccache(

@@ -48,6 +48,7 @@ CALLER_ENV: typ.Final[dict[str, str]] = {
 }
 
 SOCKET = Path("/run/user/1/buildlimits/kache.sock")
+STORE = Path("/var/cache/kache")
 
 #: ``(case id, requested argv, the argv the group must run)``.
 COMPOSITIONS: typ.Final[tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]] = (
@@ -82,8 +83,11 @@ def _kache_groups(selector: selectors.BaseSelector) -> Groups:
         cache_mode="kache",
         kache_executable=MANAGED,
         kache_socket=SOCKET,
+        kache_cache_dir=STORE,
     )
-    backend: CacheBackend = Kache(settings.kache_executable, settings.kache_socket)
+    backend: CacheBackend = Kache(
+        settings.kache_executable, settings.kache_socket, settings.kache_cache_dir
+    )
     return Groups(
         settings,
         typ.cast("UserManager", object()),
@@ -117,6 +121,28 @@ def test_kache_groups_disable_the_scheduler_and_stay_local() -> None:
         "the remote backends are out of scope for this issue"
     )
     assert env["KACHE_SOCKET_PATH"] == str(SOCKET), "the group names its daemon"
+
+
+def test_kache_groups_write_the_store_health_checked(
+    selector: selectors.BaseSelector,
+) -> None:
+    """Health verifies one store, so the group must write that same store.
+
+    The probe checks the directory it was configured with. A group that let
+    kache resolve a different one would fill a filesystem nothing verified.
+    """
+    spec = _kache_groups(selector).launch_spec(
+        launch_pending(("/t/rustc", "-vV"), CALLER_ENV), cached=True
+    )
+    assert spec.env["KACHE_CACHE_DIR"] == str(STORE), (
+        "the composed group writes the store health checked"
+    )
+
+
+def test_a_group_without_a_configured_store_names_none() -> None:
+    """Nothing is exported when the store is left to kache's own resolution."""
+    _argv, env = Kache(MANAGED, SOCKET).compose(("/t/rustc", "-vV"), CALLER_ENV)
+    assert "KACHE_CACHE_DIR" not in env, "an unset store is not an empty one"
 
 
 def test_kache_groups_carry_no_sccache_settings() -> None:
