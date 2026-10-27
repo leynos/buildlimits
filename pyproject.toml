@@ -150,7 +150,7 @@ extend-ignore = [
 "tests/cache_recovery_state_machine.py" = ["assert"]
 # The acceptance harness and the fake sccache drive the user's own systemd
 # tools and the vectors their tests supply, found on PATH as a build would.
-"tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
+"tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "too-many-arguments"]
 "tests/fixtures/fake_sccache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 "tests/fixtures/fake_kache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 # The scenario world lives beside the test modules and drives the user's own

@@ -15,23 +15,27 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import typing as typ
 import uuid
 from pathlib import Path
 
 from cache_outcome_harness import CacheOutcomeHarnessMixin
 from cached_unit_files import CachedUnits
+from harness_config import KacheSettings as KacheSettings
 from harness_config import write_config
 from harness_processes import AdapterProcessOptions, start_adapter, wait_for
 from harness_processes import journal as journal
 from harness_processes import kill_group as kill_group
 from harness_processes import pid_alive as pid_alive
+from harness_processes import server_children as server_children
 from harness_status import HarnessStatus
 from harness_units import (
     Placement,
     listening,
     manager_env,
     run_unit,
+    stop_units,
 )
 from harness_units import (
     systemd_user_marks as systemd_user_marks,
@@ -40,6 +44,7 @@ from harness_units import unit_active as _unit_active
 from harness_units import (
     user_manager_available as user_manager_available,
 )
+from kache_unit_files import start_kache_daemon
 from systemd_harness_tokens import TokenObservationMixin
 
 if typ.TYPE_CHECKING:
@@ -75,7 +80,7 @@ _DEFAULT_HARNESS_OPTIONS = HarnessOptions()
 
 
 class Harness(CacheOutcomeHarnessMixin, TokenObservationMixin, HarnessStatus):
-    """One supervisor, its pool and optionally a fake sccache server.
+    """One supervisor, its pool and optionally a fake cache backend.
 
     Parameters
     ----------
@@ -83,17 +88,27 @@ class Harness(CacheOutcomeHarnessMixin, TokenObservationMixin, HarnessStatus):
         The pool's capacity.
     cached : bool
         Whether to compose compilers with the fake sccache server.
+    kache : KacheSettings | None
+        Whether to compose compilers with kache instead, pointing them at a
+        fake daemon this harness starts as its own unit. A setting that names
+        its own client and does not expect it to serve configures kache
+        without starting a daemon, so the scenario can observe the fallback.
     nofile : tuple[int, int] | None
         Optional supervisor soft/hard descriptor limit for pressure tests.
     options : HarnessOptions
         Optional cache-recovery and cache-outcome feature settings.
     """
 
-    def __init__(
+    # The constructor is the one keyword switchboard every scenario configures,
+    # so it names each backend and seam separately rather than hiding them in a
+    # settings object a reader would have to look up. `pyproject.toml` records
+    # the same choice for Ruff's copy of this check.
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         slots: int,
         *,
         cached: bool = False,
+        kache: KacheSettings | None = None,
         nofile: tuple[int, int] | None = None,
         options: HarnessOptions = _DEFAULT_HARNESS_OPTIONS,
     ) -> None:
@@ -107,8 +122,15 @@ class Harness(CacheOutcomeHarnessMixin, TokenObservationMixin, HarnessStatus):
         self.compilers_slice = f"blt{tag}-compilers.slice"
         self.unit = f"blt{tag}-supervisor.service"
         self.sccache_unit = f"blt{tag}-sccache.service"
+        self.kache_unit = f"blt{tag}-kache.service"
         self.slots = slots
         self.cached = cached
+        self.kache = kache or KacheSettings()
+        # A kache group is only composed when a daemon already answers on this
+        # socket, so it is exported to the supervisor, to status and to each
+        # group rather than left to kache's own default resolution.
+        self.kache_socket = self.runtime / "kache.sock"
+        self.kache_store = self.runtime / "kache-store"
         self.nofile = nofile
         self.cache_recovery = options.cache_recovery
         self.cache_outcomes = options.cache_outcomes
@@ -138,14 +160,21 @@ class Harness(CacheOutcomeHarnessMixin, TokenObservationMixin, HarnessStatus):
         write_config(self)
 
     def start(self) -> None:
-        """Start the supervisor (and fake server) and wait until it listens.
+        """Start the daemon, the supervisor and the fake server, then wait.
+
+        The kache daemon is started *before* the supervisor and is owned by
+        this harness alone, never by the supervisor: an admitted group must
+        only ever be pointed at a daemon that is already answering. See ADR
+        004.
 
         Raises
         ------
         RuntimeError
-            If either service does not come up; the message carries the
+            If a service does not come up; the message carries the
             supervisor's journal when it is the one that failed.
         """
+        if self.kache.enabled and self.kache.serving:
+            self._start_kache_daemon()
         script = (
             "import sys; from buildlimits.service import main; "
             f"sys.exit(main(['--config', '{self.runtime / 'supervisor.toml'}']))"
@@ -157,9 +186,60 @@ class Harness(CacheOutcomeHarnessMixin, TokenObservationMixin, HarnessStatus):
             run_unit(self.unit, argv, {}, self.placement)
         if not wait_for(self._listening):
             raise RuntimeError(self.journal())
-        if self.cached and not wait_for(lambda: self.status()["caching"], timeout=20):
-            msg = "the isolated supervisor did not observe its ready managed cache"
+        wants_cache = self.cached or (self.kache.enabled and self.kache.serving)
+        if wants_cache and not wait_for(lambda: self.status()["caching"], timeout=20):
+            msg = "the isolated supervisor did not observe its ready cache"
             raise RuntimeError(msg)
+        if self.kache.enabled and not self.kache.serving:
+            self._await_kache_fallback()
+
+    def _await_kache_fallback(self) -> None:
+        """Wait until the supervisor has read kache as unavailable.
+
+        The first reading is taken as part of start-up, so waiting here keeps
+        a scenario from racing it: a build admitted before the reading would
+        be composed without a notice and would prove nothing about the
+        fallback.
+
+        Status alone cannot show that the reading happened, because admission
+        is uncached before the first reading as well as after it. Start-up's
+        final metric is the evidence: it is published after the reachability
+        reading and after the supervisor reports READY.
+
+        Raises
+        ------
+        RuntimeError
+            If the supervisor reads a configured, unrunnable kache as healthy
+            or never finishes its first reading.
+        """
+        if not self._await_start_metric():
+            msg = "the isolated supervisor never finished starting"
+            raise RuntimeError(msg)
+        if self.status()["caching"]:
+            msg = "the isolated supervisor composed with a kache that cannot run"
+            raise RuntimeError(msg)
+
+    def _await_start_metric(self) -> bool:
+        """Wait for the metric start-up publishes after its cache reading.
+
+        Each read is a journal query, so it is paced rather than run on the
+        harness's usual tight poll.
+
+        Returns
+        -------
+        bool
+            Whether the metric appeared in time.
+        """
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if "metric supervisor_started" in self.journal():
+                return True
+            time.sleep(0.2)
+        return False
+
+    def _start_kache_daemon(self) -> None:
+        """Start the fake kache daemon this harness owns, before admission."""
+        start_kache_daemon(self.kache_unit, self.kache_socket, self.parent_slice)
 
     def _start_cached(self, argv: list[str]) -> None:
         """Install owned cache composition once and wait for its ordered startup.
@@ -297,13 +377,7 @@ class Harness(CacheOutcomeHarnessMixin, TokenObservationMixin, HarnessStatus):
 
     def stop_sccache(self) -> None:
         """Stop the fake sccache server's unit, as an outage would."""
-        subprocess.run(
-            ["systemctl", "--user", "stop", self.sccache_unit],
-            env=manager_env(),
-            timeout=30,
-            capture_output=True,
-            check=False,
-        )
+        stop_units((self.sccache_unit,))
 
     def journal(self) -> str:
         """Return the supervisor's journal, for failure messages.
@@ -318,22 +392,15 @@ class Harness(CacheOutcomeHarnessMixin, TokenObservationMixin, HarnessStatus):
     def close(self) -> None:
         """Stop only owned units and release the pool handle exactly once."""
         try:
-            # A stopped cache is the proof needed by retained server-drain tokens.
-            for unit in (self.sccache_unit, self.unit, self.parent_slice):
-                subprocess.run(
-                    ["systemctl", "--user", "stop", unit],
-                    capture_output=True,
-                    check=False,
-                    env=manager_env(),
-                    timeout=90,
-                )
-                subprocess.run(
-                    ["systemctl", "--user", "reset-failed", unit],
-                    capture_output=True,
-                    check=False,
-                    env=manager_env(),
-                    timeout=30,
-                )
+            # A stopped cache is the proof needed by retained server-drain
+            # tokens. The parent slice goes last, so every unit inside it stops
+            # first; a kache daemon stops with everything else owned here.
+            stop_units((
+                self.sccache_unit,
+                self.kache_unit,
+                self.unit,
+                self.parent_slice,
+            ))
             if self.cached_units is not None:
                 units, self.cached_units = self.cached_units, None
                 units.close()
