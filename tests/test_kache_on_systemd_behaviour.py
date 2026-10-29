@@ -66,9 +66,14 @@ class World(BaseWorld):
 
     def close(self) -> None:
         """Remove the parked stray, then cancel and close everything else."""
-        if self.stray is not None:
-            remove(self.stray)
-        super().close()
+        try:
+            if self.stray is not None:
+                remove(self.stray)
+        finally:
+            # The inherited close cancels builds and the supervisor. A stray
+            # that will not go must not strand them for the rest of the
+            # session, so cleanup order is not conditional on its success.
+            super().close()
 
 
 world = scenario_world(World)
