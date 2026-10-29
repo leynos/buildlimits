@@ -34,9 +34,12 @@ These are unchanged:
 An existing `sccache` configuration needs no change: `cache_mode` defaults to
 `sccache`, and the sccache settings, status wording and metrics are the same as
 before. A host that wants kache instead sets `cache_mode = "kache"`, installs
-kache itself and runs a daemon as a separate unit -- the supervisor never
-starts, stops or owns one, and provisioned hosts do not get kache from
-`devhost.buildlimits`. See
+kache itself, names the socket of a daemon it runs as a separate unit in
+`kache_socket`, and leaves the daemon running -- the supervisor never starts,
+stops or owns one, and provisioned hosts do not get kache from
+`devhost.buildlimits`. The socket key is required in `kache` mode, so a
+configuration that omits it is rejected rather than left to resolve a default.
+See
 [Choose a cache backend](users-guide.md#choose-a-cache-backend).
 
 ## Who is affected

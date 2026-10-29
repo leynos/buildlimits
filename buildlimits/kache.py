@@ -72,8 +72,12 @@ class Kache:
         health verified rather than a second lookup of its own.
     socket_path : Path or None
         The separately managed daemon's socket, passed to every admitted group
-        and named in the health probe. ``None`` lets kache resolve its own
-        default socket.
+        and named in the health probe. Configuration requires it in kache
+        mode, because the probe reads the supervisor's environment while a
+        group inherits the requesting build's: an unnamed socket would let
+        health accept one daemon while the group selected another and started
+        a second one in its own scope. ``None`` is still accepted here so the
+        adapter can be exercised without a configuration document.
     cache_dir : Path or None
         The store kache writes, checked by :meth:`is_reachable` and passed to
         every admitted group as ``KACHE_CACHE_DIR``. ``None`` lets kache
