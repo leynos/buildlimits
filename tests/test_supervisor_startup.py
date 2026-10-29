@@ -15,6 +15,7 @@ from pool_helpers import FakePool
 from buildlimits import cgroups, startup
 from buildlimits import supervisor as supervisor_module
 from buildlimits.config import SupervisorConfig
+from buildlimits.kache import Kache
 from buildlimits.protocol import (
     RecoverReport,
     RecoverRequest,
@@ -103,9 +104,12 @@ def _started(mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Sta
     The slice drain, which would read ``/sys/fs/cgroup``, and the manager,
     whose runner would otherwise reach the real user manager, are scripted. The
     pool keeps a real pipe, because ``start`` registers its wake descriptor.
+    kache's health probe is scripted too: it resolves ``kache`` on the host
+    ``PATH`` and would otherwise run whatever the test host has installed.
     """
     monkeypatch.setattr(startup, "drain_slice", lambda *_args: 0)
     monkeypatch.setattr(cgroups, "directory", lambda path: tmp_path / str(path)[1:])
+    monkeypatch.setattr(Kache, "is_reachable", lambda _self: False)
     jobs: list[list[str]] = []
     pipes: list[int] = []
 
@@ -123,6 +127,10 @@ def _started(mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Sta
         # leave little of the 108-byte ``AF_UNIX`` path budget.
         socket_path=tmp_path / f"{mode}.sock",
         recovery_marker=tmp_path / mode / "cache-recovery",
+        # Kache mode requires a socket, and a named one is what makes the
+        # health probe answer for a daemon every group would reach. This case
+        # builds the settings directly, so validation cannot supply it.
+        kache_socket=tmp_path / "kache.sock" if mode == "kache" else None,
     )
     supervisor = Supervisor(
         settings,
