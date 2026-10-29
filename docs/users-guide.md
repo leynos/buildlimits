@@ -121,11 +121,14 @@ Sockets live under `$XDG_RUNTIME_DIR/buildlimits`, falling back to
 `/run/user/UID/buildlimits` when the variable is unset, because Unix socket
 paths are limited to about 108 bytes.
 
-A client setting may be an absolute path or a bare name. A bare name is looked
-up on the supervisor's own `PATH`, not the build's, and the file it resolves to
-is the one both the health probe and every composed group run. A supervisor
-started by systemd inherits a minimal `PATH`, so a client installed outside the
-usual directories should be configured as an absolute path.
+`sccache_executable` and `kache_executable` may each be an absolute path or a
+bare name. A bare `sccache_executable` stays in the composed vector and is
+searched on the build's `PATH`; sccache's health probe runs no executable, so
+nothing else resolves it. A bare `kache_executable` is resolved once on the
+supervisor's own `PATH`, and the file it resolves to is the one both the health
+probe and every composed group run. A supervisor started by systemd inherits a
+minimal `PATH`, so configure an absolute path for a kache client installed
+outside the usual directories.
 
 ```toml
 slots = 4
