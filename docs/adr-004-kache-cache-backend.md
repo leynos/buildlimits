@@ -98,8 +98,13 @@ cache **and** a detached backend. Composition alone is not enough.
   kernel; no buildlimits bookkeeping is needed.
 - If kache is unusable at admission, the compile runs directly and says so on
   standard error, in the same shape as the sccache fallback.
-- Rustdoc stays `cacheable=False`, and the `rustc` probe queries exempted under
-  [#27][issue-27] never go through kache.
+- Rustdoc stays `cacheable=False`. The `rustc` probe queries exempted under
+  [#27][issue-27] must not go through kache either: they are exempt so that
+  Cargo's package-cache lock is not held behind the compile queue, and running
+  them through kache would put them back behind it. That exemption lands on
+  [#27][issue-27]'s own branch, which is not yet merged, so this change adds no
+  probe path. It only settles what kache mode must do once the exemption is
+  present: an exempted probe is composed directly, never through the backend.
 - Status says `caching through kache` or
   `kache unavailable, compiling directly`. Metrics keep `cache_path` and add
   `cache_backend`. Detached-only events and the operator text that names the
