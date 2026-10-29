@@ -452,6 +452,12 @@ full_name = [
 path = ["buildlimits/kache.py"]
 reason = "Kache.is_reachable, the protocol method declared above, checks the store through _is_writable and reads the daemon's status document through _reports_running; the _reports_running doctest exercises the parsing decision."
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.journal_native.JournalSink.emit_trace"]
+path = ["buildlimits/journal_native.py"]
+reason = "JournalSpanExporter.export calls self.sink.emit_trace, where the sink is typed as the _TraceSinkPort protocol tracing_sdk_export declares; Skylos resolves the call edge to a concrete class only sometimes, so this method is reported as unused on some scans of an unchanged tree. JournalTracer binds a real JournalSink from service.py, and test_tracing.py asserts the export reaches an injected sink override."
+
 [tool.nose]
 version = "0.20.0"
 roots = ["."]
