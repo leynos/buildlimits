@@ -141,6 +141,25 @@ def test_a_client_that_answers_nothing_is_unavailable(tmp_path: Path) -> None:
     )
 
 
+def test_output_the_locale_cannot_decode_is_unavailable(tmp_path: Path) -> None:
+    """Undecodable bytes read as a bad document, never as a raised error.
+
+    A client that prints bytes outside the locale encoding is just one more way
+    the document can be wrong. Health promises to report every probe failure as
+    unavailable, so the decode must not escape: a ``UnicodeDecodeError``
+    reaches the supervisor tick as an internal error, which faults the loop
+    instead of letting the build compile directly.
+    """
+    client = _script(
+        tmp_path,
+        "#!/bin/sh\nprintf '\\377\\376{\"daemon_running\": true}\\n'\n",
+    )
+
+    assert not Kache(str(client)).is_reachable(), (
+        "a status document that cannot be decoded does not prove a daemon"
+    )
+
+
 def test_the_probe_asks_about_the_configured_socket(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
