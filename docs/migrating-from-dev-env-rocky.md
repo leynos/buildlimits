@@ -39,8 +39,7 @@ kache itself, names the socket of a daemon it runs as a separate unit in
 stops or owns one, and provisioned hosts do not get kache from
 `devhost.buildlimits`. The socket key is required in `kache` mode, so a
 configuration that omits it is rejected rather than left to resolve a default.
-See
-[Choose a cache backend](users-guide.md#choose-a-cache-backend).
+See [Choose a cache backend](users-guide.md#choose-a-cache-backend).
 
 ## Who is affected
 
