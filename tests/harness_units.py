@@ -231,13 +231,18 @@ def stop_units(units: cabc.Iterable[str]) -> None:
     """
     for unit in units:
         for arguments, timeout in ((("stop", unit), 90), (("reset-failed", unit), 30)):
-            subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - owned fixture units.
-                ["/usr/bin/systemctl", "--user", *arguments],
-                capture_output=True,
-                check=False,
-                env=manager_env(),
-                timeout=timeout,
-            )
+            try:
+                subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - owned fixture units.
+                    ["/usr/bin/systemctl", "--user", *arguments],
+                    capture_output=True,
+                    check=False,
+                    env=manager_env(),
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired:
+                # A hung stop must not strand the units after it, the parent
+                # slice last of all.
+                continue
 
 
 def unit_active(unit: str) -> bool:

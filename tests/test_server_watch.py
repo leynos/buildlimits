@@ -65,18 +65,22 @@ class FakeServer:
 
 
 def _watch(
-    server: FakeServer, admission: Admission | None = None, mode: str = "sccache"
+    server: FakeServer,
+    admission: Admission | None = None,
+    mode: str = "sccache",
+    backend: FakeServer | None = None,
 ) -> ServerWatch:
     """Watch a fake server for an admission state.
 
-    The fake answers both ports: it is the detached adapter the drain paths
-    query, and the health port :meth:`ServerWatch.refresh_cache_mode` probes.
+    ``server`` is the detached adapter the drain paths query. ``backend`` is the
+    health port :meth:`ServerWatch.refresh_cache_mode` probes; it defaults to
+    the same fake for the cases that do not distinguish the two.
     """
     return ServerWatch(
         typ.cast("ManagedSccache", server),
         admission or Admission(cached=False),
         mode,
-        typ.cast("CacheBackend", server),
+        typ.cast("CacheBackend", backend if backend is not None else server),
     )
 
 
@@ -171,10 +175,16 @@ def test_new_groups_cache_only_through_a_reachable_server(
 
     The probe is asked of whichever backend the mode selected, so an in-scope
     cache is composed on its own health rather than on a server this supervisor
-    does not own.
+    does not own. The managed server is scripted to the opposite answer, so a
+    reading taken from the wrong port cannot produce the expected result.
     """
     admission = Admission(cached=not cached)
-    _watch(FakeServer(reachable=reachable), admission, mode).refresh_cache_mode()
+    _watch(
+        FakeServer(reachable=reachable is not True),
+        admission,
+        mode,
+        backend=FakeServer(reachable=reachable),
+    ).refresh_cache_mode()
     assert admission.cached is cached, "the cache mode follows the probe"
 
 

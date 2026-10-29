@@ -396,7 +396,7 @@ provisioning and monitoring, use `--ready` or the JSON readiness field as shown
 below.
 
 `--ready` uses the same plain-text or JSON output with the exit-status contract
-in Table 4. Use it for provisioning checks and monitoring that need usable
+in Table 5. Use it for provisioning checks and monitoring that need usable
 admission:
 
 ```bash
