@@ -149,7 +149,7 @@ The model has two parts: the supervisor, whose actions transcribe code, and an
 environment, whose actions are everything the supervisor only observes.
 
 The model is scoped to detached cache work, which after
-[ADR 004](adr-004-kache-cache-backend.md) is `cache_mode = "sccache"` alone. An
+[ADR 005](adr-005-kache-cache-backend.md) is `cache_mode = "sccache"` alone. An
 in-scope backend such as `kache` runs the compiler inside the group's own
 scope, so it has no managed cache, no detached work, no drain and no recovery
 transaction; the state below -- the managed cache, its control group and its

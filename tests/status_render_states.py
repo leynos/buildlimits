@@ -137,13 +137,9 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
         "admission unhealthy: supervisor is unhealthy",
     ),
     "legacy-missing-admission": (
-        {
-            "capacity": 4,
-            "held": 0,
-            "healthy": True,
-            "caching": True,
-            "cache_mode": "sccache",
-        },
+        # Written before the backend was selectable: no ``cache_mode`` at all,
+        # which must still read as sccache rather than as no cache.
+        {"capacity": 4, "held": 0, "healthy": True, "caching": True},
         "capacity 4, held 0, healthy, caching through sccache",
     ),
     "legacy-non-dictionary-admission": (

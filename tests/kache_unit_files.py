@@ -1,6 +1,6 @@
 """A separately managed kache daemon the harness starts in its own unit.
 
-ADR 004 requires an admitted group to be pointed at a daemon that is already
+ADR 005 requires an admitted group to be pointed at a daemon that is already
 answering, because a daemon started from inside a group would stay in that
 group's scope and hold its token. The fixture therefore starts the daemon
 *before* the supervisor, as an unrelated unit in the harness's own slice, and

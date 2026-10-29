@@ -1,6 +1,6 @@
 """The cache backends an admitted compiler group can be composed with.
 
-ADR 004 splits the supported caches by one capability: whether composed work
+ADR 005 splits the supported caches by one capability: whether composed work
 can outlive the compiler group's own scope. sccache accepts a request and runs
 the miss compilation as a direct child of its server, outside the group, so a
 scope can empty while its compilation still runs. kache runs the compiler as a
