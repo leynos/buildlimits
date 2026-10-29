@@ -156,7 +156,7 @@ by environment. The forwarded environment reaches the server's `rustc` probes
 kache is unaffected for the same reasons, and one more. Its key is built from
 the compilation and the environment it hashes, none of which this repair
 touches; and because kache wraps the compiler inside the group's own scope
-([ADR 004](adr-004-kache-cache-backend.md)), the repaired path reaches exactly
+([ADR 005](adr-005-kache-cache-backend.md)), the repaired path reaches exactly
 the process that composes the cache key, with no server-side probe in between.
 
 ## Consequences

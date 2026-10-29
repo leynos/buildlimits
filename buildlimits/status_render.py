@@ -127,8 +127,6 @@ def _stray_lines(state: cabc.Mapping[str, object]) -> list[str]:
     ]
 
 
-
-
 def _action_label(state: cabc.Mapping[str, object]) -> str:
     """Say whether the operator must act or the supervisor will recover alone.
 
@@ -201,9 +199,9 @@ def _limit_text(value: object) -> str:
 def _cache_description(state: cabc.Mapping[str, object]) -> str:
     """Say how new groups are composed with the configured cache backend.
 
-    The backend and the word for its absence both come from the document's
-    ``cache_mode``, so a kache document says kache is *unavailable* without
-    the renderer knowing which caches exist.
+    ``caching`` decides the sentence and ``cache_mode`` names the backend in
+    it, so a document written before the cache was selectable keeps the
+    wording operators have always read.
 
     Returns
     -------
@@ -218,14 +216,16 @@ def _cache_description(state: cabc.Mapping[str, object]) -> str:
     'kache unavailable, compiling directly'
     >>> _cache_description({"cache_mode": "direct"})
     'compiling directly'
+    >>> _cache_description({"caching": True})
+    'caching through sccache'
     """
-    mode = str(state.get("cache_mode", "direct"))
+    mode = str(state.get("cache_mode", ""))
+    if state.get("caching"):
+        name = mode_name(mode) if is_cache(mode) else "sccache"
+        return f"caching through {name}"
     if not is_cache(mode):
         return "compiling directly"
-    name = mode_name(mode)
-    if state.get("caching"):
-        return f"caching through {name}"
-    return f"{name} {mode_unavailable(mode)}, compiling directly"
+    return f"{mode_name(mode)} {mode_unavailable(mode)}, compiling directly"
 
 
 def _recovery_lines(state: cabc.Mapping[str, object]) -> list[str]:

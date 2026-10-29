@@ -211,7 +211,6 @@ def _stray_kache_processes(supervisor: Supervisor) -> list[int]:
     return groups.guard.describe()
 
 
-
 def _descriptor_metrics(supervisor: Supervisor) -> dict[str, int | None]:
     """Sample process headroom without making failed enumeration fatal.
 

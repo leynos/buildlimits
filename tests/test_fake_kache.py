@@ -1,6 +1,6 @@
 """The kache stand-in reproduces the wrapper and daemon shapes acceptance needs.
 
-ADR 004 requires an admitted group to be pointed at a daemon that is already
+ADR 005 requires an admitted group to be pointed at a daemon that is already
 answering and never to leave one of its own behind. The fixture must therefore
 stand in for both halves of that model: a status document that names the
 endpoint the supervisor probed, so a daemon answering somewhere else is not

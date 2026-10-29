@@ -147,6 +147,10 @@ extend-ignore = [
 "tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "too-many-arguments"]
 "tests/fixtures/fake_sccache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 "tests/fixtures/fake_kache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
+# The table of fixed status documents quotes the exact summary line each variant
+# must produce, so its strings run past the wrap column by design and cannot be
+# broken without changing the text under test.
+"tests/status_render_states.py" = ["line-too-long"]
 
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
@@ -1166,10 +1170,6 @@ reason = "Recurring short test steps: these fragments arrange or check the same 
 
 [[tool.duplication_gate.allow]]
 unit = "tests/test_ports.py"
-reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
-
-[[tool.duplication_gate.allow]]
-unit = "tests/test_status_render.py"
 reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
 
 [[tool.duplication_gate.allow]]

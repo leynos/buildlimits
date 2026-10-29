@@ -18,7 +18,6 @@ import subprocess
 import sys
 import tempfile
 import termios
-import time
 import typing as typ
 import uuid
 from pathlib import Path
@@ -35,12 +34,12 @@ from harness_units import systemd_user_marks as systemd_user_marks
 from harness_units import unit_active as _unit_active
 from harness_units import user_manager_available as user_manager_available
 from harness_units import wait_for as wait_for
-from kache_unit_files import start_kache_daemon
+from kache_harness_steps import KacheHarnessSteps
 
 FIXTURES = Path(__file__).with_name("fixtures")
 
 
-class Harness:
+class Harness(KacheHarnessSteps):
     """One supervisor, its pool and optionally a fake cache backend.
 
     Parameters
@@ -152,54 +151,6 @@ class Harness:
             raise RuntimeError(msg)
         if self.kache.enabled and not self.kache.serving:
             self._await_kache_fallback()
-
-    def _await_kache_fallback(self) -> None:
-        """Wait until the supervisor has read kache as unavailable.
-
-        The first reading is taken as part of start-up, so waiting here keeps
-        a scenario from racing it: a build admitted before the reading would
-        be composed without a notice and would prove nothing about the
-        fallback.
-
-        Status alone cannot show that the reading happened, because admission
-        is uncached before the first reading as well as after it. Start-up's
-        final metric is the evidence: it is published after the reachability
-        reading and after the supervisor reports READY.
-
-        Raises
-        ------
-        RuntimeError
-            If the supervisor reads a configured, unrunnable kache as healthy
-            or never finishes its first reading.
-        """
-        if not self._await_start_metric():
-            msg = "the isolated supervisor never finished starting"
-            raise RuntimeError(msg)
-        if self.status()["caching"]:
-            msg = "the isolated supervisor composed with a kache that cannot run"
-            raise RuntimeError(msg)
-
-    def _await_start_metric(self) -> bool:
-        """Wait for the metric start-up publishes after its cache reading.
-
-        Each read is a journal query, so it is paced rather than run on the
-        harness's usual tight poll.
-
-        Returns
-        -------
-        bool
-            Whether the metric appeared in time.
-        """
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            if "metric supervisor_started" in self.journal():
-                return True
-            time.sleep(0.2)
-        return False
-
-    def _start_kache_daemon(self) -> None:
-        """Start the fake kache daemon this harness owns, before admission."""
-        start_kache_daemon(self.kache_unit, self.kache_socket, self.parent_slice)
 
     def _start_cached(self, argv: list[str]) -> None:
         """Install owned cache composition once and wait for its ordered startup.

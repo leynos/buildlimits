@@ -179,7 +179,7 @@ in that mode.
 ### Requirements for kache mode
 
 - kache `1.2.2` or `2.0.0-rc.1`. Other versions are unsupported until the
-  verification recorded in ADR 004 is repeated for them.
+  verification recorded in ADR 005 is repeated for them.
 - A daemon already listening on `kache_socket`, or on kache's own default when
   that key is unset. **The supervisor never starts, stops or owns it.** The
   operator installs and runs it as a separate unit; the repository does not

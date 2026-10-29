@@ -6,7 +6,7 @@ parent. That process stays in the group's scope after the compile ends, and
 the scope is the supervisor's unit of accounting -- a token returned for an
 emptied scope would cover work that is still running.
 
-ADR 004 therefore requires an already-running, separately managed daemon, and
+ADR 005 therefore requires an already-running, separately managed daemon, and
 this module is the guard behind that requirement. It is a *report*, not a
 killer. A stray process inside a group's scope is removed by the ordinary
 terminate-on-leader-exit path; a stray process outside every scope is the

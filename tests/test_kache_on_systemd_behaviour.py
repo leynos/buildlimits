@@ -1,6 +1,6 @@
 """Acceptance scenarios for kache composition on a real systemd user manager.
 
-ADR 004 makes kache an in-scope backend: the wrapper runs the compiler as its
+ADR 005 makes kache an in-scope backend: the wrapper runs the compiler as its
 own child inside the group's scope, and every group is pointed at a daemon this
 supervisor never starts or stops. These scenarios are the end-to-end evidence
 for that shape, including the two ways it degrades: a kache that cannot serve a

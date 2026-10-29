@@ -3,7 +3,7 @@
 The guard exists for one failure: kache starts its daemon from inside the
 client when none is listening, so the daemon inherits the compiler's scope and
 outlives the compile. A token returned for that emptied scope would then cover
-work that is still running. ADR 004 answers with a daemon the supervisor never
+work that is still running. ADR 005 answers with a daemon the supervisor never
 starts, and this module reports anything that gets past that.
 
 What is asserted here is the accounting contract rather than the reading

@@ -21,7 +21,7 @@ already answering on that socket. A kache or kache-engine process found outside
 an admitted scope is reported by :func:`stray_processes` rather than covered by
 a held token.
 
-See ``docs/adr-004-kache-cache-backend.md``.
+See ``docs/adr-005-kache-cache-backend.md``.
 """
 
 import dataclasses as dc
@@ -37,7 +37,7 @@ from buildlimits.cache_backend import CacheError
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-#: The scheduler is disabled in every admitted group. See ADR 004: a
+#: The scheduler is disabled in every admitted group. See ADR 005: a
 #: whole-pool request under memory pressure would admit a second time, and the
 #: 30-minute fail-open would run a compile the supervisor's pool never saw.
 SCHEDULER_DISABLE = "0"

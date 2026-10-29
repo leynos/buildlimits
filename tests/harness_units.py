@@ -72,8 +72,6 @@ def wait_for(condition: cabc.Callable[[], bool], timeout: float = 15.0) -> bool:
     return condition()
 
 
-
-
 def user_manager_available() -> bool:
     """Report whether a systemd user manager and busctl are usable.
 
