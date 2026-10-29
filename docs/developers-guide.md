@@ -280,7 +280,7 @@ the mode, so a setting the root forgets to pass is invisible everywhere else;
 `select` with a non-default setting and asking the adapter what it would
 actually run.
 
-`ComposingCacheBackend` is what admission needs: `compose(argv, env)` returns
+`CacheBackend` is what admission needs: `compose(argv, env)` returns
 the composed vector and environment, `is_reachable()` answers health,
 `fallback_notice()` words the line an uncached build sees, `name` provides the
 journal and status wording, and `in_scope_work` states the capability.
@@ -300,10 +300,14 @@ cache processes.
 
 To add a backend:
 
-1. Add the mode to `CACHE_MODES` in `buildlimits.config`, and its keys to
-   `_MODE_KEYS` so that writing another backend's setting is an error.
+1. Add a row to `MODES` in `buildlimits.cache_modes`, which is the only place
+   a mode string is read: it names the backend, says whether its work stays in
+   the group's scope and whether it caches at all, and words what its absence
+   means. `buildlimits.config` derives the accepted modes from those rows, so a
+   mode present in one table and not the other cannot exist. Then add its keys
+   to `_MODE_KEYS` so that writing another backend's setting is an error.
 2. Write the adapter in its own module beside `sccache.py` and `kache.py`,
-   implementing `ComposingCacheBackend` and, only if its work can outlive a
+   implementing `CacheBackend` and, only if its work can outlive a
    group, `DetachedCacheBackend`.
 3. Add one branch to `cache_backends.select`, passing every configuration
    value the adapter reads -- the tests above will notice a dropped one.

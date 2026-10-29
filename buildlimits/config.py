@@ -16,10 +16,19 @@ import tomllib
 import typing as typ
 from pathlib import Path
 
+from buildlimits import cache_modes
+
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-CACHE_MODES = ("sccache", "kache", "direct")
+# Derived rather than restated: ``cache_modes.MODES`` is the only place a mode
+# string is read, so a mode accepted here but missing there -- which would pass
+# validation and then compose no backend at all -- cannot be introduced.
+# ``direct`` leads, then the caching modes in the order the table declares them.
+CACHE_MODES: tuple[str, ...] = (
+    "direct",
+    *(mode for mode in cache_modes.MODES if mode != "direct"),
+)
 CACHE_RECOVERY_POLICIES = ("manual", "starved")
 _CACHE_MODE_ERROR = f"cache_mode must be one of {', '.join(CACHE_MODES)}"
 

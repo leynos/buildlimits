@@ -149,11 +149,12 @@ The model has two parts: the supervisor, whose actions transcribe code, and an
 environment, whose actions are everything the supervisor only observes.
 
 The model is scoped to detached cache work, which after
-[ADR 005](adr-005-kache-cache-backend.md) is `cache_mode = "sccache"` alone. An
-in-scope backend such as `kache` runs the compiler inside the group's own
-scope, so it has no managed cache, no detached work, no drain and no recovery
-transaction; the state below -- the managed cache, its control group and its
-retained tokens -- does not exist there, and F3 is a claim about sccache only.
+[ADR 005](../adr-005-kache-cache-backend.md) is `cache_mode = "sccache"`
+alone. An in-scope backend such as `kache` runs the compiler inside the
+group's own scope, so it has no managed cache, no detached work, no drain and
+no recovery transaction; the state below -- the managed cache, its control
+group and its retained tokens -- does not exist there, and F3 is a claim
+about sccache only.
 Modelling the in-scope case would be a different model, not an extension of
 this one.
 

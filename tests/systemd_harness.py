@@ -124,7 +124,7 @@ class Harness(KacheHarnessSteps):
         The kache daemon is started *before* the supervisor and is owned by
         this harness alone, never by the supervisor: an admitted group must
         only ever be pointed at a daemon that is already answering. See ADR
-        004.
+        005.
 
         Raises
         ------

@@ -15,7 +15,7 @@
   specific to sccache: it reads that server's own outcome signals, and none of
   it applies to `cache_mode = "kache"`, whose compile runs inside the group's
   scope and whose backend has no managed server to record against. See
-  [ADR 005](adr-005-kache-cache-backend.md).
+  [ADR 005](../adr-005-kache-cache-backend.md).
 
 ## Summary
 
