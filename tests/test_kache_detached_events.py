@@ -303,7 +303,11 @@ def test_kache_status_names_kache_and_no_managed_service(
 ) -> None:
     """Status describes kache in its own words, in both health states."""
     supervisor = Supervisor(
-        SupervisorConfig(cache_mode="kache", kache_executable="/nonexistent/kache")
+        SupervisorConfig(
+            cache_mode="kache",
+            kache_executable="/nonexistent/kache",
+            kache_socket=Path("/run/user/1/buildlimits/kache.sock"),
+        )
     )
     owned.enter_context(contextlib.closing(supervisor))
     supervisor.admission.cached = caching
@@ -330,7 +334,10 @@ def test_an_admitted_kache_request_names_its_backend(
     """The metric says which cache served the build, not only how it went."""
     emitter, sink = telemetry
     supervisor = Supervisor(
-        SupervisorConfig(cache_mode="kache"),
+        SupervisorConfig(
+            cache_mode="kache",
+            kache_socket=Path("/run/user/1/buildlimits/kache.sock"),
+        ),
         telemetry=SupervisorTelemetry(metrics=emitter),
     )
     owned.enter_context(contextlib.closing(supervisor))

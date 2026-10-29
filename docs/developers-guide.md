@@ -157,7 +157,7 @@ Each module owns one decision. This table is the single module inventory.
 | `relocation`, `descriptors`                                                        | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution                     |
 | `attributes`                                                                       | The caller's umask, niceness and resource limits                                                       |
 | `pool`                                                                             | The token device, read on a thread of its own                                                          |
-| `sccache`, `server_watch`                                                          | The managed cache's reachability and accounting; start-up and `SERVER_DRAIN` release                   |
+| `sccache`, `sccache_cgroup`, `server_watch`                                        | The managed cache's reachability, control-group reads and accounting; `SERVER_DRAIN` release           |
 | `cache_backend`, `cache_backends`, `cache_modes`                                   | The backend protocols, the composition root that turns a mode into adapters, and the vocabulary        |
 | `kache`, `kache_guard`, `compiler_argv`                                            | The in-scope cache's composition and health; stray-process reports; leading cache-layer removal        |
 | `server_drain`                                                                     | The `SERVER_DRAIN` lifecycle, reachable only for a backend that leaves detached work                   |
@@ -364,8 +364,8 @@ the mode, so a setting the root forgets to pass is invisible everywhere else;
 `select` with a non-default setting and asking the adapter what it would
 actually run.
 
-`CacheBackend` is what admission needs: `compose(argv, env)` returns
-the composed vector and environment, `is_reachable()` answers health,
+`CacheBackend` is what admission needs: `compose(argv, env)` returns the
+composed vector and environment, `is_reachable()` answers health,
 `fallback_notice()` words the line an uncached build sees, `name` provides the
 journal and status wording, and `in_scope_work` states the capability.
 `DetachedCacheBackend` adds the lifecycle only a detached backend has:
@@ -391,8 +391,8 @@ To add a backend:
    mode present in one table and not the other cannot exist. Then add its keys
    to `_MODE_KEYS` so that writing another backend's setting is an error.
 2. Write the adapter in its own module beside `sccache.py` and `kache.py`,
-   implementing `CacheBackend` and, only if its work can outlive a
-   group, `DetachedCacheBackend`.
+   implementing `CacheBackend` and, only if its work can outlive a group,
+   `DetachedCacheBackend`.
 3. Add one branch to `cache_backends.select`, passing every configuration
    value the adapter reads -- the tests above will notice a dropped one.
 4. If the backend can start a cache process inside a group, extend

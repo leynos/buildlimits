@@ -204,28 +204,33 @@ sccache's wording, its metric values and its snapshots do not change.
 
 ### Configuration
 
-| Key                  | Modes   | Meaning                                                    |
-| -------------------- | ------- | ---------------------------------------------------------- |
-| `cache_mode`         | all     | `sccache`, `kache` or `direct`                             |
-| `sccache_executable` | sccache | The sccache client                                         |
-| `sccache_unit`       | sccache | The managed server's user unit                             |
-| `sccache_socket`     | sccache | The managed server's socket                                |
-| `cache_recovery`     | sccache | `manual` or `starved`; inert in other modes                |
-| `kache_executable`   | kache   | The kache client; see the resolution rule below            |
-| `kache_socket`       | kache   | The externally managed daemon's socket, if not the default |
-| `kache_cache_dir`    | kache   | The store, if not kache's own default                      |
+| Key                  | Modes   | Meaning                                                        |
+| -------------------- | ------- | -------------------------------------------------------------- |
+| `cache_mode`         | all     | `sccache`, `kache` or `direct`                                 |
+| `sccache_executable` | sccache | The sccache client                                             |
+| `sccache_unit`       | sccache | The managed server's user unit                                 |
+| `sccache_socket`     | sccache | The managed server's socket                                    |
+| `cache_recovery`     | sccache | `manual` or `starved`; inert in other modes                    |
+| `kache_executable`   | kache   | The kache client; see the resolution rule below                |
+| `kache_socket`       | kache   | The externally managed daemon's socket; required in kache mode |
+| `kache_cache_dir`    | kache   | The store, if not kache's own default                          |
 
 _Table 2: Configuration by mode._
 
-Every key is optional, so "invalid for the mode" is decided by the keys the
-operator actually wrote, not by a difference from the defaults. Writing
-`sccache_unit` while `cache_mode = "kache"`, or `kache_socket` while it is
-`"sccache"`, is an error naming the key and the mode, because the value would
-otherwise look accepted and do nothing. `kache_socket` is exported to the group
-as `KACHE_SOCKET_PATH`; when it is unset the group exports nothing and health
-asks kache to resolve its own default socket. `KACHE_SOCKET_PATH` is an
-operational variable, so `[cache] ignore_env` in a host kache configuration
-does not suppress it.
+Apart from `kache_socket`, every key is optional, so "invalid for the mode" is
+decided by the keys the operator actually wrote, not by a difference from the
+defaults. Writing `sccache_unit` while `cache_mode = "kache"`, or
+`kache_socket` while it is `"sccache"`, is an error naming the key and the
+mode, because the value would otherwise look accepted and do nothing.
+`kache_socket` is exported to the group as `KACHE_SOCKET_PATH` and is
+**required** in kache mode. kache resolves a default socket from its own
+environment, and the probe reads the supervisor's environment while the group
+reads the requesting build's. An unnamed socket would therefore let the probe
+verify one daemon while the group selected another and started a second one
+inside the admitted scope. Requiring the key means the daemon health accepted
+is the daemon every group runs against. `KACHE_SOCKET_PATH` is an operational
+variable, so `[cache] ignore_env` in a host kache configuration does not
+suppress it.
 
 `kache_cache_dir` is the store half of the same argument. Health checks the
 directory it was configured with, so the group must write that directory, or
