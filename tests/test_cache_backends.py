@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from buildlimits import cache_backends
+from buildlimits.cache_modes import MODES
 from buildlimits.config import SupervisorConfig
 
 if typ.TYPE_CHECKING:
@@ -67,17 +68,28 @@ def test_direct_mode_selects_no_cache_and_still_builds_the_managed_adapter() -> 
     )
 
 
-def test_every_mode_states_its_capability() -> None:
-    """Only sccache's work outlives its group, and each adapter says so."""
-    capabilities = {
-        mode: cache_backends.select(
-            SupervisorConfig(cache_mode=mode), MANAGER
-        ).composition.in_scope_work
-        for mode in ("sccache", "kache", "direct")
-    }
+@pytest.mark.parametrize("mode", sorted(MODES))
+def test_the_mode_table_and_the_selected_adapter_agree(mode: str) -> None:
+    """The two statements of each mode's capability cannot drift apart.
 
-    assert capabilities == {"sccache": False, "kache": True, "direct": True}, (
-        "an unstated capability would silently default to holding tokens"
+    ``MODES`` answers recovery, server-watch and status; the adapter answers
+    the supervisor. A disagreement would let the supervisor hold a token under
+    one rule while the machinery that decides when it comes back applied the
+    opposite one, so every row is compared against the adapter it selects.
+    """
+    settings = SupervisorConfig(cache_mode=mode)
+    if mode == "kache":
+        settings = SupervisorConfig(
+            cache_mode=mode, kache_socket=Path("/run/kache/kache.sock")
+        )
+    composition = cache_backends.select(settings, MANAGER).composition
+    expected = MODES[mode]
+
+    assert composition.in_scope_work is expected.in_scope_work, (
+        f"{mode}: MODES and the selected adapter disagree on in_scope_work"
+    )
+    assert composition.name == expected.name, (
+        f"{mode}: MODES and the selected adapter disagree on name"
     )
 
 
