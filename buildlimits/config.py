@@ -132,8 +132,9 @@ class SupervisorConfig:
         The kache client, when ``cache_mode`` is ``kache``.
     kache_socket : Path or None
         The separately managed kache daemon's socket, exported to every
-        admitted group as ``KACHE_SOCKET_PATH``. ``None`` lets kache resolve
-        its own default socket.
+        admitted group as ``KACHE_SOCKET_PATH``. Validation requires it when
+        ``cache_mode`` is ``kache``; ``None`` is valid only in the other
+        modes, where the key is inert.
     kache_cache_dir : Path or None
         The kache store health checks, exported to every admitted group as
         ``KACHE_CACHE_DIR``. ``None`` leaves the check to kache's own
@@ -162,8 +163,9 @@ class SupervisorConfig:
         default_factory=lambda: runtime_dir() / "cache-recovery"
     )
     kache_executable: str = "kache"
-    # None means "let kache find its own daemon"; the probe and every composed
-    # group export nothing, so kache's own resolution order applies.
+    # None is valid only outside kache mode, where the key is inert. Kache mode
+    # requires a socket, because an admitted group must never reach a daemon
+    # that kache resolved for itself; see ``_KACHE_SOCKET_ERROR``.
     kache_socket: Path | None = None
     # None means "kache's own store"; health cannot check it, so a host that
     # moves the store between filesystems must name it here.
