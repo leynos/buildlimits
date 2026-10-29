@@ -32,8 +32,6 @@ import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed argument
 import typing as typ
 from pathlib import Path
 
-from buildlimits.cache_backend import CacheError
-
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -377,20 +375,3 @@ def _is_kache(pid: int) -> bool:
     # A replaced binary still has a live process holding the deleted inode,
     # which the kernel marks in the link text rather than the file name.
     return target.name.removesuffix(" (deleted)") in STRAY_EXECUTABLES
-
-
-def unavailable(executable: str) -> CacheError:
-    """Build the error a caller reports when kache cannot be used.
-
-    Parameters
-    ----------
-    executable : str
-        The configured kache command, quoted in the message so an operator can
-        see what was looked for.
-
-    Returns
-    -------
-    CacheError
-        The backend-neutral error naming the missing command.
-    """
-    return CacheError(f"cannot use {executable}: kache is not available")

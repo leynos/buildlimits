@@ -109,8 +109,11 @@ def _record_drain_fault(watch: ServerWatch, error: CacheError) -> None:
     changed = fault != watch.drain_fault or kind != watch.drain_fault_kind
     watch.drain_fault = fault
     watch.drain_fault_kind = kind
-    is_live = isinstance(error, LiveCacheWorkError)
-    watch._fault_roots = error.roots if is_live else None
+    match error:
+        case LiveCacheWorkError(roots=roots):
+            watch._fault_roots = roots
+        case _:
+            watch._fault_roots = None
     if changed:
         with contextlib.suppress(OSError):
             log(f"{FAULT_PREFIXES[kind]}{fault}")

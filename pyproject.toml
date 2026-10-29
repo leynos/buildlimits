@@ -147,10 +147,6 @@ extend-ignore = [
 "tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "too-many-arguments"]
 "tests/fixtures/fake_sccache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 "tests/fixtures/fake_kache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
-# The table of fixed status documents quotes the exact summary line each variant
-# must produce, so its strings run past the wrap column by design and cannot be
-# broken without changing the text under test.
-"tests/status_render_states.py" = ["line-too-long"]
 
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
