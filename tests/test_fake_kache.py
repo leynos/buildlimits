@@ -11,6 +11,7 @@ The leak mode is checked the same way the daemon guard will see it: a live
 process whose executable is *named* kache, left outside any admitted scope.
 """
 
+import contextlib
 import importlib.util
 import json
 import os
@@ -25,6 +26,8 @@ from pathlib import Path
 from harness_processes import kill_and_reap, pid_alive, start_bound
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     import pytest
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_kache.py"
@@ -48,7 +51,7 @@ def _daemon(socket_path: Path) -> subprocess.Popen[bytes]:
     Returns
     -------
     subprocess.Popen[bytes]
-        The running daemon; the caller stops it in a ``finally`` block.
+        The running daemon. Prefer :func:`_running_daemon`, which reaps it.
     """
     env = {**os.environ, "KACHE_SOCKET_PATH": str(socket_path)}
     # The handle deliberately outlives this helper so the caller can probe the
@@ -84,19 +87,37 @@ def test_a_stopped_daemon_is_reported_in_the_document(
     )
 
 
+@contextlib.contextmanager
+def _running_daemon(socket_path: Path) -> cabc.Generator[subprocess.Popen[bytes]]:
+    """Run the fixture daemon on ``socket_path`` for the body of the block.
+
+    Parameters
+    ----------
+    socket_path : Path
+        The socket the daemon is told to bind and the block probes.
+
+    Yields
+    ------
+    subprocess.Popen[bytes]
+        The running daemon, reaped when the block ends however it ends.
+    """
+    daemon = _daemon(socket_path)
+    try:
+        yield daemon
+    finally:
+        kill_and_reap(daemon, timeout=10)
+
+
 def test_a_running_daemon_echoes_the_socket_it_was_probed_on(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The socket field is what lets a supervisor trust the answer it read."""
     socket_path = tmp_path / "kache.sock"
-    daemon = _daemon(socket_path)
-    try:
+    with _running_daemon(socket_path):
         document = _status(str(socket_path), capsys)
         assert document == {"daemon_running": True, "socket": str(socket_path)}, (
             "the document names the daemon's endpoint"
         )
-    finally:
-        kill_and_reap(daemon, timeout=10)
 
 
 def test_a_daemon_answering_elsewhere_does_not_vouch_for_the_configured_socket(
@@ -111,14 +132,11 @@ def test_a_daemon_answering_elsewhere_does_not_vouch_for_the_configured_socket(
     """
     serving = tmp_path / "serving.sock"
     configured = tmp_path / "configured.sock"
-    daemon = _daemon(serving)
-    try:
+    with _running_daemon(serving):
         document = _status(str(configured), capsys)
         assert document == {"daemon_running": False, "socket": str(configured)}, (
             "the probe reports its own endpoint, not the one that answered"
         )
-    finally:
-        kill_and_reap(daemon, timeout=10)
 
 
 def test_the_compiler_is_the_wrappers_own_child(tmp_path: Path) -> None:
