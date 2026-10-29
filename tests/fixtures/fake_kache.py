@@ -46,12 +46,12 @@ def serve(path: str) -> None:
     """
     with contextlib.suppress(OSError):
         pathlib.Path(path).unlink()
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind(path)
-    listener.listen(64)
-    while True:
-        conn, _ = listener.accept()
-        conn.close()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+        listener.bind(path)
+        listener.listen(64)
+        while True:
+            conn, _ = listener.accept()
+            conn.close()
 
 
 def is_running(path: str | None) -> bool:
@@ -76,14 +76,12 @@ def is_running(path: str | None) -> bool:
     """
     if not path:
         return False
-    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    probe.settimeout(SOCKET_TIMEOUT_SECONDS)
     try:
-        probe.connect(path)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(SOCKET_TIMEOUT_SECONDS)
+            probe.connect(path)
     except OSError:
         return False
-    finally:
-        probe.close()
     return True
 
 

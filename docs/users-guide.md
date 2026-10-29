@@ -181,13 +181,12 @@ in that mode.
 - kache `1.2.2` or `2.0.0-rc.1`. Other versions are unsupported until the
   verification recorded in ADR 005 is repeated for them.
 - `kache_socket`, naming a daemon that is already listening. The key is
-  **required** in kache mode: the supervisor's environment and the
-  requesting build's can resolve different kache defaults, so an unnamed
-  socket would let the health check accept one daemon while the group
-  talked to another and started a second one inside the admitted scope.
-  **The supervisor never starts, stops or owns the daemon.** The operator
-  installs and runs it as a separate unit; the repository does not ship
-  one.
+  **required** in kache mode: the supervisor's environment and the requesting
+  build's can resolve different kache defaults, so an unnamed socket would let
+  the health check accept one daemon while the group talked to another and
+  started a second one inside the admitted scope. **The supervisor never
+  starts, stops or owns the daemon.** The operator installs and runs it as a
+  separate unit; the repository does not ship one.
 - A `kache_executable` the supervisor can run. A bare name is resolved on the
   supervisor's `PATH`, so configure an absolute path when the supervisor runs
   under a minimal service environment.
@@ -201,6 +200,12 @@ group. The first stops kache's own scheduler from admitting a compile a second
 time under memory pressure, which the pool would never see; the second keeps
 its remote backends out of scope. Both are fixed settings of the supervisor,
 not tuning knobs.
+
+Do not set `[cache] ignore_env = true` in a host or project kache configuration
+on a host that composes kache. That setting suppresses `KACHE_SCHEDULER` and
+`KACHE_LOCAL_ONLY`, so kache's scheduler can admit a compile the pool does not
+account for. The supervisor cannot detect this setting; the configuration is
+the only place it can be prevented.
 
 If health fails -- the client does not resolve, the store cannot be written, or
 no daemon answers on the configured socket -- the build compiles directly with

@@ -303,9 +303,7 @@ _RANGE_RULES: tuple[tuple[cabc.Callable[[SupervisorConfig], bool], str], ...] = 
     (lambda config: config.slots >= 1, "slots must be a positive integer"),
     (lambda config: config.cache_mode in CACHE_MODES, _CACHE_MODE_ERROR),
     (
-        lambda config: (
-            config.cache_mode != "kache" or config.kache_socket is not None
-        ),
+        lambda config: config.cache_mode != "kache" or config.kache_socket is not None,
         _KACHE_SOCKET_ERROR,
     ),
     (

@@ -94,7 +94,7 @@ def user_manager_available() -> bool:
             env=manager_env(),
             timeout=30,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError, subprocess.TimeoutExpired:
         return False
     return result.stdout.strip() in {"running", "degraded"}
 
