@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 004: kache as an in-scope cache backend
+# Architectural decision record (ADR) 005: kache as an in-scope cache backend
 
 ## Status
 
