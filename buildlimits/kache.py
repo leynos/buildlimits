@@ -239,6 +239,10 @@ class Kache:
                 [client, "daemon", "status", "--json"],
                 capture_output=True,
                 text=True,
+                # Undecodable output must arrive as a string that
+                # ``_reports_running`` rejects, not as a ``UnicodeDecodeError``
+                # that escapes the handlers below and faults the tick.
+                errors="replace",
                 check=False,
                 timeout=STATUS_TIMEOUT_SECONDS,
                 env=env,
