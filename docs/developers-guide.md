@@ -139,7 +139,7 @@ Each module owns one decision. This table is the single module inventory.
 | `relocation`, `descriptors`                               | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution              |
 | `attributes`                                              | The caller's umask, niceness and resource limits                                                |
 | `pool`                                                    | The token device, read on a thread of its own                                                   |
-| `sccache`, `server_watch`                                 | The managed cache's reachability and accounting; start-up and `SERVER_DRAIN` release            |
+| `sccache`, `sccache_cgroup`, `server_watch`               | The managed cache's reachability, control-group reads and accounting; `SERVER_DRAIN` release    |
 | `cache_backend`, `cache_backends`, `cache_modes`          | The backend protocols, the composition root that turns a mode into adapters, and the vocabulary |
 | `kache`, `kache_guard`, `compiler_argv`                   | The in-scope cache's composition and health; stray-process reports; leading cache-layer removal |
 | `server_drain`                                            | The `SERVER_DRAIN` lifecycle, reachable only for a backend that leaves detached work            |

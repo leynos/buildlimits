@@ -83,6 +83,37 @@ def test_a_setting_the_chosen_mode_cannot_use_is_rejected(
     _rejected(tmp_path, text, f"{key}.*only valid")
 
 
+def test_kache_without_a_socket_is_rejected(tmp_path: Path) -> None:
+    """A kache group must name the daemon health checks.
+
+    kache resolves a default socket from its own environment, which for the
+    group is the requesting build's and for the probe is the supervisor's. An
+    unnamed socket lets the probe verify one daemon while the group selects
+    another and starts a second one inside the admitted scope.
+    """
+    _rejected(tmp_path, 'cache_mode = "kache"\n', "kache_socket")
+    _rejected(
+        tmp_path,
+        'cache_mode = "kache"\nkache_executable = "/b/kache"\n',
+        "kache_socket",
+    )
+
+
+def test_kache_with_a_socket_loads(tmp_path: Path) -> None:
+    """The documented kache configuration is accepted."""
+    path = tmp_path / "s.toml"
+    path.write_text(
+        'cache_mode = "kache"\n'
+        'kache_socket = "/run/user/1/buildlimits/kache.sock"\n'
+        'kache_cache_dir = "/var/cache/kache"\n'
+    )
+    settings = config.load(path)
+    assert settings.cache_mode == "kache", "the file selects the kache backend"
+    assert settings.kache_socket == Path("/run/user/1/buildlimits/kache.sock"), (
+        "the named daemon socket is read from the file"
+    )
+
+
 def test_a_backend_setting_is_inert_in_direct_mode(tmp_path: Path) -> None:
     """``direct`` owns no keys, so it does not reject another backend's."""
     path = tmp_path / "s.toml"

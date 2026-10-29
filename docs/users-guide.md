@@ -112,7 +112,7 @@ with exit status 2, and nothing is half-applied.
 | `cache_recovery`        | `starved`                                      | `starved` or `manual`; see [Recover a retained managed cache](#recover-a-retained-managed-cache)                                                                                                            |
 | `recovery_marker`       | `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`  | The restart barrier the managed cache unit honours                                                                                                                                                          |
 | `kache_executable`      | `kache`                                        | The kache client used in `kache` mode; see [Choose a cache backend](#choose-a-cache-backend)                                                                                                                |
-| `kache_socket`          | unset                                          | The separately managed kache daemon's socket, exported as `KACHE_SOCKET_PATH`                                                                                                                               |
+| `kache_socket`          | **required** in `kache` mode                   | The separately managed kache daemon's socket, exported as `KACHE_SOCKET_PATH`; there is no default                                                                                                          |
 | `kache_cache_dir`       | unset                                          | The kache store, exported as `KACHE_CACHE_DIR` and checked by health                                                                                                                                        |
 
 _Table 2: Supervisor configuration keys._
@@ -180,10 +180,14 @@ in that mode.
 
 - kache `1.2.2` or `2.0.0-rc.1`. Other versions are unsupported until the
   verification recorded in ADR 005 is repeated for them.
-- A daemon already listening on `kache_socket`, or on kache's own default when
-  that key is unset. **The supervisor never starts, stops or owns it.** The
-  operator installs and runs it as a separate unit; the repository does not
-  ship one.
+- `kache_socket`, naming a daemon that is already listening. The key is
+  **required** in kache mode: the supervisor's environment and the
+  requesting build's can resolve different kache defaults, so an unnamed
+  socket would let the health check accept one daemon while the group
+  talked to another and started a second one inside the admitted scope.
+  **The supervisor never starts, stops or owns the daemon.** The operator
+  installs and runs it as a separate unit; the repository does not ship
+  one.
 - A `kache_executable` the supervisor can run. A bare name is resolved on the
   supervisor's `PATH`, so configure an absolute path when the supervisor runs
   under a minimal service environment.

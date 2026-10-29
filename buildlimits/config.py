@@ -32,6 +32,14 @@ CACHE_MODES: tuple[str, ...] = (
 CACHE_RECOVERY_POLICIES = ("manual", "starved")
 _CACHE_MODE_ERROR = f"cache_mode must be one of {', '.join(CACHE_MODES)}"
 
+# An admitted kache group must run against a daemon the supervisor has already
+# seen answering. kache resolves a default socket from the environment, and the
+# supervisor's environment is not the requesting build's: a probe that names no
+# socket can verify one daemon while the group's own lookup selects another and
+# starts a second one inside the group's scope. Requiring the socket to be
+# written down makes the probed daemon the one every group runs against.
+_KACHE_SOCKET_ERROR = "kache_socket must be set when cache_mode is 'kache'"
+
 # Settings that only mean something in one cache mode. ``cache_recovery`` is
 # deliberately absent: ``starved`` is the default, so rejecting it in kache
 # mode would make the default configuration invalid on every kache host. It
@@ -292,6 +300,12 @@ def validate(config: SupervisorConfig) -> SupervisorConfig:
 _RANGE_RULES: tuple[tuple[cabc.Callable[[SupervisorConfig], bool], str], ...] = (
     (lambda config: config.slots >= 1, "slots must be a positive integer"),
     (lambda config: config.cache_mode in CACHE_MODES, _CACHE_MODE_ERROR),
+    (
+        lambda config: (
+            config.cache_mode != "kache" or config.kache_socket is not None
+        ),
+        _KACHE_SOCKET_ERROR,
+    ),
     (
         lambda config: config.cache_recovery in CACHE_RECOVERY_POLICIES,
         (f"cache_recovery must be one of {', '.join(CACHE_RECOVERY_POLICIES)}"),
