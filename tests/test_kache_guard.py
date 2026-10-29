@@ -184,7 +184,8 @@ def test_an_unreadable_slice_does_not_fail_the_reading(
     slice_dir.mkdir()
 
     def _vanish(_path: Path) -> list[Path]:
-        raise OSError("the slice went away")
+        msg = "the slice went away"
+        raise OSError(msg)
 
     monkeypatch.setattr(kache_guard.cgroups, "child_scopes", _vanish)
 
