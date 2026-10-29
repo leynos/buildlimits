@@ -171,8 +171,11 @@ def test_the_status_text_says_the_supervisor_is_restarting(
     supervisor, _groups = running
     supervisor.request_graceful_stop()
     supervisor._tick()
-    first_line = render(supervisor.status()).splitlines()[0]
-    assert "healthy, restarting once running groups finish" in first_line, (
+    lines = render(supervisor.status()).splitlines()
+    assert lines[0] == "admission closing: supervisor is closing", (
+        "the admission state leads the restart diagnostic"
+    )
+    assert "healthy, restarting once running groups finish" in lines[1], (
         "the summary says that the supervisor waits for its running groups"
     )
 

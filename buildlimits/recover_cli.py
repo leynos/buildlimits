@@ -26,7 +26,6 @@ Stopping sccache by hand does not release a token either: only the supervisor's
 own accounting does.
 """
 
-import argparse
 import dataclasses
 import json
 import sys
@@ -34,8 +33,10 @@ import time
 import typing as typ
 
 from buildlimits import recover_client, status_client
+from buildlimits.document_cli import document_parser
 
 if typ.TYPE_CHECKING:
+    import argparse
     import collections.abc as cabc
 
 # Completion is the transaction ending with the retained-work fault cleared,
@@ -154,8 +155,7 @@ def _parse(argv: cabc.Sequence[str] | None) -> argparse.Namespace:
     argparse.Namespace
         The parsed options, with ``--wait-timeout`` defaulted.
     """
-    parser = argparse.ArgumentParser(prog="build-limits-recover")
-    parser.add_argument("--json", action="store_true", help="print the raw document")
+    parser = document_parser("build-limits-recover")
     parser.add_argument(
         "--wait", action="store_true", help="wait until the transaction finishes"
     )

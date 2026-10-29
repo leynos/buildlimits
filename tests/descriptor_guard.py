@@ -99,7 +99,7 @@ def opened_since(before: Descriptors, after: Descriptors) -> Descriptors:
 
 
 @contextlib.contextmanager
-def no_leaks() -> cabc.Iterator[None]:
+def no_leaks() -> cabc.Generator[None]:
     """Require the block to close every descriptor it opens, without the collector.
 
     Raises

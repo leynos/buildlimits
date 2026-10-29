@@ -142,7 +142,9 @@ class _RetryState:
         self.busy_delay = min(5.0, self.busy_delay * 2)
 
     @contextlib.contextmanager
-    def _finish_restart_after_wait_failure(self) -> cabc.Iterator[None]:
+    def _finish_restart_after_wait_failure(
+        self,
+    ) -> cabc.Generator[None]:
         """Finish a pending span when either retry wait is interrupted.
 
         Raises

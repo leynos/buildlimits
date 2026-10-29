@@ -25,7 +25,7 @@ PYTEST_XDIST_WORKERS ?= auto
 PYTHON_TARGETS_FROM_GIT := $(if $(filter undefined,$(origin PYTHON_TARGETS)),1,0)
 PYTHON_TARGETS ?=
 RUFF_VERSION ?= 0.16.8
-TY_VERSION ?= 0.0.74
+TY_VERSION ?= 0.0.89
 LINT_PYTHON ?= 3.14
 RUFF = $(UV_ENV) $(UV) tool run --python $(LINT_PYTHON) --from 'ruff==$(RUFF_VERSION)' ruff
 TY = $(UV_ENV) $(UV) tool run --python $(LINT_PYTHON) --from 'ty==$(TY_VERSION)' ty
@@ -44,15 +44,15 @@ PYLINT_TARGETS ?= $(PYTHON_TARGETS)
 PYLINT = $(UV_ENV) $(UV) tool run --managed-python --python $(PYLINT_PYTHON) --from 'pylint==$(PYLINT_VERSION)' pylint
 
 
-.PHONY: help all audit clean build build-release lint lint-python fmt check-fmt \
-        check-python-sources \
+.PHONY: help all audit clean build build-release lint lint-python fmt \
+        check-fmt check-lock check-python-sources \
         markdownlint nixie spelling test test-systemd-user typecheck dead-code duplication install-nose lint-actions validate $(TOOLS) $(VENV_TOOLS)
 
 .DEFAULT_GOAL := all
 # Shared build caches require sequential gates even when make receives -j.
 .NOTPARALLEL:
 
-all: check-python-sources build check-fmt lint typecheck test
+all: check-lock check-python-sources build check-fmt lint typecheck test
 	+$(MAKE) spelling
 
 define ensure_uv
@@ -62,14 +62,17 @@ define ensure_uv
 	}
 endef
 
+check-lock: ## Check that uv.lock matches project metadata
+	$(UV_ENV) $(UV) lock --check
+
 .venv: pyproject.toml
 	$(call ensure_uv)
 	$(UV_ENV) $(UV) venv --clear
 
-build: .venv ## Build virtual-env and install deps
+build: check-lock .venv ## Build virtual-env and install deps
 	$(UV_ENV) $(UV) sync --group dev
 
-build-release: ## Build artefacts (sdist & wheel)
+build-release: check-lock ## Build artefacts (sdist & wheel)
 	$(call ensure_uv)
 	$(UV_ENV) $(UV) run python -m build --sdist --wheel
 

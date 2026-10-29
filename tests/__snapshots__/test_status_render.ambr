@@ -1,6 +1,22 @@
 # serializer version: 1
+# name: test_the_summary_describes_each_state[blocked-admission]
+  '''
+  admission blocked: 4 server-drain slots retained; operator recovery required
+  capacity 4, held 4, healthy, caching through sccache
+  no requests waiting
+  no compiler groups
+  '''
+# ---
 # name: test_the_summary_describes_each_state[cached]
   '''
+  capacity 4, held 0, healthy, caching through sccache
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[closing-admission]
+  '''
+  admission closing: supervisor is closing
   capacity 4, held 0, healthy, caching through sccache
   no requests waiting
   no compiler groups
@@ -38,6 +54,14 @@
   g3 server-drain (cached): tokio in <project>, 40.0s
   '''
 # ---
+# name: test_the_summary_describes_each_state[draining-admission]
+  '''
+  admission draining: 4 server-drain slots retained; recovery is in accounting
+  capacity 4, held 4, healthy, sccache unreachable, compiling directly
+  no requests waiting
+  no compiler groups
+  '''
+# ---
 # name: test_the_summary_describes_each_state[group]
   '''
   capacity 1, held 1, healthy, caching through sccache
@@ -49,6 +73,20 @@
   '''
   capacity 4, held 1, UNHEALTHY, caching through sccache
   unhealthy reason: internal error; draining before exit
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[legacy-missing-admission]
+  '''
+  capacity 4, held 0, healthy, caching through sccache
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[legacy-non-dictionary-admission]
+  '''
+  capacity 4, held 0, healthy, caching through sccache
   no requests waiting
   no compiler groups
   '''
@@ -126,6 +164,14 @@
   '''
   capacity None, held None, healthy, compiling directly
   open descriptors unavailable (errno 24), soft limit 524288, hard limit 524288
+  no requests waiting
+  no compiler groups
+  '''
+# ---
+# name: test_the_summary_describes_each_state[unhealthy-admission]
+  '''
+  admission unhealthy: supervisor is unhealthy
+  capacity 4, held 1, UNHEALTHY, caching through sccache
   no requests waiting
   no compiler groups
   '''

@@ -11,8 +11,8 @@ updates:
       interval: "weekly"
 
 
-  # Enable version updates for Python (pip / requirements*.txt)
-  - package-ecosystem: "pip"
+  # Enable version updates for Python dependencies and uv.lock
+  - package-ecosystem: "uv"
     directory: "/"
     open-pull-requests-limit: 5
     labels:

@@ -4,8 +4,6 @@ Each helper either returns the value with a precise type or raises
 :class:`~buildlimits.framing.ProtocolError`; none coerces.
 """
 
-import typing as typ
-
 from buildlimits.framing import ProtocolError
 
 
@@ -46,7 +44,7 @@ def as_list(value: object) -> list[object]:
     list[object]
         The array.
     """
-    return typ.cast("list[object]", expect(value, list, "an array"))
+    return expect(value, list, "an array")
 
 
 def as_dict(value: object) -> dict[str, object]:
@@ -57,7 +55,7 @@ def as_dict(value: object) -> dict[str, object]:
     dict[str, object]
         The object.
     """
-    return typ.cast("dict[str, object]", expect(value, dict, "an object"))
+    return expect(value, dict, "an object")
 
 
 def as_str(value: object) -> str:

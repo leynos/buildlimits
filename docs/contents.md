@@ -29,7 +29,11 @@
 - [ADR 003: bounded restart tracing](adr-003-bounded-restart-tracing.md)
   records the local OpenTelemetry spans, bounded journal schema and failure
   isolation used at process boundaries.
-- [ADR 004: kache as an in-scope cache backend](adr-004-kache-cache-backend.md)
+- [ADR 004: expose admission readiness in
+  status](adr-004-admission-readiness-status.md) records how readiness differs
+  from supervisor health and cache reachability, while preserving health-only
+  status checks and token accounting.
+- [ADR 005: kache as an in-scope cache backend](adr-005-kache-cache-backend.md)
   records the in-scope and detached capability split, the supported kache
   versions, the external-daemon and disabled-scheduler policies, and the
   on-host process-placement evidence behind them.

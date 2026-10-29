@@ -31,18 +31,19 @@ package, its tests and the console scripts the collection installs.
 ## 2. Local workflow and quality gates
 
 `make all` is the aggregate gate. It runs, in order and never in parallel,
-`build`, `check-fmt`, `lint`, `typecheck`, `test` and `spelling`. Run
-`make markdownlint` and `make nixie` after documentation changes, and
+`check-lock`, `build`, `check-fmt`, `lint`, `typecheck`, `test` and `spelling`.
+Run `make markdownlint` and `make nixie` after documentation changes, and
 `make audit` for the dependency vulnerability check. Narrower targets are for
 investigating a specific failure; reconcile with `make all` before committing.
 
 | Target                   | What it runs                                                                                      |
 | ------------------------ | ------------------------------------------------------------------------------------------------- |
+| `make check-lock`        | `uv lock --check` before the mutable dependency sync                                              |
 | `make build`             | `uv sync --group dev` into `.venv`                                                                |
 | `make check-fmt`         | Ruff 0.16.8 format check and mdtablefix 0.6.1 table check                                         |
 | `make fmt`               | Applies Ruff formatting, import sorting and Markdown table fixes                                  |
 | `make lint`              | Ruff, Interrogate (100%), Pylint and DF12 lints, Ambrleaks, Skylos, Vulture, duplication, actions |
-| `make typecheck`         | `ty` 0.0.74 against the project interpreter (`--python .venv`)                                    |
+| `make typecheck`         | `ty` 0.0.89 against the project interpreter (`--python .venv`)                                    |
 | `make test`              | pytest under xdist over `tests/` and the package's doctests                                       |
 | `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
@@ -50,11 +51,15 @@ investigating a specific failure; reconcile with `make all` before committing.
 _Table 1: Make targets and the gates behind them._
 
 Python sources are discovered through Git, tracked and untracked, so `git init`
-must have run before the first gate. The tool pins live in the `Makefile`; bump
-one deliberately, updating the pin and fixing any new diagnostics in the same
-change. `ty` runs as an isolated tool, so the `typecheck` target passes
-`--python .venv` to resolve imports from the project environment rather than
-from the tool's own.
+must have run before the first gate. `make all` starts with `make check-lock`,
+and both `build` and `build-release` depend on it. Direct builds, format and
+format-check commands, and release builds therefore fail on stale project
+metadata before `uv sync` or `uv run` can update the lockfile. The tool-pin
+contract requires the isolated `TY_VERSION` and `RUFF_VERSION` defaults to
+match their exact pins in the dev group. When bumping ty or Ruff, update its
+Makefile default in the same change and fix any new diagnostics. Both tools run
+in isolation; `typecheck` passes `--python .venv` so ty resolves imports from
+the project environment.
 
 ### 2.1. The Python 3.14 baseline
 
@@ -149,6 +154,8 @@ Each module owns one decision. This table is the single module inventory.
 | `toolchain_env`                                           | Pure, filesystem-only recognition of a real toolchain compiler and its loader-path prefix       |
 | `service`, `service_readiness`, `config`                  | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                 |
 | `status`, `status_client`, `status_render`, `status_cli`  | The status document, its transport, rendering and command                                       |
+| `admission_readiness`                                     | Pure admission-progress classification from health, ledger counts and recovery outlook          |
+| `document_cli`                                            | Shared raw `--json` parser for status and recovery document commands                            |
 | `recover_client`, `recover_cli`                           | The recovery request and the `build-limits-recover` command                                     |
 | `metrics*`, `journal`, `journal_native`                   | Metric vocabulary, native journal datagrams, journal queries and reports                        |
 | `drain_loop`, `drain_metrics`                             | Paces drain-fault retries; observes drain progress without exit authority                       |
@@ -356,6 +363,35 @@ automatic recovery trigger requires a `live_work` fault and then accepts either
 the prompt zero-root proof or the retained-drain staleness proof described
 below. `status_render.render` is a pure function of that document, pinned by
 Syrupy snapshots.
+
+The status and recovery document commands share `document_cli.document_parser`
+for their program name and raw `--json` option. Each command adds its own
+operational flags after that common setup.
+
+Admission readiness is a separate, pure classification. `status.describe`
+passes the supervisor health and closing flags, one frozen `Counts` ledger
+snapshot, the immediate `drain_fault_kind`, and the recovery outlook fields
+`automatic`, `phase`, `attempts` and `pending` to
+`admission_readiness.classify`. The classifier does not inspect cache
+reachability or make supervisor calls. It applies this precedence: `unhealthy`,
+`closing`, `blocked`, `draining`, `saturated`, then `ready`. Only `ready`,
+`saturated` and `draining` set `admission.ready` to `true`.
+
+The `admission` status object publishes `state`, `ready`, a count-only
+`reason`, and the `running`, `draining`, `server_drain` and `queued` counts.
+The classifier's `Counts.queued` and the published `queued` value both come
+from the admission queue, not `Requests.pending`; the latter may not yet have
+requester metadata. A `draining` state means the snapshot shows a current
+progress path, not that the path is guaranteed to finish. The classifier is
+read-only: it never releases or reassigns a token. Only verified accounting
+after a service is stopped and empty can release a retained server-drain token.
+
+The `devhost.buildlimits` provisioning collection and its role live in
+dev-env-rocky, which owns host provisioning. That external consumer must use
+`build-limits-status --ready` or `.admission.ready` for generic admission
+readiness; command success or `healthy` alone is only a process and pool health
+signal. Keep `healthy` for health checks, `caching` for cache reachability, and
+drain and recovery fields for maintenance decisions.
 
 `cache_recovery.CacheRecovery` is a four-phase machine — `quiescing`,
 `stopping`, `accounting`, `restarting` — advancing at most one step per tick.

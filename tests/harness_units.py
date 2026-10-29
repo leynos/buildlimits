@@ -72,6 +72,8 @@ def wait_for(condition: cabc.Callable[[], bool], timeout: float = 15.0) -> bool:
     return condition()
 
 
+
+
 def user_manager_available() -> bool:
     """Report whether a systemd user manager and busctl are usable.
 
@@ -85,14 +87,17 @@ def user_manager_available() -> bool:
         return False
     if not shutil.which("busctl") or not shutil.which("systemd-run"):
         return False
-    result = subprocess.run(
-        ["/usr/bin/systemctl", "--user", "is-system-running"],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=manager_env(),
-        timeout=30,
-    )
+    try:
+        result = subprocess.run(
+            ["/usr/bin/systemctl", "--user", "is-system-running"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=manager_env(),
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
     return result.stdout.strip() in {"running", "degraded"}
 
 

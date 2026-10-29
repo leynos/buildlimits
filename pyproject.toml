@@ -1315,3 +1315,10 @@ members = [
     "tests/test_kache_on_systemd_behaviour.py::_no_client",
 ]
 reason = "Recurring short test steps: both check the compiler's parent command line through World.assert_parent_lacks, naming their own backend's client as the text that must not appear. Sharing the step would lose which backend each feature is about."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/admission_readiness.py::ReadinessFacts",
+    "buildlimits/recovery_starvation.py::StarvationReading",
+]
+reason = "These immutable snapshots feed different decisions: operator-facing readiness uses health, the authoritative ledger and recovery outlook, while automatic recovery uses trigger policy and timing proof. Sharing a record would couple those contracts without sharing classification logic."

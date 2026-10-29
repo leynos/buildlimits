@@ -22,7 +22,7 @@ def test_error_reader_unregisters_before_close_after_complete_outcome(
         read, write = os.pipe2(os.O_CLOEXEC | os.O_NONBLOCK)
         child = HeldChild(0, None, read)
         groups.running["g1"] = Running("g1", 1, Path("/unused"), child)
-        selector.register(read, selectors.EVENT_READ, ("exec", "g1"))
+        selector.register(read, selectors.EVENT_READ, ("errors", "g1"))
         original = selector.unregister
         inspected = []
 
@@ -36,7 +36,9 @@ def test_error_reader_unregisters_before_close_after_complete_outcome(
         try:
             os.write(write, b"stage=exec")
             assert groups.exec_outcome("g1") is None, "partial data needs another event"
-            assert selector.get_key(read), "incomplete diagnostics retain their watch"
+            assert selector.get_key(read).data == ("errors", "g1"), (
+                "incomplete diagnostics retain their watch"
+            )
             assert not inspected, "partial data does not release selector ownership"
             os.close(write)
             write = -1

@@ -23,7 +23,7 @@ if typ.TYPE_CHECKING:
 @contextlib.contextmanager
 def watched_listener(
     clock: cabc.Callable[[], float], metrics: MetricsPort | None = None
-) -> cabc.Iterator[tuple[selectors.BaseSelector, socket.socket, ListenerPressure]]:
+) -> cabc.Generator[tuple[selectors.BaseSelector, socket.socket, ListenerPressure]]:
     """Register a listener with a real selector and put it under pressure control.
 
     Parameters

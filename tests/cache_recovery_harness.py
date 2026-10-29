@@ -129,6 +129,7 @@ def harness_for(
     monkeypatch: pytest.MonkeyPatch,
     *,
     mode: str = "starved",
+    slots: int = 2,
 ) -> Harness:
     """Build a supervisor whose cache state is fully scripted.
 
@@ -143,6 +144,8 @@ def harness_for(
         Fixture used to redirect the cache's control-group lookup.
     mode : str
         The configured recovery policy.
+    slots : int
+        The token-pool capacity, which defaults to the existing two-slot case.
 
     Returns
     -------
@@ -155,6 +158,7 @@ def harness_for(
     marker = tmp_path / "cache-recovery"
     state.marker = marker
     settings = SupervisorConfig(
+        slots=slots,
         cache_mode="sccache",
         cache_recovery=mode,
         sccache_unit=CACHE_UNIT,
@@ -234,13 +238,15 @@ class HarnessFactory:
         self._monkeypatch = monkeypatch
         self._owned = owned
 
-    def build(self, *, mode: str = "starved") -> Harness:
+    def build(self, *, mode: str = "starved", slots: int = 2) -> Harness:
         """Build an owned harness over a fully scripted cache.
 
         Parameters
         ----------
         mode : str
             The configured recovery policy.
+        slots : int
+            The token-pool capacity.
 
         Returns
         -------
@@ -248,7 +254,7 @@ class HarnessFactory:
             A harness that is closed when the test ends.
         """
         return self._owned.enter_context(
-            harness_for(self._tmp_path, self._monkeypatch, mode=mode)
+            harness_for(self._tmp_path, self._monkeypatch, mode=mode, slots=slots)
         )
 
     def opened(

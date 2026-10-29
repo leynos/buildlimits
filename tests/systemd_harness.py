@@ -287,6 +287,35 @@ class Harness:
         )
         return json.loads(result.stdout)
 
+    def readiness_status(self) -> tuple[int, dict[str, typ.Any]]:
+        """Read status with the admission-readiness exit contract.
+
+        Returns
+        -------
+        tuple[int, dict[str, Any]]
+            The ``--ready`` exit code and the decoded status document.
+        """
+        result = subprocess.run(
+            [str(self.status_command), "--ready", "--json"],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        return result.returncode, json.loads(result.stdout)
+
+    def drain_fault(self) -> str:
+        """Read the current retained-drain fault, if one is reported.
+
+        Returns
+        -------
+        str
+            The reported fault, or an empty string when no fault exists.
+        """
+        fault = self.status()["drain_fault"]
+        return fault if isinstance(fault, str) else ""
+
     def kill_supervisor(self) -> None:
         """Kill the supervisor outright, as a crash would."""
         subprocess.run(

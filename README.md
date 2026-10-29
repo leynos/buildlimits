@@ -82,7 +82,8 @@ ______________________________________________________________________
 - `build-limits-supervisor`, a systemd user service that places each compiler
   group in its own transient scope and composes it with the configured cache
   backend.
-- `build-limits-status` for capacity, held tokens, the queue and drain faults.
+- `build-limits-status` for capacity, held tokens, the queue and drain faults;
+  its opt-in `--ready` flag lets provisioning check admission progress.
 - `build-limits-recover` to account for cache work that outlived its build,
   without ever releasing a token on a guess.
 - `build-limits-metrics` to summarize bounded, identifier-free journal
