@@ -202,7 +202,7 @@ def _machine(
 
 
 def test_kache_start_up_never_stops_a_service_it_does_not_own(
-    metrics: Metrics, metric_sink, tmp_path: Path
+    metrics: Metrics, metric_sink: RecordingSink, tmp_path: Path
 ) -> None:
     """The two start-up stops that account for a server both find nothing."""
     server = _KacheServer()
@@ -223,7 +223,7 @@ def test_kache_start_up_never_stops_a_service_it_does_not_own(
 
 
 def test_an_emptied_kache_group_emits_no_server_drain_release(
-    metrics: Metrics, metric_sink
+    metrics: Metrics, metric_sink: RecordingSink
 ) -> None:
     """A group returns its token as it leaves, with no server to wait for.
 
@@ -262,7 +262,10 @@ def test_an_emptied_kache_group_emits_no_server_drain_release(
 
 
 def test_a_starved_kache_pool_never_opens_a_recovery(
-    metrics: Metrics, metric_sink, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    metrics: Metrics,
+    metric_sink: RecordingSink,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Even the strongest detached proof opens nothing in kache mode."""
     kache_state = CacheState()
@@ -299,7 +302,7 @@ def test_a_starved_kache_pool_never_opens_a_recovery(
     ],
 )
 def test_kache_status_names_kache_and_no_managed_service(
-    owned, caching: bool, phrase: str
+    owned: contextlib.ExitStack, caching: bool, phrase: str
 ) -> None:
     """Status describes kache in its own words, in both health states."""
     supervisor = Supervisor(
@@ -329,7 +332,10 @@ def test_kache_status_names_kache_and_no_managed_service(
     ("cached", "path"), [(True, "cached"), (False, "direct_fallback")]
 )
 def test_an_admitted_kache_request_names_its_backend(
-    owned, telemetry, cached: bool, path: str
+    owned: contextlib.ExitStack,
+    telemetry: tuple[Metrics, RecordingSink],
+    cached: bool,
+    path: str,
 ) -> None:
     """The metric says which cache served the build, not only how it went."""
     emitter, sink = telemetry

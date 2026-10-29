@@ -39,6 +39,25 @@ class RecordingGroups:
     The defaults answer ``direct`` with an in-scope backend, so the guard stays
     off; the fixture replaces both with the supervisor's own, so the double
     keeps reporting the configuration it is standing in for.
+
+    Attributes
+    ----------
+    terminated : list[str]
+        The identifiers of the groups this double was asked to terminate.
+    running : dict[str, object]
+        The scripted groups, keyed by identifier.
+    settings : SupervisorConfig
+        The configuration the registry reports to the status path.
+    backend : CacheBackend
+        The backend the registry reports, which decides whether the stray-cache
+        guard runs at all.
+    slice_dir : Path or None
+        The compilers' slice the guard would scan, or ``None`` for no scope.
+    guard : kache_guard.Strays
+        The stray-process report the status document reads.
+    terminate : collections.abc.Callable[[str], None]
+        The termination entry point, bound in ``__post_init__`` to append to
+        ``terminated`` instead of signalling a scope.
     """
 
     terminated: list[str] = dc.field(default_factory=list)

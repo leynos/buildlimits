@@ -160,9 +160,6 @@ extend-ignore = [
 # systemd tools with fixed argv. Its guards state the fixture preconditions a
 # scenario depends on, so they fail the scenario rather than debug it.
 "tests/cache_recovery_systemd_world.py" = ["assert", "suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
-# Expected operator-facing lines are compared verbatim, so wrapping them would
-# stop them matching the rendered summary they pin.
-"tests/status_render_states.py" = ["line-too-long"]
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
 banned-from = [

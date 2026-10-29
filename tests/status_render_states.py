@@ -240,7 +240,10 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
             "caching": True,
             "recovery_action": "restore manager query transport; do not release tokens",
         },
-        "required recovery action: restore manager query transport; do not release tokens",
+        (
+            "required recovery action: restore manager query transport; "
+            "do not release tokens"
+        ),
     ),
     "missing-group-label": (
         {
@@ -250,7 +253,10 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
             "caching": True,
             "groups": [{**_RUNNING, "state": "server-drain", "label": None}],
         },
-        "g3 server-drain (cached): request metadata unavailable; retaining compiler token",
+        (
+            "g3 server-drain (cached): request metadata unavailable; "
+            "retaining compiler token"
+        ),
     ),
     "missing-group-directory": (
         {
@@ -260,7 +266,10 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
             "caching": True,
             "groups": [{**_RUNNING, "state": "server-drain", "directory": None}],
         },
-        "g3 server-drain (cached): request metadata unavailable; retaining compiler token",
+        (
+            "g3 server-drain (cached): request metadata unavailable; "
+            "retaining compiler token"
+        ),
     ),
     "missing-group-duration": (
         {
