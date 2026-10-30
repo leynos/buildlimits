@@ -205,6 +205,24 @@ Each module owns one decision. This table is the single module inventory.
 
 _Table 2: Package modules._
 
+Outcome recording is a shell around those decisions. `supervisor_placement`
+calls `outcomes.launched` only after `Groups.release` succeeds. For an emptied
+scope, `group_recovery.empty_groups` captures its cache and exit facts before
+`Admission.group_emptied` removes the group, applies the admission effects, and
+only then calls `outcomes.emptied`. `supervisor_polling.poll_services` polls
+the shell after server, pool and cache work. Its one-second quiet-point gate
+uses admission counts and the recovery barrier; statistics and generation
+probes return without waiting, and the writer accepts immutable rows through
+its own bounded queue. `OutcomeShell.close` cancels and reaps a pending helper
+within the shutdown bound. The disabled shell creates no process, socket,
+thread or store. Any optional-shell failure disables recording for that
+supervisor lifetime without changing admission.
+
+`supervisor_outcome_setup.disabled_description` is the single constructor for
+the fixed disabled status used by failed startup and runtime fail-closed paths.
+Keep it scoped to that public outcome-recorder status; it is not a general
+status redaction or error-reporting helper.
+
 `nonblocking_child` is the supervisor loop's only sanctioned helper-process
 mechanism. Its live query pipe uses the reserve in
 `descriptor_budget.DESCRIPTOR_RESERVE`.
@@ -718,12 +736,16 @@ Use these before writing a new arrange step; extend one rather than copying it.
 
 _Table 4: Shared test helper modules._
 
-Set `BUILD_LIMITS_SCCACHE_HOST_CHECK=1` when running `make test` to include the
-`sccache_host_check` test. It requires Linux and the exact `sccache 0.14.0`
-binary; pytest skips it when either precondition is absent. The test compares
-its readings with the committed JSONL fixture. Set
+`make test-sccache-host` sets `BUILD_LIMITS_SCCACHE_HOST_CHECK=1` and selects
+the `sccache_host_check` marker. The real-binary test requires Linux and the
+exact `sccache 0.14.0` binary; pytest skips that test when either precondition
+is absent. It compares its readings with the committed JSONL fixture. Set
 `BUILD_LIMITS_SCCACHE_REGENERATE_FIXTURE=1` to replace the fixture, then review
 the resulting diff before committing it.
+
+`tests/test_cache_outcomes_systemd.py` runs the recording shell with a scripted
+fake sccache and checks miss/hit labels, the barrier gate, generation reset,
+stalled-query admission, H3 replay and the status line.
 
 ### 11.3. Verification beyond examples
 
@@ -860,9 +882,10 @@ reason when the code it names changes.
   collaborators and dataclass-held owners that a static call graph cannot
   resolve. Each is named by its full dotted path under
   `[[tool.skylos.dead_code.entrypoints]]`, with the call path that keeps it
-  alive. EP-M5's child adapter also has temporary entries until EP-M7 wires
-  polling and shutdown cancellation through `OutcomeShell`; their reasons link
-  to the implementation milestone that removes them.
+  alive. EP-M7 wires the statistics child through event-loop polling and
+  shutdown cancellation; the exact `NonBlockingChild.poll` and
+  `_read_available` entries remain because Skylos does not resolve its child
+  list dispatch. The stale cancellation entry was removed after integration.
 - **Vulture.** Only `tests/` is scanned, so attributes that tests set and
   production code reads, mock configuration, runner doubles' `__call__` and the
   CrossHair contracts are listed in `ignore_names`; pytest-bdd steps and
@@ -873,7 +896,9 @@ reason when the code it names changes.
   recur across parallel scenarios. Each is listed under
   `[[tool.duplication_gate.allow]]` naming every location, so a further copy
   still blocks. Prefer a `path::name` key; a bare path key covers every unnamed
-  fragment in that file, so add one only when no name is available.
+  fragment in that file, so add one only when no name is available. The
+  outcome-shell test support has one such unit exception because the detector
+  reports its two fake-port close-log fragments without unit names.
 
 ## 13. Repository automation
 
