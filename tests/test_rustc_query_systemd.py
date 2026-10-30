@@ -7,12 +7,16 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
 from harness_processes import own_process
 from rustc_query_host_support import hold_pool
 from rustc_query_support import temporary_executable
 from systemd_harness import Harness, systemd_user_marks, wait_for
 
-pytestmark = systemd_user_marks("needs a systemd user manager and busctl")
+pytestmark = [
+    *systemd_user_marks("needs a systemd user manager and busctl"),
+    pytest.mark.timeout(180),
+]
 
 _FAKE_RUSTC = r"""#!/usr/bin/env python3
 import json

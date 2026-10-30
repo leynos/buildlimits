@@ -25,7 +25,10 @@ from rustc_query_host_support import (
 from rustc_query_support import cargo_probe
 from systemd_harness import Harness, systemd_user_marks
 
-pytestmark = systemd_user_marks("needs a systemd user manager and Rust toolchains")
+pytestmark = [
+    *systemd_user_marks("needs a systemd user manager and Rust toolchains"),
+    pytest.mark.timeout(180),
+]
 
 _SAMPLES = 5
 _SAMPLE_TIMEOUT = 10

@@ -3458,5 +3458,20 @@ Consult these documents:
   exceeded the 400-line Pylint bound. The threshold test now reads ADR 005, the
   mixin declares the harness attributes it uses, and `RecoveryWorld` and the
   status-render fixtures moved to `cache_recovery_systemd_world.py` and
-  `status_render_states.py`, both listed in the developers' guide. Fresh
-  sequential gates remain pending for the repaired candidate.
+  `status_render_states.py`, both listed in the developers' guide.
+- 2026-10-30: the first sequential gate run over the repaired candidate was red
+  in two places, and both were genuine defects rather than host noise. The
+  `Groups.advance` Skylos allowance had been merged into the existing
+  `Groups.remove` entry, but `tests/test_skylos_configuration.py` pins each
+  allowance to exactly one method and file, so the merged entry failed the
+  contract and skipped the AST existence check for the second name; the
+  allowances are now separate entries. The user-systemd gate timed out at 30 s
+  twice, at `daemon-reload` and then at `systemctl --user start`, inside
+  `tests/cached_unit_files.py`. Five systemd test modules still inherited the
+  repository's global 30 s pytest timeout while containing their own 30-60 s
+  subprocess waits, so a normal-but-slow unit start could not fit the budget;
+  they now carry the same `pytest.mark.timeout(180)` mark their sibling modules
+  already use. After both repairs the candidate passed formatting, lint,
+  typechecking, the full suite (2,454 passed, 41 skipped), Markdown and
+  spelling, Nixie, audit, Makefile validation, user-systemd (36 passed, 2
+  dylint-marker skips) and sccache-host (2 passed).

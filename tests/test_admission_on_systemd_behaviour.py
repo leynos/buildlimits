@@ -17,7 +17,10 @@ from systemd_harness import (
     wait_for,
 )
 
-pytestmark = systemd_user_marks("needs a systemd user manager and busctl")
+pytestmark = [
+    *systemd_user_marks("needs a systemd user manager and busctl"),
+    pytest.mark.timeout(180),
+]
 
 scenarios("features/admission_on_systemd.feature")
 
