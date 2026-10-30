@@ -15,7 +15,9 @@ clean review passed in `636f3ed`; EP-M5 child and query adapters are committed
 as `d96518c` and `56bc46b`; the store writer is committed as `34ea33b`, with
 candidate98 full gates and archive-bound review passed; 2026-10-27 local review
 fixes are implemented, with full gates and a fresh committed review pending;
-EP-M6 to EP-M8 remain open)
+EP-M6 to EP-M8 are reconciled against the candidate `b3be25f`, whose five
+sequential gates and assessment answers are recorded in the Progress section;
+G1 is unrun and EP-M9 is unstarted)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -973,13 +975,14 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] EP-M5: adapters (non-blocking child, queries, generation, store
   writer). Implementation commit `34ea33b`; full gates and clean archive-bound
   review passed in candidate98.
-- [ ] EP-M6: inert schema, configuration and tracing vocabulary
+- [x] EP-M6: inert schema, configuration and tracing vocabulary
   (releasable). Its earlier standalone gates passed in `d0d0495`; the
-  integrated M6-M8 candidate remains open for final acceptance, as directed in
-  the review findings.
-- [ ] EP-M7: supervisor wiring, status, report, `h3` replay, systemd
-  scenarios and documentation.
-- [ ] EP-M8: H2 child sightings, the `h2` replay, and their documentation.
+  integrated M6-M8 candidate is accepted on `b3be25f`, as recorded in the
+  2026-10-30 reconciliation below.
+- [x] EP-M7: supervisor wiring, status, report, `h3` replay, systemd
+  scenarios and documentation. Accepted on the same candidate.
+- [x] EP-M8: H2 child sightings, the `h2` replay, and their documentation.
+  Accepted on the same candidate.
 - [ ] G1 (owner): release, enable, collect, record H1, H2 and H3, and
   decide.
 - [ ] EP-M9: W2 offline replay (H4 and H5), gated on G1.
@@ -1303,6 +1306,21 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   reason that `OutcomeCounters.describe()` already exposed to a document that
   carries one, and leaves a legacy document's line byte-identical. A focused
   test pins both readings, and the users' guide explains what the reason is for.
+- [x] (2026-10-30) EP-M6 to EP-M8 are reconciled against `b3be25f`, the
+  candidate that answers assessment `BL-EP-2026-10-30-A1`. Each defect and
+  omission in that assessment has a commit: `9ab21cc` keeps recorder faults off
+  the selector thread and protects each cleanup step independently; `c159d7c`
+  builds every sample only from identities validated within it; `30a86ac`
+  aggregates reading telemetry into reason transitions and one-minute counter
+  summaries; `9f34faa` generates the O4 differential sequence and adds both
+  import-direction checks; `f50ebda` measures child sampling against its budget;
+  `828a998` puts the covered span and the stated limits in every verdict;
+  `8be1b8a` names the last closed reason on the status line; and `0961ea9`
+  records D40's close-out recount. Five sequential gates then passed on that
+  candidate: format, the full suite (2,487 passed, 42 skipped, 60 snapshots),
+  typecheck, lint in full (including dead code, duplication and action lint)
+  and Markdown with the spelling gate. The milestone checkboxes above record
+  the acceptance. G1 remains owner-controlled and EP-M9 stays unstarted.
 
 ## Surprises & discoveries
 
