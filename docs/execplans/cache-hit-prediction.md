@@ -17,9 +17,10 @@ candidate98 full gates and archive-bound review passed; 2026-10-27 local review
 fixes are implemented, with full gates and a fresh committed review pending;
 EP-M6 to EP-M8 are reconciled against the candidate `b3be25f`, whose five
 sequential gates and assessment answers are recorded in the Progress section;
-the three defects raised by the review of `72e39e8` are fixed and awaiting
-their gate run; the opt-in child-sighting measurement still needs a quiet-host
-acceptance run; G1 is unrun and EP-M9 is unstarted)
+the three defects raised by the review of `72e39e8`, and the three concerns
+raised by the proof assessment, are fixed and awaiting their gate run; the
+opt-in child-sighting measurement still needs a quiet-host acceptance run; G1
+is unrun and EP-M9 is unstarted)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -1342,6 +1343,19 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   the host is loaded, and no quiet host has been available since the assertion
   changed. The plan records the contention evidence above rather than claiming
   a pass.
+- [x] (2026-10-30) The proof assessment's three concerns are addressed. The
+  CrossHair runner now passes `--report_all` and fails unless each of the four
+  attributed contracts reports "Confirmed over all paths", so a missing or
+  inconclusive target can no longer pass as a completed proof; it also prints
+  the verifier version, the exact command and every per-target result, keeping
+  the evidence with the run. `planned_limits_are_reachable` reports "Not
+  confirmed" in the same module, so the test names it explicitly as a
+  descriptor-limit contract outside the claim rather than letting it pass
+  unremarked. The repeated-hit and repeated-error contracts now build one
+  distinct group id per launch and assert the exact label tuple. The plan
+  describes the four contracts and their rejection cases as complementary
+  checks and reserves "mutation control" for the deliberate-fault runs listed
+  beside them.
 
 ## Surprises & discoveries
 
@@ -2217,19 +2231,35 @@ window whose delta is a sum of two or more distinct footprints is
     be `count_mismatch`.
 - CrossHair proof inventory in `tests/crosshair_contracts.py`:
   - `unanimous_hit_windows_keep_the_hit_label` checks 2 to 4 identical hit
-    footprints through production `attribute()`.
+    footprints through production `attribute()`, with a distinct group id per
+    launch and the exact expected label tuple asserted.
   - `cache_errors_are_not_dropped_from_a_solo_footprint` checks one
     cache-error footprint retains the `error` label.
   - `repeated_cache_errors_are_not_unanimous` checks 2 to 4 identical cache
-    errors remain unattributed.
+    errors remain unattributed, again with distinct group ids and the exact
+    expected label tuple.
   - `decoding_never_labels_mixed` checks every four-launch hit/miss mixture
     with 1 to 3 hits remains unattributed.
   - `tests/test_crosshair.py` runs
     `python -m crosshair check --analysis_kind=asserts --per_condition_timeout=20`
-    against `tests/crosshair_contracts.py`, with a 100-second subprocess
-    timeout. The lock pins `crosshair-tool` 0.0.111; the gate used Python
-    3.14.8. These bounded symbolic contracts are not unbounded proofs; the
-    separate exhaustive test enumerates multisets of up to four Table A rows.
+    with `--report_all` against `tests/crosshair_contracts.py`, with a
+    100-second subprocess timeout. The lock pins `crosshair-tool` 0.0.111;
+    the gate used Python 3.14.8. With `--report_all` the run reports a result
+    for every contract, and the test requires each of the four above to report
+    "Confirmed over all paths": a missing result, an inconclusive result or a
+    counterexample fails the test. The test prints the verifier version, the
+    exact command and every per-target result, so the evidence is preserved
+    with the run. `planned_limits_are_reachable` is a descriptor-limit
+    contract in the same module whose integer arguments are unbounded; it
+    reports "Not confirmed", is named in the test as outside the claimed
+    proofs, and is covered by the descriptor tests instead.
+  - These contracts and the rejected cases beside them are complementary
+    checks: they constrain what a correct implementation must decide. They
+    are not mutation controls. The mutation evidence for O1 is the separate
+    deliberate-fault list below, where each injected defect was shown to fail
+    a named test.
+  - These bounded symbolic contracts are not unbounded proofs; the separate
+    exhaustive test enumerates multisets of up to four Table A rows.
 - Mutations and their failing tests:
   - Relabel the compilation-only footprint as `hit`;
     `test_truth_table[not_cached]` must fail.
