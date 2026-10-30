@@ -1,4 +1,4 @@
-"""Opt-in host measurements for recorder-loop and store-queue overhead."""
+"""Opt-in host measurements for recorder-loop, sampler and queue overhead."""
 
 import collections.abc as cabc
 import math
@@ -7,9 +7,13 @@ import time
 from pathlib import Path
 
 import pytest
+from outcome_process_test_helpers import sampler_tree
 from outcome_shell_test_support import make_outcome_world
 from outcome_store_helpers import window_summary
 
+from buildlimits import proc_trees
+from buildlimits.outcome_attribution import Generation
+from buildlimits.outcome_process_sampler import MAX_PROCESSES_PER_SAMPLE
 from buildlimits.outcome_store import StoreWriter
 
 pytestmark = [
@@ -54,6 +58,47 @@ def test_recorder_tick_and_store_enqueue_stay_within_latency_budget(
     print(f"outcome append enqueue p99: {append_p99_ms:.3f} ms")
     assert tick_lengthening_ms <= 5.0, "recorder work stays within the tick budget"
     assert append_p99_ms <= 1.0, "append only enqueues work on the caller"
+
+
+def test_child_sighting_sample_stays_within_the_latency_budget(
+    tmp_path: Path,
+) -> None:
+    """Measure a warm sample over a full 64-process batch.
+
+    The sampler is warmed once so the measurement covers the steady-state
+    path: every member's identity is re-read, while the cached command-line
+    classification is reused. A 65th member is present to prove the sample
+    still inspects no more than the documented batch.
+
+    A sample cannot run faster than the identity reads it must perform, and
+    those reads cost tens of microseconds each on a loaded host. The budget is
+    therefore checked against the same host's cost for reading the 64
+    identities once, in the same way the tick budget above subtracts its no-op
+    baseline; the absolute figures are printed for the record.
+    """
+    pids = list(range(1, MAX_PROCESSES_PER_SAMPLE + 2))
+    tree = sampler_tree(tmp_path, pids)
+    sampler, proc_root = tree.sampler, tree.proc_root
+    generation = Generation("run-a", 900, 12)
+
+    sampler.full_emit_metadata(generation)
+    samples = _measure(lambda: sampler.full_emit_metadata(generation))
+    inspected = pids[:MAX_PROCESSES_PER_SAMPLE]
+    baseline = _measure(
+        lambda: [proc_trees.read_process_starttime(pid, proc_root) for pid in inspected]
+    )
+    observed = sampler.full_emit_metadata(generation)
+    sample_p99_ms = _p99(samples) / 1_000_000
+    overhead_ms = max(0, _p99(samples) - _p99(baseline)) / 1_000_000
+
+    print(f"child-sighting sample p99: {sample_p99_ms:.3f} ms")
+    print(f"child-sighting read baseline p99: {_p99(baseline) / 1_000_000:.3f} ms")
+    print(f"child-sighting sampler overhead p99: {overhead_ms:.3f} ms")
+    assert isinstance(observed, frozenset), "the group was readable"
+    assert len(observed) == MAX_PROCESSES_PER_SAMPLE, (
+        "one sample inspects exactly the bounded batch"
+    )
+    assert overhead_ms <= 2.0, "child sighting stays within the sample budget"
 
 
 def _measure(action: cabc.Callable[[], object]) -> list[int]:

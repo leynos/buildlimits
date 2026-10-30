@@ -1273,6 +1273,21 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   reasoned exceptions were reconciled with the moved import block. Focused
   checks pass (11 tests, Ruff, `ty`, interrogate, CodeScene 10.00 on each new
   file); the full sequential gate run remains pending.
+- [x] (2026-10-30) The opt-in host measurement now covers child sighting.
+  `tests/test_outcome_latency.py` warms one sampler over a 65-member fake
+  cgroup and measures 1,000 steady-state samples, asserting that a sample
+  inspects exactly the 64-process batch and that its p99 above the same host's
+  cost for those 64 identity reads stays within the 2 ms budget. On this host
+  with 26 compilations queued, the absolute sample p99 ranged from 2.6 ms to
+  5.1 ms while reading the 64 stat files alone cost 1.8 ms to 5.2 ms, leaving
+  a sampler overhead p99 of 0.0 ms to 1.2 ms. The escalation line is therefore
+  exceeded only by host read latency: a single stat read cost about 19 µs here
+  against the few microseconds an idle host needs. Re-measure the absolute
+  figure on a quiet host before treating it as a sampler finding. The shared
+  `/proc` and cgroup builders now live in
+  `tests/outcome_process_test_helpers.py`, used by the sampler, latency and
+  server-process modules. With `BUILD_LIMITS_SCCACHE_HOST_CHECK=1`, the
+  latency and sampler modules pass all ten tests.
 
 ## Surprises & discoveries
 
