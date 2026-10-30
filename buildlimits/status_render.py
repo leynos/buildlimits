@@ -103,13 +103,13 @@ def _outcome_lines(state: cabc.Mapping[str, object]) -> list[str]:
         return []
     if section.get("enabled") is not True:
         return ["cache outcomes disabled after an internal failure"]
-    return [
-        (
-            "cache outcomes recording: "
-            f"{section.get('attributed', 0)} attributed, "
-            f"{section.get('readings', 0)} readings"
-        )
-    ]
+    line = (
+        "cache outcomes recording: "
+        f"{section.get('attributed', 0)} attributed, "
+        f"{section.get('readings', 0)} readings"
+    )
+    reason = section.get("last_reason")
+    return [line if not isinstance(reason, str) else f"{line}; last reason {reason}"]
 
 
 def _action_label(state: cabc.Mapping[str, object]) -> str:

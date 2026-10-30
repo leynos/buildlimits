@@ -1298,6 +1298,11 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   asserted against `CHILD_SAMPLE_SECONDS`, so the report cannot drift from the
   sampler's cadence. The users' guide and the module inventory record the new
   surface.
+- [x] (2026-10-30) The G1 runbook's "look at the last reading reason" step is
+  now readable from the status line. `status_render` appends the last closed
+  reason that `OutcomeCounters.describe()` already exposed to a document that
+  carries one, and leaves a legacy document's line byte-identical. A focused
+  test pins both readings, and the users' guide explains what the reason is for.
 
 ## Surprises & discoveries
 

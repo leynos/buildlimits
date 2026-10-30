@@ -326,9 +326,13 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
                 "enabled": True,
                 "attributed": 1,
                 "readings": 2,
+                "last_reason": "no_quiet_point",
             },
         },
-        "cache outcomes recording: 1 attributed, 2 readings",
+        (
+            "cache outcomes recording: 1 attributed, 2 readings; "
+            "last reason no_quiet_point"
+        ),
     ),
     "outcomes-disabled": (
         {

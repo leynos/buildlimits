@@ -155,7 +155,9 @@ paths, environment values, request identifiers, source code and compiler output
 are not stored.
 
 The status command adds a `cache outcomes recording` line while recording is
-enabled. For history and reading or store failures, query:
+enabled; once a reading or outcome has closed, that line also names the last
+reason, which is the first thing to check when nothing is being attributed. For
+history and reading or store failures, query:
 
 ```bash
 build-limits-metrics --since 1d --max-records 100000

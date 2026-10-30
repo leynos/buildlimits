@@ -133,7 +133,7 @@
 # name: test_the_summary_describes_each_state[outcomes-enabled]
   '''
   capacity 2, held 0, healthy, caching through sccache
-  cache outcomes recording: 1 attributed, 2 readings
+  cache outcomes recording: 1 attributed, 2 readings; last reason no_quiet_point
   no requests waiting
   no compiler groups
   '''

@@ -43,6 +43,20 @@ def test_a_live_work_fault_on_a_healthy_supervisor_reports_it_healthy() -> None:
     assert "drain fault kind: live_work" in lines, "the fault is still reported"
 
 
+def test_the_outcome_line_names_the_last_closed_reason() -> None:
+    """The G1 runbook asks for the last reason without a second command."""
+    state, line = STATES["outcomes-enabled"]
+    assert line in render(state).splitlines(), "the reason rides on the line"
+
+    legacy = {
+        **state,
+        "cache_outcomes": {"enabled": True, "attributed": 1, "readings": 2},
+    }
+    assert "last reason" not in render(legacy), (
+        "a document without a closed reason is unchanged"
+    )
+
+
 def test_blocked_admission_precedes_the_healthy_headline() -> None:
     """A healthy process headline cannot hide blocked admission."""
     state, _line = STATES["blocked-admission"]
