@@ -200,14 +200,14 @@ new sccache version produces `unsupported_version`, run
 `SUPPORTED_SCCACHE_VERSIONS` in the recorder.
 
 If the opt-in real-binary check cannot run, follow
-[ADR 004's private real-binary fallback procedure](adr-004-cache-outcome-recording.md#d9-keep-the-real-binary-check-private-and-non-blocking).
+[ADR 005's private real-binary fallback procedure](adr-005-cache-outcome-recording.md#d9-keep-the-real-binary-check-private-and-non-blocking).
 Build the same small crate once cold and once warm through the normal admitted
 supervisor, then compare adjacent sccache statistics windows. Do not bypass
 admission with a private compile. Because the fallback observes trailing
 counters indirectly, treat a provisional label as confirmed only when the next
 accepted window from the same server generation balances exactly. Otherwise,
 use an unattributed result with a counter-mismatch reason, as described in
-[ADR 004's counter confirmation rule](adr-004-cache-outcome-recording.md#d12-confirm-provisional-labels-only-if-needed).
+[ADR 005's counter confirmation rule](adr-005-cache-outcome-recording.md#d12-confirm-provisional-labels-only-if-needed).
 
 ### Adapter environment
 

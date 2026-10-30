@@ -248,7 +248,7 @@ consecutive readings:
   reads it synchronously on either side of the statistics query. It
   non-blockingly connects to the managed socket, gets the server PID from
   `SO_PEERCRED`, then reads `/proc/<pid>/stat` and `/proc/<pid>/environ` (§1;
-  ADR 004 D2). A restart during a query is caught even though no statistics
+  ADR 005 D2). A restart during a query is caught even though no statistics
   document records it. Different generations reject the window regardless of
   countermovement, but the ending reading remains the next baseline. This
   catches a restart from an all-zero baseline or one followed by enough work to
@@ -443,13 +443,13 @@ keeps the count independent of the retry and scoring work layer 2 adds later:
 - a `ServerProcessPort` for the statistics server. `generation()` non-blockingly
   connects to the socket and gets the server PID from `SO_PEERCRED`. It reads
   the start time and `INVOCATION_ID` from `/proc/<pid>/stat` and
-  `/proc/<pid>/environ` (ADR 004 D2). `full_emit_metadata()` samples the server
+  `/proc/<pid>/environ` (ADR 005 D2). `full_emit_metadata()` samples the server
   process group and returns in-memory `-C metadata` values for full-emit
-  compiler children (ADR 004 D24). This keeps server identity and child
+  compiler children (ADR 005 D24). This keeps server identity and child
   sightings separate from the statistics document;
 - an outcome-store port with non-blocking `append(line)` and `results()` calls,
   and bounded `close(timeout)`. Its single `StoreWriter` performs bounded
-  loading and compaction internally under ADR 004 D17's file bounds and ageing
+  loading and compaction internally under ADR 005 D17's file bounds and ageing
   rules;
 - a salt port offering one per-host random value, which is the only source the
   path digest draws on.
@@ -636,7 +636,7 @@ append and compaction in every mode. The journal keeps only the
 closed-vocabulary event; the file is the only place a key is written to disk,
 it never leaves the host, and it is read by `W2`'s offline replay and by
 nothing in `admission`. Its queue, size bounds, ageing and atomic compaction
-follow ADR 004 D17. Deleting it costs only the replay.
+follow ADR 005 D17. Deleting it costs only the replay.
 
 **Measurement for the next layer.** After at least 2,000 attributed outcomes (a
 proposal), compute coverage by origin, the outcome mix, and an offline replay
@@ -662,7 +662,7 @@ that hits can be foreseen into something the journal can check.
 - a toolchain identity with two separate HMAC-SHA-256 fields under the local
   salt: one for the compiler argument and one for `RUSTUP_TOOLCHAIN` (or the
   empty string). It also includes sccache's Rust `CACHE_VERSION` (`"6"`) and
-  the server version in the statistics document, as ADR 004 D10 specifies. The
+  the server version in the statistics document, as ADR 005 D10 specifies. The
   supervisor does not resolve or stat the compiler or run `<compiler> -vV`.
   Cargo already includes `-vV` output in `-C metadata`, which the argument
   digest covers. This is an _approximate_ identity, deliberately not the full
@@ -1065,7 +1065,7 @@ so wall time is tested only as a supplement (H2).
    is a hit always short (H2)?
 5. Should a finished group's status line show its recorded outcome? Layer 2
    rebuilds history across supervisor restarts from the persistent layer 1
-   store defined by ADR 004 D17.
+   store defined by ADR 005 D17.
 6. The reader's behaviour is settled by source rather than open: an older
    `build-limits-metrics` drops an unknown event whole (`metrics_records`) and
    omits only the field for an unknown vocabulary value (`bounded_field`), as
@@ -1099,7 +1099,7 @@ changes no runtime behaviour: it records the decision to run W1 and W2, not an
 implementation.
 
 The implementation refinements and fixed H1-H5 thresholds for W1 are recorded in
-[ADR 004](../adr-004-cache-outcome-recording.md). Its status remains Proposed
+[ADR 005](../adr-005-cache-outcome-recording.md). Its status remains Proposed
 until EP-M8 merges; the thresholds and H2 classifier are fixed before new
 evidence is collected.
 

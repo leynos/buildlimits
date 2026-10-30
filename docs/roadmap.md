@@ -285,7 +285,7 @@ Idea: if buildlimits can attribute real sccache outcomes at quiet points and
 measure H2 child sightings where H1 solo-window coverage falls below its 5%
 floor, the resulting local records can support an offline evaluation of
 prediction without changing admission. See RFC 0002 §§1-2 and
-[ADR 004](adr-004-cache-outcome-recording.md).
+[ADR 005](adr-005-cache-outcome-recording.md).
 
 ### 3.1. Record outcomes and decide G1
 
@@ -296,7 +296,7 @@ the H1-H3 evidence and the owner's RFC 0002 G1 decision.
 - [ ] 3.1.1. Complete EP-M1 to EP-M8 of the cache-hit prediction ExecPlan.
   - Requires the RFC 0002 W1 acceptance recorded in [RFC
     0002](rfcs/0002-cache-hit-prediction.md).
-  - Fix the thresholds and H2 classifier in ADR 004 before the live statistics
+  - Fix the thresholds and H2 classifier in ADR 005 before the live statistics
     fixture or outcome records are read.
   - Success: the read-only live fixture is redacted; labels, H3 evidence and
     child sightings are bounded and local; the replay reports H1-H3 against
@@ -312,5 +312,5 @@ outcome informs the separate RFC 0002 G2 decision.
   - Requires RFC 0002 G1 to release W2.
   - See RFC 0002 §2 and H4-H5. Do not run this step on the live cache.
   - Success: the replay reports the registry base-rate comparison, digest
-    stability and each verdict against ADR 004's fixed minimums and
+    stability and each verdict against ADR 005's fixed minimums and
     thresholds; evidence and limitations are recorded for G2.

@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 004: cache-outcome recording
+# Architectural decision record (ADR) 005: cache-outcome recording
 
 ## Status
 

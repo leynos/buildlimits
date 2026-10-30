@@ -229,7 +229,7 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   sees: about 1 to 3 days at this host's rate.
   - Severity: low.
   - Mitigation:
-    - ADR 004 records the limit.
+    - ADR 005 records the limit.
     - The replay reports the time span it covers.
     - If H4 or H5 is `insufficient`, W2 may propose per-key retention as a
       separate decision.
@@ -284,7 +284,7 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] (2026-10-23 23:27Z) Owner approved the whole plan, including deviations
   D2 to D25. EP-M0 is authorized to begin.
 - [x] (2026-10-24 00:10Z) EP-M0 started after plan approval commit `0400924`.
-- [x] (2026-10-24 00:18Z) Committed ADR 004's decisions, H1-H5 thresholds and
+- [x] (2026-10-24 00:18Z) Committed ADR 005's decisions, H1-H5 thresholds and
   H2 classifier as `ddfaeae` before one read-only stats query. Captured
   `tests/fixtures/sccache_0_14_0_stats.json` from the managed socket and
   redacted `cache_location` and `basedirs`. G0 remains recorded in S5.
@@ -333,7 +333,7 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] (2026-10-24) The previous Markdown overlay passed `make fmt`,
   `make check-fmt`, `make markdownlint` and `make nixie`. Fresh local
   CodeRabbit review of the docs overlay against `278cccb` completed with zero
-  findings. The reviewed files were ADR 004, the ExecPlan, RFC 0002 and the
+  findings. The reviewed files were ADR 005, the ExecPlan, RFC 0002 and the
   developers' guide; the source candidate was `8e0bd40`. The later r6
   corrections below require the final docs gates and review to run again.
 - [x] (2026-10-24) Fresh overlay CodeRabbit review against `278cccb` through
@@ -378,7 +378,7 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] (2026-10-24) The corrected four-doc overlay passed `make fmt`,
   `make check-fmt`, `make markdownlint` and `make nixie` sequentially with an
   empty formatter diff. A fresh CodeRabbit review against `278cccb` reported
-  zero findings across ADR 004, the ExecPlan, RFC 0002 and the developers'
+  zero findings across ADR 005, the ExecPlan, RFC 0002 and the developers'
   guide at source candidate `8e0bd40`. The r19 contract and r21 formatter
   corrections are included.
 - [x] (2026-10-24) After the r27 Oxford comma fixes, the four-doc overlay passed
@@ -955,7 +955,7 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   (SHA-256 `9539c0dae0a0dd73d43949e712614bda0449537c67ec92b3447838a6991c6feb`);
   the unmutated restart scenario then passed. Pytest emitted the known
   `cache_outcome_systemd_support` assert-rewrite warning.
-- [x] EP-M0: ADR 004, fixed thresholds, roadmap phase 3, contents and stats
+- [x] EP-M0: ADR 005, fixed thresholds, roadmap phase 3, contents and stats
   fixture; review corrections from `9098857`, `684fffde` and `8e0bd40` are
   applied, and its documentation gates and review passed at that revision. The
   r6/r9/r13/r19 follow-up corrections and r21 formatter correction are recorded
@@ -1309,7 +1309,7 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
 Decisions D1 to D25 were proposals of this draft and took effect when the owner
 approved the whole plan on 2026-10-23. Each deviation from the letter of RFC
-0002 is marked, and EP-M0 repeats it in ADR 004. W1 (EP-M0 to EP-M8) is
+0002 is marked, and EP-M0 repeats it in ADR 005. W1 (EP-M0 to EP-M8) is
 approved to proceed. W2 (EP-M9) remains gated on the owner's G1 decision under
 C-GATES.
 
@@ -1410,7 +1410,7 @@ C-GATES.
   The residual confounder, a rustup channel name that has moved, is measured by
   H5, just as the RFC accepts for an in-place sysroot change.
 - D11. Decision: the H1 to H5 thresholds in `Artefacts and notes` are fixed
-  in ADR 004 in EP-M0, before any data is read. `outcome_replay` holds them as
+  in ADR 005 in EP-M0, before any data is read. `outcome_replay` holds them as
   constants, and a test pins them to the ADR's text.
 - D12. Contingency, conditional on A2. Decision: only if EP-M1 shows a
   trailing counter, a label is provisional until confirmed. A pure
@@ -1691,7 +1691,7 @@ C-GATES.
   by first appearance, with Rust `str::split`, sccache `parse_arguments`, the
   command response, Cargo environment variables, Cargo fingerprints, and the
   server counter updates in that order.
-- D33. Review correction to cross-document contracts. Decision: ADR 004 D17
+- D33. Review correction to cross-document contracts. Decision: ADR 005 D17
   owns one append-only JSON Lines store and its single writer; layer 2 reads
   those records and does not persist a second snapshot. RFC 0002 uses the same
   HMAC-SHA-256 digest and toolchain identity rules, and scopes child-sighting
@@ -1795,7 +1795,7 @@ EP-M5 implementation and evidence (2026-10-25):
 
 EP-M0 conformance and evidence (2026-10-24):
 
-- The initial ADR 004 commit, `ddfaeae`, recorded D2 to D25 and fixed Table 1
+- The initial ADR 005 commit, `ddfaeae`, recorded D2 to D25 and fixed Table 1
   before the live query; its status remains Proposed until EP-M8 merges. Review
   corrections D27 to D32 are recorded in this ExecPlan.
 - The sccache 0.14.0 fixture came from one read-only query to the managed
@@ -1927,10 +1927,10 @@ compiles on a shared host. The terms below are used throughout this plan.
   accepted 2026-10-23 at `42f40e4`. There is no separate `*-design.md`; the
   developer's guide is the living interface reference.
 - ADRs:
-  - ADR 003 (bounded tracing) governs the spans. ADR 004 amends its scope
+  - ADR 003 (bounded tracing) governs the spans. ADR 005 amends its scope
     for the new operations.
   - dev-env-rocky ADR 011 governs token coverage.
-  - This plan creates ADR 004 (`docs/adr-004-cache-outcome-recording.md`). Its
+  - This plan creates ADR 005 (`docs/adr-005-cache-outcome-recording.md`). Its
     initial commit `ddfaeae` recorded D2 to D25 and fixed the thresholds before
     the live stats fixture was captured. Review corrections D27 to D32 are
     recorded in this ExecPlan.
@@ -1980,7 +1980,7 @@ RFC-COMPAT -> C-DEFAULT, C-SCHEMA, D18 -> EP-M6 -> tests/test_outcome_config.py,
 
 ### Current evidence
 
-- EP-M0's ADR 004 threshold decision is committed before the fixture's single
+- EP-M0's ADR 005 threshold decision is committed before the fixture's single
   read-only query. The fixture pins the complete sccache 0.14.0 JSON shape and
   redacts host-specific `cache_location` and `basedirs` values.
 - G0 is the existing read-only journal measurement recorded in S5; no new
@@ -2274,12 +2274,12 @@ while the entry was running.
   - counting samples taken after the entry ended.
 
 O13. Replay verdict boundaries. For H2 and H3 in W1, and H4 and H5 in EP-M9,
-the verdict changes exactly at the thresholds fixed in ADR 004. For H2 the
+the verdict changes exactly at the thresholds fixed in ADR 005. For H2 the
 boundaries are 95% and 90% agreement, 100 evaluable records and 2,000
 attributed outcomes. The evaluable set is exactly as D25 defines it.
 
 - Method: parameterized synthetic stores at, just above and just below each
-  boundary, plus a test that pins the constants to ADR 004's text.
+  boundary, plus a test that pins the constants to ADR 005's text.
 - Artefacts: `tests/test_outcome_replay_h2.py`,
   `tests/test_outcome_replay_h3.py`.
 - Non-vacuity: every verdict token is reached for every hypothesis that can
@@ -2472,7 +2472,7 @@ Changes to existing modules:
   - the broad failure categories `statistics_query`, `store_io` and `salt`;
   - the span outcome `completed`.
 
-  Detailed reasons stay in metrics only. ADR 004 amends ADR 003's scope.
+  Detailed reasons stay in metrics only. ADR 005 amends ADR 003's scope.
 - `status.py` and `status_render.py`: an optional `cache_outcomes` object
   and one line, absent when recording is `off`.
 - `pyproject.toml`: the marker `sccache_host_check`, the console script
@@ -2512,7 +2512,7 @@ W2:
     last-outcome predictor, and a Beta estimate over the last eight outcomes
     with an origin prior.
 
-  The thresholds are constants pinned to ADR 004. The verdict tokens are
+  The thresholds are constants pinned to ADR 005. The verdict tokens are
   `supported`, `refuted`, `inconclusive` (between the support and falsification
   thresholds), `insufficient` and `not_collected`.
 - `outcome_replay_cli.py` provides
@@ -2538,7 +2538,7 @@ milestone that adds each module.
 ### EP-M0: decisions recorded before any data
 
 - Outcome:
-  - `docs/adr-004-cache-outcome-recording.md` (Status: Proposed; Accepted
+  - `docs/adr-005-cache-outcome-recording.md` (Status: Proposed; Accepted
     when EP-M8 merges) records D2 to D25, the fixed thresholds of Table B,
     the 2,000-outcome minimum, the vocabulary and the ADR 003 scope
     amendment. RFC 0002 links to it. This ExecPlan records review corrections
@@ -2547,7 +2547,7 @@ milestone that adds each module.
     references qualified as in "RFC 0002 G1". It also gains phase 3,
     "Record and evaluate cache outcomes", with step 3.1 (W1: EP-M1 to
     EP-M8) and step 3.2 (W2: EP-M9).
-  - `docs/contents.md` indexes ADR 004.
+  - `docs/contents.md` indexes ADR 005.
   - `tests/fixtures/sccache_0_14_0_stats.json` is captured by one read-only
     `--show-stats --stats-format json` against the managed socket, with
     `cache_location` and `basedirs` redacted.
@@ -2911,7 +2911,7 @@ milestone that adds each module.
   - `docs/developers-guide.md` §6 and §9: the sample cadence, the
     server-process port, and the rule that `/proc` reads stay inside
     `PeerServerProcess`.
-  - ADR 004 records D23 to D25 and becomes Accepted.
+  - ADR 005 records D23 to D25 and becomes Accepted.
 - Requirements: RFC-H2 and RFC-W1 (the H1 to H3 exit evidence), plus Q1 (b).
 - Conformance check: O4, O11 and O12 hold. No argv, metadata or path reaches
   the store, the journal or a span (an extended O7). Sampling never runs when
@@ -3334,7 +3334,7 @@ Consult these documents:
     - axioms A9 and A10, obligations O12 and O13, and risk R9 are added;
     - EP-M1 gains a sighting check;
     - the G1 runbook releases EP-M8 and records H2;
-    - ADR 004 now becomes Accepted with EP-M8.
+    - ADR 005 now becomes Accepted with EP-M8.
   - Why: G0 bounds solo coverage near 4.5%, and the RFC makes H2 the route to
     coverage below 5%.
   - Effect on the remaining work: W1 grows by one milestone, and G1 waits for
