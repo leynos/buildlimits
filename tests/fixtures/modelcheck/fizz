@@ -17,6 +17,15 @@
 # log is what proves the run happened in a scratch directory rather than beside
 # the model.
 #
+# The variable is required, with no default. A default of "beside this script"
+# was the obvious convenience and the wrong one: the plan documents running
+# this command by hand, and doing that wrote ``seen.log`` into the tracked
+# fixture directory. The damage was then invisible, because ``*.log`` is
+# git-ignored and so the ``git status --porcelain`` check the plan uses as its
+# cleanliness proof did not see it. Failing loudly makes the hand-run work and
+# names what it needs, and a stub that cannot be pointed at a scratch file is
+# better than one that quietly dirties the tree.
+#
 # The ``--output-dir`` argument is honoured, so a graph lands where the adapter
 # said it would and an adapter that stopped naming the directory would be
 # caught by a missing graph rather than by a passing test.
@@ -24,7 +33,13 @@
 set -euo pipefail
 
 directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-log="${MODELCHECK_E2E_LOG:-$directory/seen.log}"
+
+if [ -z "${MODELCHECK_E2E_LOG:-}" ]; then
+  printf '%s\n' \
+    'fizz stub: MODELCHECK_E2E_LOG must name a file outside the fixture tree' >&2
+  exit 64
+fi
+log="$MODELCHECK_E2E_LOG"
 printf '%s\n' "$PWD" >> "$log"
 printf 'args: %s\n' "$*" >> "$log"
 

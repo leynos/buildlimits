@@ -428,6 +428,12 @@ full_name = ["buildlimits.admission_state.snapshot"]
 path = ["buildlimits/admission_state.py"]
 reason = "Gauges.counts, the declared entry point above, builds every snapshot through it; the doctest and test_admission.py exercise it."
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.journal_native.JournalSink.emit_trace"]
+path = ["buildlimits/journal_native.py"]
+reason = "JournalTracer passes its JournalSink to JournalSpanExporter, whose export calls self.sink.emit_trace through the _TraceSinkPort protocol annotation, so no static call edge reaches the concrete method. tests/test_adapter_restart_tracing.py writes real spans through this transport and asserts the received journal records."
+
 [tool.nose]
 version = "0.20.0"
 roots = ["."]
@@ -500,7 +506,7 @@ pytest_add_cli_args_test_selection = ["tests/"]
 timeout = 30
 # Module doctests are part of the contract, so collection covers the package
 # as well as the test tree. ``modelcheck`` is a top-level package outside the
-# wheel (ADR 004), so it is collected here too.
+# wheel (ADR 005), so it is collected here too.
 testpaths = ["tests", "buildlimits", "modelcheck"]
 # ``descriptor_guard`` is a plugin, not a conftest fixture, so its autouse leak
 # guard also covers the package's doctests (see tests/descriptor_guard.py).

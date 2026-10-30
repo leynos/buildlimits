@@ -788,7 +788,7 @@ closed by that fixture's own teardown.
 ### 11.6. Model checking
 
 `modelcheck/` is a top-level package beside `buildlimits/` and outside the
-wheel (ADR 004). It drives the pinned FizzBee checker over the admission model
+wheel (ADR 005). It drives the pinned FizzBee checker over the admission model
 and turns one run into a verdict. Run it through the module:
 
 ```sh

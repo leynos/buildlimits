@@ -5,7 +5,7 @@ question of whether those names still exist and whether the code has grown
 events or effects the model never mapped. Answering it needs a list of paths
 the code really has, which means reading ``buildlimits`` reflectively.
 
-Reflection is deliberate. A hand-written list would be a second copy of the
+Reflection is deliberate. A handwritten list would be a second copy of the
 production surface, and it would go stale in exactly the way drift detection
 exists to catch: silently, in the direction of a green report. Reading the
 package's own enums and dataclasses means adding an effect to ``Effect`` makes

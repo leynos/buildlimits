@@ -18,6 +18,12 @@ ignore = [
   # External environment variables retain their published spelling.
   '\bNO_COLOR\b',
   '\bCARGO_TERM_COLOR\b',
+  # The launcher's own "Writen" line, quoted in a test so the parser is asked
+  # about output it will really meet. The fixture that records the same line
+  # is excluded whole; this is the one place the quote appears in code, and
+  # correcting it would make the test assert on a line the checker never
+  # prints.
+  '\bWriten 1 node files and 1 link files\b',
 ]
 
 [files]
@@ -26,4 +32,8 @@ exclude = [
   # launcher misspells "Written" and Graphviz writes `color=`; correcting
   # either would make the fixture stop describing the run it records.
   'tests/fixtures/fizzbee/',
+  # The same capture for the CLI's end-to-end tests, recorded from the same
+  # launcher and read back by the same parser. It carries the identical
+  # "Writen" misspelling for the identical reason.
+  'tests/fixtures/modelcheck/',
 ]
