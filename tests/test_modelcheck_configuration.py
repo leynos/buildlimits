@@ -208,7 +208,7 @@ def test_a_missing_file_declares_nothing(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("document", "expected"),
     [
-        pytest.param("[configurations.head\n", "is not valid TOML", id="unparseable"),
+        pytest.param("[configurations.head\n", "is not valid TOML", id="unparsable"),
         pytest.param('configurations = "head"\n', "not a table", id="wrong-shape"),
     ],
 )

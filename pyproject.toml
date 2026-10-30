@@ -587,7 +587,7 @@ pytest_add_cli_args_test_selection = ["tests/"]
 timeout = 30
 # Module doctests are part of the contract, so collection covers the package
 # as well as the test tree. ``modelcheck`` is a top-level package outside the
-# wheel (ADR 004), so it is collected here too.
+# wheel (ADR 006), so it is collected here too.
 testpaths = ["tests", "buildlimits", "modelcheck"]
 # ``descriptor_guard`` is a plugin, not a conftest fixture, so its autouse leak
 # guard also covers the package's doctests (see tests/descriptor_guard.py).

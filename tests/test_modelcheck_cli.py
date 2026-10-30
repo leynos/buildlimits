@@ -4,7 +4,7 @@ The command line is where a maintainer meets the tooling, so three things are
 checked here that the service's own tests cannot see: which status each shape
 of matrix exits with, that ``--only`` narrows the *report* without narrowing
 the *check*, and that the JSON and trace artefacts say what the report says.
-The app is built with adapter factories the test supplies, per ADR 004, so no
+The app is built with adapter factories the test supplies, per ADR 006, so no
 binary is started and no repository is read.
 
 A usage error is asserted through ``cyclopts.CycloptsError`` rather than a

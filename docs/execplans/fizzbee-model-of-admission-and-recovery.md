@@ -101,7 +101,11 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     directory under the git-ignored `.model-check/`, and passes `--output-dir`
     inside it. No run reads a `.fizz` file in place: the FizzBee parser writes
     `Spec.json` beside the specification it reads.
-  - After any run, `git status --porcelain` must be empty.
+  - After any run, `git status --porcelain` must be empty — and, because Git
+    cannot see a git-ignored name, so must a recursive listing of every tracked
+    directory the run could write to. D28 records the case that proved the
+    difference: a `.log` file left in a fixture directory was invisible to
+    `git status` while it broke the next gate run.
 - **Known-bad configurations are HEAD plus named clauses.** Each one is the
   fixed model with named switches that restore specific pre-fix clauses.
   - Each switch cites the revision it transcribes (a commit in this repository
@@ -423,7 +427,8 @@ explicitly.
     observed in the working tree, but no log of that run survives and the
     red and green halves are one commit. EP-M2-E2 and EP-M2-E3 are recorded
     for the green state.
-  - [x] (2026-10-24 00:20+02:00) Committed as `b38adaf`, 23 files,
+  - [x] (2026-10-24 00:20+02:00) Committed as `b38adaf` (replayed as
+    `6d88cba` by the rebase onto `origin/main`; see D31), 23 files,
     +4,387 −42, after a second full gate run that stayed green. The
     milestone's line count is escalated in Risks; the commit was made so the
     delivered work is recoverable while that question is open.
@@ -451,14 +456,17 @@ explicitly.
     found (D25).
   - [x] EP-M3-E3 (end-to-end): `tests/test_modelcheck_cli_e2e.py` runs
     `uv run python -m modelcheck check tests/fixtures/modelcheck/model
-    --fizz tests/fixtures/modelcheck/fizz` as a subprocess. Six tests: exit 0
+    --fizz tests/fixtures/modelcheck/fizz` as a subprocess. Seven tests: exit 0
     for the met matrix, the scratch directory and the absence of the scratch
     directory afterwards, the `--json` records field by field, exit 1 when the
     known-bad configuration loses its counterexample, the fixture tree
-    unchanged, and exit 2 with the offending option named on a usage error.
+    unchanged, exit 2 with the offending option named on a usage error, and
+    the stub refusing to run without a log path (D28).
     The stub writes nothing into the fixture tree: its record goes to a
     `MODELCHECK_E2E_LOG` path in the test's own scratch directory, which is
-    what lets the scratch-path assertion be made at all.
+    what lets the scratch-path assertion be made at all. Running the command
+    above **by hand** needs that variable exported; the stub now fails with
+    `EX_USAGE` and names it rather than defaulting to a file beside itself.
   - [x] The 400-line cap was the gate that shaped EP-M3's file layout, not a
     later tidy-up. Four modules crossed it as written and were split along
     responsibility seams, each split's module docstring stating why the
@@ -481,9 +489,31 @@ explicitly.
     tests or a fixture. EP-M3's only new allowance is the single `Path.mkdir`
     call `tests/fizzbee_spike.py` and `tests/test_modelcheck_fizzbee_process.py`
     share. Ruff, Skylos and Vulture needed no new exception at all; see
-    "Configuration and gates" above for the measurements.
-  - [ ] EP-M3-E4: the gate set (`check-fmt`, `lint`, `typecheck`, `test`,
-    `markdownlint`, `nixie`) run sequentially by the scrutineer.
+    "Configuration and gates" above for the measurements. (D30 later adds one
+    Skylos entry point for `JournalSink.emit_trace`, which is a rebase-time
+    environment finding in `buildlimits/`, not a `modelcheck` exception.)
+  - [x] EP-M3-E4: the gate set (`check-fmt`, `lint`, `typecheck`, `test`,
+    `markdownlint`, `nixie`) run sequentially by the scrutineer, all six
+    exiting 0: `make test` reported 2,286 passed, 44 skipped and 56 snapshots;
+    base pylint and the DF12 pass both rated 10.00/10; `dead-code` (skylos and
+    vulture), `duplication` (136 reasoned exceptions) and `lint-actions` all
+    executed and passed. The first run of this set was red on `lint` and
+    `markdownlint`; D27 records the repair.
+  - [x] (2026-10-26) Committed as `5defe2a` (replayed as `4af38d1` by the
+    rebase onto `origin/main`; see D31), 44 files, +7,012 −72, after the
+    green gate run. The commit was made while the file-count escalation is
+    open, so the validated work is recoverable; the milestone is not accepted
+    until that question is decided.
+  - [ ] **Scope tolerance breached, escalated 2026-10-26.** EP-M3 touches 35
+    in-scope files — 29 Python (14 under `modelcheck/`, 15 under `tests/`) and
+    6 other (ADR 006, `pyproject.toml`, the feature file and three documents)
+    — against a hard stop of 25. The Python count alone exceeds it, so the
+    breach does not depend on how the count is read. Tolerances, "Scope" and
+    D21 both require a stop here; the plan's estimate of EP-M3's surface was
+    wrong by the four modules `AGENTS.md`'s 400-line cap forced and by six test
+    modules it never listed. A split at the adapter/CLI seam was measured and
+    fits on both sides (EP-M3a: 20 files; EP-M3b: 15), but the milestone must
+    not be re-cut without the user's decision. Awaiting it.
 
 - [ ] EP-M4: minimal model with the busy queue (W1).
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
@@ -492,6 +522,25 @@ explicitly.
 
 ## Surprises & discoveries
 
+- **A passing gate can look truncated when its tools are silent on success.**
+  - Observation: `make lint-actions`'s log ended at a bare `actionlint` line,
+    with no `action-validator` or `action_workflow.py` output following, even
+    though two composite actions exist under `.github/actions/`. That read as
+    a loop body which never ran, and it was carried as an evidence gap across
+    two gate rounds rather than being settled.
+  - Evidence: an `execve` trace of the real target recorded 2
+    `action-validator` execs (both naming real `action.yml` paths), 3
+    `actionlint` execs (one repository sweep, two `-stdin-filename`) and 4
+    `action_workflow.py` execs, the extra one because generation re-executes
+    under `uv`. All three tools print nothing when they succeed, so the log's
+    apparent truncation was the loop succeeding quietly, not skipping.
+  - Impact: the gap is closed and needs no code change. The lesson is about
+    reading logs: a gate whose tools are silent on success cannot be audited
+    by its log's length, only by its exit status or by tracing the execs. Both
+    `$(DF12_PYLINT)` and `$(AMBRLEAKS)` had the same shape in the same round —
+    they were skipped when base pylint aborted `lint-python`, and were
+    indistinguishable from passing until the abort was fixed and the log read
+    again.
 - **The pre-fix revisions are in this repository, not in dev-env-rocky.**
   - Observation: dev-env-rocky vendored the package once and never changed its
     source before removing it, so its history cannot name a pre-fix revision.
@@ -793,6 +842,67 @@ explicitly.
     obligations it discharges rather than against a target. A milestone that
     exceeds the threshold with no such obligation behind it is the case worth
     questioning.
+- **EP-M3 breaches the 25-file hard stop, which D21 deliberately kept.**
+  - Observation: EP-M3 touches 35 in-scope files. Twenty-nine are Python — 14
+    under `modelcheck/` and 15 under `tests/` — and six are other in-scope
+    files: ADR 006, `pyproject.toml`, `tests/features/model_check.feature`,
+    `docs/contents.md`, `docs/developers-guide.md` and this plan. The
+    tolerance's own exclusions remove nine paths: three snapshots, the
+    `tests/fixtures/modelcheck/` tree (six files) and the `.fizz` model.
+  - Evidence: `git status --porcelain -uall` against `6cbb0ff`, the
+    pre-rebase branch head (now `4af38d1`; see D31), classified by
+    the tolerance's exclusion rule. The Python count alone is 29 against a
+    limit of 25, so the breach does not depend on how the six other files are
+    counted. Net Python code lines are 2,257 (2,495 docstring, 4 comment,
+    1,167 blank), classified by the same AST pass used for EP-M2.
+  - Why the plan was wrong about this milestone's size, and no defences were
+    dropped to get here. The plan expected EP-M3 to add "the ports, the
+    service, the adapters and the CLI" as one unit. Three `AGENTS.md` 400-line
+    splits then added four modules the plan never named
+    (`adapters/configuration_fields.py`, `adapters/configuration_values.py`,
+    `adapters/fizzbee_measurements.py`, `tests/modelcheck_scenarios.py`), and
+    the milestone needs six `tests/test_modelcheck_*.py` modules plus two
+    support modules where EP-M2 needed tests only for pure functions. Nothing
+    was merged to hit a number and no acceptance condition was cut.
+  - Status: **open, escalated 2026-10-26.** This is a stop under Tolerances,
+    "Scope", and D21 reaffirmed that the file limit stays hard precisely
+    because file count says where work landed. A split at the adapter/CLI seam
+    was measured and fits on both sides — EP-M3a (ports, service, adapters) at
+    20 files, EP-M3b (CLI, report, behaviour tests) at 15 — but re-cutting an
+    approved milestone is not the planner's decision to take. `4af38d1`
+    commits the validated work so it is recoverable; EP-M3 is not accepted and
+    EP-M4 does not start until the user rules on either the split or an
+    amendment to the tolerance.
+  - What this risk is for: the 25-file limit is the plan's only remaining
+    structural check on milestone size, so a breach is worth more attention
+    than the line figure it outlived. If the limit is also to become advisory,
+    the plan loses both size guards and should say so plainly rather than
+    discovering it at G1.
+
+- **Skylos reads the repository's own uv cache, so its verdict depends on
+  what a local run has downloaded.**
+  - Observation: `[tool.skylos] exclude` names `.uv-cache`, `.uv-tools` and
+    `.venv`, exactly as `[tool.nose] exclude` does with trailing `/**`
+    globs. Those names do not keep the 516 MB `.uv-cache` out of the dead-code
+    analysis, and with it in place the gate flipped a false positive on
+    `JournalSink.emit_trace` (D30) that no clean checkout reports.
+  - Evidence: four runs of `df12-skylos check --repository .` over one
+    byte-identical tree — with both cache directories, with only `.uv-cache`,
+    with only `.uv-tools`, and with neither — gave fail, fail, pass, pass. A
+    copy of the same tree in `/tmp` without `.uv-cache` also passed. In
+    skylos 4.33.2 the helper that reads the `exclude` list,
+    `skylos.config.is_path_excluded`, is defined and never called.
+    `discover/detector.py` does prune a directory whose name is a path part of
+    the configured list, so the list is consulted on some paths; whatever
+    invocation the wrapper makes is not one of them, and that was left
+    undiagnosed because the gate is repaired rather than the tool.
+  - Impact: `make lint`'s `dead-code` verdict is not the same question in a
+    worktree that has run `make build` as it is on a fresh clone, which is why
+    the exception in D30 is needed for a local green even though the same
+    commit would pass in Continuous Integration (CI). Report a `dead-code`
+    failure whose symbol has a real caller as an environment artefact until a
+    clean-copy run says otherwise, and quote the clean-copy result as the
+    evidence.
 
 ## Decision log
 
@@ -888,7 +998,7 @@ explicitly.
       holds tests and test doubles.
     - Git source discovery, Skylos (`roots=["."]`), Pylint and `ty` already
       cover a top-level package.
-  - Recorded as ADR 004 in EP-M3.
+  - Recorded as ADR 006 in EP-M3.
 - **D3. One expected failure per run.**
   - Each run retains every assertion expected to hold in its configuration,
     plus exactly one expected failure. The other expected failures are
@@ -939,7 +1049,7 @@ explicitly.
     three places:
     - RFC 0001: the open-questions record, the baseline audit, the H1 to H4
       verdicts and the gate decisions;
-    - ADR 004: the tooling architecture;
+    - ADR 006: the tooling architecture;
     - a new developer's guide §11.6: internal interfaces, conventions and the
       update policy.
   - `docs/users-guide.md` is not changed. Nothing user-visible changes, and
@@ -1290,6 +1400,151 @@ explicitly.
   - Scope: one line of `fizzbee_process.__init__` and its docstring. No other
     module changes; the scratch-directory isolation is unchanged.
 
+- **D27. The test doubles subclass their ports instead of suppressing R9104.**
+  - Decision: `tests/modelcheck_cli_cases.Inventory` subclasses
+    `modelcheck.ports.CodeInventory` and `tests/modelcheck_doubles.FixedSource`
+    subclasses `ConfigurationSource`, each method marked `@typ.override`. The
+    four inline `# pylint: disable=trivial-attribute-wrapper` pragmas are
+    deleted rather than reworded.
+  - Reason: the pragmas broke `make lint` with four `W0012
+    unknown-option-value` findings. The base pylint pass runs with
+    `--disable=all` and an explicit `enable` list and does **not** load the
+    DF12 plugin, so it knows neither the symbolic name nor the numeric `R9104`
+    — both were probed and both trip `W0012`. Suppressing a checker the base
+    pass cannot resolve therefore cannot be made to work by changing the
+    pragma's spelling. Subclassing removes the finding instead: R9104's
+    checker returns early when `node.decorators is not None`, so an
+    `@typ.override` on a method that really is an override is exempt by the
+    checker's own rule.
+  - Why this is the better fix rather than a workaround: the doubles forward to
+    a held value, which is what a double is for, and the port is the thing that
+    says so. Declaring the base class turns "this indirection is deliberate"
+    from a comment into a check `ty` enforces — it immediately caught that
+    `FixedSource.exclusions` had been a `staticmethod` against an instance
+    method, an LSP violation the pragma had been hiding.
+  - Scope: two test-support modules. No production module changes.
+  - Follow-up, not done here: `FakeChecker._restated` and `Restated.check`
+    both repeat `import dataclasses as dc` and `from modelcheck import domain`
+    inside the method body. Both are unambiguously module-level imports, so
+    the repetition is needless. It is left for a separate atomic commit under
+    `AGENTS.md`'s "Separate atomic refactors" rule, which puts a
+    behaviour-preserving tidy-up after the functional change rather than
+    inside it.
+
+- **D28. The stub launcher requires its log path instead of defaulting one.**
+  - Decision: `tests/fixtures/modelcheck/fizz` exits 64 (`EX_USAGE`) and names
+    `MODELCHECK_E2E_LOG` when it is unset, rather than defaulting to
+    `seen.log` beside itself.
+  - Reason: the default made the plan's own documented hand-run dirty the
+    tracked tree. Running
+    `uv run python -m modelcheck check tests/fixtures/modelcheck/model --fizz
+    tests/fixtures/modelcheck/fizz` wrote `seen.log` into
+    `tests/fixtures/modelcheck/`, and nothing noticed — `*.log` is git-ignored
+    (`.gitignore:59`), so `git status --porcelain`, which the plan uses as its
+    cleanliness proof for every checker run, reported a clean tree. The
+    leftover then failed `test_the_run_leaves_the_fixture_tree_untouched` on
+    the next gate run for a reason unrelated to the change under test.
+  - How it surfaced: not by review, but because the file outlived the run that
+    wrote it. The assertion that caught it did so on a tree that was _already_
+    dirty at both snapshots, so the set comparison passed and only the
+    named-path assertion fired. A guard that can be satisfied by a pre-existing
+    violation is weaker than it reads.
+  - The fix and its test: the refusal is pinned by
+    `test_the_stub_refuses_to_write_beside_itself`, which runs the stub with
+    the variable stripped from the environment. Asserting only that the tree
+    is unchanged would pass again as soon as the default returned and the
+    leftover was cleaned, so the test asserts the refusal itself.
+  - Scope: one fixture script and one test. Production modules unchanged.
+  - Lesson for the plan's own verification: `git status --porcelain` cannot
+    prove a directory untouched when the tool writes a git-ignored name.
+    "Tree unchanged" checks on paths a tool may write should compare a full
+    recursive listing, which `_tree()` does, rather than rely on Git's view.
+
+- **D29. The model-check ADR moved from 004 to 005, then to 006.**
+  - Decision: `docs/adr-004-model-check-outside-the-wheel.md` became
+    `docs/adr-005-model-check-outside-the-wheel.md` when the branch was rebased
+    onto `origin/main` at `9ea1ecc`, and became
+    `docs/adr-006-model-check-outside-the-wheel.md` when it was rebased onto
+    `origin/main` at `f7ef264`. Every reference moved with it on both occasions.
+  - Reason: while this branch was in flight, `main` merged PR #29, which added
+    `docs/adr-004-admission-readiness-status.md`. Before the second rebase it
+    merged the cache-hit-prediction work, whose
+    `docs/adr-005-cache-outcome-recording.md` records the outcome store. Git
+    reported no conflict either time because the filenames differ, but the
+    style guide requires a zero-padded sequence number, and duplicate numbers
+    leave a reader unable to cite either unambiguously. The ADR that landed
+    first keeps the number; this branch's unmerged ADR moves past it.
+  - Evidence: `main`'s ADR set is 001–004 at `9ea1ecc` and 001–005 at
+    `f7ef264`; the branch's former 004 existed only on this branch.
+    `docs/contents.md` now lists one entry per number, and `git grep` finds no
+    `ADR 004` or `ADR 005` reference to the model-check decision.
+  - Scope: one file rename and comment or prose updates in eight files. No
+    behaviour change.
+
+- **D30. `JournalSink.emit_trace` gets a Skylos entry point.**
+  - Decision: `pyproject.toml` gains one
+    `[[tool.skylos.dead_code.entrypoints]]` block naming
+    `buildlimits.journal_native.JournalSink.emit_trace`.
+  - Reason: `make lint`'s `dead-code` prerequisite failed on this branch with
+    `SKY-U001 unused function: JournalSink.emit_trace` in a file the branch
+    never touches. The finding is a false positive about resolution, not about
+    use: `JournalTracer` (in `buildlimits/tracing.py`) passes its concrete
+    `JournalSink` to `JournalSpanExporter`, whose `export` calls
+    `self.sink.emit_trace(record)` through the `_TraceSinkPort` protocol
+    annotation it declares in `buildlimits/tracing_sdk_export.py`. Skylos
+    resolves a call only on a receiver it can name, so no static edge reaches
+    the concrete method. That is the same shape the existing entries record,
+    and `docs/developers-guide.md` §12 already states the policy.
+  - Evidence: with the checkout's own `UV_CACHE_DIR=.uv-cache` present (516 MB
+    of unpacked dependency wheels), `df12-skylos check --repository .` reported
+    the finding at HEAD `4af38d1`; with that directory held aside it printed
+    `skylos gate passed`; a byte-identical copy of the same tree in `/tmp`
+    without `.uv-cache` also passed. Holding `.uv-tools` aside instead changed
+    nothing. With the new entry, `make dead-code` exits 0 with `.uv-cache` in
+    place. The transport itself is exercised for real by
+    `tests/test_adapter_restart_tracing.py`, which writes spans to a journal
+    socket and reads the records back.
+  - Scope: one `pyproject.toml` block. No production or test code changes.
+  - Update after the second rebase: `origin/main` at `f7ef264` already records
+    the `emit_trace` entry point, with a reason that names the same
+    `_TraceSinkPort` dispatch, and adds one for
+    `buildlimits.tracing._OtelSpan.finish`. The rebase keeps the target's
+    block verbatim rather than duplicating the entry with this branch's
+    wording, so the decision this entry records is unchanged.
+
+- **D31. The branch was rebased onto `origin/main`, dropping two empty
+  commits.**
+  - Decision: the 21 commits above the exclusive boundary `42f40e4` were
+    replayed onto `origin/main` `9ea1ecc` with `--merge --no-fork-point
+    --reapply-cherry-picks --keep-empty --empty=stop` and `zdiff3`. Two
+    became empty and were skipped: the `ty` 0.0.74 → 0.0.89 lock and pin
+    update (superseded by `main`'s `f85abdc`) and the `filelock` 4.2.0 →
+    4.2.4 bump (`main`'s `uv.lock` already held 4.2.4). Both were verified
+    before skipping: `git diff <replayed-head> origin/main -- uv.lock` was
+    empty and the target versions were present.
+  - Reason: the user asked for a rebase onto the pull request's target branch,
+    keeping pertinent changes from both sides.
+  - Conflict resolutions, all unions rather than side picks: `Makefile`
+    `.PHONY` keeps `main`'s new `check-lock` and this branch's `fizzbee`;
+    `pyproject.toml` keeps `main`'s three duplication-gate allowances and
+    appends this branch's; `docs/contents.md` keeps both ADR 004 (admission
+    readiness, from `main`) and ADR 006 (this branch, see D29); and the
+    `docs/developers-guide.md` §11.2 helper table keeps every row from both
+    sides, re-flowed to one width. Locking follows the brief: `main`'s
+    `uv.lock` is kept and `uv lock --check` proves it consistent.
+  - Evidence: `git range-diff 42f40e4..6cbb0ff 9ea1ecc..4af38d1` accounts for
+    every replayed commit; every path that only the target changes is
+    byte-identical between `4af38d1` and `9ea1ecc`; `git diff --check` reports
+    only the pre-existing trailing whitespace in captured FizzBee fixture
+    output. The pre-rebase head was `6cbb0ff`; the replayed head is
+    `4af38d1`.
+  - Gate evidence after the replay: `make check-fmt`, `make typecheck`,
+    `make test` (2,538 passed, 51 skipped, 63 snapshots), `make markdownlint`
+    (spelling did not regenerate `typos.toml`) and `make nixie` all exit 0;
+    `make lint` failed only at `dead-code`, which D30 repairs. The gate set is
+    rerun on the repair commit before publication, because the replay created
+    a new candidate and the pre-rebase evidence no longer covers it.
+
 ## Outcomes & retrospective
 
 Not started. Completed at each gate and at completion.
@@ -1483,7 +1738,7 @@ Skills and documents to read before starting:
     §11.3 (existing verification); §12 (static-analysis exceptions); §13
     (automation); §14 (spelling).
   - ADR 001 (the excluded closing path).
-  - ADR 003 (the format model for ADR 004).
+  - ADR 003 (the format model for ADR 006).
   - `docs/documentation-style-guide.md`.
   - `docs/scripting-standards.md`.
   - `docs/repository-layout.md`.
@@ -1504,7 +1759,7 @@ No Terms of Reference document exists. The governing artefacts, at commit
 - **Governing standards:** `AGENTS.md` and
   `docs/documentation-style-guide.md`.
 - **ADR 001**, relevant only to the excluded closing path.
-- **ADR 004**, to be written in EP-M3.
+- **ADR 006**, to be written in EP-M3.
 - **Deferred items:** OQ9 is deferred to roadmap 2.1.1 and OQ11 to roadmap
   2.1.2. Neither is discharged here.
 
@@ -1517,7 +1772,7 @@ that delivers it, to its acceptance evidence.
 1.1.2 OQ1-3, OQ6              -> EP-M1  -> models/spike/*.fizz; tests/test_fizzbee_{spike,fixtures}.py; tests/fixtures/fizzbee/
 1.1.3 OQ4-5                   -> EP-M1  -> Makefile FIZZBEE_VERSION, FIZZBEE_SHA256; make fizzbee; RFC licence record
 RFC-§5, §6 tooling            -> EP-M2  -> modelcheck domain; tests/test_modelcheck_{expectations,materialize,drift,trace}.py
-RFC-§5, §6 tooling            -> EP-M3  -> modelcheck adapters, CLI; tests/features/model_check.feature; ADR 004
+RFC-§5, §6 tooling            -> EP-M3  -> modelcheck adapters, CLI; tests/features/model_check.feature; ADR 006
 1.1.4 S1 S2 L1 L3 L4a L4b F1-F7 F3a -> EP-M4 -> models/admission/admission.fizz; .model-check/results.json (head)
 1.1.5 I1 I3 H1 DV2            -> EP-M5  -> models/admission/configurations.toml; results.json (known-bad rows)
 1.1.6 RFC-§5 replay           -> EP-M5  -> tests/test_model_replay.py
@@ -2095,7 +2350,7 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
   - `cli.py`, with `make_app`;
   - `__main__.py`.
 - **Requirements and gaps:** RFC-§5 and §6 (obligation T1, plus the
-  behavioural contract); ADR 004.
+  behavioural contract); ADR 006.
 - **Red first.**
   - Write `tests/features/model_check.feature` and
     `tests/test_model_check_behaviour.py`, with a module-level `pytestmark`
@@ -2263,7 +2518,7 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
       `modelcheck/report.py`. The families EP-M2 recorded stand unchanged. The
       final gate reports no unsuppressed family.
 - **Documentation.**
-  - Write ADR 004, "Model-check tooling as a hexagonal package outside the
+  - Write ADR 006, "Model-check tooling as a hexagonal package outside the
     wheel", in the format of ADR 003, and add it to `docs/contents.md`.
   - Add a developer's guide §11.6 stub, "Model checking", covering how to run
     the tooling, the `fizzbee` marker, and the package's ports.

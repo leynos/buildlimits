@@ -50,8 +50,28 @@ file, and a flaky bound would be blamed on the code under test.
 """
 
 
+def _ambient() -> dict[str, str]:
+    """Return the caller's environment with every ``MODELCHECK_*`` removed.
+
+    Stripping the whole prefix rather than only the names this module passes is
+    what stops an ambient ``MODELCHECK_FIZZ`` or ``MODELCHECK_BOUNDS`` from
+    changing what a test measures. Both helpers start here, so a variable added
+    to one run's environment cannot leak into the other's by an oversight.
+
+    Returns
+    -------
+    dict[str, str]
+        The caller's environment, without any ``MODELCHECK_*`` setting.
+    """
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("MODELCHECK_")
+    }
+
+
 def _environment(log: Path, **overrides: str) -> dict[str, str]:
-    """Return the environment one run gets.
+    """Return the environment one command-line run gets.
 
     Parameters
     ----------
@@ -63,15 +83,10 @@ def _environment(log: Path, **overrides: str) -> dict[str, str]:
     Returns
     -------
     dict[str, str]
-        The caller's environment without any ``MODELCHECK_*`` setting, so an
-        ambient ``MODELCHECK_FIZZ`` or ``MODELCHECK_BOUNDS`` cannot change what
-        the test is measuring, plus the stub's log and the caller's overrides.
+        The ambient environment, plus the stub's log and the caller's
+        overrides.
     """
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith("MODELCHECK_")
-    }
+    environment = _ambient()
     environment["MODELCHECK_E2E_LOG"] = str(log)
     environment.update(overrides)
     return environment
@@ -285,6 +300,38 @@ def test_the_run_leaves_the_fixture_tree_untouched(tmp_path: Path) -> None:
     assert not (_FIXTURES / "seen.log").exists(), (
         "and the stub's record went to the scratch directory it was given"
     )
+
+
+def test_the_stub_refuses_to_write_beside_itself(tmp_path: Path) -> None:
+    """A stub run without a log path fails rather than dirtying the fixture tree.
+
+    The stub used to default its record to a file beside itself, which made the
+    documented hand-run — ``uv run python -m modelcheck check ... --fizz
+    tests/fixtures/modelcheck/fizz`` — write into the tracked tree. Nothing
+    caught it: ``*.log`` is git-ignored, so ``git status --porcelain``, the
+    plan's own cleanliness proof, reported a clean tree while the fixture
+    directory held the file. This pins the refusal, because a test that only
+    checked the tree afterwards would pass again the moment the default came
+    back and the leftover was cleaned up.
+
+    ``64`` is ``EX_USAGE``: the stub was invoked in a way it cannot honour,
+    which is distinct from a model that failed.
+    """
+    before = _tree()
+
+    result = subprocess.run(
+        [str(_FIZZ), "--output-dir", str(tmp_path / "out"), "model.fizz"],
+        env=_ambient(),
+        capture_output=True,
+        text=True,
+        timeout=_TIMEOUT_SECONDS,
+        check=False,
+    )
+
+    assert result.returncode == 64, "the stub refuses rather than guessing a path"
+    assert "MODELCHECK_E2E_LOG" in result.stderr, "and names the variable it needs"
+    assert _tree() == before, "so the fixture tree is untouched"
+    assert not (_FIXTURES / "seen.log").exists(), "and nothing was written there"
 
 
 def test_a_usage_error_names_the_problem_and_exits_two(tmp_path: Path) -> None:

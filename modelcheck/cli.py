@@ -116,7 +116,7 @@ def exit_status(judgements: cabc.Sequence[Judgement]) -> int:
     return EXIT_MET if all(judgement.is_met for judgement in judgements) else EXIT_UNMET
 
 
-def make_app(  # pylint: disable=too-many-arguments  # ADR 004 supplies three adapters.
+def make_app(  # pylint: disable=too-many-arguments  # ADR 006 supplies three adapters.
     checker_factory: CheckerFactory,
     source_factory: SourceFactory,
     inventory_factory: InventoryFactory,

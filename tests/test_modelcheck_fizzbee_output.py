@@ -1,7 +1,7 @@
 """The checker's output is classified fail-closed (obligation T1).
 
 A pass is the only result that can meet a positive expectation, so every other
-way a run can end has to be recognised and refused. The parser is tested by
+way a run can end has to be recognized and refused. The parser is tested by
 construction rather than by example: an enumeration names every marker the
 pinned checker can print, and the test sweeps every subset of them against both
 exit statuses, computing the expected classification from which markers it
@@ -154,7 +154,7 @@ def test_classification_fails_closed(markers: frozenset[str], exit_status: int) 
     """Every presence combination classifies as its markers and status require.
 
     The oracle reads the inserted markers directly, so it cannot inherit the
-    parser's mistakes. A parser that treated an unrecognised line as a pass, or
+    parser's mistakes. A parser that treated an unrecognized line as a pass, or
     that let the pass line override a verdict, would disagree with it on at
     least one of these rows.
     """

@@ -1,4 +1,4 @@
-# Architectural decision record (ADR) 004: model-check tooling outside the wheel
+# Architectural decision record (ADR) 006: model-check tooling outside the wheel
 
 ## Status
 
@@ -16,7 +16,7 @@ RFC 0001 asks whether the supervisor's admission and recovery behaviour keeps
 its stated properties under a bounded model. Answering that needs a model, a
 pinned checker and tooling that turns one checker run into a verdict a
 maintainer can defend. The tooling has real policy: it decides what a
-configuration expects, materialises each variant from one source, judges a
+configuration expects, materializes each variant from one source, judges a
 result against those expectations, computes drift between the model and the
 code, and normalizes counterexample traces.
 

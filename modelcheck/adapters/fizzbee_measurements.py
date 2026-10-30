@@ -13,7 +13,7 @@ recording that masked its timing and must not stop a report. Keeping the
 readers apart makes each default explicit at the place it is chosen.
 
 Both readers are total: every input, including the empty string and a run that
-printed nothing recognisable, produces a number. That is deliberate. A null
+printed nothing recognizable, produces a number. That is deliberate. A null
 reading is the only sensible answer for evidence the run did not print, and
 raising here would turn a real counterexample into a tool failure.
 """
