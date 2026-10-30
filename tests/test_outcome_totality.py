@@ -2,12 +2,17 @@
 
 import dataclasses as dc
 import selectors
+import time
 import typing as typ
 from pathlib import Path
 from unittest import mock
 
 import pytest
-from outcome_shell_test_support import make_outcome_world
+from outcome_shell_test_support import (
+    FakeWriter,
+    OutcomeWorldOptions,
+    make_outcome_world,
+)
 from request_helpers import crate_pending
 
 from buildlimits.admission import Admission, Launch
@@ -16,6 +21,8 @@ from buildlimits.effects import Effect, Exit, ReturnToken, Shutdown, Terminate
 from buildlimits.supervisor_outcome_setup import GroupEnding
 
 if typ.TYPE_CHECKING:
+    from buildlimits.nonblocking_child import ChildReaper
+    from buildlimits.outcome_ports import OutcomeStorePort
     from buildlimits.pending_request import Pending
     from buildlimits.supervisor_outcomes import OutcomeShell
 
@@ -127,3 +134,125 @@ def test_shell_entry_points_cannot_break_graceful_admission_drain(
         "enabled": False,
         "reason": "recorder_disabled",
     }, "the failed shell exposes only its bounded disabled state"
+
+
+class _StickyReaper:
+    """Own one helper that never settles, so a reap loop cannot empty it."""
+
+    def __init__(self, *, fails: bool = False) -> None:
+        """Create a reaper with one permanently owned child."""
+        self.polls = 0
+        self._fails = fails
+
+    @property
+    def active_count(self) -> int:
+        """Report the one child this fake never releases.
+
+        Returns
+        -------
+        int
+            Always one, so only a deadline can end a reap loop.
+        """
+        return 1
+
+    def poll(self, now: float) -> None:
+        """Count one poll, optionally failing like a broken reaper."""
+        del now
+        self.polls += 1
+        if self._fails:
+            raise RuntimeError("reaper diagnostic")
+
+
+class _StalledWriter(FakeWriter):
+    """Spend its whole allowance inside close, like a stalled join."""
+
+    def __init__(self, *, fails: bool = False) -> None:
+        """Create a writer that stalls for whatever allowance it is given."""
+        super().__init__()
+        self._fails = fails
+
+    def close(self, timeout: float) -> None:
+        """Record the allowance, stall for it, then optionally fail."""
+        self.closed.append(timeout)
+        if self._fails:
+            raise RuntimeError("writer diagnostic")
+        time.sleep(max(0.0, timeout))
+        self.is_closed = True
+
+
+def _faulted_world(
+    tmp_path: Path, reaper: _StickyReaper, writer: _StalledWriter
+) -> tuple[OutcomeShell, _StickyReaper, _StalledWriter]:
+    """Build a world whose owned helper and writer never finish promptly.
+
+    Returns
+    -------
+    tuple[OutcomeShell, _StickyReaper, _StalledWriter]
+        The shell, its sticky reaper and its stalled writer.
+    """
+    world = make_outcome_world(
+        tmp_path,
+        OutcomeWorldOptions(
+            reaper=typ.cast("ChildReaper", reaper),
+            writer=typ.cast("OutcomeStorePort", writer),
+        ),
+    )
+    return typ.cast("OutcomeShell", world.shell), reaper, writer
+
+
+def test_failure_path_does_not_wait_for_owned_resources(tmp_path: Path) -> None:
+    """A recorder fault asks its writer to stop instead of joining it."""
+    shell, reaper, writer = _faulted_world(tmp_path, _StickyReaper(), _StalledWriter())
+
+    with mock.patch.object(shell, "_on_tick", side_effect=RuntimeError("diagnostic")):
+        shell.on_tick(0.0)
+
+    assert reaper.polls == 1, "the fault path polls its helper exactly once"
+    assert writer.closed == [0.0], (
+        "the fault path only requests writer shutdown, without waiting"
+    )
+
+    shell.on_tick(0.1)
+    shell.on_tick(0.2)
+    assert reaper.polls == 3, "later ticks keep making one non-blocking step"
+    assert writer.closed == [0.0, 0.0, 0.0], "no later tick waits for the store"
+
+    started = time.monotonic()
+    shell.close(0.05)
+    assert time.monotonic() - started < 0.5, "shutdown stays within its bound"
+    assert len(writer.closed) == 4, "shutdown closes the writer once"
+    assert shell.describe() == {
+        "enabled": False,
+        "reason": "recorder_disabled",
+    }, "the failed shell still exposes only its bounded disabled state"
+
+    polls_at_close = reaper.polls
+    shell.on_tick(0.3)
+    assert reaper.polls == polls_at_close, "a closed shell is inert"
+
+
+def test_failure_cleanup_survives_secondary_exceptions(tmp_path: Path) -> None:
+    """Cleanup faults are contained, and one does not skip the other."""
+    shell, reaper, writer = _faulted_world(
+        tmp_path, _StickyReaper(fails=True), _StalledWriter(fails=True)
+    )
+
+    with mock.patch.object(shell, "_launched", side_effect=RuntimeError("diagnostic")):
+        shell.launched(crate_pending(1), "g1")
+
+    assert reaper.polls == 1, "the failing reaper was still attempted"
+    assert writer.closed == [0.0], "a reaper fault does not prevent the writer request"
+
+    shell.on_tick(0.0)
+    assert (reaper.polls, writer.closed) == (2, [0.0, 0.0]), (
+        "later ticks keep attempting both cleanup steps"
+    )
+
+    shell.close(0.05)
+    assert writer.closed[-1] > 0.0, (
+        "a failing reaper still leaves the writer its shutdown allowance"
+    )
+    assert shell.describe() == {
+        "enabled": False,
+        "reason": "recorder_disabled",
+    }, "cleanup faults never escape as a shell failure result"

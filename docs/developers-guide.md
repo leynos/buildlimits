@@ -202,6 +202,8 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_process_sampler`                                                          | Bounded control-group inspection and per-process metadata caching                                      |
 | `outcome_sampling`, `outcome_recorder_sampling`                                    | Sampling cadence, failure back-off and pure recorder sample folding                                    |
 | `outcome_sightings`, `outcome_shell_keys`                                          | In-memory child matching and privacy-safe supervisor key assembly                                      |
+| `outcome_resources`                                                                | Helper-reaper and store-writer ownership, with a non-blocking fault path and a bounded shutdown path   |
+| `outcome_shell_stats`                                                              | Bounded, privacy-safe counters for the optional recording status section                               |
 | `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                              |
 
 _Table 2: Package modules._
@@ -522,7 +524,11 @@ categories.
 `OutcomeTelemetry` maps reducer outputs to those metrics and owns the bounded
 `statistics_read` span. The recorder's pure transitions stay in
 `outcome_recorder`; `supervisor_outcomes` owns the server identity probe,
-statistics child, privacy-safe key construction and asynchronous store. Both
+statistics child and privacy-safe key construction, and `outcome_resources`
+owns the reaper and the asynchronous store. A recorder fault on the selector
+thread only requests cancellation there — one non-blocking reaper poll and
+`close(0.0)` — while later ticks keep advancing the same cleanup, and only
+`close()` spends D17's one-second deadline. Both
 `PeerServerProcess` and `ProcessSampler` read field 22 through
 `proc_trees.read_process_starttime`; that shared reader owns `/proc` decoding
 and validation, while each adapter keeps its own failure policy. The process

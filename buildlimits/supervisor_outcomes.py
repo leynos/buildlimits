@@ -4,13 +4,14 @@ import contextlib
 import dataclasses as dc
 import datetime as dt
 import os
-import time
 import typing as typ
 
 from buildlimits import (
     outcome_key,
     outcome_parser,
+    outcome_resources,
     outcome_shell_keys,
+    outcome_shell_stats,
     outcome_store_salt,
     outcome_telemetry,
     supervisor_outcome_setup,
@@ -98,8 +99,13 @@ class OutcomeShell:
             self._wall_clock = lambda: dt.datetime.now(dt.UTC)
         else:
             self._wall_clock = dependencies.wall_clock
-        self._reaper = (
-            ChildReaper() if dependencies.reaper is None else dependencies.reaper
+        reaper = ChildReaper() if dependencies.reaper is None else dependencies.reaper
+        path = outcome_store_salt.store_path(env)
+        writer = (
+            StoreWriter(path) if dependencies.writer is None else dependencies.writer
+        )
+        self._resources = outcome_resources.OutcomeResources(
+            reaper, writer, supervisor.clock
         )
         self._server = (
             PeerServerProcess(supervisor.settings.sccache_socket)
@@ -111,30 +117,19 @@ class OutcomeShell:
                 supervisor.settings.sccache_executable,
                 env,
                 supervisor.settings.sccache_socket,
-                reaper=self._reaper,
+                reaper=reaper,
             )
             if dependencies.statistics is None
             else dependencies.statistics
-        )
-        path = outcome_store_salt.store_path(env)
-        self._writer = (
-            StoreWriter(path) if dependencies.writer is None else dependencies.writer
         )
         self._recorder = OutcomeRecorder(self._statistics, self._server)
         self._child_sampler = ChildSampler(self._server)
         self._telemetry = outcome_telemetry.OutcomeTelemetry(
             supervisor.metrics, supervisor.tracer
         )
+        self._counters = outcome_shell_stats.OutcomeCounters()
         self._salt: outcome_key.Salt | None = None
         self._next_gate_at = 0.0
-        self._attributed = 0
-        self._outcomes = 0
-        self._readings = 0
-        self._readings_skipped = 0
-        self._readings_failed = 0
-        self._store_records = 0
-        self._store_discarded = 0
-        self._last_reason: str | None = None
         self._disabled = False
         self._closed = False
         self._failure_reported = False
@@ -149,6 +144,11 @@ class OutcomeShell:
 
     def on_tick(self, now: float) -> None:
         """Poll owned work, publish results and start due quiet-point reads."""
+        if self._closed:
+            return
+        if self._disabled:
+            self._resources.service_failed()
+            return
         self._guard(self._on_tick, now)
 
     def describe(self) -> dict[str, object]:
@@ -164,6 +164,9 @@ class OutcomeShell:
     def close(self, timeout: float = OUTCOME_CLOSE_SECONDS) -> None:
         """Cancel the query, reap its helper and close the writer within a bound."""
         if self._closed:
+            return
+        if self._disabled:
+            self._close_resources(timeout)
             return
         self._guard(self._close, timeout)
 
@@ -184,7 +187,11 @@ class OutcomeShell:
         try:
             return action(*args)
         except Exception:  # ruff: ignore[blind-except] - keep recorder faults outside token and admission decisions.
-            self._disable()
+            # The shield keeps even a defective fault path inside this
+            # boundary, so D19's totality does not depend on _disable being
+            # perfect.
+            with contextlib.suppress(Exception):
+                self._disable()
             return (
                 supervisor_outcome_setup.disabled_description()
                 if action == self._describe
@@ -251,7 +258,7 @@ class OutcomeShell:
         if isinstance(state, Querying) and state.ticket:
             self._publish(self._recorder.poll(now))
         else:
-            self._reaper.poll(now)
+            self._resources.poll(now)
 
     def _is_gate_due(self, now: float) -> bool:
         """Report whether a baseline exists and the next gate time arrived.
@@ -282,7 +289,7 @@ class OutcomeShell:
         if reason is None:
             self._publish(self._recorder.advance(GateOpen(inputs, now)))
             return
-        self._readings_skipped += 1
+        self._counters.skip_reading()
         self._telemetry.reading_skipped(reason)
 
     def _sample_children(self, now: float) -> None:
@@ -303,16 +310,15 @@ class OutcomeShell:
     def _drain_writer(self) -> None:
         """Consume asynchronous salt and store results without waiting."""
         if self._salt is None:
-            salt = self._writer.salt_result()
+            salt = self._resources.salt_result()
             if isinstance(salt, outcome_key.Salt):
                 self._salt = salt
-        for result in self._writer.results():
+        for result in self._resources.results():
             self._consume_store_result(result)
 
     def _consume_store_result(self, result: StoreResult) -> None:
         """Track and publish one aggregated writer result."""
-        self._store_records += result.records
-        self._store_discarded += result.discarded
+        self._counters.record_store(result)
         self._telemetry.store_result(
             operation=result.operation,
             reason=result.reason,
@@ -323,16 +329,9 @@ class OutcomeShell:
     def _publish(self, outputs: Outputs) -> None:
         """Publish metrics and enqueue immutable records from one transition."""
         self._telemetry.publish(outputs)
-        for event in outputs.events:
-            self._outcomes += 1
-            self._attributed += int(event.outcome_attribution in {"solo", "unanimous"})
-            self._last_reason = event.outcome_reason
-        for reason in outputs.reading_reasons:
-            self._readings += 1
-            self._readings_failed += int(reason != "none")
-            self._last_reason = reason
+        self._counters.record(outputs)
         for record in outputs.records:
-            self._writer.append(record)
+            self._resources.append(record)
 
     def _describe(self) -> dict[str, object]:
         """Build the privacy-safe status payload for record mode.
@@ -340,22 +339,20 @@ class OutcomeShell:
         Returns
         -------
         dict[str, object]
-            Bounded counters and the last closed reason.
+            Whether recording is still on, plus bounded counters and the last
+            closed reason.
         """
-        return {
-            "enabled": not isinstance(self._recorder.state, Disabled),
-            "attributed": self._attributed,
-            "outcomes": self._outcomes,
-            "readings": self._readings,
-            "readings_skipped": self._readings_skipped,
-            "readings_failed": self._readings_failed,
-            "store_records": self._store_records,
-            "store_discarded": self._store_discarded,
-            "last_reason": self._last_reason,
-        }
+        enabled = not isinstance(self._recorder.state, Disabled)
+        return {"enabled": enabled, **self._counters.describe()}
 
     def _disable(self) -> None:
-        """Cancel owned work once and make future calls inert."""
+        """Request cancellation once, without waiting, and make calls inert.
+
+        This runs under a fault on the selector thread, so it may only ask
+        owned work to stop: D17 bounds a join during supervisor shutdown, not
+        during an ordinary launch, tick or status call. Later ticks finish the
+        reaping and writer shutdown through ``OutcomeResources.service_failed``.
+        """
         if self._disabled:
             return
         self._disabled = True
@@ -369,13 +366,13 @@ class OutcomeShell:
                     outcome_reason="recorder_disabled",
                     readings_failed=1,
                 )
-        now = self._supervisor.clock()
         with contextlib.suppress(Exception):
+            now = self._supervisor.clock()
             outputs = self._recorder.advance(Stopping(now, self._wall_clock()))
             self._telemetry.publish(outputs)
             for record in outputs.records:
-                self._writer.append(record)
-        self._close_resources(0.1)
+                self._resources.append(record)
+        self._resources.service_failed()
 
     def _close(self, timeout: float) -> None:
         """Flush terminal recorder effects before closing owned resources."""
@@ -383,16 +380,8 @@ class OutcomeShell:
         outputs = self._recorder.advance(Stopping(now, self._wall_clock()))
         self._publish(outputs)
         self._close_resources(timeout)
-        self._closed = True
 
     def _close_resources(self, timeout: float) -> None:
-        """Cancel and reap the query before giving the remaining bound to disk."""
-        wait = min(max(timeout, 0.0), OUTCOME_CLOSE_SECONDS)
-        deadline = time.monotonic() + wait
-        now = self._supervisor.clock()
-        self._reaper.poll(now)
-        while self._reaper.active_count and time.monotonic() < deadline:
-            time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
-            self._reaper.poll(self._supervisor.clock())
-        self._writer.close(max(0.0, deadline - time.monotonic()))
+        """Reap the query before giving the remaining bound to disk."""
+        self._resources.close(timeout)
         self._closed = True

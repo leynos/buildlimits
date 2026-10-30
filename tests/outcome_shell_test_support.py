@@ -195,6 +195,7 @@ class OutcomeWorldOptions:
     recording: bool = True
     statistics_port: StatisticsPort | None = None
     reaper: ChildReaper | None = None
+    writer: OutcomeStorePort | None = None
     clock: cabc.Callable[[], float] | None = None
     tracer: JournalTracer | None = None
 
@@ -224,7 +225,7 @@ def make_outcome_world(
         if options.statistics_port is None
         else options.statistics_port
     )
-    writer = FakeWriter()
+    writer = FakeWriter() if options.writer is None else options.writer
     supervisor = SimpleNamespace(
         settings=SimpleNamespace(
             sccache_socket=tmp_path / "sccache.sock",
@@ -249,7 +250,7 @@ def make_outcome_world(
             typ.cast("Supervisor", supervisor),
             dependencies=OutcomeDependencies(
                 environment={"HOME": str(tmp_path)},
-                writer=typ.cast("OutcomeStorePort", writer),
+                writer=writer,
                 statistics=selected_statistics,
                 server=typ.cast("ServerProcessPort", FakeServerProcess()),
                 reaper=options.reaper,
@@ -262,5 +263,7 @@ def make_outcome_world(
         admission,
         metrics,
         typ.cast("PendingStatistics", selected_statistics),
-        writer,
+        # An injected writer is cast to the default fake only so callers that
+        # replace it own the concrete type they passed.
+        typ.cast("FakeWriter", writer),
     )

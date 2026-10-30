@@ -48,8 +48,9 @@ def test_loop_admits_while_query_stalls(tmp_path: Path) -> None:
         OutcomeWorldOptions(statistics_port=statistics, reaper=reaper),
     )
     shell = typ.cast("OutcomeShell", world.shell)
-    assert shell._reaper is reaper and statistics._reaper is reaper, (
-        "loop_admits_while_query_stalls: shell._reaper is reaper and statisti"
+    assert shell._resources.reaper is reaper and statistics._reaper is reaper, (
+        "loop_admits_while_query_stalls: shell._resources.reaper is reaper and "
+        "statistics._reaper is reaper"
     )
     started = time.monotonic()
 
