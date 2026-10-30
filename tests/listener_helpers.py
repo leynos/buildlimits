@@ -46,7 +46,7 @@ def watched_listener(
 
 
 @contextlib.contextmanager
-def unix_listener(path: Path) -> cabc.Iterator[socket.socket]:
+def unix_listener(path: Path) -> cabc.Generator[socket.socket]:
     """Bind a real Unix listener and remove its socket path after use.
 
     Parameters

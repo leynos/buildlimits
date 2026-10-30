@@ -156,7 +156,7 @@ def ready_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
 @contextlib.contextmanager
 def running_writer(
     path: Path, *, queue_capacity: int = 4096
-) -> cabc.Iterator[StoreWriter]:
+) -> cabc.Generator[StoreWriter]:
     """Yield an initialized writer and always close its worker afterwards.
 
     Yields
@@ -330,7 +330,7 @@ def seed_store(
 
 
 @contextlib.contextmanager
-def stalled_append() -> cabc.Iterator[tuple[threading.Event, threading.Event]]:
+def stalled_append() -> cabc.Generator[tuple[threading.Event, threading.Event]]:
     """Pause the first writer append until the test releases it.
 
     Yields

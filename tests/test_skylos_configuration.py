@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 EXPECTED_ENTRYPOINTS = {
+    "buildlimits.groups.Groups.advance": "buildlimits/groups.py",
     "buildlimits.groups.Groups.remove": "buildlimits/groups.py",
     "buildlimits.nonblocking_child.NonBlockingChild.poll": (
         "buildlimits/nonblocking_child.py"

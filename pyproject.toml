@@ -392,6 +392,12 @@ reason = "OutcomeRecorder._launch appends through Progress.window, a generic dat
 # supervisor, child-list, or report-union dispatch. Keep each allowance exact.
 [[tool.skylos.dead_code.entrypoints]]
 type = "method"
+full_name = ["buildlimits.groups.Groups.advance"]
+path = ["buildlimits/groups.py"]
+reason = "group_recovery.empty_groups calls supervisor.groups.advance to drain a group before removal; Supervisor._tick owns that typed collaborator, which Skylos does not resolve. The group-drain tests call advance directly."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
 full_name = ["buildlimits.groups.Groups.remove"]
 path = ["buildlimits/groups.py"]
 reason = "group_recovery.empty_groups calls supervisor.groups.remove after advance confirms the group is empty; Supervisor._tick owns that typed collaborator. Recovery and graceful-restart systemd scenarios exercise the cleanup."
@@ -843,6 +849,7 @@ reason = "Recurring short test steps: these fragments arrange or check the same 
 
 [[tool.duplication_gate.allow]]
 members = [
+    "tests/cache_recovery_systemd_world.py",
     "tests/test_cache_recovery_systemd.py",
     "tests/test_pressure_systemd.py",
 ]
@@ -1217,10 +1224,6 @@ unit = "tests/test_ports.py"
 reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
 
 [[tool.duplication_gate.allow]]
-unit = "tests/test_status_render.py"
-reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
-
-[[tool.duplication_gate.allow]]
 members = [
     "tests/test_admission_on_systemd_behaviour.py::_succeeds",
     "tests/test_admission_on_systemd_behaviour.py",
@@ -1354,10 +1357,11 @@ reason = "Separate pytest-bdd steps assert different result dimensions for diffe
 
 [[tool.duplication_gate.allow]]
 members = [
+    "buildlimits/admission_readiness.py::ReadinessFacts",
     "buildlimits/outcome_stats.py::StatsReading",
     "buildlimits/recovery_starvation.py::StarvationReading",
 ]
-reason = "These frozen records carry counters from separate domains and lifecycle boundaries. Their similar field documentation does not imply a shared value type or reusable parser."
+reason = "These frozen records carry facts and counters from separate domains and lifecycle boundaries: admission readiness, one sccache statistics reading, and one starvation observation. Their similar field documentation does not imply a shared value type or reusable parser."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -1424,6 +1428,7 @@ reason = "These are separate single-purpose test callbacks for admission and rec
 [[tool.duplication_gate.allow]]
 members = [
     "tests/cache_outcome_systemd_support.py",
+    "tests/cache_recovery_systemd_world.py",
     "tests/test_cache_recovery_systemd.py",
     "tests/test_pressure_systemd.py",
 ]
@@ -1439,3 +1444,17 @@ reason = "These similarly shaped properties resolve distinct fixture resources, 
 [[tool.duplication_gate.allow]]
 unit = "tests/outcome_shell_test_support.py"
 reason = "The detector reports both one-line close-log fragments without a unit name, so a member key cannot distinguish them. They belong to separate statistics and writer fakes with independent close arguments and lifecycle contracts."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/rustc_query_host_checks.py",
+    "tests/test_sccache_real_binary.py",
+]
+reason = "Matching import lists: each module names the standard-library and host-check symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_record_format.py::WindowSummary",
+    "tests/rustc_linter_acceptance.py::LinterAcceptance",
+]
+reason = "These frozen slots records describe independent value types: one stored outcome window and one real-linter run's configuration and evidence recorder. Their declaration shape matches; no behaviour or field is shared."
