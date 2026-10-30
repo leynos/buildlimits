@@ -1369,6 +1369,17 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   timeout, which is inconclusive rather than a counterexample, and it stays
   outside the claimed proofs. Latency acceptance remains open under the
   implementation assessment.
+- [x] (2026-10-30 23:12Z) The opt-in child-sighting measurement was retried as
+  host load fell. One run passed: a 1-minute load of 5.71 on 24 CPUs measured a
+  sample p99 of 1.739 ms against the 2 ms ceiling, with the tick and
+  append-enqueue figures at 0.026 ms and 0.029 ms and the 64 identity reads at
+  1.421 ms. Load then rose, and four further runs measured 2.142 ms at 7.38,
+  2.187 ms at 10.81, 2.295 ms at 16.89 and 2.649 ms at 18.23, all over the
+  ceiling. The spread follows host contention, not a change in the sampler. The
+  passing run was not made on an idle host, so the quiet-host acceptance stays
+  outstanding under the implementation assessment's deferred route; the pass is
+  recorded as environmental evidence, with the logs at
+  `/tmp/latency-quiet-1.out` to `/tmp/latency-quiet-5.out`.
 
 ## Surprises & discoveries
 
