@@ -17,7 +17,9 @@ candidate98 full gates and archive-bound review passed; 2026-10-27 local review
 fixes are implemented, with full gates and a fresh committed review pending;
 EP-M6 to EP-M8 are reconciled against the candidate `b3be25f`, whose five
 sequential gates and assessment answers are recorded in the Progress section;
-G1 is unrun and EP-M9 is unstarted)
+the three defects raised by the review of `72e39e8` are fixed and awaiting
+their gate run; the opt-in child-sighting measurement still needs a quiet-host
+acceptance run; G1 is unrun and EP-M9 is unstarted)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -1279,18 +1281,21 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 - [x] (2026-10-30) The opt-in host measurement now covers child sighting.
   `tests/test_outcome_latency.py` warms one sampler over a 65-member fake
   cgroup and measures 1,000 steady-state samples, asserting that a sample
-  inspects exactly the 64-process batch and that its p99 above the same host's
-  cost for those 64 identity reads stays within the 2 ms budget. On this host
-  with 26 compilations queued, the absolute sample p99 ranged from 2.6 ms to
-  5.1 ms while reading the 64 stat files alone cost 1.8 ms to 5.2 ms, leaving a
-  sampler overhead p99 of 0.0 ms to 1.2 ms. The escalation line is therefore
-  exceeded only by host read latency: a single stat read cost about 19 µs here
-  against the few microseconds an idle host needs. Re-measure the absolute
-  figure on a quiet host before treating it as a sampler finding. The shared
-  `/proc` and cgroup builders now live in
+  inspects exactly the 64-process batch and that its p99 stays inside the 2 ms
+  absolute ceiling this plan's escalation line names. The absolute figure is
+  the asserted one: subtracting the host's cost for the 64 identity reads would
+  remove real selector-thread work from the acceptance number, so that baseline
+  is printed beside it as a diagnostic only. The ceiling is a wall-clock
+  figure, so it fails under contention, and it did: with load average 42 on 24
+  cores and every compile slot held, the sample measured 8.8 ms while the same
+  run also broke the 1 ms append-enqueue ceiling that passes on an idle host,
+  which attributes the failure to the host rather than to the sampler. Earlier
+  runs with 26 compilations queued measured an absolute sample p99 of 2.6 ms to
+  5.1 ms against 1.8 ms to 5.2 ms for the 64 stat reads alone. A quiet-host
+  acceptance run is outstanding and is recorded in the Progress section as the
+  one open measurement. The shared `/proc` and cgroup builders now live in
   `tests/outcome_process_test_helpers.py`, used by the sampler, latency and
-  server-process modules. With `BUILD_LIMITS_SCCACHE_HOST_CHECK=1`, the latency
-  and sampler modules pass all ten tests.
+  server-process modules.
 - [x] (2026-10-30) R2, R8 and the residual-gap promise are now carried by the
   reports themselves. `buildlimits/outcome_evidence.py` holds the covered span
   (`Coverage`, built from the `observed_at` of every record read) and the fixed
@@ -1321,6 +1326,22 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   typecheck, lint in full (including dead code, duplication and action lint)
   and Markdown with the spelling gate. The milestone checkboxes above record
   the acceptance. G1 remains owner-controlled and EP-M9 stays unstarted.
+- [x] (2026-10-30) The review of `72e39e8` raised three defects, all now fixed.
+  The child-sighting caveat in `buildlimits/outcome_evidence.py` claimed a
+  child "that lives less than that can be missed"; the sampler is the party
+  that can miss it, so the caveat now reads "can be missed between samples",
+  and the two H2 snapshots were regenerated for that wording alone. The O4
+  differential machine handed every generated launch the cached entry, so a
+  direct launch would have been recorded with a cached request's key and the
+  invariant could not see it; `differential_trace_test_helpers.direct_entry()`
+  now gives a direct launch its own crate name and key, `_deliver` selects the
+  entry from `launch.cached`, and the invariant asserts that the recording
+  world holds at most one key. The latency test now asserts the plan's absolute
+  ceiling instead of a baseline-subtracted overhead. The quiet-host acceptance
+  run for that last change is the outstanding item: it fails on this host while
+  the host is loaded, and no quiet host has been available since the assertion
+  changed. The plan records the contention evidence above rather than claiming
+  a pass.
 
 ## Surprises & discoveries
 
