@@ -558,7 +558,8 @@ ignore_names = [
     "stopped_on_deadline",
 ]
 # pytest-bdd steps and Hypothesis state-machine rules are registered by their
-# decorators and dispatched by the framework, never called by name.
+# decorators and dispatched by the framework, never called by name. Hypothesis
+# initializes a state machine by running its ``@initialize`` callbacks itself.
 ignore_decorators = [
     "@given",
     "@when",
@@ -566,6 +567,7 @@ ignore_decorators = [
     "@rule",
     "@invariant",
     "@precondition",
+    "@initialize",
 ]
 min_confidence = 60
 

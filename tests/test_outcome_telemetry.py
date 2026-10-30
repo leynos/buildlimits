@@ -8,6 +8,8 @@ from buildlimits.outcome_recorder_types import Outputs
 from buildlimits.outcome_telemetry import READING_SUMMARY_SECONDS, OutcomeTelemetry
 
 if typ.TYPE_CHECKING:
+    from syrupy.assertion import SnapshotAssertion
+
     from buildlimits.outcome_vocabulary import OutcomeReason
 
 
@@ -52,7 +54,9 @@ def test_repeated_failures_cost_one_transition_and_one_summary() -> None:
     assert _total(metrics, "readings_failed") == 60, "every reading failed"
 
 
-def test_reason_changes_are_transitions_and_totals_stay_exact() -> None:
+def test_reason_changes_are_transitions_and_totals_stay_exact(
+    snapshot: SnapshotAssertion,
+) -> None:
     """Transitions carry labels only, so totals are never counted twice."""
     metrics = RecordingMetrics()
     telemetry = OutcomeTelemetry(metrics)
@@ -66,19 +70,11 @@ def test_reason_changes_are_transitions_and_totals_stay_exact() -> None:
     telemetry.flush(0.0)
     telemetry.flush(READING_SUMMARY_SECONDS)
 
-    assert _reading_events(metrics) == [
-        {"outcome_reason": "timeout"},
-        {"outcome_reason": "none"},
-        {"outcome_reason": "timeout"},
-        {"gate_reason": "queued"},
-        {
-            "readings": 5,
-            "readings_skipped": 2,
-            "readings_failed": 3,
-            "child_samples_taken": 1,
-            "child_sample_failures": 1,
-        },
-    ], "each changed state is reported once, then the interval is summarized"
+    # The snapshot pins the emitted sequence: each changed state is reported
+    # once, then the interval counters are summarized in one final event.
+    assert _reading_events(metrics) == snapshot, (
+        "the emitted transition and summary sequence changed"
+    )
     assert _total(metrics, "readings") == 5, "five readings happened"
     assert _total(metrics, "readings_failed") == 3, "three of them failed"
     assert _total(metrics, "readings_skipped") == 2, "two gates skipped"

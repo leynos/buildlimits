@@ -318,12 +318,8 @@ def test_store_cli_text_and_json_snapshots_include_semantic_sample_sizes(
     text_output = capsys.readouterr().out
 
     assert text_status == 0, "store_cli_text_and_json_sna...: text_status == 0"
-    assert "supported" in text_output, (
-        'store_cli_text_and_json_sna...: "supported" in text_output'
-    )
-    assert "100 evaluable of 2000 attributed" in text_output, (
-        'store_cli_text_and_json_sna...: "100 evaluable of 2000 attributed" i'
-    )
+    # The snapshot pins the whole report; these two name the evidence
+    # boundaries a reader must see, which a snapshot diff would not explain.
     assert "covered 2026-10-24T12:00:00Z to 2026-10-24T12:00:00Z" in text_output, (
         "the text report states the covered span"
     )

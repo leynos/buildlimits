@@ -258,7 +258,7 @@ class OutcomeShell:
         if isinstance(state, Querying) and state.ticket:
             self._publish(self._recorder.poll(now))
         else:
-            self._resources.poll(now)
+            self._resources.reaper.poll(now)
 
     def _is_gate_due(self, now: float) -> bool:
         """Report whether a baseline exists and the next gate time arrived.
@@ -310,10 +310,10 @@ class OutcomeShell:
     def _drain_writer(self) -> None:
         """Consume asynchronous salt and store results without waiting."""
         if self._salt is None:
-            salt = self._resources.salt_result()
+            salt = self._resources.writer.salt_result()
             if isinstance(salt, outcome_key.Salt):
                 self._salt = salt
-        for result in self._resources.results():
+        for result in self._resources.writer.results():
             self._consume_store_result(result)
 
     def _consume_store_result(self, result: StoreResult) -> None:
@@ -331,7 +331,7 @@ class OutcomeShell:
         self._telemetry.publish(outputs)
         self._counters.record(outputs)
         for record in outputs.records:
-            self._resources.append(record)
+            self._resources.writer.append(record)
 
     def _describe(self) -> dict[str, object]:
         """Build the privacy-safe status payload for record mode.
@@ -372,7 +372,7 @@ class OutcomeShell:
             self._telemetry.publish(outputs)
             self._telemetry.flush(now, force=True)
             for record in outputs.records:
-                self._resources.append(record)
+                self._resources.writer.append(record)
         self._resources.service_failed()
 
     def _close(self, timeout: float) -> None:

@@ -17,9 +17,7 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.nonblocking_child import ChildReaper
-    from buildlimits.outcome_key import Salt
-    from buildlimits.outcome_ports import OutcomeStorePort, StoreFailure, StoreResult
-    from buildlimits.outcome_record_format import StoreRecord
+    from buildlimits.outcome_ports import OutcomeStorePort
 
 _REAP_INTERVAL_SECONDS = 0.01
 
@@ -49,9 +47,16 @@ class OutcomeResources:
         """
         return self._reaper
 
-    def poll(self, now: float) -> None:
-        """Poll every owned helper once at the caller's tick time."""
-        self._reaper.poll(now)
+    @property
+    def writer(self) -> OutcomeStorePort:
+        """The asynchronous writer the recorder enqueues records to.
+
+        Returns
+        -------
+        OutcomeStorePort
+            The writer whose salt, results and ``append`` never wait.
+        """
+        return self._writer
 
     def service_failed(self) -> None:
         """Advance cancelled cleanup without waiting for it to finish.
@@ -88,30 +93,6 @@ class OutcomeResources:
             time.sleep(
                 min(_REAP_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic()))
             )
-
-    def salt_result(self) -> Salt | StoreFailure | None:
-        """Return the asynchronous, one-shot salt handoff without waiting.
-
-        Returns
-        -------
-        Salt | StoreFailure | None
-            Startup key material, its closed failure, or no result yet.
-        """
-        return self._writer.salt_result()
-
-    def results(self) -> tuple[StoreResult, ...]:
-        """Drain aggregated writer results without waiting for I/O.
-
-        Returns
-        -------
-        tuple[StoreResult, ...]
-            Pending counts grouped by operation and closed reason.
-        """
-        return self._writer.results()
-
-    def append(self, record: StoreRecord) -> None:
-        """Enqueue one record without waiting for disk activity."""
-        self._writer.append(record)
 
 
 __all__ = ["OutcomeResources"]

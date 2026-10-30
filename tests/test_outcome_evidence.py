@@ -9,7 +9,7 @@ from buildlimits import outcome_evidence
 from buildlimits.outcome_sampling import CHILD_SAMPLE_SECONDS
 
 
-@dc.dataclass(frozen=True)
+@dc.dataclass(frozen=True, slots=True)
 class _Observed:
     """A minimal store-shaped value that records when it was observed.
 
@@ -46,7 +46,10 @@ def test_a_non_utc_observation_is_reported_in_the_store_canonical_form() -> None
 
 def test_an_empty_span_reports_no_bounds_rather_than_a_fabricated_one() -> None:
     """A store with no readable record has no span to state."""
-    assert outcome_evidence.coverage_of(()).as_dict() == {"from": None, "until": None}
+    assert outcome_evidence.coverage_of(()).as_dict() == {
+        "from": None,
+        "until": None,
+    }, "an unreadable store states no span rather than a zero-width one"
 
 
 def test_the_stated_limits_name_the_bias_rather_than_a_count() -> None:
