@@ -52,7 +52,9 @@ class DifferentialMachine(RuleBasedStateMachine):
     def __init__(self) -> None:
         """Create both worlds under one temporary directory and clock."""
         super().__init__()
-        self._directory = tempfile.TemporaryDirectory()
+        # Hypothesis builds and tears down the machine itself, so the directory
+        # cannot be scoped by a ``with`` block; ``teardown`` cleans it up.
+        self._directory = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         root = Path(self._directory.name)
         self.clock = [0.0]
         self.enabled = Trace(
@@ -148,7 +150,7 @@ class DifferentialMachine(RuleBasedStateMachine):
     def recording_preserves_the_authority_trace(self) -> None:
         """Compare both traces and keep the generated cases non-vacuous."""
         self._assert_identical()
-        assert self.disabled.world.metrics.events == [], "the null shell is inert"
+        assert not self.disabled.world.metrics.events, "the null shell is inert"
         if not self.is_seeded:
             return
         observations = self.enabled.observations()

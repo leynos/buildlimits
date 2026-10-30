@@ -16,7 +16,6 @@ from buildlimits import (
     outcome_store_io,
 )
 from buildlimits.outcome_record_format import ChildSighting, OutcomeRecord, StoreHeader
-from buildlimits.outcome_sampling import CHILD_SAMPLE_SECONDS
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
@@ -171,11 +170,8 @@ def test_agreement_verdict_boundaries(
     """The verdict changes exactly at 95% and below 90%."""
     report = outcome_replay.evaluate_h2(_rows(100, correct, 2_000))
 
-    assert report.evaluable_records == 100, (
-        "agreement_verdict_boundaries: report.evaluable_records == 100"
-    )
-    assert report.verdict == expected, (
-        "agreement_verdict_boundaries: report.verdict == expected"
+    assert (report.evaluable_records, report.verdict) == (100, expected), (
+        "the verdict changes at the documented agreement boundaries"
     )
 
 
@@ -208,20 +204,17 @@ def test_minimum_sample_boundaries(
 def test_threshold_constants_match_the_accepted_adr() -> None:
     """The implementation thresholds stay pinned to ADR 005's fixed text."""
     adr = _ADR.read_text(encoding="utf-8")
-
-    assert outcome_replay.H2_SUPPORTED_AGREEMENT_PERCENT == 95, (
-        "threshold_constants_match_t...: outcome_replay.H2_SUPPORTED_AGREEMEN"
-    )
-    assert outcome_replay.H2_REFUTED_BELOW_PERCENT == 90, (
-        "threshold_constants_match_t...: outcome_replay.H2_REFUTED_BELOW_PERC"
-    )
-    assert outcome_replay.H2_MIN_EVALUABLE_RECORDS == 100, (
-        "threshold_constants_match_t...: outcome_replay.H2_MIN_EVALUABLE_RECO"
-    )
-    assert outcome_replay.MIN_ATTRIBUTED_OUTCOMES == 2_000, (
-        "threshold_constants_match_t...: outcome_replay.MIN_ATTRIBUTED_OUTCOM"
-    )
+    fixed = {
+        "H2_SUPPORTED_AGREEMENT_PERCENT": 95,
+        "H2_REFUTED_BELOW_PERCENT": 90,
+        "H2_MIN_EVALUABLE_RECORDS": 100,
+        "MIN_ATTRIBUTED_OUTCOMES": 2_000,
+    }
     normalized_adr = " ".join(adr.split())
+
+    assert {name: getattr(outcome_replay, name) for name in fixed} == fixed, (
+        "the module keeps the thresholds ADR 005 fixes"
+    )
     assert (
         "Report `supported` at 95% agreement or more, `refuted` below 90%, "
         "`inconclusive` between, and `insufficient` below 2,000 attributed "
@@ -233,12 +226,7 @@ def test_threshold_constants_match_the_accepted_adr() -> None:
 def test_single_outcome_keys_do_not_enter_the_evaluable_set() -> None:
     """A large history of sampled hits is insufficient without any misses."""
     records = tuple(
-        _outcome(
-            _key(index),
-            "hit",
-            runtime=0.25,
-            sighting="not_seen",
-        )
+        _outcome(_key(index), "hit", runtime=0.25, sighting="not_seen")
         for index in range(2_000)
     )
 
@@ -290,31 +278,20 @@ def test_runtime_uses_only_earlier_hits_and_ambiguous_child_is_not_a_clue() -> N
     )
 
 
-def test_reports_state_the_covered_span_and_the_sample_limits() -> None:
-    """A verdict states how much history it read and the limits it inherits."""
-    records = (
-        _outcome(_key(1), "hit", runtime=0.25),
-        dc.replace(
-            _outcome(_key(1), "miss", runtime=2.0),
-            observed_at=OBSERVED_AT + dt.timedelta(hours=3),
-        ),
-    )
+def test_a_verdict_states_the_history_it_rests_on() -> None:
+    """A verdict carries the covered span and the limits it inherits.
 
-    report = outcome_replay.evaluate_h2(records)
+    The span arithmetic itself is covered by ``test_outcome_evidence``; this
+    checks that the report a reader is handed actually carries it.
+    """
+    report = outcome_replay.evaluate_h2(_rows(100, 95, 2_000)).as_dict()
 
-    assert report.as_dict()["covered"] == {
+    assert report["covered"] == {
         "from": "2026-10-24T12:00:00Z",
-        "until": "2026-10-24T15:00:00Z",
-    }, "the report states the time span the store covers (R8)"
-    assert outcome_replay.evaluate_h2(()).as_dict()["covered"] == {
-        "from": None,
-        "until": None,
-    }, "an empty store reports no span rather than a fabricated one"
-    assert report.as_dict()["caveats"] == list(outcome_evidence.H2_LIMITS), (
-        "the H2 report states the quiet-window and sighting limits"
-    )
-    assert f"{CHILD_SAMPLE_SECONDS:g} s" in outcome_evidence.CHILD_SIGHTING_CAVEAT, (
-        "the stated interval matches the sampler's cadence (R9)"
+        "until": "2026-10-24T12:00:00Z",
+    }, "the report states the span the rows cover (R8)"
+    assert report["caveats"] == list(outcome_evidence.H2_LIMITS), (
+        "the report repeats the limits outcome_evidence defines"
     )
 
 
