@@ -8,6 +8,7 @@ from differential_trace_test_helpers import (
     CompletingStatistics,
     Trace,
     cached_entry,
+    direct_entry,
 )
 from hypothesis import event, settings
 from hypothesis import strategies as st
@@ -26,6 +27,7 @@ from outcome_shell_test_support import (
 from buildlimits.admission import Launch
 from buildlimits.admission_state import GroupState
 from buildlimits.effects import Exit
+from buildlimits.outcome_record_format import OutcomeRecord
 from buildlimits.supervisor_outcome_setup import GroupEnding
 
 if typ.TYPE_CHECKING:
@@ -155,6 +157,15 @@ class DifferentialMachine(RuleBasedStateMachine):
             return
         observations = self.enabled.observations()
         assert observations.records, "the seed completed and stored one reading"
+        # Every cached launch shares one entry, so one key; a direct launch
+        # carries a different key. A second key therefore proves a direct
+        # launch entered a recorder window.
+        keys = {
+            record.key
+            for record in observations.records
+            if isinstance(record, OutcomeRecord)
+        }
+        assert len(keys) <= 1, "only cached launches enter the recorder window"
         if self.is_cached:
             event("launch")
         if "server-drain" in observations.group_states:
@@ -181,8 +192,12 @@ class DifferentialMachine(RuleBasedStateMachine):
         if launch is None:
             return None
         self.is_cached[launch.group_id] = launch.cached
+        # The hook entry must carry the classification admission chose: the
+        # shell records only a cached launch, so a direct request that arrived
+        # as ``cached`` would invent history the real supervisor cannot make.
+        entry = cached_entry() if launch.cached else direct_entry()
         for trace in (self.enabled, self.disabled):
-            trace.world.shell.launched(cached_entry(), launch.group_id)
+            trace.world.shell.launched(entry, launch.group_id)
         return launch.group_id
 
     def _end(self, group_id: str, exit_: Exit) -> None:

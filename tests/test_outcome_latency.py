@@ -70,11 +70,11 @@ def test_child_sighting_sample_stays_within_the_latency_budget(
     classification is reused. A 65th member is present to prove the sample
     still inspects no more than the documented batch.
 
-    A sample cannot run faster than the identity reads it must perform, and
-    those reads cost tens of microseconds each on a loaded host. The budget is
-    therefore checked against the same host's cost for reading the 64
-    identities once, in the same way the tick budget above subtracts its no-op
-    baseline; the absolute figures are printed for the record.
+    The plan escalates on the absolute p99 of one sample, so that figure is
+    what the test asserts; the cost of the 64 identity reads is printed beside
+    it as a diagnostic, because on a loaded host the reads dominate and make a
+    slow measurement hard to attribute. Subtracting them would remove real
+    selector-thread work from the acceptance figure, so it is not asserted on.
     """
     pids = list(range(1, MAX_PROCESSES_PER_SAMPLE + 2))
     tree = sampler_tree(tmp_path, pids)
@@ -89,16 +89,16 @@ def test_child_sighting_sample_stays_within_the_latency_budget(
     )
     observed = sampler.full_emit_metadata(generation)
     sample_p99_ms = _p99(samples) / 1_000_000
-    overhead_ms = max(0, _p99(samples) - _p99(baseline)) / 1_000_000
 
     print(f"child-sighting sample p99: {sample_p99_ms:.3f} ms")
     print(f"child-sighting read baseline p99: {_p99(baseline) / 1_000_000:.3f} ms")
-    print(f"child-sighting sampler overhead p99: {overhead_ms:.3f} ms")
     assert isinstance(observed, frozenset), "the group was readable"
     assert len(observed) == MAX_PROCESSES_PER_SAMPLE, (
         "one sample inspects exactly the bounded batch"
     )
-    assert overhead_ms <= 2.0, "child sighting stays within the sample budget"
+    assert sample_p99_ms <= 2.0, (
+        "one sample stays inside the plan's absolute latency threshold"
+    )
 
 
 def _measure(action: cabc.Callable[[], object]) -> list[int]:

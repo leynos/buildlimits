@@ -13,8 +13,8 @@ QUIET_WINDOW_CAVEAT = (
 )
 CHILD_SIGHTING_CAVEAT = (
     "child sightings are sampled every 0.25 s, so a full-emit child that lives "
-    "less than that is never seen, which biases the sighting clue towards long "
-    "misses"
+    "less than that can be missed between samples, which biases the sighting "
+    "clue towards long misses"
 )
 H2_LIMITS = (QUIET_WINDOW_CAVEAT, CHILD_SIGHTING_CAVEAT)
 H3_LIMITS = (QUIET_WINDOW_CAVEAT,)

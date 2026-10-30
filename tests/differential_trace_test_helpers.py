@@ -87,6 +87,30 @@ def cached_entry() -> Pending:
     return entry
 
 
+def direct_entry() -> Pending:
+    """Build the launch hook for a request admission classified as direct.
+
+    The shell records a launch only when admission selected the ``cached``
+    composition, so a generated direct launch must reach the hook with that
+    classification. The crate name differs from :func:`cached_entry` on
+    purpose: it gives the direct request its own cache key, which lets a
+    comparison prove that no record came from one.
+
+    Returns
+    -------
+    Pending
+        A direct request that no recorder window should ever accept.
+    """
+    entry = crate_pending(1)
+    entry.cache_path = "direct"
+    entry.request = dc.replace(
+        entry.request,
+        argv=("rustc", "--crate-name=direct-only", "--crate-type=lib", "lib.rs"),
+        cwd="/work/direct-1.2.3",
+    )
+    return entry
+
+
 @dc.dataclass(frozen=True, slots=True)
 class DifferentialObservations:
     """Authority-side trace and optional recording effects from one run."""
