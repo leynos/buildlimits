@@ -78,7 +78,7 @@ _EMPTY_TRACE = Trace({}, (), Ending.FINITE, None)
 
 
 def parse_output(stdout: str, exit_status: int, error_graph: str | None) -> CheckResult:
-    r"""Classify one checker run, failing closed on anything unrecognised.
+    r"""Classify one checker run, failing closed on anything unrecognized.
 
     Parameters
     ----------

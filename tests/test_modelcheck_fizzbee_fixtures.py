@@ -162,7 +162,7 @@ def test_a_counterexample_keeps_the_kind_its_trace_has(
 def test_an_uninterpretable_run_names_the_line_it_failed_on() -> None:
     """An errored run's detail quotes the line, so a report can be diagnosed.
 
-    ``Errored`` carries free text, and a bare "unparseable" would leave a reader
+    ``Errored`` carries free text, and a bare "unparsable" would leave a reader
     unable to tell a compilation failure from a schema change in the checker's
     output. The detail is the line that made the run uninterpretable.
     """

@@ -1,6 +1,6 @@
 """The inventory reads the production package, and reads it as a model would.
 
-What matters here is *what* the adapter enumerates. A hand-written list would
+What matters here is *what* the adapter enumerates. A handwritten list would
 be a second copy of the production surface and would go stale in the direction
 of a green report, so the adapter reflects. These tests therefore assert
 against the production package itself rather than against a literal: if

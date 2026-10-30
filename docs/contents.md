@@ -43,7 +43,7 @@
   records the in-scope and detached capability split, the supported kache
   versions, the external-daemon and disabled-scheduler policies, and the
   on-host process-placement evidence behind them.
-- [ADR 004: model-check tooling outside the wheel](adr-004-model-check-outside-the-wheel.md)
+- [ADR 008: model-check tooling outside the wheel](adr-008-model-check-outside-the-wheel.md)
   records why the FizzBee tooling is a top-level hexagonal package excluded
   from the wheel, and the boundaries that keeps.
 - [ADR 007: cache-outcome observation port](adr-007-cache-outcome-observation-port.md)

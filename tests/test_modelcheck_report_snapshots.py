@@ -106,7 +106,7 @@ def judgements() -> list[Judgement]:
 
     A fixture rather than a plain helper because three tests read the same
     table: one checks it covers the enum, one renders it whole, and one counts
-    what it summarises. Handing the table in says that each of them is a
+    what it summarizes. Handing the table in says that each of them is a
     statement about the same ten cases, where three calls to a builder would
     read as three tables that happened to be built alike.
 
