@@ -155,6 +155,69 @@ def test_classification_cache_is_keyed_by_starttime_and_prunes_departures(
     )
 
 
+def test_cached_process_outside_the_inspected_batch_is_not_reported(
+    tmp_path: Path,
+) -> None:
+    """A cached classification the current batch skips is not carried over."""
+    proc_root, cgroup_root = tmp_path / "proc", tmp_path / "cgroup"
+    _write_server(proc_root, 900, "/sccache")
+    pids = list(range(100, 100 + MAX_PROCESSES_PER_SAMPLE))
+    group = _write_group(cgroup_root, "/sccache", pids)
+    for pid in pids:
+        _write_process(proc_root, pid, pid + 100, f"meta-{pid}")
+    sampler = ProcessSampler(proc_root, cgroup_root)
+    generation = Generation("run-a", 900, 12)
+
+    first = sampler.full_emit_metadata(generation)
+
+    assert isinstance(first, frozenset), "the measured group was readable"
+    assert len(first) == MAX_PROCESSES_PER_SAMPLE, "the whole first batch counts"
+
+    last_pid = pids[-1]
+    _write_process(proc_root, 99, 0, "meta-99")
+    group.joinpath("cgroup.procs").write_text(
+        "".join(f"{pid}\n" for pid in [99, *pids]), encoding="ascii"
+    )
+    second = sampler.full_emit_metadata(generation)
+
+    assert isinstance(second, frozenset), "the measured group was still readable"
+    assert "meta-99" in second, "an earlier member is inspected first"
+    assert f"meta-{last_pid}" not in second, (
+        "a cached classification outside this batch is a stale sighting"
+    )
+    assert len(second) == MAX_PROCESSES_PER_SAMPLE, "only inspected members count"
+
+
+def test_unreadable_cached_process_is_not_reported_from_stale_cache(
+    tmp_path: Path,
+) -> None:
+    """A process that stops being readable drops out of the current sample."""
+    proc_root, cgroup_root = tmp_path / "proc", tmp_path / "cgroup"
+    _write_server(proc_root, 900, "/sccache")
+    _write_group(cgroup_root, "/sccache", [101])
+    _write_process(proc_root, 101, 33, "meta-a")
+    sampler = ProcessSampler(proc_root, cgroup_root)
+    generation = Generation("run-a", 900, 12)
+
+    assert sampler.full_emit_metadata(generation) == frozenset({"meta-a"}), (
+        "the readable process is classified once"
+    )
+
+    stat = proc_root / "101" / "stat"
+    stat.rename(stat.with_suffix(".hidden"))
+    assert sampler.full_emit_metadata(generation) == frozenset(), (
+        "an unreadable process is not reported from its cached classification"
+    )
+
+    stat.with_suffix(".hidden").rename(stat)
+    (proc_root / "101" / "cmdline").write_bytes(
+        b"rustc\0--emit=link\0-Cmetadata=meta-b\0"
+    )
+    assert sampler.full_emit_metadata(generation) == frozenset({"meta-b"}), (
+        "readability is revalidated before the cache may be trusted again"
+    )
+
+
 def test_process_that_exits_during_cmdline_read_is_skipped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -34,6 +34,14 @@ class ProcessSampler:
     ) -> frozenset[str] | SampleFailure:
         """Read up to 64 process command lines and return full-emit metadata.
 
+        Every reported value belongs to a process whose identity this sample
+        re-validated. Cached classifications are still reused, but a value is
+        never carried over from an earlier sample merely because it was cached
+        then: a process that has become unreadable, or that falls outside this
+        sample's bounded batch, contributes nothing to the result. O12 counts a
+        classification only when it was validated while the entry ran, so a
+        stale cache hit must not be reported as a fresh sighting.
+
         Returns
         -------
         frozenset[str] | SampleFailure
@@ -51,11 +59,12 @@ class ProcessSampler:
             return SampleFailure("group_unreadable")
 
         self._forget_departed(members)
+        metadata: set[str] = set()
         for pid in sorted(members)[:MAX_PROCESSES_PER_SAMPLE]:
-            self._sample(pid)
-        return frozenset(
-            metadata for metadata in self._classified.values() if metadata is not None
-        )
+            value = self._sample(pid)
+            if value is not None:
+                metadata.add(value)
+        return frozenset(metadata)
 
     def _forget_departed(self, members: set[int]) -> None:
         """Drop cached classifications whose process left the group."""
@@ -65,22 +74,42 @@ class ProcessSampler:
             if identity[0] in members
         }
 
-    def _sample(self, pid: int) -> None:
-        """Classify one member, replacing any cached identity for its pid."""
-        starttime = self._starttime(pid)
-        if starttime is None:
-            return
-        identity = (pid, starttime)
+    def _forget_pid(self, pid: int, *, keep: tuple[int, int] | None = None) -> None:
+        """Drop cached classifications for one pid, except one live identity."""
         self._classified = {
             known: metadata
             for known, metadata in self._classified.items()
-            if known[0] != pid or known == identity
+            if known[0] != pid or known == keep
         }
+
+    def _sample(self, pid: int) -> str | None:
+        """Classify one member and report only what this sample validated.
+
+        The cache still saves a repeated command-line read, but it is keyed by
+        the identity this sample just re-read. A PID that has become
+        unreadable, or whose start time now differs, therefore contributes
+        nothing rather than an earlier classification.
+
+        Returns
+        -------
+        str | None
+            This sample's full-emit metadata for the process, or None when the
+            process is gone, unreadable, or has no full-emit argument.
+        """
+        starttime = self._starttime(pid)
+        if starttime is None:
+            self._forget_pid(pid)
+            return None
+        identity = (pid, starttime)
+        self._forget_pid(pid, keep=identity)
         if identity in self._classified:
-            return
+            return self._classified[identity]
         metadata = self._classify(pid, starttime)
-        if metadata is not _PROCESS_GONE:
-            self._classified[identity] = typ.cast("str | None", metadata)
+        if metadata is _PROCESS_GONE:
+            return None
+        value = typ.cast("str | None", metadata)
+        self._classified[identity] = value
+        return value
 
     def _control_group(self, generation: Generation) -> Path | None:
         """Resolve and cache the control group for one server identity.
