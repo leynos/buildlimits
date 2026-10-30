@@ -78,7 +78,7 @@ def test_reason_changes_are_transitions_and_totals_stay_exact() -> None:
             "child_samples_taken": 1,
             "child_sample_failures": 1,
         },
-    ], "each changed state is reported once, then the interval is summarised"
+    ], "each changed state is reported once, then the interval is summarized"
     assert _total(metrics, "readings") == 5, "five readings happened"
     assert _total(metrics, "readings_failed") == 3, "three of them failed"
     assert _total(metrics, "readings_skipped") == 2, "two gates skipped"
