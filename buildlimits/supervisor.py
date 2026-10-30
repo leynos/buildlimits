@@ -8,7 +8,6 @@ import time
 import typing as typ
 
 from buildlimits import (
-    cache_recovery,
     cgroups,
     config,
     effect_dispatch,
@@ -22,6 +21,7 @@ from buildlimits import (
     supervisor_polling,
     supervisor_shutdown,
     supervisor_signals,
+    supervisor_wiring,
 )
 from buildlimits.admission import Admission
 from buildlimits.drain_loop import MAX_INTERNAL_FAILURES as MAX_INTERNAL_FAILURES
@@ -31,8 +31,6 @@ from buildlimits.journal import log
 from buildlimits.metrics import Metrics, MetricsPort, gauge_fields
 from buildlimits.pool import PoolFailure, Token, TokenPool
 from buildlimits.requesters import Requests, listen
-from buildlimits.sccache import ManagedSccache
-from buildlimits.server_watch import ServerWatch
 from buildlimits.service_readiness import notify_ready
 from buildlimits.systemd import UserManager
 from buildlimits.timing import Clock, as_clock
@@ -107,41 +105,10 @@ class Supervisor:
             counts=self.admission.counts,
         )
         self.groups = Groups(settings, self.manager, self.selector, self.clock)
-        server = ManagedSccache(
-            settings.sccache_unit, settings.sccache_socket, self.manager
+        wiring = supervisor_wiring.Wiring(
+            settings, self.manager, self.clock, self.admission, self.metrics
         )
-        self.server = ServerWatch(
-            server,
-            self.admission,
-            settings.cache_mode,
-            clock=self.clock,
-            metrics=self.metrics,
-            # Read live, and resolved late: the recovery machine is built from
-            # this watch's readings, so it cannot be named until both exist.
-            automatic_recovery_pending=lambda: bool(
-                self.recovery.describe(self.clock())["pending"]
-            ),
-        )
-        # Installed once the watch exists, because the permission it answers
-        # for cannot be read before then. A bound method rather than a closure
-        # or a forwarding method: the reference is resolved per call, so the
-        # watch's later decisions are the ones that count, with no wrapper for
-        # DF12's ``trivial-attribute-wrapper`` to reject.
-        self.admission.cache_allowed = self.server.cache_allowed
-        self.recovery = cache_recovery.CacheRecovery(
-            settings.cache_recovery,
-            server,
-            settings.recovery_marker,
-            counts=self.admission.counts,
-            # Read live: recovery asks on every step, not once per fault.
-            fault_kind=lambda: self.server.drain_fault_kind,
-            zero_visible_roots=lambda: self.server.zero_visible_roots,
-            roots_are_visible=lambda: self.server.roots_are_visible,
-            cache_mode=settings.cache_mode,
-            metrics=self.metrics,
-            hold_cache=self.server.hold_cache,
-            release_cache=self.server.release_cache,
-        )
+        self.server, self.recovery = supervisor_wiring.watch_and_recovery(wiring)
         self.pool: TokenPool | None = None
         self.listener: socket.socket | None = None
         self.exit_status: int | None = None

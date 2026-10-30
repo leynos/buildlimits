@@ -19,7 +19,7 @@ from outcome_test_helpers import stats_text
 from buildlimits.admission import Launch
 from buildlimits.admission_state import GroupState
 from buildlimits.effects import Exit, ReturnToken, Terminate
-from buildlimits.nonblocking_child import ChildReaper
+from buildlimits.nonblocking_child import ChildReaper, NonBlockingChild
 from buildlimits.outcome_ports import StatisticsText, Ticket
 from buildlimits.outcome_queries import SccacheStatistics
 from buildlimits.outcome_recorder_types import Disabled, Querying
@@ -86,25 +86,35 @@ def test_loop_admits_while_query_stalls(tmp_path: Path) -> None:
     assert not world.admission.groups, "the completed group leaves admission"
     assert world.admission.tokens_held() == 0, "admission no longer holds the token"
 
-    deadline = ticket.deadline
     try:
-        shell.on_tick(deadline)
-        assert not child.stdout_open, "the timed-out query closes the pipe immediately"
-        for _tick in range(20):
-            shell.on_tick(deadline + 0.5)
-            if child.result is not None:
-                break
-            time.sleep(0.005)
-
-        assert child.result is not None and child.result.failure == "cancelled", (
-            "the timeout cancels the real helper"
-        )
-        assert child.reaped, "the loop reaps the killed helper"
-        assert reaper.active_count == 0, "the reaper releases its helper slot"
-        with pytest.raises(ChildProcessError):
-            os.waitpid(child._process.pid, os.WNOHANG)
+        _assert_timeout_cancels(shell, child, reaper, ticket)
     finally:
         shell.close(timeout=0.1)
+
+
+def _assert_timeout_cancels(
+    shell: OutcomeShell,
+    child: NonBlockingChild,
+    reaper: ChildReaper,
+    ticket: Ticket,
+) -> None:
+    """Assert the deadline closes the pipe, cancels, reaps and frees the slot."""
+    deadline = ticket.deadline
+    shell.on_tick(deadline)
+    assert not child.stdout_open, "the timed-out query closes the pipe immediately"
+    for _tick in range(20):
+        shell.on_tick(deadline + 0.5)
+        if child.result is not None:
+            break
+        time.sleep(0.005)
+
+    assert child.result is not None and child.result.failure == "cancelled", (
+        "the timeout cancels the real helper"
+    )
+    assert child.reaped, "the loop reaps the killed helper"
+    assert reaper.active_count == 0, "the reaper releases its helper slot"
+    with pytest.raises(ChildProcessError):
+        os.waitpid(child._process.pid, os.WNOHANG)
 
 
 class _ImmediateStatistics(PendingStatistics):

@@ -74,44 +74,78 @@ def _rows(
         Sampled paired rows plus unattributed-to-H2 supporting rows.
     """
     overrides = {} if status_overrides is None else status_overrides
-    records: list[OutcomeRecord] = []
-    paired_rows = evaluable // 2 * 2
-    for index in range(evaluable):
-        if index < paired_rows:
-            key_index = index // 2
-            label: CacheResult = "hit" if index % 2 == 0 else "miss"
-        else:
-            key_index = 0
-            label = "hit"
-        is_correct = index < correct
-        if index in overrides:
-            sighting = overrides[index]
-            is_correct = True
-        elif label == "hit":
-            sighting = "not_seen" if is_correct else "seen"
-        else:
-            sighting = "seen" if is_correct else "not_seen"
-        runtime = 0.25 if label == "hit" else 2.0 if is_correct else 0.5
-        if index in overrides and label == "miss":
-            runtime = 2.0
-        records.append(
-            _outcome(
-                _key(key_index),
-                label,
-                runtime=runtime,
-                sighting=sighting,
-            )
-        )
-    while len(records) < attributed:
-        index = len(records)
-        records.append(
-            _outcome(
-                _key(100_000 + index),
-                "failed",
-                runtime=0.25,
-            )
-        )
+    records = [
+        _paired_row(index, evaluable, correct, overrides) for index in range(evaluable)
+    ]
+    records.extend(
+        _outcome(_key(100_000 + index), "failed", runtime=0.25)
+        for index in range(len(records), attributed)
+    )
     return tuple(records)
+
+
+def _paired_row(
+    index: int,
+    evaluable: int,
+    correct: int,
+    overrides: dict[int, ChildSighting],
+) -> OutcomeRecord:
+    """Build one sampled paired row, honouring an explicit sighting override.
+
+    Returns
+    -------
+    OutcomeRecord
+        The paired hit or miss row for ``index``.
+    """
+    key_index, label = _row_identity(index, evaluable)
+    is_correct = index < correct or index in overrides
+    sighting = overrides[index] if index in overrides else _sighting(label, is_correct)
+    runtime = _row_runtime(label, is_correct)
+    if index in overrides and label == "miss":
+        runtime = 2.0
+    return _outcome(_key(key_index), label, runtime=runtime, sighting=sighting)
+
+
+def _row_identity(index: int, evaluable: int) -> tuple[int, CacheResult]:
+    """Choose the paired key and label for one evaluable row index.
+
+    Rows in the paired region alternate hit and miss on shared keys; any
+    remainder row is a single extra hit on the first key.
+
+    Returns
+    -------
+    tuple[int, CacheResult]
+        Key index and the row's hit or miss label.
+    """
+    if index < evaluable // 2 * 2:
+        return index // 2, "hit" if index % 2 == 0 else "miss"
+    return 0, "hit"
+
+
+def _sighting(label: CacheResult, is_correct: bool) -> ChildSighting:
+    """Choose the child sighting that matches the predicted correctness.
+
+    Returns
+    -------
+    ChildSighting
+        The sighting value implied by the label and correctness.
+    """
+    if label == "hit":
+        return "not_seen" if is_correct else "seen"
+    return "seen" if is_correct else "not_seen"
+
+
+def _row_runtime(label: CacheResult, is_correct: bool) -> float:
+    """Choose the runtime that carries the row's prediction.
+
+    Returns
+    -------
+    float
+        Hit rows stay fast; miss rows are slow only when predicted correctly.
+    """
+    if label == "hit":
+        return 0.25
+    return 2.0 if is_correct else 0.5
 
 
 @pytest.mark.parametrize(

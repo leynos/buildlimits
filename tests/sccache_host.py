@@ -162,36 +162,53 @@ def _private_server(
             stderr=subprocess.STDOUT,
         )
         try:
-            deadline = time.monotonic() + 20
-            while time.monotonic() < deadline:
-                if process.poll() is not None:
-                    pytest.fail(f"sccache server exited early; see {log_path}")
-                try:
-                    _read_stats(executable, environment)
-                    _server_pid(environment)
-                except OSError, subprocess.CalledProcessError, json.JSONDecodeError:
-                    time.sleep(0.05)
-                else:
-                    yield process, prefix is not None
-                    break
-            else:
-                pytest.fail(f"sccache server did not become ready; see {log_path}")
+            _await_ready(executable, environment, process, log_path)
+            yield process, prefix is not None
         finally:
-            # ruff: ignore[subprocess-without-shell-equals-true] - stop argv, no shell.
-            subprocess.run(
-                [executable, "--stop-server"],
-                check=False,
-                capture_output=True,
-                env=environment,
-                timeout=15,
-            )
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
+            _stop_server(executable, environment, process)
+
+
+def _await_ready(
+    executable: str,
+    environment: dict[str, str],
+    process: subprocess.Popen[bytes],
+    log_path: Path,
+) -> None:
+    """Block until the private server answers statistics and reports its pid."""
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            pytest.fail(f"sccache server exited early; see {log_path}")
+        try:
+            _read_stats(executable, environment)
+            _server_pid(environment)
+        except OSError, subprocess.CalledProcessError, json.JSONDecodeError:
+            time.sleep(0.05)
+        else:
+            return
+    pytest.fail(f"sccache server did not become ready; see {log_path}")
+
+
+def _stop_server(
+    executable: str, environment: dict[str, str], process: subprocess.Popen[bytes]
+) -> None:
+    """Stop the private server, bounding every wait for it to exit."""
+    # ruff: ignore[subprocess-without-shell-equals-true] - stop argv, no shell.
+    subprocess.run(
+        [executable, "--stop-server"],
+        check=False,
+        capture_output=True,
+        env=environment,
+        timeout=15,
+    )
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 def _server_pid(environment: cabc.Mapping[str, str]) -> int:

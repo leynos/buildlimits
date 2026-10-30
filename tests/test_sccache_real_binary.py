@@ -74,34 +74,56 @@ def _server_cgroup_pids(server_pid: int) -> tuple[int, ...]:
 
 def _compiler_arguments(server_pid: int, metadata: str) -> list[tuple[str, ...]]:
     """Return live compiler argv vectors in the server's cgroup for one key."""
-    matches: list[tuple[str, ...]] = []
-    for process_id in _server_cgroup_pids(server_pid):
-        try:
-            raw_arguments = Path(f"/proc/{process_id}/cmdline").read_bytes()
-        except OSError:
-            continue
-        arguments = tuple(
-            part.decode("utf-8", errors="replace")
-            for part in raw_arguments.rstrip(b"\0").split(b"\0")
-            if part
+    return [
+        arguments
+        for arguments in map(_process_arguments, _server_cgroup_pids(server_pid))
+        if arguments is not None
+        and not _is_client_or_filename_probe(arguments)
+        and any("metadata=" + metadata in argument for argument in arguments)
+    ]
+
+
+def _process_arguments(process_id: int) -> tuple[str, ...] | None:
+    """Read one process's argv vector.
+
+    Returns
+    -------
+    tuple[str, ...] or None
+        Decoded arguments, or None when the process has already exited.
+    """
+    try:
+        raw_arguments = Path(f"/proc/{process_id}/cmdline").read_bytes()
+    except OSError:
+        return None
+    return tuple(
+        part.decode("utf-8", errors="replace")
+        for part in raw_arguments.rstrip(b"\0").split(b"\0")
+        if part
+    )
+
+
+def _is_client_or_filename_probe(arguments: tuple[str, ...]) -> bool:
+    """Report whether argv belongs to the client or a filename probe.
+
+    The client carries the original emit flags, not the work it spawned, so
+    neither it nor a probe process can be evidence of a spawned compiler.
+
+    Returns
+    -------
+    bool
+        True when the process is not spawned compiler work.
+    """
+    if arguments and Path(arguments[0]).name == "sccache":
+        return True
+    return any(
+        argument == "--print=file-names"
+        or (
+            argument == "--print"
+            and index + 1 < len(arguments)
+            and arguments[index + 1] == "file-names"
         )
-        # The client carries the original emit flags, not the work it spawned.
-        if arguments and Path(arguments[0]).name == "sccache":
-            continue
-        is_filename_probe = any(
-            argument == "--print=file-names"
-            or (
-                argument == "--print"
-                and index + 1 < len(arguments)
-                and arguments[index + 1] == "file-names"
-            )
-            for index, argument in enumerate(arguments)
-        )
-        if is_filename_probe:
-            continue
-        if any("metadata=" + metadata in argument for argument in arguments):
-            matches.append(arguments)
-    return matches
+        for index, argument in enumerate(arguments)
+    )
 
 
 def _emit_values(arguments: cabc.Sequence[str]) -> frozenset[str]:

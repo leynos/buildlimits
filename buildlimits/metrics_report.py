@@ -158,36 +158,52 @@ def _cache_outcomes(records: cabc.Sequence[Record]) -> dict[str, object]:
         else None,
         "reasons": counts_by(outcome_records, "outcome_reason"),
         "child_sightings": counts_by(outcome_records, "child_sighting"),
-        "readings": {
-            "reasons": counts_by(reading_records, "outcome_reason"),
-            "skipped": sum(
-                int(record.fields.get("readings_skipped", "0"))
-                for record in reading_records
-            ),
-            "failed": sum(
-                int(record.fields.get("readings_failed", "0"))
-                for record in reading_records
-            ),
-            "child_samples_taken": sum(
-                int(record.fields.get("child_samples_taken", "0"))
-                for record in reading_records
-            ),
-            "child_sample_failures": sum(
-                int(record.fields.get("child_sample_failures", "0"))
-                for record in reading_records
-            ),
-        },
-        "store": {
-            "operations": counts_by(store_records, "store_operation"),
-            "reasons": counts_by(store_records, "store_reason"),
-            "records": sum(
-                int(record.fields.get("store_records", "0")) for record in store_records
-            ),
-            "discarded": sum(
-                int(record.fields.get("store_discarded", "0"))
-                for record in store_records
-            ),
-        },
+        "readings": _readings_section(reading_records),
+        "store": _store_section(store_records),
+    }
+
+
+def _field_total(records: cabc.Sequence[Record], name: str) -> int:
+    """Sum one integer telemetry field across records.
+
+    Returns
+    -------
+    int
+        The field total, treating a missing value as zero.
+    """
+    return sum(int(record.fields.get(name, "0")) for record in records)
+
+
+def _readings_section(reading_records: cabc.Sequence[Record]) -> dict[str, object]:
+    """Summarize reading reasons with their per-window counters.
+
+    Returns
+    -------
+    dict[str, object]
+        Reading reason counts and the totals of each reading counter.
+    """
+    return {
+        "reasons": counts_by(reading_records, "outcome_reason"),
+        "skipped": _field_total(reading_records, "readings_skipped"),
+        "failed": _field_total(reading_records, "readings_failed"),
+        "child_samples_taken": _field_total(reading_records, "child_samples_taken"),
+        "child_sample_failures": _field_total(reading_records, "child_sample_failures"),
+    }
+
+
+def _store_section(store_records: cabc.Sequence[Record]) -> dict[str, object]:
+    """Summarize store operations, reasons and persisted record totals.
+
+    Returns
+    -------
+    dict[str, object]
+        Store operation and reason counts, with records and discards.
+    """
+    return {
+        "operations": counts_by(store_records, "store_operation"),
+        "reasons": counts_by(store_records, "store_reason"),
+        "records": _field_total(store_records, "store_records"),
+        "discarded": _field_total(store_records, "store_discarded"),
     }
 
 

@@ -193,14 +193,19 @@ class OutcomeWorld:
     def close(self) -> None:
         """Kill unfinished fixture requests before stopping the owned units."""
         for process in self.processes:
-            if process.poll() is None:
-                kill_group(process)
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                process.wait(timeout=10)
-            for stream in (process.stdout, process.stderr):
-                if stream is not None:
-                    stream.close()
+            _stop_process(process)
         self.harness.close()
+
+
+def _stop_process(process: subprocess.Popen[bytes]) -> None:
+    """Kill one unfinished fixture request and close its output streams."""
+    if process.poll() is None:
+        kill_group(process)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.wait(timeout=10)
+    for stream in (process.stdout, process.stderr):
+        if stream is not None:
+            stream.close()
 
 
 @pytest.fixture

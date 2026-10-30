@@ -169,7 +169,24 @@ class OutcomeStoreMachine(RuleBasedStateMachine):
         """Compact, optionally damage or rotate the store, then reload it."""
         skipped_ageing = self._compact_model()
         previous_salt = self.salt
-        close_results = self._close_writer()
+        self._assert_close_compaction(skipped_ageing, self._close_writer())
+
+        if torn_tail:
+            self._append_torn_utf8_tail()
+            self._mark("torn-tail")
+        if change_salt:
+            self._replace_salt(previous_salt)
+
+        self.writer, self.salt = self._start_writer()
+        self._assert_reload(previous_salt)
+        assert stored_records(self.path) == tuple(self.expected), (
+            "reload matches the ordered reference model"
+        )
+
+    def _assert_close_compaction(
+        self, skipped_ageing: bool, close_results: tuple[StoreResult, ...]
+    ) -> None:
+        """Assert close compaction, its optional clock-skew reason and rows."""
         assert any(result.operation == "compact" for result in close_results), (
             "close runs final compaction"
         )
@@ -182,28 +199,22 @@ class OutcomeStoreMachine(RuleBasedStateMachine):
             "the close compaction matches the ordered model"
         )
 
-        if torn_tail:
-            self._append_torn_utf8_tail()
-            self._mark("torn-tail")
-        if change_salt:
-            self._replace_salt(previous_salt)
-
-        self.writer, self.salt = self._start_writer()
+    def _assert_reload(self, previous_salt: Salt) -> None:
+        """Assert the reload result and advance the reference model."""
         if self.salt.salt_id != previous_salt.salt_id:
             self.expected = []
             self._mark("salt-change")
-            assert any(
-                result.operation == "load" and result.reason == "salt_changed"
-                for result in self._startup_results
-            ), "reload reports a salt change"
+            reason = "salt_changed"
         else:
-            assert any(
-                result.operation == "load" and result.reason == "none"
-                for result in self._startup_results
-            ), "reload keeps a valid same-salt store"
+            reason = "none"
             self._model_startup_compaction()
-        assert stored_records(self.path) == tuple(self.expected), (
-            "reload matches the ordered reference model"
+        assert any(
+            result.operation == "load" and result.reason == reason
+            for result in self._startup_results
+        ), (
+            "reload reports a salt change"
+            if reason == "salt_changed"
+            else "reload keeps a valid same-salt store"
         )
 
     def _append_torn_utf8_tail(self) -> None:

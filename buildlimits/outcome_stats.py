@@ -113,6 +113,62 @@ def _cache_count(stats: cabc.Mapping[str, object], field: str) -> int:
     return sum(_integer(value) for value in counts.values())
 
 
+def _document(
+    text: str,
+) -> tuple[cabc.Mapping[str, object], str] | None:
+    """Parse the outer document and require its version and stats object.
+
+    Returns
+    -------
+    tuple[Mapping[str, object], str] or None
+        The stats object and version, or ``None`` when either is absent.
+
+    Examples
+    --------
+    >>> _document('{"version":"0.14.0","stats":{}}')[1]
+    '0.14.0'
+    >>> _document("not json") is None
+    True
+    """
+    try:
+        value = json.loads(text)
+    except ValueError, TypeError, RecursionError:
+        return None
+
+    document = _mapping(value)
+    if document is None:
+        return None
+    version = document.get("version")
+    if not isinstance(version, str) or not version:
+        return None
+    stats = _mapping(document.get("stats"))
+    if stats is None:
+        return None
+    return stats, version
+
+
+def _counters(stats: cabc.Mapping[str, object]) -> dict[str, int] | None:
+    """Read every required counter, or report that one is unusable.
+
+    Returns
+    -------
+    dict[str, int] or None
+        Scalar and summed cache counters, or ``None`` on a missing value.
+
+    Examples
+    --------
+    >>> _counters({}) is None
+    True
+    """
+    try:
+        return {
+            **{field: _integer(stats[field]) for field in _SCALAR_COUNTERS},
+            **{field: _cache_count(stats, field) for field in _CACHE_COUNTERS},
+        }
+    except KeyError, TypeError, ValueError:
+        return None
+
+
 def parse_statistics(
     text: str, *, supported: frozenset[str]
 ) -> StatsReading | ReadFailure:
@@ -131,27 +187,13 @@ def parse_statistics(
     ... )
     ReadFailure(reason='unsupported_version')
     """
-    try:
-        document_value = json.loads(text)
-    except ValueError, TypeError, RecursionError:
-        document_value = None
-
-    document = _mapping(document_value)
+    document = _document(text)
     if document is None:
         return ReadFailure(reason="parse_error")
-    version = document.get("version")
-    stats = _mapping(document.get("stats"))
-    if not isinstance(version, str) or not version:
-        return ReadFailure(reason="parse_error")
-    if stats is None:
-        return ReadFailure(reason="parse_error")
+    stats, version = document
     if version not in supported:
         return ReadFailure(reason="unsupported_version")
-
-    try:
-        scalar_values = {field: _integer(stats[field]) for field in _SCALAR_COUNTERS}
-        cache_values = {field: _cache_count(stats, field) for field in _CACHE_COUNTERS}
-    except KeyError, TypeError, ValueError:
+    counters = _counters(stats)
+    if counters is None:
         return ReadFailure(reason="parse_error")
-
-    return StatsReading(**scalar_values, **cache_values, version=version)
+    return StatsReading(**counters, version=version)

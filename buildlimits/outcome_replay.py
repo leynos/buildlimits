@@ -64,30 +64,53 @@ def evaluate_h3(records: cabc.Iterable[StoreRecord]) -> H3Report:
     H3Report
         The threshold verdict and its bounded agreement counts.
     """
+    outcomes, summaries = _split_records(records)
+    attributed = sum(record.outcome != "unattributed" for record in outcomes)
+    row_checks = tuple(_row_counterexample(record) for record in outcomes)
+    counterexamples = sum(check is False for check in row_checks)
+    counterexamples += sum(not _summary_agrees(summary) for summary in summaries)
+    return H3Report(
+        verdict=_h3_verdict(counterexamples, attributed, has_summaries=bool(summaries)),
+        attributed_outcomes=attributed,
+        evaluated_windows=len(summaries),
+        evaluated_rows=sum(check is not None for check in row_checks),
+        counterexamples=counterexamples,
+    )
+
+
+def _split_records(
+    records: cabc.Iterable[StoreRecord],
+) -> tuple[tuple[OutcomeRecord, ...], tuple[WindowSummary, ...]]:
+    """Separate outcome rows from window summaries in store order.
+
+    Returns
+    -------
+    tuple[tuple[OutcomeRecord, ...], tuple[WindowSummary, ...]]
+        Outcome rows, then window summaries.
+    """
     values = tuple(records)
     outcomes = tuple(record for record in values if isinstance(record, OutcomeRecord))
     summaries = tuple(record for record in values if isinstance(record, WindowSummary))
-    attributed = sum(record.outcome != "unattributed" for record in outcomes)
-    row_checks = tuple(_row_counterexample(record) for record in outcomes)
-    evaluated_rows = sum(check is not None for check in row_checks)
-    counterexamples = sum(check is False for check in row_checks)
-    counterexamples += sum(not _summary_agrees(summary) for summary in summaries)
+    return outcomes, summaries
 
+
+def _h3_verdict(
+    counterexamples: int, attributed: int, *, has_summaries: bool
+) -> Verdict:
+    """Reduce H3 evidence to its fixed verdict order.
+
+    Returns
+    -------
+    Verdict
+        ``refuted`` on any counterexample, otherwise the threshold verdict.
+    """
     if counterexamples:
-        verdict: Verdict = "refuted"
-    elif attributed < MIN_ATTRIBUTED_OUTCOMES:
-        verdict = "insufficient"
-    elif not summaries:
-        verdict = "not_collected"
-    else:
-        verdict = "supported"
-    return H3Report(
-        verdict=verdict,
-        attributed_outcomes=attributed,
-        evaluated_windows=len(summaries),
-        evaluated_rows=evaluated_rows,
-        counterexamples=counterexamples,
-    )
+        return "refuted"
+    if attributed < MIN_ATTRIBUTED_OUTCOMES:
+        return "insufficient"
+    if not has_summaries:
+        return "not_collected"
+    return "supported"
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -215,16 +238,8 @@ def evaluate_h2(records: cabc.Iterable[StoreRecord]) -> H2Report:
 
     evaluable = counters["evaluable"]
     correct = counters["combined_correct"]
-    if attributed < MIN_ATTRIBUTED_OUTCOMES or evaluable < H2_MIN_EVALUABLE_RECORDS:
-        verdict: H2Verdict = "insufficient"
-    elif correct * 100 >= H2_SUPPORTED_AGREEMENT_PERCENT * evaluable:
-        verdict = "supported"
-    elif correct * 100 < H2_REFUTED_BELOW_PERCENT * evaluable:
-        verdict = "refuted"
-    else:
-        verdict = "inconclusive"
     return H2Report(
-        verdict=verdict,
+        verdict=_h2_verdict(attributed, evaluable, correct),
         attributed_outcomes=attributed,
         evaluable_records=evaluable,
         combined_correct=correct,
@@ -238,6 +253,23 @@ def evaluate_h2(records: cabc.Iterable[StoreRecord]) -> H2Report:
         misses_seen=counters["misses_seen"],
         misses_with_child_observation=counters["misses_with_child_observation"],
     )
+
+
+def _h2_verdict(attributed: int, evaluable: int, correct: int) -> H2Verdict:
+    """Reduce H2 agreement to its fixed threshold verdict.
+
+    Returns
+    -------
+    H2Verdict
+        The agreement verdict, or ``insufficient`` below either minimum.
+    """
+    if attributed < MIN_ATTRIBUTED_OUTCOMES or evaluable < H2_MIN_EVALUABLE_RECORDS:
+        return "insufficient"
+    if correct * 100 >= H2_SUPPORTED_AGREEMENT_PERCENT * evaluable:
+        return "supported"
+    if correct * 100 < H2_REFUTED_BELOW_PERCENT * evaluable:
+        return "refuted"
+    return "inconclusive"
 
 
 def _paired_keys(records: tuple[OutcomeRecord, ...]) -> frozenset[CacheKey]:

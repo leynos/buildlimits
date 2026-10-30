@@ -135,17 +135,34 @@ class NonBlockingChild:
         """
         if self._result is not None:
             return
-        if self._failure is None and now >= self.deadline:
-            self._fail("timeout")
+        self._expire_if_late(now)
         if self._failure is None:
             self._read_available()
+        returncode = self._poll_status()
+        if returncode is not None:
+            self._finish(returncode)
+
+    def _expire_if_late(self, now: float) -> None:
+        """Record a timeout once the caller-supplied deadline has passed."""
+        if self._failure is None and now >= self.deadline:
+            self._fail("timeout")
+
+    def _poll_status(self) -> int | None:
+        """Read the exit status without waiting, recording an OS failure.
+
+        Returns
+        -------
+        int or None
+            The exit status once the child has ended, otherwise ``None``.
+        """
         try:
-            returncode = self._process.poll()
+            return self._process.poll()
         except OSError:
             self._fail("read_error")
-            return
-        if returncode is None:
-            return
+            return None
+
+    def _finish(self, returncode: int) -> None:
+        """Record the reaped status once the child can no longer produce output."""
         self._reaped = True
         if self._failure is not None or self._stdout_eof:
             self._close_stdout()

@@ -117,14 +117,32 @@ def compact(
     record_sizes = [len(encode_line(record).encode("utf-8")) + 1 for record in records]
     total_size = len(encode_line(header).encode("utf-8")) + 1 + sum(record_sizes)
     first_retained = 0
-    while first_retained < len(records) and (
-        len(records) - first_retained > MAX_COMPACT_RECORDS
-        or total_size > MAX_COMPACT_BYTES
+    while first_retained < len(records) and _exceeds_compaction_limits(
+        first_retained, len(records), total_size
     ):
         total_size -= record_sizes[first_retained]
         first_retained += 1
     discarded += first_retained
     return Compacted(header, tuple(records[first_retained:]), discarded, reason)
+
+
+def _exceeds_compaction_limits(
+    first_retained: int, record_count: int, total_size: int
+) -> bool:
+    """Check whether a store still exceeds its count or byte budget.
+
+    Returns
+    -------
+    bool
+        Whether one more leading record must be discarded.
+
+    Examples
+    --------
+    >>> _exceeds_compaction_limits(0, MAX_COMPACT_RECORDS + 1, 0)
+    True
+    """
+    too_many = record_count - first_retained > MAX_COMPACT_RECORDS
+    return too_many or total_size > MAX_COMPACT_BYTES
 
 
 def _require_utc(value: dt.datetime) -> None:

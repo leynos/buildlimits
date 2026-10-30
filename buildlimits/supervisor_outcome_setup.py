@@ -5,6 +5,8 @@ import dataclasses as dc
 import typing as typ
 
 from buildlimits.journal import log
+from buildlimits.outcome_gate import QuietInputs
+from buildlimits.outcome_recorder_types import Querying, RecorderState
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -136,6 +138,36 @@ def exists_or_unknown(path: Path) -> bool:
     except OSError:
         return True
     return True
+
+
+def quiet_inputs(
+    supervisor: Supervisor, state: RecorderState, now: float
+) -> QuietInputs:
+    """Sample every quiet-gate clause without changing admission state.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        The running supervisor whose read-only state supplies the clauses.
+    state : RecorderState
+        The recorder state, read only to report a query already in flight.
+    now : float
+        Monotonic time used to describe recovery.
+
+    Returns
+    -------
+    QuietInputs
+        The current values used by the independent quiet-point gate.
+    """
+    recovery = supervisor.recovery.describe(now)
+    return QuietInputs(
+        counts=supervisor.admission.counts(),
+        is_reachable=supervisor.admission.cached,
+        is_cache_allowed=supervisor.server.cache_allowed(),
+        is_recovery_idle=recovery["phase"] == "idle",
+        has_barrier=exists_or_unknown(supervisor.settings.recovery_marker),
+        has_query_in_flight=isinstance(state, Querying),
+    )
 
 
 def origin_kind(value: str | None) -> typ.Literal["registry", "git", "path", "unknown"]:

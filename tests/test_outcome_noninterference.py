@@ -6,7 +6,11 @@ import typing as typ
 from pathlib import Path
 
 from outcome_recorder_test_helpers import stats_text
-from outcome_shell_test_support import OutcomeWorldOptions, make_outcome_world
+from outcome_shell_test_support import (
+    OutcomeWorld,
+    OutcomeWorldOptions,
+    make_outcome_world,
+)
 from request_helpers import crate_pending
 
 from buildlimits.admission import Launch
@@ -103,6 +107,64 @@ def _delay_query_for_token(
         shell.on_tick(now)
 
 
+@dc.dataclass(slots=True)
+class _Trace:
+    """Mutable state and recorded observations for one differential run."""
+
+    world: OutcomeWorld
+    clock: list[float]
+    input_trace: list[tuple[float, str, tuple[object, ...]]] = dc.field(
+        default_factory=list
+    )
+    dispatched_effects: list[tuple[float, str, tuple[object, ...]]] = dc.field(
+        default_factory=list
+    )
+    token_return_ticks: list[tuple[float, bytes]] = dc.field(default_factory=list)
+    group_states: list[object] = dc.field(default_factory=list)
+    pool_tokens: list[bytes] = dc.field(default_factory=lambda: [b"+"])
+
+    def tick(self, now: float) -> None:
+        """Advance both the observation clock and the outcome shell."""
+        self.clock[0] = now
+        self.world.shell.on_tick(now)
+
+    def observe(
+        self, name: str, args: tuple[object, ...], effects: list[Effect]
+    ) -> list[Effect]:
+        """Record one explicit admission operation and its returned effects.
+
+        Returns
+        -------
+        list[Effect]
+            The effects produced by the recorded operation.
+        """
+        self.input_trace.append((self.clock[0], name, args))
+        self.dispatched_effects.append((self.clock[0], name, tuple(effects)))
+        for effect in effects:
+            if isinstance(effect, ReturnToken):
+                self.token_return_ticks.append((self.clock[0], effect.token))
+                self.pool_tokens.append(effect.token)
+        return effects
+
+    def observations(self) -> _DifferentialObservations:
+        """Return the recorded observations in the shared result shape.
+
+        Returns
+        -------
+        _DifferentialObservations
+            Admission traces, token timings and optional recording outputs.
+        """
+        return _DifferentialObservations(
+            input_trace=self.input_trace,
+            dispatched_effects=self.dispatched_effects,
+            token_return_ticks=self.token_return_ticks,
+            group_states=self.group_states,
+            metrics=self.world.metrics.events,
+            records=self.world.writer.records,
+            pool_tokens=self.pool_tokens,
+        )
+
+
 def _differential_run(
     tmp_path: Path, *, recording: bool, delay_token: bool = False
 ) -> _DifferentialObservations:
@@ -114,100 +176,66 @@ def _differential_run(
         Admission traces, token timings and optional recording outputs.
     """
     clock = [0.0]
-    statistics = CompletingStatistics()
     world = make_outcome_world(
         tmp_path,
         OutcomeWorldOptions(
             recording=recording,
-            statistics_port=statistics,
+            statistics_port=CompletingStatistics(),
             clock=lambda: clock[0],
         ),
     )
-    admission = world.admission
-    shell = world.shell
-    input_trace: list[tuple[float, str, tuple[object, ...]]] = []
-    dispatched_effects: list[tuple[float, str, tuple[object, ...]]] = []
-    returned_tokens: list[tuple[float, bytes]] = []
-    pool_tokens = [b"+"]
-    group_states: list[object] = []
-
-    def tick(now: float) -> None:
-        """Advance both the observation clock and the outcome shell."""
-        clock[0] = now
-        shell.on_tick(now)
-
-    def observe(
-        name: str, args: tuple[object, ...], effects: list[Effect]
-    ) -> list[Effect]:
-        """Record one explicit admission operation and its returned effects.
-
-        Returns
-        -------
-        list[Effect]
-            The effects produced by the recorded operation.
-        """
-        input_trace.append((clock[0], name, args))
-        dispatched_effects.append((clock[0], name, tuple(effects)))
-        for effect in effects:
-            if isinstance(effect, ReturnToken):
-                returned_tokens.append((clock[0], effect.token))
-                pool_tokens.append(effect.token)
-        return effects
-
-    tick(0.0)
-    tick(0.1)
-    # A completed cached request makes the next statistics read relevant.
-    shell.launched(_cached_entry(), "previous")
-    shell.emptied(GroupEnding("previous", True, True))
-    tick(1.1)
-    if recording:
-        assert isinstance(typ.cast("OutcomeShell", shell)._recorder.state, Querying), (
-            "the recorder starts a due statistics query"
-        )
-    observe("submit", (1,), admission.submit(1))
-
+    trace = _Trace(world, clock)
+    _warm_previous_group(trace, recording=recording)
+    trace.observe("submit", (1,), world.admission.submit(1))
     _delay_query_for_token(
-        typ.cast("OutcomeShell", shell),
+        typ.cast("OutcomeShell", world.shell),
         is_enabled=delay_token and recording,
         now=1.2,
         clock=clock,
     )
+    _drain_one_group(trace)
+    trace.tick(2.3)
+    trace.tick(2.4)
+    return trace.observations()
 
-    token = pool_tokens.pop(0)
-    effects = observe("token_arrived", (token,), admission.token_arrived(token))
+
+def _warm_previous_group(trace: _Trace, *, recording: bool) -> None:
+    """Run one completed cached request so a statistics read becomes due."""
+    trace.tick(0.0)
+    trace.tick(0.1)
+    trace.world.shell.launched(_cached_entry(), "previous")
+    trace.world.shell.emptied(GroupEnding("previous", True, True))
+    trace.tick(1.1)
+    if recording:
+        state = typ.cast("OutcomeShell", trace.world.shell)._recorder.state
+        assert isinstance(state, Querying), "the recorder starts a due statistics query"
+
+
+def _drain_one_group(trace: _Trace) -> None:
+    """Launch one cached group, drain it, and record its held token state."""
+    admission = trace.world.admission
+    token = trace.pool_tokens.pop(0)
+    effects = trace.observe("token_arrived", (token,), admission.token_arrived(token))
     launch = next(effect for effect in effects if isinstance(effect, Launch))
-    shell.launched(_cached_entry(), launch.group_id)
-    observe(
+    trace.world.shell.launched(_cached_entry(), launch.group_id)
+    trace.observe(
         "leader_exited",
         (launch.group_id, Exit(signal=9)),
         admission.leader_exited(launch.group_id, Exit(signal=9)),
     )
-    empty_effects = observe(
+    empty_effects = trace.observe(
         "group_emptied",
         (launch.group_id,),
         admission.group_emptied(launch.group_id),
     )
-    group_states.append(admission.groups[launch.group_id].state.value)
-    shell.emptied(GroupEnding(launch.group_id, True, False))
+    trace.group_states.append(admission.groups[launch.group_id].state.value)
+    trace.world.shell.emptied(GroupEnding(launch.group_id, True, False))
     assert not any(isinstance(effect, ReturnToken) for effect in empty_effects), (
         "admission keeps the token while its group drains"
     )
-    observe("server_activity", (0,), admission.server_activity(0))
-
-    if clock[0] < 1.2:
-        tick(1.2)
-    tick(2.3)
-    tick(2.4)
-
-    return _DifferentialObservations(
-        input_trace=input_trace,
-        dispatched_effects=dispatched_effects,
-        token_return_ticks=returned_tokens,
-        group_states=group_states,
-        metrics=world.metrics.events,
-        records=world.writer.records,
-        pool_tokens=pool_tokens,
-    )
+    trace.observe("server_activity", (0,), admission.server_activity(0))
+    if trace.clock[0] < 1.2:
+        trace.tick(1.2)
 
 
 def test_decision_modules_do_not_import_outcome_recording() -> None:

@@ -8,6 +8,7 @@ _DOMAIN_MODULES = (
     "outcome_vocabulary.py",
     "outcome_stats.py",
     "outcome_attribution.py",
+    "outcome_footprints.py",
     "outcome_gate.py",
     "json_values.py",
     "outcome_key.py",

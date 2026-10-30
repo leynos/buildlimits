@@ -177,7 +177,8 @@ Each module owns one decision. This table is the single module inventory.
 | `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, native journal datagrams, journal queries and reports                               |
 | `outcome_vocabulary`                                                               | Closed cache-outcome and reading-reason vocabularies                                                   |
 | `outcome_stats`                                                                    | Pure parsing of supported sccache statistics into validated counters                                   |
-| `outcome_attribution`                                                              | Pure whole-window classification from sccache counter footprints                                       |
+| `outcome_attribution`                                                              | Pure whole-window classification of labelled sccache counter windows                                   |
+| `outcome_footprints`                                                               | Approved sccache counter footprint table and the composition rules that accept a window delta          |
 | `outcome_gate`                                                                     | Pure quiet-point decision for starting an outcome statistics reading                                   |
 | `json_values`                                                                      | Pure JSON object and non-negative integer validators shared by boundary adapters                       |
 | `outcome_key`                                                                      | Pure, salted compile-request identity with local paths hidden                                          |

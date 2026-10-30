@@ -100,21 +100,30 @@ def _output_path(arguments: list[str], *, emit_dep_info: bool) -> Path:
 
 def _sleep_for_controlled_request(arguments: list[str], *, emit_dep_info: bool) -> None:
     """Hold one configured request open long enough for process sampling."""
-    metadata = _metadata(arguments)
+    delay = _controlled_delay(arguments, emit_dep_info=emit_dep_info)
+    if delay > 0:
+        time.sleep(delay)
+
+
+def _controlled_delay(arguments: list[str], *, emit_dep_info: bool) -> float:
+    """Return the configured delay for a request selected by its metadata.
+
+    Returns
+    -------
+    float
+        The configured seconds, or zero when this request is not selected.
+    """
     key_name = (
         "FAKE_RUSTC_SLEEP_DEP_INFO_METADATA"
         if emit_dep_info
         else "FAKE_RUSTC_SLEEP_EMIT_METADATA"
     )
-    if metadata != os.environ.get(key_name):
-        return
-
+    if _metadata(arguments) != os.environ.get(key_name):
+        return 0.0
     delay_name = (
         "FAKE_RUSTC_DEP_INFO_SECONDS" if emit_dep_info else "FAKE_RUSTC_EMIT_SECONDS"
     )
-    delay = float(os.environ.get(delay_name, "0"))
-    if delay > 0:
-        time.sleep(delay)
+    return float(os.environ.get(delay_name, "0"))
 
 
 def _write_output(arguments: list[str], *, emit_dep_info: bool) -> None:
@@ -150,8 +159,26 @@ def main(arguments: list[str]) -> int:
     int
         A rustc-compatible success status.
     """
+    probe = _probe_output(arguments)
+    if probe is not None:
+        print(probe)
+        return 0
+    emit_dep_info = _is_dep_info_request(arguments)
+    _sleep_for_controlled_request(arguments, emit_dep_info=emit_dep_info)
+    _write_output(arguments, emit_dep_info=emit_dep_info)
+    return 0
+
+
+def _probe_output(arguments: list[str]) -> str | None:
+    """Return the text of an answered rustc probe.
+
+    Returns
+    -------
+    str | None
+        Probe text to print, or None when the request is a compile.
+    """
     if "-vV" in arguments:
-        print(
+        return (
             f"rustc {_VERSION} (fake build)\n"
             "binary: rustc\n"
             "commit-hash: fake\n"
@@ -160,26 +187,28 @@ def main(arguments: list[str]) -> int:
             f"release: {_VERSION}\n"
             "LLVM version: 18.1.0"
         )
-        return 0
-
     if "--version" in arguments or "-V" in arguments:
-        print(f"rustc {_VERSION} (fake build)")
-        return 0
-
+        return f"rustc {_VERSION} (fake build)"
     if (
         "--print=sysroot" in arguments
         or _option_value(arguments, "--print") == "sysroot"
     ):
-        print(os.environ.get("FAKE_RUSTC_SYSROOT", "/fake-rustc/sysroot"))
-        return 0
+        return os.environ.get("FAKE_RUSTC_SYSROOT", "/fake-rustc/sysroot")
+    return None
 
+
+def _is_dep_info_request(arguments: list[str]) -> bool:
+    """Report whether one request emits only dep-info.
+
+    Returns
+    -------
+    bool
+        True when dep-info is requested without link or metadata output.
+    """
     emit_kinds = _emit_kinds(arguments)
-    emit_dep_info = "dep-info" in emit_kinds and not (
+    return "dep-info" in emit_kinds and not (
         "link" in emit_kinds or "metadata" in emit_kinds
     )
-    _sleep_for_controlled_request(arguments, emit_dep_info=emit_dep_info)
-    _write_output(arguments, emit_dep_info=emit_dep_info)
-    return 0
 
 
 if __name__ == "__main__":

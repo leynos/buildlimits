@@ -51,6 +51,49 @@ class CacheKey:
     toolchain_identity: ToolchainIdentity
 
 
+def _crate_name_option(argv: cabc.Sequence[str]) -> str | None:
+    """Read the raw value of either rustc crate-name spelling.
+
+    Returns
+    -------
+    str or None
+        The option value, or no value when the option is absent.
+
+    Examples
+    --------
+    >>> _crate_name_option(("rustc", "--crate-name", "serde"))
+    'serde'
+    >>> _crate_name_option(("rustc",)) is None
+    True
+    """
+    for index, argument in enumerate(argv[1:], start=1):
+        if argument == "--crate-name" and index + 1 < len(argv):
+            return argv[index + 1]
+        if argument.startswith("--crate-name="):
+            return argument.partition("=")[2]
+    return None
+
+
+def _is_safe_crate_name(value: str) -> bool:
+    """Check that a crate name cannot reveal a local path.
+
+    Returns
+    -------
+    bool
+        Whether the value is a non-empty name without path separators.
+
+    Examples
+    --------
+    >>> _is_safe_crate_name("serde")
+    True
+    >>> _is_safe_crate_name("/private/project")
+    False
+    """
+    is_named = value not in {"", ".", ".."}
+    has_separator = any(separator in value for separator in ("/", "\\"))
+    return is_named and not has_separator
+
+
 def crate_name(argv: cabc.Sequence[str]) -> str | None:
     """Read a safe crate name from either rustc option spelling.
 
@@ -66,19 +109,48 @@ def crate_name(argv: cabc.Sequence[str]) -> str | None:
     >>> crate_name(("rustc", "--crate-name", "/private/project")) is None
     True
     """
-    for index, argument in enumerate(argv[1:], start=1):
-        if argument == "--crate-name" and index + 1 < len(argv):
-            value = argv[index + 1]
-        elif argument.startswith("--crate-name="):
-            value = argument.partition("=")[2]
-        else:
-            continue
-        if value not in {"", ".", ".."} and not any(
-            separator in value for separator in ("/", "\\")
-        ):
-            return value
+    value = _crate_name_option(argv)
+    if value is None or not _is_safe_crate_name(value):
         return None
-    return None
+    return value
+
+
+def _cargo_home(env: cabc.Mapping[str, str]) -> str | None:
+    """Resolve Cargo's source cache root from the environment.
+
+    Returns
+    -------
+    str or None
+        The configured or default cache root, when one can be resolved.
+
+    Examples
+    --------
+    >>> _cargo_home({"CARGO_HOME": "/cache"})
+    '/cache'
+    >>> _cargo_home({}) is None
+    True
+    """
+    cargo_home = env.get("CARGO_HOME")
+    if cargo_home:
+        return cargo_home
+    home = env.get("HOME")
+    return f"{home}/.cargo" if home else None
+
+
+def _source_origin(parts: tuple[str, ...], env: cabc.Mapping[str, str]) -> str | None:
+    """Match a Cargo checkout against its registry or Git layout.
+
+    Returns
+    -------
+    str or None
+        A stable source label, or no value for an unrecognized layout.
+
+    Examples
+    --------
+    >>> _source_origin(("registry", "src", "index", "serde-1.2.3"), {}) is None
+    True
+    """
+    return _registry_origin(parts, env) or _git_origin(parts, env)
 
 
 def crate_origin(env: cabc.Mapping[str, str], salt: Salt) -> str | None:
@@ -100,19 +172,12 @@ def crate_origin(env: cabc.Mapping[str, str], salt: Salt) -> str | None:
     if manifest is None:
         return None
 
-    cargo_home = env.get("CARGO_HOME")
-    if not cargo_home:
-        home = env.get("HOME")
-        cargo_home = f"{home}/.cargo" if home else None
+    cargo_home = _cargo_home(env)
     relative = _relative_to(manifest, cargo_home) if cargo_home else None
     if relative is not None:
-        parts = PurePosixPath(relative).parts
-        registry = _registry_origin(parts, env)
-        if registry is not None:
-            return registry
-        git = _git_origin(parts, env)
-        if git is not None:
-            return git
+        origin = _source_origin(PurePosixPath(relative).parts, env)
+        if origin is not None:
+            return origin
     return f"path:{_hmac_digest(manifest, salt)}"
 
 

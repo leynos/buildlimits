@@ -50,28 +50,37 @@ class ProcessSampler:
         except OSError, ValueError:
             return SampleFailure("group_unreadable")
 
+        self._forget_departed(members)
+        for pid in sorted(members)[:MAX_PROCESSES_PER_SAMPLE]:
+            self._sample(pid)
+        return frozenset(
+            metadata for metadata in self._classified.values() if metadata is not None
+        )
+
+    def _forget_departed(self, members: set[int]) -> None:
+        """Drop cached classifications whose process left the group."""
         self._classified = {
             identity: metadata
             for identity, metadata in self._classified.items()
             if identity[0] in members
         }
-        for pid in sorted(members)[:MAX_PROCESSES_PER_SAMPLE]:
-            starttime = self._starttime(pid)
-            if starttime is None:
-                continue
-            identity = (pid, starttime)
-            self._classified = {
-                known: metadata
-                for known, metadata in self._classified.items()
-                if known[0] != pid or known == identity
-            }
-            if identity not in self._classified:
-                metadata = self._classify(pid, starttime)
-                if metadata is not _PROCESS_GONE:
-                    self._classified[identity] = typ.cast("str | None", metadata)
-        return frozenset(
-            metadata for metadata in self._classified.values() if metadata is not None
-        )
+
+    def _sample(self, pid: int) -> None:
+        """Classify one member, replacing any cached identity for its pid."""
+        starttime = self._starttime(pid)
+        if starttime is None:
+            return
+        identity = (pid, starttime)
+        self._classified = {
+            known: metadata
+            for known, metadata in self._classified.items()
+            if known[0] != pid or known == identity
+        }
+        if identity in self._classified:
+            return
+        metadata = self._classify(pid, starttime)
+        if metadata is not _PROCESS_GONE:
+            self._classified[identity] = typ.cast("str | None", metadata)
 
     def _control_group(self, generation: Generation) -> Path | None:
         """Resolve and cache the control group for one server identity.

@@ -256,34 +256,47 @@ def test_every_mixed_multiset_is_unattributed() -> None:
 
     for size in range(1, 5):
         for rows in it.combinations_with_replacement(_FOOTPRINTS, size):
-            result = attribute(_reading(), _sum_rows(rows), _window(size))
-            row_labels = {_LABELS[name] for name, _ in rows}
-
-            if size == 1:
-                expected = "count_mismatch" if None in row_labels else "none"
-                assert result.reason == expected, (rows, result)
-                continue
-
-            unanimous_label = next(iter(row_labels)) if len(row_labels) == 1 else None
-            if unanimous_label in _UNANIMOUS:
-                assert result.kind == "unanimous", (rows, result)
-                assert {label for _, label in result.labels} == {unanimous_label}, (
-                    "every launch in an approved unanimous multiset has the same label",
-                    rows,
-                    result,
-                )
-                continue
-
-            assert result.kind == "none", (rows, result)
-            assert result.reason == "mixed_window", (rows, result)
-            assert all(label == "unattributed" for _, label in result.labels), (
-                "mixed multisets are not split into per-group labels",
-                rows,
-                result,
-            )
-            mixed += 1
+            mixed += _assert_multiset_is_unattributed(size, rows)
 
     assert mixed >= 500, "the exhaustive table contains a substantial mixed domain"
+
+
+def _assert_multiset_is_unattributed(
+    size: int, rows: tuple[tuple[str, dict[str, int]], ...]
+) -> int:
+    """Check one multiset's attribution and report whether it was mixed.
+
+    Returns
+    -------
+    int
+        1 when the multiset is a balanced mixture, otherwise 0.
+    """
+    result = attribute(_reading(), _sum_rows(rows), _window(size))
+    row_labels = {_LABELS[name] for name, _ in rows}
+
+    if size == 1:
+        expected = "count_mismatch" if None in row_labels else "none"
+        assert result.reason == expected, (rows, result)
+        return 0
+
+    unanimous_label = next(iter(row_labels)) if len(row_labels) == 1 else None
+    if unanimous_label in _UNANIMOUS:
+        assert result.kind == "unanimous", (rows, result)
+        assert {label for _, label in result.labels} == {unanimous_label}, (
+            "every launch in an approved unanimous multiset has the same label",
+            rows,
+            result,
+        )
+        return 0
+
+    assert result.kind == "none", (rows, result)
+    assert result.reason == "mixed_window", (rows, result)
+    assert all(label == "unattributed" for _, label in result.labels), (
+        "mixed multisets are not split into per-group labels",
+        rows,
+        result,
+    )
+    return 1
 
 
 def test_rfc_ambiguous_pair_has_one_shared_unattributed_delta() -> None:

@@ -440,9 +440,10 @@ full_name = [
     "buildlimits.cache_recovery.CacheRecovery._try_stop",
     "buildlimits.cache_recovery.CacheRecovery._account",
     "buildlimits.cache_recovery.CacheRecovery._try_start",
+    "buildlimits.cache_recovery.CacheRecovery.reclaim_after_accounting",
 ]
 path = ["buildlimits/cache_recovery.py"]
-reason = "supervisor_polling._poll_server calls supervisor.recovery.tick on every server poll, after the drain probe, and tick dispatches _starved and _step; _step invokes the phase actions; _try_stop calls request_stop to retain bounded queued-job progress. Recovery transaction, queued-request and cancellation regressions exercise this path. Skylos resolves neither the dataclass-held CacheRecovery reached through Supervisor.recovery nor the private callees of an unresolved dispatch."
+reason = "supervisor_polling._poll_server calls supervisor.recovery.tick on every server poll, after the drain probe, and tick dispatches _starved and _step; _step invokes the phase actions; _try_stop calls request_stop to retain bounded queued-job progress. Supervisor.start calls reclaim_after_accounting once the drain slices are emptied, before the pool and listener exist. Recovery transaction, queued-request, cancellation and reclaim regressions exercise this path. Skylos resolves neither the dataclass-held CacheRecovery reached through Supervisor.recovery, including the recovery pair returned by supervisor_wiring.watch_and_recovery, nor the private callees of an unresolved dispatch."
 
 [[tool.skylos.dead_code.entrypoints]]
 type = "method"
@@ -1060,9 +1061,10 @@ reason = "Matching import lists: both modules drive the same scripted machine th
 [[tool.duplication_gate.allow]]
 members = [
     "tests/test_group_drain_metrics.py",
-    "buildlimits/adapter_invocation.py",
+    "buildlimits/supervisor_wiring.py",
     "tests/test_cache_recovery_telemetry.py",
     "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
 ]
 reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
 
@@ -1381,7 +1383,7 @@ reason = "These BDD given-steps create the same one-group window with opposite c
 members = [
     "buildlimits/cache_recovery.py",
     "buildlimits/outcome_store.py",
-    "tests/outcome_store_helpers.py",
+    "tests/test_outcome_noninterference.py",
 ]
 reason = "These TYPE_CHECKING blocks import different domain-owned annotation types for production and test contracts. Sharing a re-export would hide each module's dependencies without sharing runtime behaviour."
 
@@ -1458,3 +1460,24 @@ members = [
     "tests/rustc_linter_acceptance.py::LinterAcceptance",
 ]
 reason = "These frozen slots records describe independent value types: one stored outcome window and one real-linter run's configuration and evidence recorder. Their declaration shape matches; no behaviour or field is shared."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/admission_readiness.py",
+    "tests/test_outcome_replay_h2.py",
+]
+reason = "The matched fragment is one conditional expression each: _drain_progress chooses between two operator sentences for a partial drain, while _sighting maps a cache label and correctness to the observed child sighting. Neither expresses the other's rule, and sharing one would couple readiness prose to replay fixtures."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/drain_guidance.py",
+    "buildlimits/outcome_replay.py",
+]
+reason = "The matched fragment is the guard-then-return shape of unrelated decisions: journal_prefix selects the operator message for a fallback drain, while _h3_verdict applies the fixed counterexample, threshold and collection order. Their predicates and returned values share no logic."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_attribution.py::attribute",
+    "buildlimits/outcome_attribution.py::_failure_reason",
+]
+reason = "The matched subdag is the shared reading-failure gate: attribute asks _failure_reason to classify the window before it reads counters, so the second call site is the delegation itself rather than a copy of the rule. The identical doctest preambles construct the same empty statistics value the two examples both start from."

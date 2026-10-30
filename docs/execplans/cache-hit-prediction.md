@@ -1212,6 +1212,19 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   found no known vulnerabilities; the local `buildlimits` package is not
   available on PyPI. Logs use the `-gates-30` suffix in `/tmp`. The final local
   CodeRabbit review remains pending; EP-M6 to EP-M8 stay open.
+- [x] (2026-10-30) Rebased onto `origin/main` at `9ea1ecc` and repaired the
+  post-rebase gate contracts; the rebased head is `06c4195`. CodeScene findings
+  on the touched surface were cleared. The base pylint module ceiling moved
+  `FOOTPRINTS` and the composition rules that read it out of
+  `outcome_attribution.py` into `outcome_footprints.py` (210 + 266 lines), with
+  the table re-exported so callers are unchanged. Eight sequential gates then
+  passed on one tree: check-fmt, typecheck, `make test` (2,470 passed, 41
+  skipped, 59 snapshots), lint, Markdown/spelling, Nixie, audit and validate.
+  The first `make test` run failed once in
+  `test_generated_store_operations_reach_required_branches` on the 1.0 s
+  `StoreWriter.close` bound; three serial repeats and a full re-run passed, so
+  the overrun is recorded as host contention rather than a deterministic
+  defect. Local CodeRabbit review and the owner gate G1 remain outstanding.
 
 ## Surprises & discoveries
 
@@ -2314,8 +2327,12 @@ Domain modules are pure: no input or output, no `os`, `socket`, `subprocess` or
 `threading`, and no clock.
 
 - `outcome_stats.py`: `StatsReading` and `parse_statistics(text, supported)`.
-- `outcome_attribution.py`: `FOOTPRINTS` (Table A as data),
-  `attribute(before, after, window)`, and `confirm` (D12).
+- `outcome_attribution.py`: `attribute(before, after, window)` and `confirm`
+  (D12).
+- `outcome_footprints.py`: `FOOTPRINTS` (Table A as data) and the composition
+  rules that decide whether one counter delta can be labelled at all. The table
+  and the arithmetic that reads it stay together so a row and the rule
+  accepting it are reviewed side by side.
 - `outcome_gate.py`: `QuietInputs` and `quiet_point(inputs)`.
 - `outcome_key.py`: frozen `Salt`, `ToolchainIdentity` and `CacheKey` values,
   plus `crate_name`, `crate_origin`, `target`, `argument_digest` and

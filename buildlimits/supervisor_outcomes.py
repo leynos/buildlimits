@@ -17,7 +17,7 @@ from buildlimits import (
 )
 from buildlimits.journal import log
 from buildlimits.nonblocking_child import ChildReaper
-from buildlimits.outcome_gate import QuietInputs, quiet_point
+from buildlimits.outcome_gate import quiet_point
 from buildlimits.outcome_ports import SampleFailure
 from buildlimits.outcome_queries import PeerServerProcess, SccacheStatistics
 from buildlimits.outcome_recorder_driver import OutcomeRecorder
@@ -237,31 +237,53 @@ class OutcomeShell:
 
     def _on_tick(self, now: float) -> None:
         """Advance one helper, writer handoff and scheduler opportunity."""
-        if isinstance(self._recorder.state, Querying) and self._recorder.state.ticket:
-            self._publish(self._recorder.poll(now))
-        else:
-            self._reaper.poll(now)
+        self._advance_helper(now)
         self._drain_writer()
         if isinstance(self._recorder.state, Disabled):
             return
         self._sample_children(now)
+        if self._is_gate_due(now):
+            self._open_gate(now)
+
+    def _advance_helper(self, now: float) -> None:
+        """Poll the query helper while it holds a ticket, else the reaper."""
+        state = self._recorder.state
+        if isinstance(state, Querying) and state.ticket:
+            self._publish(self._recorder.poll(now))
+        else:
+            self._reaper.poll(now)
+
+    def _is_gate_due(self, now: float) -> bool:
+        """Report whether a baseline exists and the next gate time arrived.
+
+        Returns
+        -------
+        bool
+            True only once the recorder has a baseline, no launch in the
+            attribution window has ended yet, and the later of the two
+            scheduled times has passed.
+        """
         progress = self._recorder.state.progress
         has_ended_launch = any(
             entry.runtime_seconds is not None for entry in progress.window.entries
         )
         if progress.baseline is not None and not has_ended_launch:
-            return
-        if now < max(progress.next_read_at, self._next_gate_at):
-            return
-        inputs = self._quiet_inputs(now)
+            return False
+        return now >= max(progress.next_read_at, self._next_gate_at)
+
+    def _open_gate(self, now: float) -> None:
+        """Open a gate when quiet, else record the skipped opportunity."""
+        inputs = supervisor_outcome_setup.quiet_inputs(
+            self._supervisor, self._recorder.state, now
+        )
         reason = quiet_point(inputs)
         self._telemetry.selection(is_quiet=reason is None)
         self._next_gate_at = now + OUTCOME_TICK_SECONDS
-        if reason is not None:
-            self._readings_skipped += 1
-            self._telemetry.reading_skipped(reason)
+        if reason is None:
+            self._publish(self._recorder.advance(GateOpen(inputs, now)))
             return
-        self._publish(self._recorder.advance(GateOpen(inputs, now)))
+        self._readings_skipped += 1
+        self._telemetry.reading_skipped(reason)
 
     def _sample_children(self, now: float) -> None:
         """Take a due bounded sample while at least one cached group moves."""
@@ -277,27 +299,6 @@ class OutcomeShell:
             return
         self._telemetry.child_sample(failed=False)
         self._publish(self._recorder.advance(Sampled(result)))
-
-    def _quiet_inputs(self, now: float) -> QuietInputs:
-        """Sample every gate clause without changing admission state.
-
-        Returns
-        -------
-        QuietInputs
-            The current values used by the independent quiet-point gate.
-        """
-        supervisor = self._supervisor
-        recovery = supervisor.recovery.describe(now)
-        return QuietInputs(
-            counts=supervisor.admission.counts(),
-            is_reachable=supervisor.admission.cached,
-            is_cache_allowed=supervisor.server.cache_allowed(),
-            is_recovery_idle=recovery["phase"] == "idle",
-            has_barrier=supervisor_outcome_setup.exists_or_unknown(
-                supervisor.settings.recovery_marker
-            ),
-            has_query_in_flight=isinstance(self._recorder.state, Querying),
-        )
 
     def _drain_writer(self) -> None:
         """Consume asynchronous salt and store results without waiting."""

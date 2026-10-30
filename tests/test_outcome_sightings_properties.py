@@ -24,6 +24,32 @@ class SightingModel:
     ended: bool = False
 
 
+def _assert_dep_info_is_ignored() -> None:
+    """Assert a dep-info-only command line yields no full-emit metadata."""
+    argument = ("rustc", "--emit=dep-info", "-Cmetadata=meta-a")
+    assert full_emit_metadata(argument) is None, (
+        "a dep-info-only compile has no full-emit metadata"
+    )
+
+
+def _apply_metadata(
+    active: dict[str, SightingModel], child_metadata: frozenset[str]
+) -> None:
+    """Mark running models that matched one sample uniquely or ambiguously."""
+    for child_value in child_metadata:
+        _mark_matches(active, child_value)
+
+
+def _mark_matches(active: dict[str, SightingModel], child_value: str) -> None:
+    """Record how many running models carry one sample's metadata value."""
+    matches = [model for model in active.values() if model.metadata == child_value]
+    if len(matches) == 1:
+        matches[0].seen = True
+    elif len(matches) > 1:
+        for model in matches:
+            model.ambiguous = True
+
+
 class SightingMachine(RuleBasedStateMachine):
     """Compare reducer samples with an independent metadata match model."""
 
@@ -69,26 +95,22 @@ class SightingMachine(RuleBasedStateMachine):
         """Apply one successful full-emit sample to all still-running entries."""
         child_metadata = frozenset() if dep_info_only else frozenset(metadata)
         if dep_info_only:
-            event("dep-info-only")
-            assert (
-                full_emit_metadata(("rustc", "--emit=dep-info", "-Cmetadata=meta-a"))
-                is None
-            ), 'sample: full_emit_metadata(("rustc", "--emit=dep-info", "-Cmetadata='
-        active = {
-            group: model for group, model in self.models.items() if not model.ended
-        }
+            _assert_dep_info_is_ignored()
+        active = self._active_models()
         for model in active.values():
             model.samples += 1
-        for child_value in child_metadata:
-            matches = [
-                model for model in active.values() if model.metadata == child_value
-            ]
-            if len(matches) == 1:
-                matches[0].seen = True
-            elif len(matches) > 1:
-                for model in matches:
-                    model.ambiguous = True
+        _apply_metadata(active, child_metadata)
         self.state = advance(self.state, Sampled(child_metadata))[0]
+
+    def _active_models(self) -> dict[str, SightingModel]:
+        """Return the still-running model entries by group id.
+
+        Returns
+        -------
+        dict[str, SightingModel]
+            Models whose group has not ended.
+        """
+        return {group: model for group, model in self.models.items() if not model.ended}
 
     @invariant()
     def reducer_matches_the_generated_model(self) -> None:

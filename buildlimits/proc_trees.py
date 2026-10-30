@@ -49,7 +49,8 @@ def process_starttime(stat_text: str) -> int:
 
     The command name can contain spaces and parentheses, so fields are counted
     only after the final closing parenthesis. Callers retain their own policy
-    for unreadable files and malformed rows.
+    for unreadable files and malformed rows; an invalid row surfaces the
+    helpers' ``ValueError`` rather than a substituted default.
 
     Parameters
     ----------
@@ -61,15 +62,31 @@ def process_starttime(stat_text: str) -> int:
     int
         The process start time in clock ticks.
 
-    Raises
-    ------
-    ValueError
-        If the command field, start-time field, or non-negative value is invalid.
-
     Examples
     --------
     >>> process_starttime("123 (rustc (x) y) S " + " ".join(["0"] * 18 + ["456"]))
     456
+    """
+    return _non_negative_starttime(_starttime_field(stat_text))
+
+
+def _starttime_field(stat_text: str) -> str:
+    """Return the raw start-time field from a proc stat row.
+
+    Returns
+    -------
+    str
+        The field's text, before integer conversion.
+
+    Raises
+    ------
+    ValueError
+        If the command field or start-time field is missing.
+
+    Examples
+    --------
+    >>> _starttime_field("123 (rustc) S " + " ".join(["0"] * 18 + ["456"]))
+    '456'
     """
     _command, separator, after_command = stat_text.rpartition(")")
     if not separator:
@@ -79,8 +96,29 @@ def process_starttime(stat_text: str) -> int:
     if len(fields) <= _STARTTIME_FIELD_AFTER_COMM:
         msg = "process stat omitted its start time"
         raise ValueError(msg)
+    return fields[_STARTTIME_FIELD_AFTER_COMM]
+
+
+def _non_negative_starttime(field: str) -> int:
+    """Convert a start-time field, rejecting negative or non-numeric values.
+
+    Returns
+    -------
+    int
+        The non-negative start time in clock ticks.
+
+    Raises
+    ------
+    ValueError
+        If the field is not an integer or is negative.
+
+    Examples
+    --------
+    >>> _non_negative_starttime("456")
+    456
+    """
     try:
-        starttime = int(fields[_STARTTIME_FIELD_AFTER_COMM])
+        starttime = int(field)
     except ValueError as error:
         msg = "process stat has an invalid start time"
         raise ValueError(msg) from error
