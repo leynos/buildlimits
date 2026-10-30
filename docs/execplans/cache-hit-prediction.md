@@ -1242,8 +1242,8 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   request cancellation, later ticks advance the same work through
   `service_failed()`, `close()` still spends its bounded deadline and also runs
   when already disabled, and every cleanup step is guarded on its own. Resource
-  and counter ownership moved to `outcome_resources` and
-  `outcome_shell_stats`, with failure-path and secondary-fault regressions.
+  and counter ownership moved to `outcome_resources` and `outcome_shell_stats`,
+  with failure-path and secondary-fault regressions.
 - [x] (2026-10-30) `c159d7c` answered the second defect: `full_emit_metadata`
   returned every cached classification whose process was still a member,
   including identities the current sample never inspected. O12 counts a
@@ -1269,25 +1269,35 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   admission inputs, dispatched effects, token-return ticks, group states and
   pool tokens after every step; a deterministic seed completes one real
   reading, and an invariant asserts the seed stays non-vacuous. The shared
-  fakes live in `differential_trace_test_helpers.py`, and the duplication gate's
-  reasoned exceptions were reconciled with the moved import block. Focused
-  checks pass (11 tests, Ruff, `ty`, interrogate, CodeScene 10.00 on each new
-  file); the full sequential gate run remains pending.
+  fakes live in `differential_trace_test_helpers.py`, and the duplication
+  gate's reasoned exceptions were reconciled with the moved import block.
+  Focused checks pass (11 tests, Ruff, `ty`, interrogate, CodeScene 10.00 on
+  each new file); the full sequential gate run remains pending.
 - [x] (2026-10-30) The opt-in host measurement now covers child sighting.
   `tests/test_outcome_latency.py` warms one sampler over a 65-member fake
   cgroup and measures 1,000 steady-state samples, asserting that a sample
   inspects exactly the 64-process batch and that its p99 above the same host's
   cost for those 64 identity reads stays within the 2 ms budget. On this host
   with 26 compilations queued, the absolute sample p99 ranged from 2.6 ms to
-  5.1 ms while reading the 64 stat files alone cost 1.8 ms to 5.2 ms, leaving
-  a sampler overhead p99 of 0.0 ms to 1.2 ms. The escalation line is therefore
+  5.1 ms while reading the 64 stat files alone cost 1.8 ms to 5.2 ms, leaving a
+  sampler overhead p99 of 0.0 ms to 1.2 ms. The escalation line is therefore
   exceeded only by host read latency: a single stat read cost about 19 µs here
   against the few microseconds an idle host needs. Re-measure the absolute
   figure on a quiet host before treating it as a sampler finding. The shared
   `/proc` and cgroup builders now live in
   `tests/outcome_process_test_helpers.py`, used by the sampler, latency and
-  server-process modules. With `BUILD_LIMITS_SCCACHE_HOST_CHECK=1`, the
-  latency and sampler modules pass all ten tests.
+  server-process modules. With `BUILD_LIMITS_SCCACHE_HOST_CHECK=1`, the latency
+  and sampler modules pass all ten tests.
+- [x] (2026-10-30) R2, R8 and the residual-gap promise are now carried by the
+  reports themselves. `buildlimits/outcome_evidence.py` holds the covered span
+  (`Coverage`, built from the `observed_at` of every record read) and the fixed
+  caveats. Both H2 and H3 report the span from the earliest to the latest
+  record in JSON and in text, and state the quiet-window limit; H2 adds the
+  sampling limit on child sightings. An empty or missing store reports no span
+  rather than a fabricated one. The interval quoted in the sighting caveat is
+  asserted against `CHILD_SAMPLE_SECONDS`, so the report cannot drift from the
+  sampler's cadence. The users' guide and the module inventory record the new
+  surface.
 
 ## Surprises & discoveries
 

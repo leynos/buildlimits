@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from outcome_test_helpers import OBSERVED_AT, cache_key
 
-from buildlimits import outcome_replay_cli, outcome_store_io
+from buildlimits import outcome_evidence, outcome_replay_cli, outcome_store_io
 from buildlimits.outcome_record_format import (
     OutcomeRecord,
     StoreHeader,
@@ -56,9 +56,13 @@ def test_missing_store_reports_insufficient_json(
     missing = tmp_path / "missing.jsonl"
 
     status = outcome_replay_cli.main(["h3", "--store", str(missing), "--json"])
+    output = capsys.readouterr().out
 
     assert status == 0, "a missing store is an insufficient report"
-    assert '"schema": 1' in capsys.readouterr().out, "JSON is schema-labelled"
+    assert '"schema": 1' in output, "JSON is schema-labelled"
+    assert '"covered": {"from": null, "until": null}' in output, (
+        "an empty store reports no covered span"
+    )
 
 
 def test_h3_text_output_snapshot(
@@ -71,9 +75,16 @@ def test_h3_text_output_snapshot(
     _write_store(path)
 
     status = outcome_replay_cli.main(["h3", "--store", str(path)])
+    output = capsys.readouterr().out
 
     assert status == 0, "a readable store produces a report"
-    assert capsys.readouterr().out == snapshot, "the bounded report stays stable"
+    assert output == snapshot, "the bounded report stays stable"
+    assert "covered 2026-10-24T12:00:00Z to 2026-10-24T12:00:00Z" in output, (
+        "the text report states the covered span"
+    )
+    assert f"caveat: {outcome_evidence.QUIET_WINDOW_CAVEAT}" in output, (
+        "every verdict states the quiet-window limit"
+    )
 
 
 @pytest.mark.parametrize(

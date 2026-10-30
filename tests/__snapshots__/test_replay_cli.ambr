@@ -2,6 +2,8 @@
 # name: test_h3_text_output_snapshot
   '''
   H3 parser prediction: insufficient; 1 attributed outcomes, 1 windows, 0 counterexamples
+    covered 2026-10-24T12:00:00Z to 2026-10-24T12:00:00Z
+    caveat: labels come from solo and unanimous windows, so this sample may not represent busy, mixed traffic
   
   '''
 # ---

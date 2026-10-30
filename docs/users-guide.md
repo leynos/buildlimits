@@ -171,7 +171,10 @@ H2 combines full-emit child sightings with prior hit runtimes for the same
 compile key. It evaluates only sampled keys that have both a hit and a miss,
 and requires 100 evaluable rows and 2,000 attributed outcomes. H2 reports
 `supported` at 95% agreement, `refuted` below 90%, and `inconclusive` between
-those thresholds.
+those thresholds. Both commands print the time span the store covers and the
+limits of their sample: labels come from solo and unanimous windows, so a
+verdict may not represent busy, mixed traffic, and H2 also states that child
+sightings are sampled, which biases the sighting clue towards long misses.
 
 While cached requests are moving, the supervisor samples the managed server's
 control group every 250 ms and inspects at most 64 processes per sample. It

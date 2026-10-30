@@ -9,6 +9,7 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.outcome_key import CacheKey
+from buildlimits.outcome_evidence import H2_LIMITS, H3_LIMITS, Coverage, coverage_of
 from buildlimits.outcome_record_format import OutcomeRecord, StoreRecord, WindowSummary
 
 type Verdict = typ.Literal[
@@ -33,6 +34,7 @@ class H3Report:
     evaluated_windows: int
     evaluated_rows: int
     counterexamples: int
+    coverage: Coverage
 
     def as_dict(self) -> dict[str, object]:
         """Return the stable command-line JSON shape.
@@ -50,6 +52,8 @@ class H3Report:
             "evaluated_windows": self.evaluated_windows,
             "evaluated_rows": self.evaluated_rows,
             "counterexamples": self.counterexamples,
+            "covered": self.coverage.as_dict(),
+            "caveats": list(H3_LIMITS),
         }
 
 
@@ -75,6 +79,7 @@ def evaluate_h3(records: cabc.Iterable[StoreRecord]) -> H3Report:
         evaluated_windows=len(summaries),
         evaluated_rows=sum(check is not None for check in row_checks),
         counterexamples=counterexamples,
+        coverage=coverage_of((*outcomes, *summaries)),
     )
 
 
@@ -130,6 +135,7 @@ class H2Report:
     unavailable_records: int
     misses_seen: int
     misses_with_child_observation: int
+    coverage: Coverage
 
     @property
     def combined_agreement(self) -> float | None:
@@ -213,6 +219,8 @@ class H2Report:
                 "observed": self.misses_with_child_observation,
                 "share": self.miss_sighting_share,
             },
+            "covered": self.coverage.as_dict(),
+            "caveats": list(H2_LIMITS),
         }
 
 
@@ -228,7 +236,7 @@ def evaluate_h2(records: cabc.Iterable[StoreRecord]) -> H2Report:
     H2Report
         Agreement, sighting counts and the threshold verdict.
     """
-    values = tuple(record for record in records if isinstance(record, OutcomeRecord))
+    values, summaries = _split_records(records)
     attributed = sum(record.outcome != "unattributed" for record in values)
     paired_keys = _paired_keys(values)
     earlier_hits: dict[CacheKey, list[float]] = collections.defaultdict(list)
@@ -252,6 +260,7 @@ def evaluate_h2(records: cabc.Iterable[StoreRecord]) -> H2Report:
         unavailable_records=counters["unavailable"],
         misses_seen=counters["misses_seen"],
         misses_with_child_observation=counters["misses_with_child_observation"],
+        coverage=coverage_of((*values, *summaries)),
     )
 
 

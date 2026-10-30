@@ -167,6 +167,7 @@ Each module owns one decision. This table is the single module inventory.
 | `tracing`, `tracing_export`, `tracing_sdk_export`                                  | Bounded spans, the fixed journal schema and synchronous native-journal export                          |
 | `outcome_telemetry`                                                                | Maps recorder effects to bounded metrics and spans                                                     |
 | `outcome_replay`, `outcome_replay_cli`                                             | Read-only H2 and H3 evaluation over the local outcome store                                            |
+| `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                 |
 | `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper              |
 | `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar       |
 | `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                        |
@@ -523,8 +524,8 @@ categories.
 
 `OutcomeTelemetry` maps reducer outputs to those metrics and owns the bounded
 `statistics_read` span. `outcome_reading` is transition-only: it carries a
-changed `outcome_reason` or `gate_reason` label, while the counters
-`readings`, `readings_skipped`, `readings_failed`, `child_samples_taken` and
+changed `outcome_reason` or `gate_reason` label, while the counters `readings`,
+`readings_skipped`, `readings_failed`, `child_samples_taken` and
 `child_sample_failures` accumulate and are reported by one summary per minute
 and one forced summary at shutdown. Labels and counters never share an event,
 so report totals are exact sums and a steady failing loop costs two events a
@@ -534,16 +535,16 @@ statistics child and privacy-safe key construction, and `outcome_resources`
 owns the reaper and the asynchronous store. A recorder fault on the selector
 thread only requests cancellation there — one non-blocking reaper poll and
 `close(0.0)` — while later ticks keep advancing the same cleanup, and only
-`close()` spends D17's one-second deadline. Both
-`PeerServerProcess` and `ProcessSampler` read field 22 through
-`proc_trees.read_process_starttime`; that shared reader owns `/proc` decoding
-and validation, while each adapter keeps its own failure policy. The process
-sampler reads the managed server's control group through `PeerServerProcess`;
-raw argv and metadata remain in memory. Samples run every 250 ms only while
-cached groups move, inspect at most 64 processes and back off after failures.
-H2 and H3 replay read only the local store; neither queries journald nor feeds
-a result back to admission. An optional `cache_outcomes` object is added to
-status only when recording is enabled.
+`close()` spends D17's one-second deadline. Both `PeerServerProcess` and
+`ProcessSampler` read field 22 through `proc_trees.read_process_starttime`;
+that shared reader owns `/proc` decoding and validation, while each adapter
+keeps its own failure policy. The process sampler reads the managed server's
+control group through `PeerServerProcess`; raw argv and metadata remain in
+memory. Samples run every 250 ms only while cached groups move, inspect at most
+64 processes and back off after failures. H2 and H3 replay read only the local
+store; neither queries journald nor feeds a result back to admission. An
+optional `cache_outcomes` object is added to status only when recording is
+enabled.
 
 The restart path adds three bounded observations. The adapter's one
 `adapter_finished` summary carries `restart_retries`, the attempts spent

@@ -9,8 +9,14 @@ from pathlib import Path
 import pytest
 from outcome_test_helpers import OBSERVED_AT, cache_key
 
-from buildlimits import outcome_replay, outcome_replay_cli, outcome_store_io
+from buildlimits import (
+    outcome_evidence,
+    outcome_replay,
+    outcome_replay_cli,
+    outcome_store_io,
+)
 from buildlimits.outcome_record_format import ChildSighting, OutcomeRecord, StoreHeader
+from buildlimits.outcome_sampling import CHILD_SAMPLE_SECONDS
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
@@ -284,6 +290,34 @@ def test_runtime_uses_only_earlier_hits_and_ambiguous_child_is_not_a_clue() -> N
     )
 
 
+def test_reports_state_the_covered_span_and_the_sample_limits() -> None:
+    """A verdict states how much history it read and the limits it inherits."""
+    records = (
+        _outcome(_key(1), "hit", runtime=0.25),
+        dc.replace(
+            _outcome(_key(1), "miss", runtime=2.0),
+            observed_at=OBSERVED_AT + dt.timedelta(hours=3),
+        ),
+    )
+
+    report = outcome_replay.evaluate_h2(records)
+
+    assert report.as_dict()["covered"] == {
+        "from": "2026-10-24T12:00:00Z",
+        "until": "2026-10-24T15:00:00Z",
+    }, "the report states the time span the store covers (R8)"
+    assert outcome_replay.evaluate_h2(()).as_dict()["covered"] == {
+        "from": None,
+        "until": None,
+    }, "an empty store reports no span rather than a fabricated one"
+    assert report.as_dict()["caveats"] == list(outcome_evidence.H2_LIMITS), (
+        "the H2 report states the quiet-window and sighting limits"
+    )
+    assert f"{CHILD_SAMPLE_SECONDS:g} s" in outcome_evidence.CHILD_SIGHTING_CAVEAT, (
+        "the stated interval matches the sampler's cadence (R9)"
+    )
+
+
 def test_store_cli_text_and_json_snapshots_include_semantic_sample_sizes(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -313,6 +347,12 @@ def test_store_cli_text_and_json_snapshots_include_semantic_sample_sizes(
     assert "100 evaluable of 2000 attributed" in text_output, (
         'store_cli_text_and_json_sna...: "100 evaluable of 2000 attributed" i'
     )
+    assert "covered 2026-10-24T12:00:00Z to 2026-10-24T12:00:00Z" in text_output, (
+        "the text report states the covered span"
+    )
+    assert "caveat: labels come from solo and unanimous windows" in text_output, (
+        "the text report states the quiet-window limit"
+    )
     assert text_output == snapshot(name="h2-text"), (
         'store_cli_text_and_json_sna...: text_output == snapshot(name="h2-tex'
     )
@@ -336,6 +376,13 @@ def test_store_cli_text_and_json_snapshots_include_semantic_sample_sizes(
     )
     assert report["child_sightings"]["unavailable"] == 1, (
         'store_cli_text_and_json_sna...: report["child_sightings"]["unavailab'
+    )
+    assert report["covered"] == {
+        "from": "2026-10-24T12:00:00Z",
+        "until": "2026-10-24T12:00:00Z",
+    }, "the JSON report carries the covered span"
+    assert report["caveats"] == list(outcome_evidence.H2_LIMITS), (
+        "the JSON report states both sample limits"
     )
     assert json_output == snapshot(name="h2-json"), (
         'store_cli_text_and_json_sna...: json_output == snapshot(name="h2-jso'
@@ -363,4 +410,10 @@ def test_missing_h2_store_reports_insufficient_json(
     )
     assert report["evaluable_records"] == 0, (
         'missing_h2_store_reports_in...: report["evaluable_records"] == 0'
+    )
+    assert report["covered"] == {"from": None, "until": None}, (
+        "a missing store reports no span"
+    )
+    assert report["caveats"] == list(outcome_evidence.H2_LIMITS), (
+        "a missing store still states the limits"
     )

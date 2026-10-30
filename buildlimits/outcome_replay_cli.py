@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import typing as typ
 from pathlib import Path
 
 from buildlimits import outcome_records, outcome_replay
@@ -63,7 +64,7 @@ def _empty_report(
     """
     if hypothesis == "h2":
         return outcome_replay.evaluate_h2(())
-    return outcome_replay.H3Report("insufficient", 0, 0, 0, 0)
+    return outcome_replay.evaluate_h3(())
 
 
 def _write_report(
@@ -84,12 +85,30 @@ def _write_report(
             f"child-only {_format_agreement(report.child_only_agreement)}; "
             f"misses seen {report.misses_seen}/{report.misses_with_child_observation}"
         )
-        return
-    print(
-        "H3 parser prediction: "
-        f"{report.verdict}; {report.attributed_outcomes} attributed outcomes, "
-        f"{report.evaluated_windows} windows, {report.counterexamples} counterexamples"
-    )
+    else:
+        print(
+            "H3 parser prediction: "
+            f"{report.verdict}; {report.attributed_outcomes} attributed outcomes, "
+            f"{report.evaluated_windows} windows, "
+            f"{report.counterexamples} counterexamples"
+        )
+    print(f"  covered {_covered_text(value)}")
+    for caveat in typ.cast("list[str]", value["caveats"]):
+        print(f"  caveat: {caveat}")
+
+
+def _covered_text(value: dict[str, object]) -> str:
+    """Describe the span of store history a verdict rests on.
+
+    Returns
+    -------
+    str
+        The covered ISO span, or a marker when the store held no records.
+    """
+    covered = typ.cast("dict[str, str | None]", value["covered"])
+    if covered["from"] is None or covered["until"] is None:
+        return "no records"
+    return f"{covered['from']} to {covered['until']}"
 
 
 def _format_agreement(value: float | None) -> str:
