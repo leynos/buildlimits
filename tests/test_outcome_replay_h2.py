@@ -19,7 +19,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_vocabulary import CacheResult
 
 
-_ADR = Path(__file__).parents[1] / "docs/adr-004-cache-outcome-recording.md"
+_ADR = Path(__file__).parents[1] / "docs/adr-005-cache-outcome-recording.md"
 
 
 def _key(index: int) -> CacheKey:
@@ -166,7 +166,7 @@ def test_minimum_sample_boundaries(
 
 
 def test_threshold_constants_match_the_accepted_adr() -> None:
-    """The implementation thresholds stay pinned to ADR 004's fixed text."""
+    """The implementation thresholds stay pinned to ADR 005's fixed text."""
     adr = _ADR.read_text(encoding="utf-8")
 
     assert outcome_replay.H2_SUPPORTED_AGREEMENT_PERCENT == 95, (

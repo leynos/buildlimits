@@ -22,61 +22,6 @@ class FakeCacheState(typ.TypedDict, total=False):
     statistics_queries: int
 
 
-class OutcomeHarness(typ.Protocol):
-    """Systemd harness attributes used by the outcome helper methods."""
-
-    work: Path
-    runtime: Path
-    env: dict[str, str]
-    adapter: Path
-    unit: str
-    sccache_unit: str
-
-    @property
-    def fake_config(self) -> Path:
-        """The fake server's optional scripting file."""
-
-    @property
-    def fake_rustc(self) -> Path:
-        """The executable fake compiler used by cacheable requests."""
-
-    @property
-    def state_home(self) -> Path:
-        """The isolated state root used by the supervisor."""
-
-    def run_adapter(
-        self,
-        compiler: Path,
-        arguments: list[str],
-        env: dict[str, str] | None = None,
-    ) -> subprocess.Popen[bytes]:
-        """Start the adapter with one compiler and its fixed argument vector.
-
-        Returns
-        -------
-        subprocess.Popen[bytes]
-            The running process with captured output streams.
-        """
-
-    def read_metric_events(self, event: str) -> list[dict[str, str]]:
-        """Read structured journal records for one fixed event name.
-
-        Returns
-        -------
-        list[dict[str, str]]
-            Matching structured records.
-        """
-
-    def fake_cache_state(self) -> FakeCacheState:
-        """Read the fake server's persistent counter snapshot.
-
-        Returns
-        -------
-        FakeCacheState
-            Identifier-free fake server counters and script position.
-        """
-
-
 @dc.dataclass(frozen=True, slots=True)
 class FakeCacheConfiguration:
     """Scripted fake-cache outcomes and bounded response delays."""
@@ -96,8 +41,18 @@ _DEFAULT_FAKE_CACHE_CONFIGURATION = FakeCacheConfiguration()
 class CacheOutcomeHarnessMixin:
     """Add fake-cache recording controls without enlarging the core harness."""
 
+    # The composed harness supplies these attributes. Declaring them here lets
+    # the helpers resolve them directly instead of through a self-referential
+    # protocol, which structural type checkers cannot satisfy recursively.
+    work: Path
+    runtime: Path
+    env: dict[str, str]
+    adapter: Path
+    unit: str
+    sccache_unit: str
+
     def run_adapter(
-        self: OutcomeHarness,
+        self,
         compiler: Path,
         arguments: list[str],
         env: dict[str, str] | None = None,
@@ -129,7 +84,7 @@ class CacheOutcomeHarnessMixin:
             stderr=subprocess.PIPE,
         )
 
-    def read_metric_events(self: OutcomeHarness, event: str) -> list[dict[str, str]]:
+    def read_metric_events(self, event: str) -> list[dict[str, str]]:
         """Read structured journal records for one fixed event name.
 
         Parameters
@@ -165,22 +120,22 @@ class CacheOutcomeHarnessMixin:
         ]
 
     @property
-    def state_home(self: OutcomeHarness) -> Path:
+    def state_home(self) -> Path:
         """The isolated state root used by the supervisor."""
         return self.work / "state"
 
     @property
-    def fake_config(self: OutcomeHarness) -> Path:
+    def fake_config(self) -> Path:
         """The fake server's optional scripting file."""
         return self.runtime / "fake-sccache-config.json"
 
     @property
-    def fake_rustc(self: OutcomeHarness) -> Path:
+    def fake_rustc(self) -> Path:
         """The executable fake compiler used by cacheable requests."""
         return self.work / "rustc"
 
     def compile_rustc(
-        self: OutcomeHarness,
+        self,
         *,
         metadata: str = "fixture",
         env: dict[str, str] | None = None,
@@ -219,7 +174,7 @@ class CacheOutcomeHarnessMixin:
         return self.run_adapter(self.fake_rustc, arguments, env)
 
     def configure_fake_cache(
-        self: OutcomeHarness,
+        self,
         configuration: FakeCacheConfiguration = _DEFAULT_FAKE_CACHE_CONFIGURATION,
     ) -> None:
         """Set scripted fake results and a bounded number of delayed readings."""
@@ -236,7 +191,7 @@ class CacheOutcomeHarnessMixin:
             encoding="utf-8",
         )
 
-    def fake_cache_state(self: OutcomeHarness) -> FakeCacheState:
+    def fake_cache_state(self) -> FakeCacheState:
         """Read the fake server's persistent, identifier-free counter snapshot.
 
         Returns
@@ -252,7 +207,7 @@ class CacheOutcomeHarnessMixin:
             json.loads(state_path.read_text(encoding="utf-8")),
         )
 
-    def outcome_store(self: OutcomeHarness) -> dict[str, object] | None:
+    def outcome_store(self) -> dict[str, object] | None:
         """Read the per-harness store only after it has been initialized.
 
         Returns
@@ -271,7 +226,7 @@ class CacheOutcomeHarnessMixin:
             return {"failure": decoded.reason}
         return {"records": decoded.records}
 
-    def server_children(self: OutcomeHarness) -> int:
+    def server_children(self) -> int:
         """Count compilations the fake cache server is running.
 
         Returns

@@ -3448,3 +3448,15 @@ Consult these documents:
   passed). Audit found no known vulnerabilities. The logs are under `/tmp` with
   the `reviewfix-46` suffix. EP-M6 to EP-M8 remain open for their recorded
   acceptance evidence and reconciliation; EP-M9 remains gated by G1.
+- 2026-10-30: `cache-hit-prediction` was rebased onto `origin/main` at
+  `9ea1ecc7`; the branch ADR became 005 because main now owns ADR 004. The
+  first post-rebase full gate run found three candidate defects that earlier
+  focused runs had not exercised together: the H2 threshold test still read the
+  pre-renumber ADR path; `CacheOutcomeHarnessMixin` declared its receivers as a
+  self-referential protocol, so `ty` could not accept the composed `Harness` (a
+  latent defect reproduced against the pre-rebase `HEAD`); and two test modules
+  exceeded the 400-line Pylint bound. The threshold test now reads ADR 005, the
+  mixin declares the harness attributes it uses, and `RecoveryWorld` and the
+  status-render fixtures moved to `cache_recovery_systemd_world.py` and
+  `status_render_states.py`, both listed in the developers' guide. Fresh
+  sequential gates remain pending for the repaired candidate.

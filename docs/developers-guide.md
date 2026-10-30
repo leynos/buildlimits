@@ -710,8 +710,10 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `cache_recovery_helpers.py`               | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                                      |
 | `cache_recovery_harness.py`               | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers                           |
 | `cache_recovery_machines.py`              | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`                                    |
+| `cache_recovery_systemd_world.py`         | `RecoveryWorld`, the isolated supervisor and waited builds behind the real-manager recovery scenarios                     |
 | `harness_processes.py`                    | `wait_for`, `start_adapter`, process cleanup and host process observations                                                |
 | `harness_status.py`                       | `HarnessStatus`, the status document, readiness and drain-fault queries                                                   |
+| `status_render_states.py`                 | Fixed status documents and their expected summary lines for the status-render tests                                       |
 | `sccache_host.py`                         | `sccache_host_marks` and private-server helpers for the opt-in real-binary check                                          |
 | `sccache_stats.py`                        | Test-only sccache 0.14.0 counter validation and redacted replay-window fixtures                                           |
 | `systemd_harness.py`                      | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling                          |

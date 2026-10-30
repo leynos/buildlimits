@@ -152,6 +152,13 @@ extend-ignore = [
 # tools and the vectors their tests supply, found on PATH as a build would.
 "tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 "tests/fixtures/fake_sccache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
+# The scenario world lives beside the test modules and drives the user's own
+# systemd tools with fixed argv. Its guards state the fixture preconditions a
+# scenario depends on, so they fail the scenario rather than debug it.
+"tests/cache_recovery_systemd_world.py" = ["assert", "suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# Expected operator-facing lines are compared verbatim, so wrapping them would
+# stop them matching the rendered summary they pin.
+"tests/status_render_states.py" = ["line-too-long"]
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
 banned-from = [
