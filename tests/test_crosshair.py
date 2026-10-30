@@ -22,10 +22,11 @@ BOUNDED_PROOFS = (
 KNOWN_INCONCLUSIVE = ("planned_limits_are_reachable",)
 """A descriptor-limit contract this module checks but does not claim to prove.
 
-Its integer arguments are unbounded, so an exhaustive confirmation is not
-expected. It is exercised by the descriptor tests instead, and naming it here
-keeps an unrelated inconclusive result from being mistaken for a regression in
-the four attribution proofs.
+It reports "Not confirmed" under this run's per-condition timeout, so its
+result is inconclusive rather than a counterexample; an unbounded domain does
+not by itself show that confirmation is impossible. It is exercised by the
+descriptor tests instead, and naming it here keeps an unrelated inconclusive
+result from being mistaken for a regression in the four attribution proofs.
 """
 
 CONFIRMED = "Confirmed over all paths."

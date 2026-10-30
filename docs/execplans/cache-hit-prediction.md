@@ -18,9 +18,12 @@ fixes are implemented, with full gates and a fresh committed review pending;
 EP-M6 to EP-M8 are reconciled against the candidate `b3be25f`, whose five
 sequential gates and assessment answers are recorded in the Progress section;
 the three defects raised by the review of `72e39e8`, and the three concerns
-raised by the proof assessment, are fixed and awaiting their gate run; the
-opt-in child-sighting measurement still needs a quiet-host acceptance run; G1
-is unrun and EP-M9 is unstarted)
+raised by the proof assessment, are fixed and gated, and that assessment
+accepted the four bounded proofs at `b234432`; the inconclusive-result
+rationale for the descriptor-limit contract was corrected after the assessment
+disputed it; the opt-in child-sighting measurement still needs a quiet-host
+acceptance run and is carried as outstanding performance acceptance; G1 is
+unrun and EP-M9 is unstarted)
 
 Branch: `cache-hit-prediction`. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
@@ -1356,6 +1359,16 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   describes the four contracts and their rejection cases as complementary
   checks and reserves "mutation control" for the deliberate-fault runs listed
   beside them.
+- [x] (2026-10-30) The proof assessment accepted the four bounded proofs at
+  `b234432`, within the domains its table names, and recorded no unresolved
+  concern. Its one correction was to the rationale, not the claim: the earlier
+  wording said the descriptor-limit contract's integer arguments are unbounded,
+  "so an exhaustive confirmation is not expected", which infers impossibility
+  from unboundedness. The test docstring and this plan now say only what the
+  run shows: the contract reports "Not confirmed" under the per-condition
+  timeout, which is inconclusive rather than a counterexample, and it stays
+  outside the claimed proofs. Latency acceptance remains open under the
+  implementation assessment.
 
 ## Surprises & discoveries
 
@@ -2250,9 +2263,10 @@ window whose delta is a sum of two or more distinct footprints is
     counterexample fails the test. The test prints the verifier version, the
     exact command and every per-target result, so the evidence is preserved
     with the run. `planned_limits_are_reachable` is a descriptor-limit
-    contract in the same module whose integer arguments are unbounded; it
-    reports "Not confirmed", is named in the test as outside the claimed
-    proofs, and is covered by the descriptor tests instead.
+    contract in the same module that reports "Not confirmed" under the run's
+    per-condition timeout, an inconclusive result rather than a
+    counterexample; the test names it as outside the claimed proofs, and the
+    descriptor tests cover those limits instead.
   - These contracts and the rejected cases beside them are complementary
     checks: they constrain what a correct implementation must decide. They
     are not mutation controls. The mutation evidence for O1 is the separate
