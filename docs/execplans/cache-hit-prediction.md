@@ -1841,6 +1841,23 @@ C-GATES.
   scripted-cache steps. These helpers remove repeated representations without
   merging the generation and sampling contracts or the separate replay
   assertions.
+- D40. Close-out recount against the rebase base. Decision: record the
+  delivered candidate's scope against
+  `9ea1ecc7b16bf213a09167887fac604a21cbbce4`, the `origin/main` commit this
+  branch was rebased onto, measured at candidate
+  `faac20b700868b27708aff7f02d325903d80d167`. The production diff
+  (`buildlimits/`) changes 52 files, adding 8,186 lines and deleting 65, a net
+  of 8,121 production lines. The whole PR diff changes 162 files, adding 26,593
+  lines and deleting 980, a net of 25,613 lines across 58 commits; tests
+  account for 100 of those files and 12,989 net lines, and documentation for
+  seven files and 4,215 net lines. The recount therefore lands inside D36's
+  49-to-57-file and 7,468-to-8,868-line W1 estimate, five files and 1,023 net
+  lines above D38's EP-M8 boundary recount. D38 keeps its historical comparison
+  against `42f40e4` for that boundary and is not superseded for that purpose.
+  Recount with `git diff --numstat <base> <head> [-- buildlimits]`; the
+  close-out commit that adds this decision is documentation only and adds no
+  production lines. The recount does not alter the owner's W1-only decision,
+  and EP-M9 remains gated on G1.
 
 ## Outcomes & retrospective
 
@@ -3570,3 +3587,15 @@ Consult these documents:
   typechecking, the full suite (2,454 passed, 41 skipped), Markdown and
   spelling, Nixie, audit, Makefile validation, user-systemd (36 passed, 2
   dylint-marker skips) and sccache-host (2 passed).
+- 2026-10-30: the EP-M8 close-out assessment asked for a base/head-bound
+  recount; D40 supplies it against `9ea1ecc7` at `faac20b`, leaving D38's
+  earlier comparison as the EP-M8 boundary record. Each of that review's four
+  defects and three omissions now has a commit: failure-path isolation and
+  cleanup totality (`9ab21cc`), sample identity freshness (`c159d7c`), the
+  once-a-minute reading aggregation (D6, `30a86ac`), the generated O4
+  differential proof (`9f34faa`), the child-sampling measurement (`f50ebda`),
+  and the replay span, caveats and status reason (`828a998`, `8be1b8a`). The
+  same gate run then found three Pylint messages in the evidence tests, fixed in
+  `faac20b` by testing the covered span directly in
+  `tests/test_outcome_evidence.py` and by simplifying the differential
+  machine's cleanup and inert-shell checks.
