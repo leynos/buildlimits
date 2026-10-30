@@ -1,0 +1,12 @@
+digraph G {
+    "0" [label="yield
+Actions: 0, Forks: 0
+State: {\"b\":0,\"g\":0}
+", color="black" penwidth="2" ];
+    "1" [label="yield
+Actions: 1, Forks: 1
+State: {\"b\":0,\"g\":1}
+", color="black" penwidth="2" ];
+    "0" -> "1" [label="1: Gate", color="forestgreen" penwidth="1"];
+    "1" -> "0" [label="2: Gate", color="forestgreen" penwidth="1"];
+}

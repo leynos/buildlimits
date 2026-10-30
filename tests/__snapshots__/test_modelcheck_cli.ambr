@@ -1,0 +1,14 @@
+# serializer version: 1
+# name: test_the_json_holds_one_record_per_reported_judgement
+  list([
+    dict({
+      'configuration': 'head',
+      'fairness': list([
+      ]),
+      'met': True,
+      'states': 4,
+      'subject': 'S1',
+      'verdict': 'holds',
+    }),
+  ])
+# ---

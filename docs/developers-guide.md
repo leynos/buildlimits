@@ -46,6 +46,7 @@ investigating a specific failure; reconcile with `make all` before committing.
 | `make typecheck`         | `ty` 0.0.89 against the project interpreter (`--python .venv`)                                    |
 | `make test`              | pytest under xdist over `tests/` and the package's doctests                                       |
 | `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
+| `make fizzbee`           | Installs the pinned FizzBee checker into the shared XDG cache; a second run is a no-op            |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
 
 _Table 1: Make targets and the gates behind them._
@@ -615,32 +616,38 @@ live in `tests/fixtures`.
 
 Use these before writing a new arrange step; extend one rather than copying it.
 
-| Module                             | Provides                                                                                            |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `conftest.py`                      | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures |
-| `request_helpers.py`               | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
-| `pool_helpers.py`                  | `FakePool` and `attach_pool`                                                                        |
-| `descriptor_helpers.py`            | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
-| `descriptor_guard.py`              | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                          |
-| `launch_helpers.py`                | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
-| `adapter_doubles.py`               | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
-| `toolchain_trees.py`               | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler   |
-| `journal_fixtures.py`              | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
-| `listener_helpers.py`              | `watched_listener`, a listener under `ListenerPressure` control                                     |
-| `cache_recovery_helpers.py`        | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
-| `cache_recovery_harness.py`        | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
-| `cache_recovery_machines.py`       | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
-| `harness_processes.py`             | `wait_for`, `start_adapter`, process cleanup and host process observations                          |
-| `harness_status.py`                | `HarnessStatus`, the status document, readiness and drain-fault queries                             |
-| `systemd_harness.py`               | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling    |
-| `rustc_linter_acceptance.py`       | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios       |
-| `rustc_query_host_checks.py`       | Query and readiness assertions shared by host query and timing scenarios                            |
-| `rustc_query_host_observations.py` | Compact host acceptance evidence and package-cache lock-wait observations                           |
-| `rustc_query_host_support.py`      | Private Cargo fixtures, held-token barriers and captured command output                             |
-| `rustc_query_probe_records.py`     | `ProbeRecord` and JSON-line parsing for completed timing-shim observations                          |
-| `rustc_query_support.py`           | `cargo_probe` and `temporary_executable` for rustc query and property tests                         |
-| `rustc_query_timing_shim.py`       | Sibling-adapter timing shim with JSON-line probe records                                            |
-| `harness_units.py`                 | User-manager readiness, acceptance marks, transient unit control and properties                     |
+| Module                             | Provides                                                                                                          |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `conftest.py`                      | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures               |
+| `request_helpers.py`               | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                                         |
+| `pool_helpers.py`                  | `FakePool` and `attach_pool`                                                                                      |
+| `descriptor_helpers.py`            | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                                     |
+| `descriptor_guard.py`              | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                                        |
+| `launch_helpers.py`                | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                                      |
+| `adapter_doubles.py`               | `immediate_retry` and `script_adapter` for driving the adapter in-process                                         |
+| `toolchain_trees.py`               | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler                 |
+| `journal_fixtures.py`              | `journal_runner`, `fixture_query` and the native `journal_receiver`                                               |
+| `listener_helpers.py`              | `watched_listener`, a listener under `ListenerPressure` control                                                   |
+| `cache_recovery_helpers.py`        | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                              |
+| `cache_recovery_harness.py`        | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers                   |
+| `cache_recovery_machines.py`       | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`                            |
+| `harness_processes.py`             | `wait_for`, `start_adapter`, process cleanup and host process observations                                        |
+| `harness_status.py`                | `HarnessStatus`, the status document, readiness and drain-fault queries                                           |
+| `systemd_harness.py`               | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling                  |
+| `rustc_linter_acceptance.py`       | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios                     |
+| `rustc_query_host_checks.py`       | Query and readiness assertions shared by host query and timing scenarios                                          |
+| `rustc_query_host_observations.py` | Compact host acceptance evidence and package-cache lock-wait observations                                         |
+| `rustc_query_host_support.py`      | Private Cargo fixtures, held-token barriers and captured command output                                           |
+| `rustc_query_probe_records.py`     | `ProbeRecord` and JSON-line parsing for completed timing-shim observations                                        |
+| `rustc_query_support.py`           | `cargo_probe` and `temporary_executable` for rustc query and property tests                                       |
+| `rustc_query_timing_shim.py`       | Sibling-adapter timing shim with JSON-line probe records                                                          |
+| `harness_units.py`                 | User-manager readiness, acceptance marks, transient unit control and properties                                   |
+| `fizzbee_spike.py`                 | The scratch-directory `run_model` runner, output masking and error-graph readers                                  |
+| `fizzbee_expectations.py`          | `Expectation`, `check` and `paired`: what one run or a pass/fail pair must show, enforced per test                |
+| `modelcheck_cases.py`              | One expectation, result, configuration and trace of each kind, named once for the domain tests                    |
+| `modelcheck_doubles.py`            | `FakeChecker`, `Verbatim`, `Restated` and `FixedSource`: recorded checker output replayed through the real parser |
+| `modelcheck_scenarios.py`          | The model text, the `Matrix` one model-check scenario builds, and the readers its steps use                       |
+| `modelcheck_cli_cases.py`          | The command lines and expected exit statuses the CLI tests share                                                  |
 
 _Table 4: Shared test helper modules._
 
@@ -656,6 +663,33 @@ treat a repeat as a signal to raise the search budget, not to delete the
 assertion. CrossHair proves the contracts in `tests/crosshair_contracts.py`.
 Snapshot tests pin rendered status, recovery and metrics output; pair any new
 snapshot with semantic assertions for the behaviour it represents.
+
+Tests marked `fizzbee` run the pinned model checker, so they are opt-in:
+`tests/conftest.py` skips them unless `BUILD_LIMITS_MODEL_CHECK=1`, and the
+skip reason names the variable. With the variable set, a missing binary is a
+failure rather than a skip, because an opted-in run that checked nothing must
+not report success. `make fizzbee` installs the binary; run the tests with
+`BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -m fizzbee`. `make test` never
+runs them and stays hermetic. Every test copies its spec into pytest's scratch
+directory first, so a run leaves `models/` untouched; `tests/fizzbee_spike.py`
+holds the shared runner, including the process-group kill on timeout.
+`tests/test_fizzbee_spike.py` asserts the language and checker behaviour RFC
+0001 records, `tests/test_fizzbee_graphs.py` pins the artefacts a run writes
+and the state counts the RFC quotes, and `tests/test_fizzbee_fixtures.py`
+re-runs every captured class and compares its standard output, exit status and
+error graph with `tests/fixtures/fizzbee/`, so a checker version bump that
+changes any of them fails there. The three modules are split this way because a
+single one outgrew the 400-line limit. `tests/test_fizzbee_opt_in.py` pins the
+opt-in itself: which values enable it, that a missing binary fails rather than
+skips, and that the marker is registered. `tests/fizzbee_expectations.py`
+states what a run must show — the `PASSED` line, the `FAILED` line for safety
+and deadlock failures, or the separate `FAILED: Liveness check failed` line —
+together with the counts it must explore and, where the question turns on it,
+the actions its counterexample must step through, in one `Expectation` value.
+Each test then reads as its property rather than as repeated boilerplate. A
+test that poses a fairness or interleaving question as a pass/fail pair calls
+`paired`, which runs both models in their own subdirectories and returns the
+failing run.
 
 ### 11.4. Host acceptance
 
@@ -751,6 +785,31 @@ session- or module-scoped fixture is set up before the baseline and torn down
 after the comparison, so its descriptors are outside the guard and must be
 closed by that fixture's own teardown.
 
+### 11.6. Model checking
+
+`modelcheck/` is a top-level package beside `buildlimits/` and outside the
+wheel (ADR 005). It drives the pinned FizzBee checker over the admission model
+and turns one run into a verdict. Run it through the module:
+
+```sh
+uv run python -m modelcheck check models/admission --fizz .tools/fizzbee/fizz
+uv run python -m modelcheck drift models/admission
+```
+
+`check` exits 0 when every configuration meets its expectations, 1 when one
+does not, and 2 when the tool itself failed; `--bounds` selects the routine or
+nightly declaration, `--only` narrows the matrix, `--json` writes the records
+and `--save-traces` regenerates the reviewed trace files.
+
+The package is a hexagon: the pure modules hold the policy, `ports.py` names
+the collaborators, and `adapters/` are the only modules that touch a process, a
+file or `buildlimits`. `tests/test_modelcheck_layering.py` walks the pure
+modules' syntax trees so the boundary is checked rather than assumed. Tests
+marked `fizzbee` run the real checker and are skipped unless
+`BUILD_LIMITS_MODEL_CHECK=1`; the behavioural scenarios instead replay recorded
+output through the real parser, so a broken parser fails them without the
+binary.
+
 ## 12. Static-analysis exceptions
 
 Every exception is recorded in `pyproject.toml` with its reason; review the
@@ -772,6 +831,18 @@ reason when the code it names changes.
   `[[tool.duplication_gate.allow]]` naming every location, so a further copy
   still blocks. Prefer a `path::name` key; a bare path key covers every unnamed
   fragment in that file, so add one only when no name is available.
+- **`modelcheck`.** The package needed no Skylos entry point and no Vulture
+  name, and `make dead-code` passes with the exceptions here unchanged.
+  `__main__.py` reaches `main` through its `__main__` guard and constructs the
+  adapters inside a function `main` calls, so the call graph has no edge Skylos
+  cannot follow; the two test-support modules are ordinary helpers whose every
+  name a test calls. Its Ruff findings were each local to one line, so they are
+  inline `# ruff: ignore[...]` suppressions with a reason rather than per-file
+  ignores. Of its six duplication allowances, three are import lists shared
+  with the modules named beside them, one is the pair of tests that must both
+  judge through `_judge_row`, one is two builders that share only the numpy
+  Returns section, and one is a single `Path.mkdir` call two unrelated helpers
+  share.
 
 ## 13. Repository automation
 

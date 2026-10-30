@@ -1,0 +1,7 @@
+digraph G {
+    "0" [label="yield
+Actions: 0, Forks: 0
+State: {\"g\":0,\"served\":false}
+", color="black" penwidth="2" ];
+    "0" -> "0" [label="1: stutter", color="black" penwidth="1"];
+}
