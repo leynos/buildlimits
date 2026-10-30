@@ -3,6 +3,8 @@
 import ast
 from pathlib import Path
 
+from import_graph_test_helpers import package_closure
+
 _PACKAGE = Path(__file__).parents[1] / "buildlimits"
 _DOMAIN_MODULES = (
     "outcome_vocabulary.py",
@@ -134,3 +136,12 @@ def test_outcome_domain_modules_remain_pure() -> None:
         assert pathlib_imports_are_pure, filename
         assert called_names.isdisjoint(_FORBIDDEN_CALLS), filename
         assert called_attributes.isdisjoint(_FORBIDDEN_CLOCK_CALLS), filename
+
+
+def test_outcome_domain_modules_never_reach_admission() -> None:
+    """The outcome domain must not depend on admission decisions (O4)."""
+    roots = tuple(filename.removesuffix(".py") for filename in _DOMAIN_MODULES)
+    closure = package_closure(_PACKAGE, roots)
+
+    assert set(roots) <= closure, "the closure reaches every domain module"
+    assert "admission" not in closure, "the domain reaches the admission machine"

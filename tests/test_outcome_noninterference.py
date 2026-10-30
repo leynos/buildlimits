@@ -1,21 +1,20 @@
 """Admission traces stay identical with the recording shell on or off."""
 
 import ast
-import dataclasses as dc
 import typing as typ
 from pathlib import Path
 
-from outcome_recorder_test_helpers import stats_text
-from outcome_shell_test_support import (
-    OutcomeWorld,
-    OutcomeWorldOptions,
-    make_outcome_world,
+from differential_trace_test_helpers import (
+    CompletingStatistics,
+    DifferentialObservations,
+    Trace,
+    cached_entry,
 )
-from request_helpers import crate_pending
+from import_graph_test_helpers import package_closure
+from outcome_shell_test_support import OutcomeWorldOptions, make_outcome_world
 
 from buildlimits.admission import Launch
 from buildlimits.effects import Exit, ReturnToken
-from buildlimits.outcome_ports import StatisticsText, Ticket
 from buildlimits.outcome_recorder_types import Querying
 from buildlimits.supervisor_outcome_setup import GroupEnding
 
@@ -28,74 +27,19 @@ _ADMISSION_MODULES = (
     "group_drain.py",
     "cache_recovery.py",
 )
+_DECISION_MODULES = (
+    "admission",
+    "admission_state",
+    "effects",
+    "server_watch",
+    "cache_recovery",
+    "recovery_starvation",
+    "recovery_roots",
+    "recovery_outlook",
+)
 
 if typ.TYPE_CHECKING:
-    from buildlimits.effects import Effect
-    from buildlimits.outcome_record_format import StoreRecord
-    from buildlimits.pending_request import Pending
     from buildlimits.supervisor_outcomes import OutcomeShell
-
-
-@dc.dataclass(frozen=True, slots=True)
-class _DifferentialObservations:
-    """Authority-side trace and optional recording effects from one run."""
-
-    input_trace: list[tuple[float, str, tuple[object, ...]]]
-    dispatched_effects: list[tuple[float, str, tuple[object, ...]]]
-    token_return_ticks: list[tuple[float, bytes]]
-    group_states: list[object]
-    metrics: list[tuple[str, dict[str, object]]]
-    records: list[StoreRecord]
-    pool_tokens: list[bytes]
-
-
-class CompletingStatistics:
-    """Return deterministic cumulative statistics on every loop poll."""
-
-    def __init__(self) -> None:
-        """Start the baseline and one miss footprint sequence."""
-        self.polls = 0
-
-    def start(self, now: float) -> Ticket:
-        """Start one immediate, scripted statistics query."""
-        return Ticket(self.polls + 1, now + 2.0)
-
-    def poll(self, ticket: Ticket, now: float) -> StatisticsText:
-        """Complete the query with a baseline or a single miss footprint."""
-        del ticket, now
-        self.polls += 1
-        if self.polls < 3:
-            return StatisticsText(stats_text())
-        return StatisticsText(
-            stats_text(
-                compile_requests=1,
-                compilations=1,
-                cache_misses=1,
-                requests_executed=1,
-            )
-        )
-
-    @staticmethod
-    def close(ticket: Ticket) -> None:
-        """Accept terminal query cleanup without retaining opaque tickets."""
-        del ticket
-
-
-def _cached_entry() -> Pending:
-    """Build one safe cached compiler request for the shell's launch hook."""
-    entry = crate_pending(1)
-    entry.cache_path = "cached"
-    entry.request = dc.replace(
-        entry.request,
-        argv=("rustc", "--crate-name=serde", "--crate-type=lib", "lib.rs"),
-        cwd="/work/serde-1.2.3",
-        env={
-            "CARGO_PKG_NAME": "serde",
-            "CARGO_PKG_VERSION": "1.2.3",
-            "CARGO_MANIFEST_DIR": "/work/serde-1.2.3",
-        },
-    )
-    return entry
 
 
 def _delay_query_for_token(
@@ -107,72 +51,14 @@ def _delay_query_for_token(
         shell.on_tick(now)
 
 
-@dc.dataclass(slots=True)
-class _Trace:
-    """Mutable state and recorded observations for one differential run."""
-
-    world: OutcomeWorld
-    clock: list[float]
-    input_trace: list[tuple[float, str, tuple[object, ...]]] = dc.field(
-        default_factory=list
-    )
-    dispatched_effects: list[tuple[float, str, tuple[object, ...]]] = dc.field(
-        default_factory=list
-    )
-    token_return_ticks: list[tuple[float, bytes]] = dc.field(default_factory=list)
-    group_states: list[object] = dc.field(default_factory=list)
-    pool_tokens: list[bytes] = dc.field(default_factory=lambda: [b"+"])
-
-    def tick(self, now: float) -> None:
-        """Advance both the observation clock and the outcome shell."""
-        self.clock[0] = now
-        self.world.shell.on_tick(now)
-
-    def observe(
-        self, name: str, args: tuple[object, ...], effects: list[Effect]
-    ) -> list[Effect]:
-        """Record one explicit admission operation and its returned effects.
-
-        Returns
-        -------
-        list[Effect]
-            The effects produced by the recorded operation.
-        """
-        self.input_trace.append((self.clock[0], name, args))
-        self.dispatched_effects.append((self.clock[0], name, tuple(effects)))
-        for effect in effects:
-            if isinstance(effect, ReturnToken):
-                self.token_return_ticks.append((self.clock[0], effect.token))
-                self.pool_tokens.append(effect.token)
-        return effects
-
-    def observations(self) -> _DifferentialObservations:
-        """Return the recorded observations in the shared result shape.
-
-        Returns
-        -------
-        _DifferentialObservations
-            Admission traces, token timings and optional recording outputs.
-        """
-        return _DifferentialObservations(
-            input_trace=self.input_trace,
-            dispatched_effects=self.dispatched_effects,
-            token_return_ticks=self.token_return_ticks,
-            group_states=self.group_states,
-            metrics=self.world.metrics.events,
-            records=self.world.writer.records,
-            pool_tokens=self.pool_tokens,
-        )
-
-
 def _differential_run(
     tmp_path: Path, *, recording: bool, delay_token: bool = False
-) -> _DifferentialObservations:
+) -> DifferentialObservations:
     """Drive one cache-group trace and return its authority-side observations.
 
     Returns
     -------
-    _DifferentialObservations
+    DifferentialObservations
         Admission traces, token timings and optional recording outputs.
     """
     clock = [0.0]
@@ -184,7 +70,7 @@ def _differential_run(
             clock=lambda: clock[0],
         ),
     )
-    trace = _Trace(world, clock)
+    trace = Trace(world, clock)
     _warm_previous_group(trace, recording=recording)
     trace.observe("submit", (1,), world.admission.submit(1))
     _delay_query_for_token(
@@ -199,11 +85,11 @@ def _differential_run(
     return trace.observations()
 
 
-def _warm_previous_group(trace: _Trace, *, recording: bool) -> None:
+def _warm_previous_group(trace: Trace, *, recording: bool) -> None:
     """Run one completed cached request so a statistics read becomes due."""
     trace.tick(0.0)
     trace.tick(0.1)
-    trace.world.shell.launched(_cached_entry(), "previous")
+    trace.world.shell.launched(cached_entry(), "previous")
     trace.world.shell.emptied(GroupEnding("previous", True, True))
     trace.tick(1.1)
     if recording:
@@ -211,13 +97,13 @@ def _warm_previous_group(trace: _Trace, *, recording: bool) -> None:
         assert isinstance(state, Querying), "the recorder starts a due statistics query"
 
 
-def _drain_one_group(trace: _Trace) -> None:
+def _drain_one_group(trace: Trace) -> None:
     """Launch one cached group, drain it, and record its held token state."""
     admission = trace.world.admission
     token = trace.pool_tokens.pop(0)
     effects = trace.observe("token_arrived", (token,), admission.token_arrived(token))
     launch = next(effect for effect in effects if isinstance(effect, Launch))
-    trace.world.shell.launched(_cached_entry(), launch.group_id)
+    trace.world.shell.launched(cached_entry(), launch.group_id)
     trace.observe(
         "leader_exited",
         (launch.group_id, Exit(signal=9)),
@@ -255,6 +141,15 @@ def test_decision_modules_do_not_import_outcome_recording() -> None:
             for alias in node.names
         }
         assert not any(name.startswith("outcome_") for name in imported), filename
+
+
+def test_decision_module_closure_excludes_outcome_recording() -> None:
+    """Nothing the decision roots reach may be recording code (C-OBS)."""
+    closure = package_closure(ROOT / "buildlimits", _DECISION_MODULES)
+
+    assert set(_DECISION_MODULES) <= closure, "the closure reaches every root"
+    leaked = sorted(name for name in closure if name.startswith("outcome_"))
+    assert not leaked, f"decision modules transitively reach recording code: {leaked}"
 
 
 def test_outcome_hooks_follow_the_admission_effects() -> None:

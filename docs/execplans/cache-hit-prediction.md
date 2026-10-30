@@ -1225,6 +1225,54 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   `StoreWriter.close` bound; three serial repeats and a full re-run passed, so
   the overrun is recorded as host contention rather than a deterministic
   defect. Local CodeRabbit review and the owner gate G1 remain outstanding.
+- [x] (2026-10-30) `b6a4045` cleared the thirty-four CodeScene findings the
+  rebased candidate carried by extracting the piece that made each function or
+  module hard to read: crate-name helpers in `outcome_key`, document parsing in
+  `outcome_stats`, section builders in `metrics_report`, reading and sampling
+  steps in the recorder, and the supervisor's cache watch and recovery
+  construction in `supervisor_wiring`. `outcome_footprints` now holds Table A
+  beside the arithmetic that reads it. Skylos entrypoints and duplication
+  exceptions name the call path that reaches each extraction, and
+  `tests/test_skylos_configuration.py` pins them. No intended behaviour change;
+  the full suite passed with 2,470 tests, 41 skipped and 59 snapshots.
+- [x] (2026-10-30) `9ab21cc` answered the assessment's first defect: the fault
+  path called `_close_resources(0.1)`, so a stalled writer held the selector
+  thread for about 100 ms after a launch, tick or status failure, and a reaper
+  or writer exception could escape a public entry point. Faults now only
+  request cancellation, later ticks advance the same work through
+  `service_failed()`, `close()` still spends its bounded deadline and also runs
+  when already disabled, and every cleanup step is guarded on its own. Resource
+  and counter ownership moved to `outcome_resources` and
+  `outcome_shell_stats`, with failure-path and secondary-fault regressions.
+- [x] (2026-10-30) `c159d7c` answered the second defect: `full_emit_metadata`
+  returned every cached classification whose process was still a member,
+  including identities the current sample never inspected. O12 counts a
+  classification only when the sample re-reads that identity, so each sample
+  now builds its result from the identities it validated and drops stale
+  entries. Regressions cover a cached PID that becomes unreadable, one pushed
+  outside the 64-process batch, and readability returning.
+- [x] (2026-10-30) `30a86ac` implemented D6's transition-only grain.
+  `OutcomeTelemetry` emits a label-only event when the reading state changes
+  and accumulates `readings`, `readings_skipped`, `readings_failed`,
+  `child_samples_taken` and `child_sample_failures` into one summary per
+  minute, flushed from each tick and forced at shutdown. Fake-clock tests cover
+  event volume, exact totals and the forced final flush; the internal contract
+  is recorded in the developers' guide.
+- [x] (2026-10-30) The O4 and C-OBS proof surface is now generated rather than
+  hand-traced. `tests/import_graph_test_helpers.py` resolves the package's own
+  import graph, including `TYPE_CHECKING` blocks, to a transitive closure.
+  `tests/test_outcome_boundaries.py` proves the outcome domain never reaches
+  `admission`, and `tests/test_outcome_noninterference.py` proves the eight
+  decision roots never reach recording code. A Hypothesis state machine in
+  `tests/test_outcome_differential.py` drives paired recording and null worlds
+  through submits, tokens, exits, empties and server polls and compares the
+  admission inputs, dispatched effects, token-return ticks, group states and
+  pool tokens after every step; a deterministic seed completes one real
+  reading, and an invariant asserts the seed stays non-vacuous. The shared
+  fakes live in `differential_trace_test_helpers.py`, and the duplication gate's
+  reasoned exceptions were reconciled with the moved import block. Focused
+  checks pass (11 tests, Ruff, `ty`, interrogate, CodeScene 10.00 on each new
+  file); the full sequential gate run remains pending.
 
 ## Surprises & discoveries
 

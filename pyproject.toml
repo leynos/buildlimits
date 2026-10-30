@@ -1061,12 +1061,36 @@ reason = "Matching import lists: both modules drive the same scripted machine th
 [[tool.duplication_gate.allow]]
 members = [
     "tests/test_group_drain_metrics.py",
+    "buildlimits/outcome_resources.py",
     "buildlimits/supervisor_wiring.py",
     "tests/test_cache_recovery_telemetry.py",
     "tests/test_recovery_roots_deadline.py",
     "buildlimits/group_recovery.py",
+    "tests/differential_trace_test_helpers.py",
 ]
-reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+reason = "Matching import lists: each module names the protocol, port or annotation symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/server_watch.py",
+    "tests/test_outcome_totality.py",
+]
+reason = "Both modules open a TYPE_CHECKING block for their own annotation dependencies; the repeated shape is the block boilerplate, not shared imports."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/outcome_shell_test_support.py",
+    "tests/test_outcome_totality.py",
+]
+reason = "The detector reports one-line close-log fragments without a unit name, so a member key cannot distinguish them. They belong to separate statistics, server-process and writer fakes in two modules, each with independent close arguments and lifecycle contracts."
+
+[[tool.duplication_gate.allow]]
+unit = "buildlimits/supervisor_outcomes.py"
+reason = "on_tick and close each open with the same closed guard so a closed shell stays inert; extracting it would hide which public entry points are guarded."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_outcome_differential.py"
+reason = "The rule bodies forward their drawn argument to the shared _apply mirror; one identical call line per rule is the state machine's shape, not shared logic."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -1442,10 +1466,6 @@ members = [
     "tests/cache_outcome_harness.py::fake_rustc",
 ]
 reason = "These similarly shaped properties resolve distinct fixture resources, the private state directory and fake compiler executable."
-
-[[tool.duplication_gate.allow]]
-unit = "tests/outcome_shell_test_support.py"
-reason = "The detector reports both one-line close-log fragments without a unit name, so a member key cannot distinguish them. They belong to separate statistics and writer fakes with independent close arguments and lifecycle contracts."
 
 [[tool.duplication_gate.allow]]
 members = [
