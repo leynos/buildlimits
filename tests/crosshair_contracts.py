@@ -88,7 +88,8 @@ def unanimous_hit_windows_keep_the_hit_label(launch_count: int) -> None:
         requests_executed=launch_count,
         cache_hits=launch_count,
     )
-    window = tuple(WindowEntry("g", is_clean=True) for _ in range(launch_count))
+    groups = tuple(f"g{index}" for index in range(launch_count))
+    window = tuple(WindowEntry(group, is_clean=True) for group in groups)
 
     result = attribute(
         Reading(generation, baseline), Reading(generation, after), window
@@ -96,8 +97,8 @@ def unanimous_hit_windows_keep_the_hit_label(launch_count: int) -> None:
 
     assert result.kind == "unanimous", "repeated hits have unanimous attribution"
     assert result.reason == "none", "repeated hits have no failure reason"
-    assert all(label == "hit" for _, label in result.labels), (
-        "each repeated hit keeps its label"
+    assert result.labels == tuple((group, "hit") for group in groups), (
+        "each repeated hit keeps its own label"
     )
 
 
@@ -148,7 +149,8 @@ def repeated_cache_errors_are_not_unanimous(launch_count: int) -> None:
         requests_executed=launch_count,
         cache_errors=launch_count,
     )
-    window = tuple(WindowEntry("g", is_clean=True) for _ in range(launch_count))
+    groups = tuple(f"g{index}" for index in range(launch_count))
+    window = tuple(WindowEntry(group, is_clean=True) for group in groups)
 
     result = attribute(
         Reading(generation, baseline), Reading(generation, after), window
@@ -158,7 +160,7 @@ def repeated_cache_errors_are_not_unanimous(launch_count: int) -> None:
     assert result.reason == "mixed_window", (
         "repeated errors remain an unattributed mixture"
     )
-    assert all(label == "unattributed" for _, label in result.labels), (
+    assert result.labels == tuple((group, "unattributed") for group in groups), (
         "no launch in a repeated error window receives a label"
     )
 
