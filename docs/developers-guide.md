@@ -522,7 +522,13 @@ operations with the fixed `statistics_query`, `store_io` and `salt` failure
 categories.
 
 `OutcomeTelemetry` maps reducer outputs to those metrics and owns the bounded
-`statistics_read` span. The recorder's pure transitions stay in
+`statistics_read` span. `outcome_reading` is transition-only: it carries a
+changed `outcome_reason` or `gate_reason` label, while the counters
+`readings`, `readings_skipped`, `readings_failed`, `child_samples_taken` and
+`child_sample_failures` accumulate and are reported by one summary per minute
+and one forced summary at shutdown. Labels and counters never share an event,
+so report totals are exact sums and a steady failing loop costs two events a
+minute rather than one per reading. The recorder's pure transitions stay in
 `outcome_recorder`; `supervisor_outcomes` owns the server identity probe,
 statistics child and privacy-safe key construction, and `outcome_resources`
 owns the reaper and the asynchronous store. A recorder fault on the selector

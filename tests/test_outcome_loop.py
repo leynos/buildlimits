@@ -202,9 +202,9 @@ def test_idle_baseline_does_not_repeat_statistics_or_selection(
     assert tracer.started.get("admission_selection", 0) == selection_count, (
         "idle ticks do not open selection spans"
     )
-    assert len(world.metrics.events) == reading_count, (
-        "idle ticks do not emit skipped-reading metrics"
-    )
+    assert world.metrics.events[reading_count:] == [
+        ("outcome_reading", {"readings": 1})
+    ], "an idle minute costs one aggregate summary, not a skip per tick"
 
 
 def test_disabled_recorder_stops_sampling_and_reports_disabled(
@@ -268,5 +268,17 @@ def test_restart_barrier_suppresses_statistics_query(tmp_path: Path) -> None:
     assert not world.statistics.starts, "a barrier blocks the statistics child"
     assert world.metrics.events[-1] == (
         "outcome_reading",
-        {"gate_reason": "barrier", "readings_skipped": 1},
-    ), "the fixed gate reason is observable"
+        {"gate_reason": "barrier"},
+    ), "a changed gate reason is observable as a transition"
+
+    world.shell.on_tick(1.0)
+    assert world.metrics.events[-1] == (
+        "outcome_reading",
+        {"gate_reason": "barrier"},
+    ), "an unchanged gate reason is not repeated on the next tick"
+
+    world.shell.on_tick(60.0)
+    assert world.metrics.events[-1] == (
+        "outcome_reading",
+        {"readings_skipped": 3},
+    ), "the once-a-minute summary carries the skip total"

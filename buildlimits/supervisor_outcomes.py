@@ -243,14 +243,14 @@ class OutcomeShell:
         )
 
     def _on_tick(self, now: float) -> None:
-        """Advance one helper, writer handoff and scheduler opportunity."""
+        """Advance one helper, writer handoff, gate and reading summary."""
         self._advance_helper(now)
         self._drain_writer()
-        if isinstance(self._recorder.state, Disabled):
-            return
-        self._sample_children(now)
-        if self._is_gate_due(now):
-            self._open_gate(now)
+        if not isinstance(self._recorder.state, Disabled):
+            self._sample_children(now)
+            if self._is_gate_due(now):
+                self._open_gate(now)
+        self._telemetry.flush(now)
 
     def _advance_helper(self, now: float) -> None:
         """Poll the query helper while it holds a ticket, else the reaper."""
@@ -370,6 +370,7 @@ class OutcomeShell:
             now = self._supervisor.clock()
             outputs = self._recorder.advance(Stopping(now, self._wall_clock()))
             self._telemetry.publish(outputs)
+            self._telemetry.flush(now, force=True)
             for record in outputs.records:
                 self._resources.append(record)
         self._resources.service_failed()
@@ -382,6 +383,8 @@ class OutcomeShell:
         self._close_resources(timeout)
 
     def _close_resources(self, timeout: float) -> None:
-        """Reap the query before giving the remaining bound to disk."""
+        """Publish the last reading summary, then release owned resources."""
+        with contextlib.suppress(Exception):
+            self._telemetry.flush(self._supervisor.clock(), force=True)
         self._resources.close(timeout)
         self._closed = True
