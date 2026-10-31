@@ -21,6 +21,7 @@ if typ.TYPE_CHECKING:
 
 CACHE_MODES = ("sccache", "direct")
 CACHE_RECOVERY_POLICIES = ("manual", "starved")
+CACHE_OUTCOMES = ("off", "record")
 
 
 class ConfigError(Exception):
@@ -95,6 +96,9 @@ class SupervisorConfig:
         ``manual`` to recover the managed server only when an operator asks,
         or ``starved`` to also recover it when a waiting request cannot
         progress because the server retains detached work.
+    cache_outcomes : str
+        ``off`` to leave outcome recording disabled, or ``record`` to enable
+        it when the build supports the recording integration.
     recovery_marker : Path
         The restart barrier. The managed service refuses to start while this
         path exists, so recovery cannot leave the cache running with its
@@ -117,6 +121,7 @@ class SupervisorConfig:
         default_factory=lambda: runtime_dir() / "sccache.sock"
     )
     cache_recovery: str = "starved"
+    cache_outcomes: str = "off"
     recovery_marker: Path = dc.field(
         default_factory=lambda: runtime_dir() / "cache-recovery"
     )
@@ -218,6 +223,16 @@ _RANGE_RULES: tuple[tuple[cabc.Callable[[SupervisorConfig], bool], str], ...] = 
     (
         lambda config: config.cache_recovery in CACHE_RECOVERY_POLICIES,
         (f"cache_recovery must be one of {', '.join(CACHE_RECOVERY_POLICIES)}"),
+    ),
+    (
+        lambda config: config.cache_outcomes in CACHE_OUTCOMES,
+        f"cache_outcomes must be one of {', '.join(CACHE_OUTCOMES)}",
+    ),
+    (
+        lambda config: (
+            config.cache_outcomes != "record" or config.cache_mode == "sccache"
+        ),
+        'cache_outcomes="record" requires cache_mode="sccache"',
     ),
     (
         lambda config: (

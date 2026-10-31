@@ -6,8 +6,8 @@
 ## Guides
 
 - [User's guide](users-guide.md) explains how to install, configure and
-  operate compile admission: status, cache recovery, metrics and capacity
-  changes.
+  operate compile admission: status, cache recovery, outcome recording, metrics
+  and capacity changes.
 - [Developer's guide](developers-guide.md) is the maintainer's manual: quality
   gates, the supervisor's internal interfaces, the test helpers and the
   repository's static-analysis exceptions.
@@ -16,6 +16,9 @@
 - [Migrating from the dev-env-rocky copy](migrating-from-dev-env-rocky.md)
   lists what operators must change when moving from `build_limits` in
   dev-env-rocky to this repository's 0.1.0 release.
+- [Migrating to cache-outcome recording](migrating-to-cache-outcome-recording.md)
+  gives the opt-in, rollback and downgrade sequence for the outcome store and
+  its journal vocabulary.
 
 ## Decisions
 
@@ -33,6 +36,9 @@
   status](adr-004-admission-readiness-status.md) records how readiness differs
   from supervisor health and cache reachability, while preserving health-only
   status checks and token accounting.
+- [ADR 005: cache-outcome recording](adr-005-cache-outcome-recording.md)
+  records the fixed thresholds, local outcome store and observation-only design
+  approved for RFC 0002 W1.
 
 ## Conventions
 

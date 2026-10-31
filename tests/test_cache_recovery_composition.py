@@ -36,6 +36,7 @@ from cache_recovery_harness import (
     hold_drained_group,
     queue_request,
 )
+from listener_helpers import open_unix_listener, unix_listener
 
 from buildlimits.effects import Launch
 
@@ -45,30 +46,6 @@ if typ.TYPE_CHECKING:
     from buildlimits.supervisor import Supervisor
 
 SOCKET_PATH = "sccache.sock"
-
-
-def _listen(path: Path) -> socket.socket:
-    """Bind a listener where the supervisor probes for the managed server.
-
-    The probe connects to the configured socket and reads nothing, so a
-    listener at that path is the whole of "the server is up": without one, no
-    reading in this module could ever be the healthy one, and a denial would be
-    indistinguishable from a socket path that never existed.
-
-    Parameters
-    ----------
-    path : Path
-        The managed server's socket path.
-
-    Returns
-    -------
-    socket.socket
-        The listening socket, owned by the caller.
-    """
-    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind(str(path))
-    listener.listen(8)
-    return listener
 
 
 @contextlib.contextmanager
@@ -85,12 +62,8 @@ def _serving_server(path: Path) -> cabc.Generator[None]:
     None
         While the socket answers probes.
     """
-    listener = _listen(path)
-    try:
+    with unix_listener(path):
         yield
-    finally:
-        listener.close()
-        path.unlink(missing_ok=True)
 
 
 def _healthy(supervisor: Supervisor) -> None:
@@ -245,13 +218,13 @@ def test_a_request_waiting_through_the_whole_transaction_is_cached_again(
     harness = _waiting(recovery_harnesses)
     supervisor = harness.supervisor
     socket_path = tmp_path / SOCKET_PATH
-    listener = _listen(socket_path)
+    listener = open_unix_listener(socket_path)
     try:
         _open(harness)
         _account_as_the_server_stops(harness, listener, socket_path)
         # The restart is queued rather than awaited, so the server has to be
         # answering before the transaction can observe it back in service.
-        listener = _listen(socket_path)
+        listener = open_unix_listener(socket_path)
         harness.advance(31)
         harness.tick()  # restarting: the start is accepted and observed
         assert harness.cache.verbs == ["stop", "start"], "the restart was issued"
@@ -287,7 +260,7 @@ def test_a_restart_that_is_only_accepted_composes_no_cached_group(
     harness = _waiting(recovery_harnesses)
     supervisor = harness.supervisor
     socket_path = tmp_path / SOCKET_PATH
-    listener = _listen(socket_path)
+    listener = open_unix_listener(socket_path)
     try:
         _open(harness)
         # This test leaves the socket closed, so the restart has been accepted

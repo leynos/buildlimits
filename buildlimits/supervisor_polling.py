@@ -28,6 +28,7 @@ def poll_services(supervisor: Supervisor, now: float) -> None:
     _poll_server(supervisor, now)
     _poll_pool(supervisor, now)
     _poll_cache(supervisor, now)
+    supervisor.outcomes.on_tick(now)
 
 
 def _poll_server(supervisor: Supervisor, now: float) -> None:

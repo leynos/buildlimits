@@ -17,6 +17,7 @@ build-limits-supervisor = "buildlimits.service:main"
 build-limits-status = "buildlimits.status_cli:main"
 build-limits-recover = "buildlimits.recover_cli:main"
 build-limits-metrics = "buildlimits.metrics_cli:main"
+build-limits-cache-replay = "buildlimits.outcome_replay_cli:main"
 
 [dependency-groups]
 dev = [
@@ -129,7 +130,15 @@ extend-ignore = [
     "typing-only-standard-library-import",
     "raise-vanilla-args",
 ]
-"tests/steps/*.py" = ["assert", "too-many-arguments", "too-many-positional-arguments", "magic-value-comparison", "no-self-use"]
+"tests/steps/*.py" = [
+    "assert",
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "magic-value-comparison",
+    "no-self-use",
+]
+# pytest-bdd resolves step parameter annotations while it collects scenarios.
+"tests/test_cache_outcomes_systemd.py" = ["typing-only-third-party-import"]
 # CrossHair proves the ``assert`` statements in these contracts; they are the
 # specification, not debugging aids.
 "tests/crosshair_contracts.py" = ["assert"]
@@ -143,7 +152,13 @@ extend-ignore = [
 # tools and the vectors their tests supply, found on PATH as a build would.
 "tests/systemd_harness.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 "tests/fixtures/fake_sccache.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
-
+# The scenario world lives beside the test modules and drives the user's own
+# systemd tools with fixed argv. Its guards state the fixture preconditions a
+# scenario depends on, so they fail the scenario rather than debug it.
+"tests/cache_recovery_systemd_world.py" = ["assert", "suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# Expected operator-facing lines are compared verbatim, so wrapping them would
+# stop them matching the rendered summary they pin.
+"tests/status_render_states.py" = ["line-too-long"]
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
 banned-from = [
@@ -367,6 +382,50 @@ exclude = [".venv", ".uv-cache", ".uv-tools", ".tools", ".git"]
 [tool.skylos.gate]
 strict = true
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.outcome_window.OutcomeWindow.append"]
+path = ["buildlimits/outcome_window.py"]
+reason = "OutcomeRecorder._launch appends through Progress.window, a generic dataclass field that Skylos does not resolve; the bounded-window and recorder overflow tests exercise this method."
+
+# These collaborator calls are live, but Skylos cannot resolve the stored
+# supervisor, child-list, or report-union dispatch. Keep each allowance exact.
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.groups.Groups.advance"]
+path = ["buildlimits/groups.py"]
+reason = "group_recovery.empty_groups calls supervisor.groups.advance to drain a group before removal; Supervisor._tick owns that typed collaborator, which Skylos does not resolve. The group-drain tests call advance directly."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.groups.Groups.remove"]
+path = ["buildlimits/groups.py"]
+reason = "group_recovery.empty_groups calls supervisor.groups.remove after advance confirms the group is empty; Supervisor._tick owns that typed collaborator. Recovery and graceful-restart systemd scenarios exercise the cleanup."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.nonblocking_child.NonBlockingChild.poll"]
+path = ["buildlimits/nonblocking_child.py"]
+reason = "ChildReaper.poll dispatches poll through each child in its owned list; Skylos does not resolve that collection dispatch. The nonblocking-child and stalled-query tests exercise it."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.nonblocking_child.NonBlockingChild._read_available"]
+path = ["buildlimits/nonblocking_child.py"]
+reason = "NonBlockingChild.poll drains its nonblocking pipe through this private helper; Skylos does not retain private callees through the child-list entry point. The nonblocking-child and stalled-query tests exercise it."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.outcome_replay.H2Report.as_dict"]
+path = ["buildlimits/outcome_replay.py"]
+reason = "outcome_replay_cli._write_report serializes this method through the H2/H3 report union; Skylos does not resolve the union dispatch. H2 replay and CLI tests exercise the JSON shape."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.outcome_replay.H3Report.as_dict"]
+path = ["buildlimits/outcome_replay.py"]
+reason = "outcome_replay_cli._write_report serializes this method through the H2/H3 report union; Skylos does not resolve the union dispatch. H3 replay and CLI tests exercise the JSON shape."
+
 # The supervisor reaches these members through typed collaborators and
 # dataclass-held owners, which a static call graph cannot resolve. Entry-point
 # rules do not rescue private callees, so each verified callee is named too.
@@ -381,9 +440,10 @@ full_name = [
     "buildlimits.cache_recovery.CacheRecovery._try_stop",
     "buildlimits.cache_recovery.CacheRecovery._account",
     "buildlimits.cache_recovery.CacheRecovery._try_start",
+    "buildlimits.cache_recovery.CacheRecovery.reclaim_after_accounting",
 ]
 path = ["buildlimits/cache_recovery.py"]
-reason = "supervisor_polling._poll_server calls supervisor.recovery.tick on every server poll, after the drain probe, and tick dispatches _starved and _step; _step invokes the phase actions; _try_stop calls request_stop to retain bounded queued-job progress. Recovery transaction, queued-request and cancellation regressions exercise this path. Skylos resolves neither the dataclass-held CacheRecovery reached through Supervisor.recovery nor the private callees of an unresolved dispatch."
+reason = "supervisor_polling._poll_server calls supervisor.recovery.tick on every server poll, after the drain probe, and tick dispatches _starved and _step; _step invokes the phase actions; _try_stop calls request_stop to retain bounded queued-job progress. Supervisor.start calls reclaim_after_accounting once the drain slices are emptied, before the pool and listener exist. Recovery transaction, queued-request, cancellation and reclaim regressions exercise this path. Skylos resolves neither the dataclass-held CacheRecovery reached through Supervisor.recovery, including the recovery pair returned by supervisor_wiring.watch_and_recovery, nor the private callees of an unresolved dispatch."
 
 [[tool.skylos.dead_code.entrypoints]]
 type = "method"
@@ -428,6 +488,18 @@ full_name = ["buildlimits.admission_state.snapshot"]
 path = ["buildlimits/admission_state.py"]
 reason = "Gauges.counts, the declared entry point above, builds every snapshot through it; the doctest and test_admission.py exercise it."
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.journal_native.JournalSink.emit_trace"]
+path = ["buildlimits/journal_native.py"]
+reason = "The service composition root passes JournalSink to JournalTracer; JournalTracer._get_tracer supplies it to JournalSpanExporter, whose export method calls emit_trace through _TraceSinkPort. Skylos cannot resolve this cross-module protocol dispatch; tests/test_tracing.py and tests/test_supervisor_effects.py exercise it."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.tracing._OtelSpan.finish"]
+path = ["buildlimits/tracing.py"]
+reason = "AdmissionAttempt.finish_restart calls finish through its dataclass-held restart_span field; tests/test_adapter_restart_tracing.py exercises terminal span completion after admission and failure."
+
 [tool.nose]
 version = "0.20.0"
 roots = ["."]
@@ -452,6 +524,15 @@ ignore_names = [
     "pytest_plugins",
     "teardown",
     "descriptor_leak_guard",
+    # Vulture cannot resolve quoted cast types imported only for type checks.
+    "RecorderEvent",
+    "OutcomeStorePort",
+    "ServerProcessPort",
+    # TypedDict fields are read via JSON-key subscripting in the fake servers.
+    "script_index",
+    "statistics_queries",
+    # Production reads this field from Pending; test scenarios set it directly.
+    "cache_path",
     "__call__",
     "return_value",
     "side_effect",
@@ -467,13 +548,18 @@ ignore_names = [
     "slice_dir",
     "limit_order_is_total",
     "planned_limits_are_reachable",
+    "unanimous_hit_windows_keep_the_hit_label",
+    "cache_errors_are_not_dropped_from_a_solo_footprint",
+    "repeated_cache_errors_are_not_unanimous",
+    "decoding_never_labels_mixed",
     # The recovery search's Events counters are read by name through EVENTS
     # and getattr in test_cache_recovery_properties, never as attributes.
     "opened_stale",
     "stopped_on_deadline",
 ]
 # pytest-bdd steps and Hypothesis state-machine rules are registered by their
-# decorators and dispatched by the framework, never called by name.
+# decorators and dispatched by the framework, never called by name. Hypothesis
+# initializes a state machine by running its ``@initialize`` callbacks itself.
 ignore_decorators = [
     "@given",
     "@when",
@@ -481,6 +567,7 @@ ignore_decorators = [
     "@rule",
     "@invariant",
     "@precondition",
+    "@initialize",
 ]
 min_confidence = 60
 
@@ -512,6 +599,7 @@ filterwarnings = [
     "error::pytest.PytestUnraisableExceptionWarning",
 ]
 markers = [
+    "sccache_host_check: requires opt-in, Linux, and a supported sccache",
     "systemd_user: needs a running systemd user manager and busctl",
 ]
 
@@ -764,6 +852,7 @@ reason = "Recurring short test steps: these fragments arrange or check the same 
 
 [[tool.duplication_gate.allow]]
 members = [
+    "tests/cache_recovery_systemd_world.py",
     "tests/test_cache_recovery_systemd.py",
     "tests/test_pressure_systemd.py",
 ]
@@ -974,11 +1063,36 @@ reason = "Matching import lists: both modules drive the same scripted machine th
 [[tool.duplication_gate.allow]]
 members = [
     "tests/test_group_drain_metrics.py",
-    "buildlimits/adapter_invocation.py",
+    "buildlimits/outcome_resources.py",
+    "buildlimits/supervisor_wiring.py",
     "tests/test_cache_recovery_telemetry.py",
     "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "tests/differential_trace_test_helpers.py",
 ]
-reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+reason = "Matching import lists: each module names the protocol, port or annotation symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/server_watch.py",
+    "tests/test_outcome_totality.py",
+]
+reason = "Both modules open a TYPE_CHECKING block for their own annotation dependencies; the repeated shape is the block boilerplate, not shared imports."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/outcome_shell_test_support.py",
+    "tests/test_outcome_totality.py",
+]
+reason = "The detector reports one-line close-log fragments without a unit name, so a member key cannot distinguish them. They belong to separate statistics, server-process and writer fakes in two modules, each with independent close arguments and lifecycle contracts."
+
+[[tool.duplication_gate.allow]]
+unit = "buildlimits/supervisor_outcomes.py"
+reason = "on_tick and close each open with the same closed guard so a closed shell stays inert; extracting it would hide which public entry points are guarded."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_outcome_differential.py"
+reason = "The rule bodies forward their drawn argument to the shared _apply mirror; one identical call line per rule is the state machine's shape, not shared logic."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -1138,10 +1252,6 @@ unit = "tests/test_ports.py"
 reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
 
 [[tool.duplication_gate.allow]]
-unit = "tests/test_status_render.py"
-reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
-
-[[tool.duplication_gate.allow]]
 members = [
     "tests/test_admission_on_systemd_behaviour.py::_succeeds",
     "tests/test_admission_on_systemd_behaviour.py",
@@ -1215,3 +1325,181 @@ reason = "Matching imports: the host assertions and direct timing test have dist
 [[tool.duplication_gate.allow]]
 unit = "tests/test_rustc_query_host.py"
 reason = "The only matched fragments are separate optional Cargo Clippy and Dylint prerequisites with distinct skip messages. The one-line matches cannot be scoped to function names by this gate; this dedicated host acceptance module needs both checks so either linter can skip independently."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/crosshair_contracts.py::unanimous_hit_windows_keep_the_hit_label",
+    "tests/crosshair_contracts.py::cache_errors_are_not_dropped_from_a_solo_footprint",
+    "tests/crosshair_contracts.py::repeated_cache_errors_are_not_unanimous",
+    "tests/crosshair_contracts.py::decoding_never_labels_mixed",
+]
+reason = "CrossHair discovers each function by name as an independent symbolic contract. Keeping the counter values, preconditions and conclusions inside each entry point makes every proved invariant visible; a shared scenario runner would hide it from the contract boundary."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_attribution.py", "tests/crosshair_contracts.py"]
+reason = "Matching imports expose the attribution types each independent test module exercises; a re-export would hide those dependencies without sharing behaviour."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_recorder.py", "tests/test_outcome_recorder_failures.py"]
+reason = "Matching imports from the recorder test helpers expose each module's direct fixture dependencies; a re-export would hide those dependencies without sharing behaviour."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_rules_behaviour.py", "tests/crosshair_contracts.py"]
+reason = "Matching imports expose the attribution values each independent behaviour or symbolic contract exercises; a re-export would hide those dependencies without sharing behaviour."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_rules_behaviour.py",
+    "tests/test_admission_on_systemd_behaviour.py",
+]
+reason = "Both pytest-bdd modules import the decorators needed for their own feature steps. Sharing framework imports would create a test utility module with no shared behaviour."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_stats.py::test_advanced_counts_are_not_part_of_the_result",
+    "tests/test_outcome_stats.py::test_cache_result_counts_sum_all_languages",
+]
+reason = "These parser contracts prepare the same pinned fixture but mutate different cache-count dimensions; keeping each mutation beside its distinct assertion makes the data shape under test explicit."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_rules_behaviour.py::cache_hit_reading",
+    "tests/test_outcome_rules_behaviour.py::compilations_only_reading",
+    "tests/test_outcome_rules_behaviour.py::miss_reading",
+]
+reason = "Each BDD step sends one named counter footprint through the shared _finish_reading helper. The repeated call shape keeps the scenario's distinct counters visible in its step definition."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_attribution.py",
+    "tests/test_outcome_rules_behaviour.py",
+]
+reason = "Matching imports name the domain values each module uses in its own contract and feature steps; sharing them through a re-export would hide real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_rules_behaviour.py::group_has_reason",
+    "tests/test_outcome_rules_behaviour.py::group_has_label",
+]
+reason = "Separate pytest-bdd steps assert different result dimensions for different feature language. Combining them would make each scenario step conditional on whether it is checking attribution or a failure reason."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/admission_readiness.py::ReadinessFacts",
+    "buildlimits/outcome_stats.py::StatsReading",
+    "buildlimits/recovery_starvation.py::StarvationReading",
+]
+reason = "These frozen records carry facts and counters from separate domains and lifecycle boundaries: admission readiness, one sccache statistics reading, and one starvation observation. Their similar field documentation does not imply a shared value type or reusable parser."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_rules_behaviour.py::group_has_label",
+    "tests/test_outcome_rules_behaviour.py::group_has_reason",
+]
+reason = "These BDD steps both assert the expected label for one group, then check a different attribution field. A shared assertion helper would conceal which feature phrase each step fulfils."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_rules_behaviour.py::one_clean_cached_group",
+    "tests/test_outcome_rules_behaviour.py::signalled_cached_group",
+]
+reason = "These BDD given-steps create the same one-group window with opposite cleanliness. Keeping each value next to its feature phrase makes the eligibility condition explicit."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/cache_recovery.py",
+    "buildlimits/outcome_store.py",
+    "tests/test_outcome_noninterference.py",
+]
+reason = "These TYPE_CHECKING blocks import different domain-owned annotation types for production and test contracts. Sharing a re-export would hide each module's dependencies without sharing runtime behaviour."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_recorder_types.py",
+    "buildlimits/outcome_recorder_outputs.py",
+    "tests/outcome_shell_test_support.py",
+]
+reason = "Matching TYPE_CHECKING imports name each module's direct outcome types; a re-export would hide the annotation dependencies without sharing behaviour."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_outcome_server_process.py"
+reason = "These process-sampling tests keep each failure boundary beside its distinct fixture and assertion; the detector reports their shared short assertion fragments without function names, so a narrower member key cannot match."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/outcome_shell_test_support.py::generation",
+    "tests/test_outcome_sampling.py::generation",
+]
+reason = "Each test double supplies the same fixed generation through its own port; sharing the doubles would couple independent shell and sampler tests."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_cache_outcomes_systemd.py",
+    "tests/steps/cache_outcome_sighting_systemd_steps.py",
+]
+reason = "These two real-manager BDD modules own separate scenario suites. Their repeated compile, wait and assertion fragments stay beside the feature clauses so the distinct barrier, restart, query, reporting and child-sighting timing is visible; the shared supervisor and fake-result steps live in one common plugin."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_store.py",
+    "tests/test_outcome_noninterference.py",
+]
+reason = "Matching TYPE_CHECKING imports name direct production and test annotation dependencies; sharing them through a re-export would hide those dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_admission.py::health_fails",
+    "tests/test_outcome_totality.py::fail_health",
+]
+reason = "These are separate single-purpose test callbacks for admission and recorder-totality contracts, with different owners and assertions."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/cache_outcome_systemd_support.py",
+    "tests/cache_recovery_systemd_world.py",
+    "tests/test_cache_recovery_systemd.py",
+    "tests/test_pressure_systemd.py",
+]
+reason = "These real-manager modules own separate harness worlds; repeated constructor, start and close fragments refer to different cache modes, manager limits and process sets, and teardown order follows each world's ownership. A shared world abstraction would couple independent fixtures."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/cache_outcome_harness.py::state_home",
+    "tests/cache_outcome_harness.py::fake_rustc",
+]
+reason = "These similarly shaped properties resolve distinct fixture resources, the private state directory and fake compiler executable."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/rustc_query_host_checks.py",
+    "tests/test_sccache_real_binary.py",
+]
+reason = "Matching import lists: each module names the standard-library and host-check symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_record_format.py::WindowSummary",
+    "tests/rustc_linter_acceptance.py::LinterAcceptance",
+]
+reason = "These frozen slots records describe independent value types: one stored outcome window and one real-linter run's configuration and evidence recorder. Their declaration shape matches; no behaviour or field is shared."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/admission_readiness.py",
+    "tests/test_outcome_replay_h2.py",
+]
+reason = "The matched fragment is one conditional expression each: _drain_progress chooses between two operator sentences for a partial drain, while _sighting maps a cache label and correctness to the observed child sighting. Neither expresses the other's rule, and sharing one would couple readiness prose to replay fixtures."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/drain_guidance.py",
+    "buildlimits/outcome_replay.py",
+]
+reason = "The matched fragment is the guard-then-return shape of unrelated decisions: journal_prefix selects the operator message for a fallback drain, while _h3_verdict applies the fixed counterexample, threshold and collection order. Their predicates and returned values share no logic."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_attribution.py::attribute",
+    "buildlimits/outcome_attribution.py::_failure_reason",
+]
+reason = "The matched subdag is the shared reading-failure gate: attribute asks _failure_reason to classify the window before it reads counters, so the second call site is the delegation itself rather than a copy of the rule. The identical doctest preambles construct the same empty statistics value the two examples both start from."

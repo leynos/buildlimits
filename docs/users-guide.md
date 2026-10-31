@@ -115,6 +115,7 @@ with exit status 2, and nothing is half-applied.
 | `cancel_grace_seconds`  | `10.0`                                         | Seconds between `SIGTERM` and `SIGKILL` for a terminated group                                                                             |
 | `drain_timeout_seconds` | `120.0`                                        | The longest start-up waits for surviving groups to drain                                                                                   |
 | `cache_mode`            | `sccache`                                      | `sccache` composes admitted compilers with the managed cache; `direct` runs them without it, and recovery then answers `no-cache-recovery` |
+| `cache_outcomes`        | `off`                                          | `record` opts in to observation-only cache outcome recording; it requires `cache_mode = "sccache"`                                         |
 | `sccache_executable`    | `sccache`                                      | The sccache client used in `sccache` mode                                                                                                  |
 | `sccache_unit`          | `buildlimits-sccache.service`                  | The managed cache's user unit                                                                                                              |
 | `sccache_socket`        | `$XDG_RUNTIME_DIR/buildlimits/sccache.sock`    | The managed cache's socket                                                                                                                 |
@@ -131,7 +132,96 @@ paths are limited to about 108 bytes.
 slots = 4
 cache_mode = "sccache"
 cache_recovery = "manual"
+cache_outcomes = "off"
 ```
+
+### Record cache outcomes
+
+Outcome recording is off by default. Set `cache_outcomes = "record"` only after
+installing the recording-capable build and all journal readers that understand
+its event vocabulary. Recording requires `cache_mode = "sccache"` and a
+supported server version. This release supports sccache 0.14.0. It observes
+completed cached requests; it never changes admission, cache composition or
+compiler execution.
+
+The local store is `$XDG_STATE_HOME/buildlimits/cache-outcomes.jsonl`, or
+`~/.local/state/buildlimits/cache-outcomes.jsonl` when `XDG_STATE_HOME` is
+unset. Its directory is private to the user (mode `0700`); the store and its
+sibling `cache-outcomes.salt` use mode `0600`. The salt keys compile identity
+digests. Stored values include a crate name and origin class, salted digests of
+arguments and target, a bounded toolchain identity, the observed cache result,
+and coarse runtime and parser-class fields. Raw compiler arguments, local
+paths, environment values, request identifiers, source code and compiler output
+are not stored.
+
+The status command adds a `cache outcomes recording` line while recording is
+enabled; once a reading or outcome has closed, that line also names the last
+reason, which is the first thing to check when nothing is being attributed. If
+recording stops after an internal failure, the line reports that and keeps the
+last reason when one was recorded. If a single status read cannot build the
+outcome snapshot, the line reads `cache outcomes status unavailable`; recording
+continues and a later read may recover, so this is not a recorder failure. For
+history and reading or store failures, query:
+
+```bash
+build-limits-metrics --since 1d --max-records 100000
+build-limits-cache-replay h3
+build-limits-cache-replay h2
+```
+
+The metrics report's `cache_outcomes` section groups observed outcomes and
+attribution, reading failures and skipped readings, store operations, child
+sightings and sampling failures. H2 and H3 replay read the local store only. H3
+compares the parser prediction with attributed outcomes and refusal summaries.
+H2 combines full-emit child sightings with prior hit runtimes for the same
+compile key. It evaluates only sampled keys that have both a hit and a miss,
+and requires 100 evaluable rows and 2,000 attributed outcomes. H2 reports
+`supported` at 95% agreement, `refuted` below 90%, and `inconclusive` between
+those thresholds. Both commands print the time span the store covers and the
+limits of their sample: labels come from solo and unanimous windows, so a
+verdict may not represent busy, mixed traffic, and H2 also states that child
+sightings are sampled, which biases the sighting clue towards long misses.
+
+While cached requests are moving, the supervisor samples the managed server's
+control group every 250 ms and inspects at most 64 processes per sample. It
+matches full-emit children to active requests by `-C metadata` in memory. The
+store keeps only a sighting token and sample count; it never stores arguments
+or metadata values. If active requests share metadata, the sighting is
+`ambiguous` and contributes no child-only H2 evidence. `not_seen` records mean
+that at least one sample found no matching child; short compiler processes may
+finish between samples.
+
+This is evidence collection, not a hit prediction shown to users or used by the
+supervisor.
+
+To reset the history completely, stop the supervisor and delete
+`cache-outcomes.jsonl`, `cache-outcomes.jsonl.bad` and `cache-outcomes.salt`,
+then start it again. This loses replay history, including any `.bad` backup
+kept from a corrupt store, and creates a new salt, so future keys no longer
+join to the deleted store. A corrupt or version-mismatched store is moved to
+`.bad` at recording startup, but only when that backup does not already exist;
+otherwise recording remains unavailable. Read-only replay leaves the store
+untouched and reports the decoding failure.
+
+For an upgrade, install every journal reader first, then the supervisor build
+while recording remains off. Set `cache_outcomes = "record"` only after that
+build is active. To downgrade, set the option to `off` and restart gracefully;
+remove the key before downgrading to a build that predates this setting. When a
+new sccache version produces `unsupported_version`, add the version and its
+fixtures to `SUPPORTED_SCCACHE_VERSIONS` in the recorder as one change and run
+`make test-sccache-host` against it. The host check runs for every supported
+version instead of skipping, so merge that change only once the check passes.
+
+If the opt-in real-binary check cannot run, follow
+[ADR 005's private real-binary fallback procedure](adr-005-cache-outcome-recording.md#d9-keep-the-real-binary-check-private-and-non-blocking).
+Build the same small crate once cold and once warm through the normal admitted
+supervisor, then compare adjacent sccache statistics windows. Do not bypass
+admission with a private compile. The recorder writes final outcome labels and
+keeps no provisional marker, so a fallback run produces no confirmed H2 or H3
+evidence; treat what it observes as unconfirmed.
+[ADR 005's counter confirmation rule](adr-005-cache-outcome-recording.md#d12-confirm-provisional-labels-only-if-needed)
+applies only if a trailing counter is demonstrated, and this release does not
+demonstrate one.
 
 ### Adapter environment
 
@@ -286,6 +376,10 @@ adds descriptor limits, the open-descriptor sample, request-owned retention,
 the high-water mark and the budget. These are point-in-time diagnostics, not
 history; `build-limits-metrics` summarizes history.
 
+When `cache_outcomes = "record"`, status also shows the number of attributed
+outcomes and completed readings. That optional object and line are absent when
+recording is off.
+
 | Exit status | Default: health check                         | With `--ready`                                  |
 | ----------- | --------------------------------------------- | ----------------------------------------------- |
 | `0`         | Query succeeded and the supervisor is healthy | Healthy and `admission.ready` is exactly `true` |
@@ -425,12 +519,12 @@ systemctl --user restart buildlimits-supervisor.service
 
 There is no need to wait for an idle reading first. The supervisor unit must
 carry `KillMode=mixed`, described under
-[Units the restart relies on](#units-the-restart-relies-on). A supervisor older
-than the 2026-10-19 amendment to ADR 001 loses a build when a restart lands
-while that build is being placed in its scope and the unit lacks the directive;
-the adapter retries the request, but `KillMode=mixed` remains required because
-it also keeps the stop away from the supervisor's other helper commands. The
-restart works as follows.
+[Units the restart relies on](#units-the-restart-relies-on). Without the
+directive, a supervisor older than the 2026-10-19 amendment to ADR 001 loses a
+build when a restart lands while that build is being placed in its scope. A
+newer supervisor refuses such a build as `restarting`, and its adapter retries
+it. `KillMode=mixed` is still required because it also keeps the stop away from
+the supervisor's other helper commands. The restart works as follows.
 
 1. `systemctl` sends `SIGTERM`. The supervisor stops launching and requesting
    tokens but terminates nothing: every running compiler group runs to its own
@@ -800,6 +894,11 @@ adapter outcomes and connection attempts.
 Adapter outcomes include `exempt` for a recognized toolchain query. The adapter
 records that outcome before exec without wait or runtime fields, so exempt
 queries add no samples to the admission wait or runtime distributions.
+
+When outcome telemetry exists in the selected window, the report includes
+observed cache-result counts, attribution coverage, reading reasons and skipped
+or failed readings, plus store-operation and discard counts. No outcome section
+data is inferred for an empty window.
 
 The supervisor also writes OpenTelemetry `scope_placement` spans to the native
 journal. An adapter writes `adapter_restart_retry` only when it has to retry

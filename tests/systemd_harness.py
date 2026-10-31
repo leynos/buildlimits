@@ -8,19 +8,18 @@ runs and leftovers from failed runs never collide, and it removes only what
 it created.
 """
 
-import array
 import contextlib
-import fcntl
+import dataclasses as dc
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
-import termios
 import typing as typ
 import uuid
 from pathlib import Path
 
+from cache_outcome_harness import CacheOutcomeHarnessMixin
 from cached_unit_files import CachedUnits
 from harness_config import write_config
 from harness_processes import AdapterProcessOptions, start_adapter, wait_for
@@ -41,6 +40,7 @@ from harness_units import unit_active as _unit_active
 from harness_units import (
     user_manager_available as user_manager_available,
 )
+from systemd_harness_tokens import TokenObservationMixin
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -49,6 +49,7 @@ FIXTURES = Path(__file__).with_name("fixtures")
 
 __all__ = [
     "Harness",
+    "HarnessOptions",
     "Placement",
     "journal",
     "kill_group",
@@ -62,7 +63,18 @@ __all__ = [
 ]
 
 
-class Harness(HarnessStatus):
+@dc.dataclass(frozen=True, slots=True)
+class HarnessOptions:
+    """Feature settings shared by the isolated systemd scenarios."""
+
+    cache_recovery: str = "starved"
+    cache_outcomes: str = "off"
+
+
+_DEFAULT_HARNESS_OPTIONS = HarnessOptions()
+
+
+class Harness(CacheOutcomeHarnessMixin, TokenObservationMixin, HarnessStatus):
     """One supervisor, its pool and optionally a fake sccache server.
 
     Parameters
@@ -73,9 +85,8 @@ class Harness(HarnessStatus):
         Whether to compose compilers with the fake sccache server.
     nofile : tuple[int, int] | None
         Optional supervisor soft/hard descriptor limit for pressure tests.
-    cache_recovery : str
-        The supervisor's recovery policy; ``"manual"`` leaves every
-        transaction to the operator's own command.
+    options : HarnessOptions
+        Optional cache-recovery and cache-outcome feature settings.
     """
 
     def __init__(
@@ -84,7 +95,7 @@ class Harness(HarnessStatus):
         *,
         cached: bool = False,
         nofile: tuple[int, int] | None = None,
-        cache_recovery: str = "starved",
+        options: HarnessOptions = _DEFAULT_HARNESS_OPTIONS,
     ) -> None:
         """Create the harness's runtime, work directory, pool and config."""
         tag = uuid.uuid4().hex[:8]
@@ -99,7 +110,8 @@ class Harness(HarnessStatus):
         self.slots = slots
         self.cached = cached
         self.nofile = nofile
-        self.cache_recovery = cache_recovery
+        self.cache_recovery = options.cache_recovery
+        self.cache_outcomes = options.cache_outcomes
         self.placement = Placement(self.parent_slice, nofile)
         self.cached_units: CachedUnits | None = None
         # Test seams for the cached supervisor unit: a directory of command
@@ -119,6 +131,7 @@ class Harness(HarnessStatus):
             "BUILD_LIMITS_COMPILERS_SLICE": self.compilers_slice,
             "BUILD_LIMITS_HEARTBEAT_SECS": "600",
             "BUILD_LIMITS_UNAVAILABLE_SECS": "30",
+            "XDG_STATE_HOME": str(self.state_home),
         }
         for inherited in ("RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER"):
             self.env.pop(inherited, None)
@@ -292,20 +305,6 @@ class Harness(HarnessStatus):
             check=False,
         )
 
-    def server_children(self) -> int:
-        """Count compilations the fake sccache server is running.
-
-        Returns
-        -------
-        int
-            Direct children of the server process.
-        """
-        from buildlimits.sccache import ManagedSccache
-
-        return ManagedSccache(
-            self.sccache_unit, self.runtime / "sccache.sock"
-        ).active_compiles()
-
     def journal(self) -> str:
         """Return the supervisor's journal, for failure messages.
 
@@ -315,30 +314,6 @@ class Harness(HarnessStatus):
             Recent journal lines.
         """
         return journal(self.unit)
-
-    def free_tokens(self) -> int:
-        """Read the pool without taking a token, as an observer would.
-
-        Returns
-        -------
-        int
-            Bytes waiting in the FIFO, which are the free tokens. A token held
-            by admission is missing from this count, so a recovery can be
-            checked for having released exactly what it accounted for without
-            disturbing the pool.
-        """
-        if self._holder is None:
-            return 0
-        pending = array.array("i", [0])
-        # FIONREAD's fourth argument is the kernel's own all-or-nothing flag,
-        # and ioctl accepts no keywords, so the flag cannot be named.
-        fcntl.ioctl(
-            self._holder,
-            termios.FIONREAD,
-            pending,
-            True,  # ruff: ignore[boolean-positional-value-in-call] - kernel flag, never a caller's.
-        )
-        return int(pending[0])
 
     def close(self) -> None:
         """Stop only owned units and release the pool handle exactly once."""

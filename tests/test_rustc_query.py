@@ -246,6 +246,7 @@ def test_wrapper_identity_lookup_error_fails_closed(
     lookup_errors: list[tuple[Path, str | os.PathLike[str]]] = []
 
     def fail_samefile(path: Path, other: str | os.PathLike[str]) -> bool:
+        """Record the identity probe and fail it as an unreadable filesystem."""
         lookup_errors.append((path, other))
         msg = "injected identity lookup failure"
         raise OSError(msg)

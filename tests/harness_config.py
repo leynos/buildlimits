@@ -43,6 +43,7 @@ def write_config(harness: Harness) -> None:
         # machine-wide %t/buildlimits/cache-recovery path, which other agents'
         # supervisors read.
         "recovery_marker": str(harness.runtime / "cache-recovery"),
+        "cache_outcomes": harness.cache_outcomes,
     }
     lines = [f"{key} = {json.dumps(value)}" for key, value in settings.items()]
     (harness.runtime / "supervisor.toml").write_text("\n".join(lines) + "\n")

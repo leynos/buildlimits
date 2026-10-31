@@ -6,12 +6,12 @@ import typing as typ
 
 from buildlimits.adapter_connection import AdapterError
 from buildlimits.protocol import Refused
-from buildlimits.tracing import JournalTracer, _OtelSpan
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.adapter_metrics import AdapterMetrics
+    from buildlimits.tracing import JournalTracer, _OtelSpan
 
 
 class BusyError(AdapterError):
@@ -159,8 +159,7 @@ class AdmissionAttempt:
         span, self.restart_span = self.restart_span, None
         if span is None:
             return
-        _OtelSpan.finish(
-            span,
+        span.finish(
             outcome=outcome,
             failure_category=failure_category or self.restart_failure_category,
             stop_mode=self.restart_stop_mode,

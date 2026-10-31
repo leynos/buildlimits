@@ -6,8 +6,9 @@ count or duration, or a boolean. :mod:`buildlimits.metrics` owns the boundary
 that reads this catalogue; keeping the tables separate means the accepted
 vocabulary can be reviewed as data, without the validation logic around it.
 
-Nothing here imports anything, so a new measurement is added by editing one
-table and nothing else.
+Nothing here imports anything, so accepted token sets stay data-only. The
+outcome domain's ``typ.Literal`` aliases mirror the cache-result, outcome,
+store, evaluation and gate tables below.
 """
 
 MAX_COUNTER = 10**12
@@ -28,6 +29,9 @@ EVENTS = frozenset({
     "drain_progress",
     "cache_recovery",
     "cache_quiesce",
+    "cache_outcome",
+    "outcome_reading",
+    "outcome_store",
 })
 OUTCOMES = frozenset({
     "completed",
@@ -54,6 +58,70 @@ REASONS = frozenset({
     "other",
     "busy",
 })
+# Outcome-recording vocabularies are fixed here before their journal events are
+# introduced. The pure outcome modules use the same accepted tokens.
+CACHE_RESULTS = frozenset({
+    "hit",
+    "miss",
+    "not_cacheable",
+    "not_cached",
+    "failed",
+    "error",
+    "declined",
+    "not_compile",
+    "unsupported",
+    "unattributed",
+})
+OUTCOME_REASONS = frozenset({
+    "none",
+    "timeout",
+    "read_error",
+    "parse_error",
+    "unsupported_version",
+    "generation_unavailable",
+    "generation_changed",
+    "empty_stats",
+    "counter_decreased",
+    "ineligible_window",
+    "count_mismatch",
+    "mixed_window",
+    "straddled_reading",
+    "supervisor_stopped",
+    "no_baseline",
+    "window_overflow",
+    "recorder_disabled",
+})
+STORE_REASONS = frozenset({
+    "none",
+    "corrupt",
+    "unreadable",
+    "version_mismatch",
+    "tag_dropped",
+    "salt_unavailable",
+    "save_failed",
+    "expired",
+    "salt_changed",
+    "clock_skew",
+})
+EVALUATION_REASONS = frozenset({
+    "none",
+    "key_unavailable",
+    "store_unavailable",
+    "ineligible",
+})
+STORE_OPERATIONS = frozenset({"load", "append", "compact", "salt"})
+GATE_REASONS = frozenset({
+    "queued",
+    "cached_moving",
+    "server_drain",
+    "unreachable",
+    "held",
+    "recovering",
+    "barrier",
+    "in_flight",
+    "read_skipped",
+    "backing_off",
+})
 VOCABULARIES = {
     "outcome": OUTCOMES,
     "reason": REASONS,
@@ -76,6 +144,15 @@ VOCABULARIES = {
     "phase": frozenset({"idle", "quiescing", "stopping", "accounting", "restarting"}),
     # How a start-up stop of a live cache ended; see ``cache_quiesce``.
     "quiesce_outcome": frozenset({"stopped", "refused", "timed_out"}),
+    "cache_result": CACHE_RESULTS,
+    "outcome_attribution": frozenset({"solo", "unanimous", "inferred", "none"}),
+    "crate_origin": frozenset({"registry", "git", "path", "unknown"}),
+    "outcome_reason": OUTCOME_REASONS,
+    "store_reason": STORE_REASONS,
+    "evaluation_reason": EVALUATION_REASONS,
+    "store_operation": STORE_OPERATIONS,
+    "gate_reason": GATE_REASONS,
+    "child_sighting": frozenset({"seen", "not_seen", "ambiguous", "unavailable"}),
 }
 DURATIONS = frozenset({
     "wait_seconds",
@@ -108,6 +185,15 @@ COUNTERS = frozenset({
     "recovery_completions",
     "recovery_stale_openings",
     "recovery_roots_deadline_stops",
+    "readings",
+    "readings_skipped",
+    "readings_failed",
+    "window_groups",
+    "store_records",
+    "store_discarded",
+    "child_samples",
+    "child_samples_taken",
+    "child_sample_failures",
 })
 BOOLEANS = frozenset({"reachable", "load_unknown", "fd_budget_known", "accept_paused"})
 FIELD_KINDS = {

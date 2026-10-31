@@ -1,21 +1,22 @@
 # Buildlimits roadmap
 
-This roadmap sequences the work that
-[RFC 0001](rfcs/0001-fizzbee-model-of-admission-and-recovery.md) accepted on
-2026-10-18. It does not promise dates. Each phase carries one testable idea,
-the steps underneath it work to validate or falsify that idea, and each task is
-a review-sized unit of delivery. Tests, model runs and proofs are part of the
-task that needs them, and appear as a `Success:` criterion where the outcome is
-not obvious.
+This roadmap sequences work accepted in
+[RFC 0001](rfcs/0001-fizzbee-model-of-admission-and-recovery.md) on 2026-10-18
+and [RFC 0002](rfcs/0002-cache-hit-prediction.md) on 2026-10-23. It does not
+promise dates. Each phase carries one testable idea, the steps underneath it
+work to validate or falsify that idea, and each task is a review-sized unit of
+delivery. Tests, model runs and proofs are part of the task that needs them,
+and appear as a `Success:` criterion where the outcome is not obvious.
 
-Section references of the form "RFC 0001 §n" name the numbered subsections of
-the RFC's "Proposed design". Other references name the RFC's hypotheses (H1 to
-H4), workstreams (W1 to W4), gates (G1 to G4), properties (S, L and R),
-fairness assumptions (F1 to F7) and numbered open questions. The RFC's
-non-goals stay out of scope: the roadmap changes no runtime behaviour,
-threshold or interface, and does not model descriptors, framing, the wire
-protocol, launch placement, rendering or metric transport. The developer's
-guide remains the source of truth for the code the model transcribes.
+Section references of the form "RFC 0001 §n" or "RFC 0002 §n" name numbered
+subsections of the relevant RFC's proposed design. Hypothesis, workstream, gate
+and open-question references belong to the RFC named in the phase; use an
+explicit qualifier such as "RFC 0002 G1" where both RFCs use the same
+identifier. RFC 0001's phase remains model-only and does not change runtime
+behaviour or interfaces. Phase 3 is limited to RFC 0002 W1 and its gated W2: it
+adds no prediction display, hit-first admission, shadow mode or direct
+composition. The developer's guide remains the source of truth for the code the
+model transcribes.
 
 ## 1. Model admission and recovery under explicit fairness
 
@@ -277,3 +278,40 @@ has produced evidence. See RFC 0001 open questions 9, 11 and 12.
   - See RFC 0001 open question 12.
   - Success: start-up accounting and barrier reclamation are modelled with the
     properties of 1.3.3, or the RFC records why they are not.
+
+## 3. Record and evaluate cache outcomes
+
+Idea: if buildlimits can attribute real sccache outcomes at quiet points and
+measure H2 child sightings where H1 solo-window coverage falls below its 5%
+floor, the resulting local records can support an offline evaluation of
+prediction without changing admission. See RFC 0002 §§1-2 and
+[ADR 005](adr-005-cache-outcome-recording.md).
+
+### 3.1. Record outcomes and decide G1
+
+This step delivers RFC 0002 W1, including the real-binary feasibility check,
+bounded local recording, the H3 replay and H2 child sightings. Its outcome is
+the H1-H3 evidence and the owner's RFC 0002 G1 decision.
+
+- [ ] 3.1.1. Complete EP-M1 to EP-M8 of the cache-hit prediction ExecPlan.
+  - Requires the RFC 0002 W1 acceptance recorded in [RFC
+    0002](rfcs/0002-cache-hit-prediction.md).
+  - Fix the thresholds and H2 classifier in ADR 005 before the live statistics
+    fixture or outcome records are read.
+  - Success: the read-only live fixture is redacted; labels, H3 evidence and
+    child sightings are bounded and local; the replay reports H2 and H3
+    against the fixed thresholds, while the scripted and controlled windows
+    supply the H1 verdict; G0 and all material coverage limits are stated.
+
+### 3.2. Evaluate prediction offline after G1
+
+This step is RFC 0002 W2 and requires an explicit RFC 0002 G1 decision to
+proceed. It runs only against stored records and evaluates H4 and H5; its
+outcome informs the separate RFC 0002 G2 decision.
+
+- [ ] 3.2.1. Complete EP-M9 of the cache-hit prediction ExecPlan.
+  - Requires RFC 0002 G1 to release W2.
+  - See RFC 0002 §2 and H4-H5. Do not run this step on the live cache.
+  - Success: the replay reports the registry base-rate comparison, digest
+    stability and each verdict against ADR 005's fixed minimums and
+    thresholds; evidence and limitations are recorded for G2.

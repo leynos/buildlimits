@@ -18,6 +18,7 @@ import time
 import typing as typ
 from pathlib import Path
 
+import pytest
 from harness_processes import reap_and_close_pipes
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_sccache.py"
@@ -36,7 +37,11 @@ assert _SPEC is not None and _SPEC.loader is not None, (
     "the fixture module must be loadable by path"
 )
 fake_sccache = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(fake_sccache)
+sys.path.insert(0, str(FIXTURE.parent))
+try:
+    _SPEC.loader.exec_module(fake_sccache)
+finally:
+    sys.path.remove(str(FIXTURE.parent))
 
 
 def _wait_for_content(path: Path, expected: str, timeout: float = 10.0) -> None:
@@ -74,6 +79,30 @@ def _wait_for_content(path: Path, expected: str, timeout: float = 10.0) -> None:
         time.sleep(0.02)
     msg = f"{path} never held {expected!r}; last content was {seen!r}"
     raise AssertionError(msg)
+
+
+def test_fake_configuration_replacement_keeps_previous_document_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed atomic replacement cannot expose a partial configuration."""
+    path = tmp_path / "fake-sccache-config.json"
+    path.write_text('{"previous":true}', encoding="utf-8")
+    replace = Path.replace
+
+    def fail_replacement(candidate: Path, target: Path) -> Path:
+        """Refuse publication while preserving the old configuration."""
+        if target == path:
+            raise OSError("injected atomic config replacement failure")
+        return replace(candidate, target)
+
+    monkeypatch.setattr(Path, "replace", fail_replacement)
+    with pytest.raises(OSError, match="injected atomic config replacement failure"):
+        fake_sccache._write_json_atomic(path, {"next": True})
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"previous": True}, (
+        "the prior complete config remains visible"
+    )
+    assert list(tmp_path.iterdir()) == [path], "the failed temporary file is removed"
 
 
 def _server(socket_path: Path) -> subprocess.Popen[bytes]:
@@ -120,6 +149,41 @@ def test_request_fields_are_only_present_when_configured() -> None:
     assert fields == {"jobserver": "/run/jobserver", "ready": "/run/ready"}, (
         "configured paths are carried into the request"
     )
+
+
+def test_scripted_server_results_feed_live_statistics(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Scripted hits and misses change the server's cumulative counters."""
+    socket_path = tmp_path / "sccache.sock"
+    config_path = tmp_path / "fake-sccache-config.json"
+    config_path.write_text(
+        json.dumps({"script": ["hit", "miss"]}),
+        encoding="utf-8",
+    )
+    server = _server(socket_path)
+    environment = {**os.environ, "SCCACHE_SERVER_UDS": str(socket_path)}
+    command = [sys.executable, "-c", "print('compiler ran')"]
+    try:
+        hit = _send(socket_path, {"argv": command, "cwd": str(tmp_path)})
+        miss = _send(socket_path, {"argv": command, "cwd": str(tmp_path)})
+        assert hit["code"] == 0 and not hit["stdout"], (
+            "a scripted hit returns without invoking the compiler"
+        )
+        assert "compiler ran" in miss["stdout"], "a miss invokes its compiler"
+
+        assert (
+            fake_sccache.client(["--show-stats", "--stats-format", "json"], environment)
+            == 0
+        ), "the statistics client reads live server counters"
+        stats = json.loads(capsys.readouterr().out)["stats"]
+    finally:
+        _stop_server(server)
+
+    assert stats["compile_requests"] == 2, "both scripted requests are counted"
+    assert stats["cache_hits"]["counts"]["Rust"] == 1, "the hit delta is visible"
+    assert stats["cache_misses"]["counts"]["Rust"] == 1, "the miss delta is visible"
+    assert stats["compilations"] == 1, "only the miss runs a compiler"
 
 
 def test_accepted_work_survives_client_disconnect_and_waits_for_a_jobserver_slot(
