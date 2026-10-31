@@ -829,7 +829,7 @@ CodeScene or holds its credential.
   With no `CS_ACCESS_TOKEN` in the environment, the upload step is skipped and
   a separate step writes a warning, so the run still succeeds and the publisher
   works before a CodeScene project exists. The token belongs only in that
-  environment: a repository- or organisation-level `CS_ACCESS_TOKEN` is
+  environment: a repository- or organization-level `CS_ACCESS_TOKEN` is
   available to workflows outside it, and the publisher falls back to it, so
   move any such copy into the environment and delete it.
 - **Known exception.** Merges made with `GITHUB_TOKEN`, such as Dependabot
