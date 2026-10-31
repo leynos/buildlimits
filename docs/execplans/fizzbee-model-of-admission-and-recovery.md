@@ -518,6 +518,14 @@ explicitly.
     25-file stop is unchanged for every later milestone.
 
 - [ ] EP-M4: minimal model with the busy queue (W1).
+  - [x] (2026-10-31) **DV1 baseline audit completed** and recorded in RFC 0001
+    §RC4. `git diff 7445bf0 06461ae -- buildlimits/` classified every hunk in
+    the eleven update-policy modules: none changes a W1-scope behaviour, so the
+    plan's `BLOCKED` branch is not taken and `head` stands for `7445bf0` within
+    W1. The audited head's `buildlimits/` tree is byte-identical to
+    `origin/main` at `71892de`. The one touchy hunk — `_starved` reading the
+    counts port twice where it used to snapshot once — is shown equivalent
+    because admission is mutated only on the supervisor's single event loop.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -925,7 +933,9 @@ explicitly.
 
 - **DV1. Transcribe HEAD; keep `7445bf0` as a named audit point.**
   - Decision: the fixed configuration, `head`, transcribes HEAD of `main` at
-    the start of EP-M4 (currently `42f40e4`).
+    the start of EP-M4. The audit pinned it to `06461ae`, the branch head at
+    that point, whose `buildlimits/` tree is byte-identical to `origin/main`
+    at `71892de` (RFC 0001 §RC4).
   - Before writing the model, EP-M4 audits
     `git diff 7445bf0 <head> -- buildlimits/` over the update-policy modules,
     and records the result in RFC 0001.
