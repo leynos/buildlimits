@@ -17,7 +17,6 @@ from buildlimits.metrics_cli import main as metrics_main
 from buildlimits.metrics_query import Window
 from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import OutcomeRecord
-from buildlimits.outcome_recorder import OUTCOME_QUERY_SECONDS
 
 pytest_plugins = [
     "cache_outcome_systemd_support",
@@ -223,26 +222,58 @@ def _delayed_statistics(outcome_world: OutcomeWorld) -> None:
 def _compile_during_query(outcome_world: OutcomeWorld) -> None:
     """Submit a second compile while the delayed query remains outstanding."""
     before = outcome_world.harness.fake_cache_state()["statistics_queries"]
-    outcome_world.first_elapsed = outcome_world.compile()
+    outcome_world.compile()
     assert wait_for(
         lambda: outcome_world.harness.fake_cache_state()["statistics_queries"] > before,
         timeout=4,
     ), outcome_world.harness.journal()
-    outcome_world.second_elapsed = outcome_world.compile()
+    admissions_before = len(
+        outcome_world.harness.read_metric_events("request_admitted")
+    )
+    outcome_world.compile()
+    assert wait_for(
+        lambda: (
+            len(outcome_world.harness.read_metric_events("request_admitted"))
+            > admissions_before
+        ),
+        timeout=5,
+    ), outcome_world.harness.journal()
+    outcome_world.second_admitted = outcome_world.harness.read_metric_events(
+        "request_admitted"
+    )[admissions_before]
 
 
 @then("the second compile is admitted while the query is outstanding")
 def _admitted_during_query(outcome_world: OutcomeWorld) -> None:
-    """Bound the second build's excess latency below the recorder's deadline."""
-    assert outcome_world.first_elapsed is not None, (
-        "_admitted_during_query: outcome_world.first_elapsed is not None"
+    """Order the second admission against the recorder's query completion.
+
+    Elapsed compiler time cannot prove this: the second compile starts after
+    the query begins, so even an admission that waited out the deadline would
+    take less than ``OUTCOME_QUERY_SECONDS`` longer than the first. Instead the
+    supervisor's own ``request_admitted`` record is compared with the
+    ``outcome_reading`` record that reports the query's timeout. Both are
+    journal entries from the same unit, so their timestamps share a source and
+    preserve emission order.
+    """
+    assert outcome_world.second_admitted is not None, (
+        "_admitted_during_query: the second admission was observed"
     )
-    assert outcome_world.second_elapsed is not None, (
-        "_admitted_during_query: outcome_world.second_elapsed is not None"
+    assert wait_for(
+        lambda: any(
+            row.get("BUILD_LIMITS_OUTCOME_REASON") == "timeout"
+            for row in outcome_world.harness.read_metric_events("outcome_reading")
+        ),
+        timeout=6,
+    ), outcome_world.harness.journal()
+    timeout_row = next(
+        row
+        for row in outcome_world.harness.read_metric_events("outcome_reading")
+        if row.get("BUILD_LIMITS_OUTCOME_REASON") == "timeout"
     )
-    excess = outcome_world.second_elapsed - outcome_world.first_elapsed
-    assert excess < OUTCOME_QUERY_SECONDS, (
-        "the outstanding statistics query does not hold an admission token"
+    admitted_at = int(outcome_world.second_admitted["__REALTIME_TIMESTAMP"])
+    timed_out_at = int(timeout_row["__REALTIME_TIMESTAMP"])
+    assert admitted_at < timed_out_at, (
+        "the second request is admitted before the statistics query times out"
     )
 
 

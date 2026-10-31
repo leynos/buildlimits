@@ -1397,6 +1397,27 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   regression test patches the set to prove the gate follows it. The guide now
   says to add the version and its fixtures as one change, run the check, and
   merge only once it passes.
+- [x] (2026-10-31 04:55Z) Two findings from the round after the twelve repairs.
+  The first was valid: the systemd admission scenario compared the second
+  compile's excess elapsed time with `OUTCOME_QUERY_SECONDS`, but the second
+  compile starts after the delayed query begins, so even an admission that
+  waited out the deadline would finish less than that interval later. The
+  scenario now compares two journal records from the same unit instead: the
+  supervisor's `request_admitted` record for the second compile and the
+  `outcome_reading` record that reports the query's `timeout`. Journal
+  timestamps share one clock and preserve emission order, so the assertion
+  orders admission against the query's completion directly. The scenario passed
+  three consecutive runs on this host. The second finding asked for the
+  quiet-host child-sighting figure at this revision, where the sampler changed.
+  The measurement was rerun: one run recorded an absolute p99 of 1.848 ms
+  against the 2 ms ceiling at a 1-minute load of 26.94, with the 64 identity
+  reads at 1.723 ms; four further runs measured 2.254 ms at 26.15, 2.023 ms at
+  28.46, 2.445 ms at 27.94 and 4.708 ms at 27.38, while the read baseline rose
+  from 2.676 ms to 4.840 ms. The spread again follows host contention, so the
+  pass is environmental evidence with an absolute p99 at the current revision;
+  the fully idle-host acceptance stays the deferred measurement the plan
+  already records. Logs: `/tmp/latency-series-cache-hit-prediction.out` and
+  `/tmp/systemd-stalled-cache-hit-prediction.out`.
 
 ## Surprises & discoveries
 
