@@ -83,6 +83,9 @@ ______________________________________________________________________
   without ever releasing a token on a guess.
 - `build-limits-metrics` to summarize bounded, identifier-free journal
   metrics.
+- Opt-in sccache outcome recording into a private local store, with
+  `build-limits-cache-replay` for read-only H2 and H3 evidence over that
+  history.
 
 ______________________________________________________________________
 

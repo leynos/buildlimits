@@ -12,11 +12,11 @@ from outcome_shell_test_support import (
     OutcomeWorld,
     OutcomeWorldOptions,
     PendingStatistics,
+    admitted_launch,
     make_outcome_world,
 )
 from outcome_test_helpers import stats_text
 
-from buildlimits.admission import Launch
 from buildlimits.admission_state import GroupState
 from buildlimits.effects import Exit, ReturnToken, Terminate
 from buildlimits.nonblocking_child import ChildReaper, NonBlockingChild
@@ -69,12 +69,7 @@ def test_loop_admits_while_query_stalls(tmp_path: Path) -> None:
     assert iterations >= 10, "the loop keeps ticking throughout the pending query"
     assert child.result is None, "the helper remains stalled before its deadline"
 
-    assert world.admission.submit(7), "the supervisor accepts a request mid-query"
-    launch = next(
-        effect
-        for effect in world.admission.token_arrived(b"+")
-        if isinstance(effect, Launch)
-    )
+    launch = admitted_launch(world.admission, 7)
     ended = world.admission.leader_exited(launch.group_id, Exit(code=0))
     assert ended == [Terminate(launch.group_id)], "the leader exit requests a drain"
     assert world.admission.groups[launch.group_id].state is GroupState.DRAINING, (

@@ -11,16 +11,17 @@ import pytest
 from outcome_shell_test_support import (
     FakeWriter,
     OutcomeWorldOptions,
+    admitted_launch,
     make_outcome_world,
 )
 from request_helpers import crate_pending
 
-from buildlimits.admission import Admission, Launch
 from buildlimits.drain_loop import DrainLoop, LoopEffects
 from buildlimits.effects import Effect, Exit, ReturnToken, Shutdown, Terminate
 from buildlimits.supervisor_outcome_setup import GroupEnding
 
 if typ.TYPE_CHECKING:
+    from buildlimits.admission import Admission, Launch
     from buildlimits.nonblocking_child import ChildReaper
     from buildlimits.outcome_ports import OutcomeStorePort
     from buildlimits.pending_request import Pending
@@ -82,19 +83,16 @@ class _FaultedLoop:
 
 @pytest.mark.parametrize(
     "entry",
-    ["launched", "emptied", "on_tick", "describe", "close"],
+    ["launched", "emptied", "on_tick", "close"],
 )
 def test_shell_entry_points_cannot_break_graceful_admission_drain(
     tmp_path: Path, entry: str
 ) -> None:
-    """Verify shell faults leave loop health and token authority intact."""
+    """Verify loop-called shell faults leave health and token authority intact."""
     world = make_outcome_world(tmp_path)
     shell = typ.cast("OutcomeShell", world.shell)
     admission = world.admission
-    assert admission.submit(9), "one request enters the admission queue"
-    launch = next(
-        effect for effect in admission.token_arrived(b"+") if isinstance(effect, Launch)
-    )
+    launch = admitted_launch(admission, 9)
     pending = crate_pending(9, launch.group_id, admitted=0.0)
     pending.cache_path = "cached"
     callbacks = _FaultedLoop(shell, admission, pending, launch)
@@ -134,6 +132,31 @@ def test_shell_entry_points_cannot_break_graceful_admission_drain(
         "enabled": False,
         "reason": "recorder_disabled",
     }, "the failed shell exposes only its bounded disabled state"
+
+
+def test_describe_failure_reports_without_disabling_recording(tmp_path: Path) -> None:
+    """A status snapshot fault leaves state, metrics, queue and resources alone."""
+    world = make_outcome_world(tmp_path)
+    shell = typ.cast("OutcomeShell", world.shell)
+    recorder_state = shell._recorder.state
+    published = (list(world.metrics.events), list(world.writer.records))
+    assert shell.describe()["enabled"] is True, "the recorder starts enabled"
+
+    with mock.patch.object(shell, "_describe", side_effect=RuntimeError("diagnostic")):
+        assert shell.describe() == {
+            "enabled": False,
+            "reason": "snapshot_unavailable",
+        }, "a failed snapshot reports a bounded unavailable state"
+
+    assert shell._recorder.state is recorder_state, "the recorder never advanced"
+    assert shell._disabled is False, "a status read cannot fail the shell closed"
+    assert (world.metrics.events, world.writer.records) == published, (
+        "a status read publishes no metric and enqueues no record"
+    )
+    assert not world.writer.closed, "a status read leaves owned resources open"
+    assert shell.describe()["enabled"] is True, (
+        "the next snapshot succeeds because recording was never disabled"
+    )
 
 
 class _StickyReaper:

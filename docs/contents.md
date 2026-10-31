@@ -16,6 +16,9 @@
 - [Migrating from the dev-env-rocky copy](migrating-from-dev-env-rocky.md)
   lists what operators must change when moving from `build_limits` in
   dev-env-rocky to this repository's 0.1.0 release.
+- [Migrating to cache-outcome recording](migrating-to-cache-outcome-recording.md)
+  gives the opt-in, rollback and downgrade sequence for the outcome store and
+  its journal vocabulary.
 
 ## Decisions
 

@@ -152,14 +152,28 @@ class OutcomeShell:
         self._guard(self._on_tick, now)
 
     def describe(self) -> dict[str, object]:
-        """Return bounded live counters for the optional status section.
+        """Return bounded live counters without changing recorder state.
+
+        This is a status query, not a loop boundary: the fail-closed
+        ``_guard`` wraps only the methods the supervisor loop calls, so a
+        snapshot fault must not disable a recorder that is still working.
+        A recorder that cannot describe itself reports the fixed unavailable
+        state and keeps running; the next snapshot may succeed.
 
         Returns
         -------
         dict[str, object]
-            The privacy-safe recording state for supervisor status.
+            The privacy-safe recording state for supervisor status, the fixed
+            disabled state once recording has failed or the shell has closed, or
+            a bounded ``snapshot_unavailable`` marker when the snapshot itself
+            fails.
         """
-        return typ.cast("dict[str, object]", self._guard(self._describe))
+        if self._disabled or self._closed:
+            return supervisor_outcome_setup.disabled_description()
+        try:
+            return self._describe()
+        except Exception:  # ruff: ignore[blind-except] - a status read must not disable recording.
+            return {"enabled": False, "reason": "snapshot_unavailable"}
 
     def close(self, timeout: float = OUTCOME_CLOSE_SECONDS) -> None:
         """Cancel the query, reap its helper and close the writer within a bound."""
@@ -171,19 +185,15 @@ class OutcomeShell:
         self._guard(self._close, timeout)
 
     def _guard(self, action: cabc.Callable[..., object], *args: object) -> object:
-        """Make one public shell boundary total and permanently fail closed.
+        """Make one loop-called shell boundary total and permanently fail closed.
 
         Returns
         -------
         object
-            The action's result, or a bounded disabled-state value on failure.
+            The action's result, or ``None`` on failure or once disabled.
         """
         if self._disabled or self._closed:
-            return (
-                supervisor_outcome_setup.disabled_description()
-                if action == self._describe
-                else None
-            )
+            return None
         try:
             return action(*args)
         except Exception:  # ruff: ignore[blind-except] - keep recorder faults outside token and admission decisions.
@@ -192,11 +202,7 @@ class OutcomeShell:
             # perfect.
             with contextlib.suppress(Exception):
                 self._disable()
-            return (
-                supervisor_outcome_setup.disabled_description()
-                if action == self._describe
-                else None
-            )
+            return None
 
     def _launched(self, entry: Pending, group_id: str) -> None:
         """Build the bounded key payload and enter the recorder window."""

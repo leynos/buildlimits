@@ -158,8 +158,10 @@ The status command adds a `cache outcomes recording` line while recording is
 enabled; once a reading or outcome has closed, that line also names the last
 reason, which is the first thing to check when nothing is being attributed. If
 recording stops after an internal failure, the line reports that and keeps the
-last reason when one was recorded. For history and reading or store failures,
-query:
+last reason when one was recorded. If a single status read cannot build the
+outcome snapshot, the line reads `cache outcomes status unavailable`; recording
+continues and a later read may recover, so this is not a recorder failure. For
+history and reading or store failures, query:
 
 ```bash
 build-limits-metrics --since 1d --max-records 100000

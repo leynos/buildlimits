@@ -4,7 +4,7 @@ import dataclasses as dc
 import typing as typ
 from types import SimpleNamespace
 
-from buildlimits.admission import Admission
+from buildlimits.admission import Admission, Launch
 from buildlimits.metrics import Metrics
 from buildlimits.outcome_attribution import Generation
 from buildlimits.outcome_key import Salt
@@ -203,6 +203,41 @@ class OutcomeWorldOptions:
 _DEFAULT_OUTCOME_WORLD_OPTIONS = OutcomeWorldOptions()
 
 
+def admitted_launch(
+    admission: Admission, request_id: int, *, cacheable: bool = True
+) -> Launch:
+    """Queue one request and return the launch its first token admits.
+
+    Example:
+        launch = admitted_launch(world.admission, 7, cacheable=False)
+
+    Returns
+    -------
+    Launch
+        The launch admission dispatched for the queued request.
+
+    Raises
+    ------
+    AssertionError
+        If admission refuses the request or the token does not release it.
+    """
+    if not admission.submit(request_id, cacheable=cacheable):
+        msg = "the supervisor must accept the queued request"
+        raise AssertionError(msg)
+    launch = next(
+        (
+            effect
+            for effect in admission.token_arrived(b"+")
+            if isinstance(effect, Launch)
+        ),
+        None,
+    )
+    if launch is None:
+        msg = "the held token must admit the queued request"
+        raise AssertionError(msg)
+    return launch
+
+
 def make_outcome_world(
     tmp_path: Path,
     options: OutcomeWorldOptions = _DEFAULT_OUTCOME_WORLD_OPTIONS,
@@ -236,6 +271,7 @@ def make_outcome_world(
                 else options.recovery_marker
             ),
             cache_outcomes="record" if options.recording else "off",
+            cache_mode="sccache",
         ),
         metrics=metrics,
         tracer=options.tracer,

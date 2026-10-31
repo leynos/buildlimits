@@ -32,6 +32,7 @@ from buildlimits.supervisor_outcome_setup import GroupEnding
 
 if typ.TYPE_CHECKING:
     from buildlimits.effects import Effect
+    from buildlimits.supervisor_outcomes import OutcomeShell
 
 
 _CLEAN_EXIT = Exit(code=0)
@@ -48,7 +49,9 @@ class DifferentialMachine(RuleBasedStateMachine):
 
     Hypothesis draws a different subset of rules for each example, so a fixed
     seed first completes one cached request and its reading. Every example then
-    compares a real recording trace rather than only an empty one.
+    compares a real recording trace rather than only an empty one. The seed also
+    routes ``direct`` and ``direct_fallback`` launches through both shells, so no
+    example can pass by never reaching a composition the recorder must ignore.
     """
 
     def __init__(self) -> None:
@@ -59,16 +62,27 @@ class DifferentialMachine(RuleBasedStateMachine):
         self._directory = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         root = Path(self._directory.name)
         self.clock = [0.0]
+        # Both admissions consult one permission, like the supervisor's watch,
+        # so a launch can compose with the cache or fall back without it.
+        self.cache_available = True
         self.enabled = Trace(
             self._make_world(root / "enabled", recording=True), self.clock
         )
         self.disabled = Trace(
             self._make_world(root / "disabled", recording=False), self.clock
         )
+        for trace in (self.enabled, self.disabled):
+            trace.world.admission.cache_allowed = lambda: self.cache_available
         self.now = 0.0
         self.requests = 0
         self.is_cached: dict[str, bool] = {}
+        self.request_cacheable: dict[int, bool] = {}
+        self.direct_paths: set[str] = set()
         self.exits: dict[str, Exit] = {}
+        # The seed always routes one direct launch through both shells, so
+        # every example proves the recording hook ignores that composition
+        # instead of relying on Hypothesis to draw ``cacheable=False``.
+        self.direct_launches = 0
         self.is_seeded = False
 
     def _make_world(self, root: Path, *, recording: bool) -> OutcomeWorld:
@@ -98,6 +112,7 @@ class DifferentialMachine(RuleBasedStateMachine):
         for now in (0.0, 0.1):
             self._advance_to(now)
         self.requests += 2
+        self.request_cacheable.update({1: True, 2: True})
         self._apply("submit", (1,), {"cacheable": True})
         self._apply("submit", (2,), {"cacheable": True})
         draining = self._deliver(b"+")
@@ -111,6 +126,20 @@ class DifferentialMachine(RuleBasedStateMachine):
         self._apply("server_activity", (0,))
         for now in (1.1, 1.2, 2.3, 2.4):
             self._advance_to(now)
+        self.requests += 1
+        self.request_cacheable[self.requests] = False
+        self._apply("submit", (self.requests,), {"cacheable": False})
+        direct = self._deliver(b"t2")
+        assert direct is not None, "the seeded direct request holds its token"
+        # A cacheable request launched while composition is forbidden selects
+        # the ``direct_fallback`` path, which the same hook must also ignore.
+        self.requests += 1
+        self.request_cacheable[self.requests] = True
+        self.cache_available = False
+        self._apply("submit", (self.requests,), {"cacheable": True})
+        fallback = self._deliver(b"t3")
+        assert fallback is not None, "the seeded fallback request holds its token"
+        self.cache_available = True
         self.is_seeded = True
 
     @rule(step=st.sampled_from([0.05, 0.2, 1.0, 2.0]))
@@ -122,7 +151,13 @@ class DifferentialMachine(RuleBasedStateMachine):
     def submit(self, cacheable: bool) -> None:
         """Queue one new request in both admissions."""
         self.requests += 1
+        self.request_cacheable[self.requests] = cacheable
         self._apply("submit", (self.requests,), {"cacheable": cacheable})
+
+    @rule(cache_allowed=st.booleans())
+    def cache_availability(self, cache_allowed: bool) -> None:
+        """Change the cache-composition permission both admissions consult."""
+        self.cache_available = cache_allowed
 
     @rule(token=st.sampled_from([b"+", b"t1", b"t2"]))
     def token_arrived(self, token: bytes) -> None:
@@ -155,6 +190,12 @@ class DifferentialMachine(RuleBasedStateMachine):
         assert not self.disabled.world.metrics.events, "the null shell is inert"
         if not self.is_seeded:
             return
+        assert self.direct_launches >= 2, (
+            "the seed routed both direct compositions through the shells"
+        )
+        assert {"direct", "direct_fallback"} <= self.direct_paths, (
+            "the seed reached both direct compositions"
+        )
         observations = self.enabled.observations()
         assert observations.records, "the seed completed and stored one reading"
         # Every cached launch shares one entry, so one key; a direct launch
@@ -195,10 +236,35 @@ class DifferentialMachine(RuleBasedStateMachine):
         # The hook entry must carry the classification admission chose: the
         # shell records only a cached launch, so a direct request that arrived
         # as ``cached`` would invent history the real supervisor cannot make.
-        entry = cached_entry() if launch.cached else direct_entry()
+        entry = (
+            cached_entry()
+            if launch.cached
+            else direct_entry(self._direct_path(launch.request_id))
+        )
+        if launch.cached:
+            for trace in (self.enabled, self.disabled):
+                trace.world.shell.launched(entry, launch.group_id)
+            return launch.group_id
+        self.direct_launches += 1
+        self.direct_paths.add(entry.cache_path)
+        before = self._public_observations()
         for trace in (self.enabled, self.disabled):
             trace.world.shell.launched(entry, launch.group_id)
+        assert self._public_observations() == before, (
+            "a direct launch publishes no record, metric or status change"
+        )
         return launch.group_id
+
+    def _direct_path(self, request_id: int) -> str:
+        """Return the direct path ``record_admitted`` selects for a request.
+
+        Returns
+        -------
+        str
+            ``direct_fallback`` for a cacheable request that a forbidden cache
+            composition forced direct, otherwise ``direct``.
+        """
+        return "direct_fallback" if self.request_cacheable[request_id] else "direct"
 
     def _end(self, group_id: str, exit_: Exit) -> None:
         """End one group's leader in both admissions."""
@@ -216,7 +282,16 @@ class DifferentialMachine(RuleBasedStateMachine):
             groups = trace.world.admission.groups
             state = groups[group_id].state.value if group_id in groups else "removed"
             trace.group_states.append(state)
+        if ending.is_cached:
+            for trace in (self.enabled, self.disabled):
+                trace.world.shell.emptied(ending)
+            return
+        before = self._public_observations()
+        for trace in (self.enabled, self.disabled):
             trace.world.shell.emptied(ending)
+        assert self._public_observations() == before, (
+            "a direct ending publishes no record, metric or status change"
+        )
 
     def _apply(
         self,
@@ -255,6 +330,24 @@ class DifferentialMachine(RuleBasedStateMachine):
             if group.state is not GroupState.SERVER_DRAIN:
                 return group_id
         return None
+
+    def _public_observations(self) -> tuple[object, ...]:
+        """Return the recording world's public observations for comparison.
+
+        Returns
+        -------
+        tuple[object, ...]
+            The status snapshot, recorder progress, journal metrics and queued
+            store records.
+        """
+        world = self.enabled.world
+        shell = typ.cast("OutcomeShell", world.shell)
+        return (
+            shell.describe(),
+            shell._recorder.state.progress,
+            list(world.metrics.events),
+            list(world.writer.records),
+        )
 
     def _assert_identical(self) -> None:
         """Fail if the worlds observed different authority behaviour."""

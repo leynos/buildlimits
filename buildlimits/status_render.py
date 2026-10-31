@@ -13,6 +13,8 @@ if typ.TYPE_CHECKING:
 _UNAVAILABLE_ADMISSION_LINE = (
     "admission readiness unavailable: readiness is not reported"
 )
+_SNAPSHOT_UNAVAILABLE = "snapshot_unavailable"
+_SNAPSHOT_UNAVAILABLE_LINE = "cache outcomes status unavailable"
 
 
 def render(state: cabc.Mapping[str, object]) -> str:
@@ -102,6 +104,8 @@ def _outcome_lines(state: cabc.Mapping[str, object]) -> list[str]:
     if section is None:
         return []
     if section.get("enabled") is not True:
+        if section.get("reason") == _SNAPSHOT_UNAVAILABLE:
+            return [_SNAPSHOT_UNAVAILABLE_LINE]
         return [_disabled_line(section)]
     line = (
         "cache outcomes recording: "

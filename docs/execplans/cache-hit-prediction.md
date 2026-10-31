@@ -3769,3 +3769,18 @@ Consult these documents:
   recorder keeps no provisional marker and that D12 is inactive unless a
   trailing counter is demonstrated, and the roadmap says the replay reports H2
   and H3 while the scripted and controlled windows supply H1.
+- 2026-10-31: the pre-merge check on `2a591c8` raised three errors, each valid
+  against the current source. `OutcomeShell.describe` was routed through the
+  fail-closed guard and could disable a working recorder, contradicting ADR
+  005's loop-called scope and command/query segregation; it is now a read-only
+  snapshot that reports `snapshot_unavailable` for one read without changing
+  state, metrics, writer contents or owned resources, and the status renderer
+  names that state instead of inventing a recorder failure. A shell-level test
+  now proves a direct launch and ending open no recorder window, with a cached
+  control. The differential machine seeds both the `direct` and
+  `direct_fallback` compositions, carries the path `record_admitted` would
+  choose, and asserts that each publishes no record, metric or status change.
+  The developers' guide lists `supervisor_wiring`, scopes fail-closed wrapping
+  to loop-called methods and documents the read-only snapshot; the users' guide
+  and README describe the new status line and the opt-in feature; and a
+  migration guide records the opt-in, rollback and downgrade sequence.

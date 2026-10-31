@@ -142,6 +142,7 @@ Each module owns one decision. This table is the single module inventory.
 | `supervisor_polling`                                                               | Poll cadence and ordered server, pool and cache checks; no token-release decisions                     |
 | `supervisor_signals`, `supervisor_shutdown`                                        | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                                    |
 | `supervisor_outcome_setup`, `supervisor_outcomes`                                  | Resource-free disabled shell and failure-isolated recording shell                                      |
+| `supervisor_wiring`                                                                | Builds the cache watch and recovery machine, including their late-resolved mutual probes               |
 | `supervisor_observability`                                                         | Wires cached pressure and drain observers into existing owners                                         |
 | `effect_dispatch`                                                                  | Effect handlers and their metric and health mappings                                                   |
 | `requesters`, `pending_request`                                                    | Connections, queued requests and replies; recorded request data                                        |
@@ -219,8 +220,12 @@ uses admission counts and the recovery barrier; statistics and generation
 probes return without waiting, and the writer accepts immutable rows through
 its own bounded queue. `OutcomeShell.close` cancels and reaps a pending helper
 within the shutdown bound. The disabled shell creates no process, socket,
-thread or store. Any optional-shell failure disables recording for that
-supervisor lifetime without changing admission.
+thread or store. A fault in a loop-called shell method (`launched`, `emptied`,
+`on_tick` or `close`) disables recording for that supervisor lifetime without
+changing admission. `describe` is a read-only status query rather than a loop
+boundary: a failed snapshot reports
+`{"enabled": False, "reason": "snapshot_unavailable"}` for that read and leaves
+recording running.
 
 `supervisor_outcome_setup.disabled_description` is the single constructor for
 the fixed disabled status used by failed startup and runtime fail-closed paths.
@@ -274,6 +279,14 @@ tag that `_dispatch` matches: `"listener"`, `"pool"`, `("conn", request_id)`,
 terminations, notices emptied scopes, polls the cache while any group is in
 `SERVER_DRAIN`, checks that `/dev/guild` is still the device it opened, and
 refreshes the cache's reachability.
+
+`Supervisor` delegates construction of the cache watch and recovery machine to
+`supervisor_wiring.watch_and_recovery`. The two answer each other: recovery
+reads the watch's live holdings, while the watch asks recovery whether
+automatic recovery is already pending. The watch is built first, its pending
+probe is a late-resolved closure over the recovery machine installed in the
+same call, and the watch's `cache_allowed` bound method is installed on
+admission there too.
 
 Start-up takes a singleton lock and passes the restart barrier:
 `startup.drain_slice` terminates every scope under the compilers slice and

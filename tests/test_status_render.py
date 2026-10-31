@@ -71,6 +71,24 @@ def test_a_closed_reason_rides_the_outcome_line(
     )
 
 
+def test_a_failed_outcome_snapshot_never_claims_recording_disabled() -> None:
+    """A snapshot fault names the missing status, not an invented failure."""
+    state = {
+        "capacity": 4,
+        "held": 0,
+        "healthy": True,
+        "caching": True,
+        "cache_outcomes": {"enabled": False, "reason": "snapshot_unavailable"},
+    }
+    lines = render(state).splitlines()
+    assert "cache outcomes status unavailable" in lines, (
+        "the operator sees that the snapshot, not recording, is unavailable"
+    )
+    assert "cache outcomes disabled after an internal failure" not in lines, (
+        "a status read must not be reported as a recorder failure"
+    )
+
+
 def test_blocked_admission_precedes_the_healthy_headline() -> None:
     """A healthy process headline cannot hide blocked admission."""
     state, _line = STATES["blocked-admission"]
