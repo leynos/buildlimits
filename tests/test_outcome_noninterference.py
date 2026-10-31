@@ -124,23 +124,37 @@ def _drain_one_group(trace: Trace) -> None:
         trace.tick(1.2)
 
 
+def _import_parts(tree: ast.Module) -> set[str]:
+    """Return every dotted part of every module name the imports mention.
+
+    Both spellings reach recording code: ``from buildlimits.outcome_x import
+    Y`` hides the module in ``ImportFrom.module``, and ``import
+    buildlimits.outcome_x`` hides it inside a dotted ``alias.name``. Checking
+    each part catches either form without matching a symbol name by accident.
+
+    Examples
+    --------
+    >>> sorted(_import_parts(ast.parse("from buildlimits.outcome_x import Y")))
+    ['Y', 'buildlimits', 'outcome_x']
+    """
+    names: list[str] = []
+    for node in ast.walk(tree):
+        match node:
+            case ast.Import(names=aliases):
+                names.extend(alias.name for alias in aliases)
+            case ast.ImportFrom(module=module, names=aliases):
+                names.extend([module] if module else [])
+                names.extend(alias.name for alias in aliases)
+    return {part for name in names for part in name.split(".")}
+
+
 def test_decision_modules_do_not_import_outcome_recording() -> None:
     """Admission decisions remain independent of optional recording code."""
     package = ROOT / "buildlimits"
     for filename in _ADMISSION_MODULES:
         tree = ast.parse((package / filename).read_text(encoding="utf-8"))
-        imported = {
-            alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-            for alias in node.names
-        } | {
-            alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-            for alias in node.names
-        }
-        assert not any(name.startswith("outcome_") for name in imported), filename
+        imported = _import_parts(tree)
+        assert not any(part.startswith("outcome_") for part in imported), filename
 
 
 def test_decision_module_closure_excludes_outcome_recording() -> None:

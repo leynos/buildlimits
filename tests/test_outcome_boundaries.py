@@ -26,6 +26,7 @@ _DOMAIN_MODULES = (
     "outcome_records.py",
     "outcome_window.py",
 )
+_DOMAIN_ROOTS = tuple(filename.removesuffix(".py") for filename in _DOMAIN_MODULES)
 _FORBIDDEN_IMPORTS = {
     "io",
     "os",
@@ -121,27 +122,43 @@ def _domain_facts(
     return imported_modules, pathlib_imports_are_pure, called_names, called_attributes
 
 
-def test_outcome_domain_modules_remain_pure() -> None:
-    """Keep I/O, process, thread and clock dependencies outside the domain."""
-    for filename in _DOMAIN_MODULES:
-        tree = ast.parse((_PACKAGE / filename).read_text(encoding="utf-8"))
-        (
-            imported_modules,
-            pathlib_imports_are_pure,
-            called_names,
-            called_attributes,
-        ) = _domain_facts(tree)
+def _purity_violations(filename: str) -> list[str]:
+    """Report every purity rule one module breaks.
 
-        assert imported_modules.isdisjoint(_FORBIDDEN_IMPORTS), filename
-        assert pathlib_imports_are_pure, filename
-        assert called_names.isdisjoint(_FORBIDDEN_CALLS), filename
-        assert called_attributes.isdisjoint(_FORBIDDEN_CLOCK_CALLS), filename
+    Returns
+    -------
+    list[str]
+        One line per broken rule, so a failure names all of them at once.
+    """
+    tree = ast.parse((_PACKAGE / filename).read_text(encoding="utf-8"))
+    imports, pathlib_is_pure, calls, attributes = _domain_facts(tree)
+    violations: list[str] = []
+    if imports & _FORBIDDEN_IMPORTS:
+        violations.append(f"imports {sorted(imports & _FORBIDDEN_IMPORTS)}")
+    if not pathlib_is_pure:
+        violations.append("imports an impure pathlib name")
+    if calls & _FORBIDDEN_CALLS:
+        violations.append(f"calls {sorted(calls & _FORBIDDEN_CALLS)}")
+    if attributes & _FORBIDDEN_CLOCK_CALLS:
+        violations.append(
+            f"reads the clock through {sorted(attributes & _FORBIDDEN_CLOCK_CALLS)}"
+        )
+    return violations
+
+
+def test_every_module_in_the_domain_closure_remains_pure() -> None:
+    """Keep I/O, process, thread and clock dependencies outside the domain.
+
+    The closure is checked rather than the listed modules, so a module a
+    domain module starts importing cannot escape the same rules.
+    """
+    for name in sorted(package_closure(_PACKAGE, _DOMAIN_ROOTS)):
+        assert not _purity_violations(f"{name}.py"), name
 
 
 def test_outcome_domain_modules_never_reach_admission() -> None:
     """The outcome domain must not depend on admission decisions (O4)."""
-    roots = tuple(filename.removesuffix(".py") for filename in _DOMAIN_MODULES)
-    closure = package_closure(_PACKAGE, roots)
+    closure = package_closure(_PACKAGE, _DOMAIN_ROOTS)
 
-    assert set(roots) <= closure, "the closure reaches every domain module"
+    assert set(_DOMAIN_ROOTS) <= closure, "the closure reaches every domain module"
     assert "admission" not in closure, "the domain reaches the admission machine"

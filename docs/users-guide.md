@@ -156,8 +156,10 @@ are not stored.
 
 The status command adds a `cache outcomes recording` line while recording is
 enabled; once a reading or outcome has closed, that line also names the last
-reason, which is the first thing to check when nothing is being attributed. For
-history and reading or store failures, query:
+reason, which is the first thing to check when nothing is being attributed. If
+recording stops after an internal failure, the line reports that and keeps the
+last reason when one was recorded. For history and reading or store failures,
+query:
 
 ```bash
 build-limits-metrics --since 1d --max-records 100000
@@ -190,29 +192,32 @@ finish between samples.
 This is evidence collection, not a hit prediction shown to users or used by the
 supervisor.
 
-To reset the history completely, stop the supervisor and delete both
-`cache-outcomes.jsonl` and `cache-outcomes.salt`, then start it again. This
-loses replay history and creates a new salt, so future keys no longer join to
-the deleted store. A corrupt store is retained as `.bad`; a newer store format
-is left untouched for a compatible reader.
+To reset the history completely, stop the supervisor and delete
+`cache-outcomes.jsonl`, `cache-outcomes.jsonl.bad` and `cache-outcomes.salt`,
+then start it again. This loses replay history, including any `.bad` backup
+kept from a corrupt store, and creates a new salt, so future keys no longer
+join to the deleted store. A corrupt store is renamed to `.bad` rather than
+deleted; a newer store format is left untouched for a compatible reader.
 
 For an upgrade, install every journal reader first, then the supervisor build
 while recording remains off. Set `cache_outcomes = "record"` only after that
 build is active. To downgrade, set the option to `off` and restart gracefully;
 remove the key before downgrading to a build that predates this setting. When a
-new sccache version produces `unsupported_version`, run
-`make test-sccache-host` against it before adding that version to
-`SUPPORTED_SCCACHE_VERSIONS` in the recorder.
+new sccache version produces `unsupported_version`, add the version and its
+fixtures to `SUPPORTED_SCCACHE_VERSIONS` in the recorder as one change and run
+`make test-sccache-host` against it. The host check runs for every supported
+version instead of skipping, so merge that change only once the check passes.
 
 If the opt-in real-binary check cannot run, follow
 [ADR 005's private real-binary fallback procedure](adr-005-cache-outcome-recording.md#d9-keep-the-real-binary-check-private-and-non-blocking).
 Build the same small crate once cold and once warm through the normal admitted
 supervisor, then compare adjacent sccache statistics windows. Do not bypass
-admission with a private compile. Because the fallback observes trailing
-counters indirectly, treat a provisional label as confirmed only when the next
-accepted window from the same server generation balances exactly. Otherwise,
-use an unattributed result with a counter-mismatch reason, as described in
-[ADR 005's counter confirmation rule](adr-005-cache-outcome-recording.md#d12-confirm-provisional-labels-only-if-needed).
+admission with a private compile. The recorder writes final outcome labels and
+keeps no provisional marker, so a fallback run produces no confirmed H2 or H3
+evidence; treat what it observes as unconfirmed.
+[ADR 005's counter confirmation rule](adr-005-cache-outcome-recording.md#d12-confirm-provisional-labels-only-if-needed)
+applies only if a trailing counter is demonstrated, and this release does not
+demonstrate one.
 
 ### Adapter environment
 

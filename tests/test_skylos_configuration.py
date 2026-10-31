@@ -81,15 +81,21 @@ def _scoped_entries(repository: Path) -> list[dict[str, typ.Any]]:
 def _assert_entry_names_a_real_method(
     repository: Path, entry: dict[str, typ.Any]
 ) -> None:
-    """Assert one exception's shape and that its named method exists."""
+    """Assert one exception's shape and that every named method exists."""
     assert set(entry) == {"type", "full_name", "path", "reason"}, (
         "each exception contains only its exact selector and explanation"
     )
     assert entry["reason"].strip(), "every exception explains its live call path"
-    assert "*" not in entry["full_name"][0], "wildcard symbols are not allowed"
-    path = repository / entry["path"][0]
+    for full_name in entry["full_name"]:
+        assert "*" not in full_name, "wildcard symbols are not allowed"
+        for path_name in entry["path"]:
+            _assert_method_exists(repository / path_name, full_name)
+
+
+def _assert_method_exists(path: Path, full_name: str) -> None:
+    """Assert that one dotted ``module.Class.method`` name exists in the file."""
     module = ast.parse(path.read_text(encoding="utf-8"))
-    _, class_name, method_name = entry["full_name"][0].rsplit(".", maxsplit=2)
+    _, class_name, method_name = full_name.rsplit(".", maxsplit=2)
     class_node = next(
         (
             node

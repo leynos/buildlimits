@@ -102,7 +102,7 @@ def _outcome_lines(state: cabc.Mapping[str, object]) -> list[str]:
     if section is None:
         return []
     if section.get("enabled") is not True:
-        return ["cache outcomes disabled after an internal failure"]
+        return [_disabled_line(section)]
     line = (
         "cache outcomes recording: "
         f"{section.get('attributed', 0)} attributed, "
@@ -110,6 +110,26 @@ def _outcome_lines(state: cabc.Mapping[str, object]) -> list[str]:
     )
     reason = section.get("last_reason")
     return [line if not isinstance(reason, str) else f"{line}; last reason {reason}"]
+
+
+def _disabled_line(section: cabc.Mapping[str, object]) -> str:
+    """Say why recording stopped, without inventing a reason.
+
+    A recorder that fails after startup stops with no fixed reason of its own,
+    so the last closed reason is the only evidence the operator has of what it
+    was doing; a failure before startup publishes a fixed disabled status
+    instead, which the headline already covers.
+
+    Returns
+    -------
+    str
+        The disabled headline, with the last closed reason when reported.
+    """
+    headline = "cache outcomes disabled after an internal failure"
+    reason = section.get("last_reason")
+    return (
+        headline if not isinstance(reason, str) else f"{headline}; last reason {reason}"
+    )
 
 
 def _action_label(state: cabc.Mapping[str, object]) -> str:

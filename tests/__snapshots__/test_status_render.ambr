@@ -122,6 +122,14 @@
   g3 server-drain (cached): request metadata unavailable; retaining compiler token
   '''
 # ---
+# name: test_the_summary_describes_each_state[outcomes-disabled-with-reason]
+  '''
+  capacity 2, held 0, healthy, caching through sccache
+  cache outcomes disabled after an internal failure; last reason no_quiet_point
+  no requests waiting
+  no compiler groups
+  '''
+# ---
 # name: test_the_summary_describes_each_state[outcomes-disabled]
   '''
   capacity 2, held 0, healthy, caching through sccache

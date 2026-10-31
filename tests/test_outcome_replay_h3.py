@@ -71,3 +71,35 @@ def test_a_solo_refusal_row_is_a_secondary_counterexample() -> None:
 
     assert report.verdict == "refuted", "a direct parser mismatch is decisive"
     assert report.evaluated_rows == 1, "the refusal row is a secondary check"
+
+
+def test_a_refusal_class_agrees_only_with_its_own_label() -> None:
+    """ADR 005 separates a refusal from a compilation that ran without caching."""
+    agreeing = dc.replace(_outcomes(1)[0], outcome="declined", parser_class="declined")
+    assert evaluate_h3((agreeing,)).counterexamples == 0, (
+        "a declined prediction agrees with a declined outcome"
+    )
+
+    not_cacheable = dc.replace(
+        _outcomes(1)[0], outcome="not_cacheable", parser_class="declined"
+    )
+    assert evaluate_h3((not_cacheable,)).counterexamples == 1, (
+        "a declined prediction does not agree with a compilation that ran"
+    )
+
+    declined = dc.replace(_outcomes(1)[0], outcome="declined", parser_class="cacheable")
+    assert evaluate_h3((declined,)).counterexamples == 1, (
+        "a cacheable prediction does not agree with a refusal"
+    )
+
+
+def test_unsupported_outcomes_are_not_evaluated_against_a_parser_class() -> None:
+    """An unsupported compiler is reported by the recorder, not the parser."""
+    unsupported = dc.replace(
+        _outcomes(1)[0], outcome="unsupported", parser_class="cacheable"
+    )
+
+    report = evaluate_h3((unsupported,))
+
+    assert report.evaluated_rows == 0, "unsupported rows stay unevaluated"
+    assert report.counterexamples == 0, "an unsupported result is not a mismatch"

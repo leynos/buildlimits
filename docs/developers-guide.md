@@ -753,9 +753,11 @@ Use these before writing a new arrange step; extend one rather than copying it.
 _Table 4: Shared test helper modules._
 
 `make test-sccache-host` sets `BUILD_LIMITS_SCCACHE_HOST_CHECK=1` and selects
-the `sccache_host_check` marker. The real-binary test requires Linux and the
-exact `sccache 0.14.0` binary; pytest skips that test when either precondition
-is absent. It compares its readings with the committed JSONL fixture. Set
+the `sccache_host_check` marker. The real-binary test requires Linux and a
+binary whose version is in the recorder's `SUPPORTED_SCCACHE_VERSIONS` set, so
+adding a version there makes the check run against it rather than skip; pytest
+skips that test when either precondition is absent. It compares its readings
+with the committed JSONL fixture. Set
 `BUILD_LIMITS_SCCACHE_REGENERATE_FIXTURE=1` to replace the fixture, then review
 the resulting diff before committing it.
 

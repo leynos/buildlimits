@@ -80,6 +80,10 @@ class OutcomeWorld:
         self.processes: list[subprocess.Popen[bytes]] = []
         self.old_compile_requests = 0
         self.old_reading_events = 0
+        # The compile that triggers the delayed query, and the one submitted
+        # while it is outstanding: the pair makes the admission assertion a
+        # comparison on this host rather than an absolute latency budget.
+        self.first_elapsed: float | None = None
         self.second_elapsed: float | None = None
         self.barrier_queries_before = 0
 

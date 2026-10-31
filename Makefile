@@ -173,7 +173,7 @@ test: build $(VENV_TOOLS) ## Run tests
 test-systemd-user: build $(VENV_TOOLS) ## Run host acceptance against the systemd user manager
 	BUILD_LIMITS_HOST_ACCEPTANCE=1 $(UV_ENV) $(UV) run pytest -v -m systemd_user tests
 
-test-sccache-host: build $(VENV_TOOLS) ## Run opt-in checks against sccache 0.14.0
+test-sccache-host: build $(VENV_TOOLS) ## Run opt-in checks against a supported sccache
 	BUILD_LIMITS_SCCACHE_HOST_CHECK=1 $(UV_ENV) $(UV) run pytest -v -m sccache_host_check tests
 
 

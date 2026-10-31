@@ -1387,6 +1387,16 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   `pytest -s tests/test_crosshair.py`. That run reproduced all six per-target
   results on `ae661cf` with exit status 0, and the plan now carries the block
   and the exact reproduction command.
+- [x] (2026-10-31 00:23Z) A review finding against the users' guide was valid
+  and is fixed. The real-binary host check skipped unless `sccache --version`
+  reported exactly `sccache 0.14.0`, while the guide asked maintainers to
+  validate a new version with that check before enabling it, so the documented
+  procedure could never run. The collection gate and the statistics guard now
+  both read the recorder's `SUPPORTED_SCCACHE_VERSIONS`, so adding a version
+  there makes the check run against that binary rather than skip it; a
+  regression test patches the set to prove the gate follows it. The guide now
+  says to add the version and its fixtures as one change, run the check, and
+  merge only once it passes.
 
 ## Surprises & discoveries
 
@@ -3716,3 +3726,25 @@ Consult these documents:
   `faac20b` by testing the covered span directly in
   `tests/test_outcome_evidence.py` and by simplifying the differential
   machine's cleanup and inert-shell checks.
+- 2026-10-31: the twelve findings from the 00:00Z review were each checked
+  against the current source rather than disposed of by the approval command's
+  thread-resolution side effect, and all twelve were valid. Nine are code or
+  contract repairs: the purity test now walks the whole domain import closure
+  instead of a hand-listed subset, so a newly reached module cannot escape it,
+  and `outcome_key` and `outcome_sightings` derive their path handling from
+  `PurePosixPath`; the process sampler keys its classification cache by PID and
+  start time rather than rebuilding the dictionary on every sample; H3 row
+  agreement treats `declined` and `not_cacheable` as separate refusal classes
+  and skips `unsupported` rows, with regression tests for both; the status line
+  keeps the last closed reason when recording stops mid-run; the admission
+  import check inspects `ImportFrom.module` and every dotted part of an
+  `import` name, so `from buildlimits.outcome_x import Y` can no longer hide;
+  the Skylos contract checks every `full_name` and `path` pair in an exception
+  rather than the first of each; and the systemd admission assertion compares
+  the second compile's excess latency with `OUTCOME_QUERY_SECONDS` instead of
+  an absolute 1.5 s budget, so it measures the admission token rather than the
+  host. Three are documentation corrections: the reset procedure now deletes
+  `cache-outcomes.jsonl.bad`, the provisional-label paragraph now says the
+  recorder keeps no provisional marker and that D12 is inactive unless a
+  trailing counter is demonstrated, and the roadmap says the replay reports H2
+  and H3 while the scripted and controlled windows supply H1.

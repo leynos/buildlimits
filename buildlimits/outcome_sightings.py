@@ -2,7 +2,7 @@
 
 import dataclasses as dc
 import typing as typ
-from pathlib import Path
+from pathlib import PurePosixPath
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -52,7 +52,7 @@ def full_emit_metadata(argv: cabc.Sequence[str]) -> str | None:
     --------
     ``full_emit_metadata(("rustc", "--emit=dep-info"))`` is None.
     """
-    if not argv or Path(argv[0]).name not in {"rustc", "clippy-driver"}:
+    if not argv or PurePosixPath(argv[0]).name not in {"rustc", "clippy-driver"}:
         return None
     emits = _emit_kinds(argv)
     if emits is not None and not emits.intersection({"link", "metadata"}):

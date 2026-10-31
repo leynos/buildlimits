@@ -344,4 +344,22 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
         },
         "cache outcomes disabled after an internal failure",
     ),
+    "outcomes-disabled-with-reason": (
+        {
+            "capacity": 2,
+            "held": 0,
+            "healthy": True,
+            "caching": True,
+            "cache_outcomes": {
+                "enabled": False,
+                "attributed": 1,
+                "readings": 2,
+                "last_reason": "no_quiet_point",
+            },
+        },
+        (
+            "cache outcomes disabled after an internal failure; "
+            "last reason no_quiet_point"
+        ),
+    ),
 }

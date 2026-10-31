@@ -11,7 +11,7 @@ import sccache_host
 _LINUX_REASON = "the host check requires Linux /proc and SO_PEERCRED"
 _OPT_IN_REASON = "set BUILD_LIMITS_SCCACHE_HOST_CHECK=1 to run the host check"
 _MISSING_BINARY_REASON = "sccache is not installed"
-_PINNED_VERSION_REASON = "the host check requires sccache 0.14.0"
+_SUPPORTED_VERSION_REASON = "the host check requires a supported sccache version"
 _VERSION_ERROR_REASON = "could not verify the sccache version"
 
 
@@ -40,7 +40,7 @@ def _assert_skip_reason(
     """
     skip_markers = [mark for mark in marks if mark.name.startswith("skipif")]
     if expected_reason is None:
-        assert not skip_markers, "the pinned binary should permit the host check"
+        assert not skip_markers, "a supported binary should permit the host check"
         return
 
     assert len(skip_markers) == 1, "the host check should receive one skip marker"
@@ -73,7 +73,7 @@ def _assert_skip_reason(
                 subprocess.CompletedProcess(
                     ["/fake/sccache", "--version"], 1, "", "version command failed"
                 ),
-                _PINNED_VERSION_REASON,
+                _SUPPORTED_VERSION_REASON,
             ),
             id="version-command-failed",
         ),
@@ -85,7 +85,7 @@ def _assert_skip_reason(
                 subprocess.CompletedProcess(
                     ["/fake/sccache", "--version"], 0, "sccache 0.13.0\n", ""
                 ),
-                _PINNED_VERSION_REASON,
+                _SUPPORTED_VERSION_REASON,
             ),
             id="wrong-version",
         ),
@@ -119,15 +119,15 @@ def _assert_skip_reason(
                 ),
                 None,
             ),
-            id="pinned-version",
+            id="supported-version",
         ),
     ],
 )
-def test_sccache_host_marks_require_opt_in_and_pinned_binary(
+def test_sccache_host_marks_require_opt_in_and_supported_binary(
     monkeypatch: pytest.MonkeyPatch,
     case: _HostMarkCase,
 ) -> None:
-    """Skip unsupported hosts and permit only the explicitly pinned binary."""
+    """Skip unsupported hosts and permit only a supported binary version."""
     monkeypatch.setattr(sys, "platform", case.platform)
     if case.is_enabled:
         monkeypatch.setitem(os.environ, "BUILD_LIMITS_SCCACHE_HOST_CHECK", "1")
@@ -183,3 +183,35 @@ def test_sccache_host_marks_require_opt_in_and_pinned_binary(
         assert options["timeout"] == 10, "version probing has a bounded timeout"
     else:
         assert not version_calls, "version probing follows successful binary lookup"
+
+
+def test_sccache_host_marks_follow_the_supported_version_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gate the host check on the recorder's supported version set.
+
+    A version added to ``SUPPORTED_SCCACHE_VERSIONS`` must make the check run
+    against that binary, so support cannot be extended while the real-binary
+    test still skips.
+    """
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setitem(os.environ, "BUILD_LIMITS_SCCACHE_HOST_CHECK", "1")
+    monkeypatch.setattr(sccache_host.shutil, "which", lambda _name: "/fake/sccache")
+    monkeypatch.setattr(
+        sccache_host, "SUPPORTED_SCCACHE_VERSIONS", frozenset({"9.9.9"})
+    )
+    reported = {"version": "sccache 0.14.0\n"}
+
+    def run_version(
+        arguments: list[str], **_options: object
+    ) -> subprocess.CompletedProcess[str]:
+        """Report the configured version string."""
+        return subprocess.CompletedProcess(arguments, 0, reported["version"], "")
+
+    monkeypatch.setattr(sccache_host.subprocess, "run", run_version)
+
+    unsupported = sccache_host.sccache_host_marks()
+    _assert_skip_reason(unsupported, _SUPPORTED_VERSION_REASON)
+
+    reported["version"] = "sccache 9.9.9\n"
+    _assert_skip_reason(sccache_host.sccache_host_marks(), None)

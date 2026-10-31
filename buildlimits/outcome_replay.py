@@ -70,7 +70,7 @@ def evaluate_h3(records: cabc.Iterable[StoreRecord]) -> H3Report:
     """
     outcomes, summaries = _split_records(records)
     attributed = sum(record.outcome != "unattributed" for record in outcomes)
-    row_checks = tuple(_row_counterexample(record) for record in outcomes)
+    row_checks = tuple(_row_agrees(record) for record in outcomes)
     counterexamples = sum(check is False for check in row_checks)
     counterexamples += sum(not _summary_agrees(summary) for summary in summaries)
     return H3Report(
@@ -86,12 +86,12 @@ def evaluate_h3(records: cabc.Iterable[StoreRecord]) -> H3Report:
 def _split_records(
     records: cabc.Iterable[StoreRecord],
 ) -> tuple[tuple[OutcomeRecord, ...], tuple[WindowSummary, ...]]:
-    """Separate outcome rows from window summaries in store order.
+    """Separate outcome rows from window summaries, keeping store order.
 
     Returns
     -------
     tuple[tuple[OutcomeRecord, ...], tuple[WindowSummary, ...]]
-        Outcome rows, then window summaries.
+        The outcome rows and window summaries, each in store order.
     """
     values = tuple(records)
     outcomes = tuple(record for record in values if isinstance(record, OutcomeRecord))
@@ -332,9 +332,8 @@ def _score_h2_sighting(
     combined_miss = sighting == "seen" or runtime_miss
     counters["evaluable"] += 1
     counters[sighting] += 1
-    counters["combined_correct"] += (
-        "miss" if combined_miss else "hit"
-    ) == record.outcome
+    prediction = "miss" if combined_miss else "hit"
+    counters["combined_correct"] += prediction == record.outcome
     counters["runtime_correct"] += ("miss" if runtime_miss else "hit") == record.outcome
     if sighting in {"seen", "not_seen"}:
         _score_child_sighting(record, sighting, counters)
@@ -365,21 +364,24 @@ def _agreement(correct: int, total: int) -> float | None:
     return round(correct / total, 6) if total else None
 
 
-def _row_counterexample(record: OutcomeRecord) -> bool | None:
-    """Check only parser classes with a directly attributable refusal label.
+def _row_agrees(record: OutcomeRecord) -> bool | None:
+    """Check one attributed row against its parser class.
+
+    ``declined`` and ``not_cacheable`` are separate refusal classes under ADR
+    005, and an ``unsupported`` row reports no parser result to evaluate.
 
     Returns
     -------
     bool | None
-        Whether the row contradicts its parser class, or None when it cannot
-        be directly evaluated.
+        Whether the row agrees with its parser class, or None when unevaluable.
     """
-    if record.outcome == "unattributed":
+    if record.outcome in {"unattributed", "unsupported"}:
         return None
-    if record.parser_class == "not_compile":
-        return record.outcome == "not_compile"
-    if record.parser_class == "declined":
-        return record.outcome in {"declined", "not_cacheable"}
+    refusals = {"declined", "not_compile"}
+    if record.parser_class == "cacheable":
+        return record.outcome not in refusals
+    if record.parser_class in refusals:
+        return record.outcome == record.parser_class
     return None
 
 

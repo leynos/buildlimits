@@ -134,7 +134,7 @@ def _cargo_home(env: cabc.Mapping[str, str]) -> str | None:
     if cargo_home:
         return cargo_home
     home = env.get("HOME")
-    return f"{home}/.cargo" if home else None
+    return (PurePosixPath(home) / ".cargo").as_posix() if home else None
 
 
 def _source_origin(parts: tuple[str, ...], env: cabc.Mapping[str, str]) -> str | None:

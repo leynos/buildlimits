@@ -299,8 +299,9 @@ the H1-H3 evidence and the owner's RFC 0002 G1 decision.
   - Fix the thresholds and H2 classifier in ADR 005 before the live statistics
     fixture or outcome records are read.
   - Success: the read-only live fixture is redacted; labels, H3 evidence and
-    child sightings are bounded and local; the replay reports H1-H3 against
-    the fixed thresholds; G0 and all material coverage limits are stated.
+    child sightings are bounded and local; the replay reports H2 and H3
+    against the fixed thresholds, while the scripted and controlled windows
+    supply the H1 verdict; G0 and all material coverage limits are stated.
 
 ### 3.2. Evaluate prediction offline after G1
 

@@ -27,7 +27,9 @@ class ProcessSampler:
         self._cgroup_root = cgroup_root
         self._generation: Generation | None = None
         self._group_dir: Path | None = None
-        self._classified: dict[tuple[int, int], str | None] = {}
+        # Keyed by PID, with the start time stored beside the value: a reused
+        # PID is a cache miss rather than a dict rebuild per sampled process.
+        self._classified: dict[int, tuple[int, str | None]] = {}
 
     def full_emit_metadata(
         self, generation: Generation
@@ -69,26 +71,20 @@ class ProcessSampler:
     def _forget_departed(self, members: set[int]) -> None:
         """Drop cached classifications whose process left the group."""
         self._classified = {
-            identity: metadata
-            for identity, metadata in self._classified.items()
-            if identity[0] in members
+            pid: entry for pid, entry in self._classified.items() if pid in members
         }
 
-    def _forget_pid(self, pid: int, *, keep: tuple[int, int] | None = None) -> None:
-        """Drop cached classifications for one pid, except one live identity."""
-        self._classified = {
-            known: metadata
-            for known, metadata in self._classified.items()
-            if known[0] != pid or known == keep
-        }
+    def _forget_pid(self, pid: int) -> None:
+        """Drop any cached classification for one pid."""
+        self._classified.pop(pid, None)
 
     def _sample(self, pid: int) -> str | None:
         """Classify one member and report only what this sample validated.
 
-        The cache still saves a repeated command-line read, but it is keyed by
-        the identity this sample just re-read. A PID that has become
-        unreadable, or whose start time now differs, therefore contributes
-        nothing rather than an earlier classification.
+        The cache still saves a repeated command-line read, but its entry is
+        used only when the start time this sample re-read matches the stored
+        one. A PID that has become unreadable, or that has been reused, is
+        therefore re-read rather than reported from an earlier classification.
 
         Returns
         -------
@@ -100,15 +96,15 @@ class ProcessSampler:
         if starttime is None:
             self._forget_pid(pid)
             return None
-        identity = (pid, starttime)
-        self._forget_pid(pid, keep=identity)
-        if identity in self._classified:
-            return self._classified[identity]
+        cached = self._classified.get(pid)
+        if cached is not None and cached[0] == starttime:
+            return cached[1]
         metadata = self._classify(pid, starttime)
         if metadata is _PROCESS_GONE:
+            self._forget_pid(pid)
             return None
         value = typ.cast("str | None", metadata)
-        self._classified[identity] = value
+        self._classified[pid] = (starttime, value)
         return value
 
     def _control_group(self, generation: Generation) -> Path | None:

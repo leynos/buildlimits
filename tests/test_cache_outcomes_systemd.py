@@ -17,6 +17,7 @@ from buildlimits.metrics_cli import main as metrics_main
 from buildlimits.metrics_query import Window
 from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import OutcomeRecord
+from buildlimits.outcome_recorder import OUTCOME_QUERY_SECONDS
 
 pytest_plugins = [
     "cache_outcome_systemd_support",
@@ -222,7 +223,7 @@ def _delayed_statistics(outcome_world: OutcomeWorld) -> None:
 def _compile_during_query(outcome_world: OutcomeWorld) -> None:
     """Submit a second compile while the delayed query remains outstanding."""
     before = outcome_world.harness.fake_cache_state()["statistics_queries"]
-    outcome_world.compile()
+    outcome_world.first_elapsed = outcome_world.compile()
     assert wait_for(
         lambda: outcome_world.harness.fake_cache_state()["statistics_queries"] > before,
         timeout=4,
@@ -232,11 +233,15 @@ def _compile_during_query(outcome_world: OutcomeWorld) -> None:
 
 @then("the second compile is admitted while the query is outstanding")
 def _admitted_during_query(outcome_world: OutcomeWorld) -> None:
-    """Bound the second build below the recorder's two-second query deadline."""
+    """Bound the second build's excess latency below the recorder's deadline."""
+    assert outcome_world.first_elapsed is not None, (
+        "_admitted_during_query: outcome_world.first_elapsed is not None"
+    )
     assert outcome_world.second_elapsed is not None, (
         "_admitted_during_query: outcome_world.second_elapsed is not None"
     )
-    assert outcome_world.second_elapsed < 1.5, (
+    excess = outcome_world.second_elapsed - outcome_world.first_elapsed
+    assert excess < OUTCOME_QUERY_SECONDS, (
         "the outstanding statistics query does not hold an admission token"
     )
 

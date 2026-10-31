@@ -16,11 +16,16 @@ from contextlib import contextmanager
 import pytest
 from sccache_stats import _stats_payload
 
+from buildlimits.outcome_recorder import SUPPORTED_SCCACHE_VERSIONS
+
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     from pathlib import Path
 
 _WINDOW_COUNT = 200
+
+_VERSION_ERROR_REASON = "could not verify the sccache version"
+_UNSUPPORTED_VERSION_REASON = "the host check requires a supported sccache version"
 
 
 def _read_stats(
@@ -38,7 +43,7 @@ def _read_stats(
     TypeError
         If the JSON value or its ``stats`` member is not an object.
     ValueError
-        If the statistics document reports another sccache version.
+        If the statistics document reports an unsupported sccache version.
     """
     # ruff: ignore[subprocess-without-shell-equals-true] - supplied argv, no shell.
     completed = subprocess.run(
@@ -54,8 +59,8 @@ def _read_stats(
         message = "sccache returned a non-object statistics document"
         raise TypeError(message)
     document = typ.cast("dict[str, object]", value)
-    if document.get("version") != "0.14.0":
-        message = "sccache returned statistics for an unexpected version"
+    if document.get("version") not in SUPPORTED_SCCACHE_VERSIONS:
+        message = "sccache returned statistics for an unsupported version"
         raise ValueError(message)
     _stats_payload(document)
     return document
@@ -327,13 +332,33 @@ def sccache_host_marks() -> list[pytest.MarkDecorator]:
                 timeout=10,
             )
         except OSError, subprocess.TimeoutExpired:
-            reason = "could not verify the sccache version"
+            reason = _VERSION_ERROR_REASON
         else:
-            reason = (
-                "the host check requires sccache 0.14.0"
-                if version.returncode != 0 or version.stdout.strip() != "sccache 0.14.0"
-                else ""
-            )
+            reason = _version_refusal(version)
     if reason:
         marks.append(pytest.mark.skipif(condition=True, reason=reason))
     return marks
+
+
+def _version_refusal(version: subprocess.CompletedProcess[str]) -> str:
+    """Return why the reported sccache version cannot run the host check.
+
+    The gate follows the recorder's supported set rather than one literal
+    version, so adding a version there makes this check run against that
+    binary instead of silently skipping it.
+
+    Parameters
+    ----------
+    version : subprocess.CompletedProcess[str]
+        The result of asking the selected binary for its version.
+
+    Returns
+    -------
+    str
+        An empty string when the host check may run, otherwise the reason it
+        is skipped.
+    """
+    supported = {f"sccache {entry}" for entry in SUPPORTED_SCCACHE_VERSIONS}
+    if version.returncode == 0 and version.stdout.strip() in supported:
+        return ""
+    return _UNSUPPORTED_VERSION_REASON
