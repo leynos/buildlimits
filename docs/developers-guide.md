@@ -828,7 +828,10 @@ CodeScene or holds its credential.
   against, and uploads through the shared `upload-codescene-coverage` action.
   With no `CS_ACCESS_TOKEN` in the environment, the upload step is skipped and
   a separate step writes a warning, so the run still succeeds and the publisher
-  works before a CodeScene project exists.
+  works before a CodeScene project exists. The token belongs only in that
+  environment: a repository- or organisation-level `CS_ACCESS_TOKEN` is
+  available to workflows outside it, and the publisher falls back to it, so
+  move any such copy into the environment and delete it.
 - **Known exception.** Merges made with `GITHUB_TOKEN`, such as Dependabot
   automerge, fire no push event, so they reach the publisher only through a
   later push or a manual dispatch. A manual dispatch uploads coverage but does
