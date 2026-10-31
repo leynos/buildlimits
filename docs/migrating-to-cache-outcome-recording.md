@@ -87,8 +87,10 @@ later statistics reading, which disables recording while admission continues.
    `cache-outcomes.salt`, then start it again. Deleting the salt means future
    keys no longer join to any history kept elsewhere.
 
-A corrupt store is renamed to `cache-outcomes.jsonl.bad` rather than deleted,
-and a store written in a newer format is left untouched for a compatible reader.
+A corrupt or version-mismatched store is moved to `cache-outcomes.jsonl.bad`
+during recording startup, but only when that backup does not already exist;
+otherwise recording remains unavailable. Read-only replay leaves the store
+untouched and reports the decoding failure.
 
 ## Reading the status line
 
@@ -100,6 +102,8 @@ and a store written in a newer format is left untouched for a compatible reader.
 
 _Table 2: Outcome-recording status lines and what the operator should do._
 
-The disabled headline keeps the last closed reading reason when one was
-recorded. The unavailable line is not a recorder failure: a later status read
-may succeed, and no restart is needed.
+The disabled headline includes the last closed reading reason only when the
+status snapshot provides it. A recorder that fails to initialize and a shell
+fault after startup publish the fixed disabled description without that reason.
+The unavailable line is not a recorder failure: a later status read may
+succeed, and no restart is needed.

@@ -198,8 +198,10 @@ To reset the history completely, stop the supervisor and delete
 `cache-outcomes.jsonl`, `cache-outcomes.jsonl.bad` and `cache-outcomes.salt`,
 then start it again. This loses replay history, including any `.bad` backup
 kept from a corrupt store, and creates a new salt, so future keys no longer
-join to the deleted store. A corrupt store is renamed to `.bad` rather than
-deleted; a newer store format is left untouched for a compatible reader.
+join to the deleted store. A corrupt or version-mismatched store is moved to
+`.bad` at recording startup, but only when that backup does not already exist;
+otherwise recording remains unavailable. Read-only replay leaves the store
+untouched and reports the decoding failure.
 
 For an upgrade, install every journal reader first, then the supervisor build
 while recording remains off. Set `cache_outcomes = "record"` only after that
