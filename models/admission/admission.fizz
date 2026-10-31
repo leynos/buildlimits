@@ -1,0 +1,559 @@
+---
+# W1: admission and recovery with a busy queue. The model is the RFC's
+# transcription of `Admission`, `ServerWatch` and `CacheRecovery`, with the
+# health, start-up, closing, escalation and metric surfaces left out because
+# W1 claims none of them. Its state is identifier-free: requests and groups are
+# counts by class, plus the one tracked request whose liveness W2 will judge.
+#
+# Read `docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md` for the
+# fairness table (F1-F7), the properties (S1-S9, L1-L4b, R1) and the
+# action-to-code mapping this file transcribes.
+#
+# Two abstractions are deliberate and are recorded in the ExecPlan's decision
+# log. First, the cache hold is the transaction: it is held exactly while the
+# phase is not idle, because the tick renews it every turn and production stops
+# renewing it only when the transaction has finished. A separate lease state
+# would multiply the graph without changing any property. Second, the tick
+# empties at most one draining scope per turn, in a fixed class order, rather
+# than choosing a scope with an internal `oneof`; a nondeterministic branch
+# inside one fair action does not guarantee progress, so the progress this
+# model assumes is carried by separate fair actions.
+options:
+  max_actions: 80
+  max_concurrent_actions: 1
+liveness: "strict"
+deadlock_detection: true
+---
+
+# The bounds below are the W1 environment, not tunable facts. Their job is to
+# make every unhelpful environment finite so that a liveness failure names the
+# model rather than an adversary with unbounded resources.
+CAPACITY = 3
+HELD_BY_OTHERS = 0
+WAITING_LIMIT = 2
+CANCEL_LIMIT = 1
+OPERATOR_LIMIT = 1
+ABNORMAL_LIMIT = 2
+MANAGER_LIMITS = 1
+
+# The three ablations EP-M4's matrix seeds. Each is a switch the same way the
+# incident configurations in EP-M5 will be: a configuration overrides it and
+# every report names the configuration it ran.
+CACHED_GUARD = True
+STALE_PROOF = True
+GRACE_DEADLINE = True
+
+action Init:
+  # Token accounting. Two tokens are free and one is retained by the initial
+  # starvation, which is the state an incident begins in.
+  free = CAPACITY - 1 - HELD_BY_OTHERS
+  held_by_others = HELD_BY_OTHERS
+  server_drain = 1
+  running_cached = 0
+  running_uncached = 0
+  draining_clean = 0
+  draining_orphan = 0
+  draining_uncached = 0
+  # The queue, and the one request whose liveness W2 will judge.
+  q_cacheable = 0
+  q_uncached = 0
+  token_requested = False
+  tracked_request = "none"
+  tracked_ahead = 0
+  tracked_cacheable = False
+  # The recovery transaction. `start_failed` records that the manager refused
+  # one start attempt, which is all the second refusal needs to be known by.
+  phase = "idle"
+  start_failed = False
+  manual_transaction = False
+  backoff_ready = True
+  cooling = False
+  # The user manager and the cache's reachability, folded into one service
+  # state: a retained token implies the cache was up when it was retained.
+  service = "live"
+  manager_faulted = False
+  manager_faults_used = 0
+  # The drain probe and its evidence. `drain_fault` keeps only the distinction
+  # the trigger reads, live work or not; the two non-live guidance kinds have
+  # the same effect on every W1 property, so they share `other`.
+  drain_fault = "none"
+  roots = "unknown"
+  stale = False
+  grace = "none"
+  # The bounded environment.
+  abnormal_used = 0
+  cancels_used = 0
+  operator_used = False
+  refusals = 0
+  refusals_faulted = 0
+
+# ---------------------------------------------------------------------------
+# Admission: submissions, arrivals, cancellations.
+# ---------------------------------------------------------------------------
+
+atomic action SubmitCacheable:  # maps: buildlimits.admission.Admission.submit
+  # maps: buildlimits.effects.NotifyQueued
+  # maps: buildlimits.effects.RequestToken
+  # Submissions are never forced (F7), so the environment may stop submitting
+  # but may not let the queue grow past what a W1 incident can hold. The class
+  # is a choice between this action and `SubmitUncached`, which keeps it out
+  # of the state.
+  require q_cacheable + q_uncached < WAITING_LIMIT
+  if tracked_request == "none":
+    tracked_request = "waiting"
+    tracked_ahead = q_cacheable + q_uncached
+    tracked_cacheable = True
+  q_cacheable = q_cacheable + 1
+  # `submit` calls `_demand`, which requests a token whenever the queue is
+  # non-empty and none is outstanding.
+  token_requested = True
+
+atomic action SubmitUncached:  # maps: buildlimits.admission.Admission.submit
+  # maps: buildlimits.effects.NotifyQueued
+  # maps: buildlimits.effects.RequestToken
+  require q_cacheable + q_uncached < WAITING_LIMIT
+  if tracked_request == "none":
+    tracked_request = "waiting"
+    tracked_ahead = q_cacheable + q_uncached
+    tracked_cacheable = False
+  q_uncached = q_uncached + 1
+  token_requested = True
+
+atomic fair action TokenReturns:  # fairness: F5
+  # maps: buildlimits.admission.Admission.token_arrived
+  # maps: buildlimits.effects.ReturnToken
+  # The token's request was cancelled while it was in flight.
+  require token_requested and q_cacheable + q_uncached == 0
+  token_requested = False
+
+atomic fair action TokenArrivesCacheable:  # fairness: F5
+  # maps: buildlimits.admission.Admission.token_arrived
+  # maps: buildlimits.effects.Launch
+  # maps: buildlimits.effects.RequestToken
+  # The pool calls back exactly when the supervisor asked for a token and a
+  # token is free. Either class may be at the head unless the tracked request
+  # is, which is the one position the state records.
+  require (token_requested and free > 0 and q_cacheable > 0
+           and (tracked_request != "waiting"
+                or tracked_ahead > 0
+                or tracked_cacheable))
+  q_cacheable = q_cacheable - 1
+  free = free - 1
+  # Composition is decided at the arrival, and a cacheable request composes
+  # only while the cache is reachable, the service is up, and no transaction
+  # holds the cache. The hold is the phase, as the header records.
+  if service == "live" and phase == "idle":
+    running_cached = running_cached + 1
+  else:
+    running_uncached = running_uncached + 1
+  if tracked_request == "waiting" and tracked_ahead == 0:
+    tracked_request = "admitted"
+  elif tracked_request == "waiting":
+    tracked_ahead = tracked_ahead - 1
+  # `_demand` asks again if anything still waits.
+  token_requested = q_cacheable + q_uncached > 0
+
+atomic fair action TokenArrivesUncached:  # fairness: F5
+  # maps: buildlimits.admission.Admission.token_arrived
+  # maps: buildlimits.effects.Launch
+  # maps: buildlimits.effects.RequestToken
+  require (token_requested and free > 0 and q_uncached > 0
+           and (tracked_request != "waiting"
+                or tracked_ahead > 0
+                or not tracked_cacheable))
+  q_uncached = q_uncached - 1
+  free = free - 1
+  running_uncached = running_uncached + 1
+  if tracked_request == "waiting" and tracked_ahead == 0:
+    tracked_request = "admitted"
+  elif tracked_request == "waiting":
+    tracked_ahead = tracked_ahead - 1
+  token_requested = q_cacheable + q_uncached > 0
+
+atomic action CancelCacheable:  # maps: buildlimits.admission.Admission.cancel
+  # maps: buildlimits.effects.NotifyQueued
+  # A cancellation removes one waiting request and holds no token. The counts
+  # cannot say which same-class request is ahead of the tracked one, so the
+  # environment cancels an obstacle first; the choice cannot change any count,
+  # and no W1 property reads the tracked request's position.
+  require cancels_used < CANCEL_LIMIT
+  if (tracked_request == "waiting" and q_cacheable + q_uncached == 1
+      and tracked_cacheable):
+    # The only waiting request is the tracked one.
+    q_cacheable = q_cacheable - 1
+    tracked_request = "cancelled"
+    cancels_used = cancels_used + 1
+  else:
+    # Cancel a cacheable request other than the tracked one.
+    require (q_cacheable > 0
+             and (tracked_request != "waiting"
+                  or not tracked_cacheable
+                  or q_cacheable > 1))
+    q_cacheable = q_cacheable - 1
+    cancels_used = cancels_used + 1
+    # Cancelling a request ahead of the tracked one advances its position.
+    if tracked_request == "waiting" and tracked_ahead > 0:
+      tracked_ahead = tracked_ahead - 1
+
+atomic action CancelUncached:  # maps: buildlimits.admission.Admission.cancel
+  # maps: buildlimits.effects.NotifyQueued
+  require cancels_used < CANCEL_LIMIT
+  if (tracked_request == "waiting" and q_cacheable + q_uncached == 1
+      and not tracked_cacheable):
+    q_uncached = q_uncached - 1
+    tracked_request = "cancelled"
+    cancels_used = cancels_used + 1
+  else:
+    require (q_uncached > 0
+             and (tracked_request != "waiting"
+                  or tracked_cacheable
+                  or q_uncached > 1))
+    q_uncached = q_uncached - 1
+    cancels_used = cancels_used + 1
+    if tracked_request == "waiting" and tracked_ahead > 0:
+      tracked_ahead = tracked_ahead - 1
+
+# ---------------------------------------------------------------------------
+# Groups: leaders exit and scopes empty.
+# ---------------------------------------------------------------------------
+
+atomic fair action LeaderExitsCachedClean:  # fairness: F2
+  # maps: buildlimits.admission.Admission.leader_exited
+  # maps: buildlimits.effects.Terminate
+  require running_cached > 0
+  running_cached = running_cached - 1
+  draining_clean = draining_clean + 1
+
+atomic fair action LeaderExitsCachedSignalled:  # fairness: F2
+  # maps: buildlimits.admission.Admission.leader_exited
+  # maps: buildlimits.effects.Terminate
+  # A cancelled leader leaves a scope that may still be running server work,
+  # so its empty scope is retained rather than returned. This is the bounded
+  # abnormal-ending environment: at most ABNORMAL_LIMIT such scopes exist.
+  require running_cached > 0 and abnormal_used < ABNORMAL_LIMIT
+  running_cached = running_cached - 1
+  draining_orphan = draining_orphan + 1
+  abnormal_used = abnormal_used + 1
+
+atomic fair action LeaderExitsUncached:  # fairness: F2
+  # maps: buildlimits.admission.Admission.leader_exited
+  # maps: buildlimits.effects.Terminate
+  require running_uncached > 0
+  running_uncached = running_uncached - 1
+  draining_uncached = draining_uncached + 1
+
+# ---------------------------------------------------------------------------
+# The supervisor's composite poll: F1. It drains one scope, probes the
+# retained token, and takes at most one recovery step, in that order, which is
+# the order D10 fixes for `Groups.advance`, `ServerWatch.drained_tokens` and
+# `CacheRecovery.tick`.
+# ---------------------------------------------------------------------------
+
+atomic fair action SupervisorTick:  # fairness: F1
+  # maps: buildlimits.admission.Admission.group_emptied
+  # maps: buildlimits.admission.Admission.server_activity
+  # maps: buildlimits.effects.NotifyFinished
+  # maps: buildlimits.effects.ReturnToken
+  # maps: buildlimits.cache_recovery.idle
+  # maps: buildlimits.cache_recovery.quiescing
+  # maps: buildlimits.cache_recovery.stopping
+  # maps: buildlimits.cache_recovery.accounting
+  # maps: buildlimits.cache_recovery.restarting
+  # maps: buildlimits.drain_guidance.live_work
+  # maps: buildlimits.drain_guidance.stopped_populated
+  # maps: buildlimits.drain_guidance.manager
+
+  # 1. `group_emptied` for one group whose scope has emptied. A clean cached
+  #    or an uncached scope returns its token; a cached scope that may orphan
+  #    server work keeps it and adds a retained drain.
+  if draining_clean > 0:
+    draining_clean = draining_clean - 1
+    free = free + 1
+  elif draining_orphan > 0:
+    draining_orphan = draining_orphan - 1
+    if server_drain == 0:
+      # A drain's age is measured from the rise from zero, so a new drain is
+      # not stale yet.
+      stale = False
+    server_drain = server_drain + 1
+  elif draining_uncached > 0:
+    draining_uncached = draining_uncached - 1
+    free = free + 1
+
+  # 2. `ServerWatch.drained_tokens`: probe the retained work. A successful
+  #    accounting releases every token it covers and is the observation
+  #    `TokenReleasedByAccounting` exists to reach. The probe runs on every
+  #    poll rather than on the production retry schedule: the model has no
+  #    clock, and a poll that always observes is an environment the code must
+  #    tolerate.
+  if server_drain > 0:
+    if manager_faulted:
+      drain_fault = "other"
+    elif service == "stopped_empty":
+      # `server_activity` returns every released token to the pool; nothing
+      # is compiling against a stopped, empty service.
+      drain_fault = "none"
+      free = free + server_drain
+      server_drain = 0
+      stale = False
+    elif service == "stopped_populated":
+      drain_fault = "other"
+    else:
+      drain_fault = "live_work"
+
+  # 3. `CacheRecovery.tick`.
+  if phase == "idle":
+    # The automatic trigger. `starvation` requires a retained drain, a waiting
+    # request, a live-work fault and a proof; `not cooling` is the same
+    # condition one tick later. Entering a phase is taking the hold.
+    if (not cooling
+        and drain_fault == "live_work"
+        and server_drain > 0
+        and q_cacheable + q_uncached > 0):
+      if (stale and STALE_PROOF) or (roots == "zero"
+                                     and running_cached == 0
+                                     and draining_clean == 0
+                                     and draining_orphan == 0):
+        phase = "quiescing"
+        manual_transaction = False
+        start_failed = False
+        backoff_ready = True
+        grace = "none"
+  else:
+    # A running transaction holds the cache for its whole life. The phase
+    # then takes one step if its backoff has elapsed.
+    if backoff_ready:
+      if phase == "quiescing":
+        phase = "stopping"
+        start_failed = False
+        backoff_ready = True
+      elif phase == "stopping":
+        # `_try_stop`: blocked, then the roots verdict, then the stop.
+        if manager_faulted or (CACHED_GUARD
+                               and (running_cached > 0
+                                    or draining_clean > 0
+                                    or draining_orphan > 0)):
+          # `blocked` resets the roots grace and fails the attempt; the
+          # BackoffExpires handshake is the retry, so no counter is needed.
+          grace = "none"
+          backoff_ready = False
+        elif manual_transaction or roots == "zero":
+          # A manual transaction is exempt from the roots evidence, and zero
+          # visible roots prove the cache is detached. S1 reads this state:
+          # the stop is in `accounting` while some cached work still moves.
+          grace = "none"
+          phase = "accounting"
+          start_failed = False
+          backoff_ready = True
+        elif roots == "visible_detached" or roots == "visible_hung":
+          if grace == "expired":
+            if GRACE_DEADLINE:
+              phase = "accounting"
+              start_failed = False
+              backoff_ready = True
+            else:
+              # Without the deadline the grace verdict repeats for ever.
+              backoff_ready = False
+          else:
+            if grace == "none":
+              grace = "running"
+            backoff_ready = False
+        else:
+          # Unknown roots start no grace and prove nothing.
+          grace = "none"
+          backoff_ready = False
+      elif phase == "accounting":
+        # `_account`: the transaction ends once no retained work is left.
+        if server_drain == 0:
+          phase = "restarting"
+          start_failed = False
+          backoff_ready = True
+      elif phase == "restarting":
+        # `_try_start`. The manager refuses the first start attempt; a second
+        # refusal abandons the transaction without freeing the service.
+        if manager_faulted:
+          if start_failed:
+            phase = "idle"
+            start_failed = False
+            backoff_ready = True
+            manual_transaction = False
+            cooling = True
+            grace = "none"
+          else:
+            start_failed = True
+            backoff_ready = False
+        else:
+          service = "live"
+          phase = "idle"
+          start_failed = False
+          backoff_ready = True
+          manual_transaction = False
+          cooling = True
+          grace = "none"
+          if server_drain == 0:
+            stale = False
+
+# ---------------------------------------------------------------------------
+# The environment: the operator, the roots reading, server work and faults.
+# ---------------------------------------------------------------------------
+
+atomic action OperatorRequest:
+  # A manual transaction bypasses starvation but not admission's refusal
+  # rules. A faulted manager is the only source of a refusal, and L4a says
+  # every refusal is one.
+  require phase == "idle" and not operator_used
+  operator_used = True
+  if manager_faulted:
+    refusals = refusals + 1
+    refusals_faulted = refusals_faulted + 1
+  else:
+    phase = "quiescing"
+    manual_transaction = True
+    start_failed = False
+    backoff_ready = True
+    grace = "none"
+
+atomic fair action RootsBecomeReadable:  # fairness: F3a
+  # A root reading names both what is visible and who owns it. It is read once
+  # and holds: F3a's intent is that the reading is eventually made and does
+  # not flap back to unknown.
+  require roots == "unknown"
+  roots = oneof ["zero", "visible_detached", "visible_hung"]
+
+atomic fair action DetachedWorkEnds:  # fairness: F3
+  # Detached server work finishes once nothing cached is still moving.
+  require (roots == "visible_detached"
+           and running_cached == 0
+           and draining_clean == 0
+           and draining_orphan == 0)
+  roots = "zero"
+
+atomic fair action StopCompletes:  # fairness: F4
+  # The user manager runs the stop job.
+  require phase == "accounting" and service == "live"
+  service = "stopped_populated"
+
+atomic fair action WorkEnds:  # fairness: F3
+  # Whatever survived the stop finishes.
+  require service == "stopped_populated"
+  service = "stopped_empty"
+
+atomic action ManagerFaults:
+  # A manager fault is only observable through the cache, so it is offered
+  # only while a retained token waits, and it is bounded.
+  require (server_drain > 0
+           and not manager_faulted
+           and manager_faults_used < MANAGER_LIMITS)
+  manager_faulted = True
+  manager_faults_used = manager_faults_used + 1
+  drain_fault = "other"
+
+atomic fair action ManagerRecovers:  # fairness: F4
+  # The fault is finite; the next probe re-observes whatever is left.
+  require manager_faulted
+  manager_faulted = False
+  drain_fault = "none"
+
+# ---------------------------------------------------------------------------
+# Timers: F6. They expire in no set order, which is exactly what a bounded
+# model needs of a clock it does not represent.
+# ---------------------------------------------------------------------------
+
+atomic fair action StaleExpires:  # fairness: F6
+  require server_drain > 0 and not stale
+  stale = True
+
+atomic fair action GraceExpires:  # fairness: F6
+  require grace == "running"
+  grace = "expired"
+
+atomic fair action BackoffExpires:  # fairness: F6
+  require not backoff_ready
+  backoff_ready = True
+
+atomic fair action CoolingExpires:  # fairness: F6
+  require cooling
+  cooling = False
+
+
+# ---------------------------------------------------------------------------
+# The W1 properties. S1, S2 and L4a are safety; L1, L3 and L4b are liveness.
+# ---------------------------------------------------------------------------
+
+always assertion S1:
+  # No stop is ever taken while cached work is moving. A stop is the only way
+  # into `accounting`, and the guarded stop guarantees no cached work is moving
+  # at that moment, so a state in `accounting` with cached work present is
+  # exactly the violation. It is a finite counterexample: the faulty stop
+  # reaches that state after finitely many steps.
+  return not (phase == "accounting"
+              and (running_cached > 0
+                   or draining_clean > 0
+                   or draining_orphan > 0))
+
+always assertion S2:
+  # Tokens sum to capacity, every count is a count, and a non-empty queue
+  # always has a token requested for it.
+  return (free + held_by_others
+          + running_cached + running_uncached
+          + draining_clean + draining_orphan + draining_uncached
+          + server_drain == CAPACITY
+          and free >= 0
+          and running_cached >= 0
+          and running_uncached >= 0
+          and draining_clean >= 0
+          and draining_orphan >= 0
+          and draining_uncached >= 0
+          and server_drain >= 0
+          and q_cacheable >= 0
+          and q_uncached >= 0
+          and (q_cacheable + q_uncached == 0 or token_requested))
+
+always eventually assertion L1:
+  # A retained token is released for ever, or nothing is waiting for it. The
+  # RFC states this as "eventually always no token is in SERVER_DRAIN", but
+  # the automatic trigger requires a waiting request and F7 never forces a
+  # submission, so with an empty queue a retained token is legitimately left
+  # alone. The demand-conditional form is the one the code guarantees.
+  return server_drain == 0 or q_cacheable + q_uncached == 0
+
+always eventually assertion L3:
+  # The supervisor returns to idle for ever. Every transaction is bounded and
+  # the environment can create only finitely many drains.
+  return phase == "idle"
+
+always assertion L4a:
+  # A refusal is only ever an admission refusal of a faulted manager.
+  return refusals == refusals_faulted
+
+always eventually assertion L4b:
+  # An accepted operator request finishes: the manual transaction is cleared.
+  return not manual_transaction or phase == "idle"
+
+# ---------------------------------------------------------------------------
+# Probes. They are not properties; they are the evidence that the passing
+# configuration explored the behaviour the properties are about.
+# ---------------------------------------------------------------------------
+
+exists assertion StopIssued:
+  # `accounting` is reached only by taking a stop.
+  return phase == "accounting"
+
+exists assertion TokenReleasedByAccounting:
+  # A release is the only transition that empties the retained drain.
+  return server_drain == 0
+
+exists assertion ReachesRestarting:
+  return phase == "restarting"
+
+exists assertion GroupRunning:
+  return running_cached + running_uncached > 0
+
+exists assertion GroupDraining:
+  return draining_clean + draining_orphan + draining_uncached > 0
+
+exists assertion GroupServerDrain:
+  return server_drain > 0
+
+exists assertion CachedAndUncachedRunTogether:
+  return running_cached > 0 and running_uncached > 0
