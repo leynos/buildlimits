@@ -22,9 +22,11 @@ described under [Record cache outcomes](users-guide.md#record-cache-outcomes).
 
 _Table 1: Behaviour added by cache-outcome recording._
 
-Recording also requires `cache_mode = "sccache"` and a supported server
-version. The supervisor validates that combination at startup, so an
-incompatible configuration fails before any compiler is admitted.
+Recording also requires `cache_mode = "sccache"`. The supervisor validates that
+combination, and the `cache_outcomes` value itself, at startup, so an
+incompatible configuration fails before any compiler is admitted. The sccache
+version is not checked at startup: an unsupported version is detected on a
+later statistics reading, which disables recording while admission continues.
 
 ## Upgrade steps
 
@@ -90,11 +92,11 @@ and a store written in a newer format is left untouched for a compatible reader.
 
 ## Reading the status line
 
-| Line                                                | Meaning                                                           |
-| --------------------------------------------------- | ----------------------------------------------------------------- |
-| `cache outcomes recording: ...`                     | Recording is active; counters are live                            |
-| `cache outcomes disabled after an internal failure` | A loop-called shell fault stopped recording until restart         |
-| `cache outcomes status unavailable`                 | One status read could not build the snapshot; recording continues |
+| Line                                                | Meaning                                                                                                          |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `cache outcomes recording: ...`                     | Recording is active; counters are live                                                                           |
+| `cache outcomes disabled after an internal failure` | Recording stopped after failing to initialize, after an unsupported server version, or after a later shell fault |
+| `cache outcomes status unavailable`                 | One status read could not build the snapshot; recording continues                                                |
 
 _Table 2: Outcome-recording status lines and what the operator should do._
 
