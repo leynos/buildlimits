@@ -152,7 +152,7 @@ deadlock_detection = true
     assert configuration.fairness == {"F1": "weak"}, "the fairness table is read"
     assert configuration.constants == {
         "CAPACITY": "3",
-        "STRICT": "true",
+        "STRICT": "True",
         "NAME": "queue",
     }, "constants are rendered as the model spells them"
     assert configuration.options == {"max_actions": 400, "deadlock_detection": True}, (
@@ -163,11 +163,13 @@ deadlock_detection = true
 def test_a_boolean_constant_is_rendered_as_the_model_spells_it(
     tmp_path: Path,
 ) -> None:
-    """TOML's ``true`` substitutes as the model's ``true``, not Python's ``True``.
+    """TOML's ``true`` substitutes as the model's ``True``.
 
-    A constant is substituted into the model's own source, where ``True`` does
-    not compile. Rendering it here rather than in the materializer keeps that
-    spelling rule beside the format that needs it.
+    A constant is substituted into the model's own source, whose expression
+    language is Starlark and spells booleans ``True`` and ``False``. Rendering
+    it here rather than in the materializer keeps that spelling rule beside the
+    format that needs it. The frontmatter is a different surface: it is YAML,
+    and :mod:`modelcheck.frontmatter` keeps its lowercase spelling.
     """
     directory = _directory(
         tmp_path,
@@ -177,8 +179,8 @@ DEADLOCK = false
 """,
     )
 
-    assert _only(directory).constants == {"DEADLOCK": "false"}, (
-        "TOML's false, not Python's"
+    assert _only(directory).constants == {"DEADLOCK": "False"}, (
+        "the model's False, not TOML's false"
     )
 
 

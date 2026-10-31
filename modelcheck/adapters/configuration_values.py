@@ -76,10 +76,11 @@ def _text(name: str, field: str, value: object) -> str:
     Returns
     -------
     str
-        A string unchanged, a boolean as ``true`` or ``false``, and a number as
-        its literal text. The model's own language spells booleans in lower
-        case, so a TOML ``true`` substitutes as the model's ``true`` rather
-        than as Python's ``True``, which would not compile.
+        A string unchanged, a boolean as ``True`` or ``False``, and a number as
+        its literal text. The model body is Starlark, which spells booleans
+        ``True`` and ``False``; a TOML ``true`` substitutes as the model's
+        ``True``. The frontmatter is YAML and is rendered separately, where the
+        lowercase spelling is right.
 
     Raises
     ------
@@ -89,7 +90,7 @@ def _text(name: str, field: str, value: object) -> str:
     """
     match value:
         case bool():
-            return "true" if value else "false"
+            return "True" if value else "False"
         case str():
             return value
         case int() | float():
