@@ -162,7 +162,10 @@ class CachedUnits:
             The isolated fake cache server's Python executable and arguments.
         """
         harness = self.harness
-        python_path = {"PYTHONPATH": os.environ.get("PYTHONPATH", "")}
+        python_path = {
+            "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
+            "XDG_STATE_HOME": str(harness.state_home),
+        }
         ready = harness.runtime / "supervisor-launch.py"
         cache = harness.runtime / "cache-launch.py"
         _wrapper(ready, supervisor, python_path, harness.path_prefix)

@@ -15,7 +15,10 @@ from buildlimits.systemd import UserManager
 if typ.TYPE_CHECKING:
     from cached_unit_files import CachedUnits
 
-pytestmark = systemd_user_marks("needs a systemd user manager")
+pytestmark = [
+    *systemd_user_marks("needs a systemd user manager"),
+    pytest.mark.timeout(180),
+]
 
 
 @contextlib.contextmanager

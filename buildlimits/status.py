@@ -50,7 +50,7 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
     counts = admission.counts()
     recovery = supervisor.recovery.describe(now)
     settings = supervisor.settings
-    return {
+    document: dict[str, object] = {
         "capacity": settings.slots,
         "held": admission.tokens_held(),
         "healthy": admission.healthy,
@@ -78,6 +78,10 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
         "groups": _group_documents(supervisor, now),
         "descriptors": _descriptor_metrics(supervisor),
     }
+    outcome_status = supervisor.outcomes.describe()
+    if outcome_status is not None:
+        document["cache_outcomes"] = outcome_status
+    return document
 
 
 def _admission_document(

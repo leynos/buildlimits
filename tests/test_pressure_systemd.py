@@ -22,7 +22,10 @@ from systemd_harness import (
 
 from buildlimits.protocol import StatusRequest, encode_request, recv_frame, send_frame
 
-pytestmark = systemd_user_marks("needs a systemd user manager")
+pytestmark = [
+    *systemd_user_marks("needs a systemd user manager"),
+    pytest.mark.timeout(180),
+]
 scenarios("features/descriptor_pressure_on_systemd.feature")
 
 _COMPILER = """import os, time

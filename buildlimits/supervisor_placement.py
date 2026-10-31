@@ -45,6 +45,7 @@ def launch(
             failure_category = "launch_release"
         else:
             log(admitted_line(entry, cached=cached))
+            supervisor.outcomes.launched(entry, group_id)
             outcome = "admitted"
             failure_category = "none"
             return

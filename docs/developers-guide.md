@@ -46,6 +46,7 @@ investigating a specific failure; reconcile with `make all` before committing.
 | `make typecheck`         | `ty` 0.0.89 against the project interpreter (`--python .venv`)                                    |
 | `make test`              | pytest under xdist over `tests/` and the package's doctests                                       |
 | `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
+| `make test-sccache-host` | Opt-in real-binary and outcome latency checks; see §11.4                                          |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
 
 _Table 1: Make targets and the gates behind them._
@@ -79,6 +80,10 @@ The package requires Python 3.14. Annotations are therefore evaluated lazily
 The supervisor is a functional core with an imperative shell. Decisions live in
 `admission`, which performs no input or output and returns a list of effects;
 the shell carries those effects out.
+
+The admission core uses only Python's standard library. The package's
+OpenTelemetry SDK dependency supplies traces; the adapter loads it only when a
+restart requires a retry.
 
 For screen readers: the following sequence diagram shows Cargo's call to the
 adapter, query classification or admission, scope placement and token return.
@@ -129,47 +134,107 @@ second token.
 
 Each module owns one decision. This table is the single module inventory.
 
-| Module                                                                             | Responsibility                                                                                   |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `admission`, `effects`                                                             | Pure state machine: queue, tokens, draining                                                      |
-| `admission_state`                                                                  | Group lifecycle values; the identifier-free `Counts` snapshot and the `Gauges` read-only views   |
-| `supervisor`                                                                       | Event loop that carries out admission's effects                                                  |
-| `supervisor_polling`                                                               | Poll cadence and ordered server, pool and cache checks; no token-release decisions               |
-| `supervisor_signals`, `supervisor_shutdown`                                        | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                              |
-| `supervisor_observability`                                                         | Wires cached pressure and drain observers into existing owners                                   |
-| `effect_dispatch`                                                                  | Effect handlers and their metric and health mappings                                             |
-| `requesters`, `pending_request`                                                    | Connections, queued requests and replies; recorded request data                                  |
-| `request_connections`                                                              | Unrecorded sockets, received rights and refusals                                                 |
-| `request_validation`, `requester_metrics`                                          | Pure validation over explicit context; terminal metric fields                                    |
-| `request_state`                                                                    | Compatibility re-export of `pending_request.Pending`                                             |
-| `descriptor_policy`, `descriptor_budget`                                           | Pure budget arithmetic; OS sampling, retention accounting and status                             |
-| `listener_pressure`                                                                | Listener backpressure after accept-time exhaustion                                               |
-| `groups`, `group_drain`, `group_recovery`                                          | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                    |
-| `supervisor_placement`                                                             | Admitted compiler placement, terminal scope outcome and stop-mode classification                 |
-| `launch`, `launch_setup`                                                           | Held launch child and bounded setup diagnostics                                                  |
-| `relocation`, `descriptors`                                                        | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution               |
-| `attributes`                                                                       | The caller's umask, niceness and resource limits                                                 |
-| `pool`                                                                             | The token device, read on a thread of its own                                                    |
-| `sccache`, `server_watch`                                                          | The managed cache's reachability and accounting; start-up and `SERVER_DRAIN` release             |
-| `cache_recovery`, `recovery_*`                                                     | The recovery transaction, its barrier, reclamation, trigger and guidance                         |
-| `cache_quiesce`                                                                    | Start-up stop of a live managed cache under the barrier, before the strict accounting            |
-| `bus_properties`, `systemd`                                                        | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl`  |
-| `cgroups`, `startup`, `proc_trees`                                                 | Control-group reads, the restart barrier and diagnostic process-tree counts                      |
-| `protocol`, `replies`, `framing`, `frame_payload`, `wire`                          | Versioned JSON frames with passed descriptors                                                    |
-| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`                           | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc               |
-| `adapter_invocation`, `adapter_retry`                                              | Invocation state and deadline-preserving busy and restart retries                                |
-| `tracing`, `tracing_export`, `tracing_sdk_export`                                  | Bounded spans, the fixed journal schema and synchronous native-journal export                    |
-| `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper        |
-| `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar |
-| `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                  |
-| `status`, `status_client`, `status_render`, `status_cli`                           | The status document, its transport, rendering and command                                        |
-| `admission_readiness`                                                              | Pure admission-progress classification from health, ledger counts and recovery outlook           |
-| `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                             |
-| `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                      |
-| `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, native journal datagrams, journal queries and reports                         |
-| `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                        |
+| Module                                                                             | Responsibility                                                                                         |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `admission`, `effects`                                                             | Pure state machine: queue, tokens, draining                                                            |
+| `admission_state`                                                                  | Group lifecycle values; the identifier-free `Counts` snapshot and the `Gauges` read-only views         |
+| `supervisor`                                                                       | Event loop that carries out admission's effects                                                        |
+| `supervisor_polling`                                                               | Poll cadence and ordered server, pool and cache checks; no token-release decisions                     |
+| `supervisor_signals`, `supervisor_shutdown`                                        | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                                    |
+| `supervisor_outcome_setup`, `supervisor_outcomes`                                  | Resource-free disabled shell and failure-isolated recording shell                                      |
+| `supervisor_wiring`                                                                | Builds the cache watch and recovery machine, including their late-resolved mutual probes               |
+| `supervisor_observability`                                                         | Wires cached pressure and drain observers into existing owners                                         |
+| `effect_dispatch`                                                                  | Effect handlers and their metric and health mappings                                                   |
+| `requesters`, `pending_request`                                                    | Connections, queued requests and replies; recorded request data                                        |
+| `request_connections`                                                              | Unrecorded sockets, received rights and refusals                                                       |
+| `request_validation`, `requester_metrics`                                          | Pure validation over explicit context; terminal metric fields                                          |
+| `request_state`                                                                    | Compatibility re-export of `pending_request.Pending`                                                   |
+| `descriptor_policy`, `descriptor_budget`                                           | Pure budget arithmetic; OS sampling, retention accounting and status                                   |
+| `listener_pressure`                                                                | Listener backpressure after accept-time exhaustion                                                     |
+| `groups`, `group_drain`, `group_recovery`                                          | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                          |
+| `supervisor_placement`                                                             | Admitted compiler placement, terminal scope outcome and stop-mode classification                       |
+| `launch`, `launch_setup`                                                           | Held launch child and bounded setup diagnostics                                                        |
+| `relocation`, `descriptors`                                                        | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution                     |
+| `attributes`                                                                       | The caller's umask, niceness and resource limits                                                       |
+| `pool`                                                                             | The token device, read on a thread of its own                                                          |
+| `sccache`, `server_watch`                                                          | The managed cache's reachability and accounting; start-up and `SERVER_DRAIN` release                   |
+| `cache_recovery`, `recovery_*`                                                     | The recovery transaction, its barrier, reclamation, trigger and guidance                               |
+| `cache_quiesce`                                                                    | Start-up stop of a live managed cache under the barrier, before the strict accounting                  |
+| `bus_properties`, `systemd`                                                        | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl`        |
+| `cgroups`, `startup`, `proc_trees`                                                 | Control-group reads, the restart barrier, diagnostic process trees and shared `/proc` identity parsing |
+| `protocol`, `replies`, `framing`, `frame_payload`, `wire`                          | Versioned JSON frames with passed descriptors                                                          |
+| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`                           | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc                     |
+| `adapter_invocation`, `adapter_retry`                                              | Invocation state and deadline-preserving busy and restart retries                                      |
+| `tracing`, `tracing_export`, `tracing_sdk_export`                                  | Bounded spans, the fixed journal schema and synchronous native-journal export                          |
+| `outcome_telemetry`                                                                | Maps recorder effects to bounded metrics and spans                                                     |
+| `outcome_replay`, `outcome_replay_cli`                                             | Read-only H2 and H3 evaluation over the local outcome store                                            |
+| `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                 |
+| `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper              |
+| `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar       |
+| `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                        |
+| `status`, `status_client`, `status_render`, `status_cli`                           | The status document, its transport, rendering and command                                              |
+| `admission_readiness`                                                              | Pure admission-progress classification from health, ledger counts and recovery outlook                 |
+| `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                                   |
+| `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                            |
+| `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, native journal datagrams, journal queries and reports                               |
+| `outcome_vocabulary`                                                               | Closed cache-outcome and reading-reason vocabularies                                                   |
+| `outcome_stats`                                                                    | Pure parsing of supported sccache statistics into validated counters                                   |
+| `outcome_attribution`                                                              | Pure whole-window classification of labelled sccache counter windows                                   |
+| `outcome_footprints`                                                               | Approved sccache counter footprint table and the composition rules that accept a window delta          |
+| `outcome_gate`                                                                     | Pure quiet-point decision for starting an outcome statistics reading                                   |
+| `json_values`                                                                      | Pure JSON object and non-negative integer validators shared by boundary adapters                       |
+| `outcome_key`                                                                      | Pure, salted compile-request identity with local paths hidden                                          |
+| `outcome_key_arguments`                                                            | Canonical compiler arguments and selected Cargo environment for key digests                            |
+| `outcome_parser`                                                                   | In-memory sccache 0.14 Rust-parser prediction used for H3 evidence                                     |
+| `outcome_record_format`                                                            | Typed outcome records and format-specific field validation                                             |
+| `outcome_record_codec`                                                             | Strict JSON Lines encoding and decoding for outcome records                                            |
+| `outcome_records`                                                                  | Public record API and pure age, count and byte compaction                                              |
+| `outcome_store`                                                                    | Non-blocking writer port, asynchronous salt handoff and bounded result reporting                       |
+| `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes and atomic compaction replacement                    |
+| `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                           |
+| `nonblocking_child`                                                                | Non-blocking helper-process pipes and bounded child reaping for supervisor-loop work                   |
+| `outcome_queries`                                                                  | Statistics child execution and non-blocking managed-server generation reads                            |
+| `outcome_window`                                                                   | Bounded immutable payload ledger for open statistics windows                                           |
+| `outcome_ports`                                                                    | Domain-owned protocols and result types for statistics, server generation and storage                  |
+| `outcome_recorder_types`                                                           | Immutable recorder events, outputs and typestate values                                                |
+| `outcome_recorder_outputs`                                                         | Pure construction of outcome events, records and terminal transition outputs                           |
+| `outcome_recorder`                                                                 | Pure quiet-point reading sequencer and attribution state transitions                                   |
+| `outcome_recorder_reading`                                                         | Validates terminal readings, updates baselines and schedules bounded retries                           |
+| `outcome_recorder_driver`                                                          | Executes statistics-port commands and returns effects to the supervisor                                |
+| `outcome_process_sampler`                                                          | Bounded control-group inspection and per-process metadata caching                                      |
+| `outcome_sampling`, `outcome_recorder_sampling`                                    | Sampling cadence, failure back-off and pure recorder sample folding                                    |
+| `outcome_sightings`, `outcome_shell_keys`                                          | In-memory child matching and privacy-safe supervisor key assembly                                      |
+| `outcome_resources`                                                                | Helper-reaper and store-writer ownership, with a non-blocking fault path and a bounded shutdown path   |
+| `outcome_shell_stats`                                                              | Bounded, privacy-safe counters for the optional recording status section                               |
+| `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                              |
 
 _Table 2: Package modules._
+
+Outcome recording is a shell around those decisions. `supervisor_placement`
+calls `outcomes.launched` only after `Groups.release` succeeds. For an emptied
+scope, `group_recovery.empty_groups` captures its cache and exit facts before
+`Admission.group_emptied` removes the group, applies the admission effects, and
+only then calls `outcomes.emptied`. `supervisor_polling.poll_services` polls
+the shell after server, pool and cache work. Its one-second quiet-point gate
+uses admission counts and the recovery barrier; statistics and generation
+probes return without waiting, and the writer accepts immutable rows through
+its own bounded queue. `OutcomeShell.close` cancels and reaps a pending helper
+within the shutdown bound. The disabled shell creates no process, socket,
+thread or store. A fault in a loop-called shell method (`launched`, `emptied`,
+`on_tick` or `close`) disables recording for that supervisor lifetime without
+changing admission. `describe` is a read-only status query rather than a loop
+boundary: a failed snapshot reports
+`{"enabled": False, "reason": "snapshot_unavailable"}` for that read and leaves
+recording running.
+
+`supervisor_outcome_setup.disabled_description` is the single constructor for
+the fixed disabled status used by failed startup and runtime fail-closed paths.
+Keep it scoped to that public outcome-recorder status; it is not a general
+status redaction or error-reporting helper.
+
+`nonblocking_child` is the supervisor loop's only sanctioned helper-process
+mechanism. Its live query pipe uses the reserve in
+`descriptor_budget.DESCRIPTOR_RESERVE`.
 
 ## 5. Admission core
 
@@ -214,6 +279,14 @@ tag that `_dispatch` matches: `"listener"`, `"pool"`, `("conn", request_id)`,
 terminations, notices emptied scopes, polls the cache while any group is in
 `SERVER_DRAIN`, checks that `/dev/guild` is still the device it opened, and
 refreshes the cache's reachability.
+
+`Supervisor` delegates construction of the cache watch and recovery machine to
+`supervisor_wiring.watch_and_recovery`. The two answer each other: recovery
+reads the watch's live holdings, while the watch asks recovery whether
+automatic recovery is already pending. The watch is built first, its pending
+probe is a late-resolved closure over the recovery machine installed in the
+same call, and the watch's `cache_allowed` bound method is installed on
+admission there too.
 
 Start-up takes a singleton lock and passes the restart barrier:
 `startup.drain_slice` terminates every scope under the compilers slice and
@@ -452,6 +525,40 @@ inputs), and `metrics_report` and `metrics_pressure_report` aggregate.
 High-water values are producer-lifetime maxima; drain counters are cumulative
 snapshots and are never summed.
 
+The outcome event schema is registered before the supervisor integration is
+enabled. `cache_outcome` carries one bounded classification per cached launch;
+`outcome_reading` and `outcome_store` carry aggregate failure and operation
+counts. `metrics_report` leaves `cache_outcomes` empty until one of these event
+types is present, and computes attributed coverage from `outcome_attribution`
+over cached `request_admitted` records rather than trusting a separate count
+field. `tracing_export` reserves `statistics_read` and the three store
+operations with the fixed `statistics_query`, `store_io` and `salt` failure
+categories.
+
+`OutcomeTelemetry` maps reducer outputs to those metrics and owns the bounded
+`statistics_read` span. `outcome_reading` is transition-only: it carries a
+changed `outcome_reason` or `gate_reason` label, while the counters `readings`,
+`readings_skipped`, `readings_failed`, `child_samples_taken` and
+`child_sample_failures` accumulate and are reported by one summary per minute
+and one forced summary at shutdown. Labels and counters never share an event,
+so report totals are exact sums and a steady failing loop costs two events a
+minute rather than one per reading. The recorder's pure transitions stay in
+`outcome_recorder`; `supervisor_outcomes` owns the server identity probe,
+statistics child and privacy-safe key construction, and `outcome_resources`
+owns the reaper and the asynchronous store. A recorder fault on the selector
+thread only requests cancellation there — one non-blocking reaper poll and
+`close(0.0)` — while later ticks keep advancing the same cleanup, and only
+`close()` spends D17's one-second deadline. Both `PeerServerProcess` and
+`ProcessSampler` read field 22 through `proc_trees.read_process_starttime`;
+that shared reader owns `/proc` decoding and validation, while each adapter
+keeps its own failure policy. The process sampler reads the managed server's
+control group through `PeerServerProcess`; raw argv and metadata remain in
+memory. Samples run every 250 ms only while cached groups move, inspect at most
+64 processes and back off after failures. H2 and H3 replay read only the local
+store; neither queries journald nor feeds a result back to admission. An
+optional `cache_outcomes` object is added to status only when recording is
+enabled.
+
 The restart path adds three bounded observations. The adapter's one
 `adapter_finished` summary carries `restart_retries`, the attempts spent
 because the supervisor refused as `restarting` or went away before admission,
@@ -615,34 +722,61 @@ live in `tests/fixtures`.
 
 Use these before writing a new arrange step; extend one rather than copying it.
 
-| Module                             | Provides                                                                                            |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `conftest.py`                      | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures |
-| `request_helpers.py`               | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                           |
-| `pool_helpers.py`                  | `FakePool` and `attach_pool`                                                                        |
-| `descriptor_helpers.py`            | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                       |
-| `descriptor_guard.py`              | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                          |
-| `launch_helpers.py`                | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                        |
-| `adapter_doubles.py`               | `immediate_retry` and `script_adapter` for driving the adapter in-process                           |
-| `toolchain_trees.py`               | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler   |
-| `journal_fixtures.py`              | `journal_runner`, `fixture_query` and the native `journal_receiver`                                 |
-| `listener_helpers.py`              | `watched_listener`, a listener under `ListenerPressure` control                                     |
-| `cache_recovery_helpers.py`        | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                |
-| `cache_recovery_harness.py`        | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers     |
-| `cache_recovery_machines.py`       | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`              |
-| `harness_processes.py`             | `wait_for`, `start_adapter`, process cleanup and host process observations                          |
-| `harness_status.py`                | `HarnessStatus`, the status document, readiness and drain-fault queries                             |
-| `systemd_harness.py`               | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling    |
-| `rustc_linter_acceptance.py`       | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios       |
-| `rustc_query_host_checks.py`       | Query and readiness assertions shared by host query and timing scenarios                            |
-| `rustc_query_host_observations.py` | Compact host acceptance evidence and package-cache lock-wait observations                           |
-| `rustc_query_host_support.py`      | Private Cargo fixtures, held-token barriers and captured command output                             |
-| `rustc_query_probe_records.py`     | `ProbeRecord` and JSON-line parsing for completed timing-shim observations                          |
-| `rustc_query_support.py`           | `cargo_probe` and `temporary_executable` for rustc query and property tests                         |
-| `rustc_query_timing_shim.py`       | Sibling-adapter timing shim with JSON-line probe records                                            |
-| `harness_units.py`                 | User-manager readiness, acceptance marks, transient unit control and properties                     |
+| Module                                    | Provides                                                                                                                  |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `conftest.py`                             | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures                       |
+| `request_helpers.py`                      | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                                                 |
+| `pool_helpers.py`                         | `FakePool` and `attach_pool`                                                                                              |
+| `descriptor_helpers.py`                   | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                                             |
+| `descriptor_guard.py`                     | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                                                |
+| `launch_helpers.py`                       | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                                              |
+| `adapter_doubles.py`                      | `immediate_retry` and `script_adapter` for driving the adapter in-process                                                 |
+| `toolchain_trees.py`                      | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler                         |
+| `journal_fixtures.py`                     | `journal_runner`, `fixture_query` and the native `journal_receiver`                                                       |
+| `listener_helpers.py`                     | `watched_listener` (under `ListenerPressure` control), `unix_listener` (scoped) and `open_unix_listener` (caller-managed) |
+| `cache_recovery_helpers.py`               | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                                      |
+| `cache_recovery_harness.py`               | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers                           |
+| `cache_recovery_machines.py`              | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`                                    |
+| `cache_recovery_systemd_world.py`         | `RecoveryWorld`, the isolated supervisor and waited builds behind the real-manager recovery scenarios                     |
+| `harness_processes.py`                    | `wait_for`, `start_adapter`, process cleanup and host process observations                                                |
+| `harness_status.py`                       | `HarnessStatus`, the status document, readiness and drain-fault queries                                                   |
+| `status_render_states.py`                 | Fixed status documents and their expected summary lines for the status-render tests                                       |
+| `sccache_host.py`                         | `sccache_host_marks` and private-server helpers for the opt-in real-binary check                                          |
+| `sccache_stats.py`                        | Test-only sccache 0.14.0 counter validation and redacted replay-window fixtures                                           |
+| `systemd_harness.py`                      | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling                          |
+| `cache_outcome_harness.py`                | Cacheable fake-rustc requests, scripted statistics and outcome-store observations                                         |
+| `cache_outcome_sighting_systemd_steps.py` | Real-manager child-sighting and H2 replay scenario steps                                                                  |
+| `systemd_harness_tokens.py`               | Read-only FIFO token counts for systemd acceptance tests                                                                  |
+| `rustc_linter_acceptance.py`              | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios                             |
+| `rustc_query_host_checks.py`              | Query and readiness assertions shared by host query and timing scenarios                                                  |
+| `rustc_query_host_observations.py`        | Compact host acceptance evidence and package-cache lock-wait observations                                                 |
+| `rustc_query_host_support.py`             | Private Cargo fixtures, held-token barriers and captured command output                                                   |
+| `rustc_query_probe_records.py`            | `ProbeRecord` and JSON-line parsing for completed timing-shim observations                                                |
+| `rustc_query_support.py`                  | `cargo_probe` and `temporary_executable` for rustc query and property tests                                               |
+| `rustc_query_timing_shim.py`              | Sibling-adapter timing shim with JSON-line probe records                                                                  |
+| `harness_units.py`                        | User-manager readiness, acceptance marks, transient unit control and properties                                           |
+| `fake_rustc.py`                           | Scripted Rust compiler for the opt-in real-sccache host check                                                             |
+| `fixtures/fake_sccache_statistics.py`     | Fake sccache counter format and statistics-query behaviour                                                                |
+| `test_sccache_real_binary.py`             | Opt-in sccache 0.14.0 acceptance test; `_RefusalProbe` is local to this test and is not shared API                        |
+| `outcome_store_helpers.py`                | Store rows, salts and asynchronous writer outcomes for outcome-store tests                                                |
+| `outcome_shell_test_support.py`           | Pending statistics, fake server and writer ports for shell-loop tests                                                     |
+| `outcome_store_fixture_helpers.py`        | Single-row reader fixtures and torn UTF-8 tails for outcome-store tests                                                   |
+| `outcome_vocabulary_test_support.py`      | Shared outcome-token aliases for schema and metrics-sink contract tests                                                   |
 
 _Table 4: Shared test helper modules._
+
+`make test-sccache-host` sets `BUILD_LIMITS_SCCACHE_HOST_CHECK=1` and selects
+the `sccache_host_check` marker. The real-binary test requires Linux and a
+binary whose version is in the recorder's `SUPPORTED_SCCACHE_VERSIONS` set, so
+adding a version there makes the check run against it rather than skip; pytest
+skips that test when either precondition is absent. It compares its readings
+with the committed JSONL fixture. Set
+`BUILD_LIMITS_SCCACHE_REGENERATE_FIXTURE=1` to replace the fixture, then review
+the resulting diff before committing it.
+
+`tests/test_cache_outcomes_systemd.py` runs the recording shell with a scripted
+fake sccache and checks miss/hit labels, the barrier gate, generation reset,
+stalled-query admission, H3 replay and the status line.
 
 ### 11.3. Verification beyond examples
 
@@ -656,6 +790,25 @@ treat a repeat as a signal to raise the search budget, not to delete the
 assertion. CrossHair proves the contracts in `tests/crosshair_contracts.py`.
 Snapshot tests pin rendered status, recovery and metrics output; pair any new
 snapshot with semantic assertions for the behaviour it represents.
+
+The cache-outcome store has its own generated model in
+`tests/test_outcome_store_machine.py`. It drives append, compaction, reload,
+clock movement and salt replacement through the real writer, and asserts that
+expiry, clock skew, torn-tail recovery and salt changes are reached. A
+generated compaction check reaches the actual 10,000-record bound; named store
+tests keep the filesystem fault cases readable.
+
+`tests/test_outcome_loop.py`, `test_outcome_noninterference.py`,
+`test_outcome_totality.py` and `test_outcome_null_shell.py` pin the poll order,
+admission independence, failure boundary and default-off resource boundary. The
+latency check is separately opt-in because its percentile thresholds are host
+measurements; its p99 tick lengthening and append enqueue time are recorded
+against the 5 ms and 1 ms limits.
+
+The `outcome_store_helpers.py`, `outcome_store_fixture_helpers.py` and
+`outcome_vocabulary_test_support.py` modules are test-only APIs. Reuse them for
+cache-outcome store fixtures and token vocabularies; do not import them from
+production code.
 
 ### 11.4. Host acceptance
 
@@ -760,7 +913,10 @@ reason when the code it names changes.
   collaborators and dataclass-held owners that a static call graph cannot
   resolve. Each is named by its full dotted path under
   `[[tool.skylos.dead_code.entrypoints]]`, with the call path that keeps it
-  alive.
+  alive. EP-M7 wires the statistics child through event-loop polling and
+  shutdown cancellation; the exact `NonBlockingChild.poll` and
+  `_read_available` entries remain because Skylos does not resolve its child
+  list dispatch. The stale cancellation entry was removed after integration.
 - **Vulture.** Only `tests/` is scanned, so attributes that tests set and
   production code reads, mock configuration, runner doubles' `__call__` and the
   CrossHair contracts are listed in `ignore_names`; pytest-bdd steps and
@@ -771,7 +927,9 @@ reason when the code it names changes.
   recur across parallel scenarios. Each is listed under
   `[[tool.duplication_gate.allow]]` naming every location, so a further copy
   still blocks. Prefer a `path::name` key; a bare path key covers every unnamed
-  fragment in that file, so add one only when no name is available.
+  fragment in that file, so add one only when no name is available. The
+  outcome-shell test support has one such unit exception because the detector
+  reports its two fake-port close-log fragments without unit names.
 
 ## 13. Repository automation
 

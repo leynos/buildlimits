@@ -1,0 +1,24 @@
+# serializer version: 1
+# name: test_reason_changes_are_transitions_and_totals_stay_exact
+  list([
+    dict({
+      'outcome_reason': 'timeout',
+    }),
+    dict({
+      'outcome_reason': 'none',
+    }),
+    dict({
+      'outcome_reason': 'timeout',
+    }),
+    dict({
+      'gate_reason': 'queued',
+    }),
+    dict({
+      'child_sample_failures': 1,
+      'child_samples_taken': 1,
+      'readings': 5,
+      'readings_failed': 3,
+      'readings_skipped': 2,
+    }),
+  ])
+# ---

@@ -90,6 +90,7 @@ def report(window: Window) -> dict[str, object]:
         "gauges": _gauges(supervisor),
         "cache": _cache(supervisor),
         "transitions": _transitions(supervisor),
+        "cache_outcomes": _cache_outcomes(supervisor),
         "adapters": {
             "self_reported": True,
             "outcomes": counts_by(adapters, "outcome"),
@@ -119,6 +120,90 @@ def report(window: Window) -> dict[str, object]:
             )
         ],
         **pressure_sections(window.records, percentiles),
+    }
+
+
+def _cache_outcomes(records: cabc.Sequence[Record]) -> dict[str, object]:
+    """Summarize outcome labels and their reading and store diagnostics.
+
+    Returns
+    -------
+    dict[str, object]
+        An empty mapping when no outcome telemetry exists, otherwise bounded
+        counts and attribution coverage.
+
+    Examples
+    --------
+    A reading without ``cache_outcome`` rows has no outcome section data.
+    """
+    outcome_records = of_event(records, "cache_outcome")
+    cached_admissions = sum(
+        record.fields.get("cache_path") == "cached"
+        for record in of_event(records, "request_admitted")
+    )
+    reading_records = of_event(records, "outcome_reading")
+    store_records = of_event(records, "outcome_store")
+    if not any((outcome_records, reading_records, store_records)):
+        return {}
+    attributed = sum(
+        record.fields.get("outcome_attribution") in {"solo", "unanimous"}
+        for record in outcome_records
+    )
+    return {
+        "outcomes": counts_by(outcome_records, "cache_result"),
+        "attributions": counts_by(outcome_records, "outcome_attribution"),
+        "attributed": attributed,
+        "coverage": round(attributed / cached_admissions, 6)
+        if cached_admissions
+        else None,
+        "reasons": counts_by(outcome_records, "outcome_reason"),
+        "child_sightings": counts_by(outcome_records, "child_sighting"),
+        "readings": _readings_section(reading_records),
+        "store": _store_section(store_records),
+    }
+
+
+def _field_total(records: cabc.Sequence[Record], name: str) -> int:
+    """Sum one integer telemetry field across records.
+
+    Returns
+    -------
+    int
+        The field total, treating a missing value as zero.
+    """
+    return sum(int(record.fields.get(name, "0")) for record in records)
+
+
+def _readings_section(reading_records: cabc.Sequence[Record]) -> dict[str, object]:
+    """Summarize reading reasons with their per-window counters.
+
+    Returns
+    -------
+    dict[str, object]
+        Reading reason counts and the totals of each reading counter.
+    """
+    return {
+        "reasons": counts_by(reading_records, "outcome_reason"),
+        "skipped": _field_total(reading_records, "readings_skipped"),
+        "failed": _field_total(reading_records, "readings_failed"),
+        "child_samples_taken": _field_total(reading_records, "child_samples_taken"),
+        "child_sample_failures": _field_total(reading_records, "child_sample_failures"),
+    }
+
+
+def _store_section(store_records: cabc.Sequence[Record]) -> dict[str, object]:
+    """Summarize store operations, reasons and persisted record totals.
+
+    Returns
+    -------
+    dict[str, object]
+        Store operation and reason counts, with records and discards.
+    """
+    return {
+        "operations": counts_by(store_records, "store_operation"),
+        "reasons": counts_by(store_records, "store_reason"),
+        "records": _field_total(store_records, "store_records"),
+        "discarded": _field_total(store_records, "store_discarded"),
     }
 
 

@@ -16,6 +16,7 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 PROC = Path("/proc")
+_STARTTIME_FIELD_AFTER_COMM = 19
 
 
 def parent_pid(stat_text: str) -> int:
@@ -41,6 +42,124 @@ def parent_pid(stat_text: str) -> int:
     """
     after_name = stat_text[stat_text.rindex(")") + 1 :].split()
     return int(after_name[1])
+
+
+def process_starttime(stat_text: str) -> int:
+    """Extract the non-negative field 22 start time from a proc stat row.
+
+    The command name can contain spaces and parentheses, so fields are counted
+    only after the final closing parenthesis. Callers retain their own policy
+    for unreadable files and malformed rows; an invalid row surfaces the
+    helpers' ``ValueError`` rather than a substituted default.
+
+    Parameters
+    ----------
+    stat_text : str
+        The contents of ``/proc/<pid>/stat``.
+
+    Returns
+    -------
+    int
+        The process start time in clock ticks.
+
+    Examples
+    --------
+    >>> process_starttime("123 (rustc (x) y) S " + " ".join(["0"] * 18 + ["456"]))
+    456
+    """
+    return _non_negative_starttime(_starttime_field(stat_text))
+
+
+def _starttime_field(stat_text: str) -> str:
+    """Return the raw start-time field from a proc stat row.
+
+    Returns
+    -------
+    str
+        The field's text, before integer conversion.
+
+    Raises
+    ------
+    ValueError
+        If the command field or start-time field is missing.
+
+    Examples
+    --------
+    >>> _starttime_field("123 (rustc) S " + " ".join(["0"] * 18 + ["456"]))
+    '456'
+    """
+    _command, separator, after_command = stat_text.rpartition(")")
+    if not separator:
+        msg = "process stat omitted its parenthesized command"
+        raise ValueError(msg)
+    fields = after_command.split()
+    if len(fields) <= _STARTTIME_FIELD_AFTER_COMM:
+        msg = "process stat omitted its start time"
+        raise ValueError(msg)
+    return fields[_STARTTIME_FIELD_AFTER_COMM]
+
+
+def _non_negative_starttime(field: str) -> int:
+    """Convert a start-time field, rejecting negative or non-numeric values.
+
+    Returns
+    -------
+    int
+        The non-negative start time in clock ticks.
+
+    Raises
+    ------
+    ValueError
+        If the field is not an integer or is negative.
+
+    Examples
+    --------
+    >>> _non_negative_starttime("456")
+    456
+    """
+    try:
+        starttime = int(field)
+    except ValueError as error:
+        msg = "process stat has an invalid start time"
+        raise ValueError(msg) from error
+    if starttime < 0:
+        msg = "process start time cannot be negative"
+        raise ValueError(msg)
+    return starttime
+
+
+def read_process_starttime(pid: int, proc: Path = PROC) -> int:
+    """Read one process identity's start time from an injectable proc root.
+
+    Parameters
+    ----------
+    pid : int
+        Process identifier whose stat row is read.
+    proc : Path
+        Proc filesystem root, normally ``/proc``.
+
+    Returns
+    -------
+    int
+        The validated start time in clock ticks.
+
+    Raises
+    ------
+    OSError
+        If the process stat file cannot be read.
+    UnicodeError
+        If the stat file is not ASCII.
+    ValueError
+        If field 22 is missing, malformed or negative.
+
+    Examples
+    --------
+    ``read_process_starttime(123, fixture_proc)`` reads
+    ``fixture_proc/123/stat`` and applies the same field validation used by
+    production process identity checks.
+    """  # ruff: ignore[docstring-extraneous-exception] - read_text and process_starttime propagate these failures.
+    stat_text = (proc / str(pid) / "stat").read_text(encoding="ascii")
+    return process_starttime(stat_text)
 
 
 def count_children(parent: int, members: cabc.Iterable[int], proc: Path = PROC) -> int:

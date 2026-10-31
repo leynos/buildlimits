@@ -13,6 +13,8 @@ if typ.TYPE_CHECKING:
 _UNAVAILABLE_ADMISSION_LINE = (
     "admission readiness unavailable: readiness is not reported"
 )
+_SNAPSHOT_UNAVAILABLE = "snapshot_unavailable"
+_SNAPSHOT_UNAVAILABLE_LINE = "cache outcomes status unavailable"
 
 
 def render(state: cabc.Mapping[str, object]) -> str:
@@ -60,6 +62,7 @@ def render(state: cabc.Mapping[str, object]) -> str:
             if state.get(key)
         ],
         *_recovery_lines(state),
+        *_outcome_lines(state),
         *([_waiting_line(item) for item in queued] or ["no requests waiting"]),
         *([_group_line(item) for item in groups] or ["no compiler groups"]),
     ])
@@ -87,6 +90,50 @@ def _admission_lines(state: cabc.Mapping[str, object]) -> list[str]:
         detail = reason if isinstance(reason, str) else "readiness is not reported"
         return [f"admission {admission_state}: {detail}"]
     return [_UNAVAILABLE_ADMISSION_LINE]
+
+
+def _outcome_lines(state: cabc.Mapping[str, object]) -> list[str]:
+    """Render the optional outcome-recording state without private values.
+
+    Returns
+    -------
+    list[str]
+        The fixed optional section, or an empty list when absent.
+    """
+    section = _section(state, "cache_outcomes")
+    if section is None:
+        return []
+    if section.get("enabled") is not True:
+        if section.get("reason") == _SNAPSHOT_UNAVAILABLE:
+            return [_SNAPSHOT_UNAVAILABLE_LINE]
+        return [_disabled_line(section)]
+    line = (
+        "cache outcomes recording: "
+        f"{section.get('attributed', 0)} attributed, "
+        f"{section.get('readings', 0)} readings"
+    )
+    reason = section.get("last_reason")
+    return [line if not isinstance(reason, str) else f"{line}; last reason {reason}"]
+
+
+def _disabled_line(section: cabc.Mapping[str, object]) -> str:
+    """Say why recording stopped, without inventing a reason.
+
+    A recorder that fails after startup stops with no fixed reason of its own,
+    so the last closed reason is the only evidence the operator has of what it
+    was doing; a failure before startup publishes a fixed disabled status
+    instead, which the headline already covers.
+
+    Returns
+    -------
+    str
+        The disabled headline, with the last closed reason when reported.
+    """
+    headline = "cache outcomes disabled after an internal failure"
+    reason = section.get("last_reason")
+    return (
+        headline if not isinstance(reason, str) else f"{headline}; last reason {reason}"
+    )
 
 
 def _action_label(state: cabc.Mapping[str, object]) -> str:

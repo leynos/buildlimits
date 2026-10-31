@@ -8,6 +8,8 @@ import json
 import os
 import typing as typ
 
+from buildlimits.json_values import nonnegative_integer
+
 if typ.TYPE_CHECKING:
     import subprocess
 
@@ -233,22 +235,15 @@ def _property_value(prop: str, response: object, expected: str) -> str:
         msg = f"public user bus omitted {prop}"
         raise BusQueryError(msg)
     data = response.get("data")
-    valid = _valid_pid(data) if prop == "MainPID" else isinstance(data, str)
+    valid = (
+        nonnegative_integer(data) is not None
+        if prop == "MainPID"
+        else isinstance(data, str)
+    )
     if response.get("type") != expected or not valid:
         msg = f"public user bus returned an invalid {prop}"
         raise BusQueryError(msg)
     return str(data)
-
-
-def _valid_pid(data: object) -> bool:
-    """Require a non-negative integer PID, excluding JSON booleans.
-
-    Returns
-    -------
-    bool
-        Whether the value satisfies the manager PID contract.
-    """
-    return isinstance(data, int) and not isinstance(data, bool) and data >= 0
 
 
 def control_unit(runner: Runner, verb: str, unit: str, mode: str = "replace") -> None:
