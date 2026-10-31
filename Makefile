@@ -1,3 +1,8 @@
+# The CV-005 CodeScene contracts live in shared-actions and run from a full
+# commit, so a fix is a pin bump. `.github/cv005.toml` holds this repository's
+# only parameters.
+CV005_CONTRACTS_REF ?= 5a99aed78ce68dcebd3052b75c31e6f173162b1e
+CV005_CONTRACTS = $(UV_ENV) $(UV) tool run --python 3.13 --from 'git+https://github.com/leynos/shared-actions@$(CV005_CONTRACTS_REF)\#subdirectory=packages/cv005-contracts' cv005-contracts
 MDLINT ?= markdownlint-cli2
 NIXIE ?= nixie
 MDTABLEFIX ?= mdtablefix
@@ -52,7 +57,7 @@ PYLINT = $(UV_ENV) $(UV) tool run --managed-python --python $(PYLINT_PYTHON) --f
 # Shared build caches require sequential gates even when make receives -j.
 .NOTPARALLEL:
 
-all: check-lock check-python-sources build check-fmt lint typecheck test
+all: check-lock check-python-sources build check-fmt lint typecheck test test-workflow-contracts
 	+$(MAKE) spelling
 
 define ensure_uv
@@ -202,6 +207,10 @@ lint-actions: build $(ACTIONLINT) $(ACTION_VALIDATOR) ## Validate workflows and 
 	    $(ACTIONLINT) -stdin-filename "$$action" - < "$$workflow"; \
 	  fi; \
 	done < "$$actions"
+
+.PHONY: test-workflow-contracts
+test-workflow-contracts: ## Check the CV-005 CodeScene workflow contracts
+	$(CV005_CONTRACTS) check --repository .
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | \

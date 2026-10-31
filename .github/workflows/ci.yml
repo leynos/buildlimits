@@ -11,10 +11,6 @@ permissions:
 jobs:
   lint-test:
     runs-on: ubuntu-latest
-    env:
-      CS_ACCESS_TOKEN: ${{ secrets.CS_ACCESS_TOKEN }}
-      CODESCENE_CLI_SHA256: ${{ vars.CODESCENE_CLI_SHA256 }}
-
     steps:
       - name: Check out repository
         uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
@@ -104,14 +100,19 @@ jobs:
       # `project-url: https://api.codescene.io/v2/projects/<id>`.
 
       - name: Test and Measure Coverage
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: leynos/shared-actions/.github/actions/generate-coverage@ec1432aa6fa5379b2dd8f4b3402fd5b250a597bd
+        if: github.event_name == 'pull_request'
+        # Pin one interpreter in both lanes: generate-coverage builds its own
+        # venv with a bare `uv venv`, which takes whatever uv finds first.
+        env:
+          UV_PYTHON: '3.14'
+        uses: leynos/shared-actions/.github/actions/generate-coverage@5a99aed78ce68dcebd3052b75c31e6f173162b1e
         with:
+          python-source: buildlimits,scripts
           output-path: coverage.xml
           format: cobertura
-          # Measure application and repository automation code, not the test
-          # harnesses that host acceptance deliberately skips in CI.
-          python-source: buildlimits,scripts
           artefact-name-suffix: buildlimits
-          publish-artefact: ${{ env.ACT != 'true' }}
           with-ratchet: 'true'
+          publish-artefact: 'false'
+
+      - name: Check the CV-005 contracts
+        run: make test-workflow-contracts

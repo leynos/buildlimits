@@ -1,0 +1,7 @@
+repository = "leynos/buildlimits"
+interpreter = "3.14"
+
+# What the ratchet baseline measures: application and repository automation
+# code, not the test harnesses that host acceptance deliberately skips in CI.
+[selection]
+python-source = "buildlimits,scripts"
