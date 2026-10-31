@@ -1350,15 +1350,15 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   CrossHair runner now passes `--report_all` and fails unless each of the four
   attributed contracts reports "Confirmed over all paths", so a missing or
   inconclusive target can no longer pass as a completed proof; it also prints
-  the verifier version, the exact command and every per-target result, keeping
-  the evidence with the run. `planned_limits_are_reachable` reports "Not
-  confirmed" in the same module, so the test names it explicitly as a
-  descriptor-limit contract outside the claim rather than letting it pass
-  unremarked. The repeated-hit and repeated-error contracts now build one
-  distinct group id per launch and assert the exact label tuple. The plan
-  describes the four contracts and their rejection cases as complementary
-  checks and reserves "mutation control" for the deliberate-fault runs listed
-  beside them.
+  the verifier version, the exact command and every per-target result, which
+  `pytest -s tests/test_crosshair.py` retains outside the captured gate log.
+  `planned_limits_are_reachable` reports "Not confirmed" in the same module, so
+  the test names it explicitly as a descriptor-limit contract outside the claim
+  rather than letting it pass unremarked. The repeated-hit and repeated-error
+  contracts now build one distinct group id per launch and assert the exact
+  label tuple. The plan describes the four contracts and their rejection cases
+  as complementary checks and reserves "mutation control" for the
+  deliberate-fault runs listed beside them.
 - [x] (2026-10-30) The proof assessment accepted the four bounded proofs at
   `b234432`, within the domains its table names, and recorded no unresolved
   concern. Its one correction was to the rationale, not the claim: the earlier
@@ -1380,6 +1380,13 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   outstanding under the implementation assessment's deferred route; the pass is
   recorded as environmental evidence, with the logs at
   `/tmp/latency-quiet-1.out` to `/tmp/latency-quiet-5.out`.
+- [x] (2026-10-30 23:15Z) The completed review's one finding was that
+  `make test` captures pytest output, so the plan's claim that the CrossHair
+  block is "preserved with the run" did not hold for the gate log. The claim
+  was wrong and is corrected: the block is retained by running
+  `pytest -s tests/test_crosshair.py`. That run reproduced all six per-target
+  results on `ae661cf` with exit status 0, and the plan now carries the block
+  and the exact reproduction command.
 
 ## Surprises & discoveries
 
@@ -2272,8 +2279,24 @@ window whose delta is a sum of two or more distinct footprints is
     for every contract, and the test requires each of the four above to report
     "Confirmed over all paths": a missing result, an inconclusive result or a
     counterexample fails the test. The test prints the verifier version, the
-    exact command and every per-target result, so the evidence is preserved
-    with the run. `planned_limits_are_reachable` is a descriptor-limit
+    exact command and every per-target result, but `make test` runs pytest
+    with capture enabled, so a passing test's block never reaches the gate
+    log. Retain it by running `pytest -s tests/test_crosshair.py`; the block
+    it printed on `ae661cf` is:
+
+    ```text
+    crosshair-tool 0.0.111
+    exit status: 0
+    per-target results:
+      cache_errors_are_not_dropped_from_a_solo_footprint: info: Confirmed over all paths.
+      decoding_never_labels_mixed: info: Confirmed over all paths.
+      limit_order_is_total: info: Confirmed over all paths.
+      planned_limits_are_reachable: info: Not confirmed.
+      repeated_cache_errors_are_not_unanimous: info: Confirmed over all paths.
+      unanimous_hit_windows_keep_the_hit_label: info: Confirmed over all paths.
+    ```
+
+    `planned_limits_are_reachable` is a descriptor-limit
     contract in the same module that reports "Not confirmed" under the run's
     per-condition timeout, an inconclusive result rather than a
     counterexample; the test names it as outside the claimed proofs, and the
