@@ -7,8 +7,12 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
     schedule:
-      interval: "weekly"
+      interval: "daily"
 
 
   # Enable version updates for Python dependencies and uv.lock
@@ -18,5 +22,9 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    groups:
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
     schedule:
       interval: "daily"
