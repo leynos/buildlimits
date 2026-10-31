@@ -119,10 +119,10 @@ def _outcome_lines(state: cabc.Mapping[str, object]) -> list[str]:
 def _disabled_line(section: cabc.Mapping[str, object]) -> str:
     """Say why recording stopped, without inventing a reason.
 
-    A recorder that fails after startup stops with no fixed reason of its own,
-    so the last closed reason is the only evidence the operator has of what it
-    was doing; a failure before startup publishes a fixed disabled status
-    instead, which the headline already covers.
+    The renderer appends ``last_reason`` only when the supplied snapshot holds
+    a string. Construction failure and a shell fault after startup both publish
+    the fixed disabled description, so no earlier reading reason survives those
+    paths.
 
     Returns
     -------
