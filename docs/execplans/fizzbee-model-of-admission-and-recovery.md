@@ -501,19 +501,21 @@ explicitly.
     `markdownlint`; D27 records the repair.
   - [x] (2026-10-26) Committed as `5defe2a` (replayed as `4af38d1` by the
     rebase onto `origin/main`; see D31), 44 files, +7,012 −72, after the
-    green gate run. The commit was made while the file-count escalation is
-    open, so the validated work is recoverable; the milestone is not accepted
-    until that question is decided.
-  - [ ] **Scope tolerance breached, escalated 2026-10-26.** EP-M3 touches 35
-    in-scope files — 29 Python (14 under `modelcheck/`, 15 under `tests/`) and
-    6 other (ADR 006, `pyproject.toml`, the feature file and three documents)
-    — against a hard stop of 25. The Python count alone exceeds it, so the
-    breach does not depend on how the count is read. Tolerances, "Scope" and
-    D21 both require a stop here; the plan's estimate of EP-M3's surface was
+    green gate run. The commit was made while the file-count escalation was
+    open, so the validated work was recoverable.
+  - [x] **Scope tolerance breached, escalated 2026-10-26, and accepted by
+    exception on 2026-10-31.** EP-M3 touches 35 in-scope files — 29 Python (14
+    under `modelcheck/`, 15 under `tests/`) and 6 other (ADR 006,
+    `pyproject.toml`, the feature file and three documents) — against a hard
+    stop of 25. The Python count alone exceeds it, so the breach does not
+    depend on how the count is read. The plan's estimate of EP-M3's surface was
     wrong by the four modules `AGENTS.md`'s 400-line cap forced and by six test
-    modules it never listed. A split at the adapter/CLI seam was measured and
-    fits on both sides (EP-M3a: 20 files; EP-M3b: 15), but the milestone must
-    not be re-cut without the user's decision. Awaiting it.
+    modules it never listed; nothing was merged to hit a number and no
+    acceptance condition was cut. A split at the adapter/CLI seam was measured
+    and fits on both sides (EP-M3a: 20 files; EP-M3b: 15), but the milestone
+    was not re-cut: the user approved an exception, and EP-M3 is accepted at 35
+    files with its E1 to E4 evidence and its six gates green (D32). The
+    25-file stop is unchanged for every later milestone.
 
 - [ ] EP-M4: minimal model with the busy queue (W1).
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
@@ -864,18 +866,21 @@ explicitly.
     the milestone needs six `tests/test_modelcheck_*.py` modules plus two
     support modules where EP-M2 needed tests only for pure functions. Nothing
     was merged to hit a number and no acceptance condition was cut.
-  - Status: **open, escalated 2026-10-26.** This is a stop under Tolerances,
-    "Scope", and D21 reaffirmed that the file limit stays hard precisely
-    because file count says where work landed. A split at the adapter/CLI seam
-    was measured and fits on both sides — EP-M3a (ports, service, adapters) at
-    20 files, EP-M3b (CLI, report, behaviour tests) at 15 — but re-cutting an
-    approved milestone is not the planner's decision to take. `4af38d1`
-    commits the validated work so it is recoverable; EP-M3 is not accepted and
-    EP-M4 does not start until the user rules on either the split or an
-    amendment to the tolerance.
+  - Status: **closed on 2026-10-31, by exception.** The escalation stood from
+    2026-10-26 as a stop under Tolerances, "Scope", and D21 reaffirmed that the
+    file limit stays hard precisely because file count says where work landed.
+    A split at the adapter/CLI seam was measured and fit on both sides —
+    EP-M3a (ports, service, adapters) at 20 files, EP-M3b (CLI, report,
+    behaviour tests) at 15 — but re-cutting an approved milestone is not the
+    planner's decision to take. The user approved the exception instead,
+    leaving the milestone whole at 35 files; EP-M3 is accepted on its green
+    gates and E1 to E4 evidence, with D32 recording the decision.
   - What this risk is for: the 25-file limit is the plan's only remaining
     structural check on milestone size, so a breach is worth more attention
-    than the line figure it outlived. If the limit is also to become advisory,
+    than the line figure it outlived. This exception was granted to one
+    milestone on its evidence, not to the rule: the stop still applies to
+    EP-M4 onward, and a future breach must escalate in the same way rather
+    than cite EP-M3 as a precedent. If the limit is ever to become advisory,
     the plan loses both size guards and should say so plainly rather than
     discovering it at G1.
 
@@ -1545,6 +1550,27 @@ explicitly.
     rerun on the repair commit before publication, because the replay created
     a new candidate and the pre-rebase evidence no longer covers it.
 
+- **D32. EP-M3's 25-file breach is accepted as a one-milestone exception.**
+  - Decision: EP-M3 is accepted at 35 in-scope files without being re-cut, on
+    the user's approval of 2026-10-31. The 25-file stop in Tolerances,
+    "Scope", and D21 is unchanged and applies to EP-M4 and every later
+    milestone.
+  - Reason: the milestone's overrun came from acceptance conditions rather
+    than scope creep — four modules forced by `AGENTS.md`'s 400-line cap and
+    six test modules the plan never listed — and every one of its E1 to E4
+    conditions was met with six gates green. The measured alternative, a split
+    into EP-M3a (ports, service, adapters) at 20 files and EP-M3b (CLI, report,
+    behaviour tests) at 15, would have re-cut approved work to satisfy a count
+    rather than a requirement; the user chose the exception instead. Accepting
+    the milestone releases EP-M4, which the plan had blocked on this decision.
+  - Evidence: the `make test` run of 2,286 passed, 44 skipped, 56 snapshots
+    with `check-fmt`, `lint`, `typecheck`, `markdownlint` and `nixie` also
+    green (EP-M3-E4); the post-rebase rerun of all six gates on `06461ae`;
+    the file and line measurement in the Risks entry; the user's message
+    naming the 35-file count and stating "Exception approved".
+  - Scope: documentation only. No code, test or configuration change follows
+    from this decision.
+
 ## Outcomes & retrospective
 
 Not started. Completed at each gate and at completion.
@@ -1603,6 +1629,32 @@ Not started. Completed at each gate and at completion.
   renderers have no production caller until EP-M3's CLI; their tests are the
   only caller today. Skylos entries and Vulture names for the doubles belong to
   EP-M3, per the plan's own budget.
+
+### EP-M3
+
+- **Delivered.** `ports.py`, `service.py`, the five adapters, `cli.py`,
+  `__main__.py` and the report renderers wired end to end, with the behaviour
+  suite, the parser's T1 fixtures, the CLI and process tests, the snapshots,
+  ADR 005 and the developer's guide §11.6. `python -m modelcheck` lists `check`
+  and `drift` and runs a matrix against the stub checker; the real-checker path
+  has its own opt-in test module.
+- **What it cost.** The milestone's surface was much larger than the plan
+  assumed: four modules the 400-line cap forced, six test modules the plan
+  never listed and two support modules. The count of 35 in-scope files breached
+  the 25-file stop, and the user accepted EP-M3 as an exception rather than
+  re-cutting it (D32). The line figure, at 2,257 net Python code lines, is
+  reported and not stopped on (D21).
+- **What the gates found.** Ruff, Skylos and Vulture needed no new exception
+  at all; three of the four anticipated lint exceptions proved unnecessary, and
+  the duplication gate drove real consolidations before leaving one reasoned
+  allowance. The review repairs after the green run were the test doubles
+  subclassing their ports (D27) and the `MODELCHECK_E2E_LOG` fixture
+  requirement (D28). The rebase then renumbered ADR 005 (D29), added one Skylos
+  entry point for a false positive in `buildlimits/` (D30) and replayed the
+  series onto `main` (D31).
+- **Carried forward.** Nothing blocking. The model itself, its configuration,
+  `make model-check` and the end-to-end tests belong to EP-M4; the tooling can
+  run a matrix but no W1 model exists yet.
 
 ## Context and orientation
 
