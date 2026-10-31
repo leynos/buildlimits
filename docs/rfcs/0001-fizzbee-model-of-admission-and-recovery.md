@@ -1173,6 +1173,81 @@ with `a2f2413` except for the import's mechanical changes — `from __future__`
 removal, `build_limits` to `buildlimits` renames, docstring paths, and the
 `_section` helper added to `status_render`.
 
+### RC4: the DV1 baseline audit
+
+DV1 fixes `head` to the repository's current state and keeps `7445bf0` as a
+named audit point: before W1's model is written, the update-policy code at
+`head` is compared with `7445bf0`, and if a W1-scope behaviour changed the
+milestone becomes `BLOCKED` and both revisions become configurations.
+
+**Method.** The audit read the four commits that touch these modules between
+the two points — `ce7d080` (#14), `a3fd138` (#15), `de73710` (#16) and
+`32e2105` (#21) — as `git diff 7445bf0 <head> -- <file>` per file, then
+classified every hunk as a refactor, an excluded concern, or a W1-scope
+behavioural change. The audited `head` is `06461ae`, the branch head at the
+start of EP-M4; its `buildlimits/` tree is byte-identical to `origin/main` at
+`71892de`, so the result covers the current main as well.
+
+| File                      | Change                                                                                | Classification |
+| ------------------------- | ------------------------------------------------------------------------------------- | -------------- |
+| `admission.py`            | `closing` gate, `begin_closing`, refusal of the remaining queue; `Gauges` extraction  | excluded + (a) |
+| `admission_state.py`      | `Gauges` mixin, `admitting` and `winding_down`, `snapshot()` moved out of `Admission` | (a)            |
+| `pool.py`                 | `close()`, constructor rollback, reader loop restructured around a close flag         | excluded + (a) |
+| `supervisor.py`           | telemetry object, start-up quiesce, stop hooks, `_launch`/`_exec_outcome` extracted   | excluded + (a) |
+| `supervisor_placement.py` | new file: the extraction of `_launch` and `_exec_outcome`, plus a span                | (a)            |
+| `supervisor_shutdown.py`  | graceful-stop request, `fail_placement`, settle hooks, `close`                        | excluded       |
+| `server_watch.py`         | start-up `quiesce_live_cache`; fault guidance moved to `drain_guidance`, read live    | excluded + (a) |
+| `cache_recovery.py`       | `describe()` outlook fields, `recovery_stop` extraction, `_reading` refactor          | excluded + (a) |
+| `recovery_starvation.py`  | clause extraction into `permits_but_for_time` and `_is_cooling`                       | (a)            |
+| `recovery_outlook.py`     | new file: status-only countdown built on the trigger's clauses                        | excluded       |
+| `recovery_stop.py`        | new file: the manager-fault guard on the stop, extracted                              | (a)            |
+| `cache_quiesce.py`        | new file: start-up stop of a live cache, reached only from `Supervisor.start`         | excluded       |
+| `drain_guidance.py`       | new file: fault classification and operator wording, moved from `server_watch`        | excluded       |
+
+_Table 14: The DV1 baseline audit, per file. "(a)" is a refactor with unchanged
+semantics; "excluded" is a concern W1 does not model._
+
+`effects.py`, `groups.py`, `group_drain.py`, `sccache.py`,
+`recovery_barrier.py`, `recovery_roots.py` and `supervisor_polling.py` are
+byte-identical between the two points, so six of §5's eleven update-policy
+modules are unchanged and five change only as classified above. W1's other
+exclusions — health, start-up, closing, escalation detail, metrics and status
+rendering — account for every remaining hunk; `admission_readiness.py` (health
+and readiness) and the `status*` and metrics modules are entirely of that kind.
+
+**Where a W1 difference could hide, and why it does not.**
+
+- `Admission.admitting` is `healthy and not closing`, and `winding_down` is
+  `healthy and closing`. W1 holds `closing` false throughout, so both reduce to
+  `healthy`. `submit`, `token_arrived`, `_wants_token` and the new
+  `_maybe_shutdown` early return therefore behave exactly as at `7445bf0`; the
+  refusal of a queued request is reachable only while closing.
+- `recovery_starvation.starvation` now asks `permits_but_for_time` and
+  `_is_cooling` instead of one combined clause, and the new function adds
+  `refusal(fault_kind)`. For a `live_work` fault `refusal` returns the empty
+  string, so the added term is true, and the remaining conjunction is the old
+  one in a different order. The one place that must still mutate state —
+  `RetainedDrainAge.observe` — is called once in `_starved` before the reading
+  is built, exactly as before; `describe` builds a reading without observing.
+  `_starved` now reads the counts port twice, once for `observe` and once inside
+  `_reading`, where it used to snapshot once; admission is mutated only on the
+  supervisor's single event loop, so both reads name the same snapshot within
+  one tick and no W1 action can fall between them.
+- `TokenPool._serve_one_request` is the old loop with a close check before the
+  read and a wake-up suppressed after closing. W1 never closes the pool, so the
+  reader's sequence is unchanged.
+- `supervisor_placement.launch` classifies a failed placement as `restarting`
+  only when a stop is in progress; with no stop request and `closing` false it
+  calls the same `Admission.launch_failed` effect the old bound method did. The
+  `_tick` order — groups advanced, emptied groups accounted, the server polled,
+  then the recovery stepped on one `now` — is unchanged.
+
+**Outcome.** No W1-scope behavioural change was found. `head` therefore stands
+for `7445bf0` within W1's scope, the plan's `BLOCKED` branch is not taken, and
+Table 4's predictions about `7445bf0` are checked on `head` as DV1 provides.
+The audit is recorded here rather than in the plan because it changes what this
+document's predictions are checked against.
+
 ## Recommendation
 
 Approve W1 now and decide the rest at G1. The incidents expose a class of
