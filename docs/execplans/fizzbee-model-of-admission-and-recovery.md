@@ -299,11 +299,19 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
   - Mitigation: EP-M3 budgets Skylos entry points, Vulture `ignore_names`,
     Ruff per-file ignores and duplication allowances, each with its reason,
     and records them in the developer's guide §12.
-- **State explosion.**
+- **State explosion.** _Occurred 2026-10-31; H2 open._
   - Risk: H2's bounds may be too large to check within budget.
-  - Severity: medium. Likelihood: medium.
+  - Severity: high. Likelihood: certain (was medium; two runs now breach the
+    memory stop and one also breaches the routine runtime budget — see the
+    EP-M4 record under [Progress](#progress)).
   - Mitigation: counts by class, symmetry where groups are held in a `bag()`,
     minimal bounds that still reproduce Table 4, and H2's split option.
+    Fourteen semantics-preserving reductions were applied before the stop and
+    are recorded with the measurements. `--experimental_processed_queue` was
+    measured and rejected as insufficient: it removes the queue's memory, not
+    the retained graph's. The remaining product is structural, so the
+    unreduced mitigation is H2's third option — split the model into a
+    coupling model and a transaction model and re-measure once.
 
 ## Progress
 
@@ -526,6 +534,54 @@ explicitly.
     `origin/main` at `71892de`. The one touchy hunk — `_starved` reading the
     counts port twice where it used to snapshot once — is shown equivalent
     because admission is mutated only on the supervisor's single event loop.
+- [ ] (2026-10-31) **H2 opened: the first W1 model breaches both the
+    memory and the runtime tolerance, so implementation stops here.** The
+    model is written and complete in shape — every W1 action, timer and
+    assertion in
+    [EP-M4](#ep-m4-the-minimal-model-with-a-busy-queue) is present, and
+    `capacity = 3` with two waiting requests per class is the configured
+    workload — but no run has reached a verdict. Two measured runs, both on
+    the development host, both at the same model text:
+
+    | Run | Invocation | Nodes | Unique states | Queued | Elapsed | Peak RSS | Outcome |
+    | --- | --- | --- | --- | --- | --- | --- | --- |
+    | A | pinned launcher, default queue | 220,215 | 181,396 | 1,099,803 | 4 min 59 s | 11.3 GB | interrupted; still exploring |
+    | B | pinned launcher + `--experimental_processed_queue`, `GOMEMLIMIT=6GiB` | 152,214 | 125,660 | 39,333 | 8 min 39 s | 9.07 GB | stopped at the memory trigger; still exploring |
+
+    Run A was interrupted when `ps` showed the checker at 11.3 GB and the
+    host needed the memory back. Run B was stopped deliberately: its RSS
+    crossed the 8 GiB stop, which is the tolerance's own condition, and it had
+    already spent 8 min 39 s against a 10-minute routine budget without
+    reaching a verdict.
+
+    `--experimental_processed_queue` is a real but insufficient win. At
+    comparable node counts it cut the successor queue by roughly 28 times
+    (1.1 million to 39 thousand), which is what it is documented to do, but
+    the retained state graph that `liveness: "strict"` requires still grew
+    past 8 GiB at 125,660 states. The queue was not the binding constraint;
+    the reachable state count is.
+
+    The model has had no full run, so the "third model revision after its
+    first full run" tolerance is not yet engaged and these are still
+    first-run design reductions. Fourteen rounds of reduction have already
+    been applied — `attempts` folded to `start_failed`, `drain_attempts` and
+    `drain_retry` removed, four latch variables replaced by state predicates
+    over `phase`, `hold` derived from `phase`, `trigger` folded to
+    `manual_transaction`, `cancel_ahead` removed — and each was checked
+    against the property it serves. The remaining size is structural: the
+    recovery transaction's sub-state (phase × start-failure × manual ×
+    cooldown × backoff × grace × reachability × retained-token age × service
+    × manager health) is multiplied by the whole per-request lifecycle
+    (seven token buckets summing to three, the two-class queue, and the
+    tracked request). That product is what
+    [H2's third option](#tolerances-exception-triggers) exists to split, and
+    it is the option the measurements point at.
+
+    Nothing is thrown away. The model, its red end-to-end test and the
+    boolean-rendering fix EP-M4 needs are committed on this branch, so the
+    work is recoverable whichever way H2 goes. No configuration file,
+    Makefile target or documentation change beyond this plan has been made,
+    because each of those records a decision that depends on the answer.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -892,6 +948,41 @@ explicitly.
     the plan loses both size guards and should say so plainly rather than
     discovering it at G1.
 
+- **The Red run fails on a missing artefact, not on a missing configuration.**
+  - Observation: EP-M4's step 4 predicted the new end-to-end test would fail
+    with "configuration `head` not found" before the model existed. That
+    message is not produced anywhere: a model directory without the model is
+    rejected earlier, by the configuration adapter, and the test itself fails
+    on the absent artefact rather than on a configuration lookup.
+  - Evidence: `uv run python -m modelcheck check ... models/admission` at
+    HEAD `36cac71` exits 2 with `modelcheck: models/admission holds no
+    admission.fizz`; the opt-in pytest run of
+    `tests/test_model_check_e2e.py` reports four errors, each an
+    `AssertionError` that `.model-check/results.json` is missing.
+  - Impact: the Red-first obligation is still discharged — the test fails, and
+    for the right reason (the matrix has not been run against a model that
+    exists). Only the predicted wording was wrong, and it is corrected here so
+    a later reader does not go looking for a configuration-lookup failure that
+    cannot occur. The test's missing-artefact message is what an operator sees,
+    and it names the command that produces the file.
+- **A nondeterministic branch inside one fair action does not guarantee
+  progress.**
+  - Observation: an early probe encoded a supervisor tick as a single fair
+    action whose body chose among "do nothing", "stop" and "restart" with
+    `oneof`. Liveness failed: the fair action was taken infinitely often, but
+    the no-op branch was chosen at every one of those points, so the phase
+    never advanced.
+  - Evidence: `/tmp/fizz-probe/p5/p5.fizz`, a three-state transaction driven by
+    one `atomic fair action Tick` with `n = oneof ["zero", "one", "two"]` and
+    a first branch that assigns a variable to itself, reports `FAILED:
+    Liveness check failed` with `Invariant: L3`.
+  - Impact: fairness is a property of an action's occurrence, not of every
+    branch inside its body. Every step whose occurrence is needed for a
+    liveness property must therefore be its own action, enabled exactly when
+    that step is possible, or be deterministic given the state. EP-M4's model
+    follows this: the supervisor tick's phase step is a function of the phase
+    and the timer flags, and each timer expiry is a separate fair action.
+
 - **Skylos reads the repository's own uv cache, so its verdict depends on
   what a local run has downloaded.**
   - Observation: `[tool.skylos] exclude` names `.uv-cache`, `.uv-tools` and
@@ -916,6 +1007,26 @@ explicitly.
     failure whose symbol has a real caller as an environment artefact until a
     clean-copy run says otherwise, and quote the clean-copy result as the
     evidence.
+
+- **Under strict liveness the state graph, not the successor queue, is what
+  costs memory.**
+  - Observation: the checker's queue and its graph are separate costs, and
+    only the first is addressable with a search-queue flag. The queued
+    successors were 1,099,803 in run A and 39,333 in run B — a 28-fold
+    reduction from `--experimental_processed_queue`, which is exactly the
+    documented effect — yet peak RSS still rose from 11.3 GB to 9.07 GB, not
+    down by anything like that factor, because run B had also gone further
+    (125,660 unique states against 181,396) and had to retain every yield
+    point for `liveness: "strict"`.
+  - Evidence: the two runs in the EP-M4 record. The flag's documentation says
+    it "reduces peak queue memory" and separately that `--experimental_no_graph`
+    is the flag that gives "major RSS reduction" — but that one "refuses specs
+    with liveness assertions" and so cannot be used here at all.
+  - Impact: any future attempt to make a W1-sized model fit by tuning the
+    search will not work. The lever is the number of reachable states, which
+    means the model's shape. This is the evidence for H2's third option and
+    the reason it should be preferred to a bigger timeout or a fourth
+    round of variable folding.
 
 ## Decision log
 
@@ -1580,6 +1691,35 @@ explicitly.
     naming the 35-file count and stating "Exception approved".
   - Scope: documentation only. No code, test or configuration change follows
     from this decision.
+
+- **D33. H2 is open on the first W1 model; the recommendation is the split.**
+  _Pending the user's decision; nothing below is enacted._
+  - Decision sought: one of H2's three options, as written in Tolerances,
+    "Runtime budget" — (a) run the whole model on pull requests, (b) run it
+    nightly only, or (c) split it into a coupling model and a transaction
+    model and re-measure once.
+  - Evidence: two runs at one model text, recorded in the EP-M4 entry. Run A
+    reached 181,396 unique states at 4 min 59 s with 11.3 GB RSS; run B
+    reached 125,660 unique states at 8 min 39 s with 9.07 GB RSS and was
+    stopped by the 8 GiB memory tolerance while still exploring. Both breach
+    the memory stop; run B also breaches the 10-minute routine budget. No run
+    produced a verdict, so EP-M4-E1 has no evidence yet.
+  - Recommendation: **(c)**. Options (a) and (b) do not change the cost —
+    the model does not fit either budget, and 60 minutes leaves a lasso
+    check of an unknown-sized graph on a shared host, which is the
+    "Shared-host load" risk. Option (c) removes the structural product
+    identified above: the coupling model keeps the per-request lifecycle and
+    the cached guard, and the transaction model keeps the recovery phase,
+    the drain probe and the timers, with the other side of each reduced to a
+    coarse premise. The re-measurement is then a single run each, and W1's
+    properties are discharged by whichever model carries each one.
+  - Consequence if (c) is chosen: EP-M4's acceptance conditions are re-cut
+    to two models, and the plan's 25-file stop still applies. The RFC's
+    fairness table is unchanged; each model declares the subset it uses.
+  - Status: blocked on the user. The model, its red end-to-end test and the
+    boolean-rendering fix are committed for recoverability; no configuration
+    file, Makefile target or documentation change beyond this plan has been
+    made.
 
 ## Outcomes & retrospective
 
