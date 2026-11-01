@@ -220,31 +220,32 @@ Safety properties hold in every reachable state or transition; liveness
 properties hold under F1 to F7, and those that depend on the visible-roots
 grace also under F3a. Table 3 lists them.
 
-| ID  | Property                   | Statement                                                                                                                                                               |
-| --- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| S1  | Stop safety                | A stop is issued only with no cached group running or draining and a readable manager                                                                                   |
-| S2  | Token conservation         | Tokens sum to capacity; held tokens partition into running, draining and server-drain groups; waiting requests hold none; a token returns once, after its scope empties |
-| S3  | Accounted release          | A `SERVER_DRAIN` token is released only on a reading of a stopped, empty service                                                                                        |
-| S4  | Barrier ordering           | A start is issued only with the barrier absent; the barrier stands from stop to restart                                                                                 |
-| S5  | Composition                | No group is composed with the cache under a hold or after a negative reachability reading                                                                               |
-| S6  | Server work coverage       | Live server work never exceeds the tokens held by cached groups (ADR 011[^7])                                                                                           |
-| S7  | Unhealthy quiescence       | Nothing launches while the supervisor is unhealthy                                                                                                                      |
-| S8  | Explainable retention      | A retained token with a waiting request and no transaction always has a reason in status                                                                                |
-| S9  | Fault persistence          | A refused restart's fault stays in status until a later transaction ends cleanly                                                                                        |
-| L1  | Retained drains accounted  | Under the `starved` policy, eventually always no token is in `SERVER_DRAIN` while requests keep waiting (RC5)                                                           |
-| L2  | Queue progress             | The tracked request, unless cancelled or refused by a health failure, is eventually admitted                                                                            |
-| L3  | Transactions complete      | Every opened transaction eventually returns to idle                                                                                                                     |
-| L4a | Refusal justified          | A request refused at once is refused only on a faulted manager transport                                                                                                |
-| L4b | Operator requests complete | An accepted operator request eventually ends in a completed transaction or accounted tokens                                                                             |
-| R1  | Proportionate rest         | After a clean ending the trigger is eligible within the settle units                                                                                                    |
+| ID  | Property                             | Statement                                                                                                                                                               |
+| --- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| S1  | Stop safety                          | A stop is issued only with no cached group running or draining and a readable manager                                                                                   |
+| S2  | Token conservation                   | Tokens sum to capacity; held tokens partition into running, draining and server-drain groups; waiting requests hold none; a token returns once, after its scope empties |
+| S3  | Accounted release                    | A `SERVER_DRAIN` token is released only on a reading of a stopped, empty service                                                                                        |
+| S4  | Barrier ordering                     | A start is issued only with the barrier absent; the barrier stands from stop to restart                                                                                 |
+| S5  | Composition                          | No group is composed with the cache under a hold or after a negative reachability reading                                                                               |
+| S6  | Server work coverage                 | Live server work never exceeds the tokens held by cached groups (ADR 011[^7])                                                                                           |
+| S7  | Unhealthy quiescence                 | Nothing launches while the supervisor is unhealthy                                                                                                                      |
+| S8  | Explainable retention                | A retained token with a waiting request and no transaction always has a reason in status                                                                                |
+| S9  | Fault persistence                    | A refused restart's fault stays in status until a later transaction ends cleanly                                                                                        |
+| L1  | Retained drains do not starve demand | Under the `starved` policy, always eventually no token is in `SERVER_DRAIN` or nothing waits for one: `GF (server_drain = 0 ∨ ¬queue_waiting)` (RC5)                    |
+| L2  | Queue progress                       | The tracked request, unless cancelled or refused by a health failure, is eventually admitted                                                                            |
+| L3  | Transactions complete                | Every opened transaction eventually returns to idle                                                                                                                     |
+| L4a | Refusal justified                    | A request refused at once is refused only on a faulted manager transport                                                                                                |
+| L4b | Operator requests complete           | An accepted operator request eventually ends in a completed transaction or accounted tokens                                                                             |
+| R1  | Proportionate rest                   | After a clean ending the trigger is eligible within the settle units                                                                                                    |
 
 _Table 3: Safety (S), liveness (L) and bounded-response (R) properties._
 
-L1 carries a demand qualification that its row states and RC5 records: the
-token is released while requests keep waiting, not after the queue has gone
-quiet. The automatic trigger needs a waiting request, and F7 never forces a
-submission, so an environment that stops submitting leaves a retained token
-legitimately alone.
+L1 is a starvation guarantee rather than a retention guarantee, and its row
+states the operator as well as its wording: the model checks _always eventually_
+(`GF`), not _eventually always_ (`FG`). RC5 derives the formula from the code
+and records the two consequences — an environment that stops submitting leaves
+a retained token legitimately alone, and a queue that keeps emptying has had
+its demand served, so a token retained throughout is permitted.
 
 S8's reasons are a positive `cooling_for`, the drain fault with its guidance,
 or the `manual` policy. A health failure refuses every queued request
@@ -1269,27 +1270,56 @@ Table 4's predictions about `7445bf0` are checked on `head` as DV1 provides.
 The audit is recorded here rather than in the plan because it changes what this
 document's predictions are checked against.
 
-### RC5: L1 is demand-conditional
+### RC5: L1 is a starvation guarantee, stated as always eventually
 
-Table 3 states L1 as "eventually always no token is in `SERVER_DRAIN`". The
-transaction model checks the weaker `server_drain == 0 or not queue_waiting`,
-and this entry records why the weaker form is the honest one.
+Table 3 states L1 in the same form the model checks:
 
-The automatic trigger fires on starvation, and starvation is defined by a
-waiting request that the retained drain is holding up. With an empty queue
-there is nothing for the retained token to block, and F7 never forces a
-submission: the environment may simply stop asking. Under the unconditional
-form the environment can take that stutter step after a token is retained and
-produce a lasso that is a counterexample to the model's own demand assumption,
-not to the code. The demand-conditional form says what the code owes — release
-the token for ever, or have nothing left that waits for it.
+```text
+GF (server_drain = 0 ∨ ¬queue_waiting)
+```
+
+That is: on every execution, at infinitely many points, either no token is
+retained or nothing waits for one. It is an _always eventually_ (`GF`)
+statement, not the _eventually always_ (`FG`) statement an earlier draft of the
+row carried, and the difference is not cosmetic.
+
+**Why not `FG`.** The environment can create new retained drains for ever:
+`LeaderExits` has a `signalled` branch that retains another token, and F7 never
+forces it to stop. It can also submit for ever. So there is no execution after
+which the disjunction holds permanently, and `FG` would ask the model to prove
+that the environment quiesces — a property of the harness, not of the code.
+`GF` asks what the code owes while the environment keeps acting: it may not
+hold a token that keeps a waiting request waiting, without infinitely often
+either releasing it or having nothing to block.
+
+**The demand assumption, exactly.** F5 admits a waiting request whenever a free
+token exists, so a request waits only while the retained drain and the held
+tokens prevent its admission. The automatic trigger fires on starvation, and
+starvation is defined by exactly that waiting request. With an empty queue
+there is nothing for a retained token to block, and F7 never forces a
+submission: the environment may stop asking.
+
+**Repeated queue-empty intervals permit permanent retention.** This follows
+from the formula and is accepted rather than tolerated. A token may stay in
+`SERVER_DRAIN` for ever while the queue empties and refills, because each
+emptying is a request that was admitted: demand was served, and no request is
+blocked by the retained token. What L1 forbids is retention that _blocks_ — a
+request waiting from some point on that is never admitted because the retained
+drain holds its token. An earlier phrasing in this entry said the token must be
+"released for ever"; that overstated the formula, and this paragraph replaces
+it.
+
+Both sides of that boundary carry a run. `head-no-accounting-release` disables
+the release and leaves the queue free to build a backlog, so a request waits
+while the retained drain holds it and L1 must fail. `head-retention-idle-queue`
+disables the same release but requires every submission to carry a free token,
+so the queue empties again as soon as F5 admits it; L1 must hold. The pair is
+what makes the demand qualification part of the evidence rather than an escape
+hatch.
 
 Nothing else is weakened by the qualification. The retained token is still
-accounted (S3 and S8), incident 3's loss still happens under a busy queue where
-requests keep waiting, and `head-no-accounting-release` keeps a token retained
-while requests keep waiting and must fail. The configuration is the negative
-control that makes the demand direction part of the evidence rather than an
-escape hatch.
+accounted (S3 and S8), and incident 3's loss still happens under a busy queue
+where requests keep waiting.
 
 ## Recommendation
 

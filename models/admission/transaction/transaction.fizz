@@ -43,6 +43,11 @@ STALE_PROOF = True
 GRACE_DEADLINE = True
 CACHED_GUARD = True
 ACCOUNTING_RELEASE = True
+# The shape of demand. When True a request may be submitted with every token
+# held, which is the backlog L1 is about. When False every submission carries a
+# free token, so the queue empties again as soon as F5 admits it — the repeated
+# queue-empty intervals RFC 0001 RC5 says permit a retained token to stay.
+QUEUE_OVERFLOWS = True
 
 action Init:
   # Two tokens are free and one is retained by the initial starvation.
@@ -78,8 +83,9 @@ action Init:
 atomic action Submit:  # maps: buildlimits.admission.Admission.submit
   # maps: buildlimits.effects.NotifyQueued
   # Submissions are never forced (F7). One waiting request is the whole of
-  # the coupling this model needs.
-  require not queue_waiting
+  # the coupling this model needs. With QUEUE_OVERFLOWS a request may join a
+  # full pool, which is the backlog L1's demand assumption is about.
+  require not queue_waiting and (QUEUE_OVERFLOWS or free > 0)
   queue_waiting = True
 
 atomic fair action RequestAdmitted:  # fairness: F5
@@ -339,13 +345,17 @@ always assertion S2:
           and server_drain >= 0)
 
 always eventually assertion L1:
-  # A retained token is released for ever, or nothing is waiting for it. RFC
-  # 0001 records the demand assumption this rests on: the automatic trigger
-  # requires a waiting request and F7 never forces a submission, so with an
-  # empty queue a retained token is legitimately left alone. The stronger
-  # "eventually always no token is in SERVER_DRAIN" is therefore not the
-  # guarantee; the demand-conditional form is. The `head-no-accounting-release`
-  # control keeps a token retained while requests keep waiting and must fail.
+  # `GF(server_drain == 0 or not queue_waiting)`: always eventually either no
+  # token is retained or nothing waits for one. RFC 0001 Table 3 and RC5 state
+  # the same formula; it is a starvation guarantee, not a retention guarantee.
+  # Two consequences follow, and both are recorded there: the automatic trigger
+  # needs a waiting request and F7 never forces a submission, so after the queue
+  # goes quiet for ever a retained token is legitimately left alone; and a queue
+  # that empties repeatedly has had its demand served, so a token retained
+  # throughout is permitted. The mutant `head-no-accounting-release` keeps a
+  # request waiting while the retained drain blocks it and must fail. The
+  # control `head-retention-idle-queue` retains the token for ever while demand
+  # is repeatedly served and must hold.
   return server_drain == 0 or not queue_waiting
 
 always eventually assertion L3:
