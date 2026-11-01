@@ -38,6 +38,7 @@ import cyclopts
 import cyclopts.config
 
 from modelcheck import domain, drift, report, service
+from modelcheck.fixpoint import run_fixpoint
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -165,6 +166,7 @@ def make_app(  # pylint: disable=too-many-arguments  # ADR 006 supplies three ad
         only: list[str] | None = None,
         json_path: typ.Annotated[Path | None, cyclopts.Parameter(name="--json")] = None,
         save_traces: bool = False,
+        fixpoint: bool = False,
     ) -> int:
         """Run every configuration and report what each run proved.
 
@@ -182,11 +184,17 @@ def make_app(  # pylint: disable=too-many-arguments  # ADR 006 supplies three ad
             Write the matrix's judgements here as JSON.
         save_traces : bool
             Keep each counterexample's normalized trace beside the model.
+        fixpoint : bool
+            Compare every passing configuration's state count at its declared
+            ``max_actions`` bound and at twice that bound.
 
         Returns
         -------
         int
-            ``0`` when every expectation was met, ``1`` when any was not.
+            ``0`` when every expectation was met and, when asked for, every
+            configuration's exploration was stable; ``1`` when any was not.
+            ``--only`` narrows the reported expectations but never the fixpoint
+            check, which is about the model rather than a selection of it.
         """
         source = source_factory(model_dir, bounds)
         chosen = _chosen(service.run_matrix(source, checker_factory(fizz)), only)
@@ -195,7 +203,13 @@ def make_app(  # pylint: disable=too-many-arguments  # ADR 006 supplies three ad
             json_path.write_text(report.render_records(chosen), encoding="utf-8")
         if save_traces:
             _save_traces(chosen, model_dir)
-        return exit_status(chosen)
+        status = exit_status(chosen)
+        if fixpoint:
+            stable = run_fixpoint(source, checker_factory(fizz))
+            print(report.render_fixpoint(stable), end="")
+            if not all(found.is_stable for found in stable):
+                return EXIT_UNMET
+        return status
 
     @app.command
     def drift(model_dir: Path) -> int:
@@ -241,11 +255,24 @@ def _chosen(
     -------
     tuple[Judgement, ...]
         The selected judgements, in matrix order.
+
+    Raises
+    ------
+    ValueError
+        If a selection was given and matched nothing. A narrowed report with
+        no rows would exit ``0``, which reads as a pass but says only that the
+        tool was asked about an expectation the matrix never produced — a
+        mistyped configuration or property name, which is a usage error.
     """
     selections = _selections(only)
-    return tuple(
+    chosen = tuple(
         judgement for judgement in judgements if _selected(judgement, selections)
     )
+    if selections and not chosen:
+        named = ", ".join(sorted(only or ()))
+        msg = f"--only selected {named}, but the matrix reported no such expectation"
+        raise ValueError(msg)
+    return chosen
 
 
 def _selections(only: list[str] | None) -> tuple[tuple[str, str | None], ...]:

@@ -130,9 +130,10 @@ def _fairness(matrix: scenes.Matrix, tags: str, subject: str) -> None:
 
     ``materialize`` matches each tag a configuration names against a
     ``# fairness:`` annotation on an action line and raises when one is absent,
-    so the tags cannot share a line: each needs its own action. The property
-    does not reach the source, because a fairness annotation sits on an action
-    rather than on an assertion.
+    so the tags cannot share a line: each needs its own action. The tagged
+    actions are appended to the shared source rather than replacing it: the
+    property the scenario names still has to be declared, because the
+    materializer refuses an expectation the model does not carry.
     """
     del subject
     names = tags.split(", ")
@@ -140,7 +141,7 @@ def _fairness(matrix: scenes.Matrix, tags: str, subject: str) -> None:
         f"atomic fair action Step{index}:  # fairness: {tag}\n  n = n + 1"
         for index, tag in enumerate(names, start=1)
     )
-    matrix.source = f"action Init:\n  n = 0\n\n{actions}\n"
+    matrix.source = f"{scenes.DEFAULT_SOURCE}\n{actions}\n"
     matrix.fairness = dict.fromkeys(names, "weak")
 
 

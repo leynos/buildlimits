@@ -231,7 +231,7 @@ grace also under F3a. Table 3 lists them.
 | S7  | Unhealthy quiescence       | Nothing launches while the supervisor is unhealthy                                                                                                                      |
 | S8  | Explainable retention      | A retained token with a waiting request and no transaction always has a reason in status                                                                                |
 | S9  | Fault persistence          | A refused restart's fault stays in status until a later transaction ends cleanly                                                                                        |
-| L1  | Retained drains accounted  | Under the `starved` policy, eventually always no token is in `SERVER_DRAIN`                                                                                             |
+| L1  | Retained drains accounted  | Under the `starved` policy, eventually always no token is in `SERVER_DRAIN` while requests keep waiting (RC5)                                                           |
 | L2  | Queue progress             | The tracked request, unless cancelled or refused by a health failure, is eventually admitted                                                                            |
 | L3  | Transactions complete      | Every opened transaction eventually returns to idle                                                                                                                     |
 | L4a | Refusal justified          | A request refused at once is refused only on a faulted manager transport                                                                                                |
@@ -239,6 +239,12 @@ grace also under F3a. Table 3 lists them.
 | R1  | Proportionate rest         | After a clean ending the trigger is eligible within the settle units                                                                                                    |
 
 _Table 3: Safety (S), liveness (L) and bounded-response (R) properties._
+
+L1 carries a demand qualification that its row states and RC5 records: the
+token is released while requests keep waiting, not after the queue has gone
+quiet. The automatic trigger needs a waiting request, and F7 never forces a
+submission, so an environment that stops submitting leaves a retained token
+legitimately alone.
 
 S8's reasons are a positive `cooling_for`, the drain fault with its guidance,
 or the `manual` policy. A health failure refuses every queued request
@@ -502,11 +508,15 @@ The thresholds below are proposals for approval before any trial runs.
   memory, and a second, with the experimental processed queue, reached 125,660
   states in 8 min 39 s at 9.07 GB — both over 8 GiB, and the second also over
   the 10-minute pull-request budget, with neither reaching a verdict. The
-  decision rule therefore selects the split. The coupling half reaches 67,944
-  states and the transaction half 14,618; together they took 257 s at 4.14 GB,
-  so both are inside every budget. The full G2 record, with the per-property
-  fairness ablations, belongs to EP-M9; this note records only that the split
-  was taken and why.
+  decision rule therefore selects the split. The coupling half as first split
+  reached 67,944 states and the transaction half 14,618; together they took 257
+  s at 4.14 GB, so both are inside every budget. The coupling figure later fell
+  to 65,664 when S1 gained its manager-readability guard, and both fixed halves
+  were then confirmed stable at doubled bounds (65,664 and 14,618 at 80 and 160
+  actions). The earlier figure is kept here as the measurement the split
+  decision was taken on. The full G2 record, with the per-property fairness
+  ablations, belongs to EP-M9; this note records only that the split was taken
+  and why.
 
 ### H3. Correspondence
 
@@ -679,12 +689,13 @@ Open questions 1, 2, 3 and 6 are settled below; 4, 5 and 8 were settled in
 earlier entries in this section. Questions 7 and 9 to 12 stay open: none bears
 on W1, and each waits on evidence a later workstream produces.
 
-Three entries are neither open question nor settled answer, and are recorded
+Four entries are neither open question nor settled answer, and are recorded
 here because they change what §2, §3 and H1 predict: the capacity-2 refinement
-(RC1), the split of L4 and the addition of F3a (RC2), and a correction to an
-earlier misreading of weak fairness (RC3). The first two are the RFC's side of
-deviations DV2 and DV3, recorded before W1's first run as the plan requires;
-the third is a finding of the spike.
+(RC1), the split of L4 and the addition of F3a (RC2), a correction to an
+earlier misreading of weak fairness (RC3), and L1's demand qualification (RC5).
+RC1 and RC2 are the RFC's side of deviations DV2 and DV3, recorded before W1's
+first run as the plan requires; RC3 is a finding of the spike; RC5 records what
+W1's transaction model can and cannot prove. RC4 records the DV1 baseline audit.
 
 ### RC1: the incident 1 capacity-2 prediction
 
@@ -1257,6 +1268,28 @@ for `7445bf0` within W1's scope, the plan's `BLOCKED` branch is not taken, and
 Table 4's predictions about `7445bf0` are checked on `head` as DV1 provides.
 The audit is recorded here rather than in the plan because it changes what this
 document's predictions are checked against.
+
+### RC5: L1 is demand-conditional
+
+Table 3 states L1 as "eventually always no token is in `SERVER_DRAIN`". The
+transaction model checks the weaker `server_drain == 0 or not queue_waiting`,
+and this entry records why the weaker form is the honest one.
+
+The automatic trigger fires on starvation, and starvation is defined by a
+waiting request that the retained drain is holding up. With an empty queue
+there is nothing for the retained token to block, and F7 never forces a
+submission: the environment may simply stop asking. Under the unconditional
+form the environment can take that stutter step after a token is retained and
+produce a lasso that is a counterexample to the model's own demand assumption,
+not to the code. The demand-conditional form says what the code owes — release
+the token for ever, or have nothing left that waits for it.
+
+Nothing else is weakened by the qualification. The retained token is still
+accounted (S3 and S8), incident 3's loss still happens under a busy queue where
+requests keep waiting, and `head-no-accounting-release` keeps a token retained
+while requests keep waiting and must fail. The configuration is the negative
+control that makes the demand direction part of the evidence rather than an
+escape hatch.
 
 ## Recommendation
 

@@ -43,6 +43,9 @@ always assertion S1:
 always assertion S2:
   return n < 20
 
+always eventually assertion L1:
+  return n >= 1
+
 always eventually assertion L3:
   return n >= 1
 

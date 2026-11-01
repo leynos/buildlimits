@@ -19,83 +19,26 @@ from pathlib import Path
 
 import cyclopts
 import pytest
-from modelcheck_cli_cases import SOURCE, Inventory, app, configuration, fails_as, holds
+from modelcheck_cli_cases import (
+    CHECK,
+    SOURCE,
+    BoundSensitive,
+    Inventory,
+    app,
+    bounded,
+    checked,
+    checked_in,
+    configuration,
+    fails_as,
+    holds,
+    listed,
+)
 from modelcheck_doubles import FakeChecker, FixedSource
 
 from modelcheck import cli, domain
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
-
-_CHECK = ("check", ".", "--fizz", "/nonexistent/fizz")
-"""A ``check`` command line over the current directory.
-
-The launcher path is never opened: the app is built with a checker double, and
-the path only has to be present for the option to parse.
-"""
-
-
-def _checked(
-    application: cyclopts.App,
-    capsys: pytest.CaptureFixture[str],
-    *arguments: str,
-) -> tuple[int, str]:
-    """Run one command and return its status and what it printed.
-
-    Parameters
-    ----------
-    application : cyclopts.App
-        The app under test.
-    capsys : pytest.CaptureFixture[str]
-        The capture fixture, so the helper reads the report the command wrote.
-    *arguments : str
-        The command line, without a program name.
-
-    Returns
-    -------
-    tuple[int, str]
-        The exit status and the printed report, which are the two things every
-        status test here asserts on.
-    """
-    status = application(list(arguments))
-    return status, capsys.readouterr().out
-
-
-def _checked_in(application: cyclopts.App, tmp_path: Path, *options: str) -> int:
-    """Run a ``check`` over a scratch model directory and return its status.
-
-    Parameters
-    ----------
-    application : cyclopts.App
-        The app under test.
-    tmp_path : pathlib.Path
-        The model directory the run reads and writes its artefacts into.
-    *options : str
-        Further command-line options, such as ``--json`` or ``--save-traces``.
-
-    Returns
-    -------
-    int
-        The command's exit status.
-    """
-    return application(["check", str(tmp_path), *_CHECK[2:], *options])
-
-
-def _files(directory: Path) -> list[str]:
-    """Return the names a directory holds, in sorted order.
-
-    Parameters
-    ----------
-    directory : pathlib.Path
-        The directory to list.
-
-    Returns
-    -------
-    list[str]
-        The entry names, so an assertion reads as the file list a reviewer
-        would see.
-    """
-    return sorted(path.name for path in directory.iterdir())
 
 
 @pytest.mark.parametrize(
@@ -125,7 +68,7 @@ def test_the_exit_status_reports_the_matrix(
     """
     application = app([holds()], FakeChecker(checker_output))
 
-    actual, output = _checked(application, capsys, *_CHECK)
+    actual, output = checked(application, capsys, *CHECK)
 
     assert actual == status, "the status reports the matrix"
     assert printed in output, "and the report says which expectation"
@@ -139,7 +82,7 @@ def test_a_known_bad_configuration_that_still_fails_exits_zero(
         [fails_as("incident-1", "L3")], FakeChecker("lasso", property_name="L3")
     )
 
-    status, printed = _checked(application, capsys, *_CHECK)
+    status, printed = checked(application, capsys, *CHECK)
 
     assert status == cli.EXIT_MET, "a known-bad configuration that still fails passes"
     assert "counterexample as expected" in printed, "and says why"
@@ -243,9 +186,9 @@ def test_an_ordinary_run_writes_no_artefact(
     """
     application = app([holds()], FakeChecker("pass"))
 
-    _checked_in(application, tmp_path, *options)
+    checked_in(application, tmp_path, *options)
 
-    assert _files(tmp_path) == [], options
+    assert listed(tmp_path) == [], options
 
 
 def test_save_traces_names_each_counterexample_after_its_row(
@@ -269,7 +212,7 @@ def test_save_traces_names_each_counterexample_after_its_row(
         "--save-traces",
     ])
 
-    assert _files(tmp_path / "traces") == ["incident-1-L3.json"], "one trace is saved"
+    assert listed(tmp_path / "traces") == ["incident-1-L3.json"], "one trace is saved"
     record = json.loads(
         (tmp_path / "traces" / "incident-1-L3.json").read_text(encoding="utf-8")
     )
@@ -281,9 +224,9 @@ def test_save_traces_writes_nothing_for_a_pass(tmp_path: Path) -> None:
     """A pass has no path to save, and an empty one would be a false trace."""
     application = app([holds()], FakeChecker("pass"))
 
-    _checked_in(application, tmp_path, "--save-traces")
+    checked_in(application, tmp_path, "--save-traces")
 
-    assert _files(tmp_path) == [], "a pass has no trace to save"
+    assert listed(tmp_path) == [], "a pass has no trace to save"
 
 
 def test_a_clean_drift_check_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
@@ -338,6 +281,41 @@ def test_a_usage_error_raises_rather_than_exiting() -> None:
 
     with pytest.raises(cyclopts.CycloptsError):
         application(["check", "."])
+
+
+def test_fixpoint_reports_a_stable_exploration(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A count that does not move when the bound doubles is reported stable.
+
+    The recorded double answers four states whatever bound it is given, which is
+    what a run that reached its fixpoint looks like. Both counts are asserted
+    against the same row so the report cannot pass by showing one number twice
+    from two different configurations.
+    """
+    application = app([bounded()], FakeChecker("pass"))
+
+    status, printed = checked(application, capsys, *CHECK, "--fixpoint")
+
+    assert status == cli.EXIT_MET, "a stable exploration passes"
+    assert "head" in printed and "4 -> 4 stable" in printed, (
+        "the report shows both counts on the configuration's row"
+    )
+
+
+def test_fixpoint_growth_exits_unmet(capsys: pytest.CaptureFixture[str]) -> None:
+    """A run that explored more at twice the bound was truncated, and fails.
+
+    Every expectation was met, so the matrix's own status is ``0``. The
+    fixpoint is what makes the bound part of the run's meaning: a pass at an
+    exhausted bound proves only what the bound allowed.
+    """
+    application = app([bounded()], BoundSensitive())
+
+    status, printed = checked(application, capsys, *CHECK, "--fixpoint")
+
+    assert status == cli.EXIT_UNMET, "a truncated exploration is not a pass"
+    assert "grew" in printed, "and the report says the count moved"
 
 
 def test_help_lists_both_commands(capsys: pytest.CaptureFixture[str]) -> None:

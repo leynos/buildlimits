@@ -24,6 +24,17 @@ Each results file must be newer than the model it describes. A stale artefact
 is the one way this module could pass while the model no longer deserves it,
 and nothing in the checker's own output can reveal that, so the age is checked
 here with the rest of the acceptance criteria.
+
+Two obligations are checked against the real models rather than against a test
+double. Every name each configuration expects must still be declared by the
+model it names, because the materializer is the only place that refusal can
+happen and a held property that quietly vanished would otherwise be reported as
+holding. And every mutant must report the fairness its run still carries,
+because the report quotes the run rather than the configuration, and a mutant
+that names no fairness table inherits the model's own annotations.
+
+Materializing is not invoking the checker: it rewrites text that is already in
+the tree. The expensive half stays with ``make model-check``.
 """
 
 import json
@@ -31,6 +42,9 @@ import typing as typ
 from pathlib import Path
 
 import pytest
+
+from modelcheck import domain, materialize
+from modelcheck.adapters.configuration import TomlConfigurations
 
 _ROOT = Path(__file__).resolve().parents[1]
 """The checkout root, which is where ``make model-check`` writes its results."""
@@ -67,11 +81,15 @@ PROBES = {
 """The non-vacuity probes each model requires ``head`` to satisfy."""
 
 MUTANTS = {
-    "coupling": {"head-no-cached-guard": "S1"},
+    "coupling": {
+        "head-no-cached-guard": "S1",
+        "head-no-manager-guard": "S1",
+    },
     "transaction": {
         "head-no-stale-proof": "L1",
         "head-no-grace-deadline": "L1",
         "head-unknown-roots": "L1",
+        "head-no-accounting-release": "L1",
         "head-unfair-leader-exits": "L3",
     },
 }
@@ -142,6 +160,156 @@ def _of(records: list[Record], configuration: str) -> dict[str, Record]:
         for record in records
         if record["configuration"] == configuration
     }
+
+
+def _expected_failures(configuration: domain.Configuration) -> tuple[str | None, ...]:
+    """Return the runs one configuration's matrix entry materializes.
+
+    The service builds this set itself, and a materializer test that answered a
+    different set would prove the names of runs nobody makes. A configuration
+    whose every expectation is expected to fail is run once per failure and
+    never in a run that should pass; any other configuration is run once with
+    no expected failure, plus once for each failure it predicts.
+
+    Parameters
+    ----------
+    configuration : modelcheck.domain.Configuration
+        The variant to read.
+
+    Returns
+    -------
+    tuple[str | None, ...]
+        The expected failure of each run, in the service's order.
+    """
+    failures = tuple(
+        expectation.property_name
+        for expectation in configuration.expectations
+        if isinstance(expectation, domain.FailsAs)
+    )
+    if len(failures) == len(configuration.expectations):
+        return failures
+    return (None, *failures)
+
+
+@pytest.mark.parametrize("model", sorted(_MODELS))
+def test_every_expectation_is_declared_by_the_model(model: str) -> None:
+    """Every name a configuration expects is one the real model declares.
+
+    The materializer refuses a name the source does not carry, which is what
+    stops a property that vanished from the model being reported as holding.
+    This is the real-model half of that guarantee: it materializes every run
+    the matrix would ask for, so a name that drifted out of the model fails
+    here instead of passing as a green row.
+    """
+    source = TomlConfigurations(_MODELS[model])
+    text = source.source_text()
+
+    for configuration in source.configurations():
+        assert configuration.expectations, (
+            f"{model} {configuration.name} expects nothing, so no run could judge it"
+        )
+        for expected_failure in _expected_failures(configuration):
+            spec = materialize.materialize(
+                text, configuration, expected_failure=expected_failure
+            )
+            assert spec.configuration == configuration.name, (
+                "each run names the configuration it was materialized for"
+            )
+
+
+@pytest.mark.parametrize(
+    ("declaration", "renamed", "absent"),
+    [
+        (
+            "always eventually assertion L4b:",
+            "always eventually assertion L4bElsewhere:",
+            "L4b",
+        ),
+        (
+            "exists assertion ReachesRestarting:",
+            "exists assertion ReachesRestartingElsewhere:",
+            "ReachesRestarting",
+        ),
+    ],
+    ids=["held-property", "probe"],
+)
+def test_a_lost_declaration_is_refused_before_the_checker_runs(
+    declaration: str, renamed: str, absent: str
+) -> None:
+    """Controls: losing a held property or a probe refuses the whole run.
+
+    Renaming the declaration is the smallest edit that makes the expectation
+    dangle. Nothing else about the model changes, so a refusal here can only
+    be the missing name, and the matching assertion proves the refusal names
+    the expectation rather than some other defect.
+    """
+    source = TomlConfigurations(_MODELS["transaction"])
+    text = source.source_text()
+    head = next(
+        configuration
+        for configuration in source.configurations()
+        if configuration.name == "head"
+    )
+    assert declaration in text, (
+        "the control renames a declaration the model still carries"
+    )
+
+    with pytest.raises(domain.MaterializeError, match=absent):
+        materialize.materialize(
+            text.replace(declaration, renamed), head, expected_failure=None
+        )
+
+
+@pytest.mark.parametrize("model", sorted(_MODELS))
+def test_each_mutant_reports_the_fairness_it_still_carries(
+    records: dict[str, list[Record]], model: str
+) -> None:
+    """A mutant's rows name every assumption it kept and none it disabled.
+
+    A mutant that names no fairness table keeps the model's own annotations,
+    so a report built from the configuration would say the run assumed nothing
+    while its actions were still fair. The expected set is therefore read from
+    the fixed run, which names every tag, less the tags that mutant turns
+    unfair. The artefact is judged as well, because the report is what a
+    reader acts on.
+    """
+    source = TomlConfigurations(_MODELS[model])
+    text = source.source_text()
+    fixed = next(
+        configuration
+        for configuration in source.configurations()
+        if configuration.name == "head"
+    )
+    carried = materialize.materialize(
+        text, fixed, expected_failure=None
+    ).fairness_in_force
+    assert carried, f"{model} head carries no fairness, so nothing could be reported"
+
+    for configuration in source.configurations():
+        if configuration.name == "head":
+            continue
+        disabled = {
+            tag for tag, level in configuration.fairness.items() if level == "unfair"
+        }
+        expected = tuple(tag for tag in carried if tag not in disabled)
+        assert expected, (
+            f"{configuration.name} disables every fairness tag, so its report "
+            "would name no assumption at all"
+        )
+        spec = materialize.materialize(
+            text, configuration, expected_failure=_expected_failures(configuration)[0]
+        )
+        assert spec.fairness_in_force == expected, (
+            f"{configuration.name} carries {spec.fairness_in_force}, not {expected}"
+        )
+        rows = _of(records[model], configuration.name)
+        assert rows, f"{configuration.name} produced no rows to judge"
+        reported = {
+            tuple(typ.cast("list[str]", record["fairness"])) for record in rows.values()
+        }
+        assert reported == {expected}, (
+            f"{configuration.name} reported {sorted(reported)}, not {expected}"
+        )
 
 
 @pytest.mark.parametrize("model", sorted(_MODELS))

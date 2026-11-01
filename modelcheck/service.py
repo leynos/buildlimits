@@ -27,20 +27,20 @@ from modelcheck.domain import (
     MaterializedSpec,
     MaterializeError,
 )
-from modelcheck.expectations import judge
+from modelcheck.expectations import judge, only_failures
 from modelcheck.materialize import materialize
 
 if typ.TYPE_CHECKING:
     from modelcheck.domain import Configuration, Expectation
     from modelcheck.ports import ConfigurationSource, ModelChecker
 
-type Run = tuple[MaterializedSpec, CheckResult]
 """One materialized specification and what the checker made of it.
 
 The specification travels with the result because a judgement quotes the
 fairness the run carried, and that is read from the specification rather than
 from the result.
 """
+type Run = tuple[MaterializedSpec, CheckResult]
 
 
 def run_matrix(
@@ -65,18 +65,23 @@ def run_matrix(
     Raises
     ------
     MaterializeError
-        If a configuration cannot be applied to the model — an unknown
-        constant, an unknown fairness tag, or no expectations at all. A
-        configuration that expects nothing would contribute no row, and a
+        If the model declares no configurations at all, or a configuration
+        cannot be applied to it — an unknown constant, an unknown fairness tag,
+        an expectation the model does not declare, or no expectations at all.
+        A configuration that expects nothing would contribute no row, and a
         report that omitted it would be indistinguishable from one where it
-        passed.
+        passed. A model with no configurations is the same defect one level up:
+        the run would ask the checker nothing and still exit ``0``.
 
     Examples
     --------
     >>> from modelcheck import domain
     >>> class Source:
     ...     def source_text(self):
-    ...         return "action Init:\\n  n = 0\\n"
+    ...         return (
+    ...             "action Init:\n  n = 0\n\n"
+    ...             "always assertion S1:\n  return n == 0\n"
+    ...         )
     ...     def configurations(self):
     ...         return (
     ...             domain.Configuration(
@@ -90,11 +95,18 @@ def run_matrix(
     ...         return domain.Passed(4, 0.5, ())
     >>> [judgement.verdict for judgement in run_matrix(Source(), Checker())]
     [<Verdict.HOLDS: 'holds'>]
-    """  # ruff: ignore[docstring-extraneous-exception] - materialize raises it.
+    """
     text = source.source_text()
+    configurations = source.configurations()
+    if not configurations:
+        msg = (
+            "the model declares no configurations, so the matrix would check "
+            "nothing and report a pass without asking the checker"
+        )
+        raise MaterializeError(msg)
     return tuple(
         judgement
-        for configuration in source.configurations()
+        for configuration in configurations
         for judgement in _judged(text, configuration, checker)
     )
 
@@ -157,7 +169,7 @@ def _runs(
         run for no expected failure when it has an expectation nothing should
         violate.
     """
-    wanted: list[str | None] = [] if _only_failures(configuration) else [None]
+    wanted: list[str | None] = [] if only_failures(configuration) else [None]
     wanted.extend(
         expectation.property_name
         for expectation in configuration.expectations
@@ -198,25 +210,6 @@ def _checked(
     """
     spec = materialize(text, configuration, expected_failure=expected_failure)
     return spec, checker.check(spec)
-
-
-def _only_failures(configuration: Configuration) -> bool:
-    """Report whether every expectation of a configuration is a failure.
-
-    Parameters
-    ----------
-    configuration : Configuration
-        The configuration to read.
-
-    Returns
-    -------
-    bool
-        Whether it has no expectation outside a ``FailsAs``, so a run that
-        should violate nothing would answer none of them.
-    """
-    return all(
-        isinstance(expectation, FailsAs) for expectation in configuration.expectations
-    )
 
 
 def expected_failure_of(expectation: Expectation) -> str | None:

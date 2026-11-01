@@ -962,15 +962,29 @@ would be read as one.
 Each half omits the production paths the other transcribes and records them
 under `[exclusions]` with a reason, so no single directory's drift report
 proves coverage. `tests/test_model_drift.py` makes the union claim instead: it
-asserts that between them the halves map or exclude every inventory item, that
-W1's out-of-scope paths are among the exclusions, and that every exclusion
-gives a reason. Prefer that test to reading one report and assuming the rest is
-handled.
+asserts that the halves' mappings together cover every in-scope inventory item,
+that W1's out-of-scope paths are among the agreed exclusions, and that every
+exclusion gives a reason. An exclusion cannot stand in for a mapping: a path
+excluded by both halves and mapped by neither is reported as a gap, so
+subtracting every exclusion from the inventory would hide exactly the loss the
+claim exists to find. Prefer that test to reading one report and assuming the
+rest is handled.
 
 `check` exits 0 when every configuration meets its expectations, 1 when one
 does not, and 2 when the tool itself failed; `--bounds` selects the routine or
-nightly declaration, `--only` narrows the matrix, `--json` writes the records
-and `--save-traces` regenerates the reviewed trace files.
+nightly declaration, `--only` narrows the matrix, `--json` writes the records,
+`--fixpoint` adds the doubled-bound comparison and `--save-traces` regenerates
+the reviewed trace files. An empty matrix, or a `--only` that matches nothing,
+is a usage error rather than a vacuously successful run.
+
+FizzBee truncates exploration at `max_actions` without printing a marker, so a
+run that exhausted its bound can still report a pass. `--fixpoint` is the
+documented defence: every configuration that should pass is run again at twice
+its bound, and the two state counts must be equal. `make model-check` passes
+it, so the nightly matrix enforces the comparison. The `min_states` floor in
+each half's `configurations.toml` is a second, cheaper check: it is set to half
+the measured count, so it catches a collapsed state space but does not turn a
+legitimate model change into a failure.
 
 The two obligations have different costs and run in different places.
 `make model-fidelity` runs both drift reports and the drift tests; it compares

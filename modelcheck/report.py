@@ -34,6 +34,7 @@ if typ.TYPE_CHECKING:
 
     from modelcheck.domain import Expectation, Judgement
     from modelcheck.drift import DriftReport
+    from modelcheck.fixpoint import Fixpoint
     from modelcheck.trace import Trace
 
 _CONFIGURATION_WIDTH = 32
@@ -204,6 +205,46 @@ def _count(count: int, noun: str) -> str:
     ('1 step', '0 steps', '9 expectations')
     """
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def render_fixpoint(comparisons: cabc.Sequence[Fixpoint]) -> str:
+    """Render one line per configuration, then the summary line.
+
+    The two counts are printed in the order they were measured, so the reader
+    can see a configuration that grew rather than compare against a remembered
+    bound. ``stable`` is the only passing word; anything else names the growth.
+
+    Parameters
+    ----------
+    comparisons : collections.abc.Sequence[Fixpoint]
+        The comparisons to render, in configuration order.
+
+    Returns
+    -------
+    str
+        The report, newline-terminated.
+
+    Examples
+    --------
+    >>> from modelcheck.fixpoint import Fixpoint
+    >>> line, summary = render_fixpoint([Fixpoint("head", 8, 8)]).splitlines()
+    >>> line
+    'fixpoint head                            8 -> 8 stable'
+    >>> summary
+    'fixpoint check: 1 configuration stable, 0 grew'
+    """
+    stable = sum(1 for found in comparisons if found.is_stable)
+    lines = [
+        f"fixpoint {found.configuration:<{_CONFIGURATION_WIDTH}}"
+        f"{found.states} -> {found.doubled_states} "
+        f"{'stable' if found.is_stable else 'grew'}"
+        for found in comparisons
+    ]
+    lines.append(
+        f"fixpoint check: {_count(stable, 'configuration')} stable, "
+        f"{len(comparisons) - stable} grew"
+    )
+    return "\n".join(lines) + "\n"
 
 
 def render_drift(report: DriftReport) -> str:

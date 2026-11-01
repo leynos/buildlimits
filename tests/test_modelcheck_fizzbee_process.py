@@ -1,13 +1,15 @@
 """The process adapter is the package's only trust boundary, and it is fenced.
 
-Three things are asserted here that no other test can see. First, the
+Two things are asserted here that no other test can see. First, the
 specification the adapter runs is written into a scratch directory and the
 checker is *told* where to write, so a run cannot leave the tracked tree dirty.
-Second, a launcher that never exits is killed by process group: the ``fizz``
-launcher starts a Go binary of its own, so killing only the launcher would
-leave the real checker running. Third, the environment the checker inherits
-carries the Go runtime's limits, because a mistaken model can explore without
-bound and the host should not be what stops it.
+Second, the environment the checker inherits carries the Go runtime's limits,
+because a mistaken model can explore without bound and the host should not be
+what stops it.
+
+The process-group kill is the third requirement, and it is asserted in
+:mod:`tests.test_modelcheck_fizzbee_kill` because its subject is a child of the
+launcher rather than the launcher's own output.
 
 The stubs are shell scripts written by the test into a scratch directory, and
 each records what it was asked to do. A stub that merely exited would let an
@@ -15,13 +17,14 @@ adapter that never ran anything pass, so every test that cares reads the
 record the stub left.
 """
 
-import os
+import typing as typ
 from pathlib import Path
-
-import pytest
 
 from modelcheck import domain
 from modelcheck.adapters.fizzbee_process import FizzbeeChecker
+
+if typ.TYPE_CHECKING:
+    import pytest
 
 _STUB = """\
 #!/usr/bin/env bash
@@ -38,22 +41,6 @@ printf 'Valid Nodes: 4 Unique states: 4\\nPASSED: Model checker completed succes
 It writes ``error-graph.json`` into the ``out`` directory the adapter names, so
 the test can prove the adapter read the graph from where the checker was told
 to put it rather than from beside the specification.
-"""
-
-_NEVER_EXITS = """\
-#!/usr/bin/env bash
-# Starts a child that outlives a launcher-only kill, then waits forever.
-sleep 300 &
-printf '%s\\n' "$!" > "$(dirname "$0")/child.pid"
-printf 'Valid Nodes: 3 Unique states: 3\\n'
-wait
-"""
-"""A launcher whose group the adapter must kill.
-
-The child is what makes this a process-group test rather than a process test:
-it inherits the launcher's stdout pipe and its process group, so an adapter
-that killed only the launcher would both leave the child alive and block
-forever collecting output from a pipe the child still holds.
 """
 
 
@@ -189,23 +176,30 @@ def test_the_go_runtime_is_capped(tmp_path: Path) -> None:
     assert "GOMEMLIMIT=4GiB" in recorded, "and a memory cap"
 
 
-def test_the_scratch_directory_is_removed(tmp_path: Path) -> None:
+def test_the_scratch_directory_is_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A finished run removes its own scratch directory, whether it passed or failed.
 
-    The assertion is scoped to the adapter's ``run-*`` directories rather than
-    the whole of ``.model-check/``. That directory is gitignored scratch shared
-    with ``make model-check``, which writes its reports there and keeps them,
-    and with any other worker running at the same time; an empty directory is
-    not something the adapter can promise.
+    The scratch root is redirected into the test's own directory. The adapter
+    writes under ``.model-check/`` relative to the working directory, which is
+    shared with ``make model-check`` and with any other run in the same
+    checkout, so a scan of the real root would answer for a neighbour's run as
+    readily as for this one. Redirecting it also lets the test see the
+    directory exist and then go, rather than only that nothing is left.
     """
-    _run_and_record(tmp_path)
+    from modelcheck.adapters import fizzbee_process
 
-    scratch = Path.cwd() / ".model-check"
-    leftovers = sorted(
-        path.name for path in scratch.iterdir() if path.name.startswith("run-")
+    root = tmp_path / ".model-check"
+    monkeypatch.setattr(fizzbee_process, "SCRATCH_ROOT", root)
+    fizz = _stub(tmp_path, _STUB)
+
+    FizzbeeChecker(fizz).check(_spec())
+
+    assert root.is_dir(), "the run made the scratch root on demand"
+    assert sorted(path.name for path in root.iterdir()) == [], (
+        "the run removed its own scratch directory"
     )
-
-    assert leftovers == [], "the adapter's own scratch directory is emptied"
 
 
 def test_a_missing_launcher_is_a_run_that_proved_nothing(tmp_path: Path) -> None:
@@ -249,71 +243,6 @@ def test_a_failing_run_keeps_its_counterexample(tmp_path: Path) -> None:
         "with the kind the error graph recorded"
     )
     assert result.property_name == "BEventually", "and the assertion it violated"
-
-
-def test_a_run_that_never_returns_is_killed_with_its_children(
-    tmp_path: Path,
-) -> None:
-    """The whole process group dies, and no descendant survives.
-
-    This is the process-control requirement. The stub's child inherits the
-    launcher's group and its stdout pipe, so killing only the launcher would
-    leave a live process and a pipe nothing would ever close. The assertion is
-    on the child's exit, read from ``/proc``, because a child that became a
-    zombie still occupies a slot on the host the run was supposed to release.
-    """
-    fizz = _stub(tmp_path, _NEVER_EXITS)
-    checker = FizzbeeChecker(fizz, timeout_seconds=1.0)
-
-    result = checker.check(_spec())
-
-    child = int((tmp_path / "child.pid").read_text(encoding="utf-8").strip())
-    assert isinstance(result, domain.Errored), "a run that never returns proves nothing"
-    assert "did not finish within" in result.detail, "and the detail names the timeout"
-    assert _is_gone(child), f"child {child} survived the timeout"
-
-
-def test_a_timeout_names_the_limit_and_keeps_what_printed(tmp_path: Path) -> None:
-    """The report says which bound was exceeded, and where the run had got.
-
-    The state count a killed run managed is the evidence of whether it was
-    still exploring or stuck, so the detail carries the checker's output after
-    the reason rather than discarding it.
-    """
-    fizz = _stub(tmp_path, _NEVER_EXITS)
-
-    result = FizzbeeChecker(fizz, timeout_seconds=1.0).check(_spec())
-
-    assert isinstance(result, domain.Errored), "the timed-out run is an error"
-    assert result.detail.splitlines()[0] == "the checker did not finish within 1s", (
-        "the first line names the bound that was exceeded"
-    )
-    assert "Valid Nodes: 3" in result.detail, (
-        "and what the run managed is kept after the reason"
-    )
-
-
-def _is_gone(pid: int) -> bool:
-    """Report whether a process has exited and been reaped elsewhere.
-
-    Parameters
-    ----------
-    pid : int
-        The process to look for.
-
-    Returns
-    -------
-    bool
-        Whether ``/proc`` no longer holds a live or zombie entry for it, or its
-        entry is a zombie — the two states a killed child reaches when its
-        parent is gone.
-    """
-    try:
-        stat = (Path("/proc") / str(pid) / "stat").read_text(encoding="utf-8")
-    except FileNotFoundError, ProcessLookupError:
-        return True
-    state = stat.rpartition(")")[2].split()[0]
-    return state == "Z"
 
 
 def test_an_error_graph_is_read_from_the_named_output_directory() -> None:
@@ -361,24 +290,3 @@ def test_the_launcher_is_invoked_without_a_shell(tmp_path: Path) -> None:
     result = FizzbeeChecker(fizz).check(_spec())
 
     assert isinstance(result, domain.Passed), "the spaced name is one argument"
-
-
-@pytest.mark.skipif(
-    not Path("/proc/self/stat").exists(), reason="needs /proc to read a child's state"
-)
-def test_a_killed_group_releases_its_pipe(tmp_path: Path) -> None:
-    """The run returns rather than blocking on a pipe a child still holds.
-
-    A surviving child inheriting stdout would keep ``communicate`` waiting for
-    an end of file that never comes, so a test that completes at all is
-    evidence the group was killed rather than only the launcher.
-    """
-    fizz = _stub(tmp_path, _NEVER_EXITS)
-
-    started = os.times().elapsed
-    FizzbeeChecker(fizz, timeout_seconds=1.0).check(_spec())
-    elapsed = os.times().elapsed - started
-
-    assert elapsed < 60, "the run returned rather than blocking on the pipe"
-    child = int((tmp_path / "child.pid").read_text(encoding="utf-8").strip())
-    assert _is_gone(child), f"child {child} outlived the group it was killed with"

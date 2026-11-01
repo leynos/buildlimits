@@ -344,15 +344,23 @@ def _kill_group(process: subprocess.Popen[bytes]) -> None:
     ``SIGTERM`` first gives the checker a chance to print why it was stopped,
     which is the difference between a report naming its cause and a report
     saying the run vanished. ``SIGKILL`` follows after the grace period, which
-    is what handles a checker wedged inside the Go runtime. A group that has
-    already gone is not an error: ``ProcessLookupError`` means the work is
-    done, and the subsequent ``communicate`` collects whatever it printed.
+    is what handles a checker wedged inside the Go runtime.
+
+    The escalation is unconditional and runs even when the launcher has already
+    exited. ``process.wait()`` observes the launcher alone, so a child that
+    ignores ``SIGTERM`` while the launcher obeys it would otherwise never
+    receive ``SIGKILL``, and the following ``communicate`` would block on the
+    pipe that child still holds. A group that has already gone is not an
+    error: ``ProcessLookupError`` means the work is done, and the subsequent
+    ``communicate`` collects whatever it printed.
     """
     with contextlib.suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGTERM)
     try:
         process.wait(timeout=_KILL_GRACE_SECONDS)
     except subprocess.TimeoutExpired:
+        pass
+    finally:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(process.pid, signal.SIGKILL)
 

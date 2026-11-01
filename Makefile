@@ -237,11 +237,14 @@ model-fidelity: build ## Check both W1 models still account for the production s
 # matrix a maintainer reads and the artefact the suite judges are the same
 # bytes. The opt-in variable is set here rather than inherited, so this target
 # works from a clean shell and `make test` stays independent of the checker.
+# `--fixpoint` re-runs every passing configuration at twice its max_actions
+# bound and fails if the state count grows: FizzBee truncates at the bound
+# without saying so, and a stable count is the documented evidence it did not.
 model-check: fizzbee build ## Run both W1 model matrices, then judge the artefacts
 	@set -eu; mkdir -p .model-check; for model in $(MODEL_DIRS); do \
 	  name="$$(basename "$$model")"; \
 	  printf '==> check %s\n' "$$model"; \
-	  $(UV_ENV) $(UV) run python -m modelcheck check --fizz $(FIZZ) \
+	  $(UV_ENV) $(UV) run python -m modelcheck check --fizz $(FIZZ) --fixpoint \
 	    --json ".model-check/$$name.json" "$$model"; \
 	done
 	BUILD_LIMITS_MODEL_CHECK=1 $(UV_ENV) $(UV) run pytest -n 0 -rs -m fizzbee tests
