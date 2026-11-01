@@ -42,6 +42,7 @@ MANAGER_LIMITS = 1
 STALE_PROOF = True
 GRACE_DEADLINE = True
 CACHED_GUARD = True
+ACCOUNTING_RELEASE = True
 
 action Init:
   # Two tokens are free and one is retained by the initial starvation.
@@ -153,12 +154,17 @@ atomic fair action SupervisorTick:  # fairness: F1
       drain_fault = "other"
     elif service == "stopped_empty":
       # `server_activity` returns every released token to the pool; nothing
-      # is compiling against a stopped, empty service.
-      drain_fault = "none"
-      free = free + server_drain
-      server_drain = 0
-      stale = False
-      released = True
+      # is compiling against a stopped, empty service. The seeded fault keeps
+      # the token retained for ever, which is L1's negative control: while a
+      # request keeps waiting, the demand-conditional release never happens.
+      if ACCOUNTING_RELEASE:
+        drain_fault = "none"
+        free = free + server_drain
+        server_drain = 0
+        stale = False
+        released = True
+      else:
+        drain_fault = "other"
     elif service == "stopped_populated":
       drain_fault = "other"
     else:
@@ -333,11 +339,13 @@ always assertion S2:
           and server_drain >= 0)
 
 always eventually assertion L1:
-  # A retained token is released for ever, or nothing is waiting for it. The
-  # RFC states this as "eventually always no token is in SERVER_DRAIN", but
-  # the automatic trigger requires a waiting request and F7 never forces a
-  # submission, so with an empty queue a retained token is legitimately left
-  # alone. The demand-conditional form is the one the code guarantees.
+  # A retained token is released for ever, or nothing is waiting for it. RFC
+  # 0001 records the demand assumption this rests on: the automatic trigger
+  # requires a waiting request and F7 never forces a submission, so with an
+  # empty queue a retained token is legitimately left alone. The stronger
+  # "eventually always no token is in SERVER_DRAIN" is therefore not the
+  # guarantee; the demand-conditional form is. The `head-no-accounting-release`
+  # control keeps a token retained while requests keep waiting and must fail.
   return server_drain == 0 or not queue_waiting
 
 always eventually assertion L3:

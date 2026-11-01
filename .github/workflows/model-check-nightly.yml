@@ -1,11 +1,14 @@
 name: W1 model check
 
 # The full matrix explores both halves of the W1 model to exhaustion: roughly
-# 68,000 states for the coupling half and 15,000 for the transaction half, in
-# about two minutes of CPU each at the routine bounds. That is well inside the
-# plan's nightly budget and well outside what every pull request should pay,
-# so it runs nightly and on demand. `.github/workflows/model-fidelity.yml` is
-# the pull-request half of the same obligation.
+# 66,000 states for the coupling half and 15,000 for the transaction half.
+# `make model-check` passes `--fixpoint`, so each configuration that should
+# pass also runs at twice its action bound; that doubles those rows, to about
+# five minutes for the coupling half and one minute for the transaction half on
+# the development host. The total is still well inside the plan's nightly
+# budget and well outside what every pull request should pay, so it runs
+# nightly and on demand. `.github/workflows/model-fidelity.yml` is the
+# pull-request half of the same obligation.
 
 on:
   schedule:

@@ -27,12 +27,15 @@ it claims.
 
 The frontmatter is rendered by :mod:`modelcheck.frontmatter` rather than
 dumped by a YAML library, because a pure module opens no file and imports no
-package it does not need.
+package it does not need. Which expectations have to be declared, and which
+assertions a mutant keeps, is decided in :mod:`modelcheck.assertions`; this
+module only asks it to apply them.
 """
 
 import re
 import typing as typ
 
+from modelcheck.assertions import require_declared, strip_assertions
 from modelcheck.domain import (
     FailsAs,
     Holds,
@@ -68,12 +71,6 @@ _CONSTANT = re.compile(
     r"(?P<value>.*?)(?P<rest>[ \t]*(?:#.*)?)$"
 )
 """A top-level constant assignment, split into its name, value and comment."""
-
-_ASSERTION = re.compile(
-    r"^(?:(?:always[ \t]+eventually|always|exists)[ \t]+)?"
-    r"assertion[ \t]+(?P<name>[A-Za-z_][A-Za-z0-9_]*):"
-)
-"""An assertion's header, in any of the three temporal prefixes."""
 
 
 def materialize(
@@ -137,12 +134,75 @@ def materialize(
     lines = _rewrite_constants(
         source.splitlines(keepends=True), configuration.constants
     )
-    lines, in_force = _rewrite_fairness(lines, configuration.fairness)
+    lines = _rewrite_fairness(lines, configuration.fairness)
+    require_declared(lines, configuration)
     if expected_failure is not None:
         retained = _retained(configuration, expected_failure)
-        lines = _strip_assertions(lines, retained)
+        lines = strip_assertions(lines, retained)
     text = replace_frontmatter("".join(lines), configuration.options)
-    return MaterializedSpec(configuration.name, text, tuple(sorted(in_force)))
+    return MaterializedSpec(configuration.name, text, _carried_fairness(lines))
+
+
+def _carried_fairness(lines: list[str]) -> tuple[str, ...]:
+    """Return the fairness tags the rewritten specification actually carries.
+
+    The report must quote the assumptions the run made, so this reads them back
+    from the text that will be compiled rather than from the configuration.
+    Those two differ for every mutant that names no fairness table: it inherits
+    the model's own annotations, so a report built from the configuration alone
+    would say the run assumed nothing while its actions were still fair.
+
+    Parameters
+    ----------
+    lines : list[str]
+        The specification's lines, endings included, after the rewrite.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Every tag whose action still carries a fairness keyword, sorted and
+        deduplicated. An action whose keyword was removed is absent however
+        the model annotated it.
+
+    Examples
+    --------
+    >>> _carried_fairness(["atomic fair action A:  # fairness: F1"])
+    ('F1',)
+    >>> _carried_fairness(["atomic action A:  # fairness: F1"])
+    ()
+    """
+    carried = set()
+    for line in lines:
+        annotation = _FAIRNESS.search(line)
+        if annotation is None:
+            continue
+        match = _ACTION.match(line[: annotation.start()].rstrip("\r\n"))
+        if match is None:
+            continue
+        if any(_is_fair(word) for word in match.group("modifiers").split()):
+            carried.add(annotation.group("tag"))
+    return tuple(sorted(carried))
+
+
+def _is_fair(modifier: str) -> bool:
+    """Report whether one action modifier spells a fairness keyword.
+
+    Parameters
+    ----------
+    modifier : str
+        One whitespace-separated word of an action's modifiers.
+
+    Returns
+    -------
+    bool
+        Whether it is ``fair`` or a strength-qualified ``fair<...>``.
+
+    Examples
+    --------
+    >>> _is_fair("fair"), _is_fair("fair<strong>"), _is_fair("atomic")
+    (True, True, False)
+    """
+    return modifier == "fair" or modifier.startswith("fair<")
 
 
 def _retained(configuration: Configuration, expected_failure: str) -> frozenset[str]:
@@ -222,9 +282,7 @@ def _rewrite_constants(
     return rewritten
 
 
-def _rewrite_fairness(
-    lines: list[str], fairness: cabc.Mapping[str, str]
-) -> tuple[list[str], tuple[str, ...]]:
+def _rewrite_fairness(lines: list[str], fairness: cabc.Mapping[str, str]) -> list[str]:
     """Rewrite the fairness keyword of every action the configuration names.
 
     Parameters
@@ -236,8 +294,10 @@ def _rewrite_fairness(
 
     Returns
     -------
-    tuple[list[str], tuple[str, ...]]
-        The rewritten lines, and every tag whose keyword was left on.
+    list[str]
+        The rewritten lines. What fairness the result carries is read back by
+        :func:`_carried_fairness`, because an unnamed tag keeps the keyword the
+        model gave it.
 
     Raises
     ------
@@ -260,8 +320,7 @@ def _rewrite_fairness(
                 f"{sorted(_LEVELS)}"
             )
             raise MaterializeError(msg)
-    in_force = tuple(tag for tag, level in fairness.items() if _LEVELS[level])
-    return [_fairness_line(line, fairness) for line in lines], in_force
+    return [_fairness_line(line, fairness) for line in lines]
 
 
 def _fairness_line(line: str, fairness: cabc.Mapping[str, str]) -> str:
@@ -300,99 +359,3 @@ def _fairness_line(line: str, fairness: cabc.Mapping[str, str]) -> str:
         words.append(keyword)
     head = f"{match.group('indent')}{' '.join([*words, 'action'])}"
     return f"{head}{match.group('tail')}{line[annotation.start() :]}"
-
-
-def _strip_assertions(lines: list[str], retained: frozenset[str]) -> list[str]:
-    """Drop every assertion the run does not retain.
-
-    Parameters
-    ----------
-    lines : list[str]
-        The specification's lines, endings included.
-    retained : frozenset[str]
-        The assertions to keep.
-
-    Returns
-    -------
-    list[str]
-        The lines with each unstripped assertion removed whole, together with
-        the blank line that separated it from the text around it, so the
-        retained text keeps its spacing.
-
-    Raises
-    ------
-    MaterializeError
-        If a retained name matches no assertion in the source. Stripping the
-        rest would then leave a specification that asserts nothing while its
-        report named expectations, and the checker would report a pass.
-    """
-    present = {
-        match.group("name")
-        for line in lines
-        if (match := _ASSERTION.match(line)) is not None
-    }
-    absent = sorted(retained - present)
-    if absent:
-        msg = f"the model declares no assertion {absent[0]!r} to retain"
-        raise MaterializeError(msg)
-    kept: list[str] = []
-    index = 0
-    while index < len(lines):
-        match = _ASSERTION.match(lines[index])
-        if match is None or match.group("name") in retained:
-            kept.append(lines[index])
-            index += 1
-            continue
-        index = _skip_assertion(lines, index)
-        if _leaves_a_trailing_blank(lines, index, kept):
-            kept.pop()
-    return kept
-
-
-def _leaves_a_trailing_blank(lines: list[str], index: int, kept: list[str]) -> bool:
-    """Report whether stripping has left an unmatched blank line at the end.
-
-    An assertion that ran to the end of the text takes the blank line before
-    it with it; otherwise the retained text would end in a newline the reader
-    never wrote.
-
-    Parameters
-    ----------
-    lines : list[str]
-        The specification's lines.
-    index : int
-        The index of the first line after the stripped assertion.
-    kept : list[str]
-        The lines retained so far.
-
-    Returns
-    -------
-    bool
-        Whether the stripped assertion was the last content and a blank line
-        now dangles.
-    """
-    return index == len(lines) and bool(kept) and not kept[-1].strip()
-
-
-def _skip_assertion(lines: list[str], start: int) -> int:
-    """Return the index just past one assertion's header and body.
-
-    Parameters
-    ----------
-    lines : list[str]
-        The specification's lines.
-    start : int
-        The index of the assertion's header.
-
-    Returns
-    -------
-    int
-        The index of the first line after the assertion, which is either the
-        next unindented line or the end of the text.
-    """
-    index = start + 1
-    while index < len(lines) and (
-        not lines[index].strip() or lines[index][:1] in " \t"
-    ):
-        index += 1
-    return index

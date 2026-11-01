@@ -16,6 +16,11 @@ space the configuration claims, so it proves nothing.
 The materialized specification is a parameter so that a judgement cannot quote
 fairness the run did not carry: judging a result against a specification built
 for another configuration is a defect and raises.
+
+:func:`only_failures` answers the one question the callers ask of a
+configuration's expectations before running anything: whether every one of them
+expects a defect. A matrix run and a fixpoint comparison both need it, and each
+would otherwise have to read the expectations itself.
 """
 
 import typing as typ
@@ -38,6 +43,46 @@ if typ.TYPE_CHECKING:
         Configuration,
         Expectation,
         MaterializedSpec,
+    )
+
+
+def only_failures(configuration: Configuration) -> bool:
+    """Report whether every expectation of a configuration is a failure.
+
+    A configuration that expects only defects is a known-bad variant: its run
+    is meant to stop at a counterexample. Two callers depend on the
+    distinction. A mutant costs one run per expected defect rather than a run
+    that should violate nothing, and a fixpoint comparison skips it entirely,
+    because a state count taken before the violation is not a count of the
+    fixed model's states.
+
+    Parameters
+    ----------
+    configuration : Configuration
+        The configuration to read.
+
+    Returns
+    -------
+    bool
+        Whether it has no expectation outside a ``FailsAs``. A configuration
+        with no expectations at all reports ``True``; the run machinery
+        refuses it separately, since no run could answer it either way.
+
+    Examples
+    --------
+    >>> from modelcheck import domain
+    >>> kind = domain.CounterexampleKind.LASSO
+    >>> only_failures(
+    ...     domain.Configuration("m", {}, {}, {}, 1, (domain.FailsAs("L3", kind),))
+    ... )
+    True
+    >>> only_failures(
+    ...     domain.Configuration("head", {}, {}, {}, 1, (domain.Holds("S1"),))
+    ... )
+    False
+    """
+    return all(
+        isinstance(expectation, FailsAs) for expectation in configuration.expectations
     )
 
 

@@ -35,15 +35,24 @@ def test_an_empty_configuration_is_the_identity_on_the_body() -> None:
     Frontmatter is the exception — a configuration with no options replaces it
     with nothing rather than inheriting the fixed bounds — so the sources here
     carry none.
+
+    Fairness is not part of the identity claim. A configuration that names no
+    table still leaves the model's own annotations in force, so the tag the
+    first source carries is reported even though the configuration mentioned
+    none: the report quotes the run rather than the configuration.
     """
     from modelcheck import materialize
 
-    for source in (cases.FIXED, "", "action Init:\n  n = 0"):
+    for source, carried in (
+        (cases.FIXED, ("F1",)),
+        ("", ()),
+        ("action Init:\n  n = 0", ()),
+    ):
         spec = materialize.materialize(
             source, cases.configuration("head"), expected_failure=None
         )
         assert spec.text == source, f"{source!r} is returned unchanged"
-        assert not spec.fairness_in_force, "and no fairness is left on"
+        assert spec.fairness_in_force == carried, f"{source!r} carries {carried}"
 
 
 def test_an_empty_configuration_strips_no_assertion() -> None:
@@ -132,6 +141,50 @@ def test_an_unfair_level_removes_the_keyword() -> None:
     assert "atomic action Bump:      # fairness: F1" in body, "the keyword is gone"
     assert "fair action" not in body, "no fairness keyword remains"
     assert not spec.fairness_in_force, "an unfair tag is not fairness in force"
+
+
+def test_a_configuration_naming_no_tag_reports_the_models_own() -> None:
+    """The fairness a run carries is read from its text, not its configuration.
+
+    A mutant the configuration table does not name inherits the model's own
+    annotations, so its actions are still fair. Reporting the configuration's
+    (empty) table would say the run assumed nothing and quietly turn every
+    liveness verdict it produced into an unexplained one. The tagged source has
+    one action carrying ``F1`` and one annotated ``F2`` action with no fairness
+    keyword, so the expected answer is ``F1`` alone: an annotation is the
+    model's record of an assumption, not proof the action is fair.
+    """
+    from modelcheck import materialize
+
+    spec = materialize.materialize(
+        cases.TAGGED, cases.configuration("head"), expected_failure=None
+    )
+
+    assert spec.fairness_in_force == ("F1",), "the model's carried tag is reported"
+
+
+def test_disabling_one_tag_leaves_the_other_in_force() -> None:
+    """An ablation reports the tags still carried, not the table it was given.
+
+    The ``unfair`` level is expressed by removing the keyword, so the action
+    keeps its annotation while ceasing to be fair. A report built from the
+    configuration would still name both tags, which is what a mutant run must
+    not claim: the point of the ablation is that one assumption is gone.
+    """
+    from modelcheck import materialize
+
+    source = (
+        "action Init:\n  n = 0\n\n"
+        "atomic fair action StepOne:  # fairness: F1\n  n = n + 1\n\n"
+        "atomic fair action StepTwo:  # fairness: F2\n  n = n + 1\n"
+    )
+    spec = materialize.materialize(
+        source,
+        cases.configuration("ablate-f1", fairness={"F1": "unfair"}),
+        expected_failure=None,
+    )
+
+    assert spec.fairness_in_force == ("F2",), "only the disabled tag is gone"
 
 
 def test_the_frontmatter_is_replaced_whole(snapshot: SnapshotAssertion) -> None:

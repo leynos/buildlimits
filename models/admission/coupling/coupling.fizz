@@ -45,9 +45,12 @@ CANCEL_LIMIT = 1
 ABNORMAL_LIMIT = 2
 MANAGER_LIMITS = 1
 
-# The seeded fault. A configuration overrides it and every report names the
-# configuration it ran.
+# The seeded faults. A configuration overrides one and every report names the
+# configuration it ran. `CACHED_GUARD` is the guard against moving cached work;
+# `MANAGER_GUARD` is the guard against an unreadable manager, which RFC 0001's
+# S1 pairs with it at the moment the stop is issued.
 CACHED_GUARD = True
+MANAGER_GUARD = True
 
 action Init:
   # Two tokens are free and one is retained by the initial starvation, which
@@ -67,8 +70,11 @@ action Init:
   tracked_request = "none"
   tracked_ahead = 0
   tracked_cacheable = False
-  # The coarse transaction premise: a stop has been taken.
+  # The coarse transaction premise: a stop has been taken, and whether the
+  # manager was unreadable at that instant. The snapshot is taken once,
+  # because S1 is about the moment of issuance; a later fault is another event.
   stop_taken = False
+  stop_manager_unreadable = False
   # The refusal premise. A manager fault is the only source of a refusal, and
   # L4a reads exactly that.
   manager_faulted = False
@@ -274,14 +280,18 @@ atomic fair action SupervisorTick:  # fairness: F1
 atomic fair action StopTaken:  # fairness: F4
   # maps: buildlimits.cache_recovery.accounting
   # Taking a stop is the moment S1 is about. The guarded stop requires that
-  # no cached work is moving; the seeded fault removes the guard, which lets
-  # the stop race cached work.
+  # no cached work is moving and that the manager is readable; each seeded
+  # fault removes one condition, which lets the stop race cached work or take
+  # a stop it cannot supervise.
   require (not stop_taken
            and (not CACHED_GUARD
                 or (running_cached == 0
                     and draining_clean == 0
-                    and draining_orphan == 0)))
+                    and draining_orphan == 0))
+           and (not MANAGER_GUARD or not manager_faulted))
   stop_taken = True
+  if not MANAGER_GUARD and manager_faulted:
+    stop_manager_unreadable = True
 
 atomic action OperatorRequest:  # maps: buildlimits.effects.Refuse
   # A manual transaction is not modelled here; only the refusal is, because
@@ -311,13 +321,16 @@ atomic fair action ManagerRecovers:  # fairness: F4
 # ---------------------------------------------------------------------------
 
 always assertion S1:
-  # No stop is ever taken while cached work is moving. A stop is what makes
-  # the cache unavailable, and the guarded stop guarantees nothing cached is
-  # moving at that moment, so a taken stop with cached work present is exactly
-  # the violation. It is a finite counterexample: the faulty stop reaches that
-  # state after finitely many steps.
+  # A stop is never issued while cached work is moving or the manager is
+  # unreadable. A stop is what makes the cache unavailable, and the guarded
+  # stop guarantees both conditions at that moment, so a taken stop with
+  # either present is exactly the violation. The manager condition is a
+  # snapshot of the issuance instant: a fault after the stop is a different
+  # event and does not violate S1. It is a finite counterexample: the faulty
+  # stop reaches that state after finitely many steps.
   return not (stop_taken
-              and (running_cached > 0
+              and (stop_manager_unreadable
+                   or running_cached > 0
                    or draining_clean > 0
                    or draining_orphan > 0))
 

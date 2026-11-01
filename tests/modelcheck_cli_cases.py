@@ -1,10 +1,11 @@
-"""The app, its model and its configurations, built once for the CLI tests.
+"""The app, its model, its configurations and the readers a test needs.
 
-Two command-line test modules need the same three things: a model source that
-declares every assertion a configuration may name, a builder for configurations
-that expect one thing, and an app assembled from adapter factories. Writing them
-out twice would make two copies drift apart silently, and a change to
-``make_app`` would have to be made in both.
+Two command-line test modules need the same things: a model source that
+declares every assertion a configuration may name, builders for configurations
+that expect one thing or declare one bound, an app assembled from adapter
+factories, and the reader a test calls to run one command and see what it
+printed. Writing them out twice would make two copies drift apart silently, and
+a change to ``make_app`` would have to be made in both.
 
 This module is test support and is linted as production code, following the
 convention in ``docs/repository-layout.md``: ``test_*.py`` modules hold tests,
@@ -20,8 +21,10 @@ from modelcheck.ports import CodeInventory
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    from pathlib import Path
 
     import cyclopts
+    import pytest
 
 SOURCE = """\
 action Init:  # maps: buildlimits.admission.Admission.submit
@@ -200,3 +203,119 @@ def app(
         lambda _directory, _bounds: source,
         lambda: Inventory(inventory, resolves),
     )
+
+
+CHECK = ("check", ".", "--fizz", "/nonexistent/fizz")
+"""A ``check`` command line over the current directory.
+
+The launcher path is never opened: the app is built with a checker double, and
+the path only has to be present for the option to parse.
+"""
+
+
+def checked(
+    application: cyclopts.App,
+    capsys: pytest.CaptureFixture[str],
+    *arguments: str,
+) -> tuple[int, str]:
+    """Run one command and return its status and what it printed.
+
+    Parameters
+    ----------
+    application : cyclopts.App
+        The app under test.
+    capsys : pytest.CaptureFixture[str]
+        The capture fixture, so the helper reads the report the command wrote.
+    *arguments : str
+        The command line, without a program name.
+
+    Returns
+    -------
+    tuple[int, str]
+        The exit status and the printed report, which are the two things every
+        status test here asserts on.
+    """
+    status = application(list(arguments))
+    return status, capsys.readouterr().out
+
+
+def checked_in(application: cyclopts.App, tmp_path: Path, *options: str) -> int:
+    """Run a ``check`` over a scratch model directory and return its status.
+
+    Parameters
+    ----------
+    application : cyclopts.App
+        The app under test.
+    tmp_path : pathlib.Path
+        The model directory the run reads and writes its artefacts into.
+    *options : str
+        Further command-line options, such as ``--json`` or ``--save-traces``.
+
+    Returns
+    -------
+    int
+        The command's exit status.
+    """
+    return application(["check", str(tmp_path), *CHECK[2:], *options])
+
+
+def listed(directory: Path) -> list[str]:
+    """Return the names a directory holds, in sorted order.
+
+    Parameters
+    ----------
+    directory : pathlib.Path
+        The directory to list.
+
+    Returns
+    -------
+    list[str]
+        The entry names, so an assertion reads as the file list a reviewer
+        would see.
+    """
+    return sorted(path.name for path in directory.iterdir())
+
+
+class BoundSensitive:
+    """A checker double whose state count follows the specification's bound.
+
+    A recorded pass reports one count whatever bound it was run at, so it
+    cannot model the truncation the fixpoint check exists to find. This double
+    answers from the frontmatter instead: the declared bound explores eight
+    states and the doubled one explores sixteen.
+    """
+
+    @staticmethod
+    def check(spec: domain.MaterializedSpec) -> domain.CheckResult:
+        """Answer a pass, counting states from the bound in the text.
+
+        Parameters
+        ----------
+        spec : domain.MaterializedSpec
+            The specification to answer.
+
+        Returns
+        -------
+        domain.CheckResult
+            A pass with the count that bound implies.
+        """
+        return domain.Passed(16 if "max_actions: 16" in spec.text else 8, 0.1, ())
+
+
+def bounded(name: str = "head", *, max_actions: int = 8) -> domain.Configuration:
+    """Build a passing configuration that declares an action bound.
+
+    Parameters
+    ----------
+    name : str
+        The configuration's name.
+    max_actions : int
+        The exploration bound its frontmatter declares.
+
+    Returns
+    -------
+    domain.Configuration
+        The configuration, expecting ``S1`` to hold.
+    """
+    options = {"options": {"max_actions": max_actions}}
+    return domain.Configuration(name, {}, {}, options, 1, (domain.Holds("S1"),))

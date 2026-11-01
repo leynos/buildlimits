@@ -25,6 +25,7 @@
       'counterexample as expected',
       True,
       list([
+        'F1',
       ]),
     ),
   ])

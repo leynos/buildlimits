@@ -4,7 +4,11 @@
 # counterexample the configuration was built for.
 
 [configurations.head]
-min_states = 100
+# The floor catches a collapsed state space, not a change in its exact size:
+# the fixed model reaches 14,618 states at both 80 and 160 actions, and half
+# that count is the point below which an `Init` guard or a lost phase is the
+# likelier explanation than a legitimate model change. See the EP-M4 record.
+min_states = 7000
 holds = ["S2", "L1", "L3", "L4b"]
 reachable = [
   "StopIssued",
@@ -80,6 +84,22 @@ liveness = "strict"
 deadlock_detection = true
 
 [configurations.head-unknown-roots.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+# With no accounting release, a retained token is never returned; L1's
+# demand-conditional form fails while requests keep waiting.
+[configurations.head-no-accounting-release]
+fails_as = { L1 = "lasso" }
+
+[configurations.head-no-accounting-release.constants]
+ACCOUNTING_RELEASE = false
+
+[configurations.head-no-accounting-release.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head-no-accounting-release.options.options]
 max_actions = 80
 max_concurrent_actions = 1
 

@@ -1,11 +1,15 @@
-# W1's coupling half: the fixed configuration and its seeded fault.
+# W1's coupling half: the fixed configuration and its seeded faults.
 #
 # Every configuration restates the whole frontmatter because the materializer
 # replaces the block rather than merging it: a variant that restated one
 # option would silently inherit the rest of the fixed model's bounds.
 
 [configurations.head]
-min_states = 100
+# The floor catches a collapsed state space, not a change in its exact size:
+# the fixed model reaches 65,664 states at both 80 and 160 actions, and half
+# that count is the point below which an `Init` guard or a lost phase is the
+# likelier explanation than a legitimate model change. See the EP-M4 record.
+min_states = 32000
 holds = ["S1", "S2", "L4a"]
 reachable = [
   "GroupRunning",
@@ -33,7 +37,9 @@ deadlock_detection = true
 max_actions = 80
 max_concurrent_actions = 1
 
-# The S1 seeded fault: deleting the cached guard lets a stop race cached work.
+# The S1 seeded faults. Deleting the cached guard lets a stop race cached work;
+# deleting the manager guard lets a stop be issued while the manager cannot be
+# read. Each removes one half of RFC 0001's S1 at the issuance transition.
 [configurations.head-no-cached-guard]
 fails_as = { S1 = "finite" }
 
@@ -45,6 +51,20 @@ liveness = "strict"
 deadlock_detection = true
 
 [configurations.head-no-cached-guard.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+[configurations.head-no-manager-guard]
+fails_as = { S1 = "finite" }
+
+[configurations.head-no-manager-guard.constants]
+MANAGER_GUARD = false
+
+[configurations.head-no-manager-guard.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head-no-manager-guard.options.options]
 max_actions = 80
 max_concurrent_actions = 1
 

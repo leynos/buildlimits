@@ -158,3 +158,43 @@ def drift(
         stale=tuple(sorted(path for path in mapped - deliberate if not resolves(path))),
         excluded=tuple(sorted(deliberate)),
     )
+
+
+def union_gaps(
+    mapped: frozenset[str],
+    inventory: frozenset[str],
+    out_of_scope: frozenset[str],
+) -> tuple[str, ...]:
+    """Return inventory items no model maps and the agreed scope does not exclude.
+
+    This is the cross-model half of the drift check. Each half of a split model
+    may exclude a path because the *other* half transcribes it, so subtracting
+    every half's exclusions would let a path fall between the two: delete the
+    only mapping while leaving the cross-half exclusions in place, and each
+    per-half report stays clean. Only the agreed out-of-scope set may stand in
+    for a mapping, so a path is accounted for here by being mapped by at least
+    one half — never by being excluded by the half that does not own it.
+
+    Parameters
+    ----------
+    mapped : frozenset[str]
+        Every path any half of the model maps.
+    inventory : frozenset[str]
+        The production surface the models together must account for.
+    out_of_scope : frozenset[str]
+        The paths the design deliberately leaves outside the models.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The uncovered paths, sorted. Empty means the halves together cover the
+        whole in-scope surface.
+
+    Examples
+    --------
+    >>> union_gaps(frozenset({"a.B"}), frozenset({"a.B", "a.C"}), frozenset())
+    ('a.C',)
+    >>> union_gaps(frozenset(), frozenset({"a.C"}), frozenset({"a.C"}))
+    ()
+    """
+    return tuple(sorted(inventory - mapped - out_of_scope))
