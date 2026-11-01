@@ -1,0 +1,65 @@
+# W1's coupling half: the fixed configuration and its seeded fault.
+#
+# Every configuration restates the whole frontmatter because the materializer
+# replaces the block rather than merging it: a variant that restated one
+# option would silently inherit the rest of the fixed model's bounds.
+
+[configurations.head]
+min_states = 100
+holds = ["S1", "S2", "L4a"]
+reachable = [
+  "GroupRunning",
+  "GroupDraining",
+  "CachedAndUncachedRunTogether",
+  "StopTakenProbe",
+  "RefusalTaken",
+]
+
+# Every fairness tag the model's actions carry, named here so the report can
+# state the assumptions a pass depends on. Table 2 of the RFC makes every one
+# weak; naming them individually keeps an action that lost its annotation from
+# passing unnoticed.
+[configurations.head.fairness]
+F1 = "weak"
+F2 = "weak"
+F4 = "weak"
+F5 = "weak"
+
+[configurations.head.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+# The S1 seeded fault: deleting the cached guard lets a stop race cached work.
+[configurations.head-no-cached-guard]
+fails_as = { S1 = "finite" }
+
+[configurations.head-no-cached-guard.constants]
+CACHED_GUARD = false
+
+[configurations.head-no-cached-guard.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head-no-cached-guard.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+# Paths the coupling model does not transcribe. Each reason names where the
+# path is accounted for instead, so a deliberate omission is distinguishable
+# from a forgotten one.
+[exclusions]
+"buildlimits.admission.Admission.begin_closing" = "closing is outside W1's scope (RFC 0001 §1)"
+"buildlimits.admission.Admission.health_failed" = "health is outside W1's scope (RFC 0001 §1)"
+"buildlimits.admission.Admission.launch_failed" = "start-up is outside W1's scope (RFC 0001 §1)"
+"buildlimits.cache_recovery.idle" = "the phase machine is transcribed in the transaction model"
+"buildlimits.cache_recovery.quiescing" = "the phase machine is transcribed in the transaction model"
+"buildlimits.cache_recovery.stopping" = "the phase machine is transcribed in the transaction model"
+"buildlimits.cache_recovery.restarting" = "the phase machine is transcribed in the transaction model"
+"buildlimits.drain_guidance.live_work" = "the drain fault kinds are transcribed in the transaction model"
+"buildlimits.drain_guidance.stopped_populated" = "the drain fault kinds are transcribed in the transaction model"
+"buildlimits.drain_guidance.manager" = "the drain fault kinds are transcribed in the transaction model"
+"buildlimits.effects.Shutdown" = "closing is outside W1's scope (RFC 0001 §1)"

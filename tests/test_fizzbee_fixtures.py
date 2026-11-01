@@ -35,6 +35,10 @@ _CAPTURED = (
     # ``test_modelcheck_trace.py`` needs that shape to tell a cycle start from
     # a trace start; here it is pinned like every other captured run.
     ("lasso-prefix", "liveness_prefix.fizz"),
+    # A lasso whose every cycle contains a `oneof` branch link, which carries no
+    # action `Type`. `test_modelcheck_trace.py` needs that shape to tell a choice
+    # from the stutter ending, which is also an untyped link.
+    ("oneof", "liveness_oneof.fizz"),
     ("stutter", "liveness_stutter.fizz"),
     ("deadlock", "deadlock.fizz"),
     ("truncation-safety", "truncation_safety.fizz"),
@@ -47,6 +51,7 @@ _WITH_ERROR_GRAPH = (
     "safety-failure",
     "lasso",
     "lasso-prefix",
+    "oneof",
     "stutter",
     "deadlock",
     "truncation-liveness",

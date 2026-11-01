@@ -62,8 +62,9 @@ and H1.
     the licence of the candidate release.
   - Success: a candidate version, checksum and licence are recorded, or the
     absence of any is recorded as a G1 input.
-- [ ] 1.1.4. Write the minimal model with the busy queue under
-      `models/admission/`.
+- [x] 1.1.4. Write the minimal model with the busy queue under
+      `models/admission/`, split into a coupling half and a transaction half
+      once the unsplit model breached the memory and runtime tolerances.
   - Requires 1.1.2.
   - Cover the pool, cacheable and uncached requests, one tracked request,
     groups by lifecycle and composition, the cache hold, the drain probe, the

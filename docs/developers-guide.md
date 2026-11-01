@@ -48,6 +48,8 @@ investigating a specific failure; reconcile with `make all` before committing.
 | `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
 | `make test-sccache-host` | Opt-in real-binary and outcome latency checks; see §11.4                                          |
 | `make fizzbee`           | Installs the pinned FizzBee checker into the shared XDG cache; a second run is a no-op            |
+| `make model-fidelity`    | Both drift reports and `tests/test_model_drift.py`; cheap, and run on every pull request          |
+| `make model-check`       | Both W1 matrices at the plan's bounds, then the `fizzbee`-marked judgement; nightly only          |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
 
 _Table 1: Make targets and the gates behind them._
@@ -945,14 +947,39 @@ wheel (ADR 006). It drives the pinned FizzBee checker over the admission model
 and turns one run into a verdict. Run it through the module:
 
 ```sh
-uv run python -m modelcheck check models/admission --fizz .tools/fizzbee/fizz
-uv run python -m modelcheck drift models/admission
+uv run python -m modelcheck check models/admission/coupling --fizz .tools/fizzbee/fizz
+uv run python -m modelcheck drift models/admission/coupling
 ```
+
+The W1 model is split into a coupling half (`models/admission/coupling`,
+properties S1, S2 and L4a) and a transaction half
+(`models/admission/transaction`, properties S2, L1, L3 and L4b). S2 appears in
+both because each half restates the token accounting over its own state. One
+model per directory is a requirement, not tidiness: `source_text()`
+concatenates every `*.fizz` file in a directory, so two models side by side
+would be read as one.
+
+Each half omits the production paths the other transcribes and records them
+under `[exclusions]` with a reason, so no single directory's drift report
+proves coverage. `tests/test_model_drift.py` makes the union claim instead: it
+asserts that between them the halves map or exclude every inventory item, that
+W1's out-of-scope paths are among the exclusions, and that every exclusion
+gives a reason. Prefer that test to reading one report and assuming the rest is
+handled.
 
 `check` exits 0 when every configuration meets its expectations, 1 when one
 does not, and 2 when the tool itself failed; `--bounds` selects the routine or
 nightly declaration, `--only` narrows the matrix, `--json` writes the records
 and `--save-traces` regenerates the reviewed trace files.
+
+The two obligations have different costs and run in different places.
+`make model-fidelity` runs both drift reports and the drift tests; it compares
+text with an import of the production package, so it costs seconds and runs on
+every pull request. `make model-check` explores both state spaces at the plan's
+bounds, writes `.model-check/<half>.json` and then judges those artefacts with
+the `fizzbee`-marked tests; it costs minutes and runs nightly. The nightly
+workflow is the only place the full matrix is expected to run, so a property
+that fails there is a bounds or model regression rather than a slow runner.
 
 The package is a hexagon: the pure modules hold the policy, `ports.py` names
 the collaborators, and `adapters/` are the only modules that touch a process, a
@@ -1022,6 +1049,14 @@ composite actions.
 - `act-validation.yml` runs `make test WITH_ACT=1` to exercise the workflows
   locally under `act`.
 - `mutation-testing.yml` runs mutmut over `buildlimits/` daily at 09:30 UTC.
+- `model-check-nightly.yml` runs `make model-check` daily at 04:17 UTC and on
+  dispatch: both W1 state spaces at the plan's bounds, then the
+  `fizzbee`-marked judgement. Its `timeout-minutes: 60` is the nightly
+  tolerance, so a run that exceeds it is a bounds regression rather than a slow
+  machine.
+- `model-fidelity.yml` runs `make model-fidelity` on pull requests: the two
+  drift reports and the drift tests, which compare the models with the
+  production surface rather than exploring a state space.
 - `release.yml` builds the pure-Python wheel when a `v*.*.*` tag is pushed and
   attaches it to the release.
 

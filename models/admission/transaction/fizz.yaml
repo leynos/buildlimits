@@ -1,0 +1,8 @@
+# Default bounds for a direct run of this model. The matrix runs through
+# `modelcheck`, which renders the same block from configurations.toml, so the
+# two must agree; a direct run is for a maintainer reproducing a trace.
+options:
+  max_actions: 80
+  max_concurrent_actions: 1
+liveness: "strict"
+deadlock_detection: true

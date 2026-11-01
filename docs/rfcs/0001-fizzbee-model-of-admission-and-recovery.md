@@ -497,6 +497,16 @@ The thresholds below are proposals for approval before any trial runs.
 - **Decision:** within budget, proceed to W4; over the pull-request budget
   only, run nightly; over both, split into a coupling model and a transaction
   model, re-measure once, then stop if still over.
+- **Record (2026-11-01).** The prediction was falsified at the unsplit
+  bounds: one run reached 181,396 unique states in 4 min 59 s at 11.3 GB peak
+  memory, and a second, with the experimental processed queue, reached 125,660
+  states in 8 min 39 s at 9.07 GB — both over 8 GiB, and the second also over
+  the 10-minute pull-request budget, with neither reaching a verdict. The
+  decision rule therefore selects the split. The coupling half reaches 67,944
+  states and the transaction half 14,618; together they took 257 s at 4.14 GB,
+  so both are inside every budget. The full G2 record, with the per-property
+  fairness ablations, belongs to EP-M9; this note records only that the split
+  was taken and why.
 
 ### H3. Correspondence
 

@@ -1,10 +1,14 @@
 """A counterexample's path, normalized so it can be replayed and compared.
 
 The checker's ``error-graph.json`` is a list of links: the initial state, then
-one link per recorded step, naming the action, the state the step reached and
-whether that link is an action at all. That shape is an artefact of the checker
-and is not what a report or a replay needs. A :class:`Trace` names the initial
-state, then one :class:`Step` per action, and marks how the path ends:
+one link per recorded step, naming the transition, the state the step reached
+and whether that link is an action at all. A step is either an action or a
+``oneof`` choice: the checker records the branch a ``oneof`` took as its own
+link, with an empty ``Type`` and a name such as ``Any:roots="zero"``. Both move
+the state, so both are steps; only the link the checker names ``stutter`` marks
+an ending. That shape is an artefact of the checker and is not what a report or
+a replay needs. A :class:`Trace` names the initial state, then one
+:class:`Step` per transition, and marks how the path ends:
 
 - a finite path simply stops at its last state;
 - a lasso closes a cycle, and the cycle's start is found by comparing states
@@ -18,9 +22,11 @@ initial state and index ``k`` is the state after step ``k - 1``. A replay can
 therefore name the step a disposition refers to without re-deriving it, and the
 report can say how many steps the cycle had.
 
-Only the checker's notion of an action is a step. The link that records the
-stutter names no action (its ``Type`` is empty, like the initial link's), so it
-marks the ending rather than appearing in :attr:`Trace.steps`.
+Every link after the first is a step except the stutter. The stutter names no
+action (its ``Type`` is empty, like the initial link's), so it marks the ending
+rather than appearing in :attr:`Trace.steps`; a ``oneof`` link has the same
+empty ``Type``, and is told apart by its name. A ``Step``'s name is therefore a
+transition label: the action's name, or the branch a choice took.
 """
 
 import dataclasses as dc
@@ -57,7 +63,8 @@ class Step:
     Attributes
     ----------
     action : str
-        The action's name, as the checker recorded it.
+        The transition's label, as the checker recorded it: an action's name,
+        or the branch a ``oneof`` took.
     state : collections.abc.Mapping[str, object]
         The model state after the action ran.
     """
@@ -152,19 +159,23 @@ def normalize_trace(
     ------
     ValueError
         If the links are empty, if the first link is not the initial state,
-        if a link other than the last marks no action, or if a lasso's or
-        stutter's mark cannot be located.
+        if a stutter appears anywhere but the end, or if a lasso's or stutter's
+        mark cannot be located.
 
     Examples
     --------
+    A ``oneof`` link is a step, because it moves the state: here ``Pick``
+    chooses ``"a"`` and the trace records both transitions.
+
     >>> links = [
     ...     {"Type": "", "Name": "Init", "Node": {"state": {"g": 0}}},
-    ...     {"Type": "action", "Name": "Gate", "Node": {"state": {"g": 1}}},
+    ...     {"Type": "action", "Name": "Pick", "Node": {"state": {"g": 0}}},
+    ...     {"Type": "", "Name": 'Any:side="a"', "Node": {"state": {"g": 1}}},
     ...     {"Type": "action", "Name": "Gate", "Node": {"state": {"g": 0}}},
     ... ]
     >>> trace = normalize_trace(links)
     >>> [(step.action, dict(step.state)) for step in trace.steps]
-    [('Gate', {'g': 1}), ('Gate', {'g': 0})]
+    [('Pick', {'g': 0}), ('Any:side="a"', {'g': 1}), ('Gate', {'g': 0})]
     >>> trace.ending, trace.cycle_start
     (<Ending.LASSO: 'lasso'>, 0)
     """
@@ -174,14 +185,14 @@ def normalize_trace(
     if links[0].get("Type"):
         msg = "the first link is not the initial state"
         raise ValueError(msg)
-    steps = tuple(_step(link) for link in links[1:] if _is_action(link))
+    steps = tuple(_step(link) for link in links[1:] if not _marks_the_stutter(link))
     reached = (_state(links[0]), *(step.state for step in steps))
     ending, cycle_start = _ending(links, reached)
     return Trace(reached[0], steps, ending, cycle_start)
 
 
 def _is_action(link: cabc.Mapping[str, object]) -> bool:
-    """Report whether one link records an action rather than an ending.
+    """Report whether one link records an action.
 
     Parameters
     ----------
@@ -191,10 +202,31 @@ def _is_action(link: cabc.Mapping[str, object]) -> bool:
     Returns
     -------
     bool
-        Whether the link's ``Type`` names an action. The initial link and the
-        stutter link both leave it empty.
+        Whether the link's ``Type`` names an action. The initial link, a
+        ``oneof`` link and the stutter link all leave it empty.
     """
     return link.get("Type") == "action"
+
+
+def _marks_the_stutter(link: cabc.Mapping[str, object]) -> bool:
+    """Report whether one link is the ending rather than a transition.
+
+    The checker writes the stutter as a link that names no action. A ``oneof``
+    link also names no action, so the ``Type`` alone cannot separate them: the
+    stutter is the one the checker names ``stutter``, which no model can shadow
+    because an action of that name would carry an action ``Type``.
+
+    Parameters
+    ----------
+    link : collections.abc.Mapping[str, object]
+        One entry of ``error-graph.json``.
+
+    Returns
+    -------
+    bool
+        Whether the link marks a stutter ending.
+    """
+    return not _is_action(link) and link.get("Name") == "stutter"
 
 
 def _state(link: cabc.Mapping[str, object]) -> cabc.Mapping[str, object]:
@@ -238,6 +270,8 @@ def _ending(
 
     The stutter mark is checked first because it repeats the state before it,
     which is also the shape of a lasso; only the mark itself tells them apart.
+    A link that names no action and is not the stutter is a ``oneof`` choice,
+    which is a step rather than a mark.
 
     Parameters
     ----------
@@ -254,11 +288,13 @@ def _ending(
     Raises
     ------
     ValueError
-        If a link other than the last marks no action, or if the last such
-        link repeats no state.
+        If a stutter appears anywhere but the end, or if the stutter repeats
+        no state.
     """
     marks = [
-        index for index, link in enumerate(links[1:], start=1) if not _is_action(link)
+        index
+        for index, link in enumerate(links[1:], start=1)
+        if _marks_the_stutter(link)
     ]
     if not marks:
         return _lasso(reached)

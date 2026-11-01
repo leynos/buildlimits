@@ -1,0 +1,30 @@
+---
+# The counterexample shape `oneof` adds. The checker records the branch a
+# `oneof` took as a link of its own, with no action `Type`, so a normalizer that
+# treats every link without a `Type` as the ending rejects a perfectly ordinary
+# trace. `Gate` is the only action that can open the way to `B`, and its
+# nondeterministic side lets a scheduler keep B starved, so the lasso the
+# checker reports necessarily contains choice links.
+#
+# Used by `tests/test_modelcheck_trace.py` to pin that a choice is a step, and
+# by `tests/test_fizzbee_fixtures.py` to pin the recorded shape.
+options:
+  max_actions: 12
+liveness: "strict"
+---
+
+action Init:
+  g = 0
+  b = 0
+  side = "none"
+
+atomic fair action Gate:
+  g = 1 - g
+  side = oneof ["left", "right"]
+
+atomic fair action B:
+  require g == 1 and side == "left"
+  b = 1
+
+always eventually assertion BEventually:
+  return b >= 1

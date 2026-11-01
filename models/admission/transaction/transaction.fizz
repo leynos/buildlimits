@@ -1,0 +1,371 @@
+---
+# W1's transaction half: the recovery phase, the drain probe, the roots
+# evidence, the grace deadline and the timers. The coupling half lives in
+# `models/admission/coupling/coupling.fizz`; the split is H2's third option,
+# recorded in the ExecPlan after the unsplit model outgrew the memory
+# tolerance.
+#
+# Read `docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md` for the
+# fairness table (F1-F7), the properties and the action-to-code mapping.
+#
+# Admission is a coarse premise here. One boolean says whether a request
+# waits, and two counts say how many tokens the cached and the uncached groups
+# hold; the queue classes and the tracked request are the coupling model's
+# subject. The cached/uncached split stays because the stop guard reads it:
+# work admitted during a transaction composes uncached, so it cannot extend
+# the group the stop is waiting to see end. That premise is enough for every
+# transaction property: L1 reads whether anything waits, and the stop guard
+# reads whether cached work still moves.
+#
+# The two visible roots readings are collapsed into `visible`, and the
+# reading never resolves itself to zero. That is the conservative of the two:
+# a detached reading may genuinely become zero when detached work ends, so a
+# model that omits that transition explores a narrower set of successful
+# paths and a pass is stronger than the production system needs.
+#
+# The hold is the transaction, as in the unsplit model: it is held exactly
+# while the phase is not idle, because the tick renews it every turn and
+# production stops renewing it only when the transaction has finished.
+options:
+  max_actions: 80
+  max_concurrent_actions: 1
+liveness: "strict"
+deadlock_detection: true
+---
+
+# The bounds are the W1 environment, not tunable facts.
+CAPACITY = 3
+MANAGER_LIMITS = 1
+
+# The seeded ablations. Each is a switch a configuration overrides, and every
+# report names the configuration it ran.
+STALE_PROOF = True
+GRACE_DEADLINE = True
+CACHED_GUARD = True
+
+action Init:
+  # Two tokens are free and one is retained by the initial starvation.
+  free = CAPACITY - 1
+  cached_held = 0
+  uncached_held = 0
+  server_drain = 1
+  # The coupling premise: a request waits, or it does not.
+  queue_waiting = False
+  # The transaction.
+  phase = "idle"
+  service = "live"
+  manager_faulted = False
+  manager_faults_used = 0
+  start_failed = False
+  manual_transaction = False
+  backoff_ready = True
+  cooling = False
+  # The drain probe and its evidence. `drain_fault` keeps only the distinction
+  # the trigger reads, live work or not; the two non-live guidance kinds have
+  # the same effect on every W1 property, so they share `other`.
+  drain_fault = "none"
+  roots = "unknown"
+  stale = False
+  grace = "none"
+  # The observation `TokenReleasedByAccounting` exists to reach.
+  released = False
+
+# ---------------------------------------------------------------------------
+# The coupling premise: submissions, admissions and leader exits.
+# ---------------------------------------------------------------------------
+
+atomic action Submit:  # maps: buildlimits.admission.Admission.submit
+  # maps: buildlimits.effects.NotifyQueued
+  # Submissions are never forced (F7). One waiting request is the whole of
+  # the coupling this model needs.
+  require not queue_waiting
+  queue_waiting = True
+
+atomic fair action RequestAdmitted:  # fairness: F5
+  # maps: buildlimits.admission.Admission.token_arrived
+  # maps: buildlimits.effects.Launch
+  # An admission needs a free token. That is where a retained drain bites:
+  # while tokens are retained, nothing can be admitted, which is what makes L1
+  # a statement about the token.
+  require queue_waiting and free > 0
+  queue_waiting = False
+  free = free - 1
+  # Composition is decided at the arrival. A request joins the cached group
+  # only while the service is up and no transaction holds the cache; otherwise
+  # it runs uncached. That branch is what makes the stop's guard clearable: in
+  # production a request admitted during a stop cannot extend the group the
+  # stop is waiting to see end, and a model that let it would report L3 failing
+  # on a path the code cannot take.
+  if service == "live" and phase == "idle":
+    cached_held = cached_held + 1
+  else:
+    uncached_held = uncached_held + 1
+
+atomic fair action LeaderExits:  # fairness: F2
+  # maps: buildlimits.admission.Admission.leader_exited
+  # maps: buildlimits.effects.Terminate
+  # A leader either returns its token or leaves a retained drain. The branch
+  # is nondeterministic, but progress is not: the action firing always takes
+  # one cached group out of service, which is the progress the transaction
+  # relies on.
+  require cached_held > 0
+  cached_held = cached_held - 1
+  outcome = oneof ["clean", "signalled"]
+  if outcome == "clean":
+    free = free + 1
+  else:
+    server_drain = server_drain + 1
+
+atomic fair action UncachedEnds:  # fairness: F2
+  # A group admitted outside the cache ends on its own and returns its token.
+  # Its ending is not a leader exit: no retained drain moves, because it never
+  # used one.
+  require uncached_held > 0
+  uncached_held = uncached_held - 1
+  free = free + 1
+
+# ---------------------------------------------------------------------------
+# The supervisor's composite poll, F1: probe the retained work, then take at
+# most one recovery step, in the order D10 fixes for
+# `ServerWatch.drained_tokens` and `CacheRecovery.tick`.
+# ---------------------------------------------------------------------------
+
+atomic fair action SupervisorTick:  # fairness: F1
+  # maps: buildlimits.admission.Admission.server_activity
+  # maps: buildlimits.effects.ReturnToken
+  # maps: buildlimits.cache_recovery.idle
+  # maps: buildlimits.cache_recovery.quiescing
+  # maps: buildlimits.cache_recovery.stopping
+  # maps: buildlimits.cache_recovery.accounting
+  # maps: buildlimits.cache_recovery.restarting
+  # maps: buildlimits.drain_guidance.live_work
+  # maps: buildlimits.drain_guidance.stopped_populated
+  # maps: buildlimits.drain_guidance.manager
+
+  # 1. `ServerWatch.drained_tokens`: probe the retained work. A successful
+  #    accounting releases every token it covers and is the observation
+  #    `TokenReleasedByAccounting` exists to reach. The probe runs on every
+  #    poll rather than on the production retry schedule: the model has no
+  #    clock, and a poll that always observes is an environment the code must
+  #    tolerate.
+  if server_drain > 0:
+    if manager_faulted:
+      drain_fault = "other"
+    elif service == "stopped_empty":
+      # `server_activity` returns every released token to the pool; nothing
+      # is compiling against a stopped, empty service.
+      drain_fault = "none"
+      free = free + server_drain
+      server_drain = 0
+      stale = False
+      released = True
+    elif service == "stopped_populated":
+      drain_fault = "other"
+    else:
+      drain_fault = "live_work"
+
+  # 2. `CacheRecovery.tick`.
+  if phase == "idle":
+    # The automatic trigger. `starvation` requires a retained drain, a waiting
+    # request, a live-work fault and a proof; `not cooling` is the same
+    # condition one tick later. Entering a phase is taking the hold.
+    if (not cooling
+        and drain_fault == "live_work"
+        and server_drain > 0
+        and queue_waiting):
+      if (stale and STALE_PROOF) or (roots == "zero" and cached_held == 0):
+        phase = "quiescing"
+        manual_transaction = False
+        start_failed = False
+        backoff_ready = True
+        grace = "none"
+  else:
+    # A running transaction holds the cache for its whole life. The phase
+    # then takes one step if its backoff has elapsed.
+    if backoff_ready:
+      if phase == "quiescing":
+        phase = "stopping"
+        start_failed = False
+        backoff_ready = True
+      elif phase == "stopping":
+        # `_try_stop`: blocked, then the roots verdict, then the stop.
+        if manager_faulted or (CACHED_GUARD and cached_held > 0):
+          # `blocked` resets the roots grace and fails the attempt; the
+          # BackoffExpires handshake is the retry, so no counter is needed.
+          grace = "none"
+          backoff_ready = False
+        elif manual_transaction or roots == "zero":
+          # A manual transaction is exempt from the roots evidence, and zero
+          # visible roots prove the cache is detached.
+          grace = "none"
+          phase = "accounting"
+          start_failed = False
+          backoff_ready = True
+        elif roots == "visible":
+          if grace == "expired":
+            if GRACE_DEADLINE:
+              phase = "accounting"
+              start_failed = False
+              backoff_ready = True
+            else:
+              # Without the deadline the grace verdict repeats for ever.
+              backoff_ready = False
+          else:
+            if grace == "none":
+              grace = "running"
+            backoff_ready = False
+        else:
+          # Unknown roots start no grace and prove nothing.
+          grace = "none"
+          backoff_ready = False
+      elif phase == "accounting":
+        # `_account`: the transaction ends once no retained work is left.
+        if server_drain == 0:
+          phase = "restarting"
+          start_failed = False
+          backoff_ready = True
+      elif phase == "restarting":
+        # `_try_start`. The manager refuses the first start attempt; a second
+        # refusal abandons the transaction without freeing the service.
+        if manager_faulted:
+          if start_failed:
+            phase = "idle"
+            start_failed = False
+            backoff_ready = True
+            manual_transaction = False
+            cooling = True
+            grace = "none"
+          else:
+            start_failed = True
+            backoff_ready = False
+        else:
+          service = "live"
+          phase = "idle"
+          start_failed = False
+          backoff_ready = True
+          manual_transaction = False
+          cooling = True
+          grace = "none"
+          if server_drain == 0:
+            stale = False
+
+# ---------------------------------------------------------------------------
+# The environment: the operator, the roots reading, the stop and the faults.
+# ---------------------------------------------------------------------------
+
+atomic action OperatorRequest:
+  # A manual transaction bypasses starvation but not admission's refusal
+  # rules. The refusal itself is L4a's subject and is modelled with the
+  # coupling half; here a faulted manager simply cannot start one.
+  require phase == "idle" and not manager_faulted
+  phase = "quiescing"
+  manual_transaction = True
+  start_failed = False
+  backoff_ready = True
+  grace = "none"
+
+atomic fair action RootsBecomeReadable:  # fairness: F3a
+  # A root reading names what is visible and who owns it. It is read once and
+  # holds: F3a's intent is that the reading is eventually made and does not
+  # flap back to unknown.
+  require roots == "unknown"
+  roots = oneof ["zero", "visible"]
+
+atomic fair action StopCompletes:  # fairness: F4
+  # The user manager runs the stop job.
+  require phase == "accounting" and service == "live"
+  service = "stopped_populated"
+
+atomic fair action WorkEnds:  # fairness: F3
+  # Whatever survived the stop finishes.
+  require service == "stopped_populated"
+  service = "stopped_empty"
+
+atomic action ManagerFaults:
+  # A manager fault is only observable through the cache, so it is offered
+  # only while a retained token waits, and it is bounded.
+  require (server_drain > 0
+           and not manager_faulted
+           and manager_faults_used < MANAGER_LIMITS)
+  manager_faulted = True
+  manager_faults_used = manager_faults_used + 1
+  drain_fault = "other"
+
+atomic fair action ManagerRecovers:  # fairness: F4
+  # The fault is finite; the next probe re-observes whatever is left.
+  require manager_faulted
+  manager_faulted = False
+  drain_fault = "none"
+
+# ---------------------------------------------------------------------------
+# Timers: F6. They expire in no set order, which is exactly what a bounded
+# model needs of a clock it does not represent.
+# ---------------------------------------------------------------------------
+
+atomic fair action StaleExpires:  # fairness: F6
+  require server_drain > 0 and not stale
+  stale = True
+
+atomic fair action GraceExpires:  # fairness: F6
+  require grace == "running"
+  grace = "expired"
+
+atomic fair action BackoffExpires:  # fairness: F6
+  require not backoff_ready
+  backoff_ready = True
+
+atomic fair action CoolingExpires:  # fairness: F6
+  require cooling
+  cooling = False
+
+# ---------------------------------------------------------------------------
+# The transaction properties. L1, L3 and L4b are liveness; S2 is the token
+# accounting this model's coarse admission premise must still conserve.
+# ---------------------------------------------------------------------------
+
+always assertion S2:
+  # Tokens sum to capacity, every count is a count, and a waiting request
+  # always has a token for it to be admitted with.
+  return (free + cached_held + uncached_held + server_drain == CAPACITY
+          and free >= 0
+          and cached_held >= 0
+          and uncached_held >= 0
+          and server_drain >= 0)
+
+always eventually assertion L1:
+  # A retained token is released for ever, or nothing is waiting for it. The
+  # RFC states this as "eventually always no token is in SERVER_DRAIN", but
+  # the automatic trigger requires a waiting request and F7 never forces a
+  # submission, so with an empty queue a retained token is legitimately left
+  # alone. The demand-conditional form is the one the code guarantees.
+  return server_drain == 0 or not queue_waiting
+
+always eventually assertion L3:
+  # The supervisor returns to idle for ever. Every transaction is bounded and
+  # the environment can create only finitely many drains.
+  return phase == "idle"
+
+always eventually assertion L4b:
+  # An accepted operator request finishes: the manual transaction is cleared.
+  return not manual_transaction or phase == "idle"
+
+# ---------------------------------------------------------------------------
+# Probes. They are not properties; they are the evidence that the passing
+# configuration explored the behaviour the properties are about.
+# ---------------------------------------------------------------------------
+
+exists assertion StopIssued:
+  # `accounting` is reached only by taking a stop.
+  return phase == "accounting"
+
+exists assertion TokenReleasedByAccounting:
+  # A release is the only transition that empties the retained drain after
+  # the stop; the flag keeps the probe from being satisfied by the initial
+  # retained token.
+  return released
+
+exists assertion ReachesRestarting:
+  return phase == "restarting"
+
+exists assertion GroupServerDrain:
+  return server_drain > 0

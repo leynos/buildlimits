@@ -299,7 +299,8 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
   - Mitigation: EP-M3 budgets Skylos entry points, Vulture `ignore_names`,
     Ruff per-file ignores and duplication allowances, each with its reason,
     and records them in the developer's guide §12.
-- **State explosion.** _Occurred 2026-10-31; H2 open._
+- **State explosion.** _Occurred 2026-10-31; mitigated 2026-11-01 by D33's
+  split and closed on both tolerances._
   - Risk: H2's bounds may be too large to check within budget.
   - Severity: high. Likelihood: certain (was medium; two runs now breach the
     memory stop and one also breaches the routine runtime budget — see the
@@ -309,9 +310,17 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
     Fourteen semantics-preserving reductions were applied before the stop and
     are recorded with the measurements. `--experimental_processed_queue` was
     measured and rejected as insufficient: it removes the queue's memory, not
-    the retained graph's. The remaining product is structural, so the
-    unreduced mitigation is H2's third option — split the model into a
-    coupling model and a transaction model and re-measure once.
+    the retained graph's. The remaining product was structural, so the
+    mitigation was H2's third option — split the model into a coupling model
+    and a transaction model and re-measure once — which D33 adopts.
+  - Outcome: both halves fit. Coupling reaches 67,944 states, the transaction
+    half 14,618; together they took 257 s at 4.14 GB peak RSS. Neither
+    approaches the 8 GiB stop, and each is inside the 10-minute routine
+    budget, so the cost that motivated running the matrix nightly is now a
+    delivery decision rather than a limit. The residual risk
+    is bounds growth: a later revision that multiplies either half could
+    cross the tolerances again, and the nightly workflow's
+    `timeout-minutes: 60` is where that would show up.
 
 ## Progress
 
@@ -534,8 +543,9 @@ explicitly.
     `origin/main` at `71892de`. The one touchy hunk — `_starved` reading the
     counts port twice where it used to snapshot once — is shown equivalent
     because admission is mutated only on the supervisor's single event loop.
-- [ ] (2026-10-31) **H2 opened: the first W1 model breaches both the
-    memory and the runtime tolerance, so implementation stops here.** The
+- [x] (2026-10-31) **H2 opened: the first W1 model breaches both the
+    memory and the runtime tolerance, so implementation stopped there.
+    Resolved 2026-11-01 as option (c) — see "H2 resolved" below.** The
     model is written and complete in shape — every W1 action, timer and
     assertion in
     [EP-M4](#ep-m4-the-minimal-model-with-a-busy-queue) is present, and
@@ -582,6 +592,49 @@ explicitly.
     work is recoverable whichever way H2 goes. No configuration file,
     Makefile target or documentation change beyond this plan has been made,
     because each of those records a decision that depends on the answer.
+- [x] (2026-11-01) **H2 resolved: split the model, re-measure once, and put
+    each obligation where it is affordable.** The user chose
+    [D33](#decision-log)'s option (c) and added two delivery decisions: the
+    matrix runs nightly on GitHub runners, and model fidelity is checked on
+    pull requests.
+  - The model was split into `models/admission/coupling` (S1, S2, L4a) and
+    `models/admission/transaction` (S2, L1, L3, L4b), each in its own
+    directory because `source_text()` concatenates every `*.fizz` it finds.
+    The transaction half needed one substantive correction to hold L3 and S2:
+    `RequestAdmitted` had been counting every admitted request as cached work,
+    so the stop guard could never clear during a transaction. It now composes
+    the two classes — cached only when the service is live and the phase is
+    idle — with `uncached_held` and an `UncachedEnds` action, which is the
+    same composition the unsplit model used.
+  - Re-measurement, one run each, on the development host:
+
+    | Half | States | Expectations |
+    | --- | --- | --- |
+    | coupling | 67,944 | 9 of 9 met |
+    | transaction | 14,618 | 12 of 12 met |
+
+    Both matrices together, run back to back, took 257 s at 4.14 GB peak
+    resident memory. That is inside the routine budget for either half and
+    inside the 8 GiB stop for both, so the memory and runtime tolerances are
+    now met rather than breached.
+  - `make model-check` runs both matrices, writes `.model-check/<half>.json`
+    and then judges those artefacts with the `fizzbee`-marked tests;
+    `.github/workflows/model-check-nightly.yml` runs it daily at 04:17 UTC
+    with the 60-minute nightly tolerance as its timeout.
+  - `make model-fidelity` runs both drift reports and
+    `tests/test_model_drift.py`; `.github/workflows/model-fidelity.yml` runs
+    it on every pull request in well under a minute. The drift tests carry the
+    claim neither report can make alone: that the two halves map or exclude
+    every inventory item between them, that W1's four out-of-scope paths are
+    recorded as exclusions, and that every exclusion gives a reason.
+  - `models/admission/admission.fizz` is deleted. It was the unsplit model, it
+    had no configuration file, and no target ran it, so it would have been a
+    second description of W1 that nothing measured.
+  - A `oneof` branch is now a trace step. `modelcheck.trace` had rejected any
+    link after the first that was not an action, but FizzBee records a
+    `oneof` choice as an untyped link named for the branch. The spike model
+    `models/spike/liveness_oneof.fizz` pins the shape and
+    `tests/fixtures/fizzbee/oneof/` captures it.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -1692,34 +1745,45 @@ explicitly.
   - Scope: documentation only. No code, test or configuration change follows
     from this decision.
 
-- **D33. H2 is open on the first W1 model; the recommendation is the split.**
-  _Pending the user's decision; nothing below is enacted._
-  - Decision sought: one of H2's three options, as written in Tolerances,
-    "Runtime budget" — (a) run the whole model on pull requests, (b) run it
-    nightly only, or (c) split it into a coupling model and a transaction
-    model and re-measure once.
-  - Evidence: two runs at one model text, recorded in the EP-M4 entry. Run A
-    reached 181,396 unique states at 4 min 59 s with 11.3 GB RSS; run B
-    reached 125,660 unique states at 8 min 39 s with 9.07 GB RSS and was
-    stopped by the 8 GiB memory tolerance while still exploring. Both breach
-    the memory stop; run B also breaches the 10-minute routine budget. No run
-    produced a verdict, so EP-M4-E1 has no evidence yet.
-  - Recommendation: **(c)**. Options (a) and (b) do not change the cost —
-    the model does not fit either budget, and 60 minutes leaves a lasso
-    check of an unknown-sized graph on a shared host, which is the
-    "Shared-host load" risk. Option (c) removes the structural product
-    identified above: the coupling model keeps the per-request lifecycle and
-    the cached guard, and the transaction model keeps the recovery phase,
-    the drain probe and the timers, with the other side of each reduced to a
-    coarse premise. The re-measurement is then a single run each, and W1's
-    properties are discharged by whichever model carries each one.
-  - Consequence if (c) is chosen: EP-M4's acceptance conditions are re-cut
-    to two models, and the plan's 25-file stop still applies. The RFC's
-    fairness table is unchanged; each model declares the subset it uses.
-  - Status: blocked on the user. The model, its red end-to-end test and the
-    boolean-rendering fix are committed for recoverability; no configuration
-    file, Makefile target or documentation change beyond this plan has been
-    made.
+- **D33. H2 is decided as option (c): split the model, re-measure once, and
+  run the two obligations where each is affordable.** _Decided 2026-11-01._
+  - Decision: `models/admission/coupling` carries the queue, the group and the
+    refusal (S1, S2, L4a); `models/admission/transaction` carries the phase
+    machine, the drain probe and the timers (S2, L1, L3, L4b). S2 is stated in
+    both, over each half's own token accounting. The user's instruction was
+    "split it into a coupling model and a transaction model and re-measure
+    once", together with the two delivery decisions: "Run the model itself
+    nightly on GitHub runners", and "Any validation and checking of model
+    fidelity should be run on PR".
+  - Evidence for the choice: two runs at one model text, recorded in the
+    EP-M4 entry. Run A reached 181,396 unique states at 4 min 59 s with
+    11.3 GB RSS; run B reached 125,660 unique states at 8 min 39 s with
+    9.07 GB RSS and was stopped by the 8 GiB memory tolerance while still
+    exploring. Both breach the memory stop; run B also breaches the 10-minute
+    routine budget. Options (a) and (b) leave the cost untouched: the model
+    does not fit either budget, and 60 minutes leaves a lasso check of an
+    unknown-sized graph on a shared host, which is the "Shared-host load"
+    risk.
+  - Evidence that the split works: the coupling half reaches 67,944 states and
+    the transaction half 14,618. Run back to back they took 257 s at 4.14 GB
+    peak RSS, so both are inside the routine budget and inside the memory
+    stop. The coupling matrix met 9 of 9 expectations and the transaction
+    matrix 12 of 12, including each mutant's predicted counterexample.
+  - Cost split for delivery: fidelity — do the models still account for the
+    production surface? — is a text-and-import comparison, so
+    `make model-fidelity` runs on every pull request through
+    `.github/workflows/model-fidelity.yml`. The matrix explores both state
+    spaces, so `make model-check` runs nightly through
+    `.github/workflows/model-check-nightly.yml` with the plan's 60-minute
+    tolerance as its timeout.
+  - Consequence: EP-M4's acceptance conditions are re-cut to two models; the
+    coverage claim is the union of the two halves' mappings and exclusions,
+    which `tests/test_model_drift.py` asserts. The RFC's fairness table is
+    unchanged; each half declares the subset it uses, and a half that silently
+    lost an annotation now fails because its configuration names the tags.
+  - Superseded artefact: `models/admission/admission.fizz`, the unsplit model,
+    is deleted. It had no configuration file and no target ran it, so keeping
+    it would have left a second, unmeasured description of W1 in the tree.
 
 ## Outcomes & retrospective
 
@@ -1975,8 +2039,10 @@ that delivers it, to its acceptance evidence.
 1.1.3 OQ4-5                   -> EP-M1  -> Makefile FIZZBEE_VERSION, FIZZBEE_SHA256; make fizzbee; RFC licence record
 RFC-§5, §6 tooling            -> EP-M2  -> modelcheck domain; tests/test_modelcheck_{expectations,materialize,drift,trace}.py
 RFC-§5, §6 tooling            -> EP-M3  -> modelcheck adapters, CLI; tests/features/model_check.feature; ADR 006
-1.1.4 S1 S2 L1 L3 L4a L4b F1-F7 F3a -> EP-M4 -> models/admission/admission.fizz; .model-check/results.json (head)
-1.1.5 I1 I3 H1 DV2            -> EP-M5  -> models/admission/configurations.toml; results.json (known-bad rows)
+1.1.4 S1 S2 L1 L3 L4a L4b     -> EP-M4  -> models/admission/{coupling,transaction}/*.fizz
+      F1-F7 F3a                            .model-check/{coupling,transaction}.json (head)
+1.1.5 I1 I3 H1 DV2            -> EP-M5  -> models/admission/{coupling,transaction}/configurations.toml
+                                           the same artefacts (known-bad rows)
 1.1.6 RFC-§5 replay           -> EP-M5  -> tests/test_model_replay.py
 1.1.7 H1 comparator           -> EP-M5  -> tests/test_recovery_progress_comparator.py
 1.1.8 H1 G1                   -> EP-M6  -> RFC 0001 "H1 verdict" section; Decision log G1 entry
@@ -2044,6 +2110,14 @@ repository-owned logic built on them is verified against the real interface.
 
 ### Model obligations (discharged by FizzBee runs)
 
+W1 is two models after D33: `models/admission/coupling` (S1, S2, L4a) and
+`models/admission/transaction` (S2, L1, L3, L4b). Each obligation below is
+discharged by whichever half carries it, and S2 by both, over each half's own
+token accounting. A property is never assumed covered because the other half
+mentions it; `tests/test_model_check_e2e.py` names the matrix each half must
+report, and `tests/test_model_drift.py` names what each half must map or
+exclude.
+
 - **Obligation M-S: safety on the fixed configuration.**
   - Statement: the safety properties in scope (S1 and S2 in W1; S1 to S9 in
     W2) hold in every reachable state of `head`, within bounds.
@@ -2052,8 +2126,9 @@ repository-owned logic built on them is verified against the real interface.
     interleavings.
   - Domain: capacity 3; two waiting requests; W1 bounds in `fizz.yaml` and in
     the materialized frontmatter.
-  - Artefacts: `models/admission/admission.fizz` and
-    `models/admission/configurations.toml`.
+  - Artefacts: `models/admission/coupling/*.fizz` with its
+    `configurations.toml`, and `models/admission/transaction/*.fizz` with its
+    own.
   - Evidence: `make model-check` reports `holds` for each property on `head`,
     with `states_explored` at or above the configuration's `min_states`.
     Doubling `max_actions` leaves the state count unchanged.
@@ -2745,9 +2820,10 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
 
 ### EP-M4: the minimal model with a busy queue
 
-- **Outcome:** `models/admission/admission.fizz` checks S1, S2, L1, L3, L4a
-  and L4b at capacity 3 on configuration `head`, with every report naming its
-  fairness.
+- **Outcome:** `models/admission/coupling` and `models/admission/transaction`
+  between them check S1, S2, L1, L3, L4a and L4b on configuration `head`, with
+  every report naming its fairness. D33 splits the model because the unsplit
+  one breached both the memory and the runtime tolerance.
 - **Requirements and gaps:** roadmap 1.1.4; RFC-§1 to §3; F1 to F7 and F3a;
   DV1 and DV3.
 - **Steps.**
@@ -2787,43 +2863,57 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
        - each fair action carries `# fairness: <F-id>`;
        - each known-bad switch carries `# transcribes: <sha>`.
      - Guards use `require` over state read in place.
-  3. **Configuration.**
-     - Add `models/admission/fizz.yaml`, with the W1 bounds and every option
-       explicit.
-     - Add `models/admission/configurations.toml`, with:
-       - `head` and its expectations, `min_states` and `exists` probes;
-       - the M-L mutants `head-no-stale-proof`, `head-no-grace-deadline`,
-         `head-unfair-leader-exits` and `head-unknown-roots`;
-       - the S1 seeded fault, `head-no-cached-guard`.
-  4. **Make target.** Add `make model-check: fizzbee build`. Its recipe runs
-     the matrix once, then the opt-in tests, and fails if anything was
-     skipped:
+  3. **Configuration.** Each half gets its own `fizz.yaml`, with the W1 bounds
+     and every option explicit, and its own `configurations.toml`. One model
+     per directory is required: `source_text()` concatenates every `*.fizz`
+     it finds.
+     - `coupling/`: `head` with S1, S2 and L4a, its `min_states`, its five
+       `exists` probes, and the S1 seeded fault `head-no-cached-guard`.
+     - `transaction/`: `head` with S2, L1, L3 and L4b, its `min_states`, its
+       four `exists` probes, and the M-L mutants `head-no-stale-proof`,
+       `head-no-grace-deadline`, `head-unfair-leader-exits` and
+       `head-unknown-roots`.
+     - Both `configurations.toml` files name every fairness tag their half
+       uses under `[configurations.head.fairness]`, so a half that lost an
+       annotation fails rather than passing on an unstated assumption.
+     - Each half lists the production paths the other transcribes under
+       `[exclusions]` with a reason.
+  4. **Make targets.** Add two, because the obligations have different costs.
+     - `make model-fidelity` runs both drift reports and
+       `tests/test_model_drift.py`. It compares text with an import of the
+       production package, so it runs on every pull request through
+       `.github/workflows/model-fidelity.yml`.
+     - `make model-check: fizzbee build` runs both matrices into
+       `.model-check/<half>.json`, then the opt-in judgement:
 
-     ```make
-     $(UV_ENV) $(UV) run python -m modelcheck check --fizz $(FIZZ) \
-         --json .model-check/results.json models/admission
-     BUILD_LIMITS_MODEL_CHECK=1 $(UV_ENV) $(UV) run pytest -n 0 -rs -m fizzbee tests
-     ```
+       ```make
+       $(UV_ENV) $(UV) run python -m modelcheck check --fizz $(FIZZ) \
+           --json .model-check/coupling.json models/admission/coupling
+       BUILD_LIMITS_MODEL_CHECK=1 $(UV_ENV) $(UV) run pytest -n 0 -rs -m fizzbee tests
+       ```
 
-     The pytest end-to-end tests read `results.json`. They do not re-run the
-     matrix.
-  5. **Documentation.** Add to the developer's guide §11.6 a first "when you
-     change `cache_recovery.py` or `admission.py`" checklist, and a
-     `make model-check` row in Table 1.
+       The pytest end-to-end tests read the artefacts. They do not re-run the
+       matrix. `.github/workflows/model-check-nightly.yml` runs this daily at
+       04:17 UTC with the 60-minute nightly tolerance as its timeout.
+  5. **Documentation.** Add to the developer's guide §11.6 the split, the two
+     targets and the drift union check, and record both workflows in §13.
 - **Red first.**
   - Add `tests/test_model_check_e2e.py` (marker `fizzbee`), with
-    `test_fixed_configuration_holds` and `test_mutants_fail` reading
-    `results.json`.
+    `test_the_matrix_names_every_configuration`, `test_fixed_configuration_holds`
+    and `test_mutants_fail` reading the artefacts.
   - Run it before the model exists. Expect it to fail with "configuration
     `head` not found".
 - **Acceptance evidence.**
-  - EP-M4-E1: `make model-check` reports `holds` on `head` for S1, S2, L1, L3,
-    L4a and L4b, each naming its fairness, with every `exists` probe
-    satisfied.
+  - EP-M4-E1: `make model-check` reports `holds` on `head` for S1, S2 and L4a
+    in the coupling half and for S2, L1, L3 and L4b in the transaction half,
+    each naming its fairness, with every `exists` probe satisfied.
   - EP-M4-E2: each mutant yields its predicted counterexample.
   - EP-M4-E3: the `max_actions` fixpoint check holds.
-  - EP-M4-E4: `git status --porcelain` is empty afterwards.
-  - EP-M4-E5: the gates pass.
+  - EP-M4-E4: `make model-fidelity` exits 0 for both halves, and
+    `tests/test_model_drift.py` proves the union of their mappings and
+    exclusions covers the whole production surface.
+  - EP-M4-E5: `git status --porcelain` is empty afterwards.
+  - EP-M4-E6: the gates pass.
   - Roadmap task 1.1.4 is ticked.
 - **Conformance check.**
   - 1.1.4 is satisfied.
@@ -2871,9 +2961,10 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
        `arm + duration - now`;
      - projects the production state onto model state after each step.
 
-     Store each counterexample's and witness's normalized trace in
-     `models/admission/traces/`, written by `--save-traces` from runs pinned
-     to `GOMAXPROCS=1`.
+     Store each counterexample's and witness's normalized trace in the
+     `traces/` directory of the half that produced it — `models/admission/
+     coupling/traces/` or `models/admission/transaction/traces/` — written by
+     `--save-traces` from runs pinned to `GOMAXPROCS=1`.
 
      `tests/test_model_replay.py` has one test per stored trace, plus the
      hold-expiry check. A trace the code follows to a property violation is a
@@ -3082,7 +3173,10 @@ Quality method:
 - the `scrutineer` agent runs the gate commands in `Concrete steps`, in
   sequence, and reports the log paths;
 - `git status --porcelain` is checked after every `make model-check`;
-- from EP-M12, the CI job runs `make model-check` on a hosted runner.
+- from EP-M4, `.github/workflows/model-check-nightly.yml` runs
+  `make model-check` on a hosted runner nightly, and
+  `.github/workflows/model-fidelity.yml` runs `make model-fidelity` on every
+  pull request. The CI job's own `make model-check` step is at EP-M12.
 
 Red-Green-Refactor evidence is recorded in `Artefacts and notes` for each
 milestone:
@@ -3102,7 +3196,7 @@ milestone:
   Deleting `.model-check/` is always safe.
 - **Milestones** are additive, so recovery is reverting the milestone's
   commits.
-- **Trace files** in `models/admission/traces/` are regenerated by
+- **Trace files** in `models/admission/*/traces/` are regenerated by
   `--save-traces`, and reviewed as diffs.
 
 ## Artefacts and notes
@@ -3150,11 +3244,19 @@ modelcheck/
 models/
 ├── spike/                   EP-M1 toy models, kept as language checks
 └── admission/
-    ├── admission.fizz       the model
-    ├── fizz.yaml            default bounds and options
-    ├── configurations.toml  fixed, mutant and known-bad configurations with expectations
-    └── traces/              normalized counterexample and witness traces
+    ├── coupling/            queue, group and refusal: S1, S2, L4a
+    │   ├── coupling.fizz
+    │   ├── fizz.yaml        default bounds and options
+    │   └── configurations.toml
+    └── transaction/         phase machine and timers: S2, L1, L3, L4b
+        ├── transaction.fizz
+        ├── fizz.yaml
+        └── configurations.toml
 ```
+
+D33 splits the model into two directories, and one model per directory is a
+requirement rather than a preference: `source_text()` concatenates every
+`*.fizz` in a directory, so two models side by side would be read as one.
 
 _Figure 2: Planned layout of the tooling and models._
 

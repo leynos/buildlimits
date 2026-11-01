@@ -56,8 +56,12 @@ __all__ = ["TomlConfigurations"]
 _CONFIGURATIONS = "configurations.toml"
 """The file naming every variant the matrix runs."""
 
-_MODEL = "admission.fizz"
-"""The model's source file, when the directory holds exactly one."""
+_MODEL_SUFFIX = ".fizz"
+"""What a model directory must hold at least one of.
+
+The W1 model is split in two, and each half names its own file, so the suffix
+rather than a file name is what the directory is required to contain.
+"""
 
 
 class TomlConfigurations:
@@ -82,7 +86,7 @@ class TomlConfigurations:
     >>> TomlConfigurations(Path("/nonexistent"), "routine").source_text()
     Traceback (most recent call last):
     ...
-    modelcheck.domain.MaterializeError: /nonexistent holds no admission.fizz
+    modelcheck.domain.MaterializeError: /nonexistent holds no .fizz file
     """
 
     def __init__(self, directory: Path, bounds: str = "routine") -> None:
@@ -120,7 +124,7 @@ class TomlConfigurations:
         """
         files = sorted(self._directory.glob("*.fizz"))
         if not files:
-            msg = f"{self._directory} holds no {_MODEL}"
+            msg = f"{self._directory} holds no {_MODEL_SUFFIX} file"
             raise MaterializeError(msg)
         return "\n".join(path.read_text(encoding="utf-8") for path in files)
 

@@ -190,13 +190,22 @@ def test_the_go_runtime_is_capped(tmp_path: Path) -> None:
 
 
 def test_the_scratch_directory_is_removed(tmp_path: Path) -> None:
-    """A finished run leaves nothing behind, whether it passed or failed."""
+    """A finished run removes its own scratch directory, whether it passed or failed.
+
+    The assertion is scoped to the adapter's ``run-*`` directories rather than
+    the whole of ``.model-check/``. That directory is gitignored scratch shared
+    with ``make model-check``, which writes its reports there and keeps them,
+    and with any other worker running at the same time; an empty directory is
+    not something the adapter can promise.
+    """
     _run_and_record(tmp_path)
 
     scratch = Path.cwd() / ".model-check"
-    assert sorted(path.name for path in scratch.iterdir()) == [], (
-        "the scratch directory is emptied, so the tracked tree stays clean"
+    leftovers = sorted(
+        path.name for path in scratch.iterdir() if path.name.startswith("run-")
     )
+
+    assert leftovers == [], "the adapter's own scratch directory is emptied"
 
 
 def test_a_missing_launcher_is_a_run_that_proved_nothing(tmp_path: Path) -> None:

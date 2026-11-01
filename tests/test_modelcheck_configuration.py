@@ -107,7 +107,7 @@ def test_a_directory_without_a_model_is_refused(tmp_path: Path) -> None:
     A run over no source would compile nothing and report a pass over an empty
     state space, so the adapter refuses rather than returning an empty string.
     """
-    with pytest.raises(domain.MaterializeError, match=r"holds no admission\.fizz"):
+    with pytest.raises(domain.MaterializeError, match=r"holds no \.fizz file"):
         TomlConfigurations(tmp_path).source_text()
 
 

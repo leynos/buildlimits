@@ -72,7 +72,9 @@ FIZZ ?= .tools/fizzbee/fizz
 
 .PHONY: help all audit clean build build-release fizzbee lint lint-python fmt \
         check-fmt check-lock check-python-sources \
-        markdownlint nixie spelling test test-systemd-user test-sccache-host typecheck dead-code duplication install-nose lint-actions validate $(TOOLS) $(VENV_TOOLS)
+        markdownlint nixie spelling test test-systemd-user test-sccache-host \
+        typecheck dead-code duplication install-nose lint-actions validate \
+        model-check model-fidelity $(TOOLS) $(VENV_TOOLS)
 
 .DEFAULT_GOAL := all
 # Shared build caches require sequential gates even when make receives -j.
@@ -205,6 +207,44 @@ test-systemd-user: build $(VENV_TOOLS) ## Run host acceptance against the system
 test-sccache-host: build $(VENV_TOOLS) ## Run opt-in checks against a supported sccache
 	BUILD_LIMITS_SCCACHE_HOST_CHECK=1 $(UV_ENV) $(UV) run pytest -v -m sccache_host_check tests
 
+
+# The two model targets follow the plan's cost split. `model-fidelity` asks
+# only whether the models still account for the production surface, which is
+# cheap enough for every pull request. `model-check` explores every state at the
+# plan's bounds, taking minutes, so it runs nightly; see
+# `.github/workflows/model-check-nightly.yml`.
+#
+# Each model lives in its own directory because configurations.toml is read from
+# one directory and its `source_text()` concatenates every `*.fizz` there. One
+# model per directory keeps that concatenation to a single file.
+MODEL_DIRS ?= models/admission/coupling models/admission/transaction
+
+# The command reports per model, which is what makes a failure legible in a job
+# log; the tests carry the checks a per-directory report cannot make, namely that
+# the two halves cover the whole surface between them and that every exclusion
+# gives a reason. Running both here keeps one target that answers the whole
+# fidelity question.
+MODEL_DRIFT_TESTS ?= tests/test_model_drift.py
+
+model-fidelity: build ## Check both W1 models still account for the production surface
+	@set -eu; for model in $(MODEL_DIRS); do \
+	  printf '==> drift %s\n' "$$model"; \
+	  $(UV_ENV) $(UV) run python -m modelcheck drift "$$model"; \
+	done
+	$(UV_ENV) $(UV) run pytest -n 0 -q $(MODEL_DRIFT_TESTS)
+
+# The report is written under .model-check/ before the tests read it, so the
+# matrix a maintainer reads and the artefact the suite judges are the same
+# bytes. The opt-in variable is set here rather than inherited, so this target
+# works from a clean shell and `make test` stays independent of the checker.
+model-check: fizzbee build ## Run both W1 model matrices, then judge the artefacts
+	@set -eu; mkdir -p .model-check; for model in $(MODEL_DIRS); do \
+	  name="$$(basename "$$model")"; \
+	  printf '==> check %s\n' "$$model"; \
+	  $(UV_ENV) $(UV) run python -m modelcheck check --fizz $(FIZZ) \
+	    --json ".model-check/$$name.json" "$$model"; \
+	done
+	BUILD_LIMITS_MODEL_CHECK=1 $(UV_ENV) $(UV) run pytest -n 0 -rs -m fizzbee tests
 
 validate: ## Validate the Makefile
 	mbake validate Makefile
