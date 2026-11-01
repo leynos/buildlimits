@@ -1,7 +1,8 @@
-# W1's transaction half: the fixed configuration and the four ablations that
-# must still fail. Each mutant declares only the expectation it breaks, so the
-# materializer strips the other assertions and the run can report only the
-# counterexample the configuration was built for.
+# W1's transaction half: the fixed configuration, the ablations that must still
+# fail, and one control that must still hold. Each mutant declares only the
+# expectation it breaks, so the materializer strips the other assertions and
+# the run can report only the counterexample the configuration was built for.
+# The control names only the property it is evidence for, for the same reason.
 
 [configurations.head]
 # The floor catches a collapsed state space, not a change in its exact size:
@@ -100,6 +101,26 @@ liveness = "strict"
 deadlock_detection = true
 
 [configurations.head-no-accounting-release.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+# A control, not a mutant: the token is retained for ever (no accounting
+# release) while every submission carries a free token, so the queue empties
+# again as soon as F5 admits it. L1 must still hold. RFC 0001 RC5 records that
+# repeated queue-empty intervals permit permanent retention, because no request
+# is ever blocked; the mutant above is the case where one is.
+[configurations.head-retention-idle-queue]
+holds = ["L1"]
+
+[configurations.head-retention-idle-queue.constants]
+ACCOUNTING_RELEASE = false
+QUEUE_OVERFLOWS = false
+
+[configurations.head-retention-idle-queue.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head-retention-idle-queue.options.options]
 max_actions = 80
 max_concurrent_actions = 1
 

@@ -693,11 +693,21 @@ explicitly.
     an issuance snapshot: a fault after the stop is a different event.
   - **5. L1's implemented meaning was weaker than the RFC's row.** The model
     checks `server_drain == 0 or not queue_waiting`; the RFC said "eventually
-    always no token is in `SERVER_DRAIN`". The production trigger needs
-    demand, so the weaker form is the honest one. RFC 0001 now states the
-    demand qualification in table 3, in a qualifying paragraph, and in RC5,
-    and `head-no-accounting-release` remains the control that fails while
-    requests keep waiting.
+    always no token is in `SERVER_DRAIN`". The first attempt qualified the row
+    but left the operator difference and the retention consequence unstated,
+    and the hosted assessment kept this finding open for it. The row now
+    states `GF (server_drain = 0 ∨ ¬queue_waiting)` in the model's own
+    wording, and RC5 derives it: `FG` would ask the model to prove the
+    environment quiesces, which F7 does not give. RC5 also states explicitly
+    that repeated queue-empty intervals permit permanent retention, because
+    each emptying is a request that was admitted. The model gained
+    `QUEUE_OVERFLOWS` to name the two demand shapes, and the new
+    `head-retention-idle-queue` control retains a token for ever while every
+    submission carries a free token and must hold L1, beside
+    `head-no-accounting-release`, which retains it against a building backlog
+    and must fail. `test_controls_hold` judges the control's row, and
+    `test_the_matrix_names_every_configuration` requires it to be in the
+    matrix.
   - **6. Cross-half exclusions could hide a lost mapping.** The union test
     subtracted every exclusion from the inventory, so a path excluded by both
     halves and mapped by neither passed. `drift.union_gaps` now subtracts
@@ -758,6 +768,22 @@ explicitly.
     duplication families, then on one type-check diagnostic in
     `modelcheck/fixpoint.py`; each was repaired before the green run. Logs are
     under `/tmp/<gate>-fizzbee-model-of-admission-and-recovery.out`.
+  - **The follow-up assessment kept finding 5 open, and the L1 contract is
+    now stated, derived and controlled.** The hosted reply to the round
+    (`6562197934`) accepted seven dispositions and asked for three things on
+    L1: the row's exact operator, the retention consequence of that operator,
+    and a control that exhibits permitted retention with repeated queue-empty
+    intervals. Table 3, the paragraph after it and RC5 now state
+    `GF (server_drain = 0 ∨ ¬queue_waiting)` and why `FG` is unprovable here;
+    `QUEUE_OVERFLOWS` names the demand shape; and the new
+    `head-retention-idle-queue` control retains a token for ever while every
+    submission carries a free token. The transaction matrix now reports **14
+    expectations met, 0 unmet**, with `head-retention-idle-queue` holding at
+    3,222 states and both passing configurations' fixpoints stable
+    (14,618 → 14,618 and 3,222 → 3,222). `test_model_check_e2e.py` grew past
+    the 400-line rule while gaining `CONTROLS`, so its docstrings were
+    tightened rather than new modules split out; it is 390 lines and the
+    change set stays at 27 files.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
