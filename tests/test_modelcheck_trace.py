@@ -1,11 +1,12 @@
 """A normalized trace keeps the path, and marks how it ends.
 
 The checker's ``error-graph.json`` is a list of links whose first entry is the
-initial state, whose middle entries are actions, and whose last entry may be a
-stutter that names no action at all. A reader of a report wants the actions and
-the states they reached, in order, plus a statement of how the path ends — and
-a replay wants the index at which a lasso's cycle begins, or the state index a
-stutter repeats.
+initial state, whose middle entries are transitions — actions, and ``oneof``
+branches, which the checker records as links of their own — and whose last
+entry may be a stutter that names no action at all. A reader of a report wants
+the transitions and the states they reached, in order, plus a statement of how
+the path ends — and a replay wants the index at which a lasso's cycle begins,
+or the state index a stutter repeats.
 
 The tests are parametrized over the captured fixtures rather than over
 handwritten link lists, so they pin the checker's real format. Two of them are
@@ -29,7 +30,7 @@ from fizzbee_spike import captured_graph
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-CAPTURED = ("safety-failure", "lasso", "lasso-prefix", "stutter", "deadlock")
+CAPTURED = ("safety-failure", "lasso", "lasso-prefix", "oneof", "stutter", "deadlock")
 """The classes whose error graph a trace can be normalized from.
 
 Truncation and parse-error runs write no graph, or a graph that does not
@@ -40,7 +41,10 @@ describe a counterexample.
 def _steps_of(
     links: cabc.Sequence[cabc.Mapping[str, typ.Any]],
 ) -> list[tuple[str, dict[str, typ.Any]]]:
-    """Return the actions and reached states a link list records.
+    """Return the transitions and reached states a link list records.
+
+    A transition is an action link or a ``oneof`` branch link; the only link
+    after the first that is neither is the stutter, which marks the ending.
 
     Parameters
     ----------
@@ -50,12 +54,12 @@ def _steps_of(
     Returns
     -------
     list[tuple[str, dict[str, Any]]]
-        One pair per link whose type is an action, in order.
+        One pair per transition link, in order.
     """
     return [
         (str(link["Name"]), dict(link["Node"]["state"]))
-        for link in links
-        if link.get("Type") == "action"
+        for link in links[1:]
+        if link.get("Name") != "stutter"
     ]
 
 
@@ -96,6 +100,7 @@ def test_normalize_trace_marks_the_ending(output_class: str) -> None:
         "safety-failure": trace.Ending.FINITE,
         "lasso": trace.Ending.LASSO,
         "lasso-prefix": trace.Ending.LASSO,
+        "oneof": trace.Ending.LASSO,
         "stutter": trace.Ending.STUTTER,
         "deadlock": trace.Ending.FINITE,
     }[output_class]
@@ -171,6 +176,28 @@ def test_the_stutter_link_is_not_an_action() -> None:
     assert "stutter" not in {step.action for step in normalized.steps}, (
         "no step is named for the ending"
     )
+
+
+def test_a_oneof_branch_is_a_step() -> None:
+    """A ``oneof`` link moves the state, so it is a step rather than an ending.
+
+    The checker gives a branch link an empty ``Type``, the same as the initial
+    link and the stutter. Classifying by ``Type`` alone therefore rejected this
+    trace outright; classifying by ``Type`` and name keeps the branch, so a
+    replay can reproduce the choice a counterexample made.
+    """
+    from modelcheck import trace
+
+    normalized = trace.normalize_trace(captured_graph("oneof"))
+    branches = [
+        step.action for step in normalized.steps if step.action.startswith("Any:")
+    ]
+
+    assert branches, "the captured trace records the branch each oneof took"
+    assert len(normalized.states) == len(normalized.steps) + 1, (
+        "one state per transition, plus the initial one"
+    )
+    assert normalized.ending is trace.Ending.LASSO, "the branch cycle is a lasso"
 
 
 def test_normalize_trace_rejects_an_empty_graph() -> None:

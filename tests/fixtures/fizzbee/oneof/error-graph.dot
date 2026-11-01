@@ -1,0 +1,35 @@
+digraph G {
+    "0" [label="yield
+Actions: 0, Forks: 0
+State: {\"b\":0,\"g\":0,\"side\":\"none\"}
+", color="black" penwidth="2" ];
+    "1" [label="Gate
+Actions: 1, Forks: 1
+State: {\"b\":0,\"g\":1,\"side\":\"none\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "0" -> "1" [label="1: Gate", color="forestgreen" penwidth="1"];
+    "2" [label="yield
+Actions: 1, Forks: 2
+State: {\"b\":0,\"g\":1,\"side\":\"left\"}
+", color="black" penwidth="2" ];
+    "1" -> "2" [label="2: Any:side=\"left\"", color="forestgreen" penwidth="1"];
+    "3" [label="Gate
+Actions: 2, Forks: 3
+State: {\"b\":0,\"g\":0,\"side\":\"left\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "2" -> "3" [label="3: Gate", color="forestgreen" penwidth="1"];
+    "4" [label="yield
+Actions: 2, Forks: 4
+State: {\"b\":0,\"g\":0,\"side\":\"left\"}
+", color="black" penwidth="2" ];
+    "3" -> "4" [label="4: Any:side=\"left\"", color="forestgreen" penwidth="1"];
+    "5" [label="Gate
+Actions: 3, Forks: 5
+State: {\"b\":0,\"g\":1,\"side\":\"left\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+    "4" -> "5" [label="5: Gate", color="forestgreen" penwidth="1"];
+    "5" -> "2" [label="6: Any:side=\"left\"", color="forestgreen" penwidth="1"];
+}
