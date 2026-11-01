@@ -1,0 +1,56 @@
+name: W1 model check
+
+# The full matrix explores both halves of the W1 model to exhaustion: roughly
+# 66,000 states for the coupling half and 15,000 for the transaction half.
+# `make model-check` passes `--fixpoint`, so each configuration that should
+# pass also runs at twice its action bound; that doubles those rows, to about
+# five minutes for the coupling half and one minute for the transaction half on
+# the development host. The total is still well inside the plan's nightly
+# budget and well outside what every pull request should pay, so it runs
+# nightly and on demand. `.github/workflows/model-fidelity.yml` is the
+# pull-request half of the same obligation.
+
+on:
+  schedule:
+    # Off the hour so the estate's nightly jobs do not all start together; the
+    # 03:05-09:05 UTC band is occupied by the mutation-testing workflows.
+    - cron: "17 4 * * *" # Daily, 04:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Serialize runs per ref so a dispatch during a scheduled run queues rather
+# than racing for the same pinned checker cache.
+concurrency:
+  group: model-check-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    name: Run the W1 model matrix
+    runs-on: ubuntu-latest
+    # The plan's tolerance for a nightly run is 60 minutes. A run that needs
+    # more than that is a bounds regression, not a slow machine.
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+
+      # `make model-check` installs the pinned FizzBee release, runs both
+      # matrices into `.model-check/`, then judges the artefacts with the
+      # `fizzbee`-marked tests. The matrix is the whole of the cost; the
+      # judgement is what turns it into a pass or fail.
+      - name: Check both models
+        run: make model-check

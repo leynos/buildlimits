@@ -522,6 +522,8 @@ ignore_names = [
     "test_*",
     "pytestmark",
     "pytest_plugins",
+    # pytest calls this hook by name during collection; no test names it.
+    "pytest_collection_modifyitems",
     "teardown",
     "descriptor_leak_guard",
     # Vulture cannot resolve quoted cast types imported only for type checks.
@@ -584,11 +586,14 @@ pytest_add_cli_args_test_selection = ["tests/"]
 # Tests automatically killed after seconds elapsed
 timeout = 30
 # Module doctests are part of the contract, so collection covers the package
-# as well as the test tree.
-testpaths = ["tests", "buildlimits"]
+# as well as the test tree. ``modelcheck`` is a top-level package outside the
+# wheel (ADR 006), so it is collected here too.
+testpaths = ["tests", "buildlimits", "modelcheck"]
 # ``descriptor_guard`` is a plugin, not a conftest fixture, so its autouse leak
 # guard also covers the package's doctests (see tests/descriptor_guard.py).
-pythonpath = ["tests"]
+# The repository root is on the path because ``modelcheck`` is not installed:
+# only ``buildlimits`` is, through the editable install.
+pythonpath = ["tests", "."]
 addopts = ["--doctest-modules", "-p", "descriptor_guard"]
 # A descriptor-owning object that is dropped unclosed is a test defect, not
 # noise: the collector closes it during some later test, whose descriptor
@@ -601,6 +606,7 @@ filterwarnings = [
 markers = [
     "sccache_host_check: requires opt-in, Linux, and a supported sccache",
     "systemd_user: needs a running systemd user manager and busctl",
+    "fizzbee: runs the pinned FizzBee checker; opt in with BUILD_LIMITS_MODEL_CHECK=1",
 ]
 
 [tool.uv]
@@ -1503,3 +1509,34 @@ members = [
     "buildlimits/outcome_attribution.py::_failure_reason",
 ]
 reason = "The matched subdag is the shared reading-failure gate: attribute asks _failure_reason to classify the window before it reads counters, so the second call site is the delegation itself rather than a copy of the rule. The identical doctest preambles construct the same empty statistics value the two examples both start from."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_fizzbee_spike.py", "tests/test_fizzbee_graphs.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/modelcheck_cases.py", "tests/test_group_drain_metrics.py", "buildlimits/supervisor_wiring.py", "modelcheck/expectations.py", "tests/test_cache_recovery_telemetry.py", "tests/test_recovery_roots_deadline.py", "buildlimits/group_recovery.py", "modelcheck/report.py", "tests/differential_trace_test_helpers.py", "tests/modelcheck_doubles.py"]
+reason = "Matching import lists: each module names the collaborators, protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies. The family spans production, package and test-support modules, so no single helper could hold it."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/modelcheck_cases.py", "modelcheck/expectations.py"]
+reason = "Matching import lists: each module names the domain symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_modelcheck_expectations.py", "tests/test_modelcheck_report.py"]
+reason = "Matching import lists: each module names the case builders it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_modelcheck_expectations.py::test_the_truth_table_classifies_every_row", "tests/test_modelcheck_expectations.py::test_judge_returns_the_classified_verdict"]
+reason = "The parametrized row test states one row's full judgement, and the sweep states that every row is classified and every verdict reached; both judge through _judge_row, so only their docstrings and assertions repeat, and merging them would leave T2 with one test where the plan requires a row test and a non-vacuity sweep."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/modelcheck_cases.py::result_of", "tests/modelcheck_cases.py::trace"]
+reason = "Two unrelated builders share only the numpy Returns section and the deferred-import line the test-support module requires; extracting a helper from them would invent a shape neither has."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/fizzbee_spike.py",
+    "tests/test_modelcheck_fizzbee_process.py",
+]
+reason = "Both helpers create a scratch directory before writing into it, and the match is that one stdlib call; a helper around Path.mkdir would name the stdlib rather than a shared behaviour, and the two functions have nothing else in common. The detector reports the fragment unnamed, so the entry names the files."

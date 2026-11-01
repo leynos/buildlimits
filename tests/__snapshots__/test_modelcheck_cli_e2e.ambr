@@ -1,0 +1,32 @@
+# serializer version: 1
+# name: test_the_json_record_names_every_expectation
+  list([
+    tuple(
+      'head',
+      'S1',
+      'holds',
+      True,
+      list([
+        'F1',
+      ]),
+    ),
+    tuple(
+      'head',
+      'BEventually',
+      'holds',
+      True,
+      list([
+        'F1',
+      ]),
+    ),
+    tuple(
+      'incident-1',
+      'BEventually',
+      'counterexample as expected',
+      True,
+      list([
+        'F1',
+      ]),
+    ),
+  ])
+# ---

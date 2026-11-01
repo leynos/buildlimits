@@ -1,0 +1,380 @@
+---
+# W1's coupling half: per-request admission, the queue, token accounting and
+# the guard that keeps a cache stop from racing cached work. The transaction
+# half lives in `models/admission/transaction/transaction.fizz`; the split is
+# H2's third option, recorded in the ExecPlan after the unsplit model outgrew
+# the memory tolerance.
+#
+# Read `docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md` for the
+# fairness table (F1-F7), the properties and the action-to-code mapping.
+#
+# The transaction appears here only as the single switch `stop_taken`, because
+# every coupling property reads that one fact about it: S1 asks whether a stop
+# was taken while cached work moved. The phase machine, the roots reading, the
+# grace deadline and the timers are the transaction model's subject, and
+# holding them here as well is what made the unsplit graph too large.
+#
+# The accounting probe is likewise coarse. A retained token is released once
+# no cached work moves, which is the condition the real `server_activity`
+# observation needs; the retry schedule, the stopped-populated service state
+# and the faulted-manager probe belong to the transaction model. L1 is not
+# asserted here, so this model does not claim to show that the release always
+# happens; it claims only that the tokens it does release are conserved.
+#
+# The one tracked request is kept because W2 judges its liveness and the queue
+# is the state it lives in. No W1 property reads its position, which is why the
+# coupling model is still small enough to check.
+#
+# A nondeterministic branch inside one fair action does not guarantee progress,
+# so the progress this model assumes is carried by separate fair actions: one
+# per leader class, and one tick.
+options:
+  max_actions: 80
+  max_concurrent_actions: 1
+liveness: "strict"
+deadlock_detection: true
+---
+
+# The bounds are the W1 environment, not tunable facts. Their job is to make
+# every unhelpful environment finite so that a failure names the model rather
+# than an adversary with unbounded resources.
+CAPACITY = 3
+HELD_BY_OTHERS = 0
+WAITING_LIMIT = 2
+CANCEL_LIMIT = 1
+ABNORMAL_LIMIT = 2
+MANAGER_LIMITS = 1
+
+# The seeded faults. A configuration overrides one and every report names the
+# configuration it ran. `CACHED_GUARD` is the guard against moving cached work;
+# `MANAGER_GUARD` is the guard against an unreadable manager, which RFC 0001's
+# S1 pairs with it at the moment the stop is issued.
+CACHED_GUARD = True
+MANAGER_GUARD = True
+
+action Init:
+  # Two tokens are free and one is retained by the initial starvation, which
+  # is the state an incident begins in.
+  free = CAPACITY - 1 - HELD_BY_OTHERS
+  held_by_others = HELD_BY_OTHERS
+  server_drain = 1
+  running_cached = 0
+  running_uncached = 0
+  draining_clean = 0
+  draining_orphan = 0
+  draining_uncached = 0
+  q_cacheable = 0
+  q_uncached = 0
+  token_requested = False
+  # The one request whose liveness W2 will judge.
+  tracked_request = "none"
+  tracked_ahead = 0
+  tracked_cacheable = False
+  # The coarse transaction premise: a stop has been taken, and whether the
+  # manager was unreadable at that instant. The snapshot is taken once,
+  # because S1 is about the moment of issuance; a later fault is another event.
+  stop_taken = False
+  stop_manager_unreadable = False
+  # The refusal premise. A manager fault is the only source of a refusal, and
+  # L4a reads exactly that.
+  manager_faulted = False
+  manager_faults_used = 0
+  operator_used = False
+  refusals = 0
+  refusals_faulted = 0
+  # The bounded environment.
+  cancels_used = 0
+  abnormal_used = 0
+
+# ---------------------------------------------------------------------------
+# Admission: submissions, arrivals and cancellations.
+# ---------------------------------------------------------------------------
+
+atomic action SubmitCacheable:  # maps: buildlimits.admission.Admission.submit
+  # maps: buildlimits.effects.NotifyQueued
+  # maps: buildlimits.effects.RequestToken
+  # Submissions are never forced (F7), so the environment may stop submitting
+  # but may not let the queue grow past what a W1 incident can hold.
+  require q_cacheable + q_uncached < WAITING_LIMIT
+  if tracked_request == "none":
+    tracked_request = "waiting"
+    tracked_ahead = q_cacheable + q_uncached
+    tracked_cacheable = True
+  q_cacheable = q_cacheable + 1
+  # `submit` calls `_demand`, which requests a token whenever the queue is
+  # non-empty and none is outstanding.
+  token_requested = True
+
+atomic action SubmitUncached:  # maps: buildlimits.admission.Admission.submit
+  # maps: buildlimits.effects.NotifyQueued
+  # maps: buildlimits.effects.RequestToken
+  require q_cacheable + q_uncached < WAITING_LIMIT
+  if tracked_request == "none":
+    tracked_request = "waiting"
+    tracked_ahead = q_cacheable + q_uncached
+    tracked_cacheable = False
+  q_uncached = q_uncached + 1
+  token_requested = True
+
+atomic fair action TokenReturns:  # fairness: F5
+  # maps: buildlimits.admission.Admission.token_arrived
+  # maps: buildlimits.effects.ReturnToken
+  # The token's request was cancelled while it was in flight.
+  require token_requested and q_cacheable + q_uncached == 0
+  token_requested = False
+
+atomic fair action TokenArrivesCacheable:  # fairness: F5
+  # maps: buildlimits.admission.Admission.token_arrived
+  # maps: buildlimits.effects.Launch
+  # maps: buildlimits.effects.RequestToken
+  # The pool calls back exactly when the supervisor asked for a token and a
+  # token is free. Either class may be at the head unless the tracked request
+  # is, which is the one position the state records.
+  require (token_requested and free > 0 and q_cacheable > 0
+           and (tracked_request != "waiting"
+                or tracked_ahead > 0
+                or tracked_cacheable))
+  q_cacheable = q_cacheable - 1
+  free = free - 1
+  # Composition is decided at the arrival. A cacheable request composes cached
+  # only while no stop holds the cache; a stop that has been taken turns every
+  # later arrival uncached, which is the coupling S1 is about.
+  if not stop_taken:
+    running_cached = running_cached + 1
+  else:
+    running_uncached = running_uncached + 1
+  if tracked_request == "waiting" and tracked_ahead == 0:
+    tracked_request = "admitted"
+  elif tracked_request == "waiting":
+    tracked_ahead = tracked_ahead - 1
+  # `_demand` asks again if anything still waits.
+  token_requested = q_cacheable + q_uncached > 0
+
+atomic fair action TokenArrivesUncached:  # fairness: F5
+  # maps: buildlimits.admission.Admission.token_arrived
+  # maps: buildlimits.effects.Launch
+  # maps: buildlimits.effects.RequestToken
+  require (token_requested and free > 0 and q_uncached > 0
+           and (tracked_request != "waiting"
+                or tracked_ahead > 0
+                or not tracked_cacheable))
+  q_uncached = q_uncached - 1
+  free = free - 1
+  running_uncached = running_uncached + 1
+  if tracked_request == "waiting" and tracked_ahead == 0:
+    tracked_request = "admitted"
+  elif tracked_request == "waiting":
+    tracked_ahead = tracked_ahead - 1
+  token_requested = q_cacheable + q_uncached > 0
+
+atomic action CancelCacheable:  # maps: buildlimits.admission.Admission.cancel
+  # maps: buildlimits.effects.NotifyQueued
+  # The counts cannot say which same-class request is ahead of the tracked one,
+  # so the environment cancels an obstacle first; the choice cannot change any
+  # count, and no W1 property reads the tracked request's position.
+  require cancels_used < CANCEL_LIMIT
+  if (tracked_request == "waiting" and q_cacheable + q_uncached == 1
+      and tracked_cacheable):
+    q_cacheable = q_cacheable - 1
+    tracked_request = "cancelled"
+    cancels_used = cancels_used + 1
+  else:
+    require (q_cacheable > 0
+             and (tracked_request != "waiting"
+                  or not tracked_cacheable
+                  or q_cacheable > 1))
+    q_cacheable = q_cacheable - 1
+    cancels_used = cancels_used + 1
+    if tracked_request == "waiting" and tracked_ahead > 0:
+      tracked_ahead = tracked_ahead - 1
+
+atomic action CancelUncached:  # maps: buildlimits.admission.Admission.cancel
+  # maps: buildlimits.effects.NotifyQueued
+  require cancels_used < CANCEL_LIMIT
+  if (tracked_request == "waiting" and q_cacheable + q_uncached == 1
+      and not tracked_cacheable):
+    q_uncached = q_uncached - 1
+    tracked_request = "cancelled"
+    cancels_used = cancels_used + 1
+  else:
+    require (q_uncached > 0
+             and (tracked_request != "waiting"
+                  or tracked_cacheable
+                  or q_uncached > 1))
+    q_uncached = q_uncached - 1
+    cancels_used = cancels_used + 1
+    if tracked_request == "waiting" and tracked_ahead > 0:
+      tracked_ahead = tracked_ahead - 1
+
+# ---------------------------------------------------------------------------
+# Groups: leaders exit and scopes empty.
+# ---------------------------------------------------------------------------
+
+atomic fair action LeaderExitsCachedClean:  # fairness: F2
+  # maps: buildlimits.admission.Admission.leader_exited
+  # maps: buildlimits.effects.Terminate
+  require running_cached > 0
+  running_cached = running_cached - 1
+  draining_clean = draining_clean + 1
+
+atomic fair action LeaderExitsCachedSignalled:  # fairness: F2
+  # maps: buildlimits.admission.Admission.leader_exited
+  # maps: buildlimits.effects.Terminate
+  # A cancelled leader leaves a scope that may still be running server work,
+  # so its empty scope is retained rather than returned. This is the bounded
+  # abnormal-ending environment: at most ABNORMAL_LIMIT such scopes exist.
+  require running_cached > 0 and abnormal_used < ABNORMAL_LIMIT
+  running_cached = running_cached - 1
+  draining_orphan = draining_orphan + 1
+  abnormal_used = abnormal_used + 1
+
+atomic fair action LeaderExitsUncached:  # fairness: F2
+  # maps: buildlimits.admission.Admission.leader_exited
+  # maps: buildlimits.effects.Terminate
+  require running_uncached > 0
+  running_uncached = running_uncached - 1
+  draining_uncached = draining_uncached + 1
+
+# ---------------------------------------------------------------------------
+# The supervisor's composite poll, F1. It empties one draining scope and then
+# probes the retained work, in the order D10 fixes for `Groups.advance` and
+# `ServerWatch.drained_tokens`. The recovery step is absent: it is the
+# transaction model's subject.
+# ---------------------------------------------------------------------------
+
+atomic fair action SupervisorTick:  # fairness: F1
+  # maps: buildlimits.admission.Admission.group_emptied
+  # maps: buildlimits.admission.Admission.server_activity
+  # maps: buildlimits.effects.NotifyFinished
+  # maps: buildlimits.effects.ReturnToken
+
+  # 1. `group_emptied` for one group whose scope has emptied. A clean cached
+  #    or an uncached scope returns its token; a cached scope that may orphan
+  #    server work keeps it and adds a retained drain.
+  if draining_clean > 0:
+    draining_clean = draining_clean - 1
+    free = free + 1
+  elif draining_orphan > 0:
+    draining_orphan = draining_orphan - 1
+    server_drain = server_drain + 1
+  elif draining_uncached > 0:
+    draining_uncached = draining_uncached - 1
+    free = free + 1
+
+  # 2. `ServerWatch.drained_tokens`: once no cached work moves, the retained
+  #    tokens cover nothing and are returned. The transaction model supplies
+  #    the stopped-service and faulted-manager cases that make this probe
+  #    partial; here the conservative premise is that a release happens only
+  #    when there is nothing left for it to cover.
+  if (server_drain > 0
+      and running_cached == 0
+      and draining_clean == 0
+      and draining_orphan == 0):
+    free = free + server_drain
+    server_drain = 0
+
+# ---------------------------------------------------------------------------
+# The coupling premise: the stop, the operator and the manager fault.
+# ---------------------------------------------------------------------------
+
+atomic fair action StopTaken:  # fairness: F4
+  # maps: buildlimits.cache_recovery.accounting
+  # Taking a stop is the moment S1 is about. The guarded stop requires that
+  # no cached work is moving and that the manager is readable; each seeded
+  # fault removes one condition, which lets the stop race cached work or take
+  # a stop it cannot supervise.
+  require (not stop_taken
+           and (not CACHED_GUARD
+                or (running_cached == 0
+                    and draining_clean == 0
+                    and draining_orphan == 0))
+           and (not MANAGER_GUARD or not manager_faulted))
+  stop_taken = True
+  if not MANAGER_GUARD and manager_faulted:
+    stop_manager_unreadable = True
+
+atomic action OperatorRequest:  # maps: buildlimits.effects.Refuse
+  # A manual transaction is not modelled here; only the refusal is, because
+  # L4a reads it. A faulted manager is the only source of a refusal.
+  require not operator_used
+  operator_used = True
+  if manager_faulted:
+    refusals = refusals + 1
+    refusals_faulted = refusals_faulted + 1
+
+atomic action ManagerFaults:
+  # A manager fault is only observable through the cache, so it is offered
+  # only while a retained token waits, and it is bounded.
+  require (server_drain > 0
+           and not manager_faulted
+           and manager_faults_used < MANAGER_LIMITS)
+  manager_faulted = True
+  manager_faults_used = manager_faults_used + 1
+
+atomic fair action ManagerRecovers:  # fairness: F4
+  # The fault is finite; the next probe re-observes whatever is left.
+  require manager_faulted
+  manager_faulted = False
+
+# ---------------------------------------------------------------------------
+# The coupling properties. S1, S2 and L4a are all safety properties.
+# ---------------------------------------------------------------------------
+
+always assertion S1:
+  # A stop is never issued while cached work is moving or the manager is
+  # unreadable. A stop is what makes the cache unavailable, and the guarded
+  # stop guarantees both conditions at that moment, so a taken stop with
+  # either present is exactly the violation. The manager condition is a
+  # snapshot of the issuance instant: a fault after the stop is a different
+  # event and does not violate S1. It is a finite counterexample: the faulty
+  # stop reaches that state after finitely many steps.
+  return not (stop_taken
+              and (stop_manager_unreadable
+                   or running_cached > 0
+                   or draining_clean > 0
+                   or draining_orphan > 0))
+
+always assertion S2:
+  # Tokens sum to capacity, every count is a count, and a non-empty queue
+  # always has a token requested for it.
+  return (free + held_by_others
+          + running_cached + running_uncached
+          + draining_clean + draining_orphan + draining_uncached
+          + server_drain == CAPACITY
+          and free >= 0
+          and running_cached >= 0
+          and running_uncached >= 0
+          and draining_clean >= 0
+          and draining_orphan >= 0
+          and draining_uncached >= 0
+          and server_drain >= 0
+          and q_cacheable >= 0
+          and q_uncached >= 0
+          and (q_cacheable + q_uncached == 0 or token_requested))
+
+always assertion L4a:
+  # A refusal is only ever an admission refusal of a faulted manager.
+  return refusals == refusals_faulted
+
+# ---------------------------------------------------------------------------
+# Probes. They are not properties; they are the evidence that the passing
+# configuration explored the behaviour the properties are about.
+# ---------------------------------------------------------------------------
+
+exists assertion GroupRunning:
+  return running_cached + running_uncached > 0
+
+exists assertion GroupDraining:
+  return draining_clean + draining_orphan + draining_uncached > 0
+
+exists assertion CachedAndUncachedRunTogether:
+  return running_cached > 0 and running_uncached > 0
+
+exists assertion StopTakenProbe:
+  # S1 is about a taken stop; a pass where no stop was ever taken would be
+  # vacuous.
+  return stop_taken
+
+exists assertion RefusalTaken:
+  # L4a is about refusals; a pass where none was offered would be vacuous.
+  return refusals > 0

@@ -41,13 +41,13 @@ behaviour and passes on the fixed behaviour. Its outcome is the H1 verdict,
 which decides at G1 whether to proceed, change tool or stop. See RFC 0001 §§1-3
 and H1.
 
-- [ ] 1.1.1. Identify the pre-fix revisions of incidents 1, 2 and 4.
+- [x] 1.1.1. Identify the pre-fix revisions of incidents 1, 2 and 4.
   - See RFC 0001 open question 8.
   - Search the dev-env-rocky history that predates the import; incident 3's
     pre-fix revision is `eba08ad` in this repository.
   - Success: each revision is named by commit, or recorded as unrecoverable
     with the transcription basis stated, in the RFC's open-questions record.
-- [ ] 1.1.2. Settle FizzBee's language and checker behaviour with a toy model.
+- [x] 1.1.2. Settle FizzBee's language and checker behaviour with a toy model.
   - See RFC 0001 open questions 1 to 3 and 6.
   - Establish state records and collections, per-instance fairness, the
     liveness modes (including the meaning of `liveness: "strict"`), how lasso
@@ -56,14 +56,15 @@ and H1.
   - Record workarounds, including the interleaving points in the RFC's sketch.
   - Success: each question is answered with a runnable example, or marked
     unanswerable with the consequence for W3.
-- [ ] 1.1.3. Settle FizzBee's packaging and licence for a pinned release.
+- [x] 1.1.3. Settle FizzBee's packaging and licence for a pinned release.
   - See RFC 0001 open questions 4 and 5.
   - Record the Linux release's runtime dependencies, checksum or signature, and
     the licence of the candidate release.
   - Success: a candidate version, checksum and licence are recorded, or the
     absence of any is recorded as a G1 input.
-- [ ] 1.1.4. Write the minimal model with the busy queue under
-      `models/admission/`.
+- [x] 1.1.4. Write the minimal model with the busy queue under
+      `models/admission/`, split into a coupling half and a transaction half
+      once the unsplit model breached the memory and runtime tolerances.
   - Requires 1.1.2.
   - Cover the pool, cacheable and uncached requests, one tracked request,
     groups by lifecycle and composition, the cache hold, the drain probe, the

@@ -47,6 +47,9 @@ investigating a specific failure; reconcile with `make all` before committing.
 | `make test`              | pytest under xdist over `tests/` and the package's doctests                                       |
 | `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
 | `make test-sccache-host` | Opt-in real-binary and outcome latency checks; see §11.4                                          |
+| `make fizzbee`           | Installs the pinned FizzBee checker into the shared XDG cache; a second run is a no-op            |
+| `make model-fidelity`    | Both drift reports and `tests/test_model_drift.py`; cheap, and run on every pull request          |
+| `make model-check`       | Both W1 matrices at the plan's bounds, then the `fizzbee`-marked judgement; nightly only          |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
 
 _Table 1: Make targets and the gates behind them._
@@ -762,6 +765,12 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `outcome_shell_test_support.py`           | Pending statistics, fake server and writer ports for shell-loop tests                                                     |
 | `outcome_store_fixture_helpers.py`        | Single-row reader fixtures and torn UTF-8 tails for outcome-store tests                                                   |
 | `outcome_vocabulary_test_support.py`      | Shared outcome-token aliases for schema and metrics-sink contract tests                                                   |
+| `fizzbee_spike.py`                        | The scratch-directory `run_model` runner, output masking and error-graph readers                                          |
+| `fizzbee_expectations.py`                 | `Expectation`, `check` and `paired`: what one run or a pass/fail pair must show, enforced per test                        |
+| `modelcheck_cases.py`                     | One expectation, result, configuration and trace of each kind, named once for the domain tests                            |
+| `modelcheck_doubles.py`                   | `FakeChecker`, `Verbatim`, `Restated` and `FixedSource`: recorded checker output replayed through the real parser         |
+| `modelcheck_scenarios.py`                 | The model text, the `Matrix` one model-check scenario builds, and the readers its steps use                               |
+| `modelcheck_cli_cases.py`                 | The command lines and expected exit statuses the CLI tests share                                                          |
 
 _Table 4: Shared test helper modules._
 
@@ -809,6 +818,33 @@ The `outcome_store_helpers.py`, `outcome_store_fixture_helpers.py` and
 `outcome_vocabulary_test_support.py` modules are test-only APIs. Reuse them for
 cache-outcome store fixtures and token vocabularies; do not import them from
 production code.
+
+Tests marked `fizzbee` run the pinned model checker, so they are opt-in:
+`tests/conftest.py` skips them unless `BUILD_LIMITS_MODEL_CHECK=1`, and the
+skip reason names the variable. With the variable set, a missing binary is a
+failure rather than a skip, because an opted-in run that checked nothing must
+not report success. `make fizzbee` installs the binary; run the tests with
+`BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -m fizzbee`. `make test` never
+runs them and stays hermetic. Every test copies its spec into pytest's scratch
+directory first, so a run leaves `models/` untouched; `tests/fizzbee_spike.py`
+holds the shared runner, including the process-group kill on timeout.
+`tests/test_fizzbee_spike.py` asserts the language and checker behaviour RFC
+0001 records, `tests/test_fizzbee_graphs.py` pins the artefacts a run writes
+and the state counts the RFC quotes, and `tests/test_fizzbee_fixtures.py`
+re-runs every captured class and compares its standard output, exit status and
+error graph with `tests/fixtures/fizzbee/`, so a checker version bump that
+changes any of them fails there. The three modules are split this way because a
+single one outgrew the 400-line limit. `tests/test_fizzbee_opt_in.py` pins the
+opt-in itself: which values enable it, that a missing binary fails rather than
+skips, and that the marker is registered. `tests/fizzbee_expectations.py`
+states what a run must show — the `PASSED` line, the `FAILED` line for safety
+and deadlock failures, or the separate `FAILED: Liveness check failed` line —
+together with the counts it must explore and, where the question turns on it,
+the actions its counterexample must step through, in one `Expectation` value.
+Each test then reads as its property rather than as repeated boilerplate. A
+test that poses a fairness or interleaving question as a pass/fail pair calls
+`paired`, which runs both models in their own subdirectories and returns the
+failing run.
 
 ### 11.4. Host acceptance
 
@@ -904,6 +940,70 @@ session- or module-scoped fixture is set up before the baseline and torn down
 after the comparison, so its descriptors are outside the guard and must be
 closed by that fixture's own teardown.
 
+### 11.6. Model checking
+
+`modelcheck/` is a top-level package beside `buildlimits/` and outside the
+wheel (ADR 006). It drives the pinned FizzBee checker over the admission model
+and turns one run into a verdict. Run it through the module:
+
+```sh
+uv run python -m modelcheck check models/admission/coupling --fizz .tools/fizzbee/fizz
+uv run python -m modelcheck drift models/admission/coupling
+```
+
+The W1 model is split into a coupling half (`models/admission/coupling`,
+properties S1, S2 and L4a) and a transaction half
+(`models/admission/transaction`, properties S2, L1, L3 and L4b). S2 appears in
+both because each half restates the token accounting over its own state. One
+model per directory is a requirement, not tidiness: `source_text()`
+concatenates every `*.fizz` file in a directory, so two models side by side
+would be read as one.
+
+Each half omits the production paths the other transcribes and records them
+under `[exclusions]` with a reason, so no single directory's drift report
+proves coverage. `tests/test_model_drift.py` makes the union claim instead: it
+asserts that the halves' mappings together cover every in-scope inventory item,
+that W1's out-of-scope paths are among the agreed exclusions, and that every
+exclusion gives a reason. An exclusion cannot stand in for a mapping: a path
+excluded by both halves and mapped by neither is reported as a gap, so
+subtracting every exclusion from the inventory would hide exactly the loss the
+claim exists to find. Prefer that test to reading one report and assuming the
+rest is handled.
+
+`check` exits 0 when every configuration meets its expectations, 1 when one
+does not, and 2 when the tool itself failed; `--bounds` selects the routine or
+nightly declaration, `--only` narrows the matrix, `--json` writes the records,
+`--fixpoint` adds the doubled-bound comparison and `--save-traces` regenerates
+the reviewed trace files. An empty matrix, or a `--only` that matches nothing,
+is a usage error rather than a vacuously successful run.
+
+FizzBee truncates exploration at `max_actions` without printing a marker, so a
+run that exhausted its bound can still report a pass. `--fixpoint` is the
+documented defence: every configuration that should pass is run again at twice
+its bound, and the two state counts must be equal. `make model-check` passes
+it, so the nightly matrix enforces the comparison. The `min_states` floor in
+each half's `configurations.toml` is a second, cheaper check: it is set to half
+the measured count, so it catches a collapsed state space but does not turn a
+legitimate model change into a failure.
+
+The two obligations have different costs and run in different places.
+`make model-fidelity` runs both drift reports and the drift tests; it compares
+text with an import of the production package, so it costs seconds and runs on
+every pull request. `make model-check` explores both state spaces at the plan's
+bounds, writes `.model-check/<half>.json` and then judges those artefacts with
+the `fizzbee`-marked tests; it costs minutes and runs nightly. The nightly
+workflow is the only place the full matrix is expected to run, so a property
+that fails there is a bounds or model regression rather than a slow runner.
+
+The package is a hexagon: the pure modules hold the policy, `ports.py` names
+the collaborators, and `adapters/` are the only modules that touch a process, a
+file or `buildlimits`. `tests/test_modelcheck_layering.py` walks the pure
+modules' syntax trees so the boundary is checked rather than assumed. Tests
+marked `fizzbee` run the real checker and are skipped unless
+`BUILD_LIMITS_MODEL_CHECK=1`; the behavioural scenarios instead replay recorded
+output through the real parser, so a broken parser fails them without the
+binary.
+
 ## 12. Static-analysis exceptions
 
 Every exception is recorded in `pyproject.toml` with its reason; review the
@@ -930,6 +1030,18 @@ reason when the code it names changes.
   fragment in that file, so add one only when no name is available. The
   outcome-shell test support has one such unit exception because the detector
   reports its two fake-port close-log fragments without unit names.
+- **`modelcheck`.** The package needed no Skylos entry point and no Vulture
+  name, and `make dead-code` passes with the exceptions here unchanged.
+  `__main__.py` reaches `main` through its `__main__` guard and constructs the
+  adapters inside a function `main` calls, so the call graph has no edge Skylos
+  cannot follow; the two test-support modules are ordinary helpers whose every
+  name a test calls. Its Ruff findings were each local to one line, so they are
+  inline `# ruff: ignore[...]` suppressions with a reason rather than per-file
+  ignores. Of its six duplication allowances, three are import lists shared
+  with the modules named beside them, one is the pair of tests that must both
+  judge through `_judge_row`, one is two builders that share only the numpy
+  Returns section, and one is a single `Path.mkdir` call two unrelated helpers
+  share.
 
 ## 13. Repository automation
 
@@ -951,6 +1063,14 @@ composite actions.
 - `act-validation.yml` runs `make test WITH_ACT=1` to exercise the workflows
   locally under `act`.
 - `mutation-testing.yml` runs mutmut over `buildlimits/` daily at 09:30 UTC.
+- `model-check-nightly.yml` runs `make model-check` daily at 04:17 UTC and on
+  dispatch: both W1 state spaces at the plan's bounds, then the
+  `fizzbee`-marked judgement. Its `timeout-minutes: 60` is the nightly
+  tolerance, so a run that exceeds it is a bounds regression rather than a slow
+  machine.
+- `model-fidelity.yml` runs `make model-fidelity` on pull requests: the two
+  drift reports and the drift tests, which compare the models with the
+  production surface rather than exploring a state space.
 - `release.yml` builds the pure-Python wheel when a `v*.*.*` tag is pushed and
   attaches it to the release.
 
