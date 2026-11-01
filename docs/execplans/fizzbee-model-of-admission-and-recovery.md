@@ -639,6 +639,10 @@ explicitly.
     `oneof` choice as an untyped link named for the branch. The spike model
     `models/spike/liveness_oneof.fizz` pins the shape and
     `tests/fixtures/fizzbee/oneof/` captures it.
+  - The branch was rebased a second time, onto `origin/main` at `f7ef264`,
+    after the pull request's base advanced and GitHub reported it
+    `CONFLICTING`. The replay dropped the now-empty typo-regeneration commit
+    and renumbered the model-check ADR to 006; D34 records both.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -1788,6 +1792,37 @@ explicitly.
   - Superseded artefact: `models/admission/admission.fizz`, the unsplit model,
     is deleted. It had no configuration file and no target ran it, so keeping
     it would have left a second, unmeasured description of W1 in the tree.
+
+- **D34. The branch was rebased a second time, onto `origin/main` at
+  `f7ef264`.** _Recorded 2026-11-01._
+  - Decision: the 26-commit series above the exclusive boundary `9ea1ecc` was
+    replayed onto `f7ef264` with `--merge --no-fork-point --reapply-cherry-picks
+    --keep-empty --empty=stop` and `zdiff3`. Conflicts were resolved as unions,
+    never side picks: the `Makefile` `.PHONY` list keeps the target's
+    `test-sccache-host` and this branch's `model-check` and `model-fidelity`;
+    the `pyproject.toml` duplication allowances keep the target's and append
+    this branch's; `docs/contents.md` keeps ADRs 001–005 from the target plus
+    this branch's ADR 006; and both documentation tables keep every row from
+    both sides.
+  - Reason: the pull request's base advanced while the candidate was under
+    review, and GitHub reported the branch as `CONFLICTING`.
+  - Empty commit: `9569072` ("Refresh the generated typo configuration")
+    became empty because the target already carries the same regeneration and
+    `e16ed45` had already added the three branch-specific entries
+    (`tests/fixtures/fizzbee/`, `tests/fixtures/modelcheck/` and the checker's
+    quoted `Writen 1 node files and 1 link files` line). It was skipped after
+    checking those entries are present in `typos.toml` and `typos.local.toml`;
+    the "lift it into a base pull request" item this plan carried is therefore
+    closed rather than outstanding.
+  - Renumbering: this branch's model-check ADR moved from 005 to 006 in
+    `e16ed45`, because the target now owns `docs/adr-005-cache-outcome-recording.md`.
+    See D29 for the earlier 004-to-005 step.
+  - Skylos entry point: the target's `pyproject.toml` block for
+    `JournalSink.emit_trace`, and its new `_OtelSpan.finish` entry, are kept
+    verbatim; see D30.
+  - Evidence: `git range-diff 9ea1ecc..bb39694 f7ef264..2d390bb`; every changed
+    hunk is a target-side context shift or an intended union, and the only
+    missing commit is the empty `9569072`.
 
 ## Outcomes & retrospective
 
