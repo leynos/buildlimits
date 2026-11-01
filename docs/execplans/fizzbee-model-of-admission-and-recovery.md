@@ -534,7 +534,11 @@ explicitly.
     files with its E1 to E4 evidence and its six gates green (D32). The
     25-file stop is unchanged for every later milestone.
 
-- [ ] EP-M4: minimal model with the busy queue (W1).
+- [x] EP-M4: minimal model with the busy queue (W1). Delivered 2026-11-01 by
+      the split recorded below, with acceptance evidence EP-M4-E1 to EP-M4-E6
+      met: both artefacts report `holds` for their properties and
+      `counterexample as expected` for all five mutants, `make model-fidelity`
+      exits 0, and the commit left `git status --porcelain` empty.
   - [x] (2026-10-31) **DV1 baseline audit completed** and recorded in RFC 0001
     §RC4. `git diff 7445bf0 06461ae -- buildlimits/` classified every hunk in
     the eleven update-policy modules: none changes a W1-scope behaviour, so the
