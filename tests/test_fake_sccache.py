@@ -19,7 +19,7 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from harness_processes import kill_and_reap, start_bound
+from fake_cache_processes import kill_and_reap, start_bound
 
 FIXTURE = Path(__file__).parent / "fixtures" / "fake_sccache.py"
 

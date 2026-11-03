@@ -23,7 +23,8 @@ import time
 import typing as typ
 from pathlib import Path
 
-from harness_processes import kill_and_reap, pid_alive, start_bound
+from fake_cache_processes import kill_and_reap, start_bound
+from harness_processes import pid_alive
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
