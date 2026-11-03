@@ -6,6 +6,13 @@ Proposed. The owner approved this decision set as part of the cache-hit
 prediction ExecPlan on 2026-10-23. Accept this ADR when EP-M8 merges, after the
 W1 evidence and the H2 child-sighting implementation are reviewed.
 
+Historical-status note (2026-11-03): EP-M8 merged in PR #24 on 2026-10-31, so
+the stated implementation condition has been met. Quiet-host latency acceptance
+and the owner's G1 decision remain outstanding; neither is recorded here as
+complete. The proposed backend-neutral evolution is documented separately in
+[ADR 007](adr-007-cache-outcome-observation-port.md), which does not replace
+this W1 decision.
+
 ## Date
 
 2026-10-24.

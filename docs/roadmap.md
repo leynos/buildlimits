@@ -13,10 +13,13 @@ subsections of the relevant RFC's proposed design. Hypothesis, workstream, gate
 and open-question references belong to the RFC named in the phase; use an
 explicit qualifier such as "RFC 0002 G1" where both RFCs use the same
 identifier. RFC 0001's phase remains model-only and does not change runtime
-behaviour or interfaces. Phase 3 is limited to RFC 0002 W1 and its gated W2: it
-adds no prediction display, hit-first admission, shadow mode or direct
-composition. The developer's guide remains the source of truth for the code the
-model transcribes.
+behaviour or interfaces. Phase 3 retains W1 as completed implementation
+history, its remaining acceptance evidence, and gated W2. The observation-port
+extraction and kache trials are separate proposed workstreams under ADR 007;
+neither releases G1 or authorizes prediction, hit-first admission, shadow mode
+or direct composition. Cache execution support for kache remains independent of
+its future outcome observer. The developer's guide remains the source of truth
+for the code the model transcribes.
 
 ## 1. Model admission and recovery under explicit fairness
 
@@ -281,27 +284,35 @@ has produced evidence. See RFC 0001 open questions 9, 11 and 12.
 
 ## 3. Record and evaluate cache outcomes
 
-Idea: if buildlimits can attribute real sccache outcomes at quiet points and
-measure H2 child sightings where H1 solo-window coverage falls below its 5%
-floor, the resulting local records can support an offline evaluation of
-prediction without changing admission. See RFC 0002 §§1-2 and
-[ADR 005](adr-005-cache-outcome-recording.md).
+Idea: the merged sccache W1 recorder supplies bounded local observations for
+the RFC's gated prediction evaluation without changing admission. Its
+quiet-host latency acceptance and G1 remain open. RFC 0002's current
+acquisition rules are sccache-specific; ADR 007 proposes a shared evidence
+boundary and staged adapters. See RFC 0002 §§1-2,
+[ADR 005](adr-005-cache-outcome-recording.md), and
+[ADR 007](adr-007-cache-outcome-observation-port.md).
 
 ### 3.1. Record outcomes and decide G1
 
-This step delivers RFC 0002 W1, including the real-binary feasibility check,
-bounded local recording, the H3 replay and H2 child sightings. Its outcome is
-the H1-H3 evidence and the owner's RFC 0002 G1 decision.
+W1 is implemented and merged in PR #24. This step retains the acceptance
+record: quiet-host latency evidence remains outstanding, and G1 remains an
+owner decision. Neither the merge nor the proposed observation architecture
+closes those items.
 
-- [ ] 3.1.1. Complete EP-M1 to EP-M8 of the cache-hit prediction ExecPlan.
-  - Requires the RFC 0002 W1 acceptance recorded in [RFC
-    0002](rfcs/0002-cache-hit-prediction.md).
-  - Fix the thresholds and H2 classifier in ADR 005 before the live statistics
-    fixture or outcome records are read.
-  - Success: the read-only live fixture is redacted; labels, H3 evidence and
-    child sightings are bounded and local; the replay reports H2 and H3
-    against the fixed thresholds, while the scripted and controlled windows
-    supply the H1 verdict; G0 and all material coverage limits are stated.
+- [x] 3.1.1. Complete EP-M1 to EP-M8 of the cache-hit prediction ExecPlan.
+  - Completed implementation merged in PR #24; see its historical evidence in
+    the ExecPlan and [ADR 005](adr-005-cache-outcome-recording.md).
+  - The implementation milestone is complete; outstanding acceptance is
+    tracked separately in 3.1.2.
+- [ ] 3.1.2. Complete the remaining W1 quiet-host acceptance and owner G1.
+
+  - Requires the merged EP-M1 to EP-M8 implementation and its recorded
+    sequential-gate evidence.
+  - Run the outstanding quiet-host latency acceptance against the ExecPlan
+    bounds, then present H1-H3 results, coverage and sample limitations to the
+    owner. The observation-port proposal does not substitute for this evidence.
+  - Success: the quiet-host result is recorded and the owner explicitly decides
+    whether EP-M9 proceeds, narrows or stops. Until then EP-M9 remains gated.
 
 ### 3.2. Evaluate prediction offline after G1
 
@@ -310,8 +321,55 @@ proceed. It runs only against stored records and evaluates H4 and H5; its
 outcome informs the separate RFC 0002 G2 decision.
 
 - [ ] 3.2.1. Complete EP-M9 of the cache-hit prediction ExecPlan.
-  - Requires RFC 0002 G1 to release W2.
+  - Requires an explicit RFC 0002 G1 decision to proceed or narrow.
   - See RFC 0002 §2 and H4-H5. Do not run this step on the live cache.
   - Success: the replay reports the registry base-rate comparison, digest
     stability and each verdict against ADR 005's fixed minimums and
-    thresholds; evidence and limitations are recorded for G2.
+    thresholds; evidence and limitations are recorded for G2. The port proposal
+    does not waive G1 or change EP-M9's scope.
+
+### 3.3. Extract the shared observation boundary for sccache
+
+This proposed workstream adapts merged W1 behind ADR 007's typed
+`OutcomeObservationPort`. It preserves the existing recorder and deployed
+records while establishing a normalized evidence seam. It can proceed
+independently of G1; it does not start EP-M9 or decide whether prediction is
+useful.
+
+- [ ] 3.3.1. Complete EP-O1 to EP-O3 in the cache-hit prediction ExecPlan.
+
+  - Requires review and acceptance of [ADR
+    007](adr-007-cache-outcome-observation-port.md).
+  - Keep implementation limited to the sccache extraction, its current output
+    compatibility, red-first differential tests and listed quality gates.
+  - Success: event sequences, attributed records, H2/H3 replay, status, metrics,
+    storage and admission behaviour match merged W1; the existing performance
+    bounds pass. G1 and quiet-host acceptance remain separately tracked.
+
+### 3.4. Validate kache outcome evidence during adoption trials
+
+This deferred workstream delivers EP-K1 (feasibility), EP-K2 (adapter trials)
+and EP-K3 (owner eligibility decision). It belongs to
+[buildlimits #30](https://github.com/leynos/buildlimits/issues/30) and
+[dev-env-rocky #339](https://github.com/leynos/dev-env-rocky/issues/339), or
+successor plans. It is independent of implementing or selecting the kache
+execution backend. Start only after the trial binaries and real user-manager
+setup are pinned, and the trial owner has preregistered kache's baseline,
+sample adequacy, attribution criteria, limits and stop rules before examining
+outcomes.
+
+- [ ] 3.4.1. Establish kache observer feasibility and implement the adapter in
+  the trial plan.
+
+  - Requires the ADR 007 feasibility checklist, privacy-safe fixtures, bounded
+    collection cost, schema/version compatibility and correlation evidence
+    under concurrent requests. A per-crate row or inferred session alone does
+    not identify one buildlimits admission.
+  - Run paired controlled-hit and controlled-miss trials, concurrent same-crate
+    and same-key attribution cases, and negative cases for ambiguous, delayed,
+    duplicate and unavailable outcomes. Use aggregate-only unknown evidence if
+    unique request correlation cannot be established; never fabricate labels.
+  - Validate against real kache binaries and a real user manager. Decide
+    explicitly whether the resulting evidence is fit for predictor evaluation;
+    coverage improvement alone is not accuracy evidence. Do not pool its
+    calibration with sccache or copy sccache thresholds.

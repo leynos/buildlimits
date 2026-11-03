@@ -15,6 +15,10 @@
 
 ## Summary
 
+The opening motivation and original-state analysis describe the 2026-10-18
+baseline. The proposed backend-neutral extension below records the merged W1
+state and the next architectural work.
+
 Nothing in buildlimits knows whether a compile was an sccache hit. A group is
 known only as composed with the managed cache or without it, so an operator
 cannot tell a queue of quick hits from a queue of long misses, and no proposal
@@ -32,6 +36,124 @@ gated on evidence from the one before:
 The analysis rejects any form of cheaper admission that lets a cached compile
 run without a full pool token. A mispredicted hit is a real compile inside the
 sccache server's control group, and nothing can detect it before it starts.
+
+## Backend-neutral observation extension (proposed 2026-11-03)
+
+The original analysis below describes sccache 0.14.0 acquisition, not a
+universal cache API. Its motivation, H1-H8 commitments and G1-G5 dependencies
+continue to apply to sccache.
+[PR #24](https://github.com/leynos/buildlimits/pull/24) merged W1 on
+2026-10-31. The [ExecPlan](../execplans/cache-hit-prediction.md) records EP-M6
+through EP-M8 complete, outstanding quiet-host latency acceptance, an
+unexecuted G1 and unstarted EP-M9. The original-state description below is
+retained as the rationale at acceptance, not a claim that recording is absent
+today. This proposed extension changes no runtime behaviour and releases no
+prediction gate.
+
+### Five separate responsibilities
+
+1. **Cache execution** selects and invokes the configured backend. Draft
+   [PR #43](https://github.com/leynos/buildlimits/pull/43) proposes
+   `CacheBackend` and the detached-work capability; these govern composition
+   and accounting, not whether outcomes can be observed.
+2. **Cache observation** acquires backend-specific evidence with verified
+   lifecycle, version and correlation semantics. sccache uses quiet-point
+   counter deltas and H2 child sightings; another backend need not.
+3. **Outcome normalization** validates a common qualified representation,
+   retaining uncertainty and backend provenance. It does not turn aggregate
+   counts into individual labels or reinterpret backend counter semantics.
+4. **Prediction** evaluates historical eligible outcomes against a fingerprint
+   available before admission. The evaluator is independent of observation
+   code; fingerprint strategies may remain backend-specific.
+5. **Scheduling policy** is a potential later admission-order decision. Neither
+   observation nor prediction can change token accounting, composition or
+   release. Ordering still requires its own fairness and model/replay gates.
+
+### Port, evidence and migration
+
+[ADR 007](../adr-007-cache-outcome-observation-port.md) specifies the proposed
+`OutcomeObservationPort` in `buildlimits/outcome_ports.py`, its immutable input
+and result types, module boundaries, failure behaviour and compatibility rules.
+It is the normative source for this extension's evidence contract. The port's
+`descriptor`, `advance`, `poll` and `close` operations serve only the existing
+supervisor lifecycle and evidence consumers; it is not a general cache API.
+
+Each result records backend/version and evidence-schema provenance, optional
+request correlation, an outcome and a separate evidence quality, bounded reason
+codes, timing basis, observation boundaries and generation where available.
+Invocation evidence, aggregate windows and unavailable observations are
+distinct variants. `authoritative`, `attributed`, `inferred`, `ambiguous`,
+`unavailable` and `insufficient` must remain distinguishable. Hit, miss,
+uncacheable, bypass, error and unknown are not interchangeable. Direct
+compilation or fallback cannot count as a cache miss. Unknown evidence cannot
+become training truth.
+
+The initial `SccacheOutcomeObserver` wraps W1's existing reducer and driver; it
+does not rewrite them. `StatisticsPort` and `ServerProcessPort` remain internal
+sccache seams. Counter parsing, parser refusal semantics, supported versions,
+quiet-point checks, generation validation, solo/unanimous attribution and child
+sightings remain inside this adapter, including their pure functions. The store
+port, bounded writer, retention, evidence validation and generic report/replay
+plumbing remain shared. H2/H3-specific evaluation retains its sccache profile
+rather than being misrepresented as generic cache evaluation.
+
+The immediate extraction must preserve query/event sequences, attribution,
+keys, v1 record bytes/order, status, metrics, replay results and performance
+bounds against merged W1. Existing W1 records remain readable without
+rewriting, with absent provenance explicitly unknown. A richer versioned store
+is deferred until a backend needs it; ADR 007 defines read compatibility and
+rollback. No raw path, argument, sensitive environment value or unsalted
+identifying digest may enter storage or metrics. Local salted keys, bounded
+retention, queue/memory limits and fixed metric vocabularies remain mandatory.
+
+Prediction histories partition backend/version, evidence interpretation,
+fingerprint recipe, toolchain and salt identities. Compatibility across a
+partition requires evidence and a recorded decision. Common fields imply
+neither interchangeable cache keys nor comparable raw hit-rate denominators.
+Post-compilation backend keys must not leak into pre-admission prediction.
+
+### Deferred kache trial contract
+
+The kache observer belongs to [buildlimits #30][kache-issue] and
+[dev-env-rocky #339][kache-adoption], or successor trial plans. It is not part
+of the immediate sccache extraction and is not a dependency of kache execution
+support. ADR 007 records inspected reporting interfaces for the draft's
+selected 1.2.2 and 2.0.0-rc.1 versions, and separates those findings from
+unverified binary behaviour, cost and correlation.
+
+Structured `stats`/full reports expose event outcomes and timings, but neither
+a per-crate row nor an activity session identifies one buildlimits admission.
+Session reports may span Cargo commands, infer sessions, omit running work and
+lose rotated events. Repeated reports may duplicate observations. Trial owners
+must validate exact versions, schema, read-only bounded acquisition, unique
+correlation and deduplication under concurrency before asserting request
+labels. Without that evidence, collect partial aggregate windows and report
+unknown request outcomes; do not feed them to a request predictor. A validated
+isolated population may support attribution in controlled trials. Supported
+exports, upstream correlation improvements and private-log access require an
+explicit cost/stability decision; upstream changes are not mandatory for the
+fallback.
+
+### Evaluation and continuing gates
+
+Collection fidelity and coverage, fingerprint adequacy and stability,
+predictive calibration and accuracy, and scheduling benefit are four separate
+questions. Better coverage alone answers none of the latter three. Kache trials
+must preregister their population, comparator/base rate, sample minimums,
+attribution limits, fingerprint and calibration thresholds, performance budget
+and stop rules before inspecting experimental outcomes. Do not transfer sccache
+H1-H8 thresholds silently or pool the two backends' calibration.
+
+W1 evidence collection and quiet-host acceptance can continue on the existing
+release while EP-O1 to EP-O3 extract the port. G1 remains the owner's decision
+on sccache evidence and still gates W2/EP-M9; G2 still decides advisory
+prediction. G3-G5 still gate model/replay, shadow/priority work and the
+default. Kache needs its own recorded eligibility decision before predictor
+evaluation; that decision cannot stand in for sccache G1 or authorize
+scheduling changes.
+
+[kache-issue]: https://github.com/leynos/buildlimits/issues/30
+[kache-adoption]: https://github.com/leynos/dev-env-rocky/issues/339
 
 ## Problem
 
@@ -1099,9 +1221,11 @@ changes no runtime behaviour: it records the decision to run W1 and W2, not an
 implementation.
 
 The implementation refinements and fixed H1-H5 thresholds for W1 are recorded in
-[ADR 005](../adr-005-cache-outcome-recording.md). Its status remains Proposed
-until EP-M8 merges; the thresholds and H2 classifier are fixed before new
-evidence is collected.
+[ADR 005](../adr-005-cache-outcome-recording.md). Its original status text
+made acceptance conditional on EP-M8 merging; PR #24 has since merged. The
+fixed thresholds and H2 classifier remain the sccache commitments. Quiet-host
+acceptance and G1 remain outstanding, and the proposed ADR 007 extension does
+not supersede these decisions.
 
 [^1]: RFC 0001, `docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md`,
       accepted 2026-10-18 and present on `main`.

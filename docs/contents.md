@@ -39,6 +39,8 @@
 - [ADR 005: cache-outcome recording](adr-005-cache-outcome-recording.md)
   records the fixed thresholds, local outcome store and observation-only design
   approved for RFC 0002 W1.
+- [ADR 007: cache-outcome observation port](adr-007-cache-outcome-observation-port.md)
+  proposes the shared evidence boundary and staged sccache and kache adapters.
 
 ## Conventions
 
@@ -60,6 +62,10 @@
 
 ## Planning
 
+- [Cache-hit prediction ExecPlan](execplans/cache-hit-prediction.md) records
+  merged W1 evidence, the outstanding G1 gate and proposed observation-port and
+  kache-trial milestones.
+
 - [Roadmap](roadmap.md) sequences the delivery of accepted RFCs as phases,
   steps and tasks with dependencies and success criteria.
 
@@ -72,7 +78,8 @@
   compiles](rfcs/0002-cache-hit-prediction.md) proposes recording each cached
   compilation's real outcome, adding an advisory hit prediction to status and
   metrics, and conducting a gated analysis of hit-first admission. Accepted
-  2026-10-23.
+  2026-10-23; current collection rules are sccache-specific, while prediction
+  and later policy goals may apply to other backends.
 - [RFC 0003: Exempting safe rustc queries from compile
   admission](rfcs/0003-toolchain-query-admission-exemption.md) records the
   package-cache lock hazard, the fail-closed query contract and its host
