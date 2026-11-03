@@ -44,7 +44,7 @@ _KACHE_SOCKET_ERROR = "kache_socket must be set when cache_mode is 'kache'"
 # Settings that only mean something in one cache mode. ``cache_recovery`` is
 # deliberately absent: ``starved`` is the default, so rejecting it in kache
 # mode would make the default configuration invalid on every kache host. It
-# stays accepted and inert instead; see ADR 005.
+# stays accepted and inert instead; see ADR 006.
 _MODE_KEYS: dict[str, frozenset[str]] = {
     "sccache": frozenset({"sccache_executable", "sccache_unit", "sccache_socket"}),
     "kache": frozenset({"kache_executable", "kache_socket", "kache_cache_dir"}),

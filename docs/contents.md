@@ -39,7 +39,7 @@
 - [ADR 005: cache-outcome recording](adr-005-cache-outcome-recording.md)
   records the fixed thresholds, local outcome store and observation-only design
   approved for RFC 0002 W1.
-- [ADR 004: kache as an in-scope cache backend](adr-004-kache-cache-backend.md)
+- [ADR 006: kache as an in-scope cache backend](adr-006-kache-cache-backend.md)
   records the in-scope and detached capability split, the supported kache
   versions, the external-daemon and disabled-scheduler policies, and the
   on-host process-placement evidence behind them.
