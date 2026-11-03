@@ -123,7 +123,7 @@ def parse_output(stdout: str, exit_status: int, error_graph: str | None) -> Chec
         trace = _trace(error_graph)
         return Counterexample(
             name,
-            kind if kind is CounterexampleKind.DEADLOCK else _kind(trace),
+            _reported_kind(kind, error_graph, trace),
             trace,
             states(stdout),
             elapsed(stdout),
@@ -282,6 +282,46 @@ def _trace(error_graph: str | None) -> Trace:
     if error_graph is None:
         return _EMPTY_TRACE
     return normalize_trace(json.loads(error_graph))
+
+
+def _reported_kind(
+    marker_kind: CounterexampleKind, error_graph: str | None, trace: Trace
+) -> CounterexampleKind:
+    """Return the counterexample kind a failing run established.
+
+    Parameters
+    ----------
+    marker_kind : CounterexampleKind
+        The kind the verdict line alone establishes.
+    error_graph : str | None
+        The text of ``error-graph.json``, or ``None`` when the run wrote none.
+    trace : Trace
+        The path normalized from that graph, or the empty path when its text
+        was ``None``.
+
+    Returns
+    -------
+    CounterexampleKind
+        The graph's ending whenever a graph was written, because a liveness
+        violation's real shape — a lasso or a stutter — is only visible there.
+        A deadlock keeps the marker's kind, which names no property. With no
+        graph, the marker's own kind is the only evidence there is.
+
+    Notes
+    -----
+    The last case is why the empty path's ``FINITE`` ending is not consulted:
+    reading it would report every liveness failure whose graph is missing as a
+    finite counterexample, and a ``FailsAs(..., FINITE)`` expectation would
+    then be met by evidence the run never produced.
+
+    Examples
+    --------
+    >>> _reported_kind(CounterexampleKind.LASSO, None, _EMPTY_TRACE)
+    <CounterexampleKind.LASSO: 'lasso'>
+    """
+    if marker_kind is CounterexampleKind.DEADLOCK or error_graph is None:
+        return marker_kind
+    return _kind(trace)
 
 
 def _kind(trace: Trace) -> CounterexampleKind:

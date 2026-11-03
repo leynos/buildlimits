@@ -851,7 +851,27 @@ explicitly.
     `model-fidelity` and `test-workflow-contracts` clean; `test` 3,085 passed
     with 71 legitimate opt-in skips; `model-check` 10 coupling and 14
     transaction expectations met with no skips under `--fail-on-skip`, and
-    every fixpoint count stable.
+    every fixpoint count stable. Building the assessment response then found
+    that one of its findings was only half closed. The adapter already reported
+    an _unreadable_ graph as a run that proved nothing, but a _missing_ graph
+    still lent its empty `FINITE` ending to a liveness failure, so a
+    `FailsAs(..., FINITE)` expectation could be met by evidence the run never
+    produced. `fizzbee_output._reported_kind` now keeps the verdict line's kind
+    whenever no graph was written and reads the graph's ending only when one
+    exists, so absence and an unreadable read are both handled without inferring
+    a trace kind. Regressions: `test_a_missing_graph_keeps_the_kind_the_verdict_line_reported`
+    for both a safety and a liveness marker, and
+    `test_a_run_whose_graph_cannot_be_read_is_a_run_that_proved_nothing` at the
+    adapter boundary. Re-gating that repair ran six gates sequentially:
+    `check-fmt`, `lint`, `typecheck`, `test` (3,089 passed, 71 legitimate
+    opt-in skips) and `model-check` (29 fizzbee-marked tests, none skipped,
+    every fixpoint stable) passed first time, and `markdownlint` failed on the
+    paragraph above, which used asterisk emphasis where the repository
+    requires underscores, while also exposing a surviving stale `ADR 005`
+    reference in the EP-M3 delivery record. Both were corrected, and
+    `check-fmt` and `markdownlint` then passed clean; the other four gates
+    were not re-run, because the correction touched only those two Markdown
+    concerns.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -2251,7 +2271,7 @@ matrix nightly.
 - **Delivered.** `ports.py`, `service.py`, the five adapters, `cli.py`,
   `__main__.py` and the report renderers wired end to end, with the behaviour
   suite, the parser's T1 fixtures, the CLI and process tests, the snapshots,
-  ADR 005 and the developer's guide §11.6. `python -m modelcheck` lists `check`
+  ADR 006 and the developer's guide §11.6. `python -m modelcheck` lists `check`
   and `drift` and runs a matrix against the stub checker; the real-checker path
   has its own opt-in test module.
 - **What it cost.** The milestone's surface was much larger than the plan

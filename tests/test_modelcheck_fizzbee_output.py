@@ -181,6 +181,35 @@ def test_the_sweep_covers_every_subset() -> None:
     assert frozenset(MARKER_CLASSES) in subsets, "the full subset is covered"
 
 
+@pytest.mark.parametrize(
+    ("marker", "kind"),
+    [
+        pytest.param(MARKERS["safety"], "finite", id="safety"),
+        pytest.param(MARKERS["liveness"], "lasso", id="liveness"),
+    ],
+)
+def test_a_missing_graph_keeps_the_kind_the_verdict_line_reported(
+    marker: str, kind: str
+) -> None:
+    """A run without an error graph is classified by its verdict line.
+
+    The empty path a missing graph produces ends in ``FINITE``, so reading the
+    kind from it would report every liveness failure whose graph is missing as
+    a finite counterexample — and a ``FailsAs(..., FINITE)`` expectation would
+    then be met by evidence the run never produced. The verdict line is the
+    only evidence there is, so it decides.
+    """
+    from modelcheck import domain
+    from modelcheck.adapters import fizzbee_output
+
+    result = fizzbee_output.parse_output(
+        f"Valid Nodes: 4 Unique states: 4\n{marker}\n", 0, None
+    )
+
+    assert isinstance(result, domain.Counterexample), "the violation is preserved"
+    assert result.kind.value == kind, "and classified by the line that reported it"
+
+
 def test_a_never_reached_line_is_a_pass_with_unsatisfied_probes() -> None:
     """The probe marker completes a run; it does not fail one.
 

@@ -273,6 +273,30 @@ def test_an_unreadable_error_graph_is_reported_rather_than_absent(
         _graph(tmp_path)
 
 
+def test_a_run_whose_graph_cannot_be_read_is_a_run_that_proved_nothing(
+    tmp_path: Path,
+) -> None:
+    """An unreadable graph is reported as an error, not as a counterexample.
+
+    The adapter is the only place that can tell absence from a failed read, and
+    the difference decides whether a violation is reported with evidence or
+    with a trace kind nobody established. A directory where the graph should be
+    is the cheapest unreadable graph to produce.
+    """
+    _stub(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        "mkdir -p out/error-graph.json\n"
+        "printf 'Valid Nodes: 4 Unique states: 4\\n"
+        "FAILED: Liveness check failed\\n'\n",
+    )
+
+    result = FizzbeeChecker(tmp_path / "fizz").check(_spec())
+
+    assert isinstance(result, domain.Errored), "the run proved nothing"
+    assert "could not be read" in result.detail, "and the reason names the read"
+
+
 def test_a_relative_launcher_is_resolved_before_the_run_starts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
