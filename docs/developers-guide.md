@@ -210,6 +210,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_resources`                                                                | Helper-reaper and store-writer ownership, with a non-blocking fault path and a bounded shutdown path   |
 | `outcome_shell_stats`                                                              | Bounded, privacy-safe counters for the optional recording status section                               |
 | `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                              |
+
 _Table 2: Package modules._
 
 Outcome recording is a shell around those decisions. `supervisor_placement`

@@ -1446,8 +1446,10 @@ members = [
     "buildlimits/outcome_recorder_types.py",
     "buildlimits/outcome_recorder_outputs.py",
     "tests/outcome_shell_test_support.py",
+    "buildlimits/server_watch.py",
+    "buildlimits/cache_recovery.py",
 ]
-reason = "Matching TYPE_CHECKING imports name each module's direct outcome types; a re-export would hide the annotation dependencies without sharing behaviour."
+reason = "Matching TYPE_CHECKING import lists: each module names the annotation, port and value symbols it uses, so a re-export would hide each module's real dependencies without sharing any behaviour."
 
 [[tool.duplication_gate.allow]]
 unit = "tests/test_outcome_server_process.py"
@@ -1615,3 +1617,15 @@ members = [
     "tests/test_kache_on_systemd_behaviour.py::_no_client",
 ]
 reason = "Recurring short test steps: both check the compiler's parent command line through World.assert_parent_lacks, naming their own backend's client as the text that must not appear. Sharing the step would lose which backend each feature is about."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/outcome_process_test_helpers.py", "tests/test_kache_guard.py"]
+reason = "Two independent fixtures write a scope-shaped cgroup.procs file; each is the smallest stand-in its own test needs, and sharing one would couple the outcome-process helpers to the kache guard test."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/outcome_shell_test_support.py::__init__", "tests/test_admission_on_systemd_behaviour.py::__init__"]
+reason = "Both fixtures initialise a base class and start one empty observation list; the shared shape is the super().__init__() idiom, not shared logic."
+
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/rustc_query_grammar.py", "tests/fixtures/fake_kache.py"]
+reason = "The exact match is an early return on an empty input, which each module spells the same way for the same reason; extracting an is_empty helper would obscure both call sites."
