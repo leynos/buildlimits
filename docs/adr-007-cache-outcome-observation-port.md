@@ -242,11 +242,12 @@ unsalted identifying digests. Backend session/root identifiers require local
 salted HMAC-SHA-256 (hash-based message authentication code) transformation;
 request references become opaque local IDs and are never metric labels. Keep
 raw correlation material only in bounded adapter memory. Diagnostic metadata is
-allowlisted and size-limited like the record, not a privacy escape hatch. The
-existing 0700 directory, 0600 files, single writer, 4,096-entry append queue,
-16 KiB record ceiling, 16 MiB store ceiling, 12 MiB compaction ceiling, 10,000
-retained records and 30-day age bound continue to apply. Salt rotation, clock
-skew and corrupt/torn-tail handling keep their current semantics.
+allowlisted and size-limited like the record, not a privacy escape hatch.
+Existing limits and rules remain in force: directory mode 0700, file mode 0600,
+a single writer, a 4,096-entry append queue, a 16 KiB record ceiling, a 16 MiB
+store ceiling, a 12 MiB compaction ceiling, 10,000 retained records and a
+30-day age bound. Salt rotation, clock skew and corrupt/torn-tail handling keep
+their current semantics.
 
 Histories are partitioned by backend, backend version, evidence-schema and
 interpretation revision, fingerprint recipe, salt identity and toolchain
