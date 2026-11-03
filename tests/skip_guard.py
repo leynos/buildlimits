@@ -14,6 +14,7 @@ import pytest
 
 __all__ = [
     "pytest_addoption",
+    "pytest_collectreport",
     "pytest_runtest_logreport",
     "pytest_sessionfinish",
     "pytest_sessionstart",
@@ -59,6 +60,24 @@ def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     ----------
     report : pytest.TestReport
         The report for one phase of one test.
+    """
+    if report.skipped:
+        _SKIPPED.append(report.nodeid)
+
+
+def pytest_collectreport(report: pytest.CollectReport) -> None:
+    """Record a module skipped while it was being collected.
+
+    A module that calls ``pytest.skip(..., allow_module_level=True)``, or that
+    a ``pytest.importorskip`` at import time turns aside, skips before any test
+    function exists to report. Without this hook such a module is invisible to
+    ``--fail-on-skip``, and the session could pass with a whole file unrun —
+    exactly the silent success D6 exists to prevent.
+
+    Parameters
+    ----------
+    report : pytest.CollectReport
+        The report for one collected file or directory.
     """
     if report.skipped:
         _SKIPPED.append(report.nodeid)

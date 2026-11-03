@@ -7,15 +7,13 @@ shape is refused, because a pass is the only result that can meet a positive
 expectation, and a misread failure would turn a broken model into a green
 report.
 
-The precedence is fixed and is what ``parse_output`` checks in order:
-
-1. an ``Error:`` line, or any non-zero exit status, means the run proved
-   nothing — it did not compile, or the tool itself failed;
-2. a safety, liveness or deadlock marker is a counterexample: a definite
-   violation outranks an interruption;
-3. ``Model checker stopped`` is a run a signal cut short;
-4. a pass line, or the never-reached line, completes the exploration;
-5. output carrying none of these is an error, never a pass.
+The precedence is fixed, and it is what ``parse_output`` checks in order: an
+``Error:`` line or a non-zero exit status proves nothing, because the run did
+not compile or the tool itself failed; a safety, liveness or deadlock marker is
+a counterexample, since a definite violation outranks an interruption;
+``Model checker stopped`` is a run a signal cut short; a pass line or the
+never-reached line completes the exploration; and output carrying none of these
+is an error, never a pass.
 
 The never-reached line is a *completion* marker even though it begins with
 ``FAILED``: the checker prints it after finishing the exploration, names each
@@ -120,16 +118,9 @@ def parse_output(stdout: str, exit_status: int, error_graph: str | None) -> Chec
     failure = _failure(lines)
     if failure is not None:
         kind, name = failure
-        trace = _trace(error_graph)
-        return Counterexample(
-            name,
-            _reported_kind(kind, error_graph, trace),
-            trace,
-            states(stdout),
-            elapsed(stdout),
-        )
+        return _counterexample(name, kind, error_graph, stdout)
     if _mentions(lines, STOPPED):
-        return Stopped(_line(lines, STOPPED))
+        return Stopped(next(line for line in lines if line.startswith(STOPPED)))
     if _mentions(lines, NEVER_REACHED):
         return Passed(states(stdout), elapsed(stdout), _probes(lines))
     if _mentions(lines, PASSED):
@@ -180,9 +171,10 @@ def _failure(lines: list[str]) -> tuple[CounterexampleKind, str] | None:
 
     Notes
     -----
-    The kind returned for a liveness failure is a fallback. A liveness
-    violation's real shape — a lasso or a stutter — is read from its error
-    graph, and :func:`parse_output` prefers that whenever a graph is present.
+    The kind returned for a liveness failure is provisional. Its real shape —
+    a lasso or a stutter — is read from the error graph, which
+    :func:`parse_output` prefers whenever one is present, and which
+    :func:`_reported_kind` replaces with ``UNKNOWN`` when none was written.
     """
     for index, line in enumerate(lines):
         if line.startswith(DEADLOCK):
@@ -264,63 +256,111 @@ def _probes(lines: list[str]) -> tuple[str, ...]:
     )
 
 
-def _trace(error_graph: str | None) -> Trace:
-    """Return the path a counterexample took, or an empty finite path.
+def _counterexample(
+    name: str, marker_kind: CounterexampleKind, error_graph: str | None, stdout: str
+) -> CheckResult:
+    """Return the violation a failing run supports, or why it supports none.
 
     Parameters
     ----------
+    name : str
+        The assertion the run named, empty for a deadlock.
+    marker_kind : CounterexampleKind
+        The kind the verdict line alone establishes.
     error_graph : str | None
-        The text of ``error-graph.json``, or ``None`` when the run wrote none.
+        The text of ``error-graph.json``, or ``None`` when none was written.
+    stdout : str
+        The checker's output, which carries the state count and elapsed time.
+
+    Returns
+    -------
+    CheckResult
+        The :class:`~modelcheck.domain.Counterexample` the run's evidence
+        supports, or an :class:`~modelcheck.domain.Errored` when its graph does
+        not parse. Absence and malformation differ: a run that wrote no graph
+        keeps its violation and loses only the shape the graph would have
+        settled, while a graph that exists but does not parse proves nothing
+        rather than reporting a guessed shape.
+
+    Examples
+    --------
+    >>> result = _counterexample("L3", CounterexampleKind.LASSO, None, "")
+    >>> result.kind is CounterexampleKind.UNKNOWN
+    True
+    """
+    if error_graph is None:
+        return Counterexample(
+            name,
+            _reported_kind(marker_kind, None),
+            _EMPTY_TRACE,
+            states(stdout),
+            elapsed(stdout),
+        )
+    # Untrusted JSON: a scalar, a non-mapping link or a missing key raises
+    # before any shape check can name it, and each is malformed evidence.
+    try:
+        trace = _trace(error_graph)
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
+        return Errored(f"the error graph could not be parsed: {error}")
+    return Counterexample(
+        name, _reported_kind(marker_kind, trace), trace, states(stdout), elapsed(stdout)
+    )
+
+
+def _trace(error_graph: str) -> Trace:
+    """Return the path a counterexample took.
+
+    Parameters
+    ----------
+    error_graph : str
+        The text of ``error-graph.json``.
 
     Returns
     -------
     Trace
-        The normalized path. A run without a graph reports an empty one rather
-        than failing: the violation is real either way, and discarding it
-        because its path is missing would report a counterexample as an error.
+        The normalized path. A text that is not JSON, or links that are not a
+        well-formed path, raise from :func:`modelcheck.trace.normalize_trace`
+        rather than becoming a trace this module invented.
     """
-    if error_graph is None:
-        return _EMPTY_TRACE
     return normalize_trace(json.loads(error_graph))
 
 
 def _reported_kind(
-    marker_kind: CounterexampleKind, error_graph: str | None, trace: Trace
+    marker_kind: CounterexampleKind, trace: Trace | None
 ) -> CounterexampleKind:
-    """Return the counterexample kind a failing run established.
+    """Return the counterexample kind a failing run's evidence establishes.
 
     Parameters
     ----------
     marker_kind : CounterexampleKind
         The kind the verdict line alone establishes.
-    error_graph : str | None
-        The text of ``error-graph.json``, or ``None`` when the run wrote none.
-    trace : Trace
-        The path normalized from that graph, or the empty path when its text
-        was ``None``.
+    trace : Trace | None
+        The path parsed from the run's error graph, or ``None`` when the run
+        wrote none.
 
     Returns
     -------
     CounterexampleKind
-        The graph's ending whenever a graph was written, because a liveness
-        violation's real shape — a lasso or a stutter — is only visible there.
-        A deadlock keeps the marker's kind, which names no property. With no
-        graph, the marker's own kind is the only evidence there is.
-
-    Notes
-    -----
-    The last case is why the empty path's ``FINITE`` ending is not consulted:
-    reading it would report every liveness failure whose graph is missing as a
-    finite counterexample, and a ``FailsAs(..., FINITE)`` expectation would
-    then be met by evidence the run never produced.
+        A deadlock keeps its marker's kind even with a graph, which ends
+        finitely only as a consequence of no action being enabled. Otherwise
+        the graph's ending settles a shape the line could not; with no graph a
+        liveness line is ``UNKNOWN`` and safety names its own shape.
 
     Examples
     --------
-    >>> _reported_kind(CounterexampleKind.LASSO, None, _EMPTY_TRACE)
-    <CounterexampleKind.LASSO: 'lasso'>
+    >>> _reported_kind(CounterexampleKind.LASSO, None)
+    <CounterexampleKind.UNKNOWN: 'unknown'>
+    >>> _reported_kind(CounterexampleKind.DEADLOCK, _EMPTY_TRACE)
+    <CounterexampleKind.DEADLOCK: 'deadlock'>
     """
-    if marker_kind is CounterexampleKind.DEADLOCK or error_graph is None:
-        return marker_kind
+    if marker_kind is CounterexampleKind.DEADLOCK:
+        return CounterexampleKind.DEADLOCK
+    if trace is None:
+        return (
+            CounterexampleKind.UNKNOWN
+            if marker_kind is CounterexampleKind.LASSO
+            else marker_kind
+        )
     return _kind(trace)
 
 
@@ -357,21 +397,3 @@ def _mentions(lines: list[str], marker: str) -> bool:
         Whether the output carries it.
     """
     return any(line.startswith(marker) for line in lines)
-
-
-def _line(lines: list[str], marker: str) -> str:
-    """Return the first line starting with a marker.
-
-    Parameters
-    ----------
-    lines : list[str]
-        The checker's output lines.
-    marker : str
-        The marker to look for.
-
-    Returns
-    -------
-    str
-        The first matching line, used as a stopped run's detail.
-    """
-    return next(line for line in lines if line.startswith(marker))

@@ -48,12 +48,18 @@ class CounterexampleKind(enum.StrEnum):
         happens.
     DEADLOCK : str
         A run where no action is enabled before any expectation settles.
+    UNKNOWN : str
+        A violation whose path shape was not established, because the run
+        wrote no error graph and its verdict line cannot distinguish a lasso
+        from a stutter. The violation is real; the shape is not evidence a
+        run produced, so no shape-specific expectation may be met by it.
     """
 
     FINITE = "finite"
     LASSO = "lasso"
     STUTTER = "stutter"
     DEADLOCK = "deadlock"
+    UNKNOWN = "unknown"
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -86,7 +92,8 @@ class Counterexample:
     property_name : str
         The assertion or probe the checker named.
     kind : CounterexampleKind
-        The shape of the path that reached it.
+        The shape of the path that reached it, or ``UNKNOWN`` when no error
+        graph was written and the verdict line cannot settle the shape.
     trace : Trace
         The normalized path, with its cycle or terminal state marked.
     states : int

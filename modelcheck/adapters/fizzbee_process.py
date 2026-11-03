@@ -9,9 +9,8 @@ safe is made here rather than inherited from a caller:
   never beside the model, so a run cannot leave a tracked tree dirty;
 - the checker is invoked with an argument list and no shell, so a model's
   contents cannot become part of a command line;
-- it is started in its own session and killed by process group, because the
-  ``fizz`` launcher starts a Go binary of its own and killing only the launcher
-  would leave that binary running;
+- it is started in its own session and killed by process group, because
+  ``fizz`` launches a Go binary that would otherwise survive it;
 - the environment caps the Go runtime, because a mistaken model can explore
   without bound and the host should not be the thing that stops it (D5).
 
@@ -46,18 +45,17 @@ __all__ = ["FizzbeeChecker"]
 SCRATCH_ROOT = Path(".model-check")
 """Where every run's scratch directory is made.
 
-Relative to the working directory, which for a repository run is the checkout
-root, and git-ignored. It is scratch: deleting it is always safe, and each
-run's own directory is deleted as soon as its output has been read.
+Relative to the working directory, and git-ignored. Deleting it is always safe,
+and each run's own directory is removed once its output has been read.
 """
 
 _TIMEOUT_SECONDS = 600.0
 """How long one routine-bounds run may take before its group is killed.
 
-A routine configuration is required to finish in ten minutes. A run that hits
-this has already failed the requirement, so the adapter stops it rather than
-letting it hold the machine; the result is an ``Errored``, which a report shows
-as a run that proved nothing. Nightly runs pass a larger bound.
+A routine configuration must finish in ten minutes, so a run that hits this has
+already failed and is stopped rather than left holding the machine; the result
+is an ``Errored``, which a report shows as a run that proved nothing. Nightly
+runs pass a larger bound.
 """
 
 _KILL_GRACE_SECONDS = 5.0
@@ -129,9 +127,8 @@ class FizzbeeChecker:
         -------
         CheckResult
             The classified result. A launcher that is missing, or that cannot
-            be started at all, is an ``Errored`` rather than an exception: the
-            matrix reports it as a run that proved nothing, which is what it
-            is, and the exit status is still the un-met one.
+            start at all is an ``Errored`` rather than an exception, so the
+            matrix reports a run that proved nothing; the exit status is un-met.
 
         Examples
         --------
@@ -176,7 +173,7 @@ class FizzbeeChecker:
             return Errored(_timed_out(self.timeout_seconds, stdout))
         try:
             graph = _graph(output)
-        except OSError as error:
+        except (OSError, UnicodeDecodeError) as error:
             return Errored(f"the error graph could not be read: {error}")
         return parse_output(stdout, completed.status, graph)
 
@@ -387,6 +384,10 @@ def _graph(output: Path) -> str | None:
         a permission or I/O failure means the evidence the counterexample needs
         is missing for a reason the run report must name, rather than a pass or
         a finding it cannot support.
+    UnicodeDecodeError
+        If a graph exists but is not UTF-8, so it cannot be read as text. The
+        caller reports it the same way, because a graph nobody can decode
+        proves nothing a counterexample could rest on.
 
     Examples
     --------

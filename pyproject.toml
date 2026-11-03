@@ -1696,3 +1696,10 @@ members = [
     "tests/test_modelcheck_fizzbee_process.py",
 ]
 reason = "Both helpers create a scratch directory before writing into it, and the match is that one stdlib call; a helper around Path.mkdir would name the stdlib rather than a shared behaviour, and the two functions have nothing else in common. The detector reports the fragment unnamed, so the entry names the files."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/skip_guard.py::pytest_runtest_logreport",
+    "tests/skip_guard.py::pytest_collectreport",
+]
+reason = "pytest discovers both hooks by name and calls each with its own report type, so neither can be dropped, and the DF12 trivial-alias-wrapper rule rejects routing them through one helper; what remains is the same three-line bookkeeping in two functions with distinct contracts and explanations."

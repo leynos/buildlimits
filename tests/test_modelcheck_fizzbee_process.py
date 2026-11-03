@@ -297,6 +297,54 @@ def test_a_run_whose_graph_cannot_be_read_is_a_run_that_proved_nothing(
     assert "could not be read" in result.detail, "and the reason names the read"
 
 
+def test_a_graph_that_is_not_utf8_is_a_run_that_proved_nothing(
+    tmp_path: Path,
+) -> None:
+    """A graph nobody can decode is an error, not a missing graph.
+
+    Decoding happens while the file is read, so the failure arrives as a
+    ``UnicodeDecodeError`` rather than an ``OSError``. The adapter must treat
+    it as unreadable evidence rather than letting it escape as a traceback.
+    """
+    _stub(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        "mkdir -p out\n"
+        "printf '\\xff\\xfe' > out/error-graph.json\n"
+        "printf 'Valid Nodes: 4 Unique states: 4\\n"
+        "FAILED: Liveness check failed\\n'\n",
+    )
+
+    result = FizzbeeChecker(tmp_path / "fizz").check(_spec())
+
+    assert isinstance(result, domain.Errored), "the run proved nothing"
+    assert "could not be read" in result.detail, "and the reason names the read"
+
+
+def test_a_graph_that_is_not_json_is_a_run_that_proved_nothing(
+    tmp_path: Path,
+) -> None:
+    """A graph that parses as nothing is refused at the same boundary.
+
+    The text is readable, so the failure happens in the parser rather than the
+    reader. A violation whose path cannot be read is reported as a run that
+    proved nothing, so no shape-specific expectation can be met by it.
+    """
+    _stub(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        "mkdir -p out\n"
+        "printf '{not json' > out/error-graph.json\n"
+        "printf 'Valid Nodes: 4 Unique states: 4\\n"
+        "FAILED: Liveness check failed\\n'\n",
+    )
+
+    result = FizzbeeChecker(tmp_path / "fizz").check(_spec())
+
+    assert isinstance(result, domain.Errored), "the run proved nothing"
+    assert "could not be parsed" in result.detail, "and the reason names the parse"
+
+
 def test_a_relative_launcher_is_resolved_before_the_run_starts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

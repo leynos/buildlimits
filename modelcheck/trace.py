@@ -29,12 +29,10 @@ empty ``Type``, and is told apart by its name. A ``Step``'s name is therefore a
 transition label: the action's name, or the branch a choice took.
 """
 
+import collections.abc as cabc
 import dataclasses as dc
 import enum
 import typing as typ
-
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
 
 
 class Ending(enum.StrEnum):
@@ -159,8 +157,9 @@ def normalize_trace(
     ------
     ValueError
         If the links are empty, if the first link is not the initial state,
-        if a stutter appears anywhere but the end, or if a lasso's or stutter's
-        mark cannot be located.
+        if a link carries no ``Node.state`` mapping or no transition name,
+        if a stutter appears anywhere but the end, or if a lasso's or
+        stutter's mark cannot be located.
 
     Examples
     --------
@@ -241,9 +240,24 @@ def _state(link: cabc.Mapping[str, object]) -> cabc.Mapping[str, object]:
     -------
     collections.abc.Mapping[str, object]
         The state under ``Node.state``.
+
+    Raises
+    ------
+    ValueError
+        If the link carries no ``Node`` mapping, or no ``state`` mapping
+        under it. A graph that reached here is shaped wrongly rather than
+        merely unfamiliar, and the caller must be able to say so instead of
+        leaking a ``KeyError`` from inside the parser.
     """
-    node = typ.cast("cabc.Mapping[str, object]", link["Node"])
-    return typ.cast("cabc.Mapping[str, object]", node["state"])
+    node = link.get("Node")
+    if not isinstance(node, cabc.Mapping):
+        msg = f"a link carries no Node mapping: {link!r}"
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - malformed data, not a caller bug.
+    state = node.get("state")
+    if not isinstance(state, cabc.Mapping):
+        msg = f"a link's Node carries no state mapping: {link!r}"
+        raise ValueError(msg)  # ruff: ignore[type-check-without-type-error] - malformed data, not a caller bug.
+    return typ.cast("cabc.Mapping[str, object]", state)
 
 
 def _step(link: cabc.Mapping[str, object]) -> Step:
@@ -258,7 +272,15 @@ def _step(link: cabc.Mapping[str, object]) -> Step:
     -------
     Step
         The action's name and the state it reached.
+
+    Raises
+    ------
+    ValueError
+        If the link names no action, or its state mapping is malformed.
     """
+    if "Name" not in link:
+        msg = f"an action link names no transition: {link!r}"
+        raise ValueError(msg)
     return Step(str(link["Name"]), _state(link))
 
 

@@ -1064,8 +1064,23 @@ produces no user-visible behaviour, and the wheel still contains only
 
 ### Prerequisites
 
-Model checking needs the pinned FizzBee binary and a network connection the
-first time. Fetch and verify it with:
+Model checking runs on x86-64 Linux, because the pinned release asset is
+`fizzbee-$(FIZZBEE_VERSION)-linux_x86.tar.gz` and the recipe unpacks that name
+from the archive. The Python baseline is 3.14, the same as the package's:
+`make model-check` depends on `make build`, which creates `.venv` and installs
+the development dependencies with `uv`. Run
+
+```bash
+make build
+```
+
+once in a checkout that does not have `.venv`, and install `uv` beforehand if
+it is absent.
+
+The installer itself needs GNU `make`, `curl`, `tar` with gzip support,
+`sha256sum` and `flock` from util-linux. A network connection is needed only
+the first time, unless the cache entry is missing or `FIZZBEE_VERSION` or
+`FIZZBEE_SHA256` changes. Fetch and verify the binary with:
 
 ```bash
 make fizzbee
@@ -1073,9 +1088,11 @@ make fizzbee
 
 The target downloads the release named by `FIZZBEE_VERSION`, checks it against
 `FIZZBEE_SHA256`, and unpacks it into a content-addressed directory under the
-user cache. It then links `.tools/fizzbee` at the worktree root. The binary is
-never committed and never installed system-wide; `make test`, `make lint`,
-`make typecheck` and `make check-fmt` never fetch or run it.
+user cache. It then links `.tools/fizzbee` at the worktree root. A download
+that fails, or a digest that does not match, leaves neither a cache entry nor
+the link, so a later run cannot mistake a partial install for a verified one.
+The binary is never committed and never installed system-wide; `make test`,
+`make lint`, `make typecheck` and `make check-fmt` never fetch or run it.
 
 ### Run the checks
 
@@ -1096,8 +1113,12 @@ make model-check
 runs the full matrix in both model halves and takes minutes. Each
 configuration's expectations are judged, and `--fixpoint` re-runs every
 configuration that should pass at twice its declared `max_actions` bound, so a
-run truncated at its bound is reported rather than passed. It runs nightly on
-GitHub runners and can be started by hand through `workflow_dispatch`.
+run truncated at its bound is reported rather than passed. Unequal
+doubled-bound counts do not by themselves prove a production defect: they mean
+the bound is too low or the exploration has not converged, and the model needs
+a bound that reaches its fixpoint before its expectations can say anything
+about the code. It runs nightly on GitHub runners and can be started by hand
+through `workflow_dispatch`.
 
 Both targets are wrappers. The tool itself is available directly:
 
@@ -1118,15 +1139,20 @@ counterexample's normalized trace under the model's `traces/` directory.
 
 Both commands distinguish a wrong model from a tool that could not run:
 
-| Status | Meaning                                                                  |
-| ------ | ------------------------------------------------------------------------ |
-| `0`    | Every expectation was met.                                               |
-| `1`    | An expectation was unmet, or a fixpoint was truncated.                   |
-| `2`    | The tool could not start: a usage error or an input it cannot interpret. |
+| Status | Meaning                                                                |
+| ------ | ---------------------------------------------------------------------- |
+| `0`    | Every expectation was met.                                             |
+| `1`    | An expectation was unmet, or a fixpoint comparison grew.               |
+| `2`    | The tool could not run: a usage error or an input it cannot interpret. |
 
-A `2` is never folded into `1`. `1` means the model or the code is wrong; `2`
-means the checker was never asked, and a job that treated it as a pass would
-report green for a model that never ran.
+A `2` is never folded into `1`, and the boundary in the other direction is just
+as important. A `2` means the command could not complete and says nothing about
+the model; it can be raised after the checker has already run, for example when
+the path `--json` names cannot be written. A checker that never started is
+different: the command did run, so the matrix records an error judgement naming
+the reason and the status is `1`. So is a counterexample whose error graph
+exists but cannot be read or parsed. Only `0` is a pass; a job that treated any
+other status as one would report green for a model that was never checked.
 
 ### Generated artefacts
 

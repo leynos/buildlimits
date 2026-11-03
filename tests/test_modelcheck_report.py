@@ -176,6 +176,33 @@ def test_a_counterexample_renders_its_kind_and_length() -> None:
     assert columns[3].startswith("lasso, 1 step"), "and the path's shape"
 
 
+def test_an_unestablished_shape_is_named_rather_than_guessed() -> None:
+    """A run that established no path shape renders ``unknown shape``.
+
+    Printing either ``lasso`` or ``finite`` for such a run would assert
+    something it never established, and a reader would carry that word into
+    the repair. The violation is still reported; only the claim about its
+    shape is withheld.
+    """
+    from modelcheck import domain
+    from modelcheck.trace import Ending, Trace
+
+    result = domain.Counterexample(
+        PROPERTY,
+        domain.CounterexampleKind.UNKNOWN,
+        Trace({}, (), Ending.FINITE, None),
+        9,
+        0.2,
+    )
+    judgement = _judge(expectation_of("fails_as"), result)
+
+    columns = _columns(render([judgement]).splitlines()[0])
+
+    assert columns[3].startswith("unknown shape, 0 steps"), (
+        "the report withholds the shape rather than inventing one"
+    )
+
+
 def test_a_truncated_run_renders_no_evidence() -> None:
     """A stopped run has no state count and no path, so it contributes neither.
 

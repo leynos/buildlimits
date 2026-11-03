@@ -185,19 +185,20 @@ def test_the_sweep_covers_every_subset() -> None:
     ("marker", "kind"),
     [
         pytest.param(MARKERS["safety"], "finite", id="safety"),
-        pytest.param(MARKERS["liveness"], "lasso", id="liveness"),
+        pytest.param(MARKERS["liveness"], "unknown", id="liveness"),
     ],
 )
-def test_a_missing_graph_keeps_the_kind_the_verdict_line_reported(
+def test_a_missing_graph_establishes_only_the_shape_its_verdict_line_can(
     marker: str, kind: str
 ) -> None:
-    """A run without an error graph is classified by its verdict line.
+    """A run without an error graph keeps its violation and loses only the shape.
 
     The empty path a missing graph produces ends in ``FINITE``, so reading the
-    kind from it would report every liveness failure whose graph is missing as
-    a finite counterexample — and a ``FailsAs(..., FINITE)`` expectation would
-    then be met by evidence the run never produced. The verdict line is the
-    only evidence there is, so it decides.
+    kind from it would report every graphless liveness failure as finite. The
+    marker is not enough either: a liveness verdict says a temporal property
+    failed but not whether the path was a lasso or a stutter, so its shape is
+    ``UNKNOWN`` rather than the ``LASSO`` the marker hints at. A safety
+    verdict names its own shape, so it survives.
     """
     from modelcheck import domain
     from modelcheck.adapters import fizzbee_output
@@ -207,7 +208,82 @@ def test_a_missing_graph_keeps_the_kind_the_verdict_line_reported(
     )
 
     assert isinstance(result, domain.Counterexample), "the violation is preserved"
-    assert result.kind.value == kind, "and classified by the line that reported it"
+    assert result.kind.value == kind, "and classified by what the line establishes"
+
+
+def test_an_unknown_shape_cannot_satisfy_a_shape_specific_expectation() -> None:
+    """A graphless liveness failure is unmet evidence for ``FailsAs(..., LASSO)``.
+
+    This is the judgement the classification exists for: the violation is
+    reported, but it must not discharge an expectation that names a shape the
+    run never demonstrated.
+    """
+    from modelcheck import domain, expectations
+    from modelcheck.adapters import fizzbee_output
+
+    result = fizzbee_output.parse_output(
+        f"Valid Nodes: 4 Unique states: 4\n{MARKERS['liveness']}\nInvariant: L3\n",
+        0,
+        None,
+    )
+    expectation = domain.FailsAs("L3", domain.CounterexampleKind.LASSO)
+    configuration = domain.Configuration("head", {}, {}, {}, 1, (expectation,))
+
+    assert isinstance(result, domain.Counterexample), "the run reported a violation"
+    judgement = expectations.judge(
+        configuration,
+        expectation,
+        domain.MaterializedSpec("head", "", ()),
+        result,
+    )
+    assert judgement.verdict is domain.Verdict.WRONG_KIND, (
+        "but no lasso was demonstrated"
+    )
+
+
+@pytest.mark.parametrize(
+    "graph",
+    [
+        pytest.param("{not json", id="not-json"),
+        pytest.param("[]", id="empty"),
+        pytest.param("42", id="not-a-list"),
+        pytest.param("[1]", id="link-not-mapping"),
+        pytest.param('{"Type": ""}', id="not-a-link-list"),
+        pytest.param("[{}]", id="no-node"),
+        pytest.param('[{"Type": "", "Node": 3}]', id="node-not-mapping"),
+    ],
+)
+def test_a_graph_that_cannot_be_parsed_is_a_run_that_proved_nothing(
+    graph: str,
+) -> None:
+    """Malformed evidence is an error, not a counterexample of a guessed shape.
+
+    A graph that exists but does not parse is a broken artefact: nothing in it
+    can support a trace, and inventing one would let an expectation be met that
+    the run never demonstrated. Every malformed shape the checker could
+    conceivably write must leave through the same door, and the judgement that
+    consumes it must refuse to call an expected failure demonstrated.
+    """
+    from modelcheck import domain, expectations
+    from modelcheck.adapters import fizzbee_output
+
+    result = fizzbee_output.parse_output(
+        f"Valid Nodes: 4 Unique states: 4\n{MARKERS['safety']}\n", 0, graph
+    )
+    expectation = domain.FailsAs("NeverFull", domain.CounterexampleKind.FINITE)
+    configuration = domain.Configuration("head", {}, {}, {}, 1, (expectation,))
+
+    assert isinstance(result, domain.Errored), "the run proved nothing"
+    assert "could not be parsed" in result.detail, "and the reason names the parse"
+    judgement = expectations.judge(
+        configuration,
+        expectation,
+        domain.MaterializedSpec("head", "", ()),
+        result,
+    )
+    assert judgement.verdict is domain.Verdict.ERROR, (
+        "and broken evidence cannot discharge an expected failure"
+    )
 
 
 def test_a_never_reached_line_is_a_pass_with_unsatisfied_probes() -> None:

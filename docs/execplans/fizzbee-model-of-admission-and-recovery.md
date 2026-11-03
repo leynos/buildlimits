@@ -856,10 +856,12 @@ explicitly.
     an _unreadable_ graph as a run that proved nothing, but a _missing_ graph
     still lent its empty `FINITE` ending to a liveness failure, so a
     `FailsAs(..., FINITE)` expectation could be met by evidence the run never
-    produced. `fizzbee_output._reported_kind` now keeps the verdict line's kind
-    whenever no graph was written and reads the graph's ending only when one
-    exists, so absence and an unreadable read are both handled without inferring
-    a trace kind. Regressions: `test_a_missing_graph_keeps_the_kind_the_verdict_line_reported`
+    produced. `fizzbee_output._reported_kind` now derives a kind without a
+    graph instead of reading the empty trace's ending, and reads the graph only
+    when one exists. Its first form kept the verdict line's kind, which the
+    second assessment showed was still wrong for liveness; D37 supersedes it
+    with `UNKNOWN`. Regressions:
+    `test_a_missing_graph_establishes_only_the_shape_its_verdict_line_can`
     for both a safety and a liveness marker, and
     `test_a_run_whose_graph_cannot_be_read_is_a_run_that_proved_nothing` at the
     adapter boundary. Re-gating that repair ran six gates sequentially:
@@ -872,6 +874,53 @@ explicitly.
     `check-fmt` and `markdownlint` then passed clean; the other four gates
     were not re-run, because the correction touched only those two Markdown
     concerns.
+  - The assessment's second reply (`6608041964`) accepted the unreadable-graph,
+    D3, installer and workflow-contract and `--only` fixes, and corrected the
+    follow-up's claim that `--only` narrowed the status: the implementation
+    already computed it from the full matrix, which the users' guide also
+    says. It left three defects. First, the graphless fallback had replaced
+    `FINITE` with `LASSO` for every liveness failure, although a liveness
+    violation may be a lasso or a stutter, so it could still meet
+    `FailsAs(..., LASSO)`. Second, the graph repair covered `OSError` only;
+    decoding and parsing failures still escaped, and so did structural defects
+    such as a link with no `Node.state`. Third, the skip guard still missed a
+    module skipped during collection. D37 records the three repairs:
+    `UNKNOWN` as a shape that meets no shape-specific expectation, `Errored`
+    for every malformed graph, and `pytest_collectreport` for collection-time
+    skips.
+    The same round corrected the users' guide's exit-status contract (a
+    launcher that cannot start is an error judgement and therefore status 1;
+    status 2 can arise after the checker ran), completed the model-checking
+    prerequisites, qualified EP-M4's acceptance, and recounted this round's
+    files at 41 rather than the working-tree-only 32. Regressions:
+    `test_an_unknown_shape_cannot_satisfy_a_shape_specific_expectation`,
+    the seven-case
+    `test_a_graph_that_cannot_be_parsed_is_a_run_that_proved_nothing`,
+    `test_a_graph_that_is_not_utf8_is_a_run_that_proved_nothing`,
+    `test_a_graph_that_is_not_json_is_a_run_that_proved_nothing`,
+    `test_a_module_skipped_at_collection_fails_the_checker_run` and
+    `test_a_download_that_never_arrives_installs_nothing`. The repository's
+    400-line module limit then made the repaired modules be condensed rather
+    than left over it: `_line` became the expression at its only call site,
+    `_triggers` became a line in the test that used it, and `_state`'s two
+    type guards carry a justified
+    `ruff: ignore[type-check-without-type-error]`, because a malformed graph
+    is bad data rather than a mistaken caller. 324 focused tests then passed
+    over the six touched modules.
+  - The first full re-gate found one regression that the same repair had
+    introduced: reading the kind from every parsed graph overrode the marker
+    for a deadlock too, so the fixture's deadlock — whose recorded path ends
+    finitely because no action was enabled — was reported `FINITE`, and
+    `test_a_deadlock_is_its_own_counterexample_kind` failed. `_reported_kind`
+    now takes the parsed trace: a deadlock keeps its marker's kind, every other
+    kind follows the graph's ending, and a graphless liveness line stays
+    `UNKNOWN`. The second full pass widened the parse guard to
+    `AttributeError, KeyError, TypeError, ValueError`, because JSON that is a
+    scalar, a link that is not a mapping and an object where a list belongs
+    each raise before any shape check can name them; three regression cases
+    were added, which is why the malformed-graph test is seven-case. Both fixes
+    sit in `fizzbee_output`, are covered by the fixture and output suites, and
+    keep the module within its 400-line limit.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -1266,21 +1315,25 @@ explicitly.
     discovering it at G1.
 
 - **The D35 remediation round breaches the 25-file hard stop, at 27 files
-  when the escalation was raised and 32 at the current head.**
-  - Observation: the uncommitted round now touches 33 paths; the tolerance's
-    exclusions remove one `.fizz` model, leaving 32 in-scope files, seven over
-    the limit that D32 explicitly kept for EP-M4 onward. The escalation was
+  when the escalation was raised and 41 at the current head.**
+  - Observation: measured on one basis — every path the round has touched
+    since it began at `d543b3b`, including the working tree — the round now
+    touches 50 paths; the tolerance's exclusions (two `.fizz` models, one
+    syrupy snapshot and six documentation files) leave 41 in-scope files,
+    sixteen over the limit that D32 explicitly kept for EP-M4 onward. This
+    supersedes the earlier record of 32, which counted only the uncommitted
+    working tree at that moment and so omitted the round's already-committed
+    files: the same basis, applied at `486507f`, gives 40. The escalation was
     raised when the figure stood at 27 (30 paths, less two `.fizz` models and
-    one syrupy snapshot); the five files since added are the D3 and D6
-    enforcements and their controls — `tests/skip_guard.py`,
-    `tests/test_skip_guard.py`, `tests/test_model_tooling_contracts.py`,
-    `tests/modelcheck_materialize_support.py` and
-    `tests/test_modelcheck_materialize_selection.py` — not a widening of the
-    remediation scope itself. The count is reported here rather than restated
-    as 27 so the open escalation is answered against the work that exists.
-  - Evidence: `git status --porcelain -uall` at the round's final head,
-    classified by the tolerance's exclusion rule, and the per-file line counts
-    in Progress. The excess is three new modules — `modelcheck/fixpoint.py`,
+    one syrupy snapshot); the additions since are the D3 and D6 enforcements,
+    the adapter-boundary regressions, and the assessment's second-round
+    repairs, rather than a widening of the remediation scope itself. The
+    count is reported here rather than restated as 27 so the open escalation
+    is answered against the work that exists.
+  - Evidence: `git diff --name-only d543b3b` plus `git status --porcelain
+    -uall`, classified by the tolerance's exclusion rule, and the per-file
+    line counts in Progress. The excess is three new modules —
+    `modelcheck/fixpoint.py`,
     `modelcheck/assertions.py` and `tests/test_modelcheck_fizzbee_kill.py` —
     each created because `make lint`'s `C0302` refuses a module over 400 lines
     and `AGENTS.md` forbids a per-file disable for it. Merging any of them
@@ -2199,17 +2252,51 @@ explicitly.
   - Unchanged: each `head` configuration names every assertion its model
     declares, so its materialized text and state count are unchanged.
 
+- **D37. A violation without a path shape is not evidence of a shape.**
+  _Decided 2026-11-03._
+  - Decision: a run that reports a liveness failure without writing an error
+    graph is classified `UNKNOWN`, a new counterexample kind, rather than the
+    `LASSO` its verdict line hints at. `UNKNOWN` satisfies no shape-specific
+    expectation, and the report renders it as `unknown shape`. The same
+    boundary turns malformed evidence — unreadable, undecodable or unparsable
+    error graphs — into `Errored`, so the run proves nothing instead of
+    producing a guessed path. Collection-time skips are recorded by
+    `pytest_collectreport`, so `--fail-on-skip` fails a session in which a whole
+    module never ran.
+  - Finding: the second hosted assessment (comment `6608041964`) showed that
+    the graphless fallback, added in the first round, had replaced one wrong
+    shape with another: a liveness violation can be a lasso _or_ a stutter, so
+    reporting it as `LASSO` let it discharge `FailsAs(..., LASSO)`. The same
+    review found that graph decoding and parsing remained outside the
+    adapter's error handling, and that a module-level skip never reached
+    `pytest_runtest_logreport`, so the D6 guard could pass with a file unrun.
+  - Reason: the domain's job is to record what a run established, not what its
+    markers suggest. A shape no run demonstrated must not meet an expectation
+    that names it; a trace parsed from broken evidence is invention; and a
+    green `make model-check` must mean every selected model test executed.
+  - Evidence:
+    `test_a_missing_graph_establishes_only_the_shape_its_verdict_line_can`,
+    `test_an_unknown_shape_cannot_satisfy_a_shape_specific_expectation`,
+    `test_a_graph_that_cannot_be_parsed_is_a_run_that_proved_nothing`,
+    `test_a_graph_that_is_not_utf8_is_a_run_that_proved_nothing`,
+    `test_a_graph_that_is_not_json_is_a_run_that_proved_nothing`,
+    `test_a_module_skipped_at_collection_fails_the_checker_run` and
+    `test_a_download_that_never_arrives_installs_nothing`.
+
 ## Outcomes & retrospective
 
-EP-M1 to EP-M4 are delivered and accepted; EP-M5 and EP-M6 are not started. The
-plan's own estimate of the tooling's surface was its largest error. EP-M3 was
-accepted at 35 files against a 25-file stop (D32), and EP-M4's model breached
-both the memory and the runtime tolerance until it was split (D33). Both were
-resolved by an explicit decision rather than by cutting an acceptance
-condition, and the 25-file stop is unchanged for every later milestone. The
-model now runs inside the routine budget, and the two obligations it carries
-are placed where they are affordable: fidelity on every pull request, the
-matrix nightly.
+EP-M1 to EP-M3 are delivered and accepted; EP-M4's implementation is delivered
+and its acceptance evidence is recorded, but its file-count exception has not
+been ratified, so EP-M4 is not yet accepted. EP-M5 and EP-M6 are not started.
+The plan's own estimate of the tooling's surface was its largest error. EP-M3
+was accepted at 35 files against a 25-file stop (D32), and EP-M4's model
+breached both the memory and the runtime tolerance until it was split (D33).
+Both were resolved by an explicit decision rather than by cutting an acceptance
+condition, and the 25-file stop is unchanged for every later milestone. The D35
+remediation round is a third exception, and it is still open: the escalation
+has no answer, and none of its figures has been ratified. The model now runs
+inside the routine budget, and the two obligations it carries are placed where
+they are affordable: fidelity on every pull request, the matrix nightly.
 
 ### EP-M1
 
@@ -2314,12 +2401,14 @@ matrix nightly.
   had done. The assessment round then found the manager readability guard
   missing from the stop and from S1, and the coupling half's count fell from
   67,944 to 65,664.
-- **What it cost.** The 25-file stop was breached again, at 27 files, and the
-  excess is exactly the run of modules the 400-line rule forced; it is
-  escalated in Risks and does not reopen EP-M3's exception. The model has taken
-  two revisions since its first full run — the manager guard and the L1 control
-  — which is the tolerance's allowance; a third would stop the work at H1's
-  falsification boundary.
+- **What it cost.** The 25-file stop was breached again, at 27 files when the
+  escalation was raised; that figure is historical, and the round has since
+  grown to 41 in-scope files (Risks, D35). The excess is exactly the run of
+  modules the 400-line rule forced, plus the later assessment repairs; it does
+  not reopen EP-M3's exception. The model has taken two revisions since its
+  first full run — the manager guard and the L1 control — which is the
+  tolerance's allowance; a third would stop the work at H1's falsification
+  boundary.
 - **Carried forward.** The known-bad configurations, the replay and the
   comparator belong to EP-M5; the H1 verdict and gate G1 belong to EP-M6.
 

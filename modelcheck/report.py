@@ -27,7 +27,13 @@ absent column reads as the second.
 import json
 import typing as typ
 
-from modelcheck.domain import Counterexample, Passed, Reachable, states_of
+from modelcheck.domain import (
+    Counterexample,
+    CounterexampleKind,
+    Passed,
+    Reachable,
+    states_of,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -179,7 +185,8 @@ def _evidence(judgement: Judgement) -> list[str]:
         case Passed(states=states):
             return [f"states {states}"]
         case Counterexample(kind=kind, trace=trace):
-            return [f"{kind!s}, {_count(len(trace.steps), 'step')}"]
+            shape = "unknown shape" if kind is CounterexampleKind.UNKNOWN else kind
+            return [f"{shape!s}, {_count(len(trace.steps), 'step')}"]
         case _:
             return []
 

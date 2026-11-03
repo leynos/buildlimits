@@ -235,6 +235,35 @@ def test_a_digest_mismatch_is_refused_and_leaves_no_cache(tmp_path: Path) -> Non
     assert not Path(f"{home}.tar.gz").exists(), "and the download is removed"
 
 
+def test_a_download_that_never_arrives_installs_nothing(tmp_path: Path) -> None:
+    """A failed download fails the target and leaves no believable install.
+
+    This differs from a digest mismatch: nothing arrives at all, so the recipe
+    must not reach the verification, unpack or link steps. The URL is a
+    ``file:`` URI in the test's own directory naming no file, so the failure is
+    real to the recipe and needs no network.
+
+    The stamp matters most, because a run that failed after writing it would
+    make every later run use a cache that was never populated. So does the
+    link, since ``.tools/fizzbee`` is what every other target resolves.
+    """
+    digest = "1" * 64
+    home = _home(tmp_path, digest)
+    missing = tmp_path / "never-published.tar.gz"
+
+    result = _install(tmp_path, missing, digest=digest, home=home)
+
+    assert result.returncode != 0, "a download that never arrives fails the target"
+    assert "Fetching" in result.stdout, "and the target really attempted the fetch"
+    assert not (home / f".verified-{_ASSET}").exists(), (
+        "no stamp claims a verified cache"
+    )
+    assert not (home / "fizz").exists(), "no checker was installed"
+    assert not (tmp_path / ".tools" / "fizzbee").exists(), (
+        "and no link points the other targets at an empty cache"
+    )
+
+
 def test_an_archive_with_an_escaping_member_is_refused(tmp_path: Path) -> None:
     """An archive that would write outside its unpack directory is refused.
 
@@ -275,22 +304,9 @@ def test_a_cache_root_outside_the_pinned_prefix_is_refused(tmp_path: Path) -> No
 class _Workflow(typ.NamedTuple):
     """What one model workflow must declare.
 
-    Attributes
-    ----------
-    file : str
-        The workflow's file name under ``.github/workflows``.
-    name : str
-        The workflow's display name.
-    triggers : frozenset[str]
-        The events that start it.
-    group : str
-        The concurrency group, which is what serializes runs per ref.
-    cancel_in_progress : bool
-        Whether a newer run replaces an older one.
-    timeout_minutes : int
-        The job's time limit.
-    target : str
-        The Make target the job runs.
+    Each field is one setting that decides whether the obligation is enforced
+    at all, so the field names carry their own meaning and the cases below
+    supply the values.
     """
 
     file: str
@@ -329,24 +345,6 @@ and the matrix is not, so the two must not drift into each other's trigger.
 """
 
 
-def _triggers(workflow: dict[object, object]) -> object:
-    """Return a workflow's trigger mapping.
-
-    Parameters
-    ----------
-    workflow : dict[object, object]
-        The parsed workflow.
-
-    Returns
-    -------
-    object
-        The value under ``on``. YAML 1.1 reads an unquoted ``on`` as the
-        boolean ``True``, so both spellings are accepted rather than requiring
-        the file to quote a key GitHub itself writes unquoted.
-    """
-    return workflow.get("on", workflow.get(True))
-
-
 @pytest.mark.parametrize("expected", _EXPECTED, ids=lambda case: case.file)
 def test_a_model_workflow_declares_its_contract(expected: _Workflow) -> None:
     """Each model workflow keeps the trigger, permissions and target it needs.
@@ -360,7 +358,8 @@ def test_a_model_workflow_declares_its_contract(expected: _Workflow) -> None:
     assert isinstance(workflow, dict), "a workflow has a mapping root"
     assert workflow["name"] == expected.name, "the workflow is the one expected"
 
-    triggers = _triggers(workflow)
+    # YAML 1.1 reads an unquoted ``on`` as the boolean ``True``, so accept both.
+    triggers = workflow.get("on", workflow.get(True))
     assert isinstance(triggers, dict), "the workflow declares its triggers"
     assert set(triggers) == expected.triggers, "and only the events it should"
 
