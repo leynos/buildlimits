@@ -224,10 +224,10 @@ for the deployed writer and H2/H3 evaluators. This projection serves deployed
 W1 data and readers, not private source-API compatibility. Replay maps v1 rows
 to qualified evidence without rewriting the input file: backend is sccache,
 recipe is W1, version comes from existing toolchain/window fields. Labelled
-rows have `attributed/legacy_window` provenance because v1 does not persist
-solo versus unanimous attribution. Unattributed rows cannot recover their lost
-reason and must use an explicit unknown legacy reason. No generation, request
-identifier, window boundary or certainty is fabricated.
+rows have quality `attributed` and provenance `legacy_window`, because v1 does
+not persist solo versus unanimous attribution. Unattributed rows cannot recover
+their lost reason and must use an explicit unknown legacy reason. No
+generation, request identifier, window boundary or certainty is fabricated.
 
 A separately tested format version 2 is required before persisting evidence
 that v1 cannot express, including kache. The trial implementation adds a tagged
