@@ -47,15 +47,17 @@ that it needs a table.
 """
 
 
-def configuration(name: str, table: dict[str, object]) -> Configuration:
+def configuration(name: str, table: object) -> Configuration:
     """Build one configuration from its table.
 
     Parameters
     ----------
     name : str
         The configuration's name, which is its table's key.
-    table : dict[str, object]
-        The table's fields.
+    table : object
+        The value the file declared under that name. It is checked rather than
+        cast, because ``[configurations] head = 3`` would otherwise reach the
+        field readers and fail with an ``AttributeError``.
 
     Returns
     -------
@@ -70,17 +72,18 @@ def configuration(name: str, table: dict[str, object]) -> Configuration:
         :mod:`modelcheck.adapters.configuration_values` raise it, naming the
         configuration and the field that is wrong.
     """  # ruff: ignore[docstring-extraneous-exception] - the field readers raise it.
+    fields = _shape(name, "table", table, dict)
     return Configuration(
         name=name,
-        constants=strings(name, "constants", table.get("constants", {})),
-        fairness=fairness(name, table.get("fairness", {})),
-        options=options(name, table.get("options", {})),
-        min_states=floor(name, table.get("min_states", 0)),
+        constants=strings(name, "constants", fields.get("constants", {})),
+        fairness=fairness(name, fields.get("fairness", {})),
+        options=options(name, fields.get("options", {})),
+        min_states=floor(name, fields.get("min_states", 0)),
         expectations=_expectations(
             name,
-            table.get("holds", []),
-            table.get("reachable", []),
-            table.get("fails_as", {}),
+            fields.get("holds", []),
+            fields.get("reachable", []),
+            fields.get("fails_as", {}),
         ),
     )
 

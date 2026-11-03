@@ -17,14 +17,13 @@ safe is made here rather than inherited from a caller:
 
 D5 records why this is ``subprocess`` rather than ``cuprum``: ``cuprum`` is not
 a dependency of this package, and the scripting standards that require it
-govern ``scripts/``. Ruff's ``S404`` and ``S603`` are ignored for this module
-only, because a fixed argv is passed rather than a shell string.
+govern ``scripts/``. Ruff's ``S404`` and ``S603`` are ignored here only,
+because a fixed argv is passed rather than a shell string.
 
-Classifying what the checker printed is not here. That is
-:func:`modelcheck.adapters.fizzbee_output.parse_output`, which is pure and is
-tested against recordings of every shape the checker can print. This module
-only guarantees that the text it hands over is the checker's whole output, and
-that the run left no process behind.
+Classifying the output belongs to
+:func:`modelcheck.adapters.fizzbee_output.parse_output`, tested against
+recordings of every shape the checker can print. This module only guarantees
+that the text it hands over is the whole output, and that no process is left.
 """
 
 import contextlib
@@ -47,10 +46,9 @@ __all__ = ["FizzbeeChecker"]
 SCRATCH_ROOT = Path(".model-check")
 """Where every run's scratch directory is made.
 
-The path is relative to the working directory, which for a repository run is
-the checkout root, and the directory is git-ignored. It is scratch: deleting it
-is always safe, and this module deletes each run's own directory as soon as the
-run's output has been read.
+Relative to the working directory, which for a repository run is the checkout
+root, and git-ignored. It is scratch: deleting it is always safe, and each
+run's own directory is deleted as soon as its output has been read.
 """
 
 _TIMEOUT_SECONDS = 600.0
@@ -176,7 +174,11 @@ class FizzbeeChecker:
         stdout = completed.stdout.decode(errors="replace")
         if completed.timed_out:
             return Errored(_timed_out(self.timeout_seconds, stdout))
-        return parse_output(stdout, completed.status, _graph(output))
+        try:
+            graph = _graph(output)
+        except OSError as error:
+            return Errored(f"the error graph could not be read: {error}")
+        return parse_output(stdout, completed.status, graph)
 
     def _run(self, directory: Path, output: Path) -> _Completed:
         """Run the launcher and wait for it, killing its group on timeout.
@@ -376,17 +378,22 @@ def _graph(output: Path) -> str | None:
     Returns
     -------
     str | None
-        The graph's text, or ``None`` when the run passed or wrote none. A
-        graph that cannot be read is reported as absent rather than raised: the
-        violation the output announced is real either way, and the path is
-        evidence about it rather than the finding itself.
+        The graph's text, or ``None`` when the run passed or wrote none.
+
+    Raises
+    ------
+    OSError
+        If a graph exists but cannot be read. Only its absence is ordinary:
+        a permission or I/O failure means the evidence the counterexample needs
+        is missing for a reason the run report must name, rather than a pass or
+        a finding it cannot support.
 
     Examples
     --------
     >>> _graph(Path("/nonexistent")) is None
     True
-    """
+    """  # ruff: ignore[docstring-extraneous-exception] - read_text raises it.
     try:
         return (output / _GRAPH_NAME).read_text(encoding="utf-8")
-    except OSError:
+    except FileNotFoundError:
         return None

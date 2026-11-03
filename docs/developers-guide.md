@@ -810,6 +810,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `pool_helpers.py`                         | `FakePool` and `attach_pool`                                                                                                               |
 | `descriptor_helpers.py`                   | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                                                              |
 | `descriptor_guard.py`                     | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                                                                 |
+| `skip_guard.py`                           | the `--fail-on-skip` option, which makes any skipped test fail the session; see §11.6                                     |
 | `launch_helpers.py`                       | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                                                               |
 | `adapter_doubles.py`                      | `immediate_retry` and `script_adapter` for driving the adapter in-process                                                                  |
 | `toolchain_trees.py`                      | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler                                          |
@@ -1109,11 +1110,14 @@ claim exists to find. Prefer that test to reading one report and assuming the
 rest is handled.
 
 `check` exits 0 when every configuration meets its expectations, 1 when one
-does not, and 2 when the tool itself failed; `--bounds` selects the routine or
-nightly declaration, `--only` narrows the matrix, `--json` writes the records,
-`--fixpoint` adds the doubled-bound comparison and `--save-traces` regenerates
-the reviewed trace files. An empty matrix, or a `--only` that matches nothing,
-is a usage error rather than a vacuously successful run.
+does not, and 2 when the tool itself failed; `--bounds` names the declared
+bound set, of which only `routine` exists today — any other value is refused
+rather than silently checked against the routine bounds, and 1.5.1 adds the
+nightly table — `--only` narrows the report but not the exit status, `--json`
+writes the records, `--fixpoint` adds the doubled-bound comparison and
+`--save-traces` regenerates the reviewed trace files. An empty matrix, or a
+`--only` that matches nothing, is a usage error rather than a vacuously
+successful run.
 
 FizzBee truncates exploration at `max_actions` without printing a marker, so a
 run that exhausted its bound can still report a pass. `--fixpoint` is the
@@ -1141,6 +1145,17 @@ marked `fizzbee` run the real checker and are skipped unless
 `BUILD_LIMITS_MODEL_CHECK=1`; the behavioural scenarios instead replay recorded
 output through the real parser, so a broken parser fails them without the
 binary.
+
+Under `make model-check` a skip is a failure: the target passes
+`--fail-on-skip`, which the `skip_guard` plugin turns into a non-zero session
+status, so an opted-in run that checked nothing cannot report success. The
+ordinary `make test` run leaves the flag off, because suites for optional tools
+and privileges skip legitimately.
+
+The service also compares every run of one configuration on its
+`states_explored` count and reports an `Errored` row when they differ.
+Stripping assertions must not change the state graph, so a mismatch means the
+verdict describes a different model from the one the report names.
 
 ## 12. Static-analysis exceptions
 

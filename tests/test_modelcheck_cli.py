@@ -93,15 +93,16 @@ def test_only_narrows_the_report_but_not_the_check(
 ) -> None:
     """An omitted configuration still runs, and can still fail the command.
 
-    Reporting only ``head`` would hide ``incident-1``'s lost counterexample if
-    the selection also narrowed the exit status, so both are read from the same
-    narrowed sequence — and that sequence is what the reader asked to see. The
-    matrix itself runs in full either way.
+    ``incident-1`` is a known-bad configuration given a passing run, so it is
+    unmet: the counterexample it exists to find never appeared. Selecting
+    ``--only head`` hides its row, and if the selection also narrowed the exit
+    status the command would report success over a failing model — a gate that
+    does not gate. The checker's own record is read as well, so the test fails
+    for either way of narrowing the run: one that skipped the omitted
+    configuration before ``run_matrix`` never gives the checker its text.
     """
-    application = app(
-        [holds("head"), fails_as("incident-1", "L3")],
-        FakeChecker("pass"),
-    )
+    checker = FakeChecker("pass")
+    application = app([holds("head"), fails_as("incident-1", "L3")], checker)
 
     status = application([
         "check",
@@ -113,7 +114,14 @@ def test_only_narrows_the_report_but_not_the_check(
     ])
 
     printed = capsys.readouterr().out
-    assert status == cli.EXIT_MET, "the narrowed report still exits 0"
+    assert len(checker.seen) == 2, "both configurations were checked"
+    assert any("assertion S1" in text for text in checker.seen), (
+        "the selected configuration ran its own assertions"
+    )
+    assert any("assertion L3" in text for text in checker.seen), (
+        "and so did the omitted one"
+    )
+    assert status == cli.EXIT_UNMET, "the omitted configuration still fails the command"
     assert "head" in printed, "the selected configuration is reported"
     assert "incident-1" not in printed, "and the omitted one is not"
 

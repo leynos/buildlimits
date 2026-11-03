@@ -1052,3 +1052,93 @@ To disable admission, restore Cargo's previous `rustc-wrapper` and `rustdoc`
 settings and restart the launchers that hold the old environment. Leave the
 supervisor running until those processes have gone, so that no compiler still
 pointing at the adapters is stranded.
+
+## Check the admission model
+
+Admission behaviour over time — draining the cache while a queue is busy,
+releasing a retained token, noticing a fault — is checked by a FizzBee model
+rather than by the state-machine and property tests that cover the runtime.
+Nothing about an installed buildlimits changes: the model reads the design and
+produces no user-visible behaviour, and the wheel still contains only
+`buildlimits`.
+
+### Prerequisites
+
+Model checking needs the pinned FizzBee binary and a network connection the
+first time. Fetch and verify it with:
+
+```bash
+make fizzbee
+```
+
+The target downloads the release named by `FIZZBEE_VERSION`, checks it against
+`FIZZBEE_SHA256`, and unpacks it into a content-addressed directory under the
+user cache. It then links `.tools/fizzbee` at the worktree root. The binary is
+never committed and never installed system-wide; `make test`, `make lint`,
+`make typecheck` and `make check-fmt` never fetch or run it.
+
+### Run the checks
+
+Two targets cover the two obligations, because they cost very different amounts.
+
+```bash
+make model-fidelity
+```
+
+runs in seconds. It compares the model's `# maps:` annotations with the
+production package and reports any admission event, effect, recovery phase or
+fault kind the model does not account for. It runs on every pull request.
+
+```bash
+make model-check
+```
+
+runs the full matrix in both model halves and takes minutes. Each
+configuration's expectations are judged, and `--fixpoint` re-runs every
+configuration that should pass at twice its declared `max_actions` bound, so a
+run truncated at its bound is reported rather than passed. It runs nightly on
+GitHub runners and can be started by hand through `workflow_dispatch`.
+
+Both targets are wrappers. The tool itself is available directly:
+
+```bash
+python -m modelcheck check models/admission/coupling --fizz .tools/fizzbee/fizz
+python -m modelcheck check models/admission/transaction --fizz .tools/fizzbee/fizz
+python -m modelcheck drift models/admission/coupling
+```
+
+`check` prints one line per expectation, naming the configuration, the
+property, the verdict, the fairness assumptions in force and the states
+explored. `--only CONFIG[:PROPERTY]` narrows the report without narrowing the
+check, and `--bounds nightly` selects the bound set a model declares.
+`--json PATH` writes the judgements as JSON and `--save-traces` keeps each
+counterexample's normalized trace under the model's `traces/` directory.
+
+### Exit statuses
+
+Both commands distinguish a wrong model from a tool that could not run:
+
+| Status | Meaning                                                                  |
+| ------ | ------------------------------------------------------------------------ |
+| `0`    | Every expectation was met.                                               |
+| `1`    | An expectation was unmet, or a fixpoint was truncated.                   |
+| `2`    | The tool could not start: a usage error or an input it cannot interpret. |
+
+A `2` is never folded into `1`. `1` means the model or the code is wrong; `2`
+means the checker was never asked, and a job that treated it as a pass would
+report green for a model that never ran.
+
+### Generated artefacts
+
+A run copies its specification into a fresh directory under the git-ignored
+`.model-check/` and writes its output there, so no tracked directory is written
+and `git status --porcelain` stays empty. `make model-check` also writes
+`.model-check/coupling.json` and `.model-check/transaction.json`, which the
+end-to-end tests read. Those tests are opt-in because they need the binary:
+
+```bash
+BUILD_LIMITS_MODEL_CHECK=1 .venv/bin/pytest -m fizzbee tests
+```
+
+Model authoring, the split into two halves and the developer's guide's account
+of the materializer are in the [developer's guide](developers-guide.md) §11.6.

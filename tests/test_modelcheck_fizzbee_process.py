@@ -17,14 +17,12 @@ adapter that never ran anything pass, so every test that cares reads the
 record the stub left.
 """
 
-import typing as typ
 from pathlib import Path
+
+import pytest
 
 from modelcheck import domain
 from modelcheck.adapters.fizzbee_process import FizzbeeChecker
-
-if typ.TYPE_CHECKING:
-    import pytest
 
 _STUB = """\
 #!/usr/bin/env bash
@@ -248,13 +246,31 @@ def test_a_failing_run_keeps_its_counterexample(tmp_path: Path) -> None:
 def test_an_error_graph_is_read_from_the_named_output_directory() -> None:
     """A graph that is not there is absent, not an exception.
 
-    The violation the output announced is real either way; the path is evidence
-    about it rather than the finding itself, so losing it must not lose the
-    finding.
+    A run that passed, or a counterexample kind that carries no graph, writes no
+    file. Absence is ordinary, so it must not become an error that hides the
+    verdict the output already gave.
     """
     from modelcheck.adapters.fizzbee_process import _graph
 
     assert _graph(Path("/nonexistent")) is None, "a missing graph is absent, not raised"
+
+
+def test_an_unreadable_error_graph_is_reported_rather_than_absent(
+    tmp_path: Path,
+) -> None:
+    """A graph that exists but cannot be read is an error, not a missing graph.
+
+    Only absence is ordinary: a permission or I/O failure means the evidence the
+    counterexample needs is missing for a reason the run report must name.
+    Reporting it as absent would turn a broken read into a pass, or into a
+    finding it cannot support.
+    """
+    from modelcheck.adapters.fizzbee_process import _graph
+
+    (tmp_path / "error-graph.json").mkdir()
+
+    with pytest.raises(IsADirectoryError):
+        _graph(tmp_path)
 
 
 def test_a_relative_launcher_is_resolved_before_the_run_starts(

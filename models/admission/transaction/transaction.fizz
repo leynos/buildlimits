@@ -336,8 +336,8 @@ atomic fair action CoolingExpires:  # fairness: F6
 # ---------------------------------------------------------------------------
 
 always assertion S2:
-  # Tokens sum to capacity, every count is a count, and a waiting request
-  # always has a token for it to be admitted with.
+  # Tokens sum to capacity and every count is non-negative. A waiting request
+  # need not hold a token: QUEUE_OVERFLOWS lets Submit join a full pool.
   return (free + cached_held + uncached_held + server_drain == CAPACITY
           and free >= 0
           and cached_held >= 0

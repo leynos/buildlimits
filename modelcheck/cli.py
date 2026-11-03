@@ -193,17 +193,20 @@ def make_app(  # pylint: disable=too-many-arguments  # ADR 008 supplies three ad
         int
             ``0`` when every expectation was met and, when asked for, every
             configuration's exploration was stable; ``1`` when any was not.
-            ``--only`` narrows the reported expectations but never the fixpoint
-            check, which is about the model rather than a selection of it.
+            ``--only`` narrows the reported expectations but never the status
+            or the fixpoint check: both are about the model rather than a
+            selection of it, so an omitted configuration can still fail the
+            command.
         """
         source = source_factory(model_dir, bounds)
-        chosen = _chosen(service.run_matrix(source, checker_factory(fizz)), only)
+        results = service.run_matrix(source, checker_factory(fizz))
+        chosen = _chosen(results, only)
         print(report.render_report(chosen), end="")
         if json_path is not None:
             json_path.write_text(report.render_records(chosen), encoding="utf-8")
         if save_traces:
             _save_traces(chosen, model_dir)
-        status = exit_status(chosen)
+        status = exit_status(results)
         if fixpoint:
             stable = run_fixpoint(source, checker_factory(fizz))
             print(report.render_fixpoint(stable), end="")
@@ -238,11 +241,10 @@ def _chosen(
 ) -> tuple[Judgement, ...]:
     """Return the judgements a ``--only`` selection keeps.
 
-    The matrix is always run in full. A selection narrows what is *reported*,
-    not what is checked, so a run given ``--only`` cannot pass while a
-    configuration it omitted would have failed: the exit status is computed
-    from the same narrowed sequence as the report, and the caller who narrowed
-    it has said which expectations this invocation is about.
+    The matrix is always run in full, and a selection narrows only what is
+    *reported*. The caller computes the exit status from every judgement, not
+    from this sequence, so a run given ``--only`` cannot pass while a
+    configuration it omitted failed.
 
     Parameters
     ----------

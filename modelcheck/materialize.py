@@ -9,14 +9,18 @@ rewrite touches exactly four things:
 - the fairness keyword of actions tagged ``# fairness: <id>``;
 - the complete YAML frontmatter, so a variant never inherits a bound by
   accident;
-- the assertions that are expected to fail in this run but are not the one
-  failure this run exists to find.
+- the assertions the configuration does not name, so a run compiles only the
+  properties and probes it is judged by.
 
 Everything else, comments and spacing included, comes back byte for byte, so a
-configuration that changes nothing is the identity. D3 is the reason for the
+configuration that changes nothing is the identity. D3 is one reason for the
 last bullet: FizzBee reports only the first failing property, so a known-bad
 configuration keeps every assertion expected to hold and exactly one expected
-failure.
+failure. Selection applies to a positive run too, and the second reason is
+sharper: an ``exists`` probe that is unreachable stops exploration before the
+liveness check, prints no liveness result, and is reported as a pass. A probe
+the configuration does not name is removed rather than left to make that pass
+vacuously.
 
 A defect is refused rather than ignored. A constant the model does not declare,
 a fairness tag no action carries, a level that is not ``weak``, ``strong`` or
@@ -28,8 +32,8 @@ it claims.
 The frontmatter is rendered by :mod:`modelcheck.frontmatter` rather than
 dumped by a YAML library, because a pure module opens no file and imports no
 package it does not need. Which expectations have to be declared, and which
-assertions a mutant keeps, is decided in :mod:`modelcheck.assertions`; this
-module only asks it to apply them.
+assertions a run keeps, is decided in :mod:`modelcheck.assertions`; this module
+only asks it to apply them.
 """
 
 import re
@@ -103,8 +107,8 @@ def materialize(
         If the configuration names a constant, fairness tag or expected
         failure the source does not contain, names a failure that is not a
         ``FailsAs`` expectation of the configuration, supplies a level that is
-        not ``weak``, ``strong`` or ``unfair``, or supplies no expected
-        failure when the configuration expects one.
+        not ``weak``, ``strong`` or ``unfair``, or asks for the positive run of
+        a configuration whose every expectation is a failure.
 
     Examples
     --------
@@ -119,16 +123,21 @@ def materialize(
         for expectation in configuration.expectations
         if isinstance(expectation, FailsAs)
     }
-    if expected_failure is None and declared:
-        msg = (
-            f"configuration {configuration.name!r} expects the expected "
-            f"failure {min(declared)!r}, but the run was given none"
-        )
-        raise MaterializeError(msg)
     if expected_failure is not None and expected_failure not in declared:
         msg = (
             f"{expected_failure!r} is not an expected failure of configuration "
             f"{configuration.name!r}"
+        )
+        raise MaterializeError(msg)
+    retained = _retained(configuration, expected_failure)
+    # A positive run of a configuration whose every expectation is a failure
+    # would compile no assertion at all, so refuse it rather than hand FizzBee
+    # a specification that asserts nothing.
+    asserts_nothing = bool(declared) and not retained
+    if expected_failure is None and asserts_nothing:
+        msg = (
+            f"configuration {configuration.name!r} expects the expected "
+            f"failure {min(declared)!r}, but the run was given none"
         )
         raise MaterializeError(msg)
     lines = _rewrite_constants(
@@ -136,8 +145,7 @@ def materialize(
     )
     lines = _rewrite_fairness(lines, configuration.fairness)
     require_declared(lines, configuration)
-    if expected_failure is not None:
-        retained = _retained(configuration, expected_failure)
+    if retained:
         lines = strip_assertions(lines, retained)
     text = replace_frontmatter("".join(lines), configuration.options)
     return MaterializedSpec(configuration.name, text, _carried_fairness(lines))
@@ -205,25 +213,41 @@ def _is_fair(modifier: str) -> bool:
     return modifier == "fair" or modifier.startswith("fair<")
 
 
-def _retained(configuration: Configuration, expected_failure: str) -> frozenset[str]:
+def _retained(
+    configuration: Configuration, expected_failure: str | None
+) -> frozenset[str]:
     """Return the assertions one run keeps.
 
-    D3 gives each run exactly one expected failure. Keeping every assertion
-    expected to hold, every probe whose reachability is judged, and that one
-    failure is what makes a known-bad run prove the defect it exists to find
-    rather than whichever property the checker happened to reach first.
+    Every run keeps exactly the assertions it is judged by: the properties
+    expected to hold and the probes whose reachability is judged, plus the one
+    expected failure when the run exists to find it. D3 is why a targeted run
+    keeps that failure and drops every other: FizzBee reports only the first
+    failing property, so a known-bad run that kept the others could report one
+    of them and prove nothing about the defect it was built to find.
+
+    Keeping only the named assertions also protects a positive run from a
+    pass it never earned. FizzBee stops exploring when an ``exists`` probe is
+    unreachable, prints no liveness result at all, and reports the run as a
+    success; an unnamed probe left in the text would therefore let a held
+    property be judged from a run that never checked it.
+
+    A configuration that names no assertion retains an empty set, which the
+    caller reads as "strip nothing". That cannot become a run that checks
+    nothing: the run service refuses a configuration with no expectations
+    before the checker is invoked.
 
     Parameters
     ----------
     configuration : Configuration
         The configuration the run is materialized for.
-    expected_failure : str
-        The assertion the run is expected to violate.
+    expected_failure : str | None
+        The assertion the run is expected to violate, or ``None``.
 
     Returns
     -------
     frozenset[str]
-        The properties expected to hold, the probes and the expected failure.
+        The properties expected to hold, the probes, and the expected failure
+        when there is one.
     """
     held = {
         expectation.property_name
@@ -235,7 +259,8 @@ def _retained(configuration: Configuration, expected_failure: str) -> frozenset[
         for expectation in configuration.expectations
         if isinstance(expectation, Reachable)
     }
-    return frozenset(held | probed | {expected_failure})
+    failures = () if expected_failure is None else (expected_failure,)
+    return frozenset(held | probed | set(failures))
 
 
 def _rewrite_constants(

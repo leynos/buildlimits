@@ -54,5 +54,7 @@ _Table 1: Path responsibilities._
 Generated and local-only paths stay out of version control: `.venv`,
 `.uv-cache`, `.uv-tools`, `.tools` (the pinned duplication detector and a link
 to the FizzBee cache) and build output under `dist/`. A checker run also leaves
-`.model-check/`, `models/*/*.json` and `models/**/out/`, which are ignored so a
-manual run beside a source model is never staged by accident.
+`.model-check/`, the `<spec>.json` files written beside a model
+(`models/*/*.json` for the spikes and `models/*/*/*.json` for the W1 halves) and
+`models/**/out/`, which are ignored so a manual run beside a source model is
+never staged by accident.

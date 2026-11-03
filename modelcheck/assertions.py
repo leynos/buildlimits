@@ -11,10 +11,12 @@ never looked up by the checker, so the run passes the remaining specification
 and the judgement reports the absent property as holding — the run would prove
 something other than what the report claims.
 
-Backwards, a mutant keeps only the assertions its run is about, because D3
-gives each run exactly one expected failure. A name retained by that strip that
-matches no declaration would leave a specification asserting nothing while its
-report named expectations, and the checker would report a pass.
+Backwards, a run keeps only the assertions its configuration names, because
+D3 gives each run exactly one expected failure and an unnamed ``exists`` probe
+can stop the checker before a liveness check it was meant to make. A name
+retained by that strip that matches no declaration would leave a specification
+asserting nothing while its report named expectations, and the checker would
+report a pass.
 
 The assertions are found by their headers, whatever temporal prefix they carry,
 so a property and an ``exists`` probe are read by the same rule.

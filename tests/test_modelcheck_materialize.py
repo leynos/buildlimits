@@ -12,7 +12,10 @@ configuration that names something the model does not contain must fail loudly,
 which is a different claim from "a rewrite touches only what it names" and
 would obscure it. The generated-text properties and the mutant control live in
 :mod:`tests.test_modelcheck_materialize_properties`, because they search a
-space rather than pin an example.
+space rather than pin an example. Which assertions a run keeps is its own
+claim about what a pass means, so it lives in
+:mod:`tests.test_modelcheck_materialize_selection`; the readback both modules
+use is in :mod:`tests.modelcheck_materialize_support`.
 
 Every test here was written before its module was implemented (EP-M2), so it
 pins a contract the stub could not satisfy.
@@ -21,55 +24,10 @@ pins a contract the stub could not satisfy.
 import typing as typ
 
 import modelcheck_cases as cases
+from modelcheck_materialize_support import kept_by
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
-
-
-def test_an_empty_configuration_is_the_identity_on_the_body() -> None:
-    """A configuration that changes and drops nothing returns the body.
-
-    The byte-for-byte comparison is the strongest statement of locality there
-    is: comments, blank lines, trailing spaces and the absence of a final
-    newline all survive, which a line-by-line rebuild would silently lose.
-    Frontmatter is the exception — a configuration with no options replaces it
-    with nothing rather than inheriting the fixed bounds — so the sources here
-    carry none.
-
-    Fairness is not part of the identity claim. A configuration that names no
-    table still leaves the model's own annotations in force, so the tag the
-    first source carries is reported even though the configuration mentioned
-    none: the report quotes the run rather than the configuration.
-    """
-    from modelcheck import materialize
-
-    for source, carried in (
-        (cases.FIXED, ("F1",)),
-        ("", ()),
-        ("action Init:\n  n = 0", ()),
-    ):
-        spec = materialize.materialize(
-            source, cases.configuration("head"), expected_failure=None
-        )
-        assert spec.text == source, f"{source!r} is returned unchanged"
-        assert spec.fairness_in_force == carried, f"{source!r} carries {carried}"
-
-
-def test_an_empty_configuration_strips_no_assertion() -> None:
-    """With no expected failure, every assertion the model declares survives.
-
-    A run with no expected failure is how a fixed configuration checks all of
-    its properties at once, so dropping one would silently reduce what the
-    configuration claims.
-    """
-    from modelcheck import materialize
-
-    spec = materialize.materialize(
-        cases.TAGGED, cases.configuration("head"), expected_failure=None
-    )
-
-    for name in ("UnderTen", "ReachesTen", "ReachesOne"):
-        assert f"assertion {name}:" in spec.text, f"{name} survives"
 
 
 def test_a_named_constant_is_replaced_and_the_rest_is_untouched() -> None:
@@ -234,23 +192,16 @@ def test_the_expected_failure_keeps_every_other_assertion() -> None:
     the safety violation the model also contains and prove nothing about the
     liveness defect the configuration exists to find.
     """
-    from modelcheck import domain, materialize
+    from modelcheck import domain
 
-    configuration = cases.configuration(
-        "incident-3",
-        expectations=(
-            domain.Holds("UnderTen"),
-            domain.FailsAs("ReachesTen", domain.CounterexampleKind.LASSO),
-        ),
+    incident = (
+        domain.Holds("UnderTen"),
+        domain.FailsAs("ReachesTen", domain.CounterexampleKind.LASSO),
     )
 
-    spec = materialize.materialize(
-        cases.TAGGED, configuration, expected_failure="ReachesTen"
-    )
+    kept = kept_by(incident, name="incident-3", expected_failure="ReachesTen")
 
-    assert "assertion UnderTen:" in spec.text, "an assertion expected to hold is kept"
-    assert "assertion ReachesTen:" in spec.text, "the expected failure is kept"
-    assert "assertion ReachesOne:" not in spec.text, (
+    assert kept == {"UnderTen", "ReachesTen"}, (
         "an assertion neither expected nor failing is stripped"
     )
 

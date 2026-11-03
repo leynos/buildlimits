@@ -207,6 +207,17 @@ def test_a_missing_file_declares_nothing(tmp_path: Path) -> None:
     assert not source.exclusions(), "and no exclusions either"
 
 
+def test_a_bound_set_the_models_do_not_declare_is_refused(tmp_path: Path) -> None:
+    """A bound set that is not implemented is refused, not silently ignored.
+
+    Both models declare one ``options`` table in ``fizz.yaml``. Reading that
+    table after a request for another set would check the routine bounds under
+    the requested name, so the request is refused until 1.5.1 adds it.
+    """
+    with pytest.raises(domain.MaterializeError, match="bound set"):
+        TomlConfigurations(_directory(tmp_path), "nightly")
+
+
 @pytest.mark.parametrize(
     ("document", "expected"),
     [
@@ -227,6 +238,18 @@ def test_a_document_that_cannot_be_read_is_refused(
     message = _refusal(tmp_path, document, expected)
 
     assert "configurations.toml" in message, "the file a reader must open"
+
+
+def test_a_configuration_that_is_not_a_table_is_refused(tmp_path: Path) -> None:
+    """A scalar where a configuration belongs is refused, naming the variant.
+
+    ``[configurations] head = 3`` passes the top-level shape check, so without
+    a check of its own it would reach the field readers and fail with an
+    ``AttributeError`` rather than a message a reader can act on.
+    """
+    message = _refusal(tmp_path, "[configurations]\nhead = 3\n", "not a table")
+
+    assert "'head'" in message, "the configuration is named"
 
 
 @pytest.mark.parametrize(

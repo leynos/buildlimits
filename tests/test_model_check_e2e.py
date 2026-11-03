@@ -22,6 +22,12 @@ names, because the materializer is the only place that refusal can happen. And
 every mutant must report the fairness its run still carries, because the report
 quotes the run rather than the configuration. Materializing is not invoking the
 checker: it rewrites text already in the tree.
+
+Only the tests that read an artefact carry the ``fizzbee`` marker: there is no
+results file until ``make model-check`` has run, so they are skipped unless the
+run is opted into. The two materializer tests above need no artefact and run in
+the ordinary suite, where a model and its configuration that drifted apart is
+reported without waiting for a nightly check.
 """
 
 import json
@@ -41,8 +47,6 @@ _MODELS = {
     "transaction": _ROOT / "models" / "admission" / "transaction",
 }
 """The two W1 model directories, each the source its artefact must postdate."""
-
-pytestmark = [pytest.mark.fizzbee]
 
 PROPERTIES = {
     "coupling": ("S1", "S2", "L4a"),
@@ -252,6 +256,7 @@ def test_a_lost_declaration_is_refused_before_the_checker_runs(
         )
 
 
+@pytest.mark.fizzbee
 @pytest.mark.parametrize("model", sorted(_MODELS))
 def test_each_mutant_reports_the_fairness_it_still_carries(
     records: dict[str, list[Record]], model: str
@@ -303,6 +308,7 @@ def test_each_mutant_reports_the_fairness_it_still_carries(
         )
 
 
+@pytest.mark.fizzbee
 @pytest.mark.parametrize("model", sorted(_MODELS))
 def test_the_matrix_names_every_configuration(
     records: dict[str, list[Record]], model: str
@@ -321,6 +327,7 @@ def test_the_matrix_names_every_configuration(
     )
 
 
+@pytest.mark.fizzbee
 @pytest.mark.parametrize("model", sorted(_MODELS))
 def test_fixed_configuration_holds(
     records: dict[str, list[Record]], model: str
@@ -349,6 +356,7 @@ def test_fixed_configuration_holds(
         assert record["verdict"] == "reached", record
 
 
+@pytest.mark.fizzbee
 @pytest.mark.parametrize("model", sorted(_MODELS))
 def test_mutants_fail(records: dict[str, list[Record]], model: str) -> None:
     """Each targeted mutant produces exactly the counterexample it predicts.
@@ -371,6 +379,7 @@ def test_mutants_fail(records: dict[str, list[Record]], model: str) -> None:
         )
 
 
+@pytest.mark.fizzbee
 @pytest.mark.parametrize("model", sorted(_MODELS))
 def test_controls_hold(records: dict[str, list[Record]], model: str) -> None:
     """Each control meets the property it is evidence for.

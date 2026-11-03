@@ -30,10 +30,18 @@ ignore = [
 exclude = [
   # Captured checker output, compared byte for byte against a live run. The
   # launcher misspells "Written" and Graphviz writes `color=`; correcting
-  # either would make the fixture stop describing the run it records.
-  'tests/fixtures/fizzbee/',
+  # either would make the fixture stop describing the run it records. Only the
+  # captured files are named: a scenario directory may later hold a hand-written
+  # note, and excluding the whole tree would silently stop checking it.
+  'tests/fixtures/fizzbee/*/stdout.txt',
+  'tests/fixtures/fizzbee/*/exit-code.txt',
+  'tests/fixtures/fizzbee/*/graph.dot',
+  'tests/fixtures/fizzbee/*/error-graph.dot',
+  'tests/fixtures/fizzbee/*/error-graph.json',
   # The same capture for the CLI's end-to-end tests, recorded from the same
   # launcher and read back by the same parser. It carries the identical
-  # "Writen" misspelling for the identical reason.
-  'tests/fixtures/modelcheck/',
+  # "Writen" misspelling for the identical reason. The stub launcher and the
+  # model directory beside these are hand-written, so they stay checked.
+  'tests/fixtures/modelcheck/*-stdout.txt',
+  'tests/fixtures/modelcheck/*-error-graph.json',
 ]

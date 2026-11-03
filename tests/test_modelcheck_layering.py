@@ -27,6 +27,7 @@ import pytest
 PURE = (
     "domain",
     "expectations",
+    "assertions",
     "materialize",
     "frontmatter",
     "drift",
@@ -34,6 +35,7 @@ PURE = (
     "report",
     "ports",
     "service",
+    "fixpoint",
 )
 """The modules with no input, output, clock or production import.
 
@@ -41,11 +43,18 @@ PURE = (
 options; it reads no file and writes none, so it obeys the same rules as the
 materializer that calls it.
 
+``assertions`` decides which assertions a run keeps and edits the lines it is
+given; the text and the answer both stay in memory.
+
 ``ports`` and ``service`` are pure by construction rather than by accident:
 the service reads the model text, the configurations and the checker through
 the protocols, so it has nothing to open and no process to start. Listing them
 is what keeps that true — a later shortcut that read a file in the service
 would be caught here rather than in a review.
+
+``fixpoint`` repeats a run until its reading stops moving. It reaches the file,
+the process and the clock only through the ports it is handed, so it holds no
+handle of its own.
 """
 
 ALLOWED = frozenset({"enum", "dataclasses", "typing", "collections", "re", "json"})

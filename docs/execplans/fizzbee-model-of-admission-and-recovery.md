@@ -450,7 +450,9 @@ explicitly.
     +4,387 −42, after a second full gate run that stayed green. The
     milestone's line count is escalated in Risks; the commit was made so the
     delivered work is recoverable while that question is open.
-- [ ] EP-M3: `modelcheck` ports, service, adapters and command-line interface.
+- [x] EP-M3: `modelcheck` ports, service, adapters and command-line interface.
+      Complete on its accepted 35-file exception (D32), with E1 to E4 met and
+      the six gates green.
   - [x] `ports.py`, `service.py`, `cli.py`, `__main__.py` and the three
     adapters (`fizzbee_process.py`, `configuration.py`, `inventory.py`).
   - [x] EP-M3-E1: the twelve scenarios were written red under a strict
@@ -784,6 +786,72 @@ explicitly.
     the 400-line rule while gaining `CONTROLS`, so its docstrings were
     tightened rather than new modules split out; it is 390 lines and the
     change set stays at 27 files.
+  - **The hosted assessment then closed finding 5 on that commit.** The
+    tagged follow-up (`6562683011`, posted through the pool-token route on
+    the untagged one's retirement) was answered by `6562695682`, which echoed
+    the Assessment-ID, the base `f7ef264` and the head `9fc4700` and found all
+    three checks satisfied: the operator is stated in the RFC and the model,
+    RC5 records permanent retention under repeated queue-empty intervals, and
+    the boundary control is preserved by both the matrix-membership and
+    control-verdict tests. It carried findings 1–4 and 6–8 forward as
+    addressed and named only the unchanged obligations: ratify the 27-file
+    round, keep EP-M2-E1 partially discharged, and keep EP-M5 and EP-M6 out
+    of scope. It recorded its own limits honestly — it inspected the source
+    and the hosted checks but executed no repository code, so the twelve
+    local gates and the matrix measurements remain supplied evidence, and no
+    hosted nightly matrix run was verified.
+  - **Codex review then found the control was vacuous, and the finding was
+    repaired.** Comment `4437015057` (P1) said the control kept every
+    assertion because its run has no expected failure, and
+    `4437015059` (P2) said a mixed configuration's positive run was refused.
+    The P1 consequence was wrong — the matrix was green — but the mechanism
+    was real: FizzBee stopped at an unnamed, unreachable probe, printed no
+    liveness result, and was read as a pass. Assertion selection now applies
+    to every run (D36). Focused tests: 58 passed across the materialize,
+    service and expectations modules, plus 103 across the CLI, report,
+    configuration and behaviour modules; `make model-check` is re-run on this
+    candidate to record the control's genuine result.
+  - **The hosted review round closed the remaining fail-open paths and the
+    pre-merge rows.** Ten inline findings and three pre-merge errors were
+    repaired on the same candidate. `--bounds` now refuses a bound set the
+    models do not declare rather than silently running the routine one; a
+    configuration that is not a table is refused by the shared shape guard
+    rather than reaching the field readers; `_graph` reports only absence as
+    ordinary, and the adapter turns any other read failure into `Errored`; the
+    checker-independent materializer tests left the `fizzbee` opt-in; the
+    layering list names `assertions` and `fixpoint`; the spelling exclusions
+    are per-file rather than per-directory; and the `--only` status is read
+    from the whole matrix, with the regression test now asserting that both
+    configurations were checked. `make fizzbee` and the two model workflows
+    gained network-free contract tests
+    (`tests/test_model_tooling_contracts.py`), and `docs/users-guide.md`
+    gained the maintainer-facing section the user-facing documentation row
+    asked for.
+  - **The last two plan decisions are now enforced rather than described.**
+    D6 said `make model-check` must fail if anything was skipped; the new
+    `tests/skip_guard.py` plugin adds `--fail-on-skip`, the target passes it,
+    and `tests/test_skip_guard.py` proves both halves — a skip fails the
+    session under the flag and stays ordinary without it, so `make test` keeps
+    running suites that skip for a missing tool or privilege. D3 said every
+    run of one configuration must report the same `states_explored`;
+    `modelcheck.service._consistent` now compares the counts through the new
+    `modelcheck.domain.states_of` helper and turns a mismatch into an
+    `Errored` row naming both counts, because stripping assertions must not
+    change the state graph. `tests/test_modelcheck_service.py` gained the
+    mismatch and agreement controls. All twelve local gates were then run
+    sequentially against the uncommitted candidate. Ten passed first time;
+    `check-fmt` and `lint` failed in `tests/skip_guard.py` — Ruff wanted the
+    `--fail-on-skip` message joined onto one line, and Vulture read
+    `pytest_sessionstart` as dead because pytest discovers it by name. Naming
+    the hook in the module's `__all__` fixes the false positive the same way
+    the sibling hooks are already protected, and re-running both targets
+    passed, which also exercised the mdtablefix and duplication steps their
+    first failure had skipped. The other ten gates recorded: `markdownlint`,
+    `nixie`, `typecheck`, `audit`, `lint-actions`, `validate`,
+    `model-fidelity` and `test-workflow-contracts` clean; `test` 3,085 passed
+    with 71 legitimate opt-in skips; `model-check` 10 coupling and 14
+    transaction expectations met with no skips under `--fail-on-skip`, and
+    every fixpoint count stable.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -803,6 +871,18 @@ explicitly.
     fail when each fix is reverted (D35).
   - Impact: the rule the fixes follow is that each report line must be
     derivable from the artefact or the materialized text the run produced.
+- **A checker can also pass by refusing to look.** An unreachable `exists`
+  assertion makes FizzBee print `FAILED: Expected states never reached` and
+  skip the liveness check altogether, which the adapter mapped to a `Passed`.
+  The L1 control was compiled with every assertion, so two probes unrelated to
+  its claim were unreachable and suppressed the very check it was evidence for.
+  The fix is structural rather than a new verdict: select the assertions a run
+  compiles by what its configuration names (D36), so no probe survives unjudged.
+  - Evidence: the three direct FizzBee runs on the control's configuration
+    recorded in D36, and the four regressions in
+    `tests/test_modelcheck_materialize.py`.
+  - Impact: a green matrix now implies the liveness check ran, because every
+    probe in the text is one a `Reachable` expectation judges.
     The doubled-bound comparison, the text-derived fairness and the
     source-derived expectation lookup are the same rule applied three times.
 - **A passing gate can look truncated when its tools are silent on success.**
@@ -1165,11 +1245,19 @@ explicitly.
     the plan loses both size guards and should say so plainly rather than
     discovering it at G1.
 
-- **The D35 remediation round breaches the 25-file hard stop at 27 files.**
-  - Observation: the uncommitted round touches 30 paths; the tolerance's
-    exclusions remove two `.fizz` models and one syrupy snapshot, leaving 27
-    in-scope files, two over the limit that D32 explicitly kept for EP-M4
-    onward.
+- **The D35 remediation round breaches the 25-file hard stop, at 27 files
+  when the escalation was raised and 32 at the current head.**
+  - Observation: the uncommitted round now touches 33 paths; the tolerance's
+    exclusions remove one `.fizz` model, leaving 32 in-scope files, seven over
+    the limit that D32 explicitly kept for EP-M4 onward. The escalation was
+    raised when the figure stood at 27 (30 paths, less two `.fizz` models and
+    one syrupy snapshot); the five files since added are the D3 and D6
+    enforcements and their controls — `tests/skip_guard.py`,
+    `tests/test_skip_guard.py`, `tests/test_model_tooling_contracts.py`,
+    `tests/modelcheck_materialize_support.py` and
+    `tests/test_modelcheck_materialize_selection.py` — not a widening of the
+    remediation scope itself. The count is reported here rather than restated
+    as 27 so the open escalation is answered against the work that exists.
   - Evidence: `git status --porcelain -uall` at the round's final head,
     classified by the tolerance's exclusion rule, and the per-file line counts
     in Progress. The excess is three new modules — `modelcheck/fixpoint.py`,
@@ -1371,9 +1459,15 @@ explicitly.
       cover a top-level package.
   - Recorded as ADR 008 in EP-M3.
 - **D3. One expected failure per run.**
-  - Each run retains every assertion expected to hold in its configuration,
-    plus exactly one expected failure. The other expected failures are
-    stripped.
+  - Each run compiles only the assertions its configuration names: the
+    properties it expects to hold and the probes it judges. A targeted run
+    adds exactly one expected failure; the other expected failures are
+    stripped. Selection applies to a positive run too, which keeps its held
+    properties and probes and no failure.
+  - An unnamed `exists` probe must never be left in the text. FizzBee stops
+    exploring when a probe is unreachable, prints no liveness result, and
+    reports the run as a pass, so a held property retained beside an unnamed
+    probe could be judged from a run that never checked it (D36).
   - All runs of one configuration must report the same `states_explored`.
     That proves cheaply that stripping assertions did not change the state
     graph.
@@ -2049,10 +2143,53 @@ explicitly.
     (`/tmp/model-check-fizzbee-model-of-admission-and-recovery.out`).
   - Preserved: EP-M2-E1 remains **partially discharged** (D20) and EP-M3's
     35-file exception stands (D32). Neither is affected by this round.
+- **D36. Assertion selection applies to every run, not only a targeted one.**
+  _Decided 2026-11-01._
+  - Decision: the materializer compiles exactly the assertions a configuration
+    names — its held properties and probes, plus one expected failure for a
+    targeted run — and strips the rest of a positive run too. A configuration
+    declaring a `FailsAs` may now be materialized positively; one whose every
+    expectation is a failure still refuses it, because that positive run would
+    compile no assertion at all.
+  - Finding: Codex review comment `4437015057` (P1) reported that
+    `head-retention-idle-queue` kept every assertion because `expected_failure`
+    was `None`. The stated consequence, a failing matrix, was wrong: the
+    matrix was green. The mechanism was worse than the finding supposed, and
+    was reproduced against FizzBee v0.5.4. The control's full text stopped at
+    `TokenReleasedByAccounting` and `ReachesRestarting` with
+    `FAILED: Expected states never reached` and printed no
+    `Checking always eventually L1` line; the same run retaining only `L1`
+    printed `IsLive: true` and `PASSED: Model checker completed successfully`
+    at 3,222 states.
+  - Reason: FizzBee short-circuits an unreachable `exists` assertion before the
+    liveness check, and the adapter reports that as a pass, which `judge` reads
+    as `HOLDS`. A probe the configuration does not name could therefore
+    suppress the liveness check behind a green verdict. Under selection every
+    probe left in the text is one a `Reachable` expectation judges, so a green
+    matrix means the liveness check ran.
+  - P2 (`4437015059`, the mixed-expectation positive run) is the same edit: the
+    unconditional refusal was the old rule's guard rather than a separate
+    defect.
+  - Evidence: `test_a_positive_run_keeps_only_the_assertions_it_names`,
+    `test_a_positive_run_strips_an_unnamed_probe`,
+    `test_a_mixed_configuration_allows_its_positive_run` and
+    `test_the_l1_control_retains_only_the_property_it_claims` in
+    `tests/test_modelcheck_materialize.py`, and the `make model-check` run that
+    follows them.
+  - Unchanged: each `head` configuration names every assertion its model
+    declares, so its materialized text and state count are unchanged.
 
 ## Outcomes & retrospective
 
-Not started. Completed at each gate and at completion.
+EP-M1 to EP-M4 are delivered and accepted; EP-M5 and EP-M6 are not started. The
+plan's own estimate of the tooling's surface was its largest error. EP-M3 was
+accepted at 35 files against a 25-file stop (D32), and EP-M4's model breached
+both the memory and the runtime tolerance until it was split (D33). Both were
+resolved by an explicit decision rather than by cutting an acceptance
+condition, and the 25-file stop is unchanged for every later milestone. The
+model now runs inside the routine budget, and the two obligations it carries
+are placed where they are affordable: fidelity on every pull request, the
+matrix nightly.
 
 ### EP-M1
 
@@ -2134,6 +2271,37 @@ Not started. Completed at each gate and at completion.
 - **Carried forward.** Nothing blocking. The model itself, its configuration,
   `make model-check` and the end-to-end tests belong to EP-M4; the tooling can
   run a matrix but no W1 model exists yet.
+
+### EP-M4
+
+- **Delivered.** `models/admission/coupling` and `models/admission/transaction`,
+  each with its own `fizz.yaml`, `configurations.toml` and `traces/`; the
+  `make model-fidelity` and `make model-check` targets; the two workflows; the
+  `fizzbee`-marked end-to-end suite; the developer's guide §11.6 and §13; and
+  the DV1 baseline audit in RFC 0001 §RC4. Roadmap task 1.1.4 is ticked.
+- **What the measurements changed.** The unsplit model breached both
+  tolerances: 181,396 unique states at 11.3 GB in run A, and 125,660 states at
+  9.07 GB in run B, neither reaching a verdict.
+  `--experimental_processed_queue` cut the successor queue by roughly 28 times
+  and was still not enough, because the retained state graph that strict
+  liveness needs was the binding constraint. The split into two halves brought
+  the pair to 257 s at 4.14 GB peak, and the fixed halves now reach 65,664 and
+  14,618 states with stable doubled-bound counts.
+- **What the model found.** One substantive correction was needed for the
+  transaction half to hold L3 and S2: `RequestAdmitted` counted every admitted
+  request as cached work, so the stop guard could never clear during a
+  transaction. It now composes the two classes, which is what the unsplit model
+  had done. The assessment round then found the manager readability guard
+  missing from the stop and from S1, and the coupling half's count fell from
+  67,944 to 65,664.
+- **What it cost.** The 25-file stop was breached again, at 27 files, and the
+  excess is exactly the run of modules the 400-line rule forced; it is
+  escalated in Risks and does not reopen EP-M3's exception. The model has taken
+  two revisions since its first full run — the manager guard and the L1 control
+  — which is the tolerance's allowance; a third would stop the work at H1's
+  falsification boundary.
+- **Carried forward.** The known-bad configurations, the replay and the
+  comparator belong to EP-M5; the H1 verdict and gate G1 belong to EP-M6.
 
 ## Context and orientation
 
@@ -2479,8 +2647,7 @@ exclude.
   - Statement:
     - It changes only the named constant lines, the tagged fairness keywords,
       the frontmatter and the stripped assertions.
-    - An empty configuration that keeps every assertion is the identity on
-      the body.
+    - A configuration that names no assertion is the identity on the body.
     - It is idempotent.
     - An unknown constant, fairness tag or retained assertion is an error,
       never silently ignored.

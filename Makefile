@@ -243,6 +243,8 @@ model-fidelity: build ## Check both W1 models still account for the production s
 # `--fixpoint` re-runs every passing configuration at twice its max_actions
 # bound and fails if the state count grows: FizzBee truncates at the bound
 # without saying so, and a stable count is the documented evidence it did not.
+# `--fail-on-skip` makes a skipped model test a failure under the opt-in (D6), so
+# the target cannot report a matrix it did not run.
 model-check: fizzbee build ## Run both W1 model matrices, then judge the artefacts
 	@set -eu; mkdir -p .model-check; for model in $(MODEL_DIRS); do \
 	  name="$$(basename "$$model")"; \
@@ -250,7 +252,8 @@ model-check: fizzbee build ## Run both W1 model matrices, then judge the artefac
 	  $(UV_ENV) $(UV) run python -m modelcheck check --fizz $(FIZZ) --fixpoint \
 	    --json ".model-check/$$name.json" "$$model"; \
 	done
-	BUILD_LIMITS_MODEL_CHECK=1 $(UV_ENV) $(UV) run pytest -n 0 -rs -m fizzbee tests
+	BUILD_LIMITS_MODEL_CHECK=1 $(UV_ENV) $(UV) run pytest -n 0 -rs --fail-on-skip \
+	  -m fizzbee tests
 
 validate: ## Validate the Makefile
 	mbake validate Makefile

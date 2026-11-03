@@ -1,30 +1,25 @@
-"""The service's two silent-pass paths, and the fixpoint that closes the third.
+"""The service's silent-pass paths, and the comparisons that close them.
 
 An empty matrix is the quietest false pass the tooling can produce: no
 configuration means no judgement, and an empty judgement sequence exits ``0``.
-The service therefore raises rather than returning nothing.
 
 The fixpoint comparison is the documented evidence that FizzBee did not
-truncate exploration at ``max_actions``. FizzBee prints no marker when it stops
-at the bound, so the only observable test is that doubling the bound leaves the
-state count unchanged. That decision — which configurations are compared and
-what twice their bound is — belongs to the service, because it is the only
-module allowed to ask the checker for a second run.
+truncate exploration at ``max_actions``: it prints no marker when it stops, so
+the only observable test is that doubling the bound leaves the count unchanged.
+The same reasoning makes each configuration's runs agree on their state count
+(D3), because stripping assertions must not change the state graph.
 
 The same refusals are checked through the command line, because a refusal that
-reached a summary with no rows would exit ``0`` exactly as a pass does. The
-entry point maps them to ``EXIT_TOOL_FAILURE``, which says the checker was never
-asked rather than that the model or the code is wrong.
+reached a summary with no rows would exit ``0`` exactly as a pass does.
 
-The checker here is a small double that answers from the bound it is handed.
-It is not a recording: these tests are about the comparison the service makes,
-not about classifying output, which :mod:`tests.test_modelcheck_fizzbee_output`
-already owns.
+The checkers here are small doubles that answer from the specification they are
+handed, not recordings: these tests are about the comparisons the service makes.
 """
 
 import collections.abc as cabc
 
 import pytest
+from modelcheck_cases import trace
 from modelcheck_cli_cases import SOURCE, Inventory, app, holds
 from modelcheck_doubles import FakeChecker, FixedSource
 
@@ -36,6 +31,9 @@ action Init:
 
 always assertion S1:
   return n < 10
+
+always assertion S2:
+  return n < 20
 
 exists assertion StopIssued:
   return n == 3
@@ -99,6 +97,47 @@ class _Refuses:
         return domain.Errored("no verdict line")
 
 
+class _Counted:
+    """A checker whose state count depends on which run it answers.
+
+    Parameters
+    ----------
+    counts : dict[str | None, int]
+        The count to report for the positive run and for the targeted one.
+    failure : str
+        The assertion the configuration expects to fail; the run retaining it
+        is the targeted run.
+    """
+
+    def __init__(self, counts: dict[str | None, int], *, failure: str) -> None:
+        """Hold the counts and the assertion that identifies the targeted run."""
+        self._counts = counts
+        self._failure = failure
+
+    def check(self, spec: domain.MaterializedSpec) -> domain.CheckResult:
+        """Answer a pass for the positive run, a counterexample for the other.
+
+        Parameters
+        ----------
+        spec : domain.MaterializedSpec
+            The specification to answer.
+
+        Returns
+        -------
+        domain.CheckResult
+            The result the counted run reports.
+        """
+        if f"assertion {self._failure}:" not in spec.text:
+            return domain.Passed(self._counts[None], 0.1, ())
+        return domain.Counterexample(
+            self._failure,
+            domain.CounterexampleKind.FINITE,
+            trace(),
+            self._counts[self._failure],
+            0.1,
+        )
+
+
 def _source(*configurations: domain.Configuration) -> FixedSource:
     """Return a source holding the given configurations.
 
@@ -139,6 +178,15 @@ def _configuration(
     """
     options = {} if max_actions is None else {"options": {"max_actions": max_actions}}
     return domain.Configuration(name, {}, {}, options, 1, expectations)
+
+
+_MIXED = _configuration(
+    expectations=(
+        domain.Holds("S1"),
+        domain.FailsAs("S2", domain.CounterexampleKind.FINITE),
+    )
+)
+"""A configuration that holds ``S1`` and expects ``S2`` to fail."""
 
 
 @pytest.mark.parametrize("run", [service.run_matrix, fixpoint.run_fixpoint])
@@ -234,6 +282,43 @@ def test_the_matrix_keeps_one_row_per_expectation() -> None:
         domain.Verdict.HOLDS,
         domain.Verdict.REACHED,
     ], "one judgement per expectation, in declaration order"
+
+
+def test_runs_that_explore_different_state_counts_are_refused() -> None:
+    """A configuration whose runs disagree explored two different models (D3).
+
+    Stripping assertions must not change the state graph; when it does, every
+    row of the configuration is an error naming both counts.
+    """
+    judgements = service.run_matrix(
+        _source(_MIXED), _Counted({None: 80, "S2": 60}, failure="S2")
+    )
+
+    assert [judgement.verdict for judgement in judgements] == [
+        domain.Verdict.ERROR,
+        domain.Verdict.ERROR,
+    ], "neither run can be judged"
+    details = {
+        judgement.result.detail
+        for judgement in judgements
+        if isinstance(judgement.result, domain.Errored)
+    }
+    assert len(details) == 1, "every row names the same mismatch"
+    detail = details.pop()
+    assert "the positive run: 80 states" in detail, "the positive count is named"
+    assert "expecting S2: 60 states" in detail, "and the targeted count is too"
+
+
+def test_runs_that_explore_the_same_state_count_are_judged() -> None:
+    """Agreement is the evidence that stripping assertions changed nothing."""
+    judgements = service.run_matrix(
+        _source(_MIXED), _Counted({None: 80, "S2": 80}, failure="S2")
+    )
+
+    assert [judgement.verdict for judgement in judgements] == [
+        domain.Verdict.HOLDS,
+        domain.Verdict.AS_EXPECTED,
+    ], "both expectations are judged against their own run"
 
 
 def test_an_empty_matrix_is_a_usage_error() -> None:

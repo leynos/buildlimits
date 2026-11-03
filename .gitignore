@@ -217,8 +217,11 @@ target/
 # FizzBee writes `<spec>.json` beside the spec it was given and a run
 # directory under `out/`. Every target copies the spec into a scratch
 # directory under `.model-check/` first, so these cover only a manual run
-# beside the source model. The pattern is one level deep so that recorded
-# traces under `models/admission/traces/` stay committable.
+# beside the source model. The spike specs sit two levels deep and the W1
+# specs three, so both JSON patterns are needed; neither reaches the four
+# levels of a recorded trace under `models/admission/<half>/traces/`, which
+# stays committable.
 .model-check/
 models/*/*.json
+models/*/*/*.json
 models/**/out/

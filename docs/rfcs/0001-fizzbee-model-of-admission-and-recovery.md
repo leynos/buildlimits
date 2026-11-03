@@ -1052,7 +1052,7 @@ none of them is pinned.
 
 **Tarball contents.** The tarball holds 1,795 entries: 1,673 files and 122
 directories, with no symbolic links. Unpacked they occupy about 675 MiB. Table
-10 groups them by area.
+11 groups them by area.
 
 | Area          | Entries     | Unpacked | Purpose                                                                    |
 | ------------- | ----------- | -------- | -------------------------------------------------------------------------- |

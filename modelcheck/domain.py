@@ -138,6 +138,30 @@ type CheckResult = Passed | Counterexample | Stopped | Errored
 """The four outcomes a checker run can have."""
 
 
+def states_of(result: CheckResult) -> int | None:
+    """Return the state count a result carries, if any.
+
+    Parameters
+    ----------
+    result : CheckResult
+        The result to read.
+
+    Returns
+    -------
+    int | None
+        The count a pass or a counterexample reported, and ``None`` for a run
+        that reported none, so a caller never claims a figure it lacks.
+
+    Examples
+    --------
+    >>> states_of(Passed(4, 0.5, ()))
+    4
+    >>> states_of(Stopped("interrupted")) is None
+    True
+    """
+    return result.states if isinstance(result, (Passed, Counterexample)) else None
+
+
 @dc.dataclass(frozen=True, slots=True)
 class Holds:
     """An expectation that a property holds in every reachable state.

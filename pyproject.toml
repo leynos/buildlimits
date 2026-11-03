@@ -622,7 +622,7 @@ testpaths = ["tests", "buildlimits", "modelcheck"]
 # The repository root is on the path because ``modelcheck`` is not installed:
 # only ``buildlimits`` is, through the editable install.
 pythonpath = ["tests", "."]
-addopts = ["--doctest-modules", "-p", "descriptor_guard"]
+addopts = ["--doctest-modules", "-p", "descriptor_guard", "-p", "skip_guard"]
 # A descriptor-owning object that is dropped unclosed is a test defect, not
 # noise: the collector closes it during some later test, whose descriptor
 # accounting then fails. tests/descriptor_guard.py catches the objects a

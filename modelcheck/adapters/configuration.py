@@ -41,6 +41,7 @@ deliberate omission and a configuration are both statements the maintainer
 makes about this model, and a reviewer looking for one should find the other.
 """
 
+import itertools
 import tomllib
 import typing as typ
 
@@ -55,6 +56,9 @@ __all__ = ["TomlConfigurations"]
 
 _CONFIGURATIONS = "configurations.toml"
 """The file naming every variant the matrix runs."""
+
+_ROUTINE = "routine"
+"""The only bound set the models declare today."""
 
 _MODEL_SUFFIX = ".fizz"
 """What a model directory must hold at least one of.
@@ -72,10 +76,11 @@ class TomlConfigurations:
     directory : pathlib.Path
         The model directory.
     bounds : str
-        Which declared bound set applies, ``routine`` or ``nightly``. The
-        numbers live in the model's ``fizz.yaml``; this adapter only records
-        which set the run asked for, so a configuration could later select a
-        bound by name without the tooling holding a second copy of it.
+        Which declared bound set applies. Only ``routine`` is implemented: the
+        models currently declare one ``options`` table in ``fizz.yaml``, so a
+        request for another set would silently check the routine bounds and
+        report the requested name. It is refused instead, until 1.5.1 adds the
+        table that would make it meaningful.
 
     Examples
     --------
@@ -90,17 +95,30 @@ class TomlConfigurations:
     """
 
     def __init__(self, directory: Path, bounds: str = "routine") -> None:
-        """Record the directory and the bound set.
+        """Record the directory, refusing a bound set the models do not declare.
 
         Parameters
         ----------
         directory : pathlib.Path
             The model directory.
         bounds : str
-            Which declared bound set applies.
+            Which declared bound set applies. Only ``routine`` is declared by
+            the models in this repository.
+
+        Raises
+        ------
+        MaterializeError
+            If ``bounds`` names a set the models do not declare. Reading it and
+            then checking the routine bounds would report a run that never
+            happened.
         """
+        if bounds != _ROUTINE:
+            msg = (
+                f"the models declare no {bounds!r} bound set; "
+                f"only {_ROUTINE!r} is implemented"
+            )
+            raise MaterializeError(msg)
         self._directory = directory
-        self._bounds = bounds
         self._document: dict[str, object] | None = None
 
     def source_text(self) -> str:
@@ -148,10 +166,7 @@ class TomlConfigurations:
             field of the wrong shape.
         """  # ruff: ignore[docstring-extraneous-exception] - the table readers raise it.
         tables = self._table("configurations")
-        return tuple(
-            configuration(name, typ.cast("dict[str, object]", table))
-            for name, table in tables.items()
-        )
+        return tuple(itertools.starmap(configuration, tables.items()))
 
     def exclusions(self) -> cabc.Mapping[str, str]:
         """Return the inventory paths the model deliberately does not map.

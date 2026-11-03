@@ -27,7 +27,7 @@ absent column reads as the second.
 import json
 import typing as typ
 
-from modelcheck.domain import Counterexample, Passed, Reachable
+from modelcheck.domain import Counterexample, Passed, Reachable, states_of
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -339,27 +339,10 @@ def _record(judgement: Judgement) -> dict[str, object]:
         "met": judgement.is_met,
         "fairness": list(judgement.fairness_in_force),
     }
-    states = _states(judgement.result)
+    states = states_of(judgement.result)
     if states is not None:
         record["states"] = states
     return record
-
-
-def _states(result: object) -> int | None:
-    """Return the state count a result carries, if any.
-
-    Parameters
-    ----------
-    result : CheckResult
-        The result to read.
-
-    Returns
-    -------
-    int | None
-        The count a pass or a counterexample reported, and ``None`` for a run
-        that reported none, so a record never claims a figure it lacks.
-    """
-    return result.states if isinstance(result, (Passed, Counterexample)) else None
 
 
 def trace_record(trace: Trace) -> dict[str, object]:

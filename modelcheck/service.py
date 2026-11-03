@@ -13,6 +13,10 @@ expectation against a run built to fail would report an ``UNEXPECTED``
 counterexample for an expectation the configuration never claimed, so the two
 kinds are read from different runs.
 
+Every run of one configuration must also report the same state count.
+Stripping assertions must not change the state graph, so a mismatch means the
+runs explored different models and none of them can be judged (D3).
+
 Nothing here opens a file, starts a process or reads the clock. The model text,
 the configurations and the checker all arrive through the ports, which is what
 lets the whole matrix be exercised against a recording.
@@ -22,10 +26,12 @@ import typing as typ
 
 from modelcheck.domain import (
     CheckResult,
+    Errored,
     FailsAs,
     Judgement,
     MaterializedSpec,
     MaterializeError,
+    states_of,
 )
 from modelcheck.expectations import judge, only_failures
 from modelcheck.materialize import materialize
@@ -175,12 +181,82 @@ def _runs(
         for expectation in configuration.expectations
         if isinstance(expectation, FailsAs)
     )
-    return {
+    runs = {
         expected_failure: _checked(
             text, configuration, checker, expected_failure=expected_failure
         )
         for expected_failure in wanted
     }
+    return _consistent(configuration, runs)
+
+
+def _consistent(
+    configuration: Configuration, runs: dict[str | None, Run]
+) -> dict[str | None, Run]:
+    """Refuse a configuration whose runs explored different state counts (D3).
+
+    Every run of one configuration strips a different set of assertions, and
+    the state graph must not change with them: if it did, a verdict would be
+    about a different model from the one the report names. Comparing the
+    counts is the cheap proof that it did not, so a mismatch is reported as a
+    run that proved nothing rather than as a pass or a finding.
+
+    A run that reported no count at all is left alone. It is already an error
+    or a stop, whose own detail says what went wrong, and replacing it with a
+    count mismatch would hide the cause.
+
+    Parameters
+    ----------
+    configuration : Configuration
+        The configuration whose runs are compared.
+    runs : dict[str | None, Run]
+        The runs, keyed by the expected failure each was built for.
+
+    Returns
+    -------
+    dict[str | None, Run]
+        The runs unchanged when their counts agree or one is missing, and the
+        same specifications paired with one ``Errored`` describing the
+        mismatch otherwise.
+    """
+    counts = {
+        expected_failure: states_of(result)
+        for expected_failure, (_, result) in runs.items()
+    }
+    if None in counts.values() or len(set(counts.values())) == 1:
+        return runs
+    detail = (
+        f"configuration {configuration.name!r} explored different state counts "
+        f"across its runs ({_spelled(counts)}), so stripping assertions changed "
+        f"the state graph and no run can be judged"
+    )
+    return {key: (spec, Errored(detail)) for key, (spec, _) in runs.items()}
+
+
+def _spelled(counts: dict[str | None, int | None]) -> str:
+    """Name each run's state count for a mismatch report.
+
+    Parameters
+    ----------
+    counts : dict[str | None, int | None]
+        The state count of each run, keyed by the expected failure it was
+        built for.
+
+    Returns
+    -------
+    str
+        One ``<run>: <count> states`` clause per run, in the order the runs
+        were made, with the positive run named rather than left blank.
+
+    Examples
+    --------
+    >>> _spelled({None: 8, "L3": 6})
+    'the positive run: 8 states, expecting L3: 6 states'
+    """
+    return ", ".join(
+        f"{'the positive run' if key is None else f'expecting {key}'}: {count} states"
+        for key, count in counts.items()
+    )
 
 
 def _checked(
