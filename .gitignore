@@ -204,6 +204,7 @@ target/
 **/mutants.out*/
 
 .crush/
+.vtcode/
 
 # Untracked cache of the estate-wide en-GB-oxendict dictionary.
 .typos-oxendict-base.json
