@@ -1437,7 +1437,7 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
 - (2026-11-03) Main and PR #43 both use ADR 005. ADR 007 documents the
   collision and proposes 006 for the unmerged kache record; neither existing
-  decision is silently renumbered. Kache reports expose event rows but their
+  decision is silently renumbered. Kache reports expose event rows, but their
   documented sessions may span Cargo commands and do not establish admission
   identity. See ADR 007 for version-specific sources and remaining experiments.
 
