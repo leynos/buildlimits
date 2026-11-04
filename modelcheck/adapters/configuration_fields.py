@@ -35,8 +35,19 @@ if typ.TYPE_CHECKING:
 
 __all__ = ["configuration"]
 
-_KINDS = {kind.value: kind for kind in CounterexampleKind}
-"""The kinds a ``fails_as`` table may name, by their lower-case spelling."""
+_KINDS = {
+    kind.value: kind
+    for kind in CounterexampleKind
+    if kind is not CounterexampleKind.UNKNOWN
+}
+"""The kinds a ``fails_as`` table may name, by their lower-case spelling.
+
+``UNKNOWN`` is left out because it is the absence of a classification, not one
+of them: a run reaches it when the counterexample's shape could not be
+established. A configuration that named it would be claiming to expect the
+failure nobody could read, so the one case the kind exists to surface would be
+reported as the case the model predicted.
+"""
 
 _SHAPES = {list: "list", dict: "table"}
 """What each container is called in a reader's error message.

@@ -1120,18 +1120,22 @@ a bound that reaches its fixpoint before its expectations can say anything
 about the code. It runs nightly on GitHub runners and can be started by hand
 through `workflow_dispatch`.
 
-Both targets are wrappers. The tool itself is available directly:
+Both targets are wrappers. The tool itself is available directly, through
+`uv run` so it uses the environment `make build` created:
 
 ```bash
-python -m modelcheck check models/admission/coupling --fizz .tools/fizzbee/fizz
-python -m modelcheck check models/admission/transaction --fizz .tools/fizzbee/fizz
-python -m modelcheck drift models/admission/coupling
+uv run python -m modelcheck check models/admission/coupling --fizz .tools/fizzbee/fizz
+uv run python -m modelcheck check models/admission/transaction --fizz .tools/fizzbee/fizz
+uv run python -m modelcheck drift models/admission/coupling
 ```
 
 `check` prints one line per expectation, naming the configuration, the
 property, the verdict, the fairness assumptions in force and the states
 explored. `--only CONFIG[:PROPERTY]` narrows the report without narrowing the
-check, and `--bounds nightly` selects the bound set a model declares.
+check, and `--bounds routine` selects the bound set a model declares. Routine
+is the only set implemented today: any other value is refused with status `2`
+rather than falling back to the routine bounds, because a run that checked
+different bounds from the ones it named would be reported as the run asked for.
 `--json PATH` writes the judgements as JSON and `--save-traces` keeps each
 counterexample's normalized trace under the model's `traces/` directory.
 
@@ -1151,16 +1155,25 @@ the model; it can be raised after the checker has already run, for example when
 the path `--json` names cannot be written. A checker that never started is
 different: the command did run, so the matrix records an error judgement naming
 the reason and the status is `1`. So is a counterexample whose error graph
-exists but cannot be read or parsed. Only `0` is a pass; a job that treated any
+exists but cannot be read or parsed. `--fixpoint` changes the second case: the
+comparison re-reads each configuration at twice its bound and raises when a run
+that should pass has not, so the report is printed and the same missing checker
+then ends the command with `2`. A script that treats `1` and `2` differently
+should therefore not assume a checker failure keeps the status at `1` when the
+fixpoint comparison is asked for. Only `0` is a pass; a job that treated any
 other status as one would report green for a model that was never checked.
 
 ### Generated artefacts
 
 A run copies its specification into a fresh directory under the git-ignored
-`.model-check/` and writes its output there, so no tracked directory is written
-and `git status --porcelain` stays empty. `make model-check` also writes
-`.model-check/coupling.json` and `.model-check/transaction.json`, which the
-end-to-end tests read. Those tests are opt-in because they need the binary:
+`.model-check/` and writes its output there, so the run itself writes no
+tracked file. `make model-check` also writes `.model-check/coupling.json` and
+`.model-check/transaction.json`, which the end-to-end tests read. It passes
+`--save-traces` as well, so each counterexample's normalized path is kept under
+`models/admission/<half>/traces/`; that directory is not ignored, because a
+maintainer may commit a trace as evidence, and after a run it shows up as
+untracked until they decide. Those tests are opt-in because they need the
+binary:
 
 ```bash
 BUILD_LIMITS_MODEL_CHECK=1 .venv/bin/pytest -m fizzbee tests

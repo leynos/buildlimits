@@ -2326,6 +2326,34 @@ explicitly.
     `test_a_diagnostic_longer_than_its_column_is_cut_with_an_ellipsis` and the
     updated `test_modelcheck_report_snapshots` and `test_modelcheck_cli`
     snapshots.
+- **D39. An unclassified failure is not a promise, and the guide matches the
+  flags it documents.** _Decided 2026-11-04._
+  - Decision: `fails_as` refuses `unknown`; the users' guide runs the tool
+    through `uv run`, names `--bounds routine`, qualifies the checker-error
+    exit status for `--fixpoint`, and states that `--save-traces` leaves
+    `models/admission/<half>/traces/` untracked rather than claiming a run
+    leaves `git status` clean. Three modules were split to stay inside the
+    400-line limit: `tests/test_modelcheck_vocabulary.py`,
+    `modelcheck/adapters/fizzbee_process_group.py` and
+    `tests/modelcheck_artefacts.py`.
+  - Finding: the review on head `283761c` raised four minor findings. Three
+    were in `docs/users-guide.md`: the direct commands assumed an activated
+    `.venv`, the bounds example named a set the adapter refuses, and the exit
+    status omitted that `--fixpoint` turns a checker failure into `2`. The
+    fourth observed that `_KINDS` accepted `CounterexampleKind.UNKNOWN` as a
+    configurable failure kind. A fifth error was found here while checking
+    the review's citations: the guide claimed a run left `git status`
+    empty, which stopped being true when `make model-check` took on
+    `--save-traces`.
+  - Reason: `UNKNOWN` records that a counterexample's shape could not be
+    established, so a configuration naming it would report the failure nobody
+    could read as the failure the model predicted. Each of the guide's three
+    errors described a command a reader would run and see fail.
+  - Evidence: `test_the_unclassified_kind_cannot_be_expected`, written first
+    and failing with `DID NOT RAISE MaterializeError`, and a direct probe of
+    both statuses with a missing checker: `--fizz /nonexistent/fizz` exits
+    `1`, while the same command with `--fixpoint` prints the report and then
+    exits `2`.
 
 ## Outcomes & retrospective
 

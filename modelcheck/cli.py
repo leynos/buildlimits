@@ -177,7 +177,9 @@ def make_app(  # pylint: disable=too-many-arguments  # ADR 008 supplies three ad
         fizz : pathlib.Path
             The pinned checker to run.
         bounds : str
-            Which declared bound set to run, ``routine`` or ``nightly``.
+            Which declared bound set to run. The models declare only
+            ``routine`` today, so ``nightly`` reaches the adapter and is
+            refused there rather than being silently ignored.
         only : list[str] | None
             Report only these ``CONFIG[:PROPERTY]`` selections.
         json_path : pathlib.Path | None

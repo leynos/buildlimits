@@ -252,6 +252,21 @@ def test_a_configuration_that_is_not_a_table_is_refused(tmp_path: Path) -> None:
     assert "'head'" in message, "the configuration is named"
 
 
+def test_the_unclassified_kind_cannot_be_expected(tmp_path: Path) -> None:
+    """``unknown`` records the absence of a shape, so it cannot be predicted.
+
+    ``CounterexampleKind.UNKNOWN`` says a failure's shape could not be
+    established, which is not something a model can promise. Accepting it would
+    let a configuration name an unclassified failure as the one it expected,
+    and the case the kind exists to keep visible would read as a pass.
+    """
+    message = _refusal(
+        tmp_path, '[configurations.head]\nfails_as = { S1 = "unknown" }\n'
+    )
+
+    assert "is not one of" in message, "the unclassified kind is refused"
+
+
 @pytest.mark.parametrize(
     ("table", "expected"),
     [
