@@ -27,6 +27,9 @@ import typing as typ
 import pytest
 from fizzbee_spike import captured_graph
 
+from modelcheck import trace
+from modelcheck.adapters import fizzbee_graph
+
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -36,6 +39,27 @@ CAPTURED = ("safety-failure", "lasso", "lasso-prefix", "oneof", "stutter", "dead
 Truncation and parse-error runs write no graph, or a graph that does not
 describe a counterexample.
 """
+
+
+def _normalized(output_class: str) -> trace.Trace:
+    """Return the trace one captured run's error graph normalizes to.
+
+    The graph's keys are the checker's, so the adapter decodes them into
+    domain links before the normalizer sees them. Going through that door here
+    rather than handing the raw mappings straight to the normalizer is what
+    keeps the two responsibilities tested as they are split.
+
+    Parameters
+    ----------
+    output_class : str
+        Directory under ``tests/fixtures/fizzbee`` holding the run.
+
+    Returns
+    -------
+    modelcheck.trace.Trace
+        The normalized path.
+    """
+    return trace.normalize_trace(fizzbee_graph.links(captured_graph(output_class)))
 
 
 def _steps_of(
@@ -72,10 +96,8 @@ def test_normalize_trace_keeps_the_actions_and_states(output_class: str) -> None
     restating it: a normalizer that reordered, deduplicated or dropped a step
     would differ from the graph it came from.
     """
-    from modelcheck import trace
-
     links = captured_graph(output_class)
-    normalized = trace.normalize_trace(links)
+    normalized = _normalized(output_class)
 
     assert normalized.initial == links[0]["Node"]["state"], "the graph's first state"
     assert [(step.action, dict(step.state)) for step in normalized.steps] == (
@@ -92,9 +114,7 @@ def test_normalize_trace_marks_the_ending(output_class: str) -> None:
     The deadlock class is a finite path too — no action is enabled, so its
     links end after the last real step.
     """
-    from modelcheck import trace
-
-    normalized = trace.normalize_trace(captured_graph(output_class))
+    normalized = _normalized(output_class)
 
     expected = {
         "safety-failure": trace.Ending.FINITE,
@@ -115,9 +135,7 @@ def test_the_degenerate_lasso_cycles_onto_its_first_state() -> None:
     ``lasso-prefix`` case below is a contrast rather than the only lasso the
     suite knows.
     """
-    from modelcheck import trace
-
-    normalized = trace.normalize_trace(captured_graph("lasso"))
+    normalized = _normalized("lasso")
 
     assert normalized.cycle_start == 0, "the cycle closes onto the first state"
     assert normalized.states[0] == normalized.states[-1], "the last state repeats it"
@@ -133,9 +151,7 @@ def test_the_lasso_prefix_cycle_start_differs_from_the_trace_start() -> None:
     which is why the terminal state is checked to be a real step's state and
     the cycle start to lie before it.
     """
-    from modelcheck import trace
-
-    normalized = trace.normalize_trace(captured_graph("lasso-prefix"))
+    normalized = _normalized("lasso-prefix")
 
     assert normalized.cycle_start == 1, "the cycle starts after Open"
     assert normalized.cycle_start != 0, "the prefix is not part of the cycle"
@@ -153,9 +169,7 @@ def test_the_stutter_repeats_its_last_state() -> None:
     that records the stutter names no action, so it must not become a step:
     the only step here is none at all.
     """
-    from modelcheck import trace
-
-    normalized = trace.normalize_trace(captured_graph("stutter"))
+    normalized = _normalized("stutter")
 
     assert normalized.terminal == len(normalized.states) - 1, "the last index"
     assert normalized.states[-1] == normalized.states[-2], "the repetition"
@@ -169,9 +183,7 @@ def test_the_stutter_link_is_not_an_action() -> None:
     normalizer that stepped on every link after the first would report a step
     named ``"stutter"`` that no action ever took.
     """
-    from modelcheck import trace
-
-    normalized = trace.normalize_trace(captured_graph("stutter"))
+    normalized = _normalized("stutter")
 
     assert "stutter" not in {step.action for step in normalized.steps}, (
         "no step is named for the ending"
@@ -186,9 +198,7 @@ def test_a_oneof_branch_is_a_step() -> None:
     trace outright; classifying by ``Type`` and name keeps the branch, so a
     replay can reproduce the choice a counterexample made.
     """
-    from modelcheck import trace
-
-    normalized = trace.normalize_trace(captured_graph("oneof"))
+    normalized = _normalized("oneof")
     branches = [
         step.action for step in normalized.steps if step.action.startswith("Any:")
     ]
@@ -202,10 +212,8 @@ def test_a_oneof_branch_is_a_step() -> None:
 
 def test_normalize_trace_rejects_an_empty_graph() -> None:
     """A graph with no links describes no run and must raise."""
-    from modelcheck import trace
-
     with pytest.raises(ValueError, match="empty"):
-        trace.normalize_trace([])
+        trace.normalize_trace(())
 
 
 def test_normalize_trace_rejects_a_graph_that_does_not_start_at_init() -> None:
@@ -215,12 +223,10 @@ def test_normalize_trace_rejects_a_graph_that_does_not_start_at_init() -> None:
     reading its first action as the initial state would silently shift every
     index a replay depends on.
     """
-    from modelcheck import trace
-
     links = captured_graph("safety-failure")[1:]
 
     with pytest.raises(ValueError, match="initial"):
-        trace.normalize_trace(links)
+        trace.normalize_trace(fizzbee_graph.links(links))
 
 
 def test_a_deadlock_graph_normalizes_as_a_finite_path() -> None:
@@ -231,9 +237,7 @@ def test_a_deadlock_graph_normalizes_as_a_finite_path() -> None:
     ``Ending.FINITE`` says. The verdict kind comes from the checker's line, not
     from the trace.
     """
-    from modelcheck import trace
-
-    normalized = trace.normalize_trace(captured_graph("deadlock"))
+    normalized = _normalized("deadlock")
 
     assert normalized.ending is trace.Ending.FINITE, "the path simply stops"
     assert normalized.cycle_start is None, "no cycle to start"

@@ -21,14 +21,16 @@ The never-reached line is a *completion* marker even though it begins with
 domain models it as a pass carrying ``unsatisfied_probes``, which is the only
 shape from which a reachability expectation can be judged unmet.
 
-This module is pure. It parses text and JSON already in hand, and never starts
-the checker or touches the filesystem; ``fizzbee_process`` supplies the text.
+This module is pure. It classifies text already in hand and never starts the
+checker or touches the filesystem; ``fizzbee_process`` supplies the text. The
+error graph is a separate document, and decoding it is
+:mod:`modelcheck.adapters.fizzbee_graph`'s job rather than this module's.
 """
 
-import json
 import re
 import typing as typ
 
+from modelcheck.adapters import fizzbee_graph
 from modelcheck.adapters.fizzbee_measurements import elapsed, states
 from modelcheck.domain import (
     Counterexample,
@@ -37,12 +39,13 @@ from modelcheck.domain import (
     Passed,
     Stopped,
 )
-from modelcheck.trace import Ending, Trace, normalize_trace
+from modelcheck.trace import Ending, Trace
 
-__all__ = ["normalize_trace", "parse_output"]
-"""``normalize_trace`` is re-exported so a caller reading an error graph needs
-only this module; the implementation lives in :mod:`modelcheck.trace`, which is
-pure too, and its tests live beside the trace types."""
+__all__ = ["parse_output"]
+"""Only :func:`parse_output` is public. A caller that needs the decoded error
+graph imports :mod:`modelcheck.adapters.fizzbee_graph`, which owns that
+document's format; this module takes the graph as text and returns domain
+values, so its callers never handle a checker key."""
 
 if typ.TYPE_CHECKING:
     from modelcheck.domain import CheckResult
@@ -299,30 +302,12 @@ def _counterexample(
     # Untrusted JSON: a scalar, a non-mapping link or a missing key raises
     # before any shape check can name it, and each is malformed evidence.
     try:
-        trace = _trace(error_graph)
+        path = fizzbee_graph.trace(error_graph)
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         return Errored(f"the error graph could not be parsed: {error}")
     return Counterexample(
-        name, _reported_kind(marker_kind, trace), trace, states(stdout), elapsed(stdout)
+        name, _reported_kind(marker_kind, path), path, states(stdout), elapsed(stdout)
     )
-
-
-def _trace(error_graph: str) -> Trace:
-    """Return the path a counterexample took.
-
-    Parameters
-    ----------
-    error_graph : str
-        The text of ``error-graph.json``.
-
-    Returns
-    -------
-    Trace
-        The normalized path. A text that is not JSON, or links that are not a
-        well-formed path, raise from :func:`modelcheck.trace.normalize_trace`
-        rather than becoming a trace this module invented.
-    """
-    return normalize_trace(json.loads(error_graph))
 
 
 def _reported_kind(

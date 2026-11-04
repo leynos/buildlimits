@@ -2,18 +2,19 @@
 
 Two reports matter. The check report is one line per expectation — the
 configuration, the property, the verdict, then either the state count of a
-pass or the kind and length of a counterexample, and finally the fairness
+pass, the kind and length of a counterexample, or the first line of the
+diagnostic a run that proved nothing reported, and finally the fairness
 assumptions the run carried — followed by a summary. The drift report names
 the production surface the model no longer accounts for, the mappings that no
 longer resolve, and the exclusions with their reasons.
 
-Each has a machine-readable form beside it: :func:`render_records` writes the
-matrix as a JSON array, which is what ``--json`` produces and what a later
-milestone's tests read instead of re-running the model, and
-:func:`trace_record` turns one counterexample's path into the object
-``--save-traces`` stores. They live here rather than in the command-line
-module because they are the same statements in another notation, and a reader
-comparing the two should not have to hold two vocabularies.
+Each has a machine-readable form beside it, in :mod:`modelcheck.records`:
+``render_records`` writes the matrix as a JSON array, which is what ``--json``
+produces and what a later milestone's tests read instead of re-running the
+model, and ``trace_record`` turns one counterexample's path into the object
+``--save-traces`` stores. They live outside the command-line module because
+they are the same statements in another notation, and a reader comparing the
+two should not have to hold two vocabularies.
 
 Every renderer takes values and returns text or plain data. They are pure so
 that the exact wording is pinned by a snapshot rather than by a subprocess's
@@ -24,15 +25,15 @@ tell a run that made no assumption from a report that forgot to say, and an
 absent column reads as the second.
 """
 
-import json
 import typing as typ
 
 from modelcheck.domain import (
     Counterexample,
     CounterexampleKind,
+    Errored,
     Passed,
     Reachable,
-    states_of,
+    Stopped,
 )
 
 if typ.TYPE_CHECKING:
@@ -41,7 +42,6 @@ if typ.TYPE_CHECKING:
     from modelcheck.domain import Expectation, Judgement
     from modelcheck.drift import DriftReport
     from modelcheck.fixpoint import Fixpoint
-    from modelcheck.trace import Trace
 
 _CONFIGURATION_WIDTH = 32
 """The column the configuration name occupies before the property."""
@@ -57,6 +57,16 @@ _COLUMN_GAP = "  "
 
 _NO_FAIRNESS = "none"
 """What the fairness column says when the run carried no assumption."""
+
+_DETAIL_WIDTH = 56
+"""How much of an uninterpretable run's diagnostic one line may show.
+
+A run that proved nothing still has a reason, and a report that omits it makes
+the reader open the artefact to find out why a verdict was withheld. The
+reason is bounded rather than free text so one long checker dump cannot push
+every fairness column off the line; the untruncated diagnostic is in the JSON
+record, which is what a reader acts on when the first line is not enough.
+"""
 
 
 def render_report(judgements: cabc.Sequence[Judgement]) -> str:
@@ -179,7 +189,8 @@ def _evidence(judgement: Judgement) -> list[str]:
     -------
     list[str]
         The state count of a pass, the kind and length of a counterexample's
-        path, or nothing for a run that produced neither.
+        path, or the first line of the diagnostic a run gave for producing
+        neither.
     """
     match judgement.result:
         case Passed(states=states):
@@ -187,8 +198,45 @@ def _evidence(judgement: Judgement) -> list[str]:
         case Counterexample(kind=kind, trace=trace):
             shape = "unknown shape" if kind is CounterexampleKind.UNKNOWN else kind
             return [f"{shape!s}, {_count(len(trace.steps), 'step')}"]
+        case Stopped(detail=detail) | Errored(detail=detail):
+            return [_detail(detail)]
         case _:
             return []
+
+
+def _detail(detail: str) -> str:
+    r"""Return one line of a run's diagnostic, bounded to its column.
+
+    The detail a result carries is the checker's own words, which may be a
+    whole output transcript in the ``Errored`` case; only the first line is
+    shown here, because that is the line naming the cause. A diagnostic too
+    wide for the column is cut and marked with an ellipsis rather than being
+    allowed to move every column after it.
+
+    Parameters
+    ----------
+    detail : str
+        The diagnostic the result carries.
+
+    Returns
+    -------
+    str
+        The first non-empty line, at most :data:`_DETAIL_WIDTH` characters,
+        or a placeholder when the diagnostic is blank.
+
+    Examples
+    --------
+    >>> _detail("no verdict line in:\\nModel checking example.json")
+    'no verdict line in:'
+    >>> len(_detail("x" * 500)) == _DETAIL_WIDTH
+    True
+    """
+    first = next((line.strip() for line in detail.splitlines() if line.strip()), "")
+    if not first:
+        return "(no detail)"
+    if len(first) <= _DETAIL_WIDTH:
+        return first
+    return f"{first[: _DETAIL_WIDTH - 1]}…"
 
 
 def _count(count: int, noun: str) -> str:
@@ -291,94 +339,3 @@ def render_drift(report: DriftReport) -> str:
         summary,
     ]
     return "\n".join(lines) + "\n"
-
-
-def render_records(judgements: cabc.Sequence[Judgement]) -> str:
-    """Render the matrix as the JSON array ``--json`` writes.
-
-    Parameters
-    ----------
-    judgements : collections.abc.Sequence[Judgement]
-        The judgements to render, in the same order a report shows them.
-
-    Returns
-    -------
-    str
-        A JSON array with one object per judgement, newline-terminated. Each
-        object names the configuration, the subject, the verdict and whether it
-        was met, and carries the fairness in force and the state count when the
-        run reported one — a result with no state count omits the field rather
-        than claiming zero.
-
-    Examples
-    --------
-    >>> import json
-    >>> from modelcheck import domain
-    >>> record = domain.Judgement(
-    ...     "head", domain.Holds("S1"), domain.Passed(4, 0.1, ()),
-    ...     domain.Verdict.HOLDS, ("F1",),
-    ... )
-    >>> rendered = json.loads(render_records([record]))
-    >>> rendered[0]["subject"], rendered[0]["verdict"], rendered[0]["states"]
-    ('S1', 'holds', 4)
-    """
-    return json.dumps([_record(judgement) for judgement in judgements], indent=2) + "\n"
-
-
-def _record(judgement: Judgement) -> dict[str, object]:
-    """Return one judgement as the object a report's record carries.
-
-    Parameters
-    ----------
-    judgement : Judgement
-        The judgement to render.
-
-    Returns
-    -------
-    dict[str, object]
-        The fields :func:`render_records` writes, with ``states`` present only
-        when the result carries a count.
-    """
-    record: dict[str, object] = {
-        "configuration": judgement.configuration,
-        "subject": subject(judgement.expectation),
-        "verdict": str(judgement.verdict),
-        "met": judgement.is_met,
-        "fairness": list(judgement.fairness_in_force),
-    }
-    states = states_of(judgement.result)
-    if states is not None:
-        record["states"] = states
-    return record
-
-
-def trace_record(trace: Trace) -> dict[str, object]:
-    """Render one normalized counterexample path as the object a trace file holds.
-
-    Parameters
-    ----------
-    trace : Trace
-        The path to render.
-
-    Returns
-    -------
-    dict[str, object]
-        The initial state, every step's action and state, how the path ends and
-        where its cycle starts. The trace is already normalized, so the record
-        needs no further redaction: it carries names and states the model
-        declares, not addresses or timings.
-
-    Examples
-    --------
-    >>> from modelcheck.trace import Ending, Trace
-    >>> trace_record(Trace({"n": 0}, (), Ending.FINITE, None))["ending"]
-    'finite'
-    """
-    return {
-        "initial": dict(trace.initial),
-        "steps": [
-            {"action": step.action, "state": dict(step.state)} for step in trace.steps
-        ],
-        "ending": str(trace.ending),
-        "cycle_start": trace.cycle_start,
-    }

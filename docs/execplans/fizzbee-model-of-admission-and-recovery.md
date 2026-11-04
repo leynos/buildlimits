@@ -2282,6 +2282,47 @@ explicitly.
     `test_a_graph_that_is_not_json_is_a_run_that_proved_nothing`,
     `test_a_module_skipped_at_collection_fails_the_checker_run` and
     `test_a_download_that_never_arrives_installs_nothing`.
+- **D38. The checker's vocabulary stops at the adapter, and a withheld verdict
+  keeps its reason.** _Decided 2026-11-04._
+  - Decision: `adapters/fizzbee_graph.links` decodes an error graph's
+    checker-specific keys into `trace.Link` values, and
+    `trace.normalize_trace` accepts those values rather than raw mappings, so
+    the pure module states the policy — which links are steps, how a path
+    ends, where a lasso closes — without knowing a key name. The decoding
+    lives in its own adapter module because `fizzbee_output.py` already sat
+    at the file-length limit. The machine-readable renderers move from
+    `report.py` to `records.py`, keeping both modules under that limit. The human report shows the first
+    line of a `Stopped` or `Errored` run's diagnostic, bounded to 56
+    characters, and the JSON record carries the full detail, plus
+    `elapsed_seconds` for a result that measured one. `make model-check` passes
+    `--save-traces`, and the nightly job uploads `.model-check/` and the
+    recorded traces when it fails. The architecture row's wider request — to
+    move the model's *source* syntax out of the pure modules — is declined:
+    that syntax is the domain's input, and ADR 006 and EP-M2 place it there
+    deliberately. What the row found in `trace.py` was different in kind, and
+    a new rule in `tests/test_modelcheck_layering.py` keeps the checker's
+    run-record keys out of every pure module.
+  - Finding: the pre-merge checks on head `283761c`, recorded in the
+    walkthrough comment `6375941018`, raised two warnings. The architecture
+    row observed that `normalize_trace` read raw checker keys, which put the
+    checker's output format inside a pure domain module. The observability row
+    observed that `Errored.detail` was carried on the result and never
+    rendered, so a failure's cause reached no reader, and that the nightly job
+    kept neither the JSON records nor the counterexample traces when it
+    failed.
+  - Reason: the adapter is where the checker's format is allowed to be known
+    (ADR 006), and a fail-closed parser whose refusals are invisible is only
+    half fail-closed. A bounded first line keeps the report readable when the
+    detail is a whole transcript; the record is where the untruncated text
+    belongs. The nightly artefact is what turns a failed scheduled run into
+    something a maintainer can read without re-running the matrix.
+  - Evidence: `tests/test_modelcheck_trace.py` (through the `_normalized`
+    helper), `tests/test_modelcheck_fizzbee_output.py`,
+    `test_a_stopped_run_renders_the_line_that_stopped_it`,
+    `test_an_errored_run_renders_the_first_line_of_its_diagnostic`,
+    `test_a_diagnostic_longer_than_its_column_is_cut_with_an_ellipsis` and the
+    updated `test_modelcheck_report_snapshots` and `test_modelcheck_cli`
+    snapshots.
 
 ## Outcomes & retrospective
 
@@ -3119,7 +3160,7 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
   - `materialize.py`;
   - `drift.py`;
   - `trace.py`;
-  - `report.py`.
+  - `report.py`, and later `records.py`, the same rows in JSON.
 - **Requirements and gaps:** the tooling side of RFC-§5 and §6 (obligations
   T2 to T5, T8).
 - **Red first.**
@@ -3161,8 +3202,11 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
   works end to end against a stub checker:
   - `ports.py`;
   - `service.py`;
-  - `adapters/fizzbee_output.py`: `parse_output` and `normalize_trace`, both
-    pure;
+  - `adapters/fizzbee_output.py`: `parse_output`, which classifies a run's
+    verdict lines;
+  - `adapters/fizzbee_graph.py`: `links` and `trace`, which decode the
+    checker's error-graph keys into `trace.Link` values and normalize them
+    into a `trace.Trace` — the boundary the pure `trace` module takes;
   - `adapters/fizzbee_process.py`;
   - `adapters/configuration.py`;
   - `adapters/inventory.py`;
@@ -3784,10 +3828,12 @@ modelcheck/
 ├── frontmatter.py           replace_frontmatter(), body_after_frontmatter()
 ├── drift.py                 parse_mappings(), drift() -> DriftReport
 ├── trace.py                 Trace, Step, cycle and stutter markers
-├── report.py                render_report(), render_drift()
+├── report.py                render_report(), render_fixpoint(), render_drift()
+├── records.py               render_records(), trace_record(): the JSON forms
 ├── ports.py                 ModelChecker, CodeInventory, ConfigurationSource
 ├── service.py               run_matrix(): the application service over the ports
 └── adapters/
+    ├── fizzbee_graph.py     links(), trace(): pure decoding of the error graph
     ├── fizzbee_output.py    parse_output(): pure translation of FizzBee output
     ├── fizzbee_measurements.py  states(), elapsed(): the scalars a run printed
     ├── fizzbee_process.py   FizzbeeChecker: scratch directory, Popen, process-group timeout

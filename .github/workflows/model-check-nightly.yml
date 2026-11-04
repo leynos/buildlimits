@@ -54,3 +54,22 @@ jobs:
       # judgement is what turns it into a pass or fail.
       - name: Check both models
         run: make model-check
+
+      # The matrix's verdict is only half of what a failed run has to say. The
+      # per-configuration records carry each run's state count, its timing and
+      # the diagnostic a run that proved nothing produced; the traces carry the
+      # path any counterexample took. Uploading them when the job fails is what
+      # lets a maintainer diagnose the failure from the run page instead of
+      # re-running a five-minute matrix to reproduce it. The checker's scratch
+      # directories are deliberately not included: they hold nothing the
+      # records do not, and they name paths on the runner rather than in the
+      # model.
+      - name: Keep the matrix evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: model-check-evidence
+          if-no-files-found: ignore
+          path: |
+            .model-check/
+            models/admission/*/traces/

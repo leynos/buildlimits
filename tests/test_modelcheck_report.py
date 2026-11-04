@@ -203,15 +203,49 @@ def test_an_unestablished_shape_is_named_rather_than_guessed() -> None:
     )
 
 
-def test_a_truncated_run_renders_no_evidence() -> None:
-    """A stopped run has no state count and no path, so it contributes neither.
+def test_a_stopped_run_renders_the_line_that_stopped_it() -> None:
+    """A stopped run has no state count and no path, but it does have a reason.
 
     Printing a count the run never reported would be the report inventing
-    evidence for the very outcome that proves nothing.
+    evidence for the very outcome that proves nothing. Withholding the reason
+    as well would leave a maintainer opening the artefact to learn why a
+    verdict was withheld, so the interruption's own line is the evidence.
     """
-    assert _columns(_line_of("holds", "stopped"))[3] == "fairness: none", (
-        "the verdict runs into fairness"
-    )
+    rest = _columns(_line_of("holds", "stopped"))[3]
+
+    assert rest.startswith("max_actions 6 reached"), "the run's own words"
+    assert rest.endswith("fairness: none"), "and the fairness still closes the line"
+
+
+def test_an_errored_run_renders_the_first_line_of_its_diagnostic() -> None:
+    """A run that proved nothing reports the line naming the cause.
+
+    The detail an error carries may be a whole transcript — ``Errored`` keeps
+    the output that had no verdict in it — so only its first line is shown,
+    where the cause is stated.
+    """
+    rest = _columns(_line_of("holds", "errored"))[3]
+
+    assert rest.startswith("no verdict line"), "the cause, not the transcript"
+    assert rest.endswith("fairness: none"), "the fairness still closes the line"
+
+
+def test_a_diagnostic_longer_than_its_column_is_cut_with_an_ellipsis() -> None:
+    """One long diagnostic cannot push every fairness column off the line.
+
+    A checker that dumps a path or a stack trace into its error line would
+    otherwise make the report unreadable, and the untruncated text is in the
+    JSON record, which is what a reader acts on when the first line is not
+    enough.
+    """
+    from modelcheck import domain
+
+    long_detail = domain.Errored("x" * 500)
+    line = render([_judge(expectation_of("holds"), long_detail)]).splitlines()[0]
+    evidence = _columns(line)[3].removesuffix(f"{_COLUMN_GAP}fairness: none")
+
+    assert evidence.endswith("…"), "the cut is visible rather than silent"
+    assert len(evidence) == 56, "and the column is bounded to its stated width"
 
 
 def test_a_reachable_expectation_names_its_probe() -> None:

@@ -66,14 +66,17 @@ continues to package `buildlimits` only. Chosen.
 The package is a hexagon:
 
 - **Pure modules** — `domain`, `expectations`, `materialize`, `frontmatter`,
-  `drift`, `trace`, `report`, `ports` and `service`. A structural test walks
-  their syntax trees and fails on an import outside the allowlist or on any
-  call to a banned name, so purity is checked rather than promised.
+  `drift`, `trace`, `report`, `records`, `ports` and `service`. A structural
+  test walks their syntax trees and fails on an import outside the allowlist or
+  on any call to a banned name, so purity is checked rather than promised.
 - **Adapters** — `fizzbee_process` (the only module that starts a process),
-  `fizzbee_output` and `fizzbee_measurements` (the pure translation of what a
-  run printed), `configuration` with its two field readers (the model
-  directory's layout and its TOML schema), and `inventory` (the only module
-  that imports `buildlimits`).
+  `fizzbee_output`, `fizzbee_graph` and `fizzbee_measurements` (the pure
+  translation of what a run printed: verdict lines are classified in
+  `fizzbee_output`, and error-graph records are decoded into domain links and
+  traces in `fizzbee_graph`, so no checker key reaches a pure module),
+  `configuration` with its two field readers (the model directory's layout and
+  its TOML schema), and `inventory` (the only module that imports
+  `buildlimits`).
 - **Driving adapter** — `cli.py` builds the Cyclopts application from adapter
   *factories*, so a test supplies doubles without a checker and without a model
   directory. `__main__.py` is the only module that constructs the real adapters.

@@ -3,6 +3,7 @@
   list([
     dict({
       'configuration': 'head',
+      'elapsed_seconds': 0.0,
       'fairness': list([
       ]),
       'met': True,

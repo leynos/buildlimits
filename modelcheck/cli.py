@@ -37,7 +37,7 @@ from pathlib import Path
 import cyclopts
 import cyclopts.config
 
-from modelcheck import domain, drift, report, service
+from modelcheck import domain, drift, records, report, service
 from modelcheck.fixpoint import run_fixpoint
 
 if typ.TYPE_CHECKING:
@@ -203,7 +203,7 @@ def make_app(  # pylint: disable=too-many-arguments  # ADR 008 supplies three ad
         chosen = _chosen(results, only)
         print(report.render_report(chosen), end="")
         if json_path is not None:
-            json_path.write_text(report.render_records(chosen), encoding="utf-8")
+            json_path.write_text(records.render_records(chosen), encoding="utf-8")
         if save_traces:
             _save_traces(chosen, model_dir)
         status = exit_status(results)
@@ -356,7 +356,7 @@ def _save_traces(judgements: cabc.Sequence[Judgement], model_dir: Path) -> None:
             continue
         directory.mkdir(parents=True, exist_ok=True)
         name = f"{judgement.configuration}-{report.subject(judgement.expectation)}"
-        record = report.trace_record(judgement.result.trace)
+        record = records.trace_record(judgement.result.trace)
         (directory / f"{name}.json").write_text(
             json.dumps(record, indent=2) + "\n", encoding="utf-8"
         )

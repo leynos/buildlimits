@@ -17,8 +17,8 @@
   incident-1-cap2-strong-nobackoff  L3   unexpected counterexample    lasso, 1 step  fairness: F1, F2, F5, F6
   incident-1-cap2-strong-nobackoff  StopIssued  unreachable                  states 120  fairness: F1, F2, F5, F6
   incident-1-cap2-strong-nobackoff  L3   state space below floor      states 120  fairness: F1, F2, F5, F6
-  incident-1-cap2-strong-nobackoff  L3   stopped                      fairness: F1, F2, F5, F6
-  incident-1-cap2-strong-nobackoff  L3   error                        fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  L3   stopped                      max_actions 6 reached  fairness: F1, F2, F5, F6
+  incident-1-cap2-strong-nobackoff  L3   error                        no verdict line  fairness: F1, F2, F5, F6
   model check: 3 expectations met, 7 unmet
   
   '''
