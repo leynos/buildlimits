@@ -222,6 +222,15 @@ class FizzbeeChecker:
                 # its own kind of error, before the parser ever sees a status
                 # that would read as an ordinary failure.
                 return _Completed(process.returncode, _stopped(process), timed_out=True)
+            except BaseException:
+                # The launcher runs in its own session, so a terminal interrupt
+                # never reaches it or the checker it started. Without this kill
+                # the group would outlive the exception, still capped only by
+                # ``GOMAXPROCS`` and ``GOMEMLIMIT``, while the scratch directory
+                # was removed underneath it. The exception is re-raised: the
+                # caller asked for the run to stop, not to be told it passed.
+                _kill_group(process)
+                raise
             return _Completed(process.returncode, raw, timed_out=False)
 
 

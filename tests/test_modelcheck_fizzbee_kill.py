@@ -16,6 +16,7 @@ module imports them rather than repeating them.
 """
 
 import os
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -200,6 +201,45 @@ def test_a_timeout_names_the_limit_and_keeps_what_printed(tmp_path: Path) -> Non
 @pytest.mark.skipif(
     not Path("/proc/self/stat").exists(), reason="needs /proc to read a child's state"
 )
+def test_an_interrupt_kills_the_group_before_it_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller's interrupt takes the checker's group with it.
+
+    ``communicate`` is where an interrupt arrives, and the launcher runs in its
+    own session, so a terminal ``SIGINT`` never reaches it. Without a kill on
+    that path the launcher and its Go child would outlive the exception, and
+    ``check`` would remove the scratch directory from under them. The stub is
+    allowed to start and record its child before the interrupt is raised, so
+    the assertion is about a process that really existed rather than one that
+    never started.
+    """
+    fizz = _stub(tmp_path, _NEVER_EXITS)
+    pid_file = tmp_path / "child.pid"
+
+    def interrupted(
+        process: subprocess.Popen[bytes],
+        *args: object,
+        **kwargs: object,
+    ) -> tuple[bytes, bytes]:
+        del process, args, kwargs
+        deadline = time.monotonic() + _EXIT_TIMEOUT_SECONDS
+        while not pid_file.exists():
+            if time.monotonic() > deadline:
+                msg = "the stub never started its child"
+                raise AssertionError(msg)
+            time.sleep(_EXIT_POLL_SECONDS)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        FizzbeeChecker(fizz, timeout_seconds=30.0).check(_spec())
+
+    child = _child_pid(tmp_path)
+    assert _is_gone(child), f"child {child} survived an interrupted run"
+
+
 def test_a_killed_group_releases_its_pipe(tmp_path: Path) -> None:
     """The run returns rather than blocking on a pipe a child still holds.
 

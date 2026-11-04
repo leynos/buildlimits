@@ -2756,7 +2756,8 @@ exclude.
   - Statement:
     - It changes only the named constant lines, the tagged fairness keywords,
       the frontmatter and the stripped assertions.
-    - A configuration that names no assertion is the identity on the body.
+    - A configuration that names no assertion leaves the assertions unchanged;
+      constants and fairness tags it does name are still rewritten.
     - It is idempotent.
     - An unknown constant, fairness tag or retained assertion is an error,
       never silently ignored.
