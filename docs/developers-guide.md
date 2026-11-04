@@ -548,16 +548,25 @@ statistics child and privacy-safe key construction, and `outcome_resources`
 owns the reaper and the asynchronous store. A recorder fault on the selector
 thread only requests cancellation there — one non-blocking reaper poll and
 `close(0.0)` — while later ticks keep advancing the same cleanup, and only
-`close()` spends D17's one-second deadline. Both `PeerServerProcess` and
-`ProcessSampler` read field 22 through `proc_trees.read_process_starttime`;
-that shared reader owns `/proc` decoding and validation, while each adapter
-keeps its own failure policy. The process sampler reads the managed server's
-control group through `PeerServerProcess`; raw argv and metadata remain in
-memory. Samples run every 250 ms only while cached groups move, inspect at most
-64 processes and back off after failures. H2 and H3 replay read only the local
-store; neither queries journald nor feeds a result back to admission. An
-optional `cache_outcomes` object is added to status only when recording is
-enabled.
+`close()` spends D17's one-second deadline. RFC 0002's live acquisition and
+H2/H3 verdicts currently describe sccache 0.14.0. A proposed extension would
+put backend-specific observers behind the typed `OutcomeObservationPort` while
+keeping normalization, bounded persistence and replay inputs shared. The
+current implementation remains the W1 sccache recorder described above; the
+proposal does not imply that kache collection or prediction is implemented. See
+[ADR 007](adr-007-cache-outcome-observation-port.md)
+and the [cache-hit prediction ExecPlan](execplans/cache-hit-prediction.md) for
+the proposed boundaries and gated milestones.
+
+Both `PeerServerProcess` and `ProcessSampler` read field 22 through
+`proc_trees.read_process_starttime`; that shared reader owns `/proc` decoding
+and validation, while each adapter keeps its own failure policy. The process
+sampler reads the managed server's control group through `PeerServerProcess`;
+raw argv and metadata remain in memory. Samples run every 250 ms only while
+cached groups move, inspect at most 64 processes and back off after failures.
+H2 and H3 replay read only the local store; neither queries journald nor feeds
+a result back to admission. An optional `cache_outcomes` object is added to
+status only when recording is enabled.
 
 The restart path adds three bounded observations. The adapter's one
 `adapter_finished` summary carries `restart_retries`, the attempts spent

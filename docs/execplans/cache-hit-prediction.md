@@ -25,11 +25,17 @@ disputed it; the opt-in child-sighting measurement still needs a quiet-host
 acceptance run and is carried as outstanding performance acceptance; G1 is
 unrun and EP-M9 is unstarted)
 
-Branch: `cache-hit-prediction`. Plan path:
+Historical implementation branch: `cache-hit-prediction`. The 2026-11-03
+backend-neutral extension is proposed on `cache-observation-ports`; it does not
+extend the earlier runtime approval. Plan path:
 `docs/execplans/cache-hit-prediction.md`. Upstream: RFC 0002, accepted
 2026-10-23 at `42f40e4`.
 
 ## Purpose / big picture
+
+The opening W1 motivation below is historical. W1 merged in PR #24 on
+2026-10-31; the proposed observation-port workstream later in this plan builds
+on it. Quiet-host latency acceptance and G1 remain outstanding.
 
 Nothing in buildlimits knows whether a compile was an sccache hit. A waiting
 request in `build-limits-status` could be a 200-millisecond cache read or a
@@ -268,6 +274,14 @@ These are hard invariants. Violating one requires escalation, not a workaround.
     injected write-and-rollback failure is covered by O8.
 
 ## Progress
+
+- [x] (2026-11-03) Reviewed merged PR #24 and draft PR #43; documented the
+  proposed ADR 007 observation boundary without changing runtime code.
+- [ ] EP-O1: common typed contract and legacy projections (proposed).
+- [ ] EP-O2: sccache observer extraction (proposed; after EP-O1).
+- [ ] EP-O3: differential and quiet-host acceptance (after EP-O2).
+- [ ] EP-K1/EP-K2/EP-K3: deferred kache feasibility, implementation trials and
+  owner eligibility decision; owned by #30/#339 successor trial plans.
 
 - [x] (2026-10-23 19:05Z) Branch renamed to `cache-hit-prediction`; RFC 0002
   read in full.
@@ -1421,6 +1435,12 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
 ## Surprises & discoveries
 
+- (2026-11-03) Main and PR #43 both use ADR 005. ADR 007 documents the
+  collision and proposes 006 for the unmerged kache record; neither existing
+  decision is silently renumbered. Kache reports expose event rows, but their
+  documented sessions may span Cargo commands and do not establish admission
+  identity. See ADR 007 for version-specific sources and remaining experiments.
+
 - S1. In sccache 0.14.0, every result counter for a request is updated under
   one `me.stats.lock().await` guard, inside the spawned task, before `Ok(res)`
   is returned (`start_compile_task`, around `server.rs` line 1376). The
@@ -1512,6 +1532,12 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   helper across both compaction paths.
 
 ## Decision log
+
+- D-OBS (2026-11-03, proposed): introduce an observation port around the
+  merged W1 recorder, preserve the deployed v1 store and output projections,
+  and defer the kache observer and richer persistence to adoption trials.
+  EP-O1/O2/O3 trace to ADR 007; EP-K1/K2/K3 require separate trial approval.
+  This does not amend D1, the completed EP-M history or G1 authorization.
 
 Decisions D1 to D25 were proposals of this draft and took effect when the owner
 approved the whole plan on 2026-10-23. Each deviation from the letter of RFC
@@ -1976,6 +2002,10 @@ C-GATES.
 
 ## Outcomes & retrospective
 
+The 2026-11-03 revision adds architecture and future milestones only. No new
+port or adapter is implemented, no empirical gate is completed and no existing
+W1 evidence is discarded. The extraction still needs implementation approval.
+
 The panel's verdict on the first draft (Pandalump, Wafflecat, Buzzy Bee,
 Telefono, Doggylump and Dinolump, 2026-10-23) was ⚠️ proceed with conditions.
 This revision meets those conditions with:
@@ -2143,6 +2173,10 @@ compiles on a shared host. The terms below are used throughout this plan.
     duplication gate, whose allowances live in `pyproject.toml`.
 
 ## Conformance basis
+
+The proposed EP-O and EP-K extensions additionally trace to ADR 007 and the
+2026-11-03 backend-neutral section of RFC 0002. These augment, rather than
+replace, the historical conformance basis and obligations below.
 
 - Terms of Reference: none exists for this repository. RFC 0002 supplies the
   upstream intent.
@@ -3235,6 +3269,309 @@ milestone that adds each module.
   - End-to-end runs of the console script.
 - Compatibility decision: none.
 
+## Proposed observation-port workstream
+
+This section is a proposed extension for approval, not execution in this
+architectural PR. EP-O1 to EP-O3 belong to the next sccache extraction PR;
+EP-K1 to EP-K3 belong to the kache adoption trials. Stable EP-M identifiers,
+completed milestone evidence and earlier decision records above are unchanged.
+The conformance basis is the 2026-11-03 RFC 0002 extension and proposed
+[ADR 007](../adr-007-cache-outcome-observation-port.md). The implementation
+owner is the buildlimits maintainer; the kache trial owner coordinates with the
+dev-env-rocky provisioning maintainer; the repository owner makes empirical
+gate decisions. No named person is assumed to have accepted a new assignment.
+
+### Constraints, risks and sequencing
+
+W1 merged in PR #24 at `f7ef2643d25f2741f7ad99999fdb6b8e3ff96769`. EP-M6
+through EP-M8 are complete. The existing release can continue collecting G1
+evidence and completing quiet-host acceptance while extraction is developed. Do
+not restart those measurements merely because a Protocol is proposed. Record
+the binary/revision for each evidence set and require EP-O3 equivalence before
+combining pre/post-extraction evidence. Keep quiet-host acceptance outstanding
+until its actual run; do not use an abstraction review as performance evidence.
+
+EP-O1 -> EP-O2 -> EP-O3 is independent of G1 and of kache trials. Neither G1
+nor EP-M9 requires completion of unrelated kache work. EP-M9 still requires an
+explicit G1 proceed/narrow decision; if it starts before extraction, reconcile
+its replay interfaces when integrating without changing its H4/H5 thresholds.
+G2 and later RFC gates remain unchanged. No runtime port, adapter, schema,
+configuration or prediction implementation belongs in this documentation PR.
+
+The immediate implementation may add only `outcome_observation.py`,
+`outcome_normalization.py` and `outcome_sccache.py` to production modules.
+Expected edits are `outcome_ports.py`, `supervisor_outcome_setup.py`,
+`supervisor_outcomes.py`, `outcome_shell_stats.py`, `outcome_telemetry.py`,
+`outcome_recorder_outputs.py`, `outcome_record_codec.py` and
+`outcome_replay.py`. Reuse existing key/store modules and reducer/driver
+internals; edit their call sites only where required by the typed boundary. No
+admission, token-pool, recovery-policy or cache-execution change is allowed.
+Escalate a need for another production module, dependency, persistent-format
+change, changed sccache output or weakened latency bound before implementing
+it. Every code file remains under 400 lines. Existing general tolerances still
+apply; ExecPlan prose is excluded from change-size accounting.
+
+The main risks are accidentally promoting attributed labels to authoritative
+truth, losing legacy H3 details, changing output ordering, adding default-off
+work and coupling execution support to observation. The obligations below are
+the acceptance evidence for those risks. A breach blocks the extraction, not
+ongoing collection with the unchanged W1 release.
+
+### EP-O1: qualified contract and legacy projections
+
+End state: the typed common contract and pure normalization/projection
+functions exist and are tested without changing the running observer. Add the
+`OutcomeObservationPort` Protocol to `buildlimits/outcome_ports.py` and frozen
+slotted descriptor, lifecycle, context, batch and evidence values to
+`buildlimits/outcome_observation.py`. Use ADR 007's exact fields and
+invariants; keep invocation evidence, aggregate windows and unavailable results
+distinct. The Protocol exposes `descriptor`, `advance`, `poll` and idempotent
+`close`. Keep `StatisticsPort` and `ServerProcessPort` intact as sccache
+dependencies.
+
+In `buildlimits/outcome_normalization.py`, implement pure validation and
+lossless W1 projections. Translate live W1 output to the common envelope while
+retaining original result/refusal/child fields in typed `SccacheEvidence`.
+Translate stored v1 rows with only the provenance they actually contain:
+`legacy_window` cannot distinguish solo from unanimous; missing correlation and
+failure reasons remain unknown. The existing v1 writer, format version, path,
+bytes and ordering remain unchanged. A new in-memory type is not permission to
+bump the persistent schema.
+
+Red first: add `tests/test_outcome_observation.py` and
+`tests/test_outcome_normalization.py`. Run them before adding production types;
+record the expected missing-contract failure, then implement and rerun. Cover
+every classification/quality combination accepted by ADR 007 and reject invalid
+combinations, non-finite/negative durations, unbounded payloads and raw private
+fields. Include a backend result without a request ID: it must not become an
+authoritative request outcome. Extend `tests/test_outcome_records.py`,
+`tests/test_outcome_replay_h2.py`, `tests/test_outcome_replay_h3.py` and
+`tests/test_replay_cli.py` using their existing stored-record builders and
+snapshots. Archive representative serialized W1 records as immutable fixtures
+under `tests/fixtures/outcome_observation/`, recording their merge baseline and
+redaction recipe. Cover labelled/unattributed rows, H3 summaries, torn tails,
+unknown versions, salt changes and absent legacy provenance.
+
+Acceptance: normalization followed by v1 projection reproduces every existing
+W1 field and encoded byte; replay JSON/text and verdicts match existing
+snapshots. Property tests generate valid bounded records and prove round trips,
+rejecting a seeded refusal-code conflation. No private-API alias or duplicate
+pipeline is introduced. Full code gates pass. Rollback is reverting this inert
+contract commit; no deployed data changed. Remaining gap: live integration.
+
+### EP-O2: wrap and select the sccache observer
+
+End state: `SccacheOutcomeObserver` in `buildlimits/outcome_sccache.py` owns
+the existing `OutcomeRecorder` driver and translates common lifecycle inputs to
+its existing events. Keep `outcome_recorder*`, `outcome_attribution`,
+`outcome_stats`, `outcome_parser`, `outcome_gate`, `outcome_window`,
+`outcome_queries`, `outcome_process_sampler`, `outcome_sampling` and
+`outcome_sightings` as adapter internals. Parsing, version allowlists,
+generation checks and counter semantics stay there even where implemented as
+pure functions. Do not rewrite the reducer or move sccache assumptions into
+shared normalization.
+
+`supervisor_outcome_setup.py` constructs this adapter only for enabled sccache
+recording; it does not await the execution seam in PR #43.
+`supervisor_outcomes.py` forwards immutable launch/end/context facts, polls one
+bounded tick and publishes batches through shared counters, telemetry and the
+existing asynchronous store port. Adapt `outcome_shell_stats.py` and
+`outcome_telemetry.py` to common batches while preserving their exact sccache
+projections. Keep fingerprint computation in the existing shell/key strategy,
+using only pre-admission inputs; never use a reported backend key as a feature.
+The H2/H3 functions in `outcome_replay.py` consume the lossless sccache
+projection and refuse other profiles; generic validation and coverage remain
+shared.
+
+Red first: extend `tests/test_outcome_recorder_driver.py`,
+`tests/test_outcome_ports.py`, `tests/test_outcome_null_shell.py`,
+`tests/test_outcome_boundaries.py` and `tests/test_outcome_noninterference.py`.
+Inject a fake observer that emits invocation evidence, aggregate-only windows
+and failures without a statistics parser. Verify shared consumers need no
+backend-name branches. Boundary tests must fail if observation imports enter
+admission decision modules. With recording off, assert no observer
+construction, query, sampler, salt read, store open or worker creation.
+
+Extend `tests/features/cache_outcomes_on_systemd.feature` with this behavioural
+contract, implemented through the existing systemd harness:
+
+```gherkin
+Feature: Observation remains independent of admission
+  Scenario: An observation failure does not delay a waiting compilation
+    Given outcome recording is enabled and a compile is waiting for a token
+    When the observer fails while the held compile completes
+    Then the waiting compile is admitted in the existing order
+    And the token accounting and compiler result match recording disabled
+    And the observation failure is reported without changing supervisor health
+```
+
+Failure injection covers query stall/timeout, malformed statistics, unknown
+version, generation reset, unreadable children, failed salt/store
+initialization, writer saturation, storage failure and unexpected observer
+exceptions. Continue checking each existing distinct reason; a generic error
+must not hide a failed compile, cache error or missing observation. Compare
+admission traces with the observer absent, healthy and failing. Acceptance
+includes preserved quiet-point cadence, 2-second query deadline, bounded
+back-off, at most 64 inspected processes per sample, bounded window/queue and
+existing shutdown budgets. Run relevant suites red then green and all code
+gates. Rollback reverts wiring and adapter together, preserving the v1 store.
+Remaining gap: real-host and full differential acceptance.
+
+### EP-O3: observational equivalence and performance acceptance
+
+End state: a reviewable evidence bundle proves the extraction equivalent within
+the tested boundaries. Extend `tests/test_outcome_differential.py` with
+captured oracle traces from merged W1 `f7ef2643`, generated in a separate
+reference checkout without modifying the candidate or creating an isolated
+Cargo cache. If intervening main changes affect outcome behaviour, record a
+second current base oracle and explain the difference from PR #24; do not
+silently redefine W1. Keep clocks, salt, launch IDs, generations and statistics
+identical. Normalize only nondeterministic fixture metadata, never labels,
+ordering or durations.
+
+Compare query/start/close sequences, spans, events and reasons, attributed and
+unattributed records, H3 window summaries, status text/JSON, metrics and H2/H3
+replay results. Exercise solo hits/misses, unanimous windows, mixed
+concurrency, refusal classes, overlapping child metadata, straddled reads,
+server restart, late/duplicate completion, abnormal termination, overflow and
+shutdown. Extend `tests/test_outcome_recorder_machine.py` with Hypothesis
+sequences; preserve the existing finite/bounded verification claims and state
+their bounds. Deliberately flip one mixed-window outcome and duplicate one
+record to prove the differential oracle and sample accounting fail for the
+intended reason.
+
+Run `make test-systemd-user` and `make test-sccache-host` with the repository's
+required opt-ins, recording versions and counts. Skips or unavailable
+facilities are outstanding evidence, not passes. Run the existing opt-in
+`tests/test_outcome_latency.py` procedure on a quiet host for both reference
+and candidate: p99 tick lengthening <= 5 ms, append enqueue <= 1 ms and
+absolute child-sighting sample <= 2 ms. Preserve the 64-process cap. Record
+sample count, host load and tails. A noisy-host run cannot close the
+pre-existing quiet-host acceptance. No wider budget is authorized by this plan.
+
+Acceptance requires zero unexplained observable differences and all named gates
+passing on the same candidate. Attach trace/fixture identities and before/after
+latency logs to the extraction PR. The owner may then reuse pre-extraction W1
+evidence with provenance preserved; G1 still needs its separate decision. A
+failed equivalence or latency check keeps deployment on the existing W1
+release. Rollback disables recording or restores that release; retain v1 data
+for replay. No change to cache execution or token accounting is a permissible
+fix.
+
+### Verification obligations for EP-O1 to EP-O3
+
+- **O-QUAL:** normalization cannot increase certainty or invent correlation.
+  Parameterized partitions and generated invalid combinations in EP-O1 must
+  include non-empty aggregate-only, ambiguous and unavailable witnesses. A
+  mutation assigning a mixed window to one request must fail.
+- **O-LEGACY:** v1 projection and replay preserve W1 meaning and byte order.
+  Golden serialized fixtures plus generated round trips in EP-O1/EP-O3 cover
+  both record variants and every result code; a conflated refusal counter must
+  fail. Missing legacy provenance is an explicit residual limitation.
+- **O-ISOLATE:** observation has no admission effects, including default-off
+  work. Import boundaries, paired traces and failing fake ports in EP-O2 test
+  both success and failure paths. An injected observer token-release effect or
+  off-mode store open must fail the tests. This is evidence within exercised
+  traces, not an unrestricted proof about the host scheduler.
+- **O-BOUNDS:** one tick, bounded memory/storage, nonblocking acquisition and
+  bounded shutdown hold over generated event sequences. Existing recorder/store
+  state machines and boundary tests exercise full buffers and timeouts; EP-O3
+  real-host latency tests measure the scheduling costs mocks cannot prove.
+- **O-HISTORY:** incompatible backend/version, recipe, toolchain and salt
+  identities cannot share predictor history. Add generated partition tests to
+  the normalization suite; use equal digest text with different identities as a
+  negative control. EP-M9 must preserve this partition without introducing
+  prediction before G1.
+
+External axioms remain the pinned sccache binary's counter semantics and the
+host's process/clock interfaces. Existing host tests support those assumptions;
+a new version or contrary trace requires renewed evidence. Kache assumptions
+are not axioms for the sccache proof. No test claims to prove third-party code.
+
+### Gates for each immediate implementation plateau
+
+Run focused red/green tests with `uv run pytest` and the named paths,
+preserving failure logs. Before each commit, run sequentially: `make fmt`,
+`make validate`, `make check-lock`, `make check-fmt`, `make lint`,
+`make typecheck`, `make test`, `make markdownlint`, `make nixie` and
+`make audit`. EP-O2/EP-O3 also require `make test-systemd-user` and
+`make test-sccache-host`; EP-O3 adds quiet-host latency acceptance. Capture
+each result through `tee` with `set -o pipefail` in
+`/tmp/<gate>-buildlimits-<branch>.out`. Never overlap candidate gates. Required
+Continuous Integration (CI) checks must pass at the pushed candidate before
+merge; retain current-head test counts, skips and environmental limitations.
+For this documentation-only proposal, run `make fmt`, `make check-fmt`,
+`make markdownlint` (including spelling) and `make nixie` sequentially.
+
+### Deferred EP-K1: pin and falsify the observation interface
+
+Preconditions: the trial owner selects an exact execution-supported kache
+version and provisioning configuration under buildlimits issue #30 and
+dev-env-rocky issue #339, and explicitly approves this trial work. The current
+candidates are 1.2.2 and 2.0.0-rc.1; a newer version repeats the investigation.
+EP-K1 may run before sccache extraction; EP-K2 requires the common port to have
+landed. Execution backend delivery has no dependency on EP-K1, EP-K2 or EP-K3.
+
+Record the actual binary hashes, report/envelope versions and supported command
+flags. ADR 007 records tagged documentation evidence for structured stats,
+`all_events`, timings and inferred sessions; none proves unique admission
+correlation. Capture real-binary fixtures, collection CPU/wall cost and output
+bounds; test missing/delayed/duplicate rows, rotation, session reset,
+concurrent same-crate/same-key invocations, cancelled compiles and
+malformed/unsupported schemas. Test fingerprint/key behaviour across identical
+worktrees, changed source, compiler and configuration. Raw keys/paths remain
+private and bounded.
+
+Before reading experimental results, commit the trial population, independent
+truth oracle, controlled hit/miss setup, coverage denominator, sample minimum,
+maximum attribution error, acceptable missing/duplicate rates, fingerprint
+stability criterion, calibration comparator/thresholds, collection budget and
+stop rules. Choose these for kache; no sccache threshold is inherited silently.
+Interface inspection can precede preregistration; outcome experiments cannot.
+
+Exit: owner records either a validated request-correlation contract or
+aggregate-only acquisition with explicit uncertainty. The latter is a valid
+observation outcome but does not authorize predictor evaluation. Unsupported
+private logs or an upstream change require the alternative-interface evidence
+and decision in ADR 007. Keep this decision with the successor trial plan;
+rollback is retaining execution support with observation unavailable.
+
+### Deferred EP-K2: implement and validate the trial adapter
+
+Requires EP-K1's recorded contract and the landed observation port, not sccache
+G1. Add `buildlimits/outcome_kache.py` and its typed diagnostic variant; keep
+report parsing and correlation inside the adapter. Implement the separately
+versioned v2 codec/store path described by ADR 007 only now, with v1
+read/replay fixtures, total storage bounds and downgrade tests. Extend
+construction at the composition root; do not add kache cases throughout generic
+consumers.
+
+Red-first adapter unit/property tests exercise the agreed contract. Real-binary
+and real-user-manager runs use paired controlled-hit/controlled-miss
+experiments with independent compiler-execution truth, both solo and
+concurrent, and with admission's actual wrapper/daemon settings. Include two
+simultaneous identical crates, ambiguous sessions, no completed events,
+rotations, duplicate reports, missing metadata, unsupported versions and
+observer failure. Assert no invented labels, no double-counting, unchanged
+token traces and execution with observation off. Measure collection and
+persistence bounds for every supported binary/schema pair. Run all repository
+code/documentation gates plus trial host scenarios; record skips as incomplete.
+Reverting the adapter and selecting the retained v1 store must leave sccache
+evidence intact and kache execution functional.
+
+### Deferred EP-K3: decide whether evidence supports prediction
+
+The owner compares trial results with EP-K1's preregistered thresholds,
+reporting collection fidelity/coverage separately from fingerprint adequacy and
+any calibration evidence. State selection bias, unevaluable requests and actual
+sample sizes. Choose stop, aggregate-only observation, further investigation or
+permission for a separately planned kache predictor evaluation. Kache
+calibration is never pooled with sccache; insufficient correlation cannot be
+repaired by renaming inferred outcomes as ground truth. No verdict closes
+sccache G1, releases its EP-M9 or permits advisory/priority behaviour without
+the applicable G2 and later decisions. Scheduling benefit remains a separate
+experiment with fairness, model/replay and shadow evidence.
+
 ## Concrete steps
 
 Work from
@@ -3784,3 +4121,8 @@ Consult these documents:
   to loop-called methods and documents the read-only snapshot; the users' guide
   and README describe the new status line and the opt-in feature; and a
   migration guide records the opt-in, rollback and downgrade sequence.
+
+- 2026-11-03: proposed EP-O1 to EP-O3 for the observation contract, sccache
+  extraction and equivalence evidence, and separate deferred EP-K1 to EP-K3 for
+  adoption trials. Preserved completed W1 history, outstanding quiet-host
+  acceptance, unrun G1 and unstarted EP-M9. No runtime changes.
