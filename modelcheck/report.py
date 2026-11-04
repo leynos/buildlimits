@@ -226,7 +226,7 @@ def _detail(detail: str) -> str:
 
     Examples
     --------
-    >>> _detail("no verdict line in:\\nModel checking example.json")
+    >>> _detail("no verdict line in:\nModel checking example.json")
     'no verdict line in:'
     >>> len(_detail("x" * 500)) == _DETAIL_WIDTH
     True

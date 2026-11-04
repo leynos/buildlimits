@@ -25,16 +25,15 @@ recordings of every shape the checker can print. This module only guarantees
 that the text it hands over is the whole output, and that no process is left.
 """
 
-import contextlib
 import os
 import shutil
-import signal
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed argv, no shell.
 import tempfile
 import typing as typ
 from pathlib import Path
 
 from modelcheck.adapters.fizzbee_output import parse_output
+from modelcheck.adapters.fizzbee_process_group import kill_group, stopped
 from modelcheck.domain import Errored
 
 if typ.TYPE_CHECKING:
@@ -57,9 +56,6 @@ already failed and is stopped rather than left holding the machine; the result
 is an ``Errored``, which a report shows as a run that proved nothing. Nightly
 runs pass a larger bound.
 """
-
-_KILL_GRACE_SECONDS = 5.0
-"""How long a killed group has to exit after ``SIGTERM`` before ``SIGKILL``."""
 
 _MEMORY_LIMIT = "4GiB"
 """The Go runtime's memory ceiling for one run, per D5 and the plan's budget."""
@@ -221,7 +217,7 @@ class FizzbeeChecker:
                 # is deliberately not used: ``_checked`` reports a timeout as
                 # its own kind of error, before the parser ever sees a status
                 # that would read as an ordinary failure.
-                return _Completed(process.returncode, _stopped(process), timed_out=True)
+                return _Completed(process.returncode, stopped(process), timed_out=True)
             except BaseException:
                 # The launcher runs in its own session, so a terminal interrupt
                 # never reaches it or the checker it started. Without this kill
@@ -229,7 +225,7 @@ class FizzbeeChecker:
                 # ``GOMAXPROCS`` and ``GOMEMLIMIT``, while the scratch directory
                 # was removed underneath it. The exception is re-raised: the
                 # caller asked for the run to stop, not to be told it passed.
-                _kill_group(process)
+                kill_group(process)
                 raise
             return _Completed(process.returncode, raw, timed_out=False)
 
@@ -309,68 +305,6 @@ def _checker_environment() -> dict[str, str]:
         whatever else the caller's shell set for it.
     """
     return {**os.environ, "GOMAXPROCS": _PROCESSORS, "GOMEMLIMIT": _MEMORY_LIMIT}
-
-
-def _stopped(process: subprocess.Popen[bytes]) -> bytes:
-    """Kill a run's group and collect what it printed before it went.
-
-    Parameters
-    ----------
-    process : subprocess.Popen
-        The launcher, whose output has not yet been read.
-
-    Returns
-    -------
-    bytes
-        The output the checker managed to print. It is the only evidence of
-        how far the run had got, so it is kept rather than discarded: a report
-        that said nothing beyond "it timed out" would hide the state count that
-        says whether the model was still exploring, or stuck.
-
-    Notes
-    -----
-    The second ``communicate`` blocks until every writer has closed its end of
-    the pipe. Sending ``SIGKILL`` to the group is what guarantees that happens
-    even when a grandchild inherited the pipe, so this call cannot hang on a
-    daemon the launcher left behind.
-    """
-    _kill_group(process)
-    return process.communicate()[0]
-
-
-def _kill_group(process: subprocess.Popen[bytes]) -> None:
-    """Ask a launcher's group to stop, then insist.
-
-    Parameters
-    ----------
-    process : subprocess.Popen
-        The launcher, started in its own session, so its process group is
-        exactly the launcher and everything it started.
-
-    Notes
-    -----
-    ``SIGTERM`` first gives the checker a chance to print why it was stopped,
-    which is the difference between a report naming its cause and a report
-    saying the run vanished. ``SIGKILL`` follows after the grace period, which
-    is what handles a checker wedged inside the Go runtime.
-
-    The escalation is unconditional and runs even when the launcher has already
-    exited. ``process.wait()`` observes the launcher alone, so a child that
-    ignores ``SIGTERM`` while the launcher obeys it would otherwise never
-    receive ``SIGKILL``, and the following ``communicate`` would block on the
-    pipe that child still holds. A group that has already gone is not an
-    error: ``ProcessLookupError`` means the work is done, and the subsequent
-    ``communicate`` collects whatever it printed.
-    """
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=_KILL_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        pass
-    finally:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
 
 
 def _graph(output: Path) -> str | None:

@@ -30,23 +30,13 @@ the ordinary suite, where a model and its configuration that drifted apart is
 reported without waiting for a nightly check.
 """
 
-import json
 import typing as typ
-from pathlib import Path
 
 import pytest
+from modelcheck_artefacts import MODELS, Record, read_records
 
 from modelcheck import domain, materialize
 from modelcheck.adapters.configuration import TomlConfigurations
-
-_ROOT = Path(__file__).resolve().parents[1]
-"""The checkout root, which is where ``make model-check`` writes its results."""
-
-_MODELS = {
-    "coupling": _ROOT / "models" / "admission" / "coupling",
-    "transaction": _ROOT / "models" / "admission" / "transaction",
-}
-"""The two W1 model directories, each the source its artefact must postdate."""
 
 PROPERTIES = {
     "coupling": ("S1", "S2", "L4a"),
@@ -101,42 +91,11 @@ token retained for ever while the queue empties between requests, which RFC
 demand qualification would be prose with no run behind it.
 """
 
-type Record = dict[str, object]
-
-
-def _records(model: str) -> list[Record]:
-    """Return one model's matrix artefact records.
-
-    Parameters
-    ----------
-    model : str
-        The model directory's name, ``coupling`` or ``transaction``.
-
-    Returns
-    -------
-    list[dict[str, object]]
-        The decoded array ``modelcheck check --json`` wrote for that model.
-
-    Notes
-    -----
-    An absent or stale artefact fails rather than skips: a skip would report a
-    matrix that was not run against the source under test as a pass.
-    """
-    results = _ROOT / ".model-check" / f"{model}.json"
-    assert results.exists(), (
-        f"{results} is missing; run `make model-check` before this suite"
-    )
-    newest_source = max(path.stat().st_mtime for path in _MODELS[model].rglob("*"))
-    assert results.stat().st_mtime >= newest_source, (
-        f"{results} is older than the model; run `make model-check` again"
-    )
-    return typ.cast("list[Record]", json.loads(results.read_text(encoding="utf-8")))
-
 
 @pytest.fixture(scope="module")
 def records() -> dict[str, list[Record]]:
     """Provide both models' matrix records once, keyed by model name."""
-    return {model: _records(model) for model in _MODELS}
+    return {model: read_records(model) for model in MODELS}
 
 
 def _of(records: list[Record], configuration: str) -> dict[str, Record]:
@@ -189,7 +148,7 @@ def _expected_failures(configuration: domain.Configuration) -> tuple[str | None,
     return (None, *failures)
 
 
-@pytest.mark.parametrize("model", sorted(_MODELS))
+@pytest.mark.parametrize("model", sorted(MODELS))
 def test_every_expectation_is_declared_by_the_model(model: str) -> None:
     """Every name a configuration expects is one the real model declares.
 
@@ -198,7 +157,7 @@ def test_every_expectation_is_declared_by_the_model(model: str) -> None:
     materializes every run the matrix would ask for, so a name that drifted out
     of the model fails here instead of passing as a green row.
     """
-    source = TomlConfigurations(_MODELS[model])
+    source = TomlConfigurations(MODELS[model])
     text = source.source_text()
 
     for configuration in source.configurations():
@@ -239,7 +198,7 @@ def test_a_lost_declaration_is_refused_before_the_checker_runs(
     refusal here can only be the missing name, and the matching assertion
     proves the refusal names the expectation rather than another defect.
     """
-    source = TomlConfigurations(_MODELS["transaction"])
+    source = TomlConfigurations(MODELS["transaction"])
     text = source.source_text()
     head = next(
         configuration
@@ -257,7 +216,7 @@ def test_a_lost_declaration_is_refused_before_the_checker_runs(
 
 
 @pytest.mark.fizzbee
-@pytest.mark.parametrize("model", sorted(_MODELS))
+@pytest.mark.parametrize("model", sorted(MODELS))
 def test_each_mutant_reports_the_fairness_it_still_carries(
     records: dict[str, list[Record]], model: str
 ) -> None:
@@ -269,7 +228,7 @@ def test_each_mutant_reports_the_fairness_it_still_carries(
     claim the run assumed nothing while its actions were still fair. The
     artefact is judged too, because the report is what a reader acts on.
     """
-    source = TomlConfigurations(_MODELS[model])
+    source = TomlConfigurations(MODELS[model])
     text = source.source_text()
     fixed = next(
         configuration
@@ -309,7 +268,7 @@ def test_each_mutant_reports_the_fairness_it_still_carries(
 
 
 @pytest.mark.fizzbee
-@pytest.mark.parametrize("model", sorted(_MODELS))
+@pytest.mark.parametrize("model", sorted(MODELS))
 def test_the_matrix_names_every_configuration(
     records: dict[str, list[Record]], model: str
 ) -> None:
@@ -328,7 +287,7 @@ def test_the_matrix_names_every_configuration(
 
 
 @pytest.mark.fizzbee
-@pytest.mark.parametrize("model", sorted(_MODELS))
+@pytest.mark.parametrize("model", sorted(MODELS))
 def test_fixed_configuration_holds(
     records: dict[str, list[Record]], model: str
 ) -> None:
@@ -357,7 +316,7 @@ def test_fixed_configuration_holds(
 
 
 @pytest.mark.fizzbee
-@pytest.mark.parametrize("model", sorted(_MODELS))
+@pytest.mark.parametrize("model", sorted(MODELS))
 def test_mutants_fail(records: dict[str, list[Record]], model: str) -> None:
     """Each targeted mutant produces exactly the counterexample it predicts.
 
@@ -380,7 +339,7 @@ def test_mutants_fail(records: dict[str, list[Record]], model: str) -> None:
 
 
 @pytest.mark.fizzbee
-@pytest.mark.parametrize("model", sorted(_MODELS))
+@pytest.mark.parametrize("model", sorted(MODELS))
 def test_controls_hold(records: dict[str, list[Record]], model: str) -> None:
     """Each control meets the property it is evidence for.
 

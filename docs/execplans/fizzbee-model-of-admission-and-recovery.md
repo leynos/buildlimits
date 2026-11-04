@@ -2291,17 +2291,20 @@ explicitly.
     ends, where a lasso closes — without knowing a key name. The decoding
     lives in its own adapter module because `fizzbee_output.py` already sat
     at the file-length limit. The machine-readable renderers move from
-    `report.py` to `records.py`, keeping both modules under that limit. The human report shows the first
-    line of a `Stopped` or `Errored` run's diagnostic, bounded to 56
-    characters, and the JSON record carries the full detail, plus
-    `elapsed_seconds` for a result that measured one. `make model-check` passes
-    `--save-traces`, and the nightly job uploads `.model-check/` and the
-    recorded traces when it fails. The architecture row's wider request — to
-    move the model's *source* syntax out of the pure modules — is declined:
+    `report.py` to `records.py`, keeping both modules under that limit. The
+    human report shows the first line of a `Stopped` or `Errored` run's
+    diagnostic, bounded to 56 characters, and the JSON record carries the
+    full detail, plus `elapsed_seconds` for a result that measured one.
+    `make model-check` passes `--save-traces`, and the nightly job uploads
+    `.model-check/` and the recorded traces when it fails. The architecture
+    row's wider request — to move the model's _source_ syntax out of the pure
+    modules — is declined:
     that syntax is the domain's input, and ADR 006 and EP-M2 place it there
     deliberately. What the row found in `trace.py` was different in kind, and
-    a new rule in `tests/test_modelcheck_layering.py` keeps the checker's
-    run-record keys out of every pure module.
+    a new rule in `tests/test_modelcheck_vocabulary.py` keeps the checker's
+    run-record keys out of every pure module. It sits beside the layering
+    rules rather than inside `tests/test_modelcheck_layering.py`, so both
+    modules stay under the file-length limit.
   - Finding: the pre-merge checks on head `283761c`, recorded in the
     walkthrough comment `6375941018`, raised two warnings. The architecture
     row observed that `normalize_trace` read raw checker keys, which put the
