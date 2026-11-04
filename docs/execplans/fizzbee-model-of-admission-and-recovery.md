@@ -2335,7 +2335,10 @@ explicitly.
     leaves `git status` clean. Three modules were split to stay inside the
     400-line limit: `tests/test_modelcheck_vocabulary.py`,
     `modelcheck/adapters/fizzbee_process_group.py` and
-    `tests/modelcheck_artefacts.py`.
+    `tests/modelcheck_artefacts.py`. Removing the vocabulary rule from the
+    layering module left two structural rules each parsing every pure module,
+    which `make duplication` reported as one family; `_pure_trees()` now
+    serves both.
   - Finding: the review on head `283761c` raised four minor findings. Three
     were in `docs/users-guide.md`: the direct commands assumed an activated
     `.venv`, the bounds example named a set the adapter refuses, and the exit

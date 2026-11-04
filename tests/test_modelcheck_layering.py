@@ -126,6 +126,21 @@ def _tree(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"))
 
 
+def _pure_trees() -> dict[str, ast.Module]:
+    """Return each pure module's parsed tree, keyed by module name.
+
+    Both module-wide rules below read every pure module. One place that pairs a
+    name with its tree keeps them from drifting: a module added to ``PURE`` is
+    parsed once, the same way, for both.
+
+    Returns
+    -------
+    dict[str, ast.Module]
+        One entry per module in ``PURE``.
+    """
+    return {module: _tree(PACKAGE / f"{module}.py") for module in PURE}
+
+
 def imported_roots(tree: ast.Module) -> frozenset[str]:
     """Return the root module name of every absolute import in a tree.
 
@@ -324,8 +339,8 @@ def test_the_allowlist_names_imports_the_package_uses() -> None:
     allowlist, and add nothing outside it, is the middle ground the rule needs.
     """
     used: set[str] = set()
-    for module in PURE:
-        used |= imported_roots(_tree(PACKAGE / f"{module}.py"))
+    for tree in _pure_trees().values():
+        used |= imported_roots(tree)
 
     assert used & ALLOWED, "the pure modules import something the allowlist names"
     assert not (used - ALLOWED - {"modelcheck"}), "and nothing outside it"
@@ -340,8 +355,8 @@ def test_the_banned_names_are_absent_from_every_pure_module() -> None:
     the names as well catches both spellings.
     """
     offenders = {
-        module: sorted(used_names(_tree(PACKAGE / f"{module}.py")) & BANNED_NAMES)
-        for module in PURE
+        module: sorted(used_names(tree) & BANNED_NAMES)
+        for module, tree in _pure_trees().items()
     }
 
     assert not {module: names for module, names in offenders.items() if names}, (
