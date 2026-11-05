@@ -399,9 +399,9 @@ observer validation, and PR #43's execution pin is not widened by it.
   `events.jsonl.archive/`, pruned to 8 days and 512 MiB.
 - `--record` and `KACHE_RECORD_SESSIONS` write `telemetry/sessions.jsonl`, and
   the environment variable or `record_sessions = true` also records GC runs.
-  Trial owners must disable these side effects. `--redact` covers report output
-  but the recorded line is written before redaction and hashes the real root,
-  so it does not establish buildlimits' salted-identity privacy contract.
+  Trial owners must disable these side effects. `--redact` covers report
+  output, but the recorded line is written before redaction and hashes the real
+  root, so it does not establish buildlimits' salted-identity privacy contract.
 
 Primary sources: [1.2.2 commands][kache-v1-commands],
 [1.2.2 schema][kache-v1-schema], [2.0.0-rc.1 commands][kache-v2-commands],

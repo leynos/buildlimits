@@ -135,7 +135,7 @@ rows carry no producer version and `BypassDetail.version` is optional, so one
 report can mix rows from different producers. Session reports may span Cargo
 commands, infer sessions, omit running work and lose rotated events. Repeated
 reports may duplicate observations. Trial owners must validate exact versions,
-schema, read-only bounded acquisition, unique correlation and deduplication
+schema, read-only bounded acquisition, unique correlation, and deduplication
 under concurrency before asserting request labels. Without that evidence,
 collect partial aggregate windows and report unknown request outcomes; do not
 feed them to a request predictor. A validated isolated population may support
