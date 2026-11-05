@@ -527,25 +527,34 @@ sccache extraction, existing W1 evidence collection or kache execution support.
 
 ## Outstanding decisions
 
-These must be resolved before this ADR moves from Proposed to Accepted.
+Acceptance requires one decision, because it freezes the port contract:
+
+- Whether `ObserverDescriptor` capabilities are booleans as proposed, or a
+  closed enum per capability that can distinguish "supported but currently
+  disabled by configuration" from "not supported by this backend". The trial
+  adapter is the first plausible consumer of the third state.
+
+The rest are settled after acceptance by the milestone that produces their
+evidence. None blocks it: each of those milestones needs the accepted port, so
+making one a precondition would cycle.
 
 - Whether the immediate extraction keeps the port in
   `buildlimits/outcome_ports.py` alongside the existing store and statistics
   ports, or places it in the new `outcome_observation` module. Both preserve
   the contract; only the import surface differs. EP-O1 settles it.
-- Whether `ObserverDescriptor` capabilities are booleans as proposed, or a
-  closed enum per capability that can distinguish "supported but currently
-  disabled by configuration" from "not supported by this backend". The trial
-  adapter is the first plausible consumer of the third state.
 - Whether evidence `identity` needs a separate window serial in addition to the
   observer epoch and monotonic serial. If kache windows can outlive one
-  observer epoch, the current shape is insufficient; EP-K1 decides.
+  observer epoch, the current shape is insufficient; EP-K1 decides, and
+  acceptance of the port does not wait on it.
 - Whether format version 2 is required at all for kache, or whether kache
   evidence can be projected into v1 rows as faithfully as merged W1 evidence
   can. This ADR assumes v2 is required; EP-K2 must confirm it rather than
-  inherit the assumption.
+  inherit the assumption. EP-K2 needs the port that acceptance releases, so the
+  confirmation is a condition on persisting kache evidence, not on accepting
+  this ADR.
 - The kache fingerprint recipe, its pre-admission inputs and its versioning
-  scheme, which cannot be specified from documentation alone.
+  scheme, which cannot be specified from documentation alone; EP-K1 records
+  them.
 - Whether any kache acquisition method is both read-only and bounded enough to
   run on the supervisor loop, or must move to a separate worker. EP-K1 measures
   this; the port permits either.
