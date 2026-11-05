@@ -18,8 +18,9 @@ history, its remaining acceptance evidence, and gated W2. The observation-port
 extraction and kache trials are separate proposed workstreams under ADR 007;
 neither releases G1 or authorizes prediction, hit-first admission, shadow mode
 or direct composition. Cache execution support for kache remains independent of
-its future outcome observer. The developer's guide remains the source of truth
-for the code the model transcribes.
+its future outcome observer, and is recorded as ADR 006 on draft PR #43 rather
+than on `main`. The developer's guide remains the source of truth for the code
+the model transcribes.
 
 ## 1. Model admission and recovery under explicit fairness
 
@@ -364,7 +365,10 @@ outcomes.
   - Requires the ADR 007 feasibility checklist, privacy-safe fixtures, bounded
     collection cost, schema/version compatibility and correlation evidence
     under concurrent requests. A per-crate row or inferred session alone does
-    not identify one buildlimits admission.
+    not identify one buildlimits admission. PR #43's execution pin of 1.2.2 and
+    2.0.0-rc.1 is the starting point; 2.0.0 and 2.0.1 share a report schema
+    that differs from the pinned pair, so adopting either is a new trial
+    version rather than a patch upgrade.
   - Run paired controlled-hit and controlled-miss trials, concurrent same-crate
     and same-key attribution cases, and negative cases for ambiguous, delayed,
     duplicate and unavailable outcomes. Use aggregate-only unknown evidence if

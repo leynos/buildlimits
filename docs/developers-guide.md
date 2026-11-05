@@ -553,10 +553,12 @@ H2/H3 verdicts currently describe sccache 0.14.0. A proposed extension would
 put backend-specific observers behind the typed `OutcomeObservationPort` while
 keeping normalization, bounded persistence and replay inputs shared. The
 current implementation remains the W1 sccache recorder described above; the
-proposal does not imply that kache collection or prediction is implemented. See
-[ADR 007](adr-007-cache-outcome-observation-port.md)
-and the [cache-hit prediction ExecPlan](execplans/cache-hit-prediction.md) for
-the proposed boundaries and gated milestones.
+proposal does not imply that kache collection or prediction is implemented.
+Kache execution support itself is a separate decision, recorded as ADR 006 on
+draft PR #43; neither that draft nor this proposal implies the other. See
+[ADR 007](adr-007-cache-outcome-observation-port.md) and the
+[cache-hit prediction ExecPlan](execplans/cache-hit-prediction.md) for the
+proposed boundaries and gated milestones.
 
 Both `PeerServerProcess` and `ProcessSampler` read field 22 through
 `proc_trees.read_process_starttime`; that shared reader owns `/proc` decoding

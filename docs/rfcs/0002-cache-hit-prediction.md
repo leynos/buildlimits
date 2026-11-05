@@ -50,12 +50,18 @@ retained as the rationale at acceptance, not a claim that recording is absent
 today. This proposed extension changes no runtime behaviour and releases no
 prediction gate.
 
+Revised 2026-11-05: PR #43 renumbered its kache execution record to ADR 006,
+resolving the number collision, and the kache reporting findings were extended
+to the 2.0.0 and 2.0.1 tags. The 2026-11-03 findings that remain true are
+unchanged.
+
 ### Five separate responsibilities
 
 1. **Cache execution** selects and invokes the configured backend. Draft
    [PR #43](https://github.com/leynos/buildlimits/pull/43) proposes
-   `CacheBackend` and the detached-work capability; these govern composition
-   and accounting, not whether outcomes can be observed.
+   `CacheBackend` and the detached-work capability, recorded as ADR 006 on that
+   branch; these govern composition and accounting, not whether outcomes can be
+   observed.
 2. **Cache observation** acquires backend-specific evidence with verified
    lifecycle, version and correlation semantics. sccache uses quiet-point
    counter deltas and H2 child sightings; another backend need not.
@@ -117,22 +123,25 @@ Post-compilation backend keys must not leak into pre-admission prediction.
 The kache observer belongs to [buildlimits #30][kache-issue] and
 [dev-env-rocky #339][kache-adoption], or successor trial plans. It is not part
 of the immediate sccache extraction and is not a dependency of kache execution
-support. ADR 007 records inspected reporting interfaces for the draft's
-selected 1.2.2 and 2.0.0-rc.1 versions, and separates those findings from
-unverified binary behaviour, cost and correlation.
+support. ADR 007 records inspected reporting interfaces for 1.2.2, 2.0.0-rc.1,
+2.0.0 and 2.0.1, and separates those findings from unverified binary behaviour,
+cost and correlation. PR #43's execution pin remains 1.2.2 and 2.0.0-rc.1;
+later upstream releases do not widen it.
 
 Structured `stats`/full reports expose event outcomes and timings, but neither
 a per-crate row nor an activity session identifies one buildlimits admission.
-Session reports may span Cargo commands, infer sessions, omit running work and
-lose rotated events. Repeated reports may duplicate observations. Trial owners
-must validate exact versions, schema, read-only bounded acquisition, unique
-correlation and deduplication under concurrency before asserting request
-labels. Without that evidence, collect partial aggregate windows and report
-unknown request outcomes; do not feed them to a request predictor. A validated
-isolated population may support attribution in controlled trials. Supported
-exports, upstream correlation improvements and private-log access require an
-explicit cost/stability decision; upstream changes are not mandatory for the
-fallback.
+The report's `meta.kache_version` describes the reporter, while `CrateDetail`
+rows carry no producer version and `BypassDetail.version` is optional, so one
+report can mix rows from different producers. Session reports may span Cargo
+commands, infer sessions, omit running work and lose rotated events. Repeated
+reports may duplicate observations. Trial owners must validate exact versions,
+schema, read-only bounded acquisition, unique correlation, and deduplication
+under concurrency before asserting request labels. Without that evidence,
+collect partial aggregate windows and report unknown request outcomes; do not
+feed them to a request predictor. A validated isolated population may support
+attribution in controlled trials. Supported exports, upstream correlation
+improvements and private-log access require an explicit cost/stability
+decision; upstream changes are not mandatory for the fallback.
 
 ### Evaluation and continuing gates
 
