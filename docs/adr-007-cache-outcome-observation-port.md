@@ -7,9 +7,15 @@ boundary. It authorizes no runtime change or predictor experiment by itself.
 [ADR 005](adr-005-cache-outcome-recording.md) remains the historical W1
 decision.
 
+Revision note (2026-11-05): the cross-branch number allocation recorded below
+has been resolved by draft PR #43, which renumbered its kache execution record
+to ADR 006. This ADR keeps 007. The kache trial evidence has been refreshed
+against releases published after the first draft; the original 2026-11-03
+findings are retained where they remain true.
+
 ## Date
 
-2026-11-03.
+2026-11-05 (created 2026-11-03).
 
 ## Context and problem statement
 
@@ -26,23 +32,61 @@ seams, but are not backend-neutral observation contracts: the recorder parses
 sccache 0.14.0 counters and applies sccache generation and attribution rules.
 The existing `OutcomeStorePort` already isolates asynchronous persistence.
 
-Draft [PR #43](https://github.com/leynos/buildlimits/pull/43), inspected at
-`036f75f8bd70480114023d9d2cc334bef43dbf2b`, introduces `CacheBackend` for
+Draft [PR #43](https://github.com/leynos/buildlimits/pull/43), inspected at head
+`2a074c52c70ebfd0171d96ef9262a84ea28358d3`, introduces `CacheBackend` for
 composition, reachability and `in_scope_work`, with `DetachedCacheBackend` for
 accounted drain, stop and start. Execution capabilities do not establish
 observation capabilities. An in-scope cache can still lack correlated evidence.
 
 ### Number allocation and cross-branch collision
 
-Main owns `adr-005-cache-outcome-recording.md`. PR #43 also calls its kache
-record ADR 005, and labels it Accepted within that unmerged branch. Neither
-publication nor that branch-local status permits replacing main's decision.
-This proposal uses ADR 007 and leaves ADR 006 available for the draft kache
-record. PR #43's maintainer must resolve the collision, preferably by assigning
-006 and updating its references, before merge. That renumbering is not
-performed or claimed here; recheck the allocation when either branch
-integrates. The accepted recording decisions and their existing references
-remain numbered 005.
+Main owns `adr-005-cache-outcome-recording.md`. When this ADR was first
+drafted, PR #43 also called its kache record ADR 005, and labelled it Accepted
+within that unmerged branch. Neither publication nor that branch-local status
+permits replacing main's decision, so this proposal took 007 and the collision
+was recorded rather than resolved locally.
+
+The collision has since been resolved on the draft branch. PR #43 commit
+`dcde62a900711aa538f632d28ffb5a00e184cb24` ("Renumber the kache ADR to 006",
+2026-11-03) renumbered that record to `docs/adr-006-kache-cache-backend.md` and
+updated its references. No accepted decision was overwritten, and main's 005
+remains the cache-outcome recording decision. Both branches therefore now agree
+on 005 for recording and 007 for this observation port.
+
+Two obligations survive that resolution. First, PR #43 is still a draft, so 006
+is reserved by an unmerged branch rather than published on main; if ADR 007
+merges first, main will hold 005 and 007 with a gap at 006. That gap is
+harmless, because these identifiers are labels rather than a sequence with
+continuity requirements, but no other record may claim 006 while PR #43 is
+open. Second, recheck the allocation when either branch integrates: a
+concurrent proposal may claim 006 or 007 independently. If PR #43 is abandoned,
+006 becomes free and this ADR's references to it must be withdrawn rather than
+retargeted silently. The accepted recording decisions and their existing
+references remain numbered 005 throughout.
+
+## Goals and non-goals
+
+- Goals:
+  - Define one narrow, typed observation boundary that sccache and kache can
+    each satisfy without sharing cache keys or statistics APIs.
+  - Preserve merged W1 evidence, its byte-level v1 records, replay results,
+    failure isolation and performance bounds unchanged.
+  - Represent missing correlation, partial windows and acquisition failure as
+    first-class qualified evidence rather than invented hit/miss labels.
+  - Keep observation, normalization, prediction and scheduling policy as
+    separately testable responsibilities.
+- Non-goals:
+  - Implementing the port or either adapter in this change. This record and
+    RFC 0002 are the deliverable; EP-O1 to EP-O3 and EP-K1 to EP-K3 hold the
+    implementation work.
+  - Releasing G1, starting EP-M9 or authorizing EP-M9 or any advisory
+    prediction, ordering or shadow behaviour.
+  - Providing a universal cache API, a plugin registry, or a replacement for
+    either backend's full statistics surface.
+  - Making sccache and kache outcomes comparable, poolable or
+    interchangeable by virtue of sharing a representation.
+  - Establishing kache request correlation. This ADR records what the tagged
+    reporting interfaces expose and what a trial must still prove.
 
 ## Decision drivers
 
@@ -302,37 +346,79 @@ not read the salt or store. No retry may execute on admission's behalf.
 ## Future kache adapter: evidence available and evidence still required
 
 The trial scope belongs to [buildlimits #30][issue-30] and
-[dev-env-rocky #339][issue-339], or their successor plans. PR #43 selects 1.2.2
-and 2.0.0-rc.1 for execution checks. Source-document inspection on 2026-11-03
-found the following in both tagged command references and report schemas; this
-is interface evidence, not real-binary observer validation.
+[dev-env-rocky #339][issue-339], or their successor plans. PR #43 pins 1.2.2
+and 2.0.0-rc.1 for execution checks and verifies both on this host. Upstream
+published further releases after that decision: 2.0.0-rc.2 (2026-10-27),
+2.0.0-rc.3 (2026-10-28), 2.0.0 (2026-11-02) and a tagged 2.0.1 with no GitHub
+release object. Source-document inspection on 2026-11-03, extended on
+2026-11-05 to 2.0.0 and 2.0.1, found the following in the tagged command
+references and report schemas. This is interface evidence, not real-binary
+observer validation, and PR #43's execution pin is not widened by it.
 
 - `kache stats --json` provides structured summaries; `stats --full --json`
   and `report --format json` expose a full report. The JSON envelope and the
-  report have distinct contracts. Report `schema_version` is 1 and is
-  documented to change on breaking changes; retain the binary version as well.
-- `all_events` includes result, crate name, cache key, start/end timestamps,
-  elapsed, compile and overhead measurements. Results distinguish local,
-  prefetch and remote hits, `dup`, miss, error, passthrough and skipped. These
-  are event rows, not a documented buildlimits request-ID interface.
-- `meta.session` can contain an ID or mark the selection inferred. The docs
-  explicitly allow sessions to span concurrent/nearby Cargo commands and
-  describe inferred grouping by overlapping activity and gaps under five
-  minutes. A session, root, crate name or cache key is not one admission.
+  report have distinct contracts. Top-level `schema_version` is constrained to
+  the single value 1 in every inspected tag and is documented to increase on
+  breaking changes. The required `meta` object carries `kache_version`,
+  `generated_at` and `since_hours`, with `since_secs`, `since`, `root_filter`
+  and `session` optional. Producer provenance is therefore per report, from
+  `meta.kache_version`, not per row.
+- `all_events` holds `CrateDetail` rows. In 1.2.2 these carry result, crate
+  name, cache key, start/end timestamps, elapsed, compile and overhead
+  measurements. In 2.0.0 the same 23 fields are retained and ten timing fields
+  are added: `key_ms`, `lookup_ms`, `restore_ms`, `store_ms`, `startup_ms`,
+  `wait_ms`, `permit_wait_ms`, `flight_wait_ms`, `dep_info_ms` and
+  `unattributed_ms`. No field was removed.
+- `CrateDetail` has no per-event `version` in any inspected schema; the only
+  `version` property is on `BypassDetail`, described as "Kache version that
+  recorded this invocation. Omitted when unavailable", with `fixed_in` added in
+  2.0.0. An event row is therefore not self-describing, and a reporter running
+  alongside an upgraded client can emit rows from more than one producer under
+  one `meta.kache_version`.
+- `result` is a stable machine code with the same eight-value enum in every
+  inspected schema: `local_hit`, `prefetch_hit`, `remote_hit`, `dup`, `miss`,
+  `error`, `passthrough` and `skipped`. These are event rows, not a documented
+  buildlimits request-ID interface.
+- `CrateDetail` also carries `prediction_mismatches`, present since 1.2.2 and
+  described as "sampled verifications where a predicted input closure disagreed
+  with the dep-info pre-pass", non-zero only when
+  `KACHE_VERIFY_INPUT_PREDICTIONS` requested the comparison. That is kache's
+  own input-closure prediction being self-checked, not a cache hit/miss
+  prediction and not a measure of buildlimits admission. Its presence is a
+  reminder that "prediction" names several different problems; this record's
+  use of the word means only pre-admission cache-outcome prediction.
+- `meta.session` can contain a `session_id` or mark the selection inferred. The
+  docs explicitly allow sessions to span concurrent or nearby Cargo commands
+  and state that `--last-build` "does not identify one Cargo invocation".
+  Inferred grouping uses overlapping activity and gaps under five minutes. A
+  session, root, crate name or cache key is not one admission.
 - Reports see retained, completed events only. Running work is absent, rotation
   can remove session beginnings, and repeated overlapping reports can repeat
-  rows. `--since` is a selection window, not a lossless event cursor.
-- `--record` and `KACHE_RECORD_SESSIONS` can write additional telemetry. Trials
-  must disable these side effects. `--redact` is useful for exported reports
-  but does not establish buildlimits' salted-identity privacy contract.
+  rows. `--since` accepts `s`, `m`, `h` and `d` units and is a selection
+  window, not a lossless event cursor. Rotation keeps dropped lines under
+  `events.jsonl.archive/`, pruned to 8 days and 512 MiB.
+- `--record` and `KACHE_RECORD_SESSIONS` write `telemetry/sessions.jsonl`, and
+  the environment variable or `record_sessions = true` also records GC runs.
+  Trial owners must disable these side effects. `--redact` covers report output
+  but the recorded line is written before redaction and hashes the real root,
+  so it does not establish buildlimits' salted-identity privacy contract.
 
 Primary sources: [1.2.2 commands][kache-v1-commands],
-[1.2.2 schema][kache-v1-schema], [2.0.0-rc.1 commands][kache-v2-commands] and
-[2.0.0-rc.1 schema][kache-v2-schema]. The two inspected report schema files
-were byte-identical. This does not prove binary conformance or stability of
-private event storage. The [current cache-key guide][kache-key] documents
+[1.2.2 schema][kache-v1-schema], [2.0.0-rc.1 commands][kache-v2-commands],
+[2.0.0-rc.1 schema][kache-v2-schema], [2.0.0 commands][kache-v200-commands],
+[2.0.0 schema][kache-v200-schema], [2.0.1 commands][kache-v201-commands] and
+[2.0.1 schema][kache-v201-schema].
+
+Schema identity was checked by digest rather than by eye. The 1.2.2 and
+2.0.0-rc.1 schemas are byte-identical (28,381 bytes). The 2.0.0 and 2.0.1
+schemas are byte-identical to each other (30,172 bytes) but differ from the
+earlier pair, which is why 2.0.1 is treated here as a distinct schema even
+though it is a patch release. The byte-identical schema pairs have different
+command references, so schema equality does not imply identical reporting
+behaviour. None of this proves binary conformance or stability of private event
+storage. The [current cache-key guide][kache-key] documents
 content/toolchain/configuration inputs and path normalization for worktree
-reuse; it is not a version-pinned guarantee for either trial binary.
+reuse; it is not a version-pinned guarantee for any trial binary.
 
 Before implementing `KacheOutcomeObserver`, the trial owner must pin the actual
 binary and report schema, capture privacy-safe real-binary fixtures, measure
@@ -380,6 +466,42 @@ limits remain 5 ms tick lengthening, 1 ms append enqueue and 2 ms child sample,
 with at most 64 processes inspected per sample. The outstanding quiet-host
 acceptance is not discharged by passing ordinary tests or this proposal.
 
+## Architectural rationale
+
+The project already separates admission accounting from everything that merely
+observes it: tokens are returned by scope emptying, and W1 recording was built
+to fail without touching reachability, health, composition or token return.
+This decision extends that existing boundary rather than inventing a new
+architectural principle. Observation becomes a port; admission stays a caller
+that cannot be influenced by it.
+
+Three consequences follow from taking the boundary seriously.
+
+First, the port is deliberately narrower than either backend's API. Consumers
+need evidence about admissions and windows, so the contract exposes evidence,
+not cache operations. Widening it to stats queries, key lookups or cache
+management would recreate the coupling the port exists to remove, and would
+invite consumers to depend on semantics only one backend implements.
+
+Second, uncertainty is data. The separate `classification` and `quality` axes,
+the closed provenance vocabulary and the explicit `ObservationUnavailable`
+variant mean a consumer cannot accidentally read "we could not tell" as "it
+missed". This is the same discipline W1 already applies when it refuses to
+label an unattributed window, expressed once at the shared boundary instead of
+separately in every consumer.
+
+Third, provenance travels with the evidence. Attribution method, backend
+version, evidence-schema revision and fingerprint recipe are recorded, not
+inferred at read time. That is what makes history partitioning auditable and
+what prevents a later reader from pooling two backends' denominators simply
+because both produced rows of the same shape.
+
+The layering matches the existing repository structure: pure interpretation
+inside adapters, immutable values at the boundary, bounded asynchronous
+persistence behind its own port, and evaluation as a separate read-only
+consumer. No new layer is introduced between the supervisor shell and the
+cache; an existing implicit seam is made explicit.
+
 ## Consequences and deferred decisions
 
 One additional boundary and explicit provenance increase type and fixture work,
@@ -403,10 +525,46 @@ recipe, its trial thresholds and its eventual predictor eligibility. Format v2
 implementation belongs with the first adapter that needs it. None blocks the
 sccache extraction, existing W1 evidence collection or kache execution support.
 
+## Outstanding decisions
+
+These must be resolved before this ADR moves from Proposed to Accepted.
+
+- Whether the immediate extraction keeps the port in
+  `buildlimits/outcome_ports.py` alongside the existing store and statistics
+  ports, or places it in the new `outcome_observation` module. Both preserve
+  the contract; only the import surface differs. EP-O1 settles it.
+- Whether `ObserverDescriptor` capabilities are booleans as proposed, or a
+  closed enum per capability that can distinguish "supported but currently
+  disabled by configuration" from "not supported by this backend". The trial
+  adapter is the first plausible consumer of the third state.
+- Whether evidence `identity` needs a separate window serial in addition to the
+  observer epoch and monotonic serial. If kache windows can outlive one
+  observer epoch, the current shape is insufficient; EP-K1 decides.
+- Whether format version 2 is required at all for kache, or whether kache
+  evidence can be projected into v1 rows as faithfully as merged W1 evidence
+  can. This ADR assumes v2 is required; EP-K2 must confirm it rather than
+  inherit the assumption.
+- The kache fingerprint recipe, its pre-admission inputs and its versioning
+  scheme, which cannot be specified from documentation alone.
+- Whether any kache acquisition method is both read-only and bounded enough to
+  run on the supervisor loop, or must move to a separate worker. EP-K1 measures
+  this; the port permits either.
+- Whether G1's quiet-host acceptance should be re-measured after the sccache
+  extraction lands, or whether the differential equivalence evidence plus the
+  original measurement is sufficient. The ExecPlan currently requires the
+  original acceptance, not a new one.
+
+ADR 006, should PR #43 merge, does not answer any of these; execution support
+and observation support remain separate decisions.
+
 [issue-30]: https://github.com/leynos/buildlimits/issues/30
 [issue-339]: https://github.com/leynos/dev-env-rocky/issues/339
 [kache-v1-commands]: https://github.com/kunobi-ninja/kache/blob/v1.2.2/docs/commands/reference.mdx
 [kache-v1-schema]: https://github.com/kunobi-ninja/kache/blob/v1.2.2/docs/commands/report.schema.json
 [kache-v2-commands]: https://github.com/kunobi-ninja/kache/blob/v2.0.0-rc.1/docs/commands/reference.mdx
 [kache-v2-schema]: https://github.com/kunobi-ninja/kache/blob/v2.0.0-rc.1/docs/commands/report.schema.json
+[kache-v200-commands]: https://github.com/kunobi-ninja/kache/blob/v2.0.0/docs/commands/reference.mdx
+[kache-v200-schema]: https://github.com/kunobi-ninja/kache/blob/v2.0.0/docs/commands/report.schema.json
+[kache-v201-commands]: https://github.com/kunobi-ninja/kache/blob/v2.0.1/docs/commands/reference.mdx
+[kache-v201-schema]: https://github.com/kunobi-ninja/kache/blob/v2.0.1/docs/commands/report.schema.json
 [kache-key]: https://ninja.kunobi.com/docs/kache/how-it-works/cache-key

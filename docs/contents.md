@@ -41,6 +41,8 @@
   approved for RFC 0002 W1.
 - [ADR 007: cache-outcome observation port](adr-007-cache-outcome-observation-port.md)
   proposes the shared evidence boundary and staged sccache and kache adapters.
+  It records the ADR number allocation: 006 is reserved for draft PR #43's
+  kache execution record and is not yet published on main.
 
 ## Conventions
 

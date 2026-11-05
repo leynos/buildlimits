@@ -277,6 +277,11 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
 - [x] (2026-11-03) Reviewed merged PR #24 and draft PR #43; documented the
   proposed ADR 007 observation boundary without changing runtime code.
+- [x] (2026-11-05) Corrected the ADR-numbering record after PR #43 renumbered to
+  006, refreshed the kache reporting evidence for 2.0.0 and 2.0.1, added the
+  ADR 007 goals, rationale and outstanding-decisions sections, and replaced the
+  stale worktree path in `Concrete steps`. Documentation only; no runtime code
+  and no gate state changed.
 - [ ] EP-O1: common typed contract and legacy projections (proposed).
 - [ ] EP-O2: sccache observer extraction (proposed; after EP-O1).
 - [ ] EP-O3: differential and quiet-host acceptance (after EP-O2).
@@ -1435,11 +1440,23 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
 ## Surprises & discoveries
 
-- (2026-11-03) Main and PR #43 both use ADR 005. ADR 007 documents the
-  collision and proposes 006 for the unmerged kache record; neither existing
-  decision is silently renumbered. Kache reports expose event rows, but their
+- (2026-11-03) Main and PR #43 both used ADR 005. ADR 007 documented the
+  collision and proposed 006 for the unmerged kache record; neither existing
+  decision was silently renumbered. Kache reports expose event rows, but their
   documented sessions may span Cargo commands and do not establish admission
   identity. See ADR 007 for version-specific sources and remaining experiments.
+- (2026-11-05) The ADR collision is resolved on the draft branch: PR #43 commit
+  `dcde62a900711aa538f632d28ffb5a00e184cb24` renumbered the kache execution
+  record to `docs/adr-006-kache-cache-backend.md`. Main keeps 005 for recording
+  and 007 for observation. PR #43 is still a draft, so 006 is reserved rather
+  than published; recheck the allocation if either branch is abandoned or a
+  third proposal claims 006 or 007. Separately, kache published 2.0.0-rc.2,
+  2.0.0-rc.3, 2.0.0 and 2.0.1 after PR #43's execution pin. The 2.0.0 and 2.0.1
+  report schemas are byte-identical and differ from 1.2.2 and 2.0.0-rc.1, whose
+  schemas are byte-identical to each other. `CrateDetail` gained ten timing
+  fields in 2.0.0 and lost none, carries no producer version in any inspected
+  schema, and the `result` enum is unchanged. The trial pin is not widened by
+  an unverified documentation review; EP-K1 must pin its own binary.
 
 - S1. In sccache 0.14.0, every result counter for a request is updated under
   one `me.stats.lock().await` guard, inside the spawned task, before `Ok(res)`
@@ -3507,10 +3524,14 @@ For this documentation-only proposal, run `make fmt`, `make check-fmt`,
 
 Preconditions: the trial owner selects an exact execution-supported kache
 version and provisioning configuration under buildlimits issue #30 and
-dev-env-rocky issue #339, and explicitly approves this trial work. The current
-candidates are 1.2.2 and 2.0.0-rc.1; a newer version repeats the investigation.
-EP-K1 may run before sccache extraction; EP-K2 requires the common port to have
-landed. Execution backend delivery has no dependency on EP-K1, EP-K2 or EP-K3.
+dev-env-rocky issue #339, and explicitly approves this trial work. PR #43's
+execution pin is 1.2.2 and 2.0.0-rc.1, which remains the starting point. Kache
+has since published 2.0.0-rc.2, 2.0.0-rc.3, 2.0.0 and 2.0.1; the 2.0.0 and
+2.0.1 report schemas are byte-identical to each other and differ from the
+pinned pair, so selecting either is a new trial version, not a free upgrade. An
+unverified documentation review never widens the pin. EP-K1 may run before
+sccache extraction; EP-K2 requires the common port to have landed. Execution
+backend delivery has no dependency on EP-K1, EP-K2 or EP-K3.
 
 Record the actual binary hashes, report/envelope versions and supported command
 flags. ADR 007 records tagged documentation evidence for structured stats,
@@ -3574,10 +3595,15 @@ experiment with fairness, model/replay and shadow evidence.
 
 ## Concrete steps
 
-Work from
-`/home/leynos/.lody/repos/github---leynos---buildlimits/worktrees/ac9f6ac4-ab16-4230-a4f9-0b19d16fbf25`.
+Work from the worktree checked out for the milestone's own branch; obtain it
+with `git rev-parse --show-toplevel` rather than reusing a path recorded by an
+earlier session. Worktree directory names are allocated per session and are not
+stable, so a hardcoded path becomes wrong as soon as this plan outlives the
+checkout that wrote it.
 
-1. Run `git branch --show-current` and expect `cache-hit-prediction`.
+1. Run `git branch --show-current` and confirm it names the branch this
+   milestone belongs to. Do not proceed on `main`; record the observed branch in
+   `Progress` if it differs from the milestone's expected name.
 2. For each milestone, write the red tests, then run only them through the
    Makefile's environment, capturing a log:
 
