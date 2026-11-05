@@ -37,9 +37,9 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.admission_state import Counts
+    from buildlimits.cache_backend import DetachedCacheBackend
     from buildlimits.recovery_barrier import RecoveryBarrier
     from buildlimits.recovery_starvation import StarvationReading
-    from buildlimits.sccache import ManagedSccache
 
 RECOVERY_RETRY_SECONDS = 30.0
 RECOVERY_MAX_RETRY_SECONDS = 120.0
@@ -57,7 +57,7 @@ class CacheRecovery:
     policy : str
         ``manual`` to act only on operator request, or ``starved`` to also
         open a transaction when a waiting request is blocked by cache work.
-    cache : ManagedSccache
+    cache : DetachedCacheBackend
         The managed server, whose control verbs queue jobs rather than
         awaiting them.
     marker : Path
@@ -89,7 +89,7 @@ class CacheRecovery:
     """
 
     policy: str
-    cache: ManagedSccache
+    cache: DetachedCacheBackend
     marker: Path
     counts: cabc.Callable[[], Counts] = dc.field(kw_only=True)
     fault_kind: cabc.Callable[[], str | None] = dc.field(kw_only=True)

@@ -555,6 +555,7 @@ ignore_names = [
     "RecorderEvent",
     "OutcomeStorePort",
     "ServerProcessPort",
+    "DetachedCacheBackend",
     # TypedDict fields are read via JSON-key subscripting in the fake servers.
     "script_index",
     "statistics_queries",
@@ -1075,8 +1076,8 @@ members = [
     "tests/cache_recovery_helpers.py::refusing_runner",
     "tests/test_supervisor_loop.py::_empty_runner",
     "tests/test_exec_failure.py::_quiet_runner",
-    "tests/test_supervisor_effects.py::_empty_runner",
     "tests/test_supervisor_startup.py::_refusing_runner",
+    "tests/supervisor_helpers.py::_empty_runner",
 ]
 reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
 
@@ -1564,7 +1565,7 @@ reason = "Both methods exist to fail: they are the two detached-only questions a
 
 [[tool.duplication_gate.allow]]
 members = [
-    "buildlimits/kache.py::_is_kache",
+    "buildlimits/kache_guard.py::_is_kache",
     "tests/kache_stray_fixture.py::is_observable",
 ]
 reason = "The fixture oracle restates the guard's executable test independently so that a change to what counts as a kache binary is caught, not mirrored. Sharing the production predicate would let the fixture agree with a broken guard."
@@ -1619,7 +1620,7 @@ members = [
 reason = "Recurring short test steps: both check the compiler's parent command line through World.assert_parent_lacks, naming their own backend's client as the text that must not appear. Sharing the step would lose which backend each feature is about."
 
 [[tool.duplication_gate.allow]]
-members = ["tests/outcome_process_test_helpers.py", "tests/test_kache_guard.py"]
+members = ["tests/outcome_process_test_helpers.py", "tests/kache_guard_helpers.py"]
 reason = "Two independent fixtures write a scope-shaped cgroup.procs file; each is the smallest stand-in its own test needs, and sharing one would couple the outcome-process helpers to the kache guard test."
 
 [[tool.duplication_gate.allow]]
@@ -1629,3 +1630,21 @@ reason = "Both fixtures initialise a base class and start one empty observation 
 [[tool.duplication_gate.allow]]
 members = ["buildlimits/rustc_query_grammar.py", "tests/fixtures/fake_kache.py"]
 reason = "The exact match is an early return on an empty input, which each module spells the same way for the same reason; extracting an is_empty helper would obscure both call sites."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_fake_kache.py",
+    "tests/test_kache_guard.py",
+]
+reason = "Matching import lists: each module names the process-inspection and signals symbols it needs from the standard library, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_supervisor_admission_guard.py",
+    "tests/test_supervisor_graceful_stop.py",
+]
+reason = "Matching import lists: each module names the admission, configuration and supervisor symbols it drives, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/groups_helpers.py"
+reason = "Recurring short test steps: each method records its own name on the shared order list, and the one line is the whole observable effect of that double. Extracting it would leave the methods with no body to read."

@@ -34,7 +34,7 @@ from buildlimits.systemd import SystemdError
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
-    from buildlimits.sccache import ManagedSccache
+    from buildlimits.cache_backend import DetachedCacheBackend
 
 
 def new_barrier(marker: Path) -> RecoveryBarrier:
@@ -85,7 +85,7 @@ def reclaim_after_accounting(
     *,
     cache_mode: str,
     barrier: RecoveryBarrier,
-    cache: ManagedSccache,
+    cache: DetachedCacheBackend,
 ) -> None:
     """Restore the managed cache after an accounted start-up released its tokens.
 
@@ -96,7 +96,7 @@ def reclaim_after_accounting(
         other mode returns without touching either.
     barrier : RecoveryBarrier
         The restart barrier left by an interrupted transaction, if any.
-    cache : ManagedSccache
+    cache : DetachedCacheBackend
         The managed server whose start is queued once the barrier is gone.
 
     Notes

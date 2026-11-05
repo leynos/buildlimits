@@ -101,10 +101,10 @@ cache **and** a detached backend. Composition alone is not enough.
 - Rustdoc stays `cacheable=False`. The `rustc` probe queries exempted under
   [#27][issue-27] must not go through kache either: they are exempt so that
   Cargo's package-cache lock is not held behind the compile queue, and running
-  them through kache would put them back behind it. That exemption lands on
-  [#27][issue-27]'s own branch, which is not yet merged, so this change adds no
-  probe path. It only settles what kache mode must do once the exemption is
-  present: an exempted probe is composed directly, never through the backend.
+  them through kache would put them back behind it. That exemption is now
+  merged, so the probe path is live; kache mode keeps it by composing an
+  exempted probe directly as the adapter already does, never through the
+  backend.
 - Status says `caching through kache` or
   `kache unavailable, compiling directly`. Metrics keep `cache_path` and add
   `cache_backend`. Detached-only events and the operator text that names the
@@ -117,8 +117,11 @@ cache **and** a detached backend. Composition alone is not enough.
 
 - A `CacheBackend` protocol covers argv and environment composition,
   reachability or health, an `in_scope_work` (or equivalent) capability, and
-  the detached-only lifecycle (`accounted_drain`, `stop`, `start`). Exception
-  names are backend-neutral.
+  the detached-only lifecycle (`accounted_drain`, `stop`, `start`, and the
+  `unit` a control refusal must name). Exception names are backend-neutral.
+- The drain, quiesce and recovery paths annotate that lifecycle rather than
+  `ManagedSccache`, so the seam is enforced by the type checker and not only by
+  convention. `ManagedSccache` remains the sole implementation.
 - `ManagedSccache` implements the protocol with no behaviour change. Its
   status text, metrics and snapshots are byte-identical before and after the
   seam.
@@ -330,9 +333,20 @@ The supervisor's obligations are then:
   from "not guarded". A change in the reading also writes a plain journal line,
   which begins `stray kache process outside admitted scopes:` and is journalled
   once per appearance or clearance rather than once per poll. The fault never
-  holds a token. The in-scope case cannot normally arise because the external
-  daemon is required, but the guard covers a daemon that dies mid-build and a
-  group that then auto-starts a replacement.
+  holds a token. The reading is the whole slice recursively, with the members
+  of the admitted scopes subtracted, so a cache process in a foreign unit or a
+  nested slice is found; it is taken at admission and on the cache poll, so a
+  stray is reported when the next group is admitted rather than only up to a
+  poll interval later.
+
+  What the guard cannot report is a daemon auto-started into a group whose
+  scope admission still holds: its members are covered by that group's token
+  until the scope empties, and reporting a covered process would report every
+  legitimate compile. A daemon that dies mid-build and is replaced inside a
+  running scope is therefore invisible until its group releases, after which
+  the scope is no longer admitted and the next reading reports it. The guard
+  makes an orphaned daemon _visible_, not impossible; the external-daemon
+  requirement is what prevents one being created.
 
 The guard is a report, not a killer. A stray process inside a group's scope is
 removed by the ordinary terminate-on-leader-exit path; a stray process outside
@@ -577,8 +591,11 @@ reader does not carry its conclusions across to kache.
 2. **Extract the backend seam.** Add the `CacheBackend` protocol,
    backend-neutral exception names, the capability projection into `Admission`,
    backend-named wording, and the `sccache.py` and `cache_recovery.py` splits.
-   Land the extraction as its own behaviour-preserving pull request, with
-   sccache status, metrics and snapshots unchanged.
+   The extraction was originally planned as its own behaviour-preserving pull
+   request. It landed instead as the first commits of this branch, ahead of any
+   kache code, so it remains reviewable as a behaviour-preserving change
+   without a separate PR; sccache status, metrics and snapshots are unchanged
+   by it.
 3. **Add the kache backend.** Configuration and per-mode key validation,
    composition and environment, the caller's `kache` and `sccache` layer
    stripping, health and the external-daemon requirement, the stray-process

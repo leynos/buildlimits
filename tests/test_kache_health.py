@@ -19,15 +19,20 @@ import os
 import typing as typ
 from pathlib import Path
 
+import pytest
+
 from buildlimits.kache import Kache
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-    import pytest
-
-#: The document a healthy `kache daemon status --json` prints.
-RUNNING = '{"daemon_running": true}'
+#: The document a healthy `kache daemon status --json` prints. kache wraps the
+#: body in one versioned envelope for every ``--json`` command, so a fixture
+#: without it would not be the document health actually reads.
+RUNNING = (
+    '{"schema_version": 1, "command": "daemon-status", "success": true,'
+    ' "daemon_running": true}'
+)
 
 
 def _script(
@@ -141,6 +146,63 @@ def test_a_client_that_answers_nothing_is_unavailable(tmp_path: Path) -> None:
     )
 
 
+def _printing(directory: Path, document: str, *, status: int = 0) -> Path:
+    """Write a client that prints ``document`` and exits with ``status``."""
+    body = f"#!/bin/sh\nprintf '%s\\n' '{document}'\nexit {status}\n"
+    return _script(directory, body)
+
+
+def test_a_probe_that_exits_non_zero_is_unavailable(tmp_path: Path) -> None:
+    """A failed command's document is not an answer about a daemon.
+
+    ``kache daemon status --json`` exits zero for both a running and a stopped
+    daemon, so any other status means the command itself failed. Its standard
+    output may still be a document -- a partial write, or one produced before
+    the failure -- and reading it would let a failed probe compose a group.
+    """
+    client = _printing(tmp_path, RUNNING, status=1)
+
+    assert not Kache(str(client)).is_reachable(), (
+        "a status document printed by a failed command proves no daemon"
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "document"),
+    [
+        (
+            "unsupported schema version",
+            RUNNING.replace('"schema_version": 1', '"schema_version": 2'),
+        ),
+        (
+            "another command's document",
+            RUNNING.replace('"command": "daemon-status"', '"command": "cache-clear"'),
+        ),
+        (
+            "failed envelope",
+            RUNNING.replace('"success": true', '"success": false'),
+        ),
+        (
+            "body without an envelope",
+            '{"daemon_running": true}',
+        ),
+    ],
+)
+def test_a_document_outside_the_supported_envelope_is_unavailable(
+    tmp_path: Path, name: str, document: str
+) -> None:
+    """Only kache's own versioned ``daemon-status`` envelope is evidence.
+
+    Each row is a document a naive body-only probe would accept while it says
+    something else entirely: a schema a later kache may redefine, another
+    command's success, a command that failed, or a shape that predates the
+    envelope. Trusting any of them would report a daemon the group cannot use.
+    """
+    client = _printing(tmp_path, document)
+
+    assert not Kache(str(client)).is_reachable(), f"rejected: {name}"
+
+
 def test_output_the_locale_cannot_decode_is_unavailable(tmp_path: Path) -> None:
     """Undecodable bytes read as a bad document, never as a raised error.
 
@@ -152,7 +214,10 @@ def test_output_the_locale_cannot_decode_is_unavailable(tmp_path: Path) -> None:
     """
     client = _script(
         tmp_path,
-        "#!/bin/sh\nprintf '\\377\\376{\"daemon_running\": true}\\n'\n",
+        "#!/bin/sh\nprintf '\\377\\376"
+        '{"schema_version": 1, "command": "daemon-status", "success": true,'
+        ' "daemon_running": true}'
+        "\\n'\n",
     )
 
     assert not Kache(str(client)).is_reachable(), (
@@ -174,7 +239,11 @@ def test_the_probe_asks_about_the_configured_socket(
     client = _script(
         tmp_path,
         f'#!/bin/sh\nprintf "%s\\n%s\\n" "$KACHE_SOCKET_PATH" "$MARKER" > {recorded}\n'
-        f'printf \'{{"daemon_running": true, "socket": "%s"}}\\n\' "$KACHE_SOCKET_PATH"\n',
+        "printf '{"
+        '"schema_version": 1, "command": "daemon-status", "success": true,'
+        ' "daemon_running": true, "socket": "%s"'
+        "}\\n' "
+        '"$KACHE_SOCKET_PATH"\n',
     )
     socket = tmp_path / "kache.sock"
     monkeypatch.setitem(os.environ, "MARKER", "inherited")
@@ -193,7 +262,11 @@ def test_a_socket_the_document_does_not_name_is_unavailable(tmp_path: Path) -> N
     """A daemon answering on another endpoint is not the one the group uses."""
     client = _script(
         tmp_path,
-        '#!/bin/sh\nprintf \'{"daemon_running": true, "socket": "/elsewhere"}\\n\'\n',
+        "#!/bin/sh\n"
+        "printf '{"
+        '"schema_version": 1, "command": "daemon-status", "success": true,'
+        ' "daemon_running": true, "socket": "/elsewhere"'
+        "}\\n'\n",
     )
 
     assert not Kache(str(client), socket_path=tmp_path / "kache.sock").is_reachable(), (

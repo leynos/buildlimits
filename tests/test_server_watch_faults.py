@@ -22,7 +22,8 @@ from buildlimits.server_watch import ServerWatch
 if typ.TYPE_CHECKING:
     import pytest
 
-    from buildlimits.cache_backend import CacheBackend
+    from buildlimits.cache_backend import CacheBackend, DetachedCacheBackend
+
 
 # A fault whose root count was never established, so nothing may act on it.
 _UNKNOWN_ROOTS = LiveCacheWorkError(
@@ -240,7 +241,7 @@ def test_a_pending_automatic_recovery_makes_the_command_a_fallback(
     now = [0.0]
     server = FakeServer(load=_ZERO_ROOTS)
     watch = ServerWatch(
-        typ.cast("ManagedSccache", server),
+        typ.cast("DetachedCacheBackend", server),
         _draining(b"a"),
         "sccache",
         typ.cast("CacheBackend", server),
@@ -268,7 +269,7 @@ def test_a_manager_fault_is_never_a_fallback() -> None:
     """Only a live-work fault can be cured by the automatic recovery."""
     server = FakeServer(load=SccacheError("manager down"))
     watch = ServerWatch(
-        typ.cast("ManagedSccache", server),
+        typ.cast("DetachedCacheBackend", server),
         _draining(b"a"),
         "sccache",
         typ.cast("CacheBackend", server),

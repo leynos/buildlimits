@@ -18,8 +18,9 @@ finished. Every admitted group therefore points at a separately managed daemon
 through ``KACHE_SOCKET_PATH``, disables the built-in scheduler, and is only
 composed at all when :meth:`Kache.is_reachable` has confirmed that a daemon is
 already answering on that socket. A kache or kache-engine process found outside
-an admitted scope is reported by :func:`stray_processes` rather than covered by
-a held token.
+an admitted scope is reported by
+:func:`buildlimits.kache_guard.stray_processes` rather than covered by a held
+token.
 
 See ``docs/adr-006-kache-cache-backend.md``.
 """
@@ -30,10 +31,10 @@ import os
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed argument vectors, never a shell.
 import typing as typ
-from pathlib import Path
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    from pathlib import Path
 
 #: The scheduler is disabled in every admitted group. See ADR 006: a
 #: whole-pool request under memory pressure would admit a second time, and the
@@ -43,11 +44,6 @@ SCHEDULER_DISABLE = "0"
 #: Restrict kache to its local store, which keeps its remote-gated start paths
 #: inert; the remote backends are out of scope for this issue.
 LOCAL_ONLY = "1"
-
-#: Names that identify a kache process outside an admitted compiler scope.
-#: The v2 client ``exec``s ``kache-engine`` in place, so a snapshot may see
-#: either executable at the wrapper's process identifier.
-STRAY_EXECUTABLES = frozenset({"kache", "kache-engine"})
 
 #: The health probe runs on every admission cycle, so it must not hold the
 #: supervisor open when a daemon accepts the connection and then stalls. It is
@@ -127,6 +123,7 @@ class Kache:
 
         Examples
         --------
+        >>> from pathlib import Path
         >>> cache = Kache("/b/kache")
         >>> cache.compose(("/t/rustc", "-vV"), {})[0]
         ('/b/kache', '/t/rustc', '-vV')
@@ -249,14 +246,33 @@ class Kache:
             )
         except OSError, subprocess.TimeoutExpired:
             return False
-        return _reports_running(finished.stdout, self.socket_path)
+        return _reports_running(finished.returncode, finished.stdout, self.socket_path)
 
 
-def _reports_running(stdout: str, socket_path: Path | None) -> bool:
+def _reports_running(returncode: int, stdout: str, socket_path: Path | None) -> bool:
     """Decide whether a ``daemon status --json`` document proves a daemon.
+
+    kache publishes one versioned envelope for every ``--json`` command. A
+    successful document always carries ``schema_version`` (currently the
+    integer ``1``), the ``command`` it belongs to, and ``success``; a failed
+    one carries ``success: false`` and an ``error`` object. Reading the body
+    without those fields would accept any JSON that happened to contain a
+    ``daemon_running`` key -- a truncated write, another command's document, or
+    a shape a later release no longer means -- and would report a daemon to a
+    group that could not use it. The envelope is therefore checked, and an
+    unknown ``schema_version`` is refused rather than interpreted: a future
+    kache may redefine the fields this probe relies on.
+
+    ``success`` is not the daemon's liveness. ``kache daemon status`` succeeds
+    whether or not a daemon is running, and reports absence in the body, which
+    is what makes it safe to call on every admission cycle.
 
     Parameters
     ----------
+    returncode : int
+        The probe's exit status. ``kache daemon status --json`` exits zero for
+        both a running and a stopped daemon, so a non-zero status means the
+        command itself failed and its document is not an answer about a daemon.
     stdout : str
         The command's standard output, expected to be the documented JSON
         document.
@@ -267,30 +283,54 @@ def _reports_running(stdout: str, socket_path: Path | None) -> bool:
     Returns
     -------
     bool
-        ``True`` only when the document reports ``daemon_running: true`` and,
-        for a configured socket, names that same endpoint.
+        ``True`` only when the probe exited successfully with a supported
+        envelope whose body reports ``daemon_running: true`` and, for a
+        configured socket, names that same endpoint.
 
     Examples
     --------
-    >>> _reports_running('{"daemon_running": true, "socket": "/r/d.sock"}',
-    ...                  Path("/r/d.sock"))
+    >>> from pathlib import Path
+    >>> running = (
+    ...     '{"schema_version": 1, "command": "daemon-status", "success": true,'
+    ...     ' "daemon_running": true, "socket": "/r/d.sock"}'
+    ... )
+    >>> _reports_running(0, running, Path("/r/d.sock"))
     True
-    >>> _reports_running('{"daemon_running": false, "socket": "/r/d.sock"}',
-    ...                  Path("/r/d.sock"))
+    >>> stopped = (
+    ...     '{"schema_version": 1, "command": "daemon-status", "success": true,'
+    ...     ' "daemon_running": false, "socket": "/r/d.sock"}'
+    ... )
+    >>> _reports_running(0, stopped, Path("/r/d.sock"))
     False
-    >>> _reports_running('{"daemon_running": true, "socket": "/r/d.sock"}',
-    ...                  Path("/r/other.sock"))
+    >>> elsewhere = running.replace("/r/d.sock", "/r/other.sock")
+    >>> _reports_running(0, elsewhere, Path("/r/d.sock"))
+    False
+    >>> _reports_running(1, running, Path("/r/d.sock"))
+    False
+    >>> _reports_running(
+    ...     0, running.replace('"schema_version": 1', '"schema_version": 2'),
+    ...     Path("/r/d.sock"),
+    ... )
     False
     """
+    if returncode != 0:
+        return False
     try:
         document = json.loads(stdout)
     except json.JSONDecodeError:
         return False
     # A mapping pattern is a total test here: a document that is not a mapping
     # at all -- a list, a bare string -- falls through to the final case rather
-    # than needing a separate type guard.
+    # than needing a separate type guard, and so does one missing envelope
+    # field. ``schema_version`` is matched as the literal supported value, so a
+    # document written by a future release is refused rather than guessed at.
     match document:
-        case {"daemon_running": True}:
+        case {
+            "schema_version": 1,
+            "command": "daemon-status",
+            "success": True,
+            "daemon_running": True,
+        }:
             return socket_path is None or document.get("socket") == str(socket_path)
         case _:
             return False
@@ -314,68 +354,3 @@ def _is_writable(directory: Path) -> bool:
         return probe.is_dir() and os.access(probe, os.W_OK | os.X_OK)
     except OSError:
         return False
-
-
-def stray_processes(
-    pids: cabc.Iterable[int],
-    *,
-    admitted: cabc.Container[int],
-    is_kache: cabc.Callable[[int], bool] | None = None,
-) -> tuple[int, ...]:
-    """Find kache processes that no admitted scope covers.
-
-    A kache daemon started from an admitted group stays in that group's scope
-    after the compile ends, and the scope is the supervisor's unit of
-    accounting: a token returned for an emptied scope would then cover work
-    that is still running. Rather than guess whether such a process is
-    harmless, the supervisor reports it as a distinct fault.
-
-    Parameters
-    ----------
-    pids : Iterable[int]
-        Candidate process identifiers read from the compilers' slice.
-    admitted : Container[int]
-        Processes that an admitted group's scope already covers.
-    is_kache : Callable[[int], bool] or None
-        The executable test, injectable so the decision can be exercised
-        without a live ``/proc``. ``None`` means the real one. The module
-        global is read at call time rather than bound as a default, so a test
-        that substitutes it is exercising the same call the guard makes.
-
-    Returns
-    -------
-    tuple[int, ...]
-        The identifiers of uncovered kache processes, in the order given.
-
-    Examples
-    --------
-    >>> stray_processes([10, 11, 12], admitted={11}, is_kache=lambda pid: pid != 12)
-    (10,)
-    """
-    probe = _is_kache if is_kache is None else is_kache
-    return tuple(pid for pid in pids if pid not in admitted and probe(pid))
-
-
-def _is_kache(pid: int) -> bool:
-    """Report whether a process's executable is a kache binary.
-
-    The executable link is what the kernel actually ran, so it distinguishes
-    kache from a process that merely carries a similar name. A v2 wrapper that
-    has ``exec``ed its engine links to ``kache-engine``, which is why both
-    names are recognized.
-
-    Returns
-    -------
-    bool
-        ``True`` when ``/proc`` names a kache executable for the process. A
-        process that has already exited, or whose executable cannot be read,
-        is not reported: the caller is looking for survivors, and an unreadable
-        entry is not evidence of one.
-    """
-    try:
-        target = Path(f"/proc/{pid}/exe").readlink()
-    except OSError:
-        return False
-    # A replaced binary still has a live process holding the deleted inode,
-    # which the kernel marks in the link text rather than the file name.
-    return target.name.removesuffix(" (deleted)") in STRAY_EXECUTABLES

@@ -10,7 +10,7 @@ from buildlimits.sccache import LiveCacheWorkError, SccacheError
 if typ.TYPE_CHECKING:
     from conftest import RecordingSink
 
-    from buildlimits.sccache import ManagedSccache
+    from buildlimits.cache_backend import DetachedCacheBackend
     from buildlimits.supervisor import Supervisor
 
 
@@ -60,7 +60,7 @@ def test_due_cache_probe_counts_only_real_attempts_and_successful_recovery(
     """Live cached work is pending while unknown accounting remains a fault."""
     error, state, recovered, failures = case
     cache = ScriptedCache([error, 0])
-    supervisor.server.server = typ.cast("ManagedSccache", cache)
+    supervisor.server.server = typ.cast("DetachedCacheBackend", cache)
     assert supervisor.server.drained_tokens() == [], "unaccounted work retains tokens"
     assert supervisor.admission.tokens_held() == 1, "a probe fault never reclaims work"
     first = _progress(metric_sink)[0]
@@ -90,7 +90,7 @@ def test_no_wait_reset_never_claims_cache_recovery(
 ) -> None:
     """Clearing drain bookkeeping without a probe emits no recovery observation."""
     cache = ScriptedCache([SccacheError("unavailable"), 0])
-    supervisor.server.server = typ.cast("ManagedSccache", cache)
+    supervisor.server.server = typ.cast("DetachedCacheBackend", cache)
     supervisor.server.drained_tokens()
     recorded = tuple(metric_sink.records)
     supervisor.admission.groups.clear()

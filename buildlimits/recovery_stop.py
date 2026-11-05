@@ -11,15 +11,15 @@ import typing as typ
 from buildlimits.systemd import SystemdError
 
 if typ.TYPE_CHECKING:
-    from buildlimits.sccache import ManagedSccache
+    from buildlimits.cache_backend import DetachedCacheBackend
 
 
-def request_stop(cache: ManagedSccache, fault_kind: str | None) -> None:
+def request_stop(cache: DetachedCacheBackend, fault_kind: str | None) -> None:
     """Ask the manager to stop the managed cache under the barrier.
 
     Parameters
     ----------
-    cache : ManagedSccache
+    cache : DetachedCacheBackend
         The managed server, whose control verbs queue jobs.
     fault_kind : str | None
         The drain probe's last fault classification, if any.

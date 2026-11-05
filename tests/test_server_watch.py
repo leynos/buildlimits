@@ -17,7 +17,7 @@ from buildlimits.systemd import UserManager
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-    from buildlimits.cache_backend import CacheBackend
+    from buildlimits.cache_backend import CacheBackend, DetachedCacheBackend
 
 
 @dc.dataclass(slots=True)
@@ -77,7 +77,7 @@ def _watch(
     the same fake for the cases that do not distinguish the two.
     """
     return ServerWatch(
-        typ.cast("ManagedSccache", server),
+        typ.cast("DetachedCacheBackend", server),
         admission or Admission(cached=False),
         mode,
         typ.cast("CacheBackend", backend if backend is not None else server),

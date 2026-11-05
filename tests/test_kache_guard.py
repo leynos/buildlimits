@@ -11,13 +11,21 @@ mechanics: a covered process is never reported, an uncovered one always is,
 and a status query must not consume the journal line the next poll owes.
 """
 
+import os
 import selectors
+import shutil
+import signal
+import subprocess
+import sys
+import time
 import typing as typ
 from pathlib import Path
 
 import pytest
+from harness_processes import pid_alive
+from kache_guard_helpers import cache_processes, fake_scope
 
-from buildlimits import kache, kache_guard
+from buildlimits import kache_guard
 from buildlimits.cache_backend import CacheBackend, DirectCache
 from buildlimits.config import SupervisorConfig
 from buildlimits.groups import Groups, Running
@@ -25,10 +33,10 @@ from buildlimits.kache import Kache
 from buildlimits.sccache import ManagedSccache
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
     from buildlimits.launch import HeldChild
     from buildlimits.systemd import UserManager
+
+__all__ = ["cache_processes"]  # Re-exported so pytest finds the fixture here.
 
 
 def _backend(cache_mode: str, *, in_scope: bool = True) -> CacheBackend:
@@ -61,62 +69,12 @@ def _groups(
     return groups
 
 
-def _fake_scope(slice_dir: Path, name: str, pids: cabc.Iterable[int]) -> Path:
-    """Create a directory that looks like one supervisor-created scope."""
-    scope = slice_dir / f"buildlimits-{name}.scope"
-    scope.mkdir(parents=True)
-    (scope / "cgroup.procs").write_text(
-        "".join(f"{pid}\n" for pid in pids), encoding="ascii"
-    )
-    return scope
-
-
-@pytest.fixture
-def cache_processes(monkeypatch: pytest.MonkeyPatch) -> set[int]:
-    """Treat every listed process as a kache executable for the test.
-
-    The real test reads ``/proc/<pid>/exe``, which cannot name a fake process;
-    the predicate is resolved through the module's globals at call time, so the
-    substitution exercises the same decision the live guard makes.
-    """
-    is_kache: set[int] = set()
-    monkeypatch.setattr(kache, "_is_kache", lambda pid: pid in is_kache)
-    return is_kache
-
-
-def _observed_stray(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cache_processes: set[int]
-) -> tuple[kache_guard.Strays, list[str]]:
-    """Leave one uncovered scope holding a cache process and capture the journal.
-
-    Parameters
-    ----------
-    monkeypatch : pytest.MonkeyPatch
-        The test's patcher, used to replace the module-level log sink.
-    tmp_path : Path
-        The slice directory for this test.
-    cache_processes : set[int]
-        The processes the fixture's predicate calls kache.
-
-    Returns
-    -------
-    tuple[kache_guard.Strays, list[str]]
-        A reading that has not observed the slice yet, and the lines the guard
-        journals from now on, in order.
-    """
-    _fake_scope(tmp_path, "forgotten", [4242])
-    cache_processes.update({4242})
-    lines: list[str] = []
-    monkeypatch.setattr(kache_guard, "log", lines.append)
-    return kache_guard.Strays(), lines
-
-
 def test_a_scope_admission_has_forgotten_is_not_covered(
     tmp_path: Path, cache_processes: set[int]
 ) -> None:
     """A process in a scope no group holds has outlived the token that covered it."""
-    held = _fake_scope(tmp_path, "held", [10, 11])
-    _fake_scope(tmp_path, "forgotten", [20, 21])
+    held = fake_scope(tmp_path, "held", [10, 11])
+    fake_scope(tmp_path, "forgotten", [20, 21])
     cache_processes.update({10, 11, 20, 21})
 
     found = kache_guard.find(tmp_path, [held])
@@ -128,8 +86,8 @@ def test_a_covered_process_is_never_reported(
     tmp_path: Path, cache_processes: set[int]
 ) -> None:
     """The daemon a live group owns is its own business while the group runs."""
-    first = _fake_scope(tmp_path, "first", [20, 21])
-    second = _fake_scope(tmp_path, "second", [21, 22])
+    first = fake_scope(tmp_path, "first", [20, 21])
+    second = fake_scope(tmp_path, "second", [21, 22])
     cache_processes.update({20, 21, 22})
 
     found = kache_guard.find(tmp_path, [first, second])
@@ -140,7 +98,7 @@ def test_only_cache_processes_are_reported(
     tmp_path: Path, cache_processes: set[int]
 ) -> None:
     """A stray compiler is a different fault; this guard reports only kache."""
-    scope = _fake_scope(tmp_path, "forgotten", [30, 31])
+    scope = fake_scope(tmp_path, "forgotten", [30, 31])
     cache_processes.add(31)
 
     assert kache_guard.find(tmp_path, []) == (31,), (
@@ -152,8 +110,8 @@ def test_readings_follow_scope_name_order(
     tmp_path: Path, cache_processes: set[int]
 ) -> None:
     """The report is stable, so a change of ordering is a real change."""
-    _fake_scope(tmp_path, "b-second", [42])
-    _fake_scope(tmp_path, "a-first", [41])
+    fake_scope(tmp_path, "b-second", [42])
+    fake_scope(tmp_path, "a-first", [41])
     cache_processes.update({41, 42})
 
     assert kache_guard.find(tmp_path, []) == (41, 42), "scopes are read in name order"
@@ -173,23 +131,94 @@ def test_an_unreadable_scope_does_not_fail_the_reading(
 def test_an_unreadable_slice_does_not_fail_the_reading(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The slice can vanish between the existence check and the listing.
+    """The slice can vanish between the existence check and the walk.
 
-    ``child_scopes`` returns ``[]`` for a slice that is not there, but its
-    ``iterdir`` is not guarded, so a slice removed in between raises. The guard
+    ``slice_member_pids`` returns ``[]`` for a slice that is not there, but its
+    ``walk`` is not guarded, so a slice removed in between raises. The guard
     only reports; a reading it cannot take is no strays, not a poll fault and
     not a failed status query.
     """
     slice_dir = tmp_path / "buildlimits-compilers.slice"
     slice_dir.mkdir()
 
-    def _vanish(_path: Path) -> list[Path]:
+    def _vanish(_path: Path) -> list[int]:
         msg = "the slice went away"
         raise OSError(msg)
 
-    monkeypatch.setattr(kache_guard.cgroups, "child_scopes", _vanish)
+    monkeypatch.setattr(kache_guard.cgroups, "slice_member_pids", _vanish)
 
     assert not kache_guard.find(slice_dir, []), "an unreadable slice reads as empty"
+
+
+def test_a_process_in_a_foreign_scope_is_found(
+    tmp_path: Path, cache_processes: set[int]
+) -> None:
+    """The guard must not rely on units carrying the supervisor's own name.
+
+    ``buildlimits-compilers.slice`` can hold a transient service, another
+    harness's scope, or any other unit. A reading of only the scopes this
+    supervisor recognizes would never look inside them, so a kache daemon
+    started there would run unaccounted for.
+    """
+    foreign = tmp_path / "some-service.service"
+    foreign.mkdir()
+    (foreign / "cgroup.procs").write_text("5150\n", encoding="ascii")
+    cache_processes.add(5150)
+
+    assert kache_guard.find(tmp_path, []) == (5150,), (
+        "a scope the supervisor did not name is still inside its slice"
+    )
+
+
+def test_a_process_in_a_nested_slice_is_found(
+    tmp_path: Path, cache_processes: set[int]
+) -> None:
+    """A slice nested under the compilers slice is read too, not just scopes."""
+    nested = tmp_path / "buildlimits-compilers-extra.slice"
+    inner = nested / "buildlimits-9-g1.scope"
+    inner.mkdir(parents=True)
+    (inner / "cgroup.procs").write_text("6160\n", encoding="ascii")
+    cache_processes.add(6160)
+
+    assert kache_guard.find(tmp_path, []) == (6160,), (
+        "the whole slice is read, not one level of it"
+    )
+
+
+def test_an_admitted_scope_covers_only_its_own_members(
+    tmp_path: Path, cache_processes: set[int]
+) -> None:
+    """Coverage is subtraction from the slice reading, not exclusion from it.
+
+    A held group's own members are covered; a kache process in a neighbouring
+    unit is not, even though both are read from the same slice in one pass.
+    """
+    held = fake_scope(tmp_path, "held", [7001, 7002])
+    elsewhere = tmp_path / "some-service.service"
+    elsewhere.mkdir()
+    (elsewhere / "cgroup.procs").write_text("7003\n", encoding="ascii")
+    cache_processes.update({7001, 7002, 7003})
+
+    assert kache_guard.find(tmp_path, [held]) == (7003,), (
+        "only the units the admitted scope does not cover are reported"
+    )
+
+
+def test_a_process_in_the_slice_itself_is_found(
+    tmp_path: Path, cache_processes: set[int]
+) -> None:
+    """A process can sit directly in the slice, in no child scope at all.
+
+    Reading only the scope directories would miss it, since it belongs to none
+    of them. It is still inside ``buildlimits-compilers.slice`` and no token
+    covers it, which is the whole of the guard's definition.
+    """
+    (tmp_path / "cgroup.procs").write_text("8002\n", encoding="ascii")
+    cache_processes.add(8002)
+
+    assert kache_guard.find(tmp_path, []) == (8002,), (
+        "the slice's own members are read, not only its children's"
+    )
 
 
 @pytest.mark.parametrize(
@@ -231,75 +260,50 @@ def test_a_held_group_covers_its_scope(selector: selectors.BaseSelector) -> None
     ], "the covered scopes are exactly the running groups'"
 
 
-def test_a_stray_is_journalled_once_per_change(
+def test_the_guard_finds_the_leaked_daemon_the_fixture_starts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    cache_processes: set[int],
 ) -> None:
-    """A daemon that stays behind is named once, not on every poll."""
-    strays, lines = _observed_stray(monkeypatch, tmp_path, cache_processes)
+    """The reading recognizes a real process, not only a substituted predicate.
 
-    strays.refresh(tmp_path, [])
-    strays.refresh(tmp_path, [])
-
-    assert len(lines) == 1, "two identical readings journal one line"
-    assert "4242" in lines[0], f"the line names the process: {lines[0]}"
-
-
-def test_a_cleared_stray_is_journalled(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    cache_processes: set[int],
-) -> None:
-    """An operator needs to know the fault is over, not only that it began."""
-    strays, lines = _observed_stray(monkeypatch, tmp_path, cache_processes)
-    members = tmp_path / "buildlimits-forgotten.scope" / "cgroup.procs"
-
-    for reading in ("4242\n", ""):
-        members.write_text(reading, encoding="ascii")
-        strays.refresh(tmp_path, [])
-
-    assert len(lines) == 2, "the clearing is a change and is journalled"
-    assert lines[1] == "no stray kache process remains outside the admitted scopes", (
-        lines[1]
-    )
-
-
-def test_a_quiet_reading_is_not_journalled(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A guard that has never found anything says nothing at all."""
-    lines: list[str] = []
-    monkeypatch.setattr(kache_guard, "log", lines.append)
-
-    kache_guard.Strays().refresh(tmp_path, [])
-
-    assert not lines, "silence before the first stray is the established behaviour"
-
-
-def test_a_status_read_does_not_silence_the_next_journal_line(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    cache_processes: set[int],
-) -> None:
-    """Answering one status query must not consume the poll's report.
-
-    Status and the poll read the same slice, and status may be asked for at any
-    moment. If a status read advanced the journalled baseline, an operator
-    asking what the fault is would be the reason nobody ever saw it announced.
+    Every other test here replaces ``_is_kache`` with a set membership, which
+    exercises the accounting but leaves the executable test itself unproven
+    against a live process. The fake wrapper's leak mode starts exactly the
+    process the guard exists for: a child named ``kache`` that outlives the
+    wrapper, sitting in the slice with no admitted scope covering it. Its own
+    executable name is the evidence, so this test reads ``/proc`` for real.
     """
-    strays, lines = _observed_stray(monkeypatch, tmp_path, cache_processes)
-
-    assert strays.observe(tmp_path, []) == (4242,), "status sees the stray at once"
-    assert not lines, "status itself never journals"
-    strays.refresh(tmp_path, [])
-
-    assert len(lines) == 1, "the poll still owes the line the status read did not pay"
-
-
-def test_no_slice_yet_reads_as_no_strays() -> None:
-    """Before the restart barrier there is nothing to read and nothing to report."""
-    strays = kache_guard.Strays()
-
-    assert not strays.observe(None, []), "an unknown slice is not an empty one"
-    assert not strays.describe(), "status reports no strays before the slice is known"
+    slice_dir = tmp_path / "buildlimits-compilers.slice"
+    scope = slice_dir / "buildlimits-9-g1.scope"
+    scope.mkdir(parents=True)
+    binary = tmp_path / "kache"
+    shutil.copy("/bin/sleep", binary)
+    marker = tmp_path / "leaked.pid"
+    wrapper = Path(__file__).parent / "fixtures" / "fake_kache.py"
+    monkeypatch.setenv("FAKE_KACHE_LEAK_DAEMON", str(marker))
+    monkeypatch.setenv("FAKE_KACHE_LEAK_BINARY", str(binary))
+    compiled = subprocess.run(
+        [sys.executable, str(wrapper), sys.executable, "-c", "pass"],
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+    assert compiled.returncode == 0, "the wrapper still compiles"
+    leaked = int(marker.read_text(encoding="ascii"))
+    # The fixture cannot park its child in a real scope, so the test writes the
+    # live identifier into the scope's member list. Everything after that point
+    # is the production reading: the slice walk, then ``/proc``.
+    (scope / "cgroup.procs").write_text(f"{leaked}\n", encoding="ascii")
+    try:
+        assert kache_guard.find(slice_dir, []) == (leaked,), (
+            "a live kache process in an unadmitted scope was reported"
+        )
+        assert not kache_guard.find(slice_dir, [scope]), (
+            "the same process is covered once a held scope accounts for it"
+        )
+    finally:
+        os.kill(leaked, signal.SIGKILL)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and pid_alive(leaked):
+        time.sleep(0.02)
+    assert not pid_alive(leaked), "the test removed the process it started"

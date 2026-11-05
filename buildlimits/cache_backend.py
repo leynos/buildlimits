@@ -182,7 +182,16 @@ class DetachedCacheBackend(CacheBackend, typ.Protocol):
     Their presence says nothing about whether the backend is healthy. A
     stopped, empty cache accounts for zero work, which is what
     :meth:`accounted_drain` reports.
+
+    ``unit`` is part of the protocol because a refusal to queue a control verb
+    has to name the service the operator must repair, and because a detached
+    backend is by definition one the supervisor manages as a unit.
     """
+
+    @property
+    def unit(self) -> str:
+        """The systemd user unit this backend's lifecycle controls."""
+        ...
 
     def accounted_drain(self) -> int:
         """Report how much accepted work can no longer start outside a scope.

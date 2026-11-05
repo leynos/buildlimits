@@ -65,6 +65,22 @@ def _daemon(socket_path: Path) -> subprocess.Popen[bytes]:
     )
 
 
+def _envelope(**body: object) -> dict[str, object]:
+    """Wrap a daemon status body in kache's versioned ``--json`` envelope.
+
+    The values are written out rather than read from the fixture so the test
+    pins the contract the supervisor reads independently of the fixture's own
+    constants. ``success`` is the command's, not the daemon's: it stays true
+    when no daemon is running, which is what makes the probe safe to poll.
+    """
+    return {
+        "schema_version": 1,
+        "command": "daemon-status",
+        "success": True,
+        **body,
+    }
+
+
 def _status(
     socket: str | None, capsys: pytest.CaptureFixture[str]
 ) -> dict[str, object]:
@@ -79,7 +95,7 @@ def test_a_stopped_daemon_is_reported_in_the_document(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Absence is a field, so the probe can run on every admission cycle."""
-    assert _status(None, capsys) == {"daemon_running": False}, (
+    assert _status(None, capsys) == _envelope(daemon_running=False), (
         "an unset socket names no daemon and echoes none"
     )
     assert fake_kache.is_running(None) is False, "no socket is never running"
@@ -116,7 +132,7 @@ def test_a_running_daemon_echoes_the_socket_it_was_probed_on(
     socket_path = tmp_path / "kache.sock"
     with _running_daemon(socket_path):
         document = _status(str(socket_path), capsys)
-        assert document == {"daemon_running": True, "socket": str(socket_path)}, (
+        assert document == _envelope(daemon_running=True, socket=str(socket_path)), (
             "the document names the daemon's endpoint"
         )
 
@@ -135,7 +151,7 @@ def test_a_daemon_answering_elsewhere_does_not_vouch_for_the_configured_socket(
     configured = tmp_path / "configured.sock"
     with _running_daemon(serving):
         document = _status(str(configured), capsys)
-        assert document == {"daemon_running": False, "socket": str(configured)}, (
+        assert document == _envelope(daemon_running=False, socket=str(configured)), (
             "the probe reports its own endpoint, not the one that answered"
         )
 

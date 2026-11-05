@@ -3,10 +3,11 @@
 The supervisor asks three things of a detached cache: whether a crashed
 predecessor left compilations running in it, how many it is running while
 server-drain tokens wait, and whether new groups can be composed with it.
-:class:`ServerWatch` answers them through the detached adapter -- at present
-:class:`buildlimits.sccache.ManagedSccache` -- and turns a cache whose state
-cannot be read into the safe decision for each question: start-up fails, the
-tokens stay held, and new groups compile directly.
+:class:`ServerWatch` answers them through the detached adapter --
+:class:`buildlimits.cache_backend.DetachedCacheBackend`, the lifecycle sccache
+is the only backend to implement today -- and turns a cache whose state cannot
+be read into the safe decision for each question: start-up fails, the tokens
+stay held, and new groups compile directly.
 
 A cache that keeps its work inside the compiler's scope has no detached work
 to account for, so nothing waits and nothing is drained. Only one question is
@@ -39,10 +40,10 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.admission import Admission
+    from buildlimits.cache_backend import DetachedCacheBackend
     from buildlimits.drain_guidance import FaultKind
     from buildlimits.metrics import MetricsPort
     from buildlimits.recovery_barrier import RecoveryBarrier
-    from buildlimits.sccache import ManagedSccache
     from buildlimits.timing import Clock
 
 
@@ -52,7 +53,7 @@ class ServerWatch:
 
     Parameters
     ----------
-    server : ManagedSccache
+    server : DetachedCacheBackend
         The managed server. Only a detached mode touches it.
     admission : Admission
         The admission state whose cache mode and server-drain tokens the
@@ -75,7 +76,7 @@ class ServerWatch:
         Shared operation observer; never changes cache-accounting authority.
     """
 
-    server: ManagedSccache
+    server: DetachedCacheBackend
     admission: Admission
     cache_mode: str
     backend: CacheBackend = dc.field(default_factory=DirectCache)
@@ -261,6 +262,8 @@ def _reachability_line(cache_mode: str, *, reachable: bool) -> str:
 
     Examples
     --------
+    >>> _reachability_line("sccache", reachable=True)
+    'the managed sccache server is reachable; caching compilations'
     >>> _reachability_line("sccache", reachable=False)
     'the managed sccache server is unreachable; compiling directly'
     >>> _reachability_line("kache", reachable=False)
@@ -269,11 +272,15 @@ def _reachability_line(cache_mode: str, *, reachable: bool) -> str:
     'kache is caching compilations'
     """
     name = mode_name(cache_mode)
-    state = (
-        "caching compilations"
-        if reachable
-        else f"{mode_unavailable(cache_mode)}; compiling directly"
-    )
+    # The detached wording keeps main's established "is reachable; caching
+    # compilations" line, so an operator's journal and any probe that matches
+    # on it are unchanged by the arrival of a second backend. Only an
+    # in-scope backend, whose health is a daemon it does not own, gets the
+    # shorter form.
     if is_detached_mode(cache_mode):
-        return f"the managed {name} server is {state}"
-    return f"{name} is {state}"
+        if reachable:
+            return f"the managed {name} server is reachable; caching compilations"
+        return f"the managed {name} server is unreachable; compiling directly"
+    if reachable:
+        return f"{name} is caching compilations"
+    return f"{name} is {mode_unavailable(cache_mode)}; compiling directly"

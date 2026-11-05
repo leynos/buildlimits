@@ -370,10 +370,14 @@ composed vector and environment, `is_reachable()` answers health,
 `fallback_notice()` words the line an uncached build sees, `name` provides the
 journal and status wording, and `in_scope_work` states the capability.
 `DetachedCacheBackend` adds the lifecycle only a detached backend has:
-`accounted_drain`, `stop` and `start`. `DirectCache` implements the first with
-no cache and `ManagedSccache` implements both; `Kache` implements only the
-first, and its absence from the second is the type-level statement that an
-in-scope cache has no managed service to drain or stop.
+`accounted_drain`, `stop`, `start` and the `unit` a refused control verb must
+name. `DirectCache` implements the first with no cache and `ManagedSccache`
+implements both; `Kache` implements only the first, and its absence from the
+second is the type-level statement that an in-scope cache has no managed
+service to drain or stop. The drain, quiesce and recovery paths annotate
+`DetachedCacheBackend`, not `ManagedSccache`, so that statement is enforced by
+the type checker: one of them reaching for a member only the sccache adapter
+has would fail `make typecheck`.
 
 `in_scope_work` is the capability every conditional path reads. `Supervisor`
 projects it once into `Admission(cache_detached=...)`, and the start-up

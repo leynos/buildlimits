@@ -85,12 +85,22 @@ def is_running(path: str | None) -> bool:
     return True
 
 
+#: The envelope kache publishes for every ``--json`` command. Health checks
+#: it, so a fixture that omitted it would not exercise the contract the
+#: supervisor actually reads.
+SCHEMA_VERSION = 1
+COMMAND = "daemon-status"
+
+
 def status(path: str | None) -> int:
     """Print the status document the supervisor's health probe reads.
 
     The real command reports absence in the document rather than in its exit
     status, which is what lets the supervisor poll it on every admission cycle
-    without treating a stopped daemon as a probe failure.
+    without treating a stopped daemon as a probe failure. The body is therefore
+    wrapped in the versioned envelope kache publishes for every ``--json``
+    command: ``success`` describes the command, not the daemon, and stays true
+    whether or not one is running.
 
     Parameters
     ----------
@@ -103,7 +113,12 @@ def status(path: str | None) -> int:
     int
         The exit status, always zero.
     """
-    document: dict[str, typ.Any] = {"daemon_running": is_running(path)}
+    document: dict[str, typ.Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "command": COMMAND,
+        "success": True,
+        "daemon_running": is_running(path),
+    }
     if path:
         document["socket"] = path
     sys.stdout.write(json.dumps(document) + "\n")

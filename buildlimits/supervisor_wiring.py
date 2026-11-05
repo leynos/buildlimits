@@ -17,9 +17,8 @@ if typ.TYPE_CHECKING:
 
     from buildlimits import config
     from buildlimits.admission import Admission
-    from buildlimits.cache_backend import CacheBackend
+    from buildlimits.cache_backend import CacheBackend, DetachedCacheBackend
     from buildlimits.metrics import MetricsPort
-    from buildlimits.sccache import ManagedSccache
     from buildlimits.systemd import UserManager
 
 
@@ -39,7 +38,7 @@ class Wiring:
         Admission books; recovery reports its token counts here.
     metrics : MetricsPort
         Event metrics shared by the watch and recovery.
-    server : ManagedSccache
+    server : DetachedCacheBackend
         The managed server the composition root built. The watch probes it and
         recovery drives its lifecycle, so both must see the same instance.
     backend : CacheBackend
@@ -53,7 +52,7 @@ class Wiring:
     clock: cabc.Callable[[], float]
     admission: Admission
     metrics: MetricsPort
-    server: ManagedSccache
+    server: DetachedCacheBackend
     backend: CacheBackend
 
 

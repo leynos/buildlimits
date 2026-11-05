@@ -21,16 +21,21 @@ is why the gate is a capability rather than a mode name.
 import contextlib
 import dataclasses as dc
 import typing as typ
+from pathlib import Path
 
-from buildlimits import cgroups, kache
+from buildlimits import cgroups
 from buildlimits.cache_modes import is_cache
 from buildlimits.journal import log
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-    from pathlib import Path
 
     from buildlimits.groups import Groups
+
+#: Names that identify a kache process outside an admitted compiler scope.
+#: The v2 client ``exec``s ``kache-engine`` in place, so a snapshot may see
+#: either executable at the wrapper's process identifier.
+STRAY_EXECUTABLES = frozenset({"kache", "kache-engine"})
 
 
 @dc.dataclass(slots=True)
@@ -168,11 +173,22 @@ def admitted_scopes(groups: Groups) -> list[Path]:
 def find(slice_dir: Path, admitted: cabc.Iterable[Path]) -> tuple[int, ...]:
     """Find kache processes in the slice that no admitted scope covers.
 
-    Every supervisor-created scope is read, and the members of the scopes
-    admission still holds are treated as covered. A scope admission has
-    forgotten is not covered even though it is still in the slice: by then its
-    token has been accounted for, so anything still running there outlived the
-    group that owned it.
+    The whole slice is read and the members of the scopes admission still
+    holds are then subtracted from that reading. Reading the named scopes
+    instead would miss a kache process in a place the supervisor does not
+    name: a transient service, another harness's scope, or a slice nested
+    inside this one. Those units are not covered by any token either, so a
+    process inside them is exactly what this guard exists to report.
+
+    A scope admission has forgotten is not covered even though it is still in
+    the slice: by then its token has been accounted for, so anything still
+    running there outlived the group that owned it. The same is true of a
+    process that has left its group's scope for another unit in the slice --
+    it is no longer under the scope whose token would cover it.
+
+    Coverage is read from the admitted scope directories rather than from the
+    slice reading, so a process that merely happens to sit in the same
+    directory is still covered only while its group is held.
 
     Parameters
     ----------
@@ -184,15 +200,12 @@ def find(slice_dir: Path, admitted: cabc.Iterable[Path]) -> tuple[int, ...]:
     Returns
     -------
     tuple[int, ...]
-        The uncovered kache process identifiers, in scope-name order.
+        The uncovered kache process identifiers, in path order.
     """
     covered: set[int] = set()
     for scope in admitted:
         covered.update(_members(scope))
-    candidates: list[int] = []
-    for scope in _child_scopes(slice_dir):
-        candidates.extend(_members(scope))
-    return kache.stray_processes(candidates, admitted=covered)
+    return stray_processes(_slice_members(slice_dir), admitted=covered)
 
 
 def _or_nothing[T](read: cabc.Callable[[Path], list[T]], path: Path) -> list[T]:
@@ -223,8 +236,8 @@ def _or_nothing[T](read: cabc.Callable[[Path], list[T]], path: Path) -> list[T]:
         return []
 
 
-def _child_scopes(slice_dir: Path) -> list[Path]:
-    """List the slice's scopes, or none when the slice cannot be read.
+def _slice_members(slice_dir: Path) -> list[int]:
+    """List every process in the slice, or none when it cannot be read.
 
     Parameters
     ----------
@@ -233,11 +246,11 @@ def _child_scopes(slice_dir: Path) -> list[Path]:
 
     Returns
     -------
-    list[Path]
-        The scope directories, empty when the slice has gone. See
+    list[int]
+        Every process identifier under the slice, in path order. See
         :func:`_or_nothing` for why an unreadable slice is no finding.
     """
-    return _or_nothing(cgroups.child_scopes, slice_dir)
+    return _or_nothing(cgroups.slice_member_pids, slice_dir)
 
 
 def _members(scope_dir: Path) -> list[int]:
@@ -284,3 +297,68 @@ def _line(found: tuple[int, ...]) -> str:
             "no token covers it; remove it"
         )
     return "no stray kache process remains outside the admitted scopes"
+
+
+def stray_processes(
+    pids: cabc.Iterable[int],
+    *,
+    admitted: cabc.Container[int],
+    is_kache: cabc.Callable[[int], bool] | None = None,
+) -> tuple[int, ...]:
+    """Find kache processes that no admitted scope covers.
+
+    A kache daemon started from an admitted group stays in that group's scope
+    after the compile ends, and the scope is the supervisor's unit of
+    accounting: a token returned for an emptied scope would then cover work
+    that is still running. Rather than guess whether such a process is
+    harmless, the supervisor reports it as a distinct fault.
+
+    Parameters
+    ----------
+    pids : Iterable[int]
+        Candidate process identifiers read from the compilers' slice.
+    admitted : Container[int]
+        Processes that an admitted group's scope already covers.
+    is_kache : Callable[[int], bool] or None
+        The executable test, injectable so the decision can be exercised
+        without a live ``/proc``. ``None`` means the real one. The module
+        global is read at call time rather than bound as a default, so a test
+        that substitutes it is exercising the same call the guard makes.
+
+    Returns
+    -------
+    tuple[int, ...]
+        The identifiers of uncovered kache processes, in the order given.
+
+    Examples
+    --------
+    >>> stray_processes([10, 11, 12], admitted={11}, is_kache=lambda pid: pid != 12)
+    (10,)
+    """
+    probe = _is_kache if is_kache is None else is_kache
+    return tuple(pid for pid in pids if pid not in admitted and probe(pid))
+
+
+def _is_kache(pid: int) -> bool:
+    """Report whether a process's executable is a kache binary.
+
+    The executable link is what the kernel actually ran, so it distinguishes
+    kache from a process that merely carries a similar name. A v2 wrapper that
+    has ``exec``ed its engine links to ``kache-engine``, which is why both
+    names are recognized.
+
+    Returns
+    -------
+    bool
+        ``True`` when ``/proc`` names a kache executable for the process. A
+        process that has already exited, or whose executable cannot be read,
+        is not reported: the caller is looking for survivors, and an unreadable
+        entry is not evidence of one.
+    """
+    try:
+        target = Path(f"/proc/{pid}/exe").readlink()
+    except OSError:
+        return False
+    # A replaced binary still has a live process holding the deleted inode,
+    # which the kernel marks in the link text rather than the file name.
+    return target.name.removesuffix(" (deleted)") in STRAY_EXECUTABLES

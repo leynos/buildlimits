@@ -48,7 +48,7 @@ from buildlimits.timing import Clock
 if typ.TYPE_CHECKING:
     from conftest import RecordingSink
 
-    from buildlimits.cache_backend import CacheBackend
+    from buildlimits.cache_backend import CacheBackend, DetachedCacheBackend
     from buildlimits.metrics import MetricsPort
 
 
@@ -153,7 +153,7 @@ def _watch(
         The watch a kache supervisor would hold.
     """
     return ServerWatch(
-        typ.cast("ManagedSccache", server),
+        typ.cast("DetachedCacheBackend", server),
         admission,
         "kache",
         typ.cast("CacheBackend", server),
