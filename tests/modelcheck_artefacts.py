@@ -31,6 +31,76 @@ _TRACES = "traces"
 """The directory ``--save-traces`` writes under a model, which is output."""
 
 
+def fixpoint_record(records: list[Record]) -> Record:
+    """Return the single ``fixpoint`` record an artefact carried.
+
+    Parameters
+    ----------
+    records : list[Record]
+        The decoded records the artefact carried.
+
+    Returns
+    -------
+    Record
+        The one record whose subject is ``fixpoint``.
+
+    Examples
+    --------
+    >>> fixpoint_record([{"subject": "matrix"}, {"subject": "fixpoint"}])
+    {'subject': 'fixpoint'}
+    """
+    (record,) = [entry for entry in records if entry["subject"] == "fixpoint"]
+    return record
+
+
+def doubled_failure(records: list[Record]) -> tuple[object, object, object, object]:
+    """Return the fields that identify an artefact's doubled-bound failure.
+
+    Two tests read the same failure record for different reasons: the
+    end-to-end module checks that the counterexample survived the process's
+    non-zero exit, and the in-process module checks that the run's diagnostic
+    was kept. Both need the record to identify itself the same way first, and
+    a second copy of these assertions would be a place for the two to drift
+    apart. The reader returns the fields rather than asserting them because
+    this module is linted as production code, where ``assert`` is banned; each
+    caller compares the tuple and supplies its own message.
+
+    Parameters
+    ----------
+    records : list[Record]
+        The decoded records the artefact carried.
+
+    Returns
+    -------
+    tuple[object, object, object, object]
+        The configuration, stage, bound and ``met`` flag of the single
+        ``fixpoint`` record, in that order.
+
+    Examples
+    --------
+    >>> doubled_failure(
+    ...     [
+    ...         {"subject": "matrix", "met": True},
+    ...         {
+    ...             "subject": "fixpoint",
+    ...             "configuration": "head",
+    ...             "stage": "doubled",
+    ...             "bound": 16,
+    ...             "met": False,
+    ...         },
+    ...     ]
+    ... )
+    ('head', 'doubled', 16, False)
+    """
+    record = fixpoint_record(records)
+    return (
+        record["configuration"],
+        record["stage"],
+        record["bound"],
+        record["met"],
+    )
+
+
 def read_records(model: str) -> list[Record]:
     """Return one model's matrix artefact records.
 

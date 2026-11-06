@@ -160,6 +160,10 @@ extend-ignore = [
 # systemd tools with fixed argv. Its guards state the fixture preconditions a
 # scenario depends on, so they fail the scenario rather than debug it.
 "tests/cache_recovery_systemd_world.py" = ["assert", "suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# The end-to-end support module runs ``uv run python -m modelcheck`` with a
+# fixed argv, the way a maintainer does. The launcher path is found on PATH
+# because that is where ``uv`` is installed on every host the suite runs on.
+"tests/modelcheck_e2e_cases.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
 banned-from = [

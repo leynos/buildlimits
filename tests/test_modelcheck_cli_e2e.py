@@ -26,174 +26,27 @@ maintainer invokes the tool, and because it is the invocation the plan names.
 """
 
 import json
-import os
 import shutil
 import subprocess
 import typing as typ
 from pathlib import Path
 
-from modelcheck_cli_cases import Record, doubled_failure, fixpoint_record
+from modelcheck_artefacts import Record, doubled_failure, fixpoint_record
+from modelcheck_e2e_cases import (
+    FIXTURES,
+    FIZZ,
+    MODEL,
+    TIMEOUT_SECONDS,
+    ambient,
+    check,
+    invocations,
+    paths,
+    run,
+    tree,
+)
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
-
-_ROOT = Path(__file__).resolve().parents[1]
-"""The checkout root, which is where ``uv run`` finds the project."""
-
-_FIXTURES = Path(__file__).with_name("fixtures") / "modelcheck"
-"""The fixture directory holding the model, its configurations and the stub."""
-
-_MODEL = _FIXTURES / "model"
-_FIZZ = _FIXTURES / "fizz"
-
-_TIMEOUT_SECONDS = 120
-"""Enough for ``uv`` to resolve the project and the run to finish twice over.
-
-The matrix itself is three stub invocations of a few milliseconds. The bound is
-generous because the first ``uv run`` in a session may have to check the lock
-file, and a flaky bound would be blamed on the code under test.
-"""
-
-
-def _ambient() -> dict[str, str]:
-    """Return the caller's environment with every ``MODELCHECK_*`` removed.
-
-    Stripping the whole prefix rather than only the names this module passes is
-    what stops an ambient ``MODELCHECK_FIZZ`` or ``MODELCHECK_BOUNDS`` from
-    changing what a test measures. Both helpers start here, so a variable added
-    to one run's environment cannot leak into the other's by an oversight.
-
-    Returns
-    -------
-    dict[str, str]
-        The caller's environment, without any ``MODELCHECK_*`` setting.
-    """
-    return {
-        key: value
-        for key, value in os.environ.items()
-        if not key.startswith("MODELCHECK_")
-    }
-
-
-def _environment(log: Path, **overrides: str) -> dict[str, str]:
-    """Return the environment one command-line run gets.
-
-    Parameters
-    ----------
-    log : pathlib.Path
-        Where the stub is to record each invocation.
-    **overrides : str
-        Variables to set or replace for this run.
-
-    Returns
-    -------
-    dict[str, str]
-        The ambient environment, plus the stub's log and the caller's
-        overrides.
-    """
-    environment = _ambient()
-    environment["MODELCHECK_E2E_LOG"] = str(log)
-    environment.update(overrides)
-    return environment
-
-
-def _run(
-    *arguments: str, log: Path, **overrides: str
-) -> subprocess.CompletedProcess[str]:
-    """Run the command line as a maintainer would.
-
-    Parameters
-    ----------
-    *arguments : str
-        The arguments after ``python -m modelcheck``.
-    log : pathlib.Path
-        Where the stub is to record each invocation.
-    **overrides : str
-        Variables to set or replace for this run.
-
-    Returns
-    -------
-    subprocess.CompletedProcess
-        The finished run, with its output decoded as text.
-    """
-    return subprocess.run(
-        ["uv", "run", "python", "-m", "modelcheck", *arguments],
-        cwd=_ROOT,
-        env=_environment(log, **overrides),
-        capture_output=True,
-        text=True,
-        timeout=_TIMEOUT_SECONDS,
-        check=False,
-    )
-
-
-def _check(
-    *extra: str, log: Path, **overrides: str
-) -> subprocess.CompletedProcess[str]:
-    """Run ``modelcheck check`` over the fixture model.
-
-    Parameters
-    ----------
-    *extra : str
-        Further arguments to the ``check`` command.
-    log : pathlib.Path
-        Where the stub is to record each invocation.
-    **overrides : str
-        Variables to set or replace for this run.
-
-    Returns
-    -------
-    subprocess.CompletedProcess
-        The finished run.
-    """
-    return _run(
-        "check", str(_MODEL), "--fizz", str(_FIZZ), *extra, log=log, **overrides
-    )
-
-
-def _invocations(log: Path) -> list[tuple[str, str]]:
-    """Return what the stub was asked to do, one pair per run.
-
-    Parameters
-    ----------
-    log : pathlib.Path
-        The file the stub appended to.
-
-    Returns
-    -------
-    list[tuple[str, str]]
-        Each run's working directory and the arguments it was given.
-    """
-    lines = log.read_text(encoding="utf-8").splitlines()
-    return list(zip(lines[0::2], lines[1::2], strict=True))
-
-
-def _paths(root: Path) -> list[Path]:
-    """Return every path under a directory.
-
-    Parameters
-    ----------
-    root : pathlib.Path
-        The directory to list.
-
-    Returns
-    -------
-    list[Path]
-        The paths beneath it, relative to it and sorted, so two snapshots
-        compare as sets of names rather than as directory listings.
-    """
-    return sorted(path.relative_to(root) for path in root.rglob("*"))
-
-
-def _tree() -> list[Path]:
-    """Return every path under the fixture directory.
-
-    Returns
-    -------
-    list[Path]
-        The fixture tree's paths, relative to it and sorted.
-    """
-    return _paths(_FIXTURES)
 
 
 def test_a_met_matrix_exits_zero(tmp_path: Path) -> None:
@@ -207,7 +60,7 @@ def test_a_met_matrix_exits_zero(tmp_path: Path) -> None:
     """
     log = tmp_path / "seen.log"
 
-    result = _check(log=log)
+    result = check(log=log)
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[-1] == (
@@ -230,16 +83,16 @@ def test_the_stub_runs_in_a_scratch_directory(tmp_path: Path) -> None:
     """
     log = tmp_path / "seen.log"
 
-    _check(log=log)
+    check(log=log)
 
-    invocations = _invocations(log)
-    assert len(invocations) == 2, "one run per configuration"
-    for directory, arguments in invocations:
+    seen = invocations(log)
+    assert len(seen) == 2, "one run per configuration"
+    for directory, arguments in seen:
         working_directory = Path(directory)
         assert working_directory.parent.name == ".model-check", (
             "the checker runs under the scratch directory"
         )
-        assert not working_directory.is_relative_to(_MODEL), (
+        assert not working_directory.is_relative_to(MODEL), (
             "and never inside the model directory"
         )
         assert arguments.endswith(" model.fizz"), (
@@ -262,7 +115,7 @@ def test_the_json_record_names_every_expectation(
     log = tmp_path / "seen.log"
     records = tmp_path / "matrix.json"
 
-    result = _check("--json", str(records), log=log)
+    result = check("--json", str(records), log=log)
 
     assert result.returncode == 0, result.stderr
     written = json.loads(records.read_text(encoding="utf-8"))
@@ -292,7 +145,7 @@ def test_a_lost_counterexample_exits_one(tmp_path: Path) -> None:
     """
     log = tmp_path / "seen.log"
 
-    result = _check(log=log, MODELCHECK_E2E_ANSWER="pass")
+    result = check(log=log, MODELCHECK_E2E_ANSWER="pass")
 
     assert result.returncode == 1, result.stderr
     assert "expected counterexample missing" in result.stdout, (
@@ -312,13 +165,13 @@ def test_the_run_leaves_the_fixture_tree_untouched(tmp_path: Path) -> None:
     that started writing there would be caught wherever it did it.
     """
     log = tmp_path / "seen.log"
-    before = _tree()
+    before = tree()
 
-    _check("--json", str(tmp_path / "matrix.json"), log=log)
-    _check(log=log, MODELCHECK_E2E_ANSWER="pass")
+    check("--json", str(tmp_path / "matrix.json"), log=log)
+    check(log=log, MODELCHECK_E2E_ANSWER="pass")
 
-    assert _tree() == before, "the fixture tree holds the same paths afterwards"
-    assert not (_FIXTURES / "seen.log").exists(), (
+    assert tree() == before, "the fixture tree holds the same paths afterwards"
+    assert not (FIXTURES / "seen.log").exists(), (
         "and the stub's record went to the scratch directory it was given"
     )
 
@@ -333,19 +186,19 @@ def test_a_run_writes_only_the_traces_it_was_asked_for(tmp_path: Path) -> None:
     check is about what the run wrote rather than about the fixture.
     """
     model = tmp_path / "model"
-    shutil.copytree(_MODEL, model)
-    before = _paths(model)
-    fixture_before = _tree()
+    shutil.copytree(MODEL, model)
+    before = paths(model)
+    fixture_before = tree()
     log = tmp_path / "seen.log"
 
-    result = _run("check", str(model), "--fizz", str(_FIZZ), "--save-traces", log=log)
+    result = run("check", str(model), "--fizz", str(FIZZ), "--save-traces", log=log)
 
     assert result.returncode == 0, result.stderr
-    assert sorted(set(_paths(model)) - set(before)) == [
+    assert sorted(set(paths(model)) - set(before)) == [
         Path("traces"),
         Path("traces/incident-1-BEventually.json"),
     ], "only the declared counterexample trace is written"
-    assert _tree() == fixture_before, "and the tracked fixture tree is untouched"
+    assert tree() == fixture_before, "and the tracked fixture tree is untouched"
 
 
 def test_a_failed_comparison_exits_two_and_keeps_its_evidence(
@@ -362,15 +215,15 @@ def test_a_failed_comparison_exits_two_and_keeps_its_evidence(
     bound, with the counterexample and its path still readable afterwards.
     """
     model = tmp_path / "model"
-    shutil.copytree(_MODEL, model)
+    shutil.copytree(MODEL, model)
     log = tmp_path / "seen.log"
     records = tmp_path / "matrix.json"
 
-    result = _run(
+    result = run(
         "check",
         str(model),
         "--fizz",
-        str(_FIZZ),
+        str(FIZZ),
         "--fixpoint",
         "--json",
         str(records),
@@ -420,21 +273,21 @@ def test_the_stub_refuses_to_write_beside_itself(tmp_path: Path) -> None:
     ``64`` is ``EX_USAGE``: the stub was invoked in a way it cannot honour,
     which is distinct from a model that failed.
     """
-    before = _tree()
+    before = tree()
 
     result = subprocess.run(
-        [str(_FIZZ), "--output-dir", str(tmp_path / "out"), "model.fizz"],
-        env=_ambient(),
+        [str(FIZZ), "--output-dir", str(tmp_path / "out"), "model.fizz"],
+        env=ambient(),
         capture_output=True,
         text=True,
-        timeout=_TIMEOUT_SECONDS,
+        timeout=TIMEOUT_SECONDS,
         check=False,
     )
 
     assert result.returncode == 64, "the stub refuses rather than guessing a path"
     assert "MODELCHECK_E2E_LOG" in result.stderr, "and names the variable it needs"
-    assert _tree() == before, "so the fixture tree is untouched"
-    assert not (_FIXTURES / "seen.log").exists(), "and nothing was written there"
+    assert tree() == before, "so the fixture tree is untouched"
+    assert not (FIXTURES / "seen.log").exists(), "and nothing was written there"
 
 
 def test_a_usage_error_names_the_problem_and_exits_two(tmp_path: Path) -> None:
@@ -446,7 +299,7 @@ def test_a_usage_error_names_the_problem_and_exits_two(tmp_path: Path) -> None:
     """
     log = tmp_path / "seen.log"
 
-    result = _run("check", str(_MODEL), log=log)
+    result = run("check", str(MODEL), log=log)
 
     assert result.returncode == 2, "a usage error is distinct from a failed model"
     assert not result.stdout, "the failure is reported on stderr"
