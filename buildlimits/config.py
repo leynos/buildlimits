@@ -145,9 +145,6 @@ class SupervisorConfig:
         resolution, under ``$XDG_CACHE_HOME/kache`` or ``~/.cache/kache``.
         Health cannot check a path the supervisor was never told, so a host
         that moves the store should name it here.
-    cache_outcomes : str
-        ``off`` to leave outcome recording disabled, or ``record`` to enable
-        it when the build supports the recording integration.
     """
 
     device: Path = Path("/dev/guild")

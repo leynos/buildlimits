@@ -22,6 +22,21 @@ an admitted scope is reported by
 :func:`buildlimits.kache_guard.stray_processes` rather than covered by a held
 token.
 
+Two assumptions are load-bearing and neither is enforced here, because no key
+of the supported versions would enforce them:
+
+- **The daemon is external.** An operator runs it as a separate unit. The
+  supervisor never starts, stops or owns one, so the requirement that one is
+  already listening is the operator's to keep. A deployment that lets an
+  admitted group reach a stopped daemon trades a cache miss for a daemon inside
+  the group's scope, which the substrate cannot prevent and the guard can only
+  report afterwards.
+- **Health is a sample, not a lock.** The probe runs before a group is
+  composed, and a daemon can stop in the interval between the probe and the
+  launch. The probe narrows the window; it does not close it. ADR 006 records
+  what the guard can and cannot see, including a daemon replaced inside a scope
+  admission still holds.
+
 See ``docs/adr-006-kache-cache-backend.md``.
 """
 
@@ -184,9 +199,19 @@ class Kache:
         Health has three parts, all of which must hold before a group is
         composed: the client resolves and is executable, the configured store
         can be created or written, and ``kache daemon status --json`` reports
-        a running daemon on the configured socket. The last part is what keeps
-        a daemon out of the compiler's scope, because a group is only ever
-        pointed at a daemon that is already listening.
+        a running daemon on the configured socket.
+
+        That reading is a sample, not a guarantee. It closes the window in
+        which a group is composed against a daemon already known to be down,
+        which is the window the auto-start branch of a kache client fills by
+        creating a daemon *inside* the admitted scope. It does not stop a
+        daemon that answers here and dies before the group launches, nor one
+        that is started by something other than an admitted group. What keeps
+        a daemon out of a group's scope is the operator running one; the probe
+        is what makes composing against a stopped one unlikely, and
+        :func:`buildlimits.kache_guard.stray_processes` is what makes a stray
+        visible afterwards. ADR 006 records the measurement and exactly what
+        the guard cannot see.
 
         ``kache daemon status`` never starts a daemon and exits zero with
         ``daemon_running: false`` when none is running, so it is safe to call

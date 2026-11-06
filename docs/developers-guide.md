@@ -47,6 +47,7 @@ investigating a specific failure; reconcile with `make all` before committing.
 | `make test`              | pytest under xdist over `tests/` and the package's doctests                                       |
 | `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
 | `make test-sccache-host` | Opt-in real-binary and outcome latency checks; see §11.4                                          |
+| `make test-kache-host`   | Opt-in health and cacheable-compilation checks against a real kache; see §11.4                    |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
 
 _Table 1: Make targets and the gates behind them._
@@ -359,11 +360,19 @@ the supervisor's own attributes.
 A cache backend is what turns the bare compiler invocation into the one the
 group runs. `buildlimits.cache_backend` defines it as two protocols, and
 `buildlimits.cache_backends.select` is the single place a `cache_mode` string
-becomes an adapter. Every other module receives a `CacheBackend` and cannot see
-the mode, so a setting the root forgets to pass is invisible everywhere else;
-`tests/test_cache_backends.py` exists to catch exactly that, by driving
-`select` with a non-default setting and asking the adapter what it would
-actually run.
+becomes an adapter. Composition sites receive a `CacheBackend`, so a setting
+the root forgets to pass is invisible there; `tests/test_cache_backends.py`
+exists to catch exactly that, by driving `select` with a non-default setting
+and asking the adapter what it would actually run.
+
+Two readers hold a mode string rather than a backend, because the value they
+judge crossed a boundary before an adapter was built: `ServerWatch` keeps
+`cache_mode` beside its `backend`, and the recovery modules (`recovery_reclaim`,
+`recovery_outlook`, `recovery_starvation`) take one as an argument. They ask
+`buildlimits.cache_modes.is_detached_mode` instead, which is the `ModeFacts`
+row projected by the same table `select` reads, so the two answers cannot
+disagree - but a new conditional added here must decide deliberately which form
+it is given.
 
 `CacheBackend` is what admission needs: `compose(argv, env)` returns the
 composed vector and environment, `is_reachable()` answers health,
@@ -379,13 +388,15 @@ service to drain or stop. The drain, quiesce and recovery paths annotate
 the type checker: one of them reaching for a member only the sccache adapter
 has would fail `make typecheck`.
 
-`in_scope_work` is the capability every conditional path reads. `Supervisor`
-projects it once into `Admission(cache_detached=...)`, and the start-up
-quiesce, the drain-token release, `SERVER_DRAIN` and the recovery transaction
-are all gated on that value rather than on a mode string, so a backend that
-cannot leave work behind cannot reach them. `kache_guard.guarded` reads the
-same capability to decide whether the compilers' slice needs reading for stray
-cache processes.
+`in_scope_work` is the capability the object-holding paths read. `Supervisor`
+projects it once into `Admission(cache_detached=...)`, and the `SERVER_DRAIN`
+state it gates is likewise read from that value rather than from a mode string,
+so a backend that cannot leave work behind cannot reach it.
+`kache_guard.guarded` reads the same capability to decide whether the
+compilers' slice needs reading for stray cache processes. The start-up quiesce,
+`drain_orphans` and the recovery transaction have only a mode string at the
+point they run, so they consult `is_detached_mode`; a backend that is in scope
+never enters them, because the same table gives that mode `in_scope_work=True`.
 
 To add a backend:
 
@@ -789,52 +800,62 @@ on the developer's own manager.
 
 Use these before writing a new arrange step; extend one rather than copying it.
 
-| Module                                    | Provides                                                                                                                  |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `conftest.py`                             | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures                       |
-| `request_helpers.py`                      | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                                                 |
-| `pool_helpers.py`                         | `FakePool` and `attach_pool`                                                                                              |
-| `descriptor_helpers.py`                   | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                                             |
-| `descriptor_guard.py`                     | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                                                |
-| `launch_helpers.py`                       | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                                              |
-| `adapter_doubles.py`                      | `immediate_retry` and `script_adapter` for driving the adapter in-process                                                 |
-| `toolchain_trees.py`                      | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler                         |
-| `journal_fixtures.py`                     | `journal_runner`, `fixture_query` and the native `journal_receiver`                                                       |
-| `listener_helpers.py`                     | `watched_listener` (under `ListenerPressure` control), `unix_listener` (scoped) and `open_unix_listener` (caller-managed) |
-| `cache_recovery_helpers.py`               | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                                      |
-| `cache_recovery_harness.py`               | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers                           |
-| `cache_recovery_machines.py`              | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`                                    |
-| `cache_recovery_systemd_world.py`         | `RecoveryWorld`, the isolated supervisor and waited builds behind the real-manager recovery scenarios                     |
-| `harness_processes.py`                    | `wait_for`, `start_adapter`, `journal_records`, `server_children` and host process observations                           |
-| `fake_cache_processes.py`                 | `start_bound` and `kill_and_reap`: the fake sccache and kache stand-ins' start-and-stop pair                              |
-| `kache_unit_files.py`                     | `start_kache_daemon`, the separately managed daemon a kache scenario points its groups at                                 |
-| `kache_stray_fixture.py`                  | `stray_kache_scope`, `remove` and `named_kache_binary`: a kache-named process parked in a scope admission never held      |
-| `harness_status.py`                       | `HarnessStatus`, the status document, readiness and drain-fault queries                                                   |
-| `status_render_states.py`                 | Fixed status documents and their expected summary lines for the status-render tests                                       |
-| `sccache_host.py`                         | `sccache_host_marks` and private-server helpers for the opt-in real-binary check                                          |
-| `sccache_stats.py`                        | Test-only sccache 0.14.0 counter validation and redacted replay-window fixtures                                           |
-| `systemd_harness.py`                      | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling                          |
-| `cache_outcome_harness.py`                | Cacheable fake-rustc requests, scripted statistics and outcome-store observations                                         |
-| `cache_outcome_sighting_systemd_steps.py` | Real-manager child-sighting and H2 replay scenario steps                                                                  |
-| `systemd_harness_tokens.py`               | Read-only FIFO token counts for systemd acceptance tests                                                                  |
-| `rustc_linter_acceptance.py`              | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios                             |
-| `rustc_query_host_checks.py`              | Query and readiness assertions shared by host query and timing scenarios                                                  |
-| `rustc_query_host_observations.py`        | Compact host acceptance evidence and package-cache lock-wait observations                                                 |
-| `rustc_query_host_support.py`             | Private Cargo fixtures, held-token barriers and captured command output                                                   |
-| `rustc_query_probe_records.py`            | `ProbeRecord` and JSON-line parsing for completed timing-shim observations                                                |
-| `rustc_query_support.py`                  | `cargo_probe` and `temporary_executable` for rustc query and property tests                                               |
-| `rustc_query_timing_shim.py`              | Sibling-adapter timing shim with JSON-line probe records                                                                  |
-| `harness_units.py`                        | User-manager readiness, acceptance marks, transient unit control, `stop_units` and unit properties                        |
-| `harness_config.py`                       | `KacheSettings` and `write_config`, the supervisor document a harness runs against                                        |
-| `fake_rustc.py`                           | Scripted Rust compiler for the opt-in real-sccache host check                                                             |
-| `fixtures/fake_sccache_statistics.py`     | Fake sccache counter format and statistics-query behaviour                                                                |
-| `test_sccache_real_binary.py`             | Opt-in sccache 0.14.0 acceptance test; `_RefusalProbe` is local to this test and is not shared API                        |
-| `outcome_store_helpers.py`                | Store rows, salts and asynchronous writer outcomes for outcome-store tests                                                |
-| `outcome_shell_test_support.py`           | Pending statistics, fake server and writer ports for shell-loop tests                                                     |
-| `outcome_store_fixture_helpers.py`        | Single-row reader fixtures and torn UTF-8 tails for outcome-store tests                                                   |
-| `outcome_vocabulary_test_support.py`      | Shared outcome-token aliases for schema and metrics-sink contract tests                                                   |
+| Module                                    | Provides                                                                                                                       |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `conftest.py`                             | `RecordingSink` (with `of_event`), `metric_sink`, `metrics`, `telemetry` and `socket_pair` fixtures                            |
+| `request_helpers.py`                      | `compile_request`, `crate_pending`, `recorded_request` and `refusal_from`                                                      |
+| `pool_helpers.py`                         | `FakePool` and `attach_pool`                                                                                                   |
+| `descriptor_helpers.py`                   | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                                                  |
+| `descriptor_guard.py`                     | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                                                     |
+| `launch_helpers.py`                       | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                                                   |
+| `adapter_doubles.py`                      | `immediate_retry` and `script_adapter` for driving the adapter in-process                                                      |
+| `toolchain_trees.py`                      | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler                              |
+| `journal_fixtures.py`                     | `journal_runner`, `fixture_query` and the native `journal_receiver`                                                            |
+| `listener_helpers.py`                     | `watched_listener` (under `ListenerPressure` control), `unix_listener` (scoped) and `open_unix_listener` (caller-managed)      |
+| `cache_recovery_helpers.py`               | `CacheState`, `gauges`, `fixture_cgroup`, `settle_transaction` and scripted managers                                           |
+| `cache_recovery_harness.py`               | `Harness`, `HarnessFactory`, `harness_for`, `opened_recovery` and the admission seeding helpers                                |
+| `cache_recovery_machines.py`              | `machine_for`, `metered_machine`, `scripted_machine`, `tick_phase` and `ScriptedCache`                                         |
+| `cache_recovery_systemd_world.py`         | `RecoveryWorld`, the isolated supervisor and waited builds behind the real-manager recovery scenarios                          |
+| `harness_processes.py`                    | `wait_for`, `start_adapter`, `journal_records`, `server_children` and host process observations                                |
+| `fake_cache_processes.py`                 | `start_bound` and `kill_and_reap`: the fake sccache and kache stand-ins' start-and-stop pair                                   |
+| `kache_unit_files.py`                     | `start_kache_daemon`, the separately managed daemon a kache scenario points its groups at                                      |
+| `kache_stray_fixture.py`                  | `stray_kache_scope`, `remove` and `named_kache_binary`: a kache-named process parked in a scope admission never held           |
+| `harness_status.py`                       | `HarnessStatus`, the status document, readiness and drain-fault queries                                                        |
+| `status_render_states.py`                 | Fixed status documents and their expected summary lines for the status-render tests                                            |
+| `host_check_marks.py`                     | `HostCheck`, `host_check_marks`, `decoded_document` and `end_process`: the collection and teardown rule both host checks share |
+| `sccache_host.py`                         | `sccache_host_marks` and private-server helpers for the opt-in real-binary check                                               |
+| `kache_host.py`                           | `kache_host_marks`, a private daemon and the event and counter readers for the opt-in real-kache check                         |
+| `sccache_stats.py`                        | Test-only sccache 0.14.0 counter validation and redacted replay-window fixtures                                                |
+| `systemd_harness.py`                      | Host acceptance `Harness`; `compile` and arbitrary-argv `invoke` share session and pipe handling                               |
+| `cache_outcome_harness.py`                | Cacheable fake-rustc requests, scripted statistics and outcome-store observations                                              |
+| `cache_outcome_sighting_systemd_steps.py` | Real-manager child-sighting and H2 replay scenario steps                                                                       |
+| `systemd_harness_tokens.py`               | Read-only FIFO token counts for systemd acceptance tests                                                                       |
+| `rustc_linter_acceptance.py`              | `LinterAcceptance` and `run_linter_acceptance` for held-pool Clippy and Dylint host scenarios                                  |
+| `rustc_query_host_checks.py`              | Query and readiness assertions shared by host query and timing scenarios                                                       |
+| `rustc_query_host_observations.py`        | Compact host acceptance evidence and package-cache lock-wait observations                                                      |
+| `rustc_query_host_support.py`             | Private Cargo fixtures, held-token barriers and captured command output                                                        |
+| `rustc_query_probe_records.py`            | `ProbeRecord` and JSON-line parsing for completed timing-shim observations                                                     |
+| `rustc_query_support.py`                  | `cargo_probe` and `temporary_executable` for rustc query and property tests                                                    |
+| `rustc_query_timing_shim.py`              | Sibling-adapter timing shim with JSON-line probe records                                                                       |
+| `harness_units.py`                        | User-manager readiness, acceptance marks, transient unit control, `stop_units` and unit properties                             |
+| `harness_config.py`                       | `KacheSettings` and `write_config`, the supervisor document a harness runs against                                             |
+| `fake_rustc.py`                           | Scripted Rust compiler for the opt-in real-sccache and real-kache host checks                                                  |
+| `fixtures/fake_sccache_statistics.py`     | Fake sccache counter format and statistics-query behaviour                                                                     |
+| `test_sccache_real_binary.py`             | Opt-in sccache 0.14.0 acceptance test; `_RefusalProbe` is local to this test and is not shared API                             |
+| `test_kache_real_binary.py`               | Opt-in real-kache acceptance test: health, a composed compilation and its miss-then-hit record                                 |
+| `outcome_store_helpers.py`                | Store rows, salts and asynchronous writer outcomes for outcome-store tests                                                     |
+| `outcome_shell_test_support.py`           | Pending statistics, fake server and writer ports for shell-loop tests                                                          |
+| `outcome_store_fixture_helpers.py`        | Single-row reader fixtures and torn UTF-8 tails for outcome-store tests                                                        |
+| `outcome_vocabulary_test_support.py`      | Shared outcome-token aliases for schema and metrics-sink contract tests                                                        |
 
 _Table 4: Shared test helper modules._
+
+Both host checks take their collection marks from `tests/host_check_marks.py`.
+A backend supplies a `HostCheck` -- its marker, opt-in variable, binary name,
+supported set and skip reasons -- and receives the platform guard, the opt-in
+gate and the version probe from one rule, so the two backends cannot drift
+apart in how they decide to run. A backend whose version reporting genuinely
+differs should carry its own rule rather than bend that one.
 
 `make test-sccache-host` sets `BUILD_LIMITS_SCCACHE_HOST_CHECK=1` and selects
 the `sccache_host_check` marker. The real-binary test requires Linux and a
@@ -844,6 +865,21 @@ skips that test when either precondition is absent. It compares its readings
 with the committed JSONL fixture. Set
 `BUILD_LIMITS_SCCACHE_REGENERATE_FIXTURE=1` to replace the fixture, then review
 the resulting diff before committing it.
+
+`make test-kache-host` sets `BUILD_LIMITS_KACHE_HOST_CHECK=1` and selects the
+`kache_host_check` marker. The test requires Linux and a binary whose version
+is in `tests/kache_host.py`'s `SUPPORTED_KACHE_VERSIONS`, so adding a release
+there makes the check run against it rather than skip. It starts a private
+`kache daemon run` in its own session, composes a group through
+`Supervisor.groups.launch_spec` and compiles one Cargo-shaped library request
+twice. The evidence is kache's own: the store's `events.jsonl` must record a
+`miss` that ran the compiler followed by a `local_hit` that did not, and
+`kache stats --json --full` must agree. The `--full` flag matters, because plain
+`stats --json` starts a daemon when none answers. The environment names no
+`KACHE_RUNTIME_DIR`, which is what puts the event log beside the store rather
+than in a second directory, and health is checked before and after the daemon
+stops. Both `1.2.2` and `2.0.0-rc.1` pass; a new release is adopted by
+repeating that verification and adding it to the set.
 
 `tests/test_cache_outcomes_systemd.py` runs the recording shell with a scripted
 fake sccache and checks miss/hit labels, the barrier gate, generation reset,
@@ -889,6 +925,15 @@ own user manager, in uniquely named slices and units, and never open
 are opt-in. `make test-systemd-user` sets `BUILD_LIMITS_HOST_ACCEPTANCE=1`;
 without it, collection never contacts the manager and the scenarios skip. They
 also skip where no user manager runs.
+
+`tests/test_sccache_real_binary.py` and `tests/test_kache_real_binary.py` are
+host checks of a different kind: each drives one real cache binary in a private
+deployment, so neither needs a user manager and neither touches a shared store
+or socket. Both skip unless their own environment variable is set, and neither
+is part of `make test`, because both execute binaries whose behaviour is
+outside this repository's control. Keep every path they create under
+`tmp_path`; a host check that reached a real store would be measuring a
+different deployment on every run.
 
 `tests/test_graceful_restart_systemd.py` runs the operator's
 `systemctl --user restart` against an isolated supervisor under a running

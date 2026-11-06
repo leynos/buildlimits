@@ -30,10 +30,16 @@ class StepResult(typ.NamedTuple):
         Whether the pool actually handed admission a token. A generated
         ``token`` operation with nothing outstanding is not one: the guard
         declines it, and counting it would unbalance the accounting.
+    emptied_group : str | None
+        The group an effective ``empty`` operation was applied to. A generated
+        ``empty`` with no group to empty is not one: the guard declines it, and
+        naming a group admission was never asked about would let an invariant
+        check pass vacuously.
     """
 
     effects: list[effect_model.Effect]
     delivered_token: bool
+    emptied_group: str | None = None
 
 
 def first(
@@ -127,6 +133,7 @@ def step(
     oldest_group = next(iter(admission.groups), None)
     effects: list[effect_model.Effect] = []
     delivered = False
+    emptied: str | None = None
     match operation:
         case "submit":
             effects = admission.submit(sequence_number)
@@ -143,10 +150,11 @@ def step(
             effects = admission.leader_exited(running_group, exit_)
         case "empty" if oldest_group is not None:
             effects = admission.group_emptied(oldest_group)
+            emptied = oldest_group
         case "cancel-queued" | "cancel-group":
             effects = cancel(admission, operation)
         case "close":
             effects = admission.begin_closing()
         case "fail" if running_group:
             effects = admission.launch_failed(running_group)
-    return StepResult(effects, delivered)
+    return StepResult(effects, delivered, emptied)

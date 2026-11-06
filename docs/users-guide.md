@@ -281,14 +281,25 @@ in that mode.
 ### Requirements for kache mode
 
 - kache `1.2.2` or `2.0.0-rc.1`. Other versions are unsupported until the
-  verification recorded in ADR 005 is repeated for them.
+  verification recorded in
+  [ADR 006](adr-006-kache-cache-backend.md#on-host-verification) is repeated
+  for them. To adopt a release, add it to `tests/kache_host.py`'s
+  `SUPPORTED_KACHE_VERSIONS` and run `make test-kache-host` against that
+  binary; the check runs for every version in the set rather than skipping, so
+  merge the change only once it passes.
 - `kache_socket`, naming a daemon that is already listening. The key is
   **required** in kache mode: the supervisor's environment and the requesting
   build's can resolve different kache defaults, so an unnamed socket would let
   the health check accept one daemon while the group talked to another and
   started a second one inside the admitted scope. **The supervisor never
   starts, stops or owns the daemon.** The operator installs and runs it as a
-  separate unit; the repository does not ship one.
+  separate unit; the repository does not ship one. That requirement is the
+  operator's to keep: the health check samples the daemon before a group is
+  composed, so it narrows the window in which a group is pointed at a stopped
+  daemon but does not close it. A daemon that stops between the check and the
+  launch leaves the compile to kache's own auto-start, which creates the daemon
+  inside the group's scope; the stray-process guard reports that state
+  afterwards, and no setting of the supported kache versions prevents it.
 - A `kache_executable` the supervisor can run. A bare name is resolved on the
   supervisor's `PATH`, so configure an absolute path when the supervisor runs
   under a minimal service environment.
@@ -302,6 +313,16 @@ group. The first stops kache's own scheduler from admitting a compile a second
 time under memory pressure, which the pool would never see; the second keeps
 its remote backends out of scope. Both are fixed settings of the supervisor,
 not tuning knobs.
+
+Writing one backend's settings while another is selected is a configuration
+error, not a silently ignored line. With `cache_mode = "kache"`, a document
+that also sets `sccache_unit` fails to load with
+`setting 'sccache_unit' is only valid when cache_mode is 'sccache', not 'kache'`;
+the reverse applies to `kache_socket`, `kache_executable` and
+`kache_cache_dir` in `sccache` mode. Switching backends therefore means
+removing the other backend's keys, so a mode that was not the one intended
+cannot load and quietly do nothing. `direct` names no backend, so every
+backend's keys are merely inert there.
 
 Do not set `[cache] ignore_env = true` in a host or project kache configuration
 on a host that composes kache. That setting suppresses `KACHE_SCHEDULER` and

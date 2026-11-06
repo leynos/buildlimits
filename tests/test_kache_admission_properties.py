@@ -18,6 +18,12 @@ every step three things must hold:
 - the tokens admission has taken in less the tokens it has returned is exactly
   the number of groups it still holds, so neither a leak nor a double return
   can survive a step even when no single effect looked wrong.
+
+The third rule is a balance, not an attribution: it holds while ``empty``
+releases the wrong group's token, and while it forgets a group but some later
+effect returns a token. The fourth assertion therefore binds the return to the
+group the step itself emptied, so the property is about the operation that
+caused it and not merely about the total.
 """
 
 import typing as typ
@@ -88,6 +94,37 @@ def _assert_every_departure_returns_its_token(
         )
 
 
+def _assert_the_emptied_group_returns_its_token(
+    *,
+    emptied_group: str | None,
+    before: cabc.Mapping[str, bytes],
+    after: cabc.Mapping[str, bytes],
+    returned: list[bytes],
+) -> None:
+    """Check that the group an effective ``empty`` targeted is the one released.
+
+    The general departure check only relates a group that left to *some* token
+    that came back. Binding the assertion to the group the step actually
+    emptied is what makes it about this operation: if ``empty`` released a
+    token while forgetting the group, or released the wrong group's token, the
+    counts still balance and only this check notices.
+    """
+    if emptied_group is None:
+        return
+    assert emptied_group in before, (
+        f"the step emptied {emptied_group}, which admission did not hold"
+    )
+    assert emptied_group not in after, (
+        f"{emptied_group} emptied but is still held; an in-scope cache has no "
+        "server work left to drain"
+    )
+    token = before[emptied_group]
+    assert returned.count(token) == 1, (
+        f"{emptied_group} emptied but its token came back {returned.count(token)} "
+        f"time(s) in that step; exactly one return belongs to the empty"
+    )
+
+
 def _assert_balance(
     *,
     taken: int,
@@ -126,6 +163,12 @@ def test_a_kache_group_returns_its_token_when_its_scope_empties(
         after = {group_id: group.token for group_id, group in admission.groups.items()}
         _assert_no_server_drain(admission)
         _assert_every_departure_returns_its_token(before, after, step_returns)
+        _assert_the_emptied_group_returns_its_token(
+            emptied_group=result.emptied_group,
+            before=before,
+            after=after,
+            returned=step_returns,
+        )
         _assert_balance(taken=taken, returned=returned, admission=admission)
 
 

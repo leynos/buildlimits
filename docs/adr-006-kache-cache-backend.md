@@ -154,7 +154,8 @@ Introduce the `CacheBackend` protocol, mark kache `in_scope_work = True`, and
 gate the drain, quiesce and recovery paths on the detached capability. kache
 groups then follow the direct path for token release and cancellation, and
 sccache keeps its existing path unchanged. Chosen, and delivered as a
-behaviour-preserving seam PR before the kache backend lands.
+behaviour-preserving seam in the first commits of this branch, ahead of any
+kache code (see the migration plan, step 2).
 
 ### Option D: let a kache group auto-start its daemon inside the scope
 
@@ -537,6 +538,36 @@ What the four cases establish, and what they narrow:
 - An in-scope daemon does not survive the scope kill, so the ordinary
   terminate path contains it even when the external daemon policy fails.
 
+#### The external-daemon case as an automated check
+
+`tests/test_kache_real_binary.py` reproduces the external-daemon contract
+through buildlimits itself rather than through a probe script. It starts a
+private `kache daemon run` on its own socket and store, composes a group with
+`Supervisor.groups.launch_spec(..., cached=True)`, and runs the composed vector
+under exactly the environment the supervisor produced. Three claims are checked
+against records kache publishes, not against timing:
+
+- Health follows the daemon. `Kache.is_reachable()` is `True` while the daemon
+  answers, `Supervisor.refresh_cache_mode()` makes the supervisor's own
+  `caching` reading follow it, and health reads `False` once the daemon has
+  stopped.
+- The group caches a Cargo-shaped request. `--emit=link,dep-info` is asked of
+  the scripted compiler because kache stores a compilation only when every
+  requested emit kind was written; a request that emits one of them is recorded
+  as `missing-output` and never becomes a hit.
+- The result is observable. `<store>/events.jsonl` records the first request as
+  a `miss` with `compiler_runs: 1` and the replay as a `local_hit` with
+  `compiler_runs: 0`, and `kache stats --json --full` reports one miss, one
+  local hit, two crates and no skips.
+
+The check runs under `make test-kache-host` for every release in
+`SUPPORTED_KACHE_VERSIONS`, and both `1.2.2` and `2.0.0-rc.1` pass it. It is
+opt-in because it needs a real kache binary and a real compile, so it is not
+part of `make test`; see the developers' guide. This is a contract check on the
+backend seam, not a replacement for the process-topology measurement in Table
+5: it says the composed group caches and stays healthy, while Table 5 says
+where the compiler it spawns lives.
+
 ### How RFC 0001 and RFC 0002 apply
 
 RFC 0001 models admission and recovery together. Its fairness and safety tables
@@ -640,6 +671,11 @@ reader does not carry its conclusions across to kache.
   `KACHE_SCHEDULER=0`, bounded by `BUILD_LOCK_TIMEOUT` for the waiting side.
 - **The stray-process guard is observational.** A stray kache process outside
   every scope is reported, not removed.
+- **An unreadable cgroup directory reads as no members.** `kache_guard` treats
+  a failed read as a missing one, so a diagnostic cannot fault status, and the
+  price is that a slice or scope nobody can read is indistinguishable from an
+  empty one. A scope that becomes unreadable while it still holds a stray would
+  let the read look clean.
 - **`cache_recovery` being inert** means a shared configuration file says
   something that has no effect in kache mode. Status is the only surface that
   tells the operator.

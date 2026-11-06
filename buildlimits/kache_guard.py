@@ -202,10 +202,17 @@ def find(slice_dir: Path, admitted: cabc.Iterable[Path]) -> tuple[int, ...]:
     tuple[int, ...]
         The uncovered kache process identifiers, in path order.
     """
+    # The order of these two reads is load-bearing. Reading the slice first
+    # means a process that joins a held scope afterwards is either absent from
+    # the slice reading or present in ``covered``, and so can never be reported
+    # as a stray. Reading the scopes first instead gives a window in which a
+    # process that forked into a live group appears only in the slice reading,
+    # and the operator is told to remove a process a running group owns.
+    members = _slice_members(slice_dir)
     covered: set[int] = set()
     for scope in admitted:
         covered.update(_members(scope))
-    return stray_processes(_slice_members(slice_dir), admitted=covered)
+    return stray_processes(members, admitted=covered)
 
 
 def _or_nothing[T](read: cabc.Callable[[Path], list[T]], path: Path) -> list[T]:

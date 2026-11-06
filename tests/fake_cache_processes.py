@@ -8,6 +8,7 @@ they live here rather than in :mod:`harness_processes`, which holds the
 general-purpose process observations the whole harness shares.
 """
 
+import socket
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed fixture argv, never a shell.
 import time
 import typing as typ
@@ -16,6 +17,11 @@ from harness_processes import reap_and_close_pipes
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
+
+#: How long one readiness connection may take. It is not a wait for the server:
+#: the fixture binds and listens in the same breath, so a connect either
+#: succeeds immediately or the fixture has not started yet.
+_READY_TIMEOUT_SECONDS = 0.2
 
 
 def kill_and_reap(process: subprocess.Popen[typ.Any], timeout: float = 30.0) -> None:
@@ -54,6 +60,11 @@ def start_bound(
     Waiting here means a scenario never races the bind: an assertion made
     immediately after this returns is made against a fixture that is already
     answering.
+
+    Readiness is a *connection*, not the socket file's existence. A fixture
+    binds its path before it listens, so between those two calls the path
+    exists and a connect is refused; waiting on ``exists()`` returns in that
+    window and hands the scenario a fixture that refuses its first client.
 
     Parameters
     ----------
@@ -94,9 +105,41 @@ def start_bound(
     )
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
-        if socket_path.exists():
+        if _answers(socket_path):
             return process
         time.sleep(0.02)
     kill_and_reap(process, timeout=10)
     msg = "the fixture never bound its socket"
     raise AssertionError(msg)
+
+
+def _answers(socket_path: Path) -> bool:
+    """Report whether the socket at *socket_path* accepts a connection.
+
+    A path that exists is not yet a server, so readiness is taken from the
+    only thing a caller will do next. The probe sends nothing: both fixtures
+    treat an empty request as a connection that simply went away.
+
+    Parameters
+    ----------
+    socket_path : Path
+        The socket the fixture was told to bind.
+
+    Returns
+    -------
+    bool
+        ``True`` only when a connect succeeded.
+
+    Examples
+    --------
+    >>> from pathlib import Path
+    >>> _answers(Path("/nonexistent/cache.sock"))
+    False
+    """
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(_READY_TIMEOUT_SECONDS)
+            probe.connect(str(socket_path))
+    except OSError:
+        return False
+    return True

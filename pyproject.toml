@@ -627,6 +627,7 @@ filterwarnings = [
     "error::pytest.PytestUnraisableExceptionWarning",
 ]
 markers = [
+    "kache_host_check: requires opt-in, Linux, and a supported kache",
     "sccache_host_check: requires opt-in, Linux, and a supported sccache",
     "systemd_user: needs a running systemd user manager and busctl",
 ]
@@ -1648,3 +1649,10 @@ reason = "Matching import lists: each module names the admission, configuration 
 [[tool.duplication_gate.allow]]
 unit = "tests/groups_helpers.py"
 reason = "Recurring short test steps: each method records its own name on the shared order list, and the one line is the whole observable effect of that double. Extracting it would leave the methods with no body to read."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/kache_host.py",
+    "tests/sccache_host.py",
+]
+reason = "Matching import lists: each module names the subprocess, JSON, typing and pytest symbols its own backend needs, and sharing them through a re-export module would hide each module's real dependencies."

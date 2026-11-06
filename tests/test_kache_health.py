@@ -16,6 +16,7 @@ the other two questions meaningless.
 """
 
 import os
+import time
 import typing as typ
 from pathlib import Path
 
@@ -271,6 +272,59 @@ def test_a_socket_the_document_does_not_name_is_unavailable(tmp_path: Path) -> N
 
     assert not Kache(str(client), socket_path=tmp_path / "kache.sock").is_reachable(), (
         "a daemon on a different socket is not the daemon this group was promised"
+    )
+
+
+def test_the_probe_asks_for_the_json_document(tmp_path: Path) -> None:
+    """The ``--json`` argument is what makes the answer the envelope health reads.
+
+    Without it kache prints its human-readable status, which parses as no
+    document at all. A stand-in that answers the same text whatever it is
+    asked cannot notice the flag going missing, so this one records its
+    argument vector and refuses to answer unless the flag is there.
+    """
+    recorded = tmp_path / "probe-argv"
+    client = _script(
+        tmp_path,
+        f'#!/bin/sh\nprintf "%s\\n" "$*" > {recorded}\n'
+        'case " $* " in\n'
+        "  *\" --json \"*) printf '%s\\n' '"
+        f"{RUNNING}"
+        "' ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n",
+    )
+
+    assert Kache(str(client)).is_reachable(), (
+        "a client asked for the versioned document reports a daemon"
+    )
+    assert recorded.read_text(encoding="ascii").split() == [
+        "daemon",
+        "status",
+        "--json",
+    ], "the probe asks for the document, not for kache's human-readable status"
+
+
+def test_a_stalled_probe_is_unavailable_rather_than_a_stalled_supervisor(
+    tmp_path: Path,
+) -> None:
+    """The probe is bounded, so a wedged daemon cannot stop an admission cycle.
+
+    ``kache daemon status`` normally returns immediately. A client that hangs
+    is the failure mode a timeout exists for: without one the supervisor's
+    poll would block inside ``subprocess.run`` and every admission would stop
+    with it.
+    """
+    client = _script(tmp_path, "#!/bin/sh\nsleep 300\n")
+
+    started = time.monotonic()
+    reachable = Kache(str(client)).is_reachable()
+    elapsed = time.monotonic() - started
+
+    assert not reachable, "a probe that never answers is not a reachable daemon"
+    assert elapsed < 10.0, (
+        f"the probe returned in {elapsed:.1f}s, so it is bounded rather than "
+        "waiting for a wedged client"
     )
 
 

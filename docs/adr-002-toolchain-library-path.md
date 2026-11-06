@@ -143,7 +143,7 @@ leaves an unset or empty variable alone: an empty path cannot shadow `RUNPATH`,
 and adding a loader entry to a clean environment would change what the
 compiler's children (linkers, proc-macro hosts) inherit for no gain.
 
-### Why sccache and kache are unaffected
+### Why sccache is unaffected
 
 sccache 0.14.0 hashes the compilation from the source files, the dependency
 information's `# env-dep:` variables and the variables beginning `CARGO_`
@@ -152,12 +152,6 @@ libraries in the compiler's sysroot. `LD_LIBRARY_PATH` is not an input. Its
 server caches compiler detection by executable path and modification time, not
 by environment. The forwarded environment reaches the server's `rustc` probes
 (`--print=sysroot`), where the repaired path helps rather than splits the cache.
-
-kache is unaffected for the same reasons, and one more. Its key is built from
-the compilation and the environment it hashes, none of which this repair
-touches; and because kache wraps the compiler inside the group's own scope
-([ADR 006](adr-006-kache-cache-backend.md)), the repaired path reaches exactly
-the process that composes the cache key, with no server-side probe in between.
 
 ## Consequences
 
@@ -191,3 +185,29 @@ the process that composes the cache key, with no server-side probe in between.
   the toolchains in the evidence were observed.
 
 [issue-312]: https://github.com/leynos/dev-env-rocky/issues/312
+
+## Amendment, 2026-11-06: kache is unaffected too
+
+### Context
+
+This ADR was written before an in-scope cache backend existed. ADR 006 adds
+kache, whose compiler wrapper runs inside the group's own scope rather than in
+a server the supervisor accounts for. The question the original section
+answers—whether this repair can split a cache key or poison a server's view of
+the toolchain—has to be answered for that backend as well, and the answer
+belongs here rather than in a silent edit to an accepted record.
+
+### Decision
+
+kache is unaffected for the same reasons sccache is. Its key is built from the
+compilation and the environment it hashes, neither of which this repair
+touches. The one difference makes the repair safer, not riskier: because kache
+wraps the compiler inside the group's own scope
+([ADR 006](adr-006-kache-cache-backend.md)), the repaired path reaches exactly
+the process that composes the cache key, with no server-side probe in between.
+
+### Amendment consequences
+
+Nothing changes for an operator or for the adapter. The statement is recorded
+so that a future backend, or a kache version that moves composition
+server-side, is reviewed against it rather than assumed to inherit it.

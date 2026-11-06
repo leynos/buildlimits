@@ -8,12 +8,17 @@ import struct
 
 # ruff: ignore[suspicious-subprocess-import] - fixed argv, no shell.
 import subprocess
-import sys
 import time
 import typing as typ
 from contextlib import contextmanager
 
 import pytest
+from host_check_marks import (
+    HostCheck,
+    decoded_document,
+    end_process,
+    host_check_marks,
+)
 from sccache_stats import _stats_payload
 
 from buildlimits.outcome_recorder import SUPPORTED_SCCACHE_VERSIONS
@@ -23,7 +28,10 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
 _WINDOW_COUNT = 200
+_STOP_TIMEOUT_SECONDS = 5.0
 
+_LINUX_REASON = "the host check requires Linux /proc and SO_PEERCRED"
+_OPT_IN_REASON = "set BUILD_LIMITS_SCCACHE_HOST_CHECK=1 to run the host check"
 _VERSION_ERROR_REASON = "could not verify the sccache version"
 _UNSUPPORTED_VERSION_REASON = "the host check requires a supported sccache version"
 
@@ -40,8 +48,6 @@ def _read_stats(
 
     Raises
     ------
-    TypeError
-        If the JSON value or its ``stats`` member is not an object.
     ValueError
         If the statistics document reports an unsupported sccache version.
     """
@@ -54,11 +60,7 @@ def _read_stats(
         env=environment,
         timeout=15,
     )
-    value = json.loads(completed.stdout)
-    if not isinstance(value, dict):
-        message = "sccache returned a non-object statistics document"
-        raise TypeError(message)
-    document = typ.cast("dict[str, object]", value)
+    document = decoded_document(completed.stdout, source="sccache")
     if document.get("version") not in SUPPORTED_SCCACHE_VERSIONS:
         message = "sccache returned statistics for an unsupported version"
         raise ValueError(message)
@@ -206,14 +208,7 @@ def _stop_server(
         env=environment,
         timeout=15,
     )
-    if process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
+    end_process(process, timeout=_STOP_TIMEOUT_SECONDS)
 
 
 def _server_pid(environment: cabc.Mapping[str, str]) -> int:
@@ -298,67 +293,16 @@ def sccache_host_marks() -> list[pytest.MarkDecorator]:
     list[pytest.MarkDecorator]
         The opt-in and version-availability marks for the host check.
     """
-    marks = [pytest.mark.sccache_host_check, pytest.mark.timeout(600)]
-    if sys.platform != "linux":
-        marks.append(
-            pytest.mark.skipif(
-                condition=True,
-                reason="the host check requires Linux /proc and SO_PEERCRED",
-            )
-        )
-        return marks
-
-    enabled = os.environ.get("BUILD_LIMITS_SCCACHE_HOST_CHECK") == "1"
-    if not enabled:
-        marks.append(
-            pytest.mark.skipif(
-                condition=True,
-                reason="set BUILD_LIMITS_SCCACHE_HOST_CHECK=1 to run the host check",
-            )
-        )
-        return marks
-
-    executable = shutil.which("sccache")
-    if executable is None:
-        reason = "sccache is not installed"
-    else:
-        try:
-            # ruff: ignore[subprocess-without-shell-equals-true] - fixed argv, no shell.
-            version = subprocess.run(
-                [executable, "--version"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except OSError, subprocess.TimeoutExpired:
-            reason = _VERSION_ERROR_REASON
-        else:
-            reason = _version_refusal(version)
-    if reason:
-        marks.append(pytest.mark.skipif(condition=True, reason=reason))
-    return marks
-
-
-def _version_refusal(version: subprocess.CompletedProcess[str]) -> str:
-    """Return why the reported sccache version cannot run the host check.
-
-    The gate follows the recorder's supported set rather than one literal
-    version, so adding a version there makes this check run against that
-    binary instead of silently skipping it.
-
-    Parameters
-    ----------
-    version : subprocess.CompletedProcess[str]
-        The result of asking the selected binary for its version.
-
-    Returns
-    -------
-    str
-        An empty string when the host check may run, otherwise the reason it
-        is skipped.
-    """
-    supported = {f"sccache {entry}" for entry in SUPPORTED_SCCACHE_VERSIONS}
-    if version.returncode == 0 and version.stdout.strip() in supported:
-        return ""
-    return _UNSUPPORTED_VERSION_REASON
+    check = HostCheck(
+        marker=pytest.mark.sccache_host_check,
+        opt_in_variable="BUILD_LIMITS_SCCACHE_HOST_CHECK",
+        binary="sccache",
+        versions=SUPPORTED_SCCACHE_VERSIONS,
+        unavailable_reason=_UNSUPPORTED_VERSION_REASON,
+        version_error_reason=_VERSION_ERROR_REASON,
+    )
+    return host_check_marks(
+        check,
+        platform_reason=_LINUX_REASON,
+        opt_in_reason=_OPT_IN_REASON,
+    )

@@ -83,7 +83,12 @@ def _handle(conn: socket.socket, state: ServerState, socket_path: str) -> None:
     discarded rather than treated as a server fault.
     """
     with conn, conn.makefile("rwb") as stream:
-        request = json.loads(stream.readline())
+        line = stream.readline()
+        if not line:
+            # A readiness probe connects and closes without saying anything.
+            # There is no request to run, and that is not a server fault.
+            return
+        request = json.loads(line)
         if request.get("operation") == "statistics":
             delay = _statistics_delay(socket_path, state)
             if delay > 0:

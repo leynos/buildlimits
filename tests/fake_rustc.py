@@ -165,8 +165,32 @@ def main(arguments: list[str]) -> int:
         return 0
     emit_dep_info = _is_dep_info_request(arguments)
     _sleep_for_controlled_request(arguments, emit_dep_info=emit_dep_info)
-    _write_output(arguments, emit_dep_info=emit_dep_info)
+    _write_requested_outputs(arguments, emit_dep_info=emit_dep_info)
     return 0
+
+
+def _write_requested_outputs(arguments: list[str], *, emit_dep_info: bool) -> None:
+    """Write every artefact a real compiler would produce for this request.
+
+    A cache stores a compilation only when the compiler physically writes each
+    requested emit kind. ``--emit=link,dep-info`` asks for two files, so a
+    stand-in that writes one lets kache record ``missing-output: dep-info`` and
+    skip the store, which would make a caching test measure nothing. The
+    single-emit paths keep their original behaviour.
+
+    Parameters
+    ----------
+    arguments : list[str]
+        The compiler argument vector.
+    emit_dep_info : bool
+        Whether the request emits only dep-info.
+    """
+    kinds = _emit_kinds(arguments)
+    if "link" in kinds and "dep-info" in kinds:
+        _write_output(arguments, emit_dep_info=True)
+        _write_output(arguments, emit_dep_info=False)
+        return
+    _write_output(arguments, emit_dep_info=emit_dep_info)
 
 
 def _probe_output(arguments: list[str]) -> str | None:

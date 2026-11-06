@@ -16,6 +16,7 @@ from outcome_store_helpers import (
     stored_records,
     wait_for_results,
     window_summary,
+    worker_exited,
 )
 
 from buildlimits import outcome_store, outcome_store_io
@@ -169,11 +170,22 @@ def test_close_returns_within_its_bound_when_a_write_stalls(tmp_path: Path) -> N
     """A stalled worker cannot extend the caller's one-second close bound."""
     path = tmp_path / "cache-outcomes.jsonl"
     with running_writer(path) as writer:
-        with stalled_append() as (entered, _release):
+        with stalled_append() as (entered, release):
             writer.append(window_summary())
             assert entered.wait(1.0), "the worker entered its stalled write"
             started = time.monotonic()
             writer.close(1.0)
             elapsed = time.monotonic() - started
+            # The bound is meant to expire here, which leaves the worker inside
+            # the write the stall is holding. Release it and wait for the worker
+            # to finish, so the append and compaction it still runs happen
+            # inside the test that caused them rather than after it. The wait is
+            # far longer than the write needs because the point is to tolerate a
+            # worker that waits for a timeslice on a heavily loaded host; pytest
+            # bounds the test itself, so a genuinely wedged worker still fails.
+            release.set()
+            assert worker_exited(writer, 10.0), (
+                "the worker stops once the write resumes"
+            )
 
     assert elapsed < 1.25, "close honours the supplied one-second bound"
