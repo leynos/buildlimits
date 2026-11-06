@@ -267,6 +267,20 @@ def test_the_unclassified_kind_cannot_be_expected(tmp_path: Path) -> None:
     assert "is not one of" in message, "the unclassified kind is refused"
 
 
+def test_an_unknown_field_is_refused_rather_than_ignored(tmp_path: Path) -> None:
+    """A misspelt key would otherwise drop the expectation it was meant to add.
+
+    ``reacheable`` reads as an absent field and is defaulted, so the probe the
+    configuration asked for is never run and the remaining expectations report
+    a pass. The refusal names the key, because the defect is a spelling in the
+    file the reader has open.
+    """
+    message = _refusal(tmp_path, '[configurations.head]\nreacheable = ["P"]\n')
+
+    assert "'head'" in message, "the configuration is named"
+    assert "'reacheable'" in message, "and the misspelt key is named"
+
+
 @pytest.mark.parametrize(
     ("table", "expected"),
     [

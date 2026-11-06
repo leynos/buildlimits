@@ -33,7 +33,7 @@ from modelcheck_cli_cases import (
     holds,
     listed,
 )
-from modelcheck_doubles import FakeChecker, FixedSource
+from modelcheck_doubles import FailsDoubled, FakeChecker, FixedSource
 
 from modelcheck import cli, domain
 
@@ -160,7 +160,7 @@ def test_the_json_holds_one_record_per_reported_judgement(
     """
     application = app([holds("head", "S1")], FakeChecker("pass", property_name="S1"))
 
-    application([
+    status = application([
         "check",
         str(tmp_path),
         "--fizz",
@@ -170,6 +170,7 @@ def test_the_json_holds_one_record_per_reported_judgement(
     ])
 
     records = json.loads((tmp_path / "records.json").read_text(encoding="utf-8"))
+    assert status == cli.EXIT_MET, "the met matrix exits 0"
     assert records == snapshot, "the record's field set is the contract"
 
 
@@ -194,8 +195,9 @@ def test_an_ordinary_run_writes_no_artefact(
     """
     application = app([holds()], FakeChecker("pass"))
 
-    checked_in(application, tmp_path, *options)
+    status = checked_in(application, tmp_path, *options)
 
+    assert status == cli.EXIT_MET, "the pass exits 0"
     assert listed(tmp_path) == [], options
 
 
@@ -212,7 +214,7 @@ def test_save_traces_names_each_counterexample_after_its_row(
         [fails_as("incident-1", "L3")], FakeChecker("lasso", property_name="L3")
     )
 
-    application([
+    status = application([
         "check",
         str(tmp_path),
         "--fizz",
@@ -220,6 +222,7 @@ def test_save_traces_names_each_counterexample_after_its_row(
         "--save-traces",
     ])
 
+    assert status == cli.EXIT_MET, "the expected counterexample exits 0"
     assert listed(tmp_path / "traces") == ["incident-1-L3.json"], "one trace is saved"
     record = json.loads(
         (tmp_path / "traces" / "incident-1-L3.json").read_text(encoding="utf-8")
@@ -232,8 +235,9 @@ def test_save_traces_writes_nothing_for_a_pass(tmp_path: Path) -> None:
     """A pass has no path to save, and an empty one would be a false trace."""
     application = app([holds()], FakeChecker("pass"))
 
-    checked_in(application, tmp_path, "--save-traces")
+    status = checked_in(application, tmp_path, "--save-traces")
 
+    assert status == cli.EXIT_MET, "the pass exits 0"
     assert listed(tmp_path) == [], "a pass has no trace to save"
 
 
@@ -324,6 +328,42 @@ def test_fixpoint_growth_exits_unmet(capsys: pytest.CaptureFixture[str]) -> None
 
     assert status == cli.EXIT_UNMET, "a truncated exploration is not a pass"
     assert "grew" in printed, "and the report says the count moved"
+
+
+def test_a_failed_comparison_is_written_to_the_artefact(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A comparison that fails after the matrix is saved is still recorded.
+
+    The artefact is written before the fixpoint check runs, so a failure only
+    the doubled-bound run produces would otherwise leave the file claiming a
+    clean matrix. The record names the configuration, the stage and the bound,
+    and carries the run's own diagnostic, which is what tells a truncated
+    exploration from a broken model.
+    """
+    application = app([bounded()], FailsDoubled())
+    path = tmp_path / "records.json"
+
+    with pytest.raises(domain.MaterializeError, match="doubled bound"):
+        application([
+            "check",
+            str(tmp_path),
+            "--fizz",
+            "/nonexistent/fizz",
+            "--fixpoint",
+            "--json",
+            str(path),
+        ])
+
+    printed = capsys.readouterr().out
+    assert "doubled bound failed" in printed, "the report names the failed run"
+    records = json.loads(path.read_text(encoding="utf-8"))
+    (failure,) = [record for record in records if record["subject"] == "fixpoint"]
+    assert failure["configuration"] == "head", "the record names the configuration"
+    assert failure["stage"] == "doubled", "and the stage that failed"
+    assert failure["bound"] == 16, "with the bound that run was given"
+    assert failure["met"] is False, "a failed run is never met"
+    assert "doubled bound" in failure["detail"], "and its own diagnostic is kept"
 
 
 def test_help_lists_both_commands(capsys: pytest.CaptureFixture[str]) -> None:

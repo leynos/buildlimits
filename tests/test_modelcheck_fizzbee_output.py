@@ -44,6 +44,8 @@ from modelcheck_doubles import class_of
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from syrupy.assertion import SnapshotAssertion
+
 MARKERS: typ.Final = {
     "passed": "PASSED: Model checker completed successfully",
     "never_reached": "FAILED: Expected states never reached",
@@ -284,6 +286,28 @@ def test_a_graph_that_cannot_be_parsed_is_a_run_that_proved_nothing(
     assert judgement.verdict is domain.Verdict.ERROR, (
         "and broken evidence cannot discharge an expected failure"
     )
+
+
+def test_a_malformed_graph_keeps_the_evidence_that_explains_it(
+    snapshot: SnapshotAssertion,
+) -> None:
+    """The transcript and the graph survive the scratch directory's removal.
+
+    A run whose graph cannot be parsed is the one case where the parser holds
+    evidence and would otherwise discard it: the process adapter deletes the
+    scratch directory as the call returns, so the diagnostic is the only record
+    of what the checker printed and what it wrote. The whole diagnostic is
+    pinned, because its value is which parts it keeps and in what order.
+    """
+    from modelcheck import domain
+    from modelcheck.adapters import fizzbee_output
+
+    result = fizzbee_output.parse_output(
+        f"Valid Nodes: 4 Unique states: 4\n{MARKERS['safety']}\n", 0, "{not json"
+    )
+
+    assert isinstance(result, domain.Errored), "the run proved nothing"
+    assert result.detail == snapshot, "the reason and both captures are kept"
 
 
 def test_a_never_reached_line_is_a_pass_with_unsatisfied_probes() -> None:

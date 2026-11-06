@@ -28,6 +28,7 @@ absent column reads as the second.
 import typing as typ
 
 from modelcheck.domain import (
+    CheckResult,
     Counterexample,
     CounterexampleKind,
     Errored,
@@ -42,6 +43,7 @@ if typ.TYPE_CHECKING:
     from modelcheck.domain import Expectation, Judgement
     from modelcheck.drift import DriftReport
     from modelcheck.fixpoint import Fixpoint
+    from modelcheck.fixpoint_failures import FixpointFailure
 
 _CONFIGURATION_WIDTH = 32
 """The column the configuration name occupies before the property."""
@@ -262,7 +264,10 @@ def _count(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def render_fixpoint(comparisons: cabc.Sequence[Fixpoint]) -> str:
+def render_fixpoint(
+    comparisons: cabc.Sequence[Fixpoint],
+    failures: cabc.Sequence[FixpointFailure] = (),
+) -> str:
     """Render one line per configuration, then the summary line.
 
     The two counts are printed in the order they were measured, so the reader
@@ -272,7 +277,11 @@ def render_fixpoint(comparisons: cabc.Sequence[Fixpoint]) -> str:
     Parameters
     ----------
     comparisons : collections.abc.Sequence[Fixpoint]
-        The comparisons to render, in configuration order.
+        The comparisons that completed, in configuration order.
+    failures : collections.abc.Sequence[FixpointFailure]
+        Comparison runs that did not pass. They are printed first, because a
+        run that produced no count is the reason the command is failing and
+        should not be below a screenful of passing rows.
 
     Returns
     -------
@@ -290,16 +299,50 @@ def render_fixpoint(comparisons: cabc.Sequence[Fixpoint]) -> str:
     """
     stable = sum(1 for found in comparisons if found.is_stable)
     lines = [
+        f"fixpoint {failure.configuration:<{_CONFIGURATION_WIDTH}}"
+        f"{failure.bound} {failure.stage} bound failed: "
+        f"{_failure_evidence(failure.result)}"
+        for failure in failures
+    ]
+    lines.extend(
         f"fixpoint {found.configuration:<{_CONFIGURATION_WIDTH}}"
         f"{found.states} -> {found.doubled_states} "
         f"{'stable' if found.is_stable else 'grew'}"
         for found in comparisons
-    ]
-    lines.append(
+    )
+    summary = (
         f"fixpoint check: {_count(stable, 'configuration')} stable, "
         f"{len(comparisons) - stable} grew"
     )
+    if failures:
+        summary = f"{summary}, {_count(len(failures), 'run')} failed"
+    lines.append(summary)
     return "\n".join(lines) + "\n"
+
+
+def _failure_evidence(result: CheckResult) -> str:
+    """Return the evidence column one failed comparison run contributes.
+
+    Parameters
+    ----------
+    result : modelcheck.domain.CheckResult
+        The result the run produced. It is not a pass, so it is either a
+        counterexample or a diagnostic.
+
+    Returns
+    -------
+    str
+        The property and shape of a counterexample, or the first line of the
+        diagnostic a run gave for producing no count.
+    """
+    match result:
+        case Counterexample(kind=kind, property_name=name):
+            shape = "unknown shape" if kind is CounterexampleKind.UNKNOWN else kind
+            return f"counterexample for {name} ({shape})"
+        case Stopped(detail=detail) | Errored(detail=detail):
+            return _detail(detail)
+        case _:
+            return "did not pass"
 
 
 def render_drift(report: DriftReport) -> str:

@@ -32,6 +32,7 @@ import tempfile
 import typing as typ
 from pathlib import Path
 
+from modelcheck.adapters.fizzbee_evidence import with_evidence
 from modelcheck.adapters.fizzbee_output import parse_output
 from modelcheck.adapters.fizzbee_process_group import kill_group, stopped
 from modelcheck.domain import Errored
@@ -170,7 +171,15 @@ class FizzbeeChecker:
         try:
             graph = _graph(output)
         except (OSError, UnicodeDecodeError) as error:
-            return Errored(f"the error graph could not be read: {error}")
+            # The scratch directory is removed as this call returns, so the
+            # checker's transcript is the only evidence left of a run whose
+            # graph could not be read.
+            return Errored(
+                with_evidence(
+                    f"the error graph could not be read: {error}",
+                    (("the checker printed", stdout),),
+                )
+            )
         return parse_output(stdout, completed.status, graph)
 
     def _run(self, directory: Path, output: Path) -> _Completed:

@@ -196,6 +196,37 @@ class FakeChecker:
         return dc.replace(result, property_name=self._property_name)
 
 
+class FailsDoubled:
+    """A checker that passes at the declared bound and fails at the doubled one.
+
+    The matrix therefore passes and only the fixpoint comparison fails. That is
+    the case a saved artefact has to record: the file is written before the
+    comparison runs, so nothing else would name the run that failed or what it
+    said.
+    """
+
+    @staticmethod
+    def check(spec: MaterializedSpec) -> CheckResult:
+        """Answer a pass at the declared bound, an error at the doubled one.
+
+        Parameters
+        ----------
+        spec : MaterializedSpec
+            The specification to answer.
+
+        Returns
+        -------
+        CheckResult
+            A pass for the declared run, and a run that proved nothing for the
+            doubled one.
+        """
+        from modelcheck import domain
+
+        if "max_actions: 16" in spec.text:
+            return domain.Errored("no verdict line at the doubled bound")
+        return domain.Passed(8, 0.1, ())
+
+
 class Verbatim:
     """A checker that answers with one fixed transcript.
 

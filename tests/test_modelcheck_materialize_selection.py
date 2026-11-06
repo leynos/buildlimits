@@ -14,7 +14,8 @@ are in :mod:`tests.test_modelcheck_materialize_properties`.
 
 from pathlib import Path
 
-from modelcheck_materialize_support import kept_by
+import modelcheck_cases as cases
+from modelcheck_materialize_support import kept, kept_by
 
 from modelcheck import domain, materialize
 from modelcheck.adapters.configuration import TomlConfigurations
@@ -74,6 +75,38 @@ def test_a_mixed_configuration_allows_its_positive_run() -> None:
     assert kept_by(mixed, name="mixed") == {"UnderTen"}, (
         "the expected failure belongs to its own run"
     )
+
+
+def test_an_eventually_always_assertion_is_a_header_like_any_other() -> None:
+    """The ``eventually always`` spelling is found, retained and stripped.
+
+    The RFC documents it for liveness properties. A header the reader does not
+    recognise is left in the text by the strip, so a property the configuration
+    never names would still be checked by a run whose report does not mention
+    it; and a configuration that does name it would be refused as expecting an
+    assertion the model does not declare.
+    """
+    text = """\
+action Init:
+  n = 0
+
+always assertion Held:
+  return n < 10
+
+eventually always assertion Unnamed:
+  return n >= 10
+"""
+    naming_it = cases.configuration("named", expectations=(domain.Holds("Unnamed"),))
+    naming_the_other = cases.configuration(
+        "other", expectations=(domain.Holds("Held"),)
+    )
+
+    assert kept(
+        materialize.materialize(text, naming_it, expected_failure=None).text
+    ) == {"Unnamed"}, "a named liveness assertion is declared and retained"
+    assert kept(
+        materialize.materialize(text, naming_the_other, expected_failure=None).text
+    ) == {"Held"}, "an unretained one is stripped like any other property"
 
 
 def test_the_l1_control_retains_only_the_property_it_claims() -> None:

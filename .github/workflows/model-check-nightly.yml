@@ -66,10 +66,14 @@ jobs:
       # model.
       - name: Keep the matrix evidence
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: model-check-evidence
-          if-no-files-found: ignore
+          # The records live under `.model-check/`, which upload-artifact v4.4
+          # and later skip unless hidden files are asked for. `warn` rather
+          # than `ignore` so a missing upload is visible on the run page.
+          if-no-files-found: warn
+          include-hidden-files: true
           path: |
             .model-check/
             models/admission/*/traces/

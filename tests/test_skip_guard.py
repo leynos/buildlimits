@@ -86,8 +86,10 @@ def _run(pytester: pytest.Pytester, *arguments: str) -> pytest.RunResult:
         The finished inner session.
     """
     # The parent coverage run's SlipCover plugin is inherited by this child.
+    # A bounded timeout turns a hung inner session, which the plugin under
+    # test could cause, into a failed test rather than a blocked suite.
     return pytester.runpytest_subprocess(
-        "-p", "no:cacheprovider", "-p", "no:slipcover", *arguments
+        "-p", "no:cacheprovider", "-p", "no:slipcover", *arguments, timeout=60.0
     )
 
 

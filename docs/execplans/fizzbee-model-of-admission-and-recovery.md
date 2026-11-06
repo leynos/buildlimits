@@ -96,16 +96,24 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
   - It is never committed and never installed system-wide.
   - It is never fetched or run by `make test`, `make lint`, `make typecheck`
     or `make check-fmt`.
-- **Checker runs never write into tracked directories.**
+- **Checker runs never write unintended files into tracked directories.**
   - Every run copies its materialized specification into a fresh per-run
     directory under the git-ignored `.model-check/`, and passes `--output-dir`
     inside it. No run reads a `.fizz` file in place: the FizzBee parser writes
     `Spec.json` beside the specification it reads.
-  - After any run, `git status --porcelain` must be empty — and, because Git
-    cannot see a git-ignored name, so must a recursive listing of every tracked
-    directory the run could write to. D28 records the case that proved the
-    difference: a `.log` file left in a fixture directory was invisible to
-    `git status` while it broke the next gate run.
+  - The one declared exception is requested evidence. `--save-traces` writes
+    each counterexample under `models/admission/<half>/traces/`, which is
+    deliberately not git-ignored so the paths are reviewed as diffs. Those
+    files are the only addition a run may make to a tracked directory; D39
+    records why the guide and the plan must say so rather than claiming every
+    run leaves the tree untouched.
+  - After any run without `--save-traces`, `git status --porcelain` must be
+    empty — and, because Git cannot see a git-ignored name, so must a
+    recursive listing of every tracked directory the run could write to. A run
+    with `--save-traces` may add only the declared trace files, which
+    `tests/test_modelcheck_cli_e2e.py` checks end to end. D28 records the case
+    that proved why the listing matters: a `.log` file left in a fixture
+    directory was invisible to `git status` while it broke the next gate run.
 - **Known-bad configurations are HEAD plus named clauses.** Each one is the
   fixed model with named switches that restore specific pre-fix clauses.
   - Each switch cites the revision it transcribes (a commit in this repository
@@ -921,6 +929,82 @@ explicitly.
     were added, which is why the malformed-graph test is seven-case. Both fixes
     sit in `fizzbee_output`, are covered by the fixture and output suites, and
     keep the module within its 400-line limit.
+- [x] (2026-11-06) **Assessment round: the comparison's failures and the
+    parser's discarded evidence are kept, and the cleanliness rule names its
+    exception.** D40 records the decision.
+  - `run_fixpoint` no longer raises a message-only error. It raises
+    `FixpointError`, which carries a `FixpointFailure` per failed comparison —
+    configuration, stage, bound, fairness and the run's own result — and
+    `cli.check` writes those into the matrix artefact before the error leaves,
+    so a command that exits `2` cannot leave a file claiming a clean matrix.
+    `test_a_failed_doubled_run_carries_its_own_evidence` and
+    `test_a_failed_comparison_is_written_to_the_artefact` are the regressions.
+  - A malformed or unreadable error graph no longer loses its evidence. The
+    process adapter deletes the scratch directory as the call returns, so the
+    diagnostic is the only record of what the checker printed and wrote;
+    `adapters/fizzbee_evidence.with_evidence` keeps a bounded copy of both, and
+    `test_a_malformed_graph_keeps_the_evidence_that_explains_it` pins the whole
+    diagnostic as a snapshot because which parts it keeps and in what order is
+    the contract.
+  - The plan's cleanliness constraint, EP-M4-E5 and ADR 006 required an empty
+    `git status` after every run, which `--save-traces` had already made false.
+    All three now separate checker scratch output from requested trace
+    evidence, and `test_a_run_writes_only_the_traces_it_was_asked_for` checks
+    end to end that a trace-taking run adds only the declared files.
+  - The `--only` selection policy moved to `modelcheck/selection.py`, a new
+    pure module registered in the layering test's `PURE` set, so `cli.py` stays
+    inside the 400-line limit. `tests/test_modelcheck_service.py` reached 424
+    lines in the same way; the fixpoint comparison now lives in
+    `tests/test_modelcheck_fixpoint_service.py` and the model, source builder
+    and checker doubles in `tests/modelcheck_service_cases.py`, which is linted
+    as production code under the repository's test-support convention.
+  - The first re-gate then found two lint-class defects in the repairs
+    themselves rather than in the product. DF12's `prefer-snapshot-substring`
+    fired on four substring assertions against one `detail` string in the
+    output suite and three in the process suite; the first became the snapshot
+    above and the second was reduced to two stronger assertions. `ty` reported
+    one diagnostic: `bounded_configuration` built its `options` mapping with an
+    inferred `dict[str, dict[str, int]]`, which is not the `dict[str, object]`
+    the shared builder declares, so the annotation is now explicit. Both were
+    checked in isolation before the full re-gate: Ruff clean, DF12 Pylint
+    10.00/10, `ty` clean, and 345 focused tests passed over the seven touched
+    modules.
+- [x] (2026-11-06) **Review round: the fail-open paths the reviewer found are
+    closed, and the evidence survives the run.** The hosted CodeRabbit review
+    left fourteen inline findings; eleven needed a change and three were
+    already discharged by earlier rounds.
+  - `adapters/configuration_fields.py` ignored a key it did not recognise, so
+    a misspelt `reacheable = [...]` dropped the probe the configuration asked
+    for and the remaining expectations reported a pass. `_refuse_unknown` now
+    refuses the table, naming the key and the keys it may declare;
+    `test_an_unknown_field_is_refused_rather_than_ignored` is the regression.
+  - `assertions._ASSERTION` did not recognise the `eventually always` header
+    the RFC documents for liveness. An unrecognised header is left in the text
+    by the strip, so a property the configuration never names would still be
+    checked, while one it does name was refused as undeclared.
+    `test_an_eventually_always_assertion_is_a_header_like_any_other` pins
+    both directions.
+  - `_expected_names` tested its argument with `isinstance`, which a later
+    member of the expectation union would silently fall through. It now
+    matches structurally through `_name_of`, whose `Reachable` arm names the
+    probe and whose default reads `property_name`.
+  - `_consistent` compared every run's state count, including a safety or
+    deadlock counterexample's. Those stop the checker at the violation, so
+    their count is search progress rather than graph size, and two runs over
+    graphs of the same size could be refused as different.
+    `_completed_count` returns `None` for both kinds, and
+    `test_a_safety_counterexample_count_is_not_compared` is the regression.
+  - The remaining repairs asserted the statuses four CLI tests had discarded,
+    made the `/proc`-dependent kill suite skip as a module rather than per
+    test, bounded the skip guard's inner pytest session, and replaced the
+    report test's assumed column with the verdict's actual column.
+  - The nightly workflow's evidence upload now asks for hidden files, because
+    `upload-artifact` v4.4 and later skip `.model-check/` without it, and the
+    action's stale `# v4` comment names the pinned `v4.6.2`.
+  - Writing the `_refuse_unknown` doctest found that an exception message
+    naming every accepted key overran the 88-column limit in a production
+    module, where `line-too-long` is not ignored (it is for `test_*.py`). The
+    message is now two lines: the defect, then the keys the table may declare.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -2358,6 +2442,40 @@ explicitly.
     `1`, while the same command with `--fixpoint` prints the report and then
     exits `2`.
 
+- **D40. A failure outside the matrix keeps its evidence, and the cleanliness
+  requirement names its one exception.** _Decided 2026-11-05._
+  - Decision: `run_fixpoint` raises `FixpointError`, which carries every
+    failed comparison as a `FixpointFailure` — configuration, stage, bound,
+    fairness and the run's own result — and `cli.check` writes those into the
+    JSON artefact before the error leaves. A malformed or unreadable error
+    graph keeps a bounded copy of the checker's transcript and of the graph
+    itself, through `adapters/fizzbee_evidence.with_evidence`. The plan's
+    cleanliness constraint, EP-M4-E5 and ADR 006 now distinguish checker
+    scratch output from requested trace evidence, and
+    `tests/test_modelcheck_cli_e2e.py` checks end to end that a run with
+    `--save-traces` adds only the declared trace files. The `--only` policy
+    moved to `modelcheck/selection.py`, a new pure module, so `cli.py` stays
+    inside the 400-line limit while the comparison's failure path gains its
+    own documented helper.
+  - Finding: the assessment on head `d251d5d` observed that the matrix
+    artefact is written before the fixpoint comparison runs, so a comparison
+    that failed afterwards left the file claiming a clean matrix while the
+    command exited `2`; the exception named neither the bound nor the result.
+    The same assessment found the parser dropping the transcript when a graph
+    could not be parsed, and the process adapter then deleting the scratch
+    directory. It also found the plan and ADR 006 still requiring an empty
+    `git status` after every run, which `--save-traces` had already made
+    false.
+  - Reason: the nightly upload cannot recover evidence the tool discarded, and
+    a fail-closed refusal whose cause reaches no reader is only half
+    fail-closed. The cleanliness requirement exists to catch unintended
+    writes, not to forbid the evidence the flag was added to keep.
+  - Evidence: `test_a_failed_doubled_run_carries_its_own_evidence`,
+    `test_a_failed_comparison_is_written_to_the_artefact`,
+    `test_a_malformed_graph_keeps_the_evidence_that_explains_it`,
+    `test_a_run_whose_graph_cannot_be_read_is_a_run_that_proved_nothing` and
+    `test_a_run_writes_only_the_traces_it_was_asked_for`.
+
 ## Outcomes & retrospective
 
 EP-M1 to EP-M3 are delivered and accepted; EP-M4's implementation is delivered
@@ -3544,7 +3662,9 @@ and ticks the roadmap tasks whose success criteria it met. The stages are:
   - EP-M4-E4: `make model-fidelity` exits 0 for both halves, and
     `tests/test_model_drift.py` proves the union of their mappings and
     exclusions covers the whole production surface.
-  - EP-M4-E5: `git status --porcelain` is empty afterwards.
+  - EP-M4-E5: `git status --porcelain` is empty after a run without
+    `--save-traces`, and a run with it adds only
+    `models/admission/<half>/traces/*.json`.
   - EP-M4-E6: the gates pass.
   - Roadmap task 1.1.4 is ticked.
 - **Conformance check.**
@@ -3936,6 +4056,7 @@ class CounterexampleKind(enum.StrEnum):
     LASSO = "lasso"
     STUTTER = "stutter"
     DEADLOCK = "deadlock"
+    UNKNOWN = "unknown"  # result-only: a liveness line with no error graph
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -4029,6 +4150,11 @@ class Judgement:
         """Report whether the verdict satisfies the expectation."""
         return self.verdict in {Verdict.HOLDS, Verdict.AS_EXPECTED, Verdict.REACHED}
 ```
+
+`UNKNOWN` is result-only. A liveness verdict line whose run wrote no error
+graph reaches it, because the line alone cannot settle whether the path was a
+lasso or a stutter (D37). `fails_as` refuses it: a configuration that named the
+kind would be claiming to expect the failure nobody could read (D39).
 
 The functions:
 

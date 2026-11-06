@@ -26,6 +26,8 @@ import typing as typ
 
 from modelcheck.domain import (
     CheckResult,
+    Counterexample,
+    CounterexampleKind,
     Errored,
     FailsAs,
     Judgement,
@@ -205,6 +207,12 @@ def _consistent(
     or a stop, whose own detail says what went wrong, and replacing it with a
     count mismatch would hide the cause.
 
+    Only a run that explored the whole state graph is counted. A safety or
+    deadlock counterexample stops the checker at the violation, so the states
+    it printed are how far the search had got, not the size of the graph.
+    Comparing one with a completed run would report a configuration as broken
+    for finding exactly the defect it declared it expected.
+
     Parameters
     ----------
     configuration : Configuration
@@ -223,7 +231,14 @@ def _consistent(
         expected_failure: states_of(result)
         for expected_failure, (_, result) in runs.items()
     }
-    if None in counts.values() or len(set(counts.values())) == 1:
+    if None in counts.values():
+        return runs
+    completed = {
+        expected_failure: count
+        for expected_failure, (_, result) in runs.items()
+        if (count := _completed_count(result)) is not None
+    }
+    if len(set(completed.values())) <= 1:
         return runs
     detail = (
         f"configuration {configuration.name!r} explored different state counts "
@@ -231,6 +246,44 @@ def _consistent(
         f"the state graph and no run can be judged"
     )
     return {key: (spec, Errored(detail)) for key, (spec, _) in runs.items()}
+
+
+def _completed_count(result: CheckResult) -> int | None:
+    """Return a result's state count when its exploration ran to completion.
+
+    Parameters
+    ----------
+    result : CheckResult
+        The result to read.
+
+    Returns
+    -------
+    int | None
+        The count a completed run reported, and ``None`` for a run that stopped
+        at a violation or reported nothing. A finite or deadlock
+        counterexample's count is the search's progress, so it says nothing
+        about the size of the graph another run explored.
+
+    Examples
+    --------
+    >>> from modelcheck import domain
+    >>> from modelcheck.trace import Ending, Trace
+    >>> _completed_count(domain.Passed(8, 0.1, ()))
+    8
+    >>> trace = Trace({}, (), Ending.FINITE, None)
+    >>> finite = domain.Counterexample(
+    ...     "S1", domain.CounterexampleKind.FINITE, trace, 5, 0.1
+    ... )
+    >>> _completed_count(finite) is None
+    True
+    """
+    match result:
+        case Counterexample(
+            kind=CounterexampleKind.FINITE | CounterexampleKind.DEADLOCK
+        ):
+            return None
+        case _:
+            return states_of(result)
 
 
 def _spelled(counts: dict[str | None, int | None]) -> str:

@@ -62,6 +62,16 @@ launcher ends immediately, while the child still holds the stdout pipe the
 adapter must read to completion.
 """
 
+pytestmark = pytest.mark.skipif(
+    not Path("/proc/self/stat").exists(),
+    reason="needs /proc to read a child's state",
+)
+"""Every test here proves a child died by reading ``/proc``.
+
+Without it, every process id is missing from ``/proc``, so a check that looks
+for one would report every child as gone and pass without testing anything.
+"""
+
 _EXIT_TIMEOUT_SECONDS = 5.0
 """How long a killed process is given to leave ``/proc`` before it counts as alive."""
 
@@ -198,9 +208,6 @@ def test_a_timeout_names_the_limit_and_keeps_what_printed(tmp_path: Path) -> Non
     )
 
 
-@pytest.mark.skipif(
-    not Path("/proc/self/stat").exists(), reason="needs /proc to read a child's state"
-)
 def test_an_interrupt_kills_the_group_before_it_propagates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

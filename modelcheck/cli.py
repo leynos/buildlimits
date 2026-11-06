@@ -30,6 +30,7 @@ the only place that constructs the real ones, which keeps every test able to
 hand the app a stub checker and a fixed source.
 """
 
+import dataclasses as dc
 import json
 import typing as typ
 from pathlib import Path
@@ -38,13 +39,15 @@ import cyclopts
 import cyclopts.config
 
 from modelcheck import domain, drift, records, report, service
-from modelcheck.fixpoint import run_fixpoint
+from modelcheck.fixpoint import FixpointError, run_fixpoint
+from modelcheck.selection import select
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from modelcheck.domain import Judgement
-    from modelcheck.ports import CodeInventory, ConfigurationSource
+    from modelcheck.fixpoint_failures import FixpointFailure
+    from modelcheck.ports import CodeInventory, ConfigurationSource, ModelChecker
 
 __all__ = ["exit_status", "make_app"]
 
@@ -202,18 +205,15 @@ def make_app(  # pylint: disable=too-many-arguments  # ADR 008 supplies three ad
         """
         source = source_factory(model_dir, bounds)
         results = service.run_matrix(source, checker_factory(fizz))
-        chosen = _chosen(results, only)
+        chosen = select(results, only)
         print(report.render_report(chosen), end="")
-        if json_path is not None:
-            json_path.write_text(records.render_records(chosen), encoding="utf-8")
+        artefact = _Artefact(json_path, chosen)
+        artefact.write()
         if save_traces:
             _save_traces(chosen, model_dir)
         status = exit_status(results)
         if fixpoint:
-            stable = run_fixpoint(source, checker_factory(fizz))
-            print(report.render_fixpoint(stable), end="")
-            if not all(found.is_stable for found in stable):
-                return EXIT_UNMET
+            return _compared(source, checker_factory(fizz), artefact, status)
         return status
 
     @app.command
@@ -238,103 +238,83 @@ def make_app(  # pylint: disable=too-many-arguments  # ADR 008 supplies three ad
     return app
 
 
-def _chosen(
-    judgements: cabc.Sequence[Judgement], only: list[str] | None
-) -> tuple[Judgement, ...]:
-    """Return the judgements a ``--only`` selection keeps.
+@dc.dataclass(frozen=True, slots=True)
+class _Artefact:
+    """The matrix's machine-readable record: where it goes and what it covers.
 
-    The matrix is always run in full, and a selection narrows only what is
-    *reported*. The caller computes the exit status from every judgement, not
-    from this sequence, so a run given ``--only`` cannot pass while a
-    configuration it omitted failed.
+    One value rather than a path and a sequence of rows, because the success
+    path and the failure path write the same rows to the same place; keeping
+    them together is what stops the two writes from drifting apart.
+    """
+
+    path: Path | None
+    """The ``--json`` destination, or ``None`` when the run asked for none."""
+
+    chosen: tuple[Judgement, ...]
+    """The judgements the artefact describes, after ``--only`` narrowed them."""
+
+    def write(self, failures: tuple[FixpointFailure, ...] = ()) -> None:
+        """Write the records, adding any failed fixpoint comparison.
+
+        Parameters
+        ----------
+        failures : tuple[FixpointFailure, ...]
+            The comparisons that did not pass, in the order they ran. Empty
+            for a run that did not fail one.
+
+        Notes
+        -----
+        Writing is a no-op when the run asked for no artefact, so both callers
+        write unconditionally rather than repeating the check.
+        """
+        if self.path is None:
+            return
+        self.path.write_text(
+            records.render_records(self.chosen, failures), encoding="utf-8"
+        )
+
+
+def _compared(
+    source: ConfigurationSource,
+    checker: ModelChecker,
+    artefact: _Artefact,
+    status: int,
+) -> int:
+    """Return the status once every passing configuration has been compared.
 
     Parameters
     ----------
-    judgements : collections.abc.Sequence[Judgement]
-        Every judgement the matrix produced.
-    only : list[str] | None
-        The raw ``CONFIG[:PROPERTY]`` selections, or ``None`` for everything.
+    source : ConfigurationSource
+        The model text and the configurations to compare.
+    checker : ModelChecker
+        The checker each comparison run is delegated to.
+    artefact : _Artefact
+        The record the matrix already wrote, and the rows it describes.
+    status : int
+        The status the matrix alone produced.
 
     Returns
     -------
-    tuple[Judgement, ...]
-        The selected judgements, in matrix order.
+    int
+        ``status`` when every comparison was stable, and ``1`` when one was
+        not: an exploration that keeps growing is an unmet expectation even
+        when every matrix row held.
 
     Raises
     ------
-    ValueError
-        If a selection was given and matched nothing. A narrowed report with
-        no rows would exit ``0``, which reads as a pass but says only that the
-        tool was asked about an expectation the matrix never produced — a
-        mistyped configuration or property name, which is a usage error.
+    FixpointError
+        If a configuration did not pass at one of its two bounds. The artefact
+        is rewritten with the failed comparison before the error leaves,
+        because it was written before this check ran.
     """
-    selections = _selections(only)
-    chosen = tuple(
-        judgement for judgement in judgements if _selected(judgement, selections)
-    )
-    if selections and not chosen:
-        named = ", ".join(sorted(only or ()))
-        msg = f"--only selected {named}, but the matrix reported no such expectation"
-        raise ValueError(msg)
-    return chosen
-
-
-def _selections(only: list[str] | None) -> tuple[tuple[str, str | None], ...]:
-    """Split ``CONFIG[:PROPERTY]`` selections into their parts.
-
-    A selection with no colon names every expectation of one configuration; one
-    with a colon names a single property or probe of it.
-
-    Parameters
-    ----------
-    only : list[str] | None
-        The selections as the command line gave them.
-
-    Returns
-    -------
-    tuple[tuple[str, str | None], ...]
-        One pair per selection, the property being ``None`` when the whole
-        configuration was named.
-
-    Examples
-    --------
-    >>> _selections(["head", "incident-1:L3"])
-    (('head', None), ('incident-1', 'L3'))
-    >>> _selections(None)
-    ()
-    """
-    return tuple(
-        (configuration, subject or None)
-        for selection in only or []
-        for configuration, _, subject in (selection.partition(":"),)
-    )
-
-
-def _selected(
-    judgement: Judgement, selections: tuple[tuple[str, str | None], ...]
-) -> bool:
-    """Report whether a judgement is one of the selected expectations.
-
-    Parameters
-    ----------
-    judgement : Judgement
-        The judgement to test.
-    selections : tuple[tuple[str, str | None], ...]
-        The parsed ``--only`` selections. Empty means everything is selected.
-
-    Returns
-    -------
-    bool
-        Whether the judgement's configuration is named, and its subject too
-        when the selection named one.
-    """
-    if not selections:
-        return True
-    return any(
-        configuration == judgement.configuration
-        and (subject is None or subject == report.subject(judgement.expectation))
-        for configuration, subject in selections
-    )
+    try:
+        stable = run_fixpoint(source, checker)
+    except FixpointError as error:
+        print(report.render_fixpoint(error.comparisons, error.failures), end="")
+        artefact.write(error.failures)
+        raise
+    print(report.render_fixpoint(stable), end="")
+    return status if all(found.is_stable for found in stable) else EXIT_UNMET
 
 
 def _save_traces(judgements: cabc.Sequence[Judgement], model_dir: Path) -> None:

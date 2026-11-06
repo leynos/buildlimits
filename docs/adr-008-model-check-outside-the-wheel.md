@@ -66,17 +66,23 @@ continues to package `buildlimits` only. Chosen.
 The package is a hexagon:
 
 - **Pure modules** — `domain`, `expectations`, `materialize`, `frontmatter`,
-  `drift`, `trace`, `report`, `records`, `ports` and `service`. A structural
-  test walks their syntax trees and fails on an import outside the allowlist or
-  on any call to a banned name, so purity is checked rather than promised.
-- **Adapters** — `fizzbee_process` (the only module that starts a process),
-  `fizzbee_output`, `fizzbee_graph` and `fizzbee_measurements` (the pure
-  translation of what a run printed: verdict lines are classified in
-  `fizzbee_output`, and error-graph records are decoded into domain links and
-  traces in `fizzbee_graph`, so no checker key reaches a pure module),
-  `configuration` with its two field readers (the model directory's layout and
-  its TOML schema), and `inventory` (the only module that imports
-  `buildlimits`).
+  `drift`, `trace`, `report`, `records`, `ports`, `service`, `assertions`
+  (which reads, requires and strips the assertions a configuration names),
+  `fixpoint` with `fixpoint_failures` (the doubled-bound comparison and the
+  evidence a failed comparison carries), and `selection` (the `--only`
+  policy). A structural test walks their syntax trees and fails on an import
+  outside the allowlist or on any call to a banned name, so purity is checked
+  rather than promised.
+- **Adapters** — `fizzbee_process` (the only module that starts a process) with
+  `fizzbee_process_group` (the group kill and the bounded wait for it),
+  `fizzbee_output`, `fizzbee_graph`, `fizzbee_measurements` and
+  `fizzbee_evidence` (the pure translation of what a run printed: verdict
+  lines are classified in `fizzbee_output`, error-graph records are decoded
+  into domain links and traces in `fizzbee_graph`, and the bounded transcript
+  a failed run keeps is assembled in `fizzbee_evidence`, so no checker key
+  reaches a pure module), `configuration` with its two field readers (the
+  model directory's layout and its TOML schema), and `inventory` (the only
+  module that imports `buildlimits`).
 - **Driving adapter** — `cli.py` builds the Cyclopts application from adapter
   *factories*, so a test supplies doubles without a checker and without a model
   directory. `__main__.py` is the only module that constructs the real adapters.
@@ -91,10 +97,14 @@ Three consequences follow, and each is deliberate:
   shell and a new session, and killed by process group. Ruff's `S404` and
   `S603` are ignored for that module alone, with the reason recorded beside the
   suppression.
-- A run writes only under `.model-check/`, a git-ignored scratch root, and
-  each configuration's specification is copied there before the checker sees
-  it. The plan's acceptance test for this is that `git status --porcelain` is
-  empty after a run.
+- A run writes checker scratch output only under `.model-check/`, a
+  git-ignored scratch root, and each configuration's specification is copied
+  there before the checker sees it. `--save-traces` is the one declared
+  exception: it writes each counterexample's normalized path under
+  `models/admission/<half>/traces/`, which is deliberately not ignored so the
+  evidence is reviewed as a diff. The plan's acceptance test is that
+  `git status --porcelain` is empty after a run that was not asked for traces,
+  and that a run that was asked adds only those files.
 
 ## Goals and non-goals
 

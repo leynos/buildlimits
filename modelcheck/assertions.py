@@ -25,16 +25,23 @@ so a property and an ``exists`` probe are read by the same rule.
 import re
 import typing as typ
 
-from modelcheck.domain import FailsAs, Holds, MaterializeError
+from modelcheck.domain import MaterializeError, Reachable
 
 if typ.TYPE_CHECKING:
-    from modelcheck.domain import Configuration
+    from modelcheck.domain import Configuration, Expectation
 
 _ASSERTION = re.compile(
-    r"^(?:(?:always[ \t]+eventually|always|exists)[ \t]+)?"
+    r"^(?:(?:always[ \t]+eventually|eventually[ \t]+always|always|exists)[ \t]+)?"
     r"assertion[ \t]+(?P<name>[A-Za-z_][A-Za-z0-9_]*):"
 )
-"""An assertion's header, in any of the three temporal prefixes."""
+"""An assertion's header, in any of the four temporal prefixes.
+
+``always eventually`` and ``eventually always`` are both liveness spellings,
+and a header the reader does not recognise is left in the text by
+:func:`strip_assertions`. An unnamed property would then still be checked by a
+run whose report never mentions it, or refused as undeclared when a
+configuration names it.
+"""
 
 
 def require_declared(lines: list[str], configuration: Configuration) -> None:
@@ -112,11 +119,37 @@ def _expected_names(configuration: Configuration) -> frozenset[str]:
         ``Reachable`` probe names.
     """
     return frozenset(
-        expectation.property_name
-        if isinstance(expectation, (Holds, FailsAs))
-        else expectation.probe_name
-        for expectation in configuration.expectations
+        _name_of(expectation) for expectation in configuration.expectations
     )
+
+
+def _name_of(expectation: Expectation) -> str:
+    """Return the assertion or probe name one expectation is about.
+
+    Parameters
+    ----------
+    expectation : Expectation
+        The expectation to read.
+
+    Returns
+    -------
+    str
+        The property name of a ``Holds`` or a ``FailsAs``, and the probe name
+        of a ``Reachable``.
+
+    Examples
+    --------
+    >>> from modelcheck import domain
+    >>> _name_of(domain.Holds("S1"))
+    'S1'
+    >>> _name_of(domain.Reachable("P"))
+    'P'
+    """
+    match expectation:
+        case Reachable(probe_name=probe_name):
+            return probe_name
+        case _:
+            return expectation.property_name
 
 
 def strip_assertions(lines: list[str], retained: frozenset[str]) -> list[str]:

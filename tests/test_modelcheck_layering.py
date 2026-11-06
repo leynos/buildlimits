@@ -37,6 +37,8 @@ PURE = (
     "ports",
     "service",
     "fixpoint",
+    "fixpoint_failures",
+    "selection",
 )
 """The modules with no input, output, clock or production import.
 
@@ -56,6 +58,11 @@ would be caught here rather than in a review.
 ``fixpoint`` repeats a run until its reading stops moving. It reaches the file,
 the process and the clock only through the ports it is handed, so it holds no
 handle of its own.
+
+``selection`` decides which of a matrix's judgements a ``--only`` selection
+reports. It reads no file and writes none, and it was moved out of the command
+line module so the policy over values sits beside the values it filters rather
+than beside the argument parsing.
 """
 
 ALLOWED = frozenset({"enum", "dataclasses", "typing", "collections", "re", "json"})

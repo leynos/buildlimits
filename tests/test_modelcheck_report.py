@@ -266,17 +266,14 @@ def test_a_probe_name_longer_than_the_column_is_not_truncated() -> None:
     Cutting a name would make two different probes render identically, so a
     reader could not tell which expectation a failure belonged to.
     """
-    long_name = "StopIssued"
-    judgement = _judge(
-        expectation_of("reachable"), result_of("passed"), fairness=(long_name,)
-    )
+    judgement = _judge(expectation_of("reachable"), result_of("passed"))
 
     line = render([judgement]).splitlines()[0]
 
     assert PROBE in line, "the whole name survives"
-    assert line.index("reached") > CONFIGURATION_WIDTH + PROPERTY_WIDTH, (
-        "and the verdict moves right"
-    )
+    assert line.index("reached") == (
+        CONFIGURATION_WIDTH + len(_COLUMN_GAP) + len(PROBE) + len(_COLUMN_GAP)
+    ), "and the verdict moves right by the whole name"
 
 
 def test_the_summary_counts_every_judgement() -> None:

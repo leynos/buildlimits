@@ -26,19 +26,28 @@ from modelcheck.report import subject
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-    from modelcheck.domain import Judgement
+    from modelcheck.domain import CheckResult, Judgement
+    from modelcheck.fixpoint_failures import FixpointFailure
     from modelcheck.trace import Trace
 
-__all__ = ["render_records", "trace_record"]
+__all__ = ["fixpoint_record", "render_records", "trace_record"]
 
 
-def render_records(judgements: cabc.Sequence[Judgement]) -> str:
+def render_records(
+    judgements: cabc.Sequence[Judgement],
+    failures: cabc.Sequence[FixpointFailure] = (),
+) -> str:
     """Render the matrix as the JSON array ``--json`` writes.
 
     Parameters
     ----------
     judgements : collections.abc.Sequence[Judgement]
         The judgements to render, in the same order a report shows them.
+    failures : collections.abc.Sequence[FixpointFailure]
+        Comparison runs that failed after the matrix was judged. They are
+        appended to the same array, because the artefact is the one place a
+        maintainer looks and a failure the file omitted would be evidence the
+        tool discarded.
 
     Returns
     -------
@@ -63,7 +72,9 @@ def render_records(judgements: cabc.Sequence[Judgement]) -> str:
     >>> rendered[0]["subject"], rendered[0]["verdict"], rendered[0]["states"]
     ('S1', 'holds', 4)
     """
-    return json.dumps([_record(judgement) for judgement in judgements], indent=2) + "\n"
+    records = [_record(judgement) for judgement in judgements]
+    records.extend(fixpoint_record(failure) for failure in failures)
+    return json.dumps(records, indent=2) + "\n"
 
 
 def _record(judgement: Judgement) -> dict[str, object]:
@@ -90,15 +101,72 @@ def _record(judgement: Judgement) -> dict[str, object]:
         "met": judgement.is_met,
         "fairness": list(judgement.fairness_in_force),
     }
-    states = states_of(judgement.result)
+    _result_fields(record, judgement.result)
+    return record
+
+
+def fixpoint_record(failure: FixpointFailure) -> dict[str, object]:
+    """Render one failed comparison run as the object the artefact carries.
+
+    Parameters
+    ----------
+    failure : modelcheck.fixpoint.FixpointFailure
+        The comparison run that did not pass.
+
+    Returns
+    -------
+    dict[str, object]
+        The configuration, the stage and bound of the run that failed, and the
+        result's own measurements. ``subject`` is ``fixpoint`` so a reader can
+        tell a comparison run from a matrix judgement, and ``met`` is always
+        false: the record exists only because the run did not pass.
+
+    Examples
+    --------
+    >>> from modelcheck import domain
+    >>> from modelcheck.fixpoint_failures import FixpointFailure
+    >>> failure = FixpointFailure(
+    ...     "head", "doubled", 16, ("F1",), domain.Errored("no verdict line")
+    ... )
+    >>> record = fixpoint_record(failure)
+    >>> record["subject"], record["stage"], record["bound"], record["detail"]
+    ('fixpoint', 'doubled', 16, 'no verdict line')
+    """
+    record: dict[str, object] = {
+        "configuration": failure.configuration,
+        "subject": "fixpoint",
+        "verdict": "failed",
+        "met": False,
+        "fairness": list(failure.fairness),
+        "stage": failure.stage,
+        "bound": failure.bound,
+    }
+    _result_fields(record, failure.result)
+    if isinstance(failure.result, Counterexample):
+        record["property"] = failure.result.property_name
+        record["kind"] = str(failure.result.kind)
+        record["trace"] = trace_record(failure.result.trace)
+    return record
+
+
+def _result_fields(record: dict[str, object], result: CheckResult) -> None:
+    """Add the measurements one result contributes to a record.
+
+    Parameters
+    ----------
+    record : dict[str, object]
+        The record to extend, in place.
+    result : modelcheck.domain.CheckResult
+        The result to read.
+    """
+    states = states_of(result)
     if states is not None:
         record["states"] = states
-    match judgement.result:
+    match result:
         case Passed(elapsed_seconds=elapsed) | Counterexample(elapsed_seconds=elapsed):
             record["elapsed_seconds"] = elapsed
         case Stopped(detail=detail) | Errored(detail=detail):
             record["detail"] = detail
-    return record
 
 
 def trace_record(trace: Trace) -> dict[str, object]:

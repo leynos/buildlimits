@@ -21,6 +21,7 @@ import typing as typ
 
 from modelcheck.domain import MaterializeError, Passed
 from modelcheck.expectations import only_failures
+from modelcheck.fixpoint_failures import FixpointError, FixpointFailure, Stage
 from modelcheck.materialize import materialize
 
 if typ.TYPE_CHECKING:
@@ -89,9 +90,13 @@ def run_fixpoint(
 
     Raises
     ------
+    FixpointError
+        If a run that should pass does not. The error carries every failed
+        comparison's configuration, bound, result and diagnostic, so a caller
+        can save them before reporting the failure.
     MaterializeError
-        If the model declares no configurations, a configuration declares no
-        ``max_actions`` bound to double, or a run that should pass does not.
+        If the model declares no configurations or a configuration declares no
+        ``max_actions`` bound to double.
 
     Examples
     --------
@@ -122,16 +127,23 @@ def run_fixpoint(
     if not configurations:
         msg = "the model declares no configurations to compare"
         raise MaterializeError(msg)
-    return tuple(
+    # Every comparable configuration is attempted before the refusal, so one
+    # failing comparison does not hide another's evidence.
+    compared = [
         _compared(text, configuration, checker)
         for configuration in configurations
         if not only_failures(configuration)
-    )
+    ]
+    comparisons = tuple(found for found, _ in compared if found is not None)
+    failures = tuple(failure for _, found in compared for failure in found)
+    if failures:
+        raise FixpointError(comparisons, failures)
+    return comparisons
 
 
 def _compared(
     text: str, configuration: Configuration, checker: ModelChecker
-) -> Fixpoint:
+) -> tuple[Fixpoint | None, tuple[FixpointFailure, ...]]:
     """Run one configuration at its bound and at twice its bound.
 
     Parameters
@@ -145,22 +157,33 @@ def _compared(
 
     Returns
     -------
-    Fixpoint
-        The two state counts.
+    tuple[Fixpoint | None, tuple[FixpointFailure, ...]]
+        The two state counts when both runs passed, or the failure of the
+        first run that did not. A failed declared-bound run is not followed by
+        a doubled-bound one: the first already proves the count cannot be
+        compared, and repeating it at a larger bound only spends the time.
 
     Raises
     ------
     MaterializeError
-        If the configuration declares no ``max_actions`` bound or a run that
-        should pass does not.
-    """  # ruff: ignore[docstring-extraneous-exception] - _doubled and _pass_run raise it.
-    declared = _pass_run(text, configuration, checker)
-    doubled = _pass_run(text, _doubled(configuration), checker)
-    return Fixpoint(configuration.name, declared.states, doubled.states)
+        If the configuration declares no ``max_actions`` bound.
+    """  # ruff: ignore[docstring-extraneous-exception] - _doubled raises it.
+    declared = _pass_run(text, configuration, "declared", checker)
+    if isinstance(declared, FixpointFailure):
+        return None, (declared,)
+    doubled = _pass_run(text, _doubled(configuration), "doubled", checker)
+    if isinstance(doubled, FixpointFailure):
+        return None, (doubled,)
+    return Fixpoint(configuration.name, declared.states, doubled.states), ()
 
 
-def _pass_run(text: str, configuration: Configuration, checker: ModelChecker) -> Passed:
-    """Materialize one configuration and require a pass.
+def _pass_run(
+    text: str,
+    configuration: Configuration,
+    stage: Stage,
+    checker: ModelChecker,
+) -> Passed | FixpointFailure:
+    """Materialize one configuration, requiring a pass or recording why not.
 
     Parameters
     ----------
@@ -168,29 +191,30 @@ def _pass_run(text: str, configuration: Configuration, checker: ModelChecker) ->
         The model source.
     configuration : Configuration
         The variant to run.
+    stage : Stage
+        Which of the two comparison runs this is.
     checker : ModelChecker
         The checker the run is delegated to.
 
     Returns
     -------
-    Passed
-        The pass the run produced.
-
-    Raises
-    ------
-    MaterializeError
-        If the run did not pass, because its state count is then not a count
-        of the model's states and comparing it would prove nothing.
+    Passed | FixpointFailure
+        The pass the run produced, or the evidence of a run that did not pass.
+        A run that did not pass keeps its result rather than being discarded:
+        its state count is not a count of the model's states, but its
+        diagnostic or counterexample is exactly what a reader needs.
     """
     spec = materialize(text, configuration, expected_failure=None)
     result = checker.check(spec)
-    if not isinstance(result, Passed):
-        msg = (
-            f"configuration {configuration.name!r} did not pass at the bound "
-            f"the fixpoint check needs, so its state count cannot be compared"
-        )
-        raise MaterializeError(msg)
-    return result
+    if isinstance(result, Passed):
+        return result
+    return FixpointFailure(
+        configuration.name,
+        stage,
+        _declared_bound(configuration),
+        spec.fairness_in_force,
+        result,
+    )
 
 
 def _doubled(configuration: Configuration) -> Configuration:
@@ -204,27 +228,93 @@ def _doubled(configuration: Configuration) -> Configuration:
     Returns
     -------
     Configuration
-        The same variant with twice the exploration bound.
+        The same variant with twice the exploration bound. A configuration
+        that declares no integer ``max_actions`` is refused by
+        :func:`_declared_bound`, since the run would then have no bound the
+        check could compare.
+    """
+    bound = _declared_bound(configuration)
+    options = {
+        **configuration.options,
+        "options": {
+            **_options(configuration),
+            _ACTION_BOUND: bound * _FIXPOINT_FACTOR,
+        },
+    }
+    return dc.replace(configuration, options=options)
+
+
+def _declared_bound(configuration: Configuration) -> int:
+    """Return the integer ``max_actions`` bound a configuration declares.
+
+    Parameters
+    ----------
+    configuration : Configuration
+        The variant to read.
+
+    Returns
+    -------
+    int
+        The bound the run is given, and the number the comparison doubles.
 
     Raises
     ------
     MaterializeError
-        If the frontmatter declares no integer ``max_actions``, since the
-        run would then have no bound the check could compare.
+        If the frontmatter declares no integer ``max_actions``, since the run
+        would then have no bound the check could compare.
+    """
+    bound = _options(configuration).get(_ACTION_BOUND)
+    if not _is_int(bound):
+        raise MaterializeError(_missing_bound_message(configuration))
+    return bound
+
+
+def _options(configuration: Configuration) -> cabc.Mapping[str, object]:
+    """Return the frontmatter's ``options`` table.
+
+    Parameters
+    ----------
+    configuration : Configuration
+        The variant to read.
+
+    Returns
+    -------
+    collections.abc.Mapping[str, object]
+        The table the bound is declared in.
+
+    Raises
+    ------
+    MaterializeError
+        If the frontmatter has no ``options`` table, so no bound could be
+        declared at all.
     """
     bounds = configuration.options.get("options")
-    bound = bounds.get(_ACTION_BOUND) if isinstance(bounds, cabc.Mapping) else None
-    if not isinstance(bounds, cabc.Mapping) or not _is_int(bound):
-        msg = (
-            f"configuration {configuration.name!r} declares no integer "
-            f"{_ACTION_BOUND!r} to double"
-        )
-        raise MaterializeError(msg)
-    options = {
-        **configuration.options,
-        "options": {**bounds, _ACTION_BOUND: bound * _FIXPOINT_FACTOR},
-    }
-    return dc.replace(configuration, options=options)
+    if not isinstance(bounds, cabc.Mapping):
+        raise MaterializeError(_missing_bound_message(configuration))
+    return bounds
+
+
+def _missing_bound_message(configuration: Configuration) -> str:
+    """Return the refusal for a configuration with no usable action bound.
+
+    The message is built here so the two readers that can find no bound refuse
+    in the same words. The caller raises :class:`MaterializeError` itself, so
+    each docstring names the exception it really raises.
+
+    Parameters
+    ----------
+    configuration : Configuration
+        The variant that declares none.
+
+    Returns
+    -------
+    str
+        The refusal, naming the configuration and the key it lacks.
+    """
+    return (
+        f"configuration {configuration.name!r} declares no integer "
+        f"{_ACTION_BOUND!r} to double"
+    )
 
 
 def _is_int(value: object) -> typ.TypeGuard[int]:

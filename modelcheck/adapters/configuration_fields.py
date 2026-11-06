@@ -49,6 +49,22 @@ failure nobody could read, so the one case the kind exists to surface would be
 reported as the case the model predicted.
 """
 
+_FIELDS = frozenset({
+    "constants",
+    "fairness",
+    "options",
+    "min_states",
+    "holds",
+    "reachable",
+    "fails_as",
+})
+"""The only keys a configuration table may declare.
+
+A misspelt key would otherwise be read as an absent field and defaulted: a
+``reacheable`` list would drop the probe it names, and the run would report a
+pass for a check the configuration asked for but never made.
+"""
+
 _SHAPES = {list: "list", dict: "table"}
 """What each container is called in a reader's error message.
 
@@ -78,12 +94,14 @@ def configuration(name: str, table: object) -> Configuration:
     Raises
     ------
     MaterializeError
-        If a field has the wrong shape or names a value the domain does not
-        know. The field readers in this module and in
+        If a field has the wrong shape, declares a key the readers do not read,
+        or names a value the domain does not know. The field readers in this
+        module and in
         :mod:`modelcheck.adapters.configuration_values` raise it, naming the
         configuration and the field that is wrong.
     """  # ruff: ignore[docstring-extraneous-exception] - the field readers raise it.
     fields = _shape(name, "table", table, dict)
+    _refuse_unknown(name, fields)
     return Configuration(
         name=name,
         constants=strings(name, "constants", fields.get("constants", {})),
@@ -97,6 +115,40 @@ def configuration(name: str, table: object) -> Configuration:
             fields.get("fails_as", {}),
         ),
     )
+
+
+def _refuse_unknown(name: str, fields: dict[str, object]) -> None:
+    """Refuse a table that declares a key the reader does not read.
+
+    Parameters
+    ----------
+    name : str
+        The configuration's name, for the error message.
+    fields : dict[str, object]
+        The table's keys and values.
+
+    Raises
+    ------
+    MaterializeError
+        If a key is not one of :data:`_FIELDS`. The message names the key,
+        because the defect is a spelling in the file the reader has open.
+
+    Examples
+    --------
+    >>> _refuse_unknown("head", {"holds": []})
+    >>> _refuse_unknown("head", {"reacheable": []})
+    Traceback (most recent call last):
+    ...
+    modelcheck.domain.MaterializeError: unknown key 'reacheable' in configuration 'head'
+    known keys: constants, fails_as, fairness, holds, min_states, options, reachable
+    """
+    unknown = sorted(set(fields) - _FIELDS)
+    if unknown:
+        msg = (
+            f"unknown key {unknown[0]!r} in configuration {name!r}\n"
+            f"known keys: {', '.join(sorted(_FIELDS))}"
+        )
+        raise MaterializeError(msg)
 
 
 def _expectations(

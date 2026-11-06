@@ -31,6 +31,7 @@ import re
 import typing as typ
 
 from modelcheck.adapters import fizzbee_graph
+from modelcheck.adapters.fizzbee_evidence import with_evidence
 from modelcheck.adapters.fizzbee_measurements import elapsed, states
 from modelcheck.domain import (
     Counterexample,
@@ -304,7 +305,18 @@ def _counterexample(
     try:
         path = fizzbee_graph.trace(error_graph)
     except (AttributeError, KeyError, TypeError, ValueError) as error:
-        return Errored(f"the error graph could not be parsed: {error}")
+        # The graph is deleted with the scratch directory after this call, so
+        # both the checker's own words and the malformed document are the last
+        # evidence this run can be diagnosed from.
+        return Errored(
+            with_evidence(
+                f"the error graph could not be parsed: {error}",
+                (
+                    ("the checker printed", stdout),
+                    ("the error graph held", error_graph),
+                ),
+            )
+        )
     return Counterexample(
         name, _reported_kind(marker_kind, path), path, states(stdout), elapsed(stdout)
     )

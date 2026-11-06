@@ -9,9 +9,11 @@ That leaves three things unproven, and this module is here for exactly those:
   scratch directory, so a launcher path resolved at run time would be looked
   for there; the end-to-end run is what found that, and it is why the path is
   resolved when the adapter is built;
-- the run leaves nothing in the tracked tree. ``.model-check/`` is git-ignored
-  and each run's directory is removed, so ``git status --porcelain`` is still
-  empty afterwards — the plan's constraint on every checker run.
+- the run leaves nothing unintended in the tracked tree. ``.model-check/`` is
+  git-ignored and each run's directory is removed, and ``--save-traces`` writes
+  only the declared counterexample paths, so a run without that flag leaves
+  ``git status --porcelain`` empty — the plan's constraint on every checker
+  run.
 
 The stub is a shell script in the fixture directory. It writes nothing there:
 its record of what it was asked goes to the path ``MODELCHECK_E2E_LOG`` names,
@@ -25,6 +27,7 @@ maintainer invokes the tool, and because it is the invocation the plan names.
 
 import json
 import os
+import shutil
 import subprocess
 import typing as typ
 from pathlib import Path
@@ -163,16 +166,32 @@ def _invocations(log: Path) -> list[tuple[str, str]]:
     return list(zip(lines[0::2], lines[1::2], strict=True))
 
 
+def _paths(root: Path) -> list[Path]:
+    """Return every path under a directory.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The directory to list.
+
+    Returns
+    -------
+    list[Path]
+        The paths beneath it, relative to it and sorted, so two snapshots
+        compare as sets of names rather than as directory listings.
+    """
+    return sorted(path.relative_to(root) for path in root.rglob("*"))
+
+
 def _tree() -> list[Path]:
     """Return every path under the fixture directory.
 
     Returns
     -------
     list[Path]
-        The fixture tree's paths, relative to it and sorted, so two snapshots
-        compare as sets of names rather than as directory listings.
+        The fixture tree's paths, relative to it and sorted.
     """
-    return sorted(path.relative_to(_FIXTURES) for path in _FIXTURES.rglob("*"))
+    return _paths(_FIXTURES)
 
 
 def test_a_met_matrix_exits_zero(tmp_path: Path) -> None:
@@ -300,6 +319,31 @@ def test_the_run_leaves_the_fixture_tree_untouched(tmp_path: Path) -> None:
     assert not (_FIXTURES / "seen.log").exists(), (
         "and the stub's record went to the scratch directory it was given"
     )
+
+
+def test_a_run_writes_only_the_traces_it_was_asked_for(tmp_path: Path) -> None:
+    """The one addition a run may make to a model directory is a declared trace.
+
+    The plan's cleanliness requirement is about unintended writes, not about
+    ``--save-traces``: that flag exists to keep each counterexample's path as
+    reviewable evidence, so those files are the only addition a run may make.
+    The model is copied first, because the fixture tree is tracked and this
+    check is about what the run wrote rather than about the fixture.
+    """
+    model = tmp_path / "model"
+    shutil.copytree(_MODEL, model)
+    before = _paths(model)
+    fixture_before = _tree()
+    log = tmp_path / "seen.log"
+
+    result = _run("check", str(model), "--fizz", str(_FIZZ), "--save-traces", log=log)
+
+    assert result.returncode == 0, result.stderr
+    assert sorted(set(_paths(model)) - set(before)) == [
+        Path("traces"),
+        Path("traces/incident-1-BEventually.json"),
+    ], "only the declared counterexample trace is written"
+    assert _tree() == fixture_before, "and the tracked fixture tree is untouched"
 
 
 def test_the_stub_refuses_to_write_beside_itself(tmp_path: Path) -> None:

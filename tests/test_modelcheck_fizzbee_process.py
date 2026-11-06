@@ -295,6 +295,9 @@ def test_a_run_whose_graph_cannot_be_read_is_a_run_that_proved_nothing(
 
     assert isinstance(result, domain.Errored), "the run proved nothing"
     assert "could not be read" in result.detail, "and the reason names the read"
+    assert "the checker printed:\nValid Nodes: 4 Unique states: 4\n" in result.detail, (
+        "the transcript is kept because the scratch directory holding it is deleted"
+    )
 
 
 def test_a_graph_that_is_not_utf8_is_a_run_that_proved_nothing(
