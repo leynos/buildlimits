@@ -38,9 +38,11 @@ from modelcheck_e2e_cases import (
     MODEL,
     TIMEOUT_SECONDS,
     ambient,
+    assert_holds,
     check,
     contents,
     invocations,
+    persisted,
     run,
     tree,
 )
@@ -280,30 +282,30 @@ def test_an_unreadable_graph_reaches_the_persisted_record(tmp_path: Path) -> Non
     the model. The inherited environment is checked for the same reason — the
     adapter records what the checker printed, never what it was given.
     """
-    log = tmp_path / "seen.log"
-    records = tmp_path / "matrix.json"
     inherited_value = "s3cr3t-do-not-record"
 
-    result = check(
-        "--json",
-        str(records),
-        log=log,
-        MODELCHECK_E2E_ANSWER="unreadable",
-        MODELCHECK_E2E_SECRET=inherited_value,
+    status, written = persisted(
+        tmp_path, "unreadable", MODELCHECK_E2E_SECRET=inherited_value
     )
 
-    assert result.returncode == 1, "a run that proved nothing meets no expectation"
-    written = typ.cast("list[Record]", json.loads(records.read_text(encoding="utf-8")))
+    assert status == 1, "a run that proved nothing meets no expectation"
     assert {record["verdict"] for record in written} == {"error"}, (
         "every expectation's run is recorded as an error"
     )
     detail = typ.cast("str", written[0]["detail"])
-    assert "the error graph could not be read" in detail, "the reason names the read"
-    assert "the checker printed" in detail, "and the transcript is kept"
-    assert "reading <scratch>/model.fizz" in detail, "with the runner path replaced"
-    assert ".model-check" not in detail, "and no part of it left in the record"
+    assert_holds(
+        detail,
+        {
+            "the reason names the read": "the error graph could not be read",
+            "the transcript is kept": "the checker printed",
+            "the runner path is replaced": "reading <scratch>/model.fizz",
+            "the transcript is bounded and the cut stated": "first 4000 of",
+        },
+    )
+    assert ".model-check" not in detail, (
+        "no part of the runner path is left in the record"
+    )
     assert inherited_value not in detail, "nor any inherited environment value"
-    assert "first 4000 of" in detail, "the transcript is bounded and the cut stated"
     assert detail.count("x") < 5000, "so the whole runaway transcript is not kept"
     assert detail.endswith("…"), "and the omission is marked"
     assert typ.cast("float", written[0]["harness_seconds"]) >= 0.0, (
@@ -319,18 +321,19 @@ def test_a_malformed_graph_reaches_the_persisted_record(tmp_path: Path) -> None:
     the scratch directory holding it is deleted as the run returns and a
     maintainer diagnosing the checker's output needs to see what it wrote.
     """
-    log = tmp_path / "seen.log"
-    records = tmp_path / "matrix.json"
+    status, written = persisted(tmp_path, "malformed")
 
-    result = check("--json", str(records), log=log, MODELCHECK_E2E_ANSWER="malformed")
-
-    assert result.returncode == 1, "a run that proved nothing meets no expectation"
-    written = typ.cast("list[Record]", json.loads(records.read_text(encoding="utf-8")))
+    assert status == 1, "a run that proved nothing meets no expectation"
     detail = typ.cast("str", written[0]["detail"])
-    assert "the error graph could not be parsed" in detail, "the reason names the parse"
-    assert "the error graph held" in detail, "and the document is kept"
-    assert '{"not": "a list"}' in detail, "as the checker wrote it"
-    assert "the checker printed" in detail, "beside the transcript"
+    assert_holds(
+        detail,
+        {
+            "the reason names the parse": "the error graph could not be parsed",
+            "the document is kept": "the error graph held",
+            "as the checker wrote it": '{"not": "a list"}',
+            "beside the transcript": "the checker printed",
+        },
+    )
 
 
 def test_the_stub_refuses_to_write_beside_itself(tmp_path: Path) -> None:

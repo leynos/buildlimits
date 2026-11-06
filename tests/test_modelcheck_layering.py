@@ -37,6 +37,7 @@ PURE = (
     "ports",
     "service",
     "fixpoint",
+    "fixpoint_bounds",
     "fixpoint_failures",
     "selection",
 )
@@ -57,7 +58,9 @@ would be caught here rather than in a review.
 
 ``fixpoint`` repeats a run until its reading stops moving. It reaches the file,
 the process and the clock only through the ports it is handed, so it holds no
-handle of its own.
+handle of its own. ``fixpoint_bounds`` reads and rewrites the ``max_actions``
+bound that comparison doubles; a configuration and its bound are values, so it
+stays under the same rules.
 
 ``selection`` decides which of a matrix's judgements a ``--only`` selection
 reports. It reads no file and writes none, and it was moved out of the command

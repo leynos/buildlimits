@@ -68,11 +68,11 @@ The package is a hexagon:
 - **Pure modules** — `domain`, `expectations`, `materialize`, `frontmatter`,
   `drift`, `trace`, `report`, `records`, `ports`, `service`, `assertions`
   (which reads, requires and strips the assertions a configuration names),
-  `fixpoint` with `fixpoint_failures` (the doubled-bound comparison and the
-  evidence a failed comparison carries), and `selection` (the `--only` policy).
-  A structural test walks their syntax trees and fails on an import outside the
-  allowlist or on any call to a banned name, so purity is checked rather than
-  promised.
+  `fixpoint` with `fixpoint_bounds` (the bound the comparison reads and
+  doubles) and `fixpoint_failures` (the evidence a failed comparison carries),
+  and `selection` (the `--only` policy). A structural test walks their syntax
+  trees and fails on an import outside the allowlist or on any call to a banned
+  name, so purity is checked rather than promised.
 - **Adapters** — `fizzbee_process` (the only module that starts a process) with
   `fizzbee_process_group` (the group kill and the bounded wait for it),
   `fizzbee_output`, `fizzbee_graph`, `fizzbee_measurements` and
@@ -85,7 +85,9 @@ The package is a hexagon:
   that imports `buildlimits`).
 - **Driving adapter** — `cli.py` builds the Cyclopts application from adapter
   *factories*, so a test supplies doubles without a checker and without a model
-  directory. `__main__.py` is the only module that constructs the real adapters.
+  directory. `cli_outputs.py` holds the artefact and the traces that run
+  writes, beside the parsing that decides when to write them. `__main__.py` is
+  the only module that constructs the real adapters.
 
 Three consequences follow, and each is deliberate:
 

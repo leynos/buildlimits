@@ -15,7 +15,7 @@ anything else here holds helpers.
 import json
 import typing as typ
 
-from modelcheck_doubles import FixedSource
+from modelcheck_source_doubles import FixedSource
 
 from modelcheck import cli, domain
 from modelcheck.ports import CodeInventory

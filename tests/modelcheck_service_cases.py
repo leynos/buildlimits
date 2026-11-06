@@ -19,7 +19,7 @@ anything else here holds helpers.
 import typing as typ
 
 from modelcheck_cases import configuration
-from modelcheck_doubles import FixedSource
+from modelcheck_source_doubles import FixedSource
 
 from modelcheck import domain
 

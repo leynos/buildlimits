@@ -21,7 +21,8 @@ anything else here holds helpers.
 import dataclasses
 import typing as typ
 
-from modelcheck_doubles import FakeChecker, FixedSource
+from modelcheck_doubles import FakeChecker
+from modelcheck_source_doubles import FixedSource
 
 from modelcheck import domain, report
 

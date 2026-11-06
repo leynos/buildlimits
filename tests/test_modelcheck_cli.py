@@ -32,7 +32,8 @@ from modelcheck_cli_cases import (
     holds,
     listed,
 )
-from modelcheck_doubles import FakeChecker, FixedSource
+from modelcheck_doubles import FakeChecker
+from modelcheck_source_doubles import FixedSource
 
 from modelcheck import cli, domain
 

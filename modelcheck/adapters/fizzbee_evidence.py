@@ -23,7 +23,13 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
     from pathlib import Path
 
-__all__ = ["redacted", "with_evidence"]
+__all__ = [
+    "redacted",
+    "timeout_detail",
+    "unreadable_graph",
+    "with_evidence",
+    "without_scratch",
+]
 
 _TRANSCRIPT_LIMIT = 4000
 """How many characters of one captured stream are kept."""
@@ -104,6 +110,95 @@ def with_evidence(reason: str, captures: cabc.Iterable[tuple[str, str]]) -> str:
     parts = [reason]
     parts.extend(_bounded(label, text) for label, text in captures if text.strip())
     return "\n".join(parts)
+
+
+def without_scratch(graph: str | None, directory: Path) -> str | None:
+    """Return an error graph with this run's scratch directory replaced.
+
+    Parameters
+    ----------
+    graph : str | None
+        The graph's text, or ``None`` when the run wrote none.
+    directory : pathlib.Path
+        The scratch directory this run owns.
+
+    Returns
+    -------
+    str | None
+        The graph with the runner path replaced, or ``None`` unchanged. A graph
+        that names no path is returned as it was, so the ordinary case is not
+        rewritten.
+
+    Examples
+    --------
+    >>> from pathlib import Path
+    >>> without_scratch(None, Path(".model-check/run-1")) is None
+    True
+    >>> graph = '{"state": {"p": ".model-check/run-1"}}'
+    >>> without_scratch(graph, Path(".model-check/run-1"))
+    '{"state": {"p": "<scratch>"}}'
+    """
+    if graph is None:
+        return None
+    return redacted(graph, directory)
+
+
+def unreadable_graph(error: OSError | UnicodeDecodeError) -> str:
+    r"""Return the reason a graph that exists could not be read.
+
+    Parameters
+    ----------
+    error : OSError | UnicodeDecodeError
+        The failure the read raised.
+
+    Returns
+    -------
+    str
+        The reason, naming the file and the operating system's own message.
+        The absolute path is deliberately not included: it is a runner path,
+        and the record it becomes is committed evidence about the model.
+
+    Examples
+    --------
+    >>> unreadable_graph(IsADirectoryError(21, "Is a directory"))
+    'the error graph could not be read: Is a directory'
+    >>> unreadable_graph(UnicodeDecodeError("utf-8", b"\\xff", 0, 1, "invalid"))
+    'the error graph could not be read: it is not UTF-8 text'
+    """
+    if isinstance(error, UnicodeDecodeError):
+        return "the error graph could not be read: it is not UTF-8 text"
+    return f"the error graph could not be read: {error.strerror or error}"
+
+
+def timeout_detail(timeout_seconds: float, stdout: str) -> str:
+    r"""Build the detail for a run the adapter stopped.
+
+    Parameters
+    ----------
+    timeout_seconds : float
+        The limit the run exceeded.
+    stdout : str
+        Everything the checker printed before it was killed, already redacted
+        of the scratch directory's path.
+
+    Returns
+    -------
+    str
+        The reason, followed by a bounded copy of the checker's own output when
+        there was any. Keeping it is the difference between a report naming the
+        state count the model had reached and a report saying only that time
+        ran out; bounding it keeps a runaway run's transcript out of the
+        artefact.
+
+    Examples
+    --------
+    >>> timeout_detail(600.0, "Nodes: 41\n").splitlines()[0]
+    'the checker did not finish within 600s'
+    >>> timeout_detail(600.0, "").splitlines()
+    ['the checker did not finish within 600s']
+    """
+    reason = f"the checker did not finish within {timeout_seconds:.0f}s"
+    return with_evidence(reason, (("the checker printed", stdout),))
 
 
 def _bounded(label: str, text: str) -> str:

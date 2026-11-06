@@ -20,8 +20,9 @@ import collections.abc as cabc
 import pytest
 from modelcheck_cases import trace
 from modelcheck_cli_cases import SOURCE, Inventory, app, holds
-from modelcheck_doubles import FakeChecker, FixedSource
+from modelcheck_doubles import FakeChecker
 from modelcheck_service_cases import Bounded, bounded_configuration, source
+from modelcheck_source_doubles import FixedSource
 
 from modelcheck import cli, domain, fixpoint, service
 

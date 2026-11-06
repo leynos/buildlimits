@@ -9,7 +9,9 @@ what stops it.
 
 The process-group kill is the third requirement, and it is asserted in
 :mod:`tests.test_modelcheck_fizzbee_kill` because its subject is a child of the
-launcher rather than the launcher's own output.
+launcher rather than the launcher's own output. The evidence a failed run keeps
+— the error graph it reads, refuses or redacts, and the transcript beside it —
+is asserted in :mod:`tests.test_modelcheck_fizzbee_evidence`.
 
 The stubs are shell scripts written by the test into a scratch directory, and
 each records what it was asked to do. A stub that merely exited would let an
@@ -17,12 +19,14 @@ adapter that never ran anything pass, so every test that cares reads the
 record the stub left.
 """
 
+import typing as typ
 from pathlib import Path
-
-import pytest
 
 from modelcheck import domain
 from modelcheck.adapters.fizzbee_process import FizzbeeChecker
+
+if typ.TYPE_CHECKING:
+    import pytest
 
 _STUB = """\
 #!/usr/bin/env bash
@@ -243,138 +247,6 @@ def test_a_failing_run_keeps_its_counterexample(tmp_path: Path) -> None:
     assert result.property_name == "BEventually", "and the assertion it violated"
 
 
-def test_an_error_graph_is_read_from_the_named_output_directory() -> None:
-    """A graph that is not there is absent, not an exception.
-
-    A run that passed, or a counterexample kind that carries no graph, writes no
-    file. Absence is ordinary, so it must not become an error that hides the
-    verdict the output already gave.
-    """
-    from modelcheck.adapters.fizzbee_process import _graph
-
-    assert _graph(Path("/nonexistent")) is None, "a missing graph is absent, not raised"
-
-
-def test_an_unreadable_error_graph_is_reported_rather_than_absent(
-    tmp_path: Path,
-) -> None:
-    """A graph that exists but cannot be read is an error, not a missing graph.
-
-    Only absence is ordinary: a permission or I/O failure means the evidence the
-    counterexample needs is missing for a reason the run report must name.
-    Reporting it as absent would turn a broken read into a pass, or into a
-    finding it cannot support.
-    """
-    from modelcheck.adapters.fizzbee_process import _graph
-
-    (tmp_path / "error-graph.json").mkdir()
-
-    with pytest.raises(IsADirectoryError):
-        _graph(tmp_path)
-
-
-def test_a_run_whose_graph_cannot_be_read_is_a_run_that_proved_nothing(
-    tmp_path: Path,
-) -> None:
-    """An unreadable graph is reported as an error, not as a counterexample.
-
-    The adapter is the only place that can tell absence from a failed read, and
-    the difference decides whether a violation is reported with evidence or
-    with a trace kind nobody established. A directory where the graph should be
-    is the cheapest unreadable graph to produce.
-    """
-    _stub(
-        tmp_path,
-        "#!/usr/bin/env bash\n"
-        "mkdir -p out/error-graph.json\n"
-        "printf 'Valid Nodes: 4 Unique states: 4\\n"
-        "FAILED: Liveness check failed\\n'\n",
-    )
-
-    result = FizzbeeChecker(tmp_path / "fizz").check(_spec())
-
-    assert isinstance(result, domain.Errored), "the run proved nothing"
-    assert "could not be read" in result.detail, "and the reason names the read"
-    assert "the checker printed:\nValid Nodes: 4 Unique states: 4\n" in result.detail, (
-        "the transcript is kept because the scratch directory holding it is deleted"
-    )
-
-
-def test_a_graph_that_is_not_utf8_is_a_run_that_proved_nothing(
-    tmp_path: Path,
-) -> None:
-    """A graph nobody can decode is an error, not a missing graph.
-
-    Decoding happens while the file is read, so the failure arrives as a
-    ``UnicodeDecodeError`` rather than an ``OSError``. The adapter must treat
-    it as unreadable evidence rather than letting it escape as a traceback.
-    """
-    _stub(
-        tmp_path,
-        "#!/usr/bin/env bash\n"
-        "mkdir -p out\n"
-        "printf '\\xff\\xfe' > out/error-graph.json\n"
-        "printf 'Valid Nodes: 4 Unique states: 4\\n"
-        "FAILED: Liveness check failed\\n'\n",
-    )
-
-    result = FizzbeeChecker(tmp_path / "fizz").check(_spec())
-
-    assert isinstance(result, domain.Errored), "the run proved nothing"
-    assert "could not be read" in result.detail, "and the reason names the read"
-
-
-def test_a_graph_that_is_not_json_is_a_run_that_proved_nothing(
-    tmp_path: Path,
-) -> None:
-    """A graph that parses as nothing is refused at the same boundary.
-
-    The text is readable, so the failure happens in the parser rather than the
-    reader. A violation whose path cannot be read is reported as a run that
-    proved nothing, so no shape-specific expectation can be met by it.
-    """
-    _stub(
-        tmp_path,
-        "#!/usr/bin/env bash\n"
-        "mkdir -p out\n"
-        "printf '{not json' > out/error-graph.json\n"
-        "printf 'Valid Nodes: 4 Unique states: 4\\n"
-        "FAILED: Liveness check failed\\n'\n",
-    )
-
-    result = FizzbeeChecker(tmp_path / "fizz").check(_spec())
-
-    assert isinstance(result, domain.Errored), "the run proved nothing"
-    assert "could not be parsed" in result.detail, "and the reason names the parse"
-
-
-def test_a_scratch_path_in_the_error_graph_is_redacted(tmp_path: Path) -> None:
-    """A graph kept as evidence is redacted like the transcript beside it.
-
-    The graph is checker-written text about the model, but it is written into
-    the run's scratch directory and can name that directory. Discarded as
-    evidence it would put a runner path into the committed record exactly as a
-    printed one would, so the adapter replaces it before the text leaves.
-    """
-    _stub(
-        tmp_path,
-        "#!/usr/bin/env bash\n"
-        "mkdir -p out\n"
-        'printf \'{"state": "%s"}\' "$PWD" > out/error-graph.json\n'
-        "printf 'Valid Nodes: 4 Unique states: 4\\n"
-        "FAILED: Liveness check failed\\n'\n",
-    )
-
-    result = FizzbeeChecker(tmp_path / "fizz").check(_spec())
-
-    assert isinstance(result, domain.Errored), "a mapping is not an error graph"
-    assert "the error graph could not be parsed" in result.detail, (
-        "the refusal names the parse"
-    )
-    assert '{"state": "<scratch>"}' in result.detail, "and the runner path is replaced"
-    assert ".model-check" not in result.detail, "with no part of it left behind"
-
-
 def test_a_run_that_proved_nothing_records_the_harness_time(tmp_path: Path) -> None:
     """A run with no verdict still has a duration, and it is the harness's.
 
@@ -405,26 +277,6 @@ def test_a_timed_out_run_records_the_harness_time(tmp_path: Path) -> None:
     assert "did not finish within" in result.detail, "and the reason names the limit"
     assert result.harness_seconds is not None, "the harness timed the run"
     assert result.harness_seconds >= 0.2, "for at least as long as the limit"
-
-
-def test_a_scratch_path_the_checker_printed_is_redacted(tmp_path: Path) -> None:
-    """A runner path is not evidence about the model, so it is replaced.
-
-    The scratch directory's absolute path identifies this machine and this run
-    and nothing about the model. A record that carried it would put a runner
-    path into an artefact a maintainer commits, so the adapter replaces it
-    before the text becomes a diagnostic.
-    """
-    fizz = _stub(
-        tmp_path,
-        "#!/usr/bin/env bash\nprintf 'reading %s/model.fizz\\n' \"$PWD\"\n",
-    )
-
-    result = FizzbeeChecker(fizz).check(_spec())
-
-    assert isinstance(result, domain.Errored), "no verdict line is an error"
-    assert "<scratch>/model.fizz" in result.detail, "the path is replaced"
-    assert ".model-check" not in result.detail, "and the runner path is gone"
 
 
 def test_a_relative_launcher_is_resolved_before_the_run_starts(

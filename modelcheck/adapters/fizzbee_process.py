@@ -34,7 +34,13 @@ import time
 import typing as typ
 from pathlib import Path
 
-from modelcheck.adapters.fizzbee_evidence import redacted, with_evidence
+from modelcheck.adapters.fizzbee_evidence import (
+    redacted,
+    timeout_detail,
+    unreadable_graph,
+    with_evidence,
+    without_scratch,
+)
 from modelcheck.adapters.fizzbee_output import parse_output
 from modelcheck.adapters.fizzbee_process_group import kill_group, stopped
 from modelcheck.domain import Errored, Stopped
@@ -179,7 +185,7 @@ class FizzbeeChecker:
             return Errored(f"the checker could not be started: {error}")
         stdout = redacted(completed.stdout.decode(errors="replace"), directory)
         if completed.timed_out:
-            return Errored(_timed_out(self.timeout_seconds, stdout))
+            return Errored(timeout_detail(self.timeout_seconds, stdout))
         try:
             graph = _graph(output)
         except (OSError, UnicodeDecodeError) as error:
@@ -188,11 +194,11 @@ class FizzbeeChecker:
             # graph could not be read.
             return Errored(
                 with_evidence(
-                    _unreadable_graph(error),
+                    unreadable_graph(error),
                     (("the checker printed", stdout),),
                 )
             )
-        graph_text = _without_scratch(graph, directory)
+        graph_text = without_scratch(graph, directory)
         return parse_output(stdout, completed.status, graph_text)
 
     def _run(self, directory: Path, output: Path) -> _Completed:
@@ -297,94 +303,6 @@ def _observed(result: CheckResult, seconds: float) -> CheckResult:
     if isinstance(result, (Stopped, Errored)):
         return dc.replace(result, harness_seconds=seconds)
     return result
-
-
-def _without_scratch(graph: str | None, directory: Path) -> str | None:
-    """Return an error graph with this run's scratch directory replaced.
-
-    Parameters
-    ----------
-    graph : str | None
-        The graph's text, or ``None`` when the run wrote none.
-    directory : pathlib.Path
-        The scratch directory this run owns.
-
-    Returns
-    -------
-    str | None
-        The graph with the runner path replaced, or ``None`` unchanged. A graph
-        that names no path is returned as it was, so the ordinary case is not
-        rewritten.
-
-    Examples
-    --------
-    >>> _without_scratch(None, Path(".model-check/run-1")) is None
-    True
-    >>> graph = '{"state": {"p": ".model-check/run-1"}}'
-    >>> _without_scratch(graph, Path(".model-check/run-1"))
-    '{"state": {"p": "<scratch>"}}'
-    """
-    if graph is None:
-        return None
-    return redacted(graph, directory)
-
-
-def _unreadable_graph(error: OSError | UnicodeDecodeError) -> str:
-    r"""Return the reason a graph that exists could not be read.
-
-    Parameters
-    ----------
-    error : OSError | UnicodeDecodeError
-        The failure the read raised.
-
-    Returns
-    -------
-    str
-        The reason, naming the file and the operating system's own message.
-        The absolute path is deliberately not included: it is a runner path,
-        and the record it becomes is committed evidence about the model.
-
-    Examples
-    --------
-    >>> _unreadable_graph(IsADirectoryError(21, "Is a directory"))
-    'the error graph could not be read: Is a directory'
-    >>> _unreadable_graph(UnicodeDecodeError("utf-8", b"\\xff", 0, 1, "invalid"))
-    'the error graph could not be read: it is not UTF-8 text'
-    """
-    if isinstance(error, UnicodeDecodeError):
-        return "the error graph could not be read: it is not UTF-8 text"
-    return f"the error graph could not be read: {error.strerror or error}"
-
-
-def _timed_out(timeout_seconds: float, stdout: str) -> str:
-    r"""Build the detail for a run the adapter stopped.
-
-    Parameters
-    ----------
-    timeout_seconds : float
-        The limit the run exceeded.
-    stdout : str
-        Everything the checker printed before it was killed, already redacted
-        of the scratch directory's path.
-
-    Returns
-    -------
-    str
-        The reason, followed by a bounded copy of the checker's own output when
-        there was any. Keeping it is the difference between a report naming the
-        state count the model had reached and a report saying only that time
-        ran out; bounding it keeps a runaway run's transcript out of the
-        artefact.
-
-    Examples
-    --------
-    >>> _timed_out(600.0, "Nodes: 41\n").splitlines()[0]
-    'the checker did not finish within 600s'
-    >>> _timed_out(600.0, "").splitlines()
-    ['the checker did not finish within 600s']
-    """
-    reason = f"the checker did not finish within {timeout_seconds:.0f}s"
-    return with_evidence(reason, (("the checker printed", stdout),))
 
 
 def _scratch() -> Path:

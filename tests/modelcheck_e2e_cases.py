@@ -11,9 +11,16 @@ convention in ``docs/repository-layout.md``: ``test_*.py`` modules hold tests,
 anything else here holds helpers.
 """
 
+import json
 import os
 import subprocess
+import typing as typ
 from pathlib import Path
+
+import pytest
+
+if typ.TYPE_CHECKING:
+    from modelcheck_artefacts import Record
 
 ROOT = Path(__file__).resolve().parents[1]
 """The checkout root, which is where ``uv run`` finds the project."""
@@ -126,6 +133,67 @@ def check(*extra: str, log: Path, **overrides: str) -> subprocess.CompletedProce
         The finished run.
     """
     return run("check", str(MODEL), "--fizz", str(FIZZ), *extra, log=log, **overrides)
+
+
+def persisted(
+    tmp_path: Path, answer: str, **overrides: str
+) -> tuple[int, list[Record]]:
+    """Run the matrix with one stub answer and read the record it persisted.
+
+    Parameters
+    ----------
+    tmp_path : pathlib.Path
+        The test's scratch directory; the record and the stub's log both go
+        here rather than beside the fixture.
+    answer : str
+        The stub's ``MODELCHECK_E2E_ANSWER``, which selects the checker output
+        the run replays.
+    **overrides : str
+        Further environment variables for this run.
+
+    Returns
+    -------
+    tuple[int, list[Record]]
+        The command's exit status and the records it wrote.
+    """
+    records = tmp_path / "matrix.json"
+    result = check(
+        "--json",
+        str(records),
+        log=tmp_path / "seen.log",
+        MODELCHECK_E2E_ANSWER=answer,
+        **overrides,
+    )
+    written = typ.cast("list[Record]", json.loads(records.read_text(encoding="utf-8")))
+    return result.returncode, written
+
+
+def assert_holds(text: str, expected: dict[str, str]) -> None:
+    """Assert that ``text`` contains each phrase, naming the claim that failed.
+
+    Parameters
+    ----------
+    text : str
+        The diagnostic being checked.
+    expected : dict[str, str]
+        Each claim a maintainer should be able to make about the text, mapped
+        to the phrase that establishes it. The claim is the failure message,
+        because a bare phrase match does not say why the phrase matters.
+
+    Notes
+    -----
+    Each phrase is a distinct behavioural claim about the record — the reason
+    names the read, the transcript is kept, the runner path is replaced — so
+    this is not a snapshot of a rendered document. A snapshot would pin the
+    transcript's four thousand characters and the reader would still have to
+    work out which part carries which claim.
+    """
+    missing = {
+        claim: phrase for claim, phrase in expected.items() if phrase not in text
+    }
+
+    if missing:
+        pytest.fail(f"the record omits {missing}")
 
 
 def invocations(log: Path) -> list[tuple[str, str]]:

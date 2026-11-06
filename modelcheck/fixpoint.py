@@ -15,24 +15,18 @@ the configurations and the checker all arrive through the ports, which is what
 lets the comparison be exercised against a recording.
 """
 
-import collections.abc as cabc
 import dataclasses as dc
 import typing as typ
 
 from modelcheck.domain import Errored, MaterializeError, Passed
 from modelcheck.expectations import only_failures
+from modelcheck.fixpoint_bounds import FIXPOINT_FACTOR, declared_bound, doubled
 from modelcheck.fixpoint_failures import FixpointError, FixpointFailure, Stage
 from modelcheck.materialize import materialize
 
 if typ.TYPE_CHECKING:
     from modelcheck.domain import Configuration
     from modelcheck.ports import ConfigurationSource, ModelChecker
-
-_ACTION_BOUND = "max_actions"
-"""The frontmatter bound the fixpoint check doubles."""
-
-_FIXPOINT_FACTOR = 2
-"""What the bound is multiplied by to test whether exploration was truncated."""
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -75,7 +69,7 @@ class Fixpoint:
     @property
     def doubled_bound(self) -> int:
         """The bound the doubled run was given."""
-        return self.bound * _FIXPOINT_FACTOR
+        return self.bound * FIXPOINT_FACTOR
 
     @property
     def is_stable(self) -> bool:
@@ -234,19 +228,19 @@ def _compared(
     ------
     MaterializeError
         If the configuration declares no ``max_actions`` bound.
-    """  # ruff: ignore[docstring-extraneous-exception] - _doubled raises it.
+    """  # ruff: ignore[docstring-extraneous-exception] - doubled() raises it.
     declared = _pass_run(text, configuration, "declared", checker)
     if isinstance(declared, FixpointFailure):
         return None, (declared,)
-    doubled = _pass_run(text, _doubled(configuration), "doubled", checker)
-    if isinstance(doubled, FixpointFailure):
-        return None, (doubled,)
+    doubled_run = _pass_run(text, doubled(configuration), "doubled", checker)
+    if isinstance(doubled_run, FixpointFailure):
+        return None, (doubled_run,)
     return (
         Fixpoint(
             configuration.name,
-            _declared_bound(configuration),
+            declared_bound(configuration),
             declared,
-            doubled,
+            doubled_run,
         ),
         (),
     )
@@ -286,134 +280,7 @@ def _pass_run(
     return FixpointFailure(
         configuration.name,
         stage,
-        _declared_bound(configuration),
+        declared_bound(configuration),
         spec.fairness_in_force,
         result,
     )
-
-
-def _doubled(configuration: Configuration) -> Configuration:
-    """Return the configuration with its ``max_actions`` bound doubled.
-
-    Parameters
-    ----------
-    configuration : Configuration
-        The variant to double.
-
-    Returns
-    -------
-    Configuration
-        The same variant with twice the exploration bound. A configuration
-        that declares no integer ``max_actions`` is refused by
-        :func:`_declared_bound`, since the run would then have no bound the
-        check could compare.
-    """
-    bound = _declared_bound(configuration)
-    options = {
-        **configuration.options,
-        "options": {
-            **_options(configuration),
-            _ACTION_BOUND: bound * _FIXPOINT_FACTOR,
-        },
-    }
-    return dc.replace(configuration, options=options)
-
-
-def _declared_bound(configuration: Configuration) -> int:
-    """Return the integer ``max_actions`` bound a configuration declares.
-
-    Parameters
-    ----------
-    configuration : Configuration
-        The variant to read.
-
-    Returns
-    -------
-    int
-        The bound the run is given, and the number the comparison doubles.
-
-    Raises
-    ------
-    MaterializeError
-        If the frontmatter declares no integer ``max_actions``, since the run
-        would then have no bound the check could compare.
-    """
-    bound = _options(configuration).get(_ACTION_BOUND)
-    if not _is_int(bound):
-        raise MaterializeError(_missing_bound_message(configuration))
-    return bound
-
-
-def _options(configuration: Configuration) -> cabc.Mapping[str, object]:
-    """Return the frontmatter's ``options`` table.
-
-    Parameters
-    ----------
-    configuration : Configuration
-        The variant to read.
-
-    Returns
-    -------
-    collections.abc.Mapping[str, object]
-        The table the bound is declared in.
-
-    Raises
-    ------
-    MaterializeError
-        If the frontmatter has no ``options`` table, so no bound could be
-        declared at all.
-    """
-    bounds = configuration.options.get("options")
-    if not isinstance(bounds, cabc.Mapping):
-        raise MaterializeError(_missing_bound_message(configuration))
-    return bounds
-
-
-def _missing_bound_message(configuration: Configuration) -> str:
-    """Return the refusal for a configuration with no usable action bound.
-
-    The message is built here so the two readers that can find no bound refuse
-    in the same words. The caller raises :class:`MaterializeError` itself, so
-    each docstring names the exception it really raises.
-
-    Parameters
-    ----------
-    configuration : Configuration
-        The variant that declares none.
-
-    Returns
-    -------
-    str
-        The refusal, naming the configuration and the key it lacks.
-    """
-    return (
-        f"configuration {configuration.name!r} declares no integer "
-        f"{_ACTION_BOUND!r} to double"
-    )
-
-
-def _is_int(value: object) -> typ.TypeGuard[int]:
-    """Report whether a decoded TOML value is a genuine integer bound.
-
-    ``bool`` is a subclass of ``int`` in Python, so ``max_actions = true``
-    would otherwise be doubled to ``2`` and compared as a bound. The check is
-    a query so the refusal above reads as one condition, and the guard tells a
-    type checker what the refusal has already established: the value being
-    doubled is an ``int``, not an opaque decoded TOML value.
-
-    Parameters
-    ----------
-    value : object
-        The decoded value to classify.
-
-    Returns
-    -------
-    typing.TypeGuard[int]
-        Whether the value is an integer and not a boolean.
-
-    Examples
-    --------
-    >>> _is_int(8), _is_int(True), _is_int("8")
-    (True, False, False)
-    """
-    return isinstance(value, int) and not isinstance(value, bool)

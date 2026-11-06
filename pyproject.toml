@@ -1677,19 +1677,28 @@ reason = "Matching import lists: each module names the protocol or port symbols 
 [[tool.duplication_gate.allow]]
 members = [
     "tests/modelcheck_cases.py",
+    "modelcheck/cli_outputs.py",
+    "tests/outcome_store_helpers.py",
     "tests/test_group_drain_metrics.py",
     "buildlimits/supervisor_wiring.py",
     "modelcheck/expectations.py",
     "modelcheck/records.py",
+    "modelcheck/report.py",
     "tests/modelcheck_service_cases.py",
     "tests/test_cache_recovery_telemetry.py",
     "tests/test_recovery_roots_deadline.py",
     "buildlimits/group_recovery.py",
-    "modelcheck/report.py",
     "tests/differential_trace_test_helpers.py",
-    "tests/modelcheck_doubles.py",
+    "modelcheck/cli.py",
 ]
 reason = "Matching import lists: each module names the collaborators, protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies. The family spans production, package and test-support modules, so no single helper could hold it."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_modelcheck_fizzbee_kill.py",
+    "tests/test_modelcheck_fizzbee_evidence.py",
+]
+reason = "Matching import lists: both modules drive the same process adapter and import the stub helpers its sibling test module owns, and a re-export module would hide that dependency behind a name that says nothing about which adapter is under test."
 
 [[tool.duplication_gate.allow]]
 members = [
