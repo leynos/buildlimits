@@ -1099,8 +1099,19 @@ explicitly.
     400-line limit and change no behaviour.
   - Focused validation on the working tree: 67 tests and 1 snapshot pass
     across the layering, evidence, fixpoint and command-line suites and the
-    changed modules' doctests. Repository gates are delegated to the
-    scrutineer.
+    changed modules' doctests.
+  - All thirteen commit gates pass on the committed head `6b3b227`, with the
+    working tree clean before and after: `check-lock`, `check-fmt`,
+    `markdownlint`, `nixie`, `lint`, `typecheck`, `test` (3175 passed, 73
+    skipped, 72 snapshots), `audit`, `lint-actions`, `validate`,
+    `model-fidelity`, `test-workflow-contracts`, and `model-check` (coupling
+    10/10 and transaction 14/14 expectations met, both fixpoints stable).
+    Hosted `act-validation`, `lint-test` and the model check are green on the
+    same head.
+  - The four findings are answered in their own threads with the commit that
+    addresses each. CodeRabbit reported `Review paused` on the new head, so one
+    review request is queued through `comenq`; the review of this head is
+    pending, not complete.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
