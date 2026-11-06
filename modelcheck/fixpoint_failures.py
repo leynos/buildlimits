@@ -16,7 +16,7 @@ value, like every other result the package judges.
 import dataclasses as dc
 import typing as typ
 
-from modelcheck.domain import MaterializeError
+from modelcheck.domain import Errored, MaterializeError
 
 if typ.TYPE_CHECKING:
     from modelcheck.domain import CheckResult
@@ -24,8 +24,14 @@ if typ.TYPE_CHECKING:
 
 __all__ = ["FixpointError", "FixpointFailure", "Stage"]
 
-type Stage = typ.Literal["declared", "doubled"]
-"""Which of a configuration's two comparison runs failed."""
+type Stage = typ.Literal["declared", "doubled", "materialize"]
+"""Which part of a configuration's comparison failed.
+
+``declared`` and ``doubled`` name the two runs. ``materialize`` means the
+configuration could not be turned into a run at all — a constant the model does
+not declare, or no ``max_actions`` bound to double — so no bound was ever
+given and the failure is about the configuration rather than about a run.
+"""
 
 _ACTION_BOUND = "max_actions"
 """The frontmatter bound the fixpoint check doubles."""
@@ -40,9 +46,11 @@ class FixpointFailure:
     configuration : str
         The configuration compared.
     stage : Stage
-        Whether the declared-bound or the doubled-bound run failed.
-    bound : int
-        The ``max_actions`` value that run was given.
+        Whether the declared-bound or the doubled-bound run failed, or that
+        the configuration could not be materialized at all.
+    bound : int | None
+        The ``max_actions`` value that run was given, or ``None`` when the
+        configuration failed before a bound could be read.
     fairness : tuple[str, ...]
         Every fairness tag the run carried, as the matrix records it.
     result : modelcheck.domain.CheckResult
@@ -53,7 +61,7 @@ class FixpointFailure:
 
     configuration: str
     stage: Stage
-    bound: int
+    bound: int | None
     fairness: tuple[str, ...]
     result: CheckResult
 
@@ -96,13 +104,35 @@ def _failure_message(failures: tuple[FixpointFailure, ...]) -> str:
     Returns
     -------
     str
-        One clause per failure, naming the configuration and the bound it was
-        given. The result itself is not quoted: it is in the error's
-        ``failures`` and in the artefact, and a checker transcript can be long.
+        One clause per failure. Each names the configuration, and says why no
+        state count could be compared. The result itself is not quoted: it is
+        in the error's ``failures`` and in the artefact, and a checker
+        transcript can be long.
     """
-    reported = "; ".join(
+    return "; ".join(_clause(failure) for failure in failures)
+
+
+def _clause(failure: FixpointFailure) -> str:
+    """Return the sentence one failure contributes to the error's message.
+
+    Parameters
+    ----------
+    failure : FixpointFailure
+        The comparison run that did not pass.
+
+    Returns
+    -------
+    str
+        A clause naming the configuration and, for a run, the stage and bound
+        it was given. A configuration that could not be materialized has no
+        bound, so its clause quotes the materializer's own short reason
+        instead; that reason already names the configuration and the missing
+        key, which are the facts a reader needs to fix it.
+    """
+    if failure.bound is None and isinstance(failure.result, Errored):
+        return f"{failure.result.detail}, so it has no state count to compare"
+    return (
         f"configuration {failure.configuration!r} did not pass at its "
-        f"{failure.stage} bound ({_ACTION_BOUND}={failure.bound})"
-        for failure in failures
+        f"{failure.stage} bound ({_ACTION_BOUND}={failure.bound}), so its "
+        f"state count cannot be compared"
     )
-    return f"{reported}, so its state count cannot be compared"

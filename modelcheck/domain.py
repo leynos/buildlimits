@@ -123,9 +123,18 @@ class Stopped:
     ----------
     detail : str
         The line the interruption was read from.
+    harness_seconds : float | None
+        Wall-clock seconds the harness spent on the run, when the adapter
+        measured them. A stopped run reports no exploration duration of its
+        own, so this is the only timing it has; it is deliberately a separate
+        field from ``elapsed_seconds``, which is the duration the checker
+        reported for an exploration that completed. ``None`` means the
+        result was built by a caller that did not measure one, such as a
+        parser tested against a recording.
     """
 
     detail: str
+    harness_seconds: float | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -136,9 +145,15 @@ class Errored:
     ----------
     detail : str
         The line, exit status or parse diagnostic the error was read from.
+    harness_seconds : float | None
+        Wall-clock seconds the harness spent on the run, when the adapter
+        measured them, for the same reason a stopped run records one: the
+        checker reports no exploration duration for a run that never
+        produced a verdict.
     """
 
     detail: str
+    harness_seconds: float | None = None
 
 
 type CheckResult = Passed | Counterexample | Stopped | Errored

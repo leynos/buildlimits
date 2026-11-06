@@ -1172,8 +1172,13 @@ tracked file. `make model-check` also writes `.model-check/coupling.json` and
 `--save-traces` as well, so each counterexample's normalized path is kept under
 `models/admission/<half>/traces/`; that directory is not ignored, because a
 maintainer may commit a trace as evidence, and after a run it shows up as
-untracked until they decide. Those tests are opt-in because they need the
-binary:
+untracked until they decide. A failed comparison's counterexample is kept the
+same way, named `<configuration>-fixpoint-<stage>.json` so it sits beside the
+matrix's trace for the same configuration rather than replacing it. The JSON
+record names the kind of result each failed run produced, and a run that
+reported no exploration time of its own is recorded with the time the harness
+waited for it, under a field of its own. Those tests are opt-in because they
+need the binary:
 
 ```bash
 BUILD_LIMITS_MODEL_CHECK=1 .venv/bin/pytest -m fizzbee tests

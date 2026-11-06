@@ -19,7 +19,7 @@ import collections.abc as cabc
 import dataclasses as dc
 import typing as typ
 
-from modelcheck.domain import MaterializeError, Passed
+from modelcheck.domain import Errored, MaterializeError, Passed
 from modelcheck.expectations import only_failures
 from modelcheck.fixpoint_failures import FixpointError, FixpointFailure, Stage
 from modelcheck.materialize import materialize
@@ -117,12 +117,14 @@ def run_fixpoint(
     Raises
     ------
     FixpointError
-        If a run that should pass does not. The error carries every failed
-        comparison's configuration, bound, result and diagnostic, so a caller
-        can save them before reporting the failure.
+        If a run that should pass does not, or a configuration cannot be
+        materialized. The error carries every failed comparison's
+        configuration, bound, result and diagnostic, so a caller can save them
+        before reporting the failure. A configuration that cannot be
+        materialized is recorded as a failure rather than raised on its own, so
+        it cannot discard the evidence of a comparison that already failed.
     MaterializeError
-        If the model declares no configurations or a configuration declares no
-        ``max_actions`` bound to double.
+        If the model declares no configurations to compare.
 
     Examples
     --------
@@ -154,17 +156,56 @@ def run_fixpoint(
         msg = "the model declares no configurations to compare"
         raise MaterializeError(msg)
     # Every comparable configuration is attempted before the refusal, so one
-    # failing comparison does not hide another's evidence.
-    compared = [
-        _compared(text, configuration, checker)
-        for configuration in configurations
-        if not only_failures(configuration)
-    ]
-    comparisons = tuple(found for found, _ in compared if found is not None)
-    failures = tuple(failure for _, found in compared for failure in found)
+    # failing comparison does not hide another's evidence. A configuration the
+    # materializer refuses is caught here for the same reason: it is evidence
+    # about that configuration, not a reason to discard the comparisons that
+    # already ran.
+    comparisons: list[Fixpoint] = []
+    failures: list[FixpointFailure] = []
+    for configuration in configurations:
+        if only_failures(configuration):
+            continue
+        try:
+            found, failed = _compared(text, configuration, checker)
+        except MaterializeError as error:
+            failures.append(_materialization_failure(configuration, error))
+            continue
+        if found is not None:
+            comparisons.append(found)
+        failures.extend(failed)
     if failures:
-        raise FixpointError(comparisons, failures)
-    return comparisons
+        raise FixpointError(tuple(comparisons), tuple(failures))
+    return tuple(comparisons)
+
+
+def _materialization_failure(
+    configuration: Configuration, error: MaterializeError
+) -> FixpointFailure:
+    """Return the failure of a configuration that could not be built.
+
+    Parameters
+    ----------
+    configuration : Configuration
+        The variant the materializer refused.
+    error : MaterializeError
+        The materializer's refusal, whose message names what the configuration
+        lacks.
+
+    Returns
+    -------
+    FixpointFailure
+        A failure at the ``materialize`` stage with no bound and no fairness in
+        force, because neither was ever reached. The refusal is carried as an
+        :class:`~modelcheck.domain.Errored` result so the artefact records it
+        the same way as a run that proved nothing.
+    """
+    return FixpointFailure(
+        configuration.name,
+        "materialize",
+        None,
+        (),
+        Errored(str(error)),
+    )
 
 
 def _compared(

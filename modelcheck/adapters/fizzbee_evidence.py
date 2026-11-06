@@ -21,11 +21,56 @@ import typing as typ
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    from pathlib import Path
 
-__all__ = ["with_evidence"]
+__all__ = ["redacted", "with_evidence"]
 
 _TRANSCRIPT_LIMIT = 4000
 """How many characters of one captured stream are kept."""
+
+_SCRATCH_PLACEHOLDER = "<scratch>"
+"""What the run's own scratch directory is replaced with in evidence.
+
+The directory's absolute path is a property of this machine and this run. It
+identifies nothing about the model, and a record that carried it would leak a
+runner path into an artefact a maintainer commits. The placeholder keeps the
+part of a message that matters — that something under the scratch directory
+could not be read — without the part that only makes sense on the host that
+ran it.
+"""
+
+
+def redacted(text: str, directory: Path) -> str:
+    """Return a run's output with its scratch directory path replaced.
+
+    Parameters
+    ----------
+    text : str
+        The checker's output, or a message built from a file under the scratch
+        directory.
+    directory : pathlib.Path
+        The directory this run owns, which is the only runner path the adapter
+        knows it created.
+
+    Returns
+    -------
+    str
+        The text with every occurrence of the directory's absolute path
+        replaced by :data:`_SCRATCH_PLACEHOLDER`. Both the path as given and
+        its resolved form are replaced, because the adapter may have been
+        handed a relative path while a diagnostic carries the absolute one.
+
+    Examples
+    --------
+    >>> from pathlib import Path
+    >>> scratch = Path(".model-check/run-1")
+    >>> redacted(f"open {scratch}/model.fizz failed", scratch)
+    'open <scratch>/model.fizz failed'
+    """
+    needles = {str(directory), str(directory.resolve())}
+    for needle in sorted(needles, key=len, reverse=True):
+        text = text.replace(needle, _SCRATCH_PLACEHOLDER)
+    return text
 
 
 def with_evidence(reason: str, captures: cabc.Iterable[tuple[str, str]]) -> str:

@@ -227,6 +227,41 @@ class FailsDoubled:
         return domain.Passed(8, 0.1, ())
 
 
+class CounterexampleDoubled:
+    """A checker that passes at the declared bound and violates at the doubled one.
+
+    The matrix therefore passes and only the fixpoint comparison fails, with a
+    real counterexample rather than a diagnostic. That is the case a saved
+    trace has to survive: the run that produced the path is the one the command
+    is failing on, and the matrix's own trace for the same configuration is a
+    different run.
+    """
+
+    def __init__(self) -> None:
+        """Hold the recording the doubled-bound run is answered with."""
+        self._violation = FakeChecker("lasso")
+
+    def check(self, spec: MaterializedSpec) -> CheckResult:
+        """Answer a pass at the declared bound, a lasso at the doubled one.
+
+        Parameters
+        ----------
+        spec : MaterializedSpec
+            The specification to answer.
+
+        Returns
+        -------
+        CheckResult
+            A pass for the declared run, and the recorded counterexample for
+            the doubled one.
+        """
+        from modelcheck import domain
+
+        if "max_actions: 16" in spec.text:
+            return self._violation.check(spec)
+        return domain.Passed(8, 0.1, ())
+
+
 class Verbatim:
     """A checker that answers with one fixed transcript.
 

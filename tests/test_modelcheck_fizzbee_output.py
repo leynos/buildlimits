@@ -335,3 +335,21 @@ def test_a_never_reached_line_is_a_pass_with_unsatisfied_probes() -> None:
     assert isinstance(result, domain.Passed), "exploration completed"
     assert result.unsatisfied_probes == ("StopIssued",), "the probe it did not reach"
     assert result.states == 4, "the run's own count, which the floor reads"
+
+
+def test_a_run_with_no_verdict_keeps_a_bounded_transcript() -> None:
+    """A runaway transcript is cut, and the cut is stated.
+
+    Output carrying no verdict is an error, and the transcript is the only
+    evidence of what the run printed. Keeping all of it would put a runaway
+    run's whole output into the artefact, so the parser keeps a fixed prefix
+    and says how much of the whole that is.
+    """
+    from modelcheck import domain
+    from modelcheck.adapters import fizzbee_output
+
+    result = fizzbee_output.parse_output("x" * 5000, 0, None)
+
+    assert isinstance(result, domain.Errored), "no verdict line is an error"
+    assert "first 4000 of 5000 characters" in result.detail, "the cut is stated"
+    assert result.detail.count("x") == 4000, "and only the prefix is kept"

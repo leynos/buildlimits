@@ -106,14 +106,15 @@ def parse_output(stdout: str, exit_status: int, error_graph: str | None) -> Chec
 
     A run that could not compile is never a pass, whatever else it printed.
 
-    >>> parse_output(ERROR + " Compilation failed\n" + PASSED + "\n", 0, None)
-    Errored(detail='Error: Compilation failed')
+    >>> result = parse_output(ERROR + " Compilation failed\n" + PASSED + "\n", 0, None)
+    >>> result.detail
+    'Error: Compilation failed'
 
     Output with no verdict line at all is an error rather than a silent pass.
 
     >>> result = parse_output("Model checking example.json\n", 0, None)
     >>> isinstance(result, Errored), result.detail.splitlines()[0]
-    (True, 'no verdict line in:')
+    (True, 'no verdict line in')
     """
     lines = stdout.splitlines()
     reason = _error(lines, exit_status)
@@ -129,7 +130,9 @@ def parse_output(stdout: str, exit_status: int, error_graph: str | None) -> Chec
         return Passed(states(stdout), elapsed(stdout), _probes(lines))
     if _mentions(lines, PASSED):
         return Passed(states(stdout), elapsed(stdout), ())
-    return Errored(f"no verdict line in:\n{stdout}")
+    return Errored(
+        with_evidence("no verdict line in", (("the checker printed", stdout),))
+    )
 
 
 def _error(lines: list[str], exit_status: int) -> str | None:

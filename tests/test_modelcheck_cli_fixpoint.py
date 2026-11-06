@@ -20,9 +20,10 @@ from modelcheck_cli_cases import (
     app,
     bounded,
     checked,
+    checked_in,
     checked_json,
 )
-from modelcheck_doubles import FailsDoubled, FakeChecker
+from modelcheck_doubles import CounterexampleDoubled, FailsDoubled, FakeChecker
 
 from modelcheck import cli, domain
 
@@ -124,3 +125,24 @@ def test_a_failed_comparison_is_written_to_the_artefact(
     )
     detail = typ.cast("str", fixpoint_record(records)["detail"])
     assert "doubled bound" in detail, "and its own diagnostic is kept"
+
+
+def test_a_failed_comparison_saves_its_counterexample_trace(tmp_path: Path) -> None:
+    """A comparison's counterexample is kept even without ``--json``.
+
+    The matrix saves its own traces before the comparison runs, so a comparison
+    that finds a counterexample at the doubled bound has nowhere to put it
+    unless the failure path saves one too. The file name carries the stage,
+    because the matrix's trace for the same configuration is a different run
+    and must not be overwritten by this one.
+    """
+    application = app([bounded()], CounterexampleDoubled())
+
+    with pytest.raises(domain.MaterializeError, match="doubled bound"):
+        checked_in(application, tmp_path, "--fixpoint", "--save-traces")
+
+    saved = tmp_path / "traces" / "head-fixpoint-doubled.json"
+    assert saved.exists(), "the failed comparison's path is saved"
+    record = json.loads(saved.read_text(encoding="utf-8"))
+    assert record["ending"] == "lasso", "with the shape the run reported"
+    assert record["steps"], "and the path it walked"

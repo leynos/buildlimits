@@ -162,6 +162,40 @@ def paths(root: Path) -> list[Path]:
     return sorted(path.relative_to(root) for path in root.rglob("*"))
 
 
+def contents(root: Path) -> dict[Path, bytes]:
+    """Return every file under a directory with the bytes it holds.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        The directory to read.
+
+    Returns
+    -------
+    dict[pathlib.Path, bytes]
+        Each file's path, relative to the root, mapped to its contents. A
+        listing of paths cannot tell a file that was rewritten from one that
+        was not, and a run that changed a model file in place would leave the
+        same set of names behind. Reading the bytes is what makes the
+        difference visible.
+
+    Examples
+    --------
+    >>> import tempfile
+    >>> from pathlib import Path
+    >>> with tempfile.TemporaryDirectory() as scratch:
+    ...     root = Path(scratch)
+    ...     _ = (root / "a.txt").write_text("a", encoding="utf-8")
+    ...     contents(root) == {Path("a.txt"): b"a"}
+    True
+    """
+    return {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
 def tree() -> list[Path]:
     """Return every path under the fixture directory.
 

@@ -49,6 +49,7 @@ if typ.TYPE_CHECKING:
     from modelcheck.domain import Judgement
     from modelcheck.fixpoint_failures import FixpointFailure
     from modelcheck.ports import CodeInventory, ConfigurationSource, ModelChecker
+    from modelcheck.trace import Trace
 
 __all__ = ["exit_status", "make_app"]
 
@@ -210,11 +211,13 @@ def make_app(  # pylint: disable=too-many-arguments  # ADR 008 supplies three ad
         print(report.render_report(chosen), end="")
         artefact = _Artefact(json_path, chosen)
         artefact.write()
-        if save_traces:
-            _save_traces(chosen, model_dir)
+        traces = _Traces(save_traces, model_dir)
+        traces.save(chosen)
         status = exit_status(results)
         if fixpoint:
-            return _compared(source, checker_factory(fizz), artefact, status)
+            return _compared(
+                source, checker_factory(fizz), _Outputs(artefact, traces), status
+            )
         return status
 
     @app.command
@@ -288,7 +291,7 @@ class _Artefact:
 def _compared(
     source: ConfigurationSource,
     checker: ModelChecker,
-    artefact: _Artefact,
+    outputs: _Outputs,
     status: int,
 ) -> int:
     """Return the status once every passing configuration has been compared.
@@ -299,8 +302,9 @@ def _compared(
         The model text and the configurations to compare.
     checker : ModelChecker
         The checker each comparison run is delegated to.
-    artefact : _Artefact
-        The record the matrix already wrote, and the rows it describes.
+    outputs : _Outputs
+        The artefact the matrix already wrote, and where a comparison's
+        counterexample path is kept.
     status : int
         The status the matrix alone produced.
 
@@ -316,44 +320,113 @@ def _compared(
     FixpointError
         If a configuration did not pass at one of its two bounds. The artefact
         is rewritten with the failed comparison before the error leaves,
-        because it was written before this check ran.
+        because it was written before this check ran, and a failed
+        comparison's counterexample is saved for the same reason: nothing
+        downstream of the exception would otherwise see it.
     """
     try:
         stable = run_fixpoint(source, checker)
     except FixpointError as error:
         print(report.render_fixpoint(error.comparisons, error.failures), end="")
-        artefact.write(error.failures, error.comparisons)
+        outputs.artefact.write(error.failures, error.comparisons)
+        outputs.traces.save_comparisons(error.failures)
         raise
     print(report.render_fixpoint(stable), end="")
-    artefact.write(comparisons=stable)
+    outputs.artefact.write(comparisons=stable)
     return status if all(found.is_stable for found in stable) else EXIT_UNMET
 
 
-def _save_traces(judgements: cabc.Sequence[Judgement], model_dir: Path) -> None:
-    """Write each counterexample's normalized path beside the model.
+@dc.dataclass(frozen=True, slots=True)
+class _Traces:
+    """Where a counterexample's normalized path is kept.
 
     A trace is written only for a counterexample, because only a
     counterexample has one. The file name is the configuration and the subject,
     so a re-run replaces its own trace rather than accumulating a directory
     full of timestamps, and a review of the change sees the paths that moved.
 
-    Parameters
-    ----------
-    judgements : collections.abc.Sequence[Judgement]
-        The judgements whose counterexamples to keep.
-    model_dir : pathlib.Path
-        The model directory; traces go under its ``traces/``.
+    Comparison traces carry their own stage in the name. The matrix has
+    already saved a trace for the same configuration and subject, and a
+    comparison run is a different run: without the stage, a failed comparison's
+    path would overwrite the matrix's counterexample rather than sit beside it.
     """
-    directory = model_dir / "traces"
-    for judgement in judgements:
-        if not isinstance(judgement.result, domain.Counterexample):
-            continue
+
+    enabled: bool
+    """Whether the run asked for traces at all."""
+
+    model_dir: Path
+    """The model directory; traces go under its ``traces/``."""
+
+    def save(self, judgements: cabc.Sequence[Judgement]) -> None:
+        """Write each matrix counterexample's normalized path.
+
+        Parameters
+        ----------
+        judgements : collections.abc.Sequence[Judgement]
+            The judgements whose counterexamples to keep.
+        """
+        if not self.enabled:
+            return
+        for judgement in judgements:
+            if isinstance(judgement.result, domain.Counterexample):
+                self._write(
+                    f"{judgement.configuration}-{subject(judgement.expectation)}",
+                    judgement.result.trace,
+                )
+
+    def save_comparisons(self, failures: cabc.Sequence[FixpointFailure]) -> None:
+        """Write each failed comparison's counterexample path.
+
+        Parameters
+        ----------
+        failures : collections.abc.Sequence[FixpointFailure]
+            The comparison runs that did not pass. Only those that produced a
+            counterexample have a path; a run that proved nothing, or a
+            configuration that could not be materialized, wrote none.
+        """
+        if not self.enabled:
+            return
+        for failure in failures:
+            if isinstance(failure.result, domain.Counterexample):
+                self._write(
+                    f"{failure.configuration}-fixpoint-{failure.stage}",
+                    failure.result.trace,
+                )
+
+    def _write(self, name: str, trace: Trace) -> None:
+        """Write one trace under the model directory's ``traces/``.
+
+        Parameters
+        ----------
+        name : str
+            The file's name, without the ``.json`` suffix.
+        trace : modelcheck.trace.Trace
+            The normalized path to write.
+        """
+        directory = self.model_dir / "traces"
         directory.mkdir(parents=True, exist_ok=True)
-        name = f"{judgement.configuration}-{subject(judgement.expectation)}"
-        record = records.trace_record(judgement.result.trace)
+        record = records.trace_record(trace)
         (directory / f"{name}.json").write_text(
             json.dumps(record, indent=2) + "\n", encoding="utf-8"
         )
+
+
+@dc.dataclass(frozen=True, slots=True)
+class _Outputs:
+    """What a run leaves behind for a maintainer to read.
+
+    The artefact and the traces are written from the same judgements and must
+    agree about what was found, so the comparison step is handed both together
+    rather than as two arguments it could pair with the wrong record. The
+    grouping is private to this module: nothing outside it decides where a run
+    keeps its evidence.
+    """
+
+    artefact: _Artefact
+    """The machine-readable record of the matrix and of each comparison."""
+
+    traces: _Traces
+    """Where each counterexample's normalized path is kept."""
 
 
 def _drift_report(

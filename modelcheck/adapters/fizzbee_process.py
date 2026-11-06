@@ -25,17 +25,19 @@ recordings of every shape the checker can print. This module only guarantees
 that the text it hands over is the whole output, and that no process is left.
 """
 
+import dataclasses as dc
 import os
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed argv, no shell.
 import tempfile
+import time
 import typing as typ
 from pathlib import Path
 
-from modelcheck.adapters.fizzbee_evidence import with_evidence
+from modelcheck.adapters.fizzbee_evidence import redacted, with_evidence
 from modelcheck.adapters.fizzbee_output import parse_output
 from modelcheck.adapters.fizzbee_process_group import kill_group, stopped
-from modelcheck.domain import Errored
+from modelcheck.domain import Errored, Stopped
 
 if typ.TYPE_CHECKING:
     from modelcheck.domain import CheckResult, MaterializedSpec
@@ -139,10 +141,12 @@ class FizzbeeChecker:
         True
         """
         directory = _scratch()
+        started = time.monotonic()
         try:
-            return self._checked(directory, spec)
+            result = self._checked(directory, spec)
         finally:
             shutil.rmtree(directory, ignore_errors=True)
+        return _observed(result, time.monotonic() - started)
 
     def _checked(self, directory: Path, spec: MaterializedSpec) -> CheckResult:
         """Write the specification, run it, and read what it left.
@@ -158,6 +162,14 @@ class FizzbeeChecker:
         -------
         CheckResult
             What the checker's output and error graph classify as.
+
+        Notes
+        -----
+        Both the transcript and the error graph are redacted of this run's
+        scratch directory. The graph is checker-written text that becomes
+        committed evidence — a trace file on a successful parse, a bounded
+        capture on a failed one — so a runner path left in it would travel into
+        the artefact the same way one printed to the transcript would.
         """
         (directory / _SPEC_NAME).write_text(spec.text, encoding="utf-8")
         output = directory / "out"
@@ -165,7 +177,7 @@ class FizzbeeChecker:
             completed = self._run(directory, output)
         except OSError as error:
             return Errored(f"the checker could not be started: {error}")
-        stdout = completed.stdout.decode(errors="replace")
+        stdout = redacted(completed.stdout.decode(errors="replace"), directory)
         if completed.timed_out:
             return Errored(_timed_out(self.timeout_seconds, stdout))
         try:
@@ -176,11 +188,12 @@ class FizzbeeChecker:
             # graph could not be read.
             return Errored(
                 with_evidence(
-                    f"the error graph could not be read: {error}",
+                    _unreadable_graph(error),
                     (("the checker printed", stdout),),
                 )
             )
-        return parse_output(stdout, completed.status, graph)
+        graph_text = _without_scratch(graph, directory)
+        return parse_output(stdout, completed.status, graph_text)
 
     def _run(self, directory: Path, output: Path) -> _Completed:
         """Run the launcher and wait for it, killing its group on timeout.
@@ -259,6 +272,90 @@ class _Completed(typ.NamedTuple):
     timed_out: bool
 
 
+def _observed(result: CheckResult, seconds: float) -> CheckResult:
+    """Attach the harness's own wall time to a run that produced no verdict.
+
+    A pass or a counterexample carries the exploration duration the checker
+    reported. A stopped or errored run reports none, so without this the one
+    timing such a run has would be lost. The field is named for the harness
+    rather than the checker, because it measures how long this adapter waited,
+    not how long the checker explored.
+
+    Parameters
+    ----------
+    result : CheckResult
+        The classified result.
+    seconds : float
+        Wall-clock seconds the run took, measured around the whole invocation.
+
+    Returns
+    -------
+    CheckResult
+        The result with ``harness_seconds`` set when it is a stopped or errored
+        run, and unchanged otherwise.
+    """
+    if isinstance(result, (Stopped, Errored)):
+        return dc.replace(result, harness_seconds=seconds)
+    return result
+
+
+def _without_scratch(graph: str | None, directory: Path) -> str | None:
+    """Return an error graph with this run's scratch directory replaced.
+
+    Parameters
+    ----------
+    graph : str | None
+        The graph's text, or ``None`` when the run wrote none.
+    directory : pathlib.Path
+        The scratch directory this run owns.
+
+    Returns
+    -------
+    str | None
+        The graph with the runner path replaced, or ``None`` unchanged. A graph
+        that names no path is returned as it was, so the ordinary case is not
+        rewritten.
+
+    Examples
+    --------
+    >>> _without_scratch(None, Path(".model-check/run-1")) is None
+    True
+    >>> graph = '{"state": {"p": ".model-check/run-1"}}'
+    >>> _without_scratch(graph, Path(".model-check/run-1"))
+    '{"state": {"p": "<scratch>"}}'
+    """
+    if graph is None:
+        return None
+    return redacted(graph, directory)
+
+
+def _unreadable_graph(error: OSError | UnicodeDecodeError) -> str:
+    r"""Return the reason a graph that exists could not be read.
+
+    Parameters
+    ----------
+    error : OSError | UnicodeDecodeError
+        The failure the read raised.
+
+    Returns
+    -------
+    str
+        The reason, naming the file and the operating system's own message.
+        The absolute path is deliberately not included: it is a runner path,
+        and the record it becomes is committed evidence about the model.
+
+    Examples
+    --------
+    >>> _unreadable_graph(IsADirectoryError(21, "Is a directory"))
+    'the error graph could not be read: Is a directory'
+    >>> _unreadable_graph(UnicodeDecodeError("utf-8", b"\\xff", 0, 1, "invalid"))
+    'the error graph could not be read: it is not UTF-8 text'
+    """
+    if isinstance(error, UnicodeDecodeError):
+        return "the error graph could not be read: it is not UTF-8 text"
+    return f"the error graph could not be read: {error.strerror or error}"
+
+
 def _timed_out(timeout_seconds: float, stdout: str) -> str:
     r"""Build the detail for a run the adapter stopped.
 
@@ -267,14 +364,17 @@ def _timed_out(timeout_seconds: float, stdout: str) -> str:
     timeout_seconds : float
         The limit the run exceeded.
     stdout : str
-        Everything the checker printed before it was killed.
+        Everything the checker printed before it was killed, already redacted
+        of the scratch directory's path.
 
     Returns
     -------
     str
-        The reason, followed by the checker's own output when there was any.
-        Keeping it is the difference between a report naming the state count
-        the model had reached and a report saying only that time ran out.
+        The reason, followed by a bounded copy of the checker's own output when
+        there was any. Keeping it is the difference between a report naming the
+        state count the model had reached and a report saying only that time
+        ran out; bounding it keeps a runaway run's transcript out of the
+        artefact.
 
     Examples
     --------
@@ -284,8 +384,7 @@ def _timed_out(timeout_seconds: float, stdout: str) -> str:
     ['the checker did not finish within 600s']
     """
     reason = f"the checker did not finish within {timeout_seconds:.0f}s"
-    printed = stdout.strip()
-    return f"{reason}\n{printed}" if printed else reason
+    return with_evidence(reason, (("the checker printed", stdout),))
 
 
 def _scratch() -> Path:

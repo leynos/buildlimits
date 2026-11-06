@@ -1028,10 +1028,35 @@ explicitly.
   - The architecture warning is declined for the second time, under D38: the
     model's _source_ syntax is the pure domain's input by design. The
     developer-documentation warning's ExecPlan half was already discharged in
-    D39 and D40; ADR 006 now carries an addendum recording D37 to D41.
+    D39 and D40; ADR 006 carries an addendum recording these decisions, grown
+    to D42 in the next round.
   - `make duplication` had failed on the four new import-list families the
     previous round introduced; the existing family was extended and three
     reasoned entries added, and the gate now reports 175 allowed exceptions.
+- [x] (2026-11-06) **Review round: the failed comparison's evidence and record
+    are complete.** The remaining-work list against head `10ebc8a` left five
+    items, recorded as D42.
+  - A failed comparison's counterexample is now saved whenever
+    `--save-traces` is set, with or without `--json`, under
+    `<configuration>-fixpoint-<stage>.json` so it cannot overwrite the
+    matrix's trace. `_Traces` carries both writes, and the end-to-end test
+    reads the comparison's own file.
+  - `run_fixpoint` records a configuration the materializer refuses as a
+    `materialize` failure and keeps going, so a later refusal no longer
+    discards an earlier comparison's failure.
+    `test_a_later_refusal_keeps_an_earlier_failure` is the regression.
+  - The record names the result type and keeps the harness's own timing apart
+    from the checker's exploration time; `tests/test_modelcheck_records.py`
+    pins the field contract.
+  - The error graph is redacted of the run's scratch directory before it
+    becomes evidence, and the unreadable and malformed paths are now exercised
+    through the command line into the persisted record.
+  - The cleanliness test compares the model directory's contents rather than
+    its paths, so a rewritten or deleted file is caught as well as an added
+    one.
+  - Focused validation on the working tree: 624 tests and 11 snapshots pass
+    across `tests/test_modelcheck_*.py`, `tests/modelcheck_*.py` and the
+    package's doctests. Repository gates are delegated to the scrutineer.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -2534,6 +2559,47 @@ explicitly.
     `test_a_stable_count_is_reported_as_stable`,
     `test_a_failed_comparison_exits_two_and_keeps_its_evidence` and
     [Migrating to 0.2.0](../migrating-to-0.2.0.md).
+
+- **D42. A failed comparison's record says what kind of result it produced,
+  and its evidence survives the exit.** _Decided 2026-11-06._
+  - Decision: `records.fixpoint_record` writes `result` — the concrete class of
+    the run's `CheckResult`, in lower case — beside the verdict, and writes
+    `harness_seconds` for a `Stopped` or `Errored` run that was timed by the
+    adapter, never as `elapsed_seconds`. `_Traces` becomes an object with
+    `save` and `save_comparisons`, so a failed comparison's counterexample is
+    kept as `<configuration>-fixpoint-<stage>.json` beside the matrix's own
+    trace instead of being discarded as the exception leaves. `FizzbeeChecker`
+    redacts its scratch directory from the error graph before the text becomes
+    evidence, on the same reasoning as the transcript. `run_fixpoint` records
+    a configuration the materializer refuses as a `materialize` failure and
+    keeps comparing the rest, so a later refusal cannot discard an earlier
+    comparison's evidence. `cli._compared` takes the artefact and the traces as
+    one `_Outputs` value, because both are the run's evidence and a step that
+    rewrites one writes the other. The end-to-end cleanliness test reads the
+    model directory's contents rather than its paths, so a rewritten or deleted
+    file is caught as well as an added one.
+  - Finding: the pre-merge checks on head `10ebc8a`, recorded in the
+    walkthrough comment, left five items. A `--fixpoint --save-traces` run lost
+    a failed comparison's trace, and the end-to-end test read the matrix's
+    trace instead. A later materialization refusal could discard an earlier
+    comparison's failure. A failed comparison's record named no result type and
+    had nowhere to put the harness's timing. The graph-error capture kept raw
+    text without redaction. The artefact tests did not exercise graph errors
+    through the command line, and compared paths rather than contents. The
+    scope exception raised at EP-M4 remains unratified, which the review asks
+    be kept open; EP-M2-E1 stays partially discharged.
+  - Reason: "failed" alone cannot tell a violation from a run that never
+    answered, and a record a tool must guess at is not the contract the
+    artefact claims to be. The graph is checker-written text that becomes
+    committed evidence, so a runner path in it would travel into the artefact
+    exactly as one printed to the transcript would.
+  - Evidence: `tests/test_modelcheck_records.py`,
+    `test_a_later_refusal_keeps_an_earlier_failure`,
+    `test_an_unreadable_graph_reaches_the_persisted_record`,
+    `test_a_malformed_graph_reaches_the_persisted_record`,
+    `test_a_scratch_path_in_the_error_graph_is_redacted` and
+    `test_a_failed_comparison_exits_two_and_keeps_its_evidence`, the last of
+    which now also asserts the failed comparison's own saved trace.
 
 ## Outcomes & retrospective
 

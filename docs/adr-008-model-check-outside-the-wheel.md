@@ -178,6 +178,20 @@ its finding, reason and evidence, in the
   `elapsed_seconds` and `doubled_elapsed_seconds` beside the two state counts.
   A count without its bound is not evidence that the second run was given a
   larger bound at all.
+- **D42, 2026-11-06.** A failed comparison's record says what kind of result it
+  produced, and its evidence is kept the way a matrix counterexample's is. The
+  record carries `result` (`passed`, `counterexample`, `stopped` or `errored`)
+  beside the verdict, because "failed" alone cannot tell a run that found a
+  violation from one that never answered. A run that reported no exploration
+  time is timed by the harness and recorded as `harness_seconds`, never as
+  `elapsed_seconds`: the two measure different things, and writing the second
+  under the first name would claim a duration the checker never gave. A failed
+  comparison's counterexample path is saved as
+  `<configuration>-fixpoint-<stage>.json`, so it sits beside the matrix's own
+  trace for the same configuration rather than overwriting it. The error graph
+  is redacted of the run's scratch directory before it becomes evidence, on the
+  same reasoning as the transcript: a runner path is not a fact about the
+  model, and the graph is committed.
 
 ## References
 

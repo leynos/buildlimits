@@ -71,11 +71,52 @@ def test_a_count_that_grows_with_the_bound_is_not_stable() -> None:
 
 
 def test_a_configuration_without_an_action_bound_cannot_be_compared() -> None:
-    """Doubling a bound that is absent would compare two identical runs."""
-    with pytest.raises(domain.MaterializeError, match="max_actions"):
+    """Doubling a bound that is absent would compare two identical runs.
+
+    The refusal is recorded as a failure rather than raised on its own, because
+    it is evidence about that configuration: it has no bound to double. A
+    caller that only saw an exception would still have to write the failure
+    into the artefact itself.
+    """
+    with pytest.raises(fixpoint.FixpointError) as raised:
         fixpoint.run_fixpoint(
             source(bounded_configuration(max_actions=None)), Bounded()
         )
+
+    (failure,) = raised.value.failures
+    assert failure.stage == "materialize", "the configuration never became a run"
+    assert failure.bound is None, "so it was given no bound to report"
+    assert "max_actions" in str(raised.value), "and the refusal names the missing key"
+
+
+def test_a_later_refusal_keeps_an_earlier_failure() -> None:
+    """A configuration that cannot be built must not discard prior evidence.
+
+    The first configuration's run fails, which is the evidence a maintainer
+    needs. The second declares no bound, and a refusal that escaped on its own
+    would replace that evidence with a single sentence about the second
+    configuration. Both failures must reach the error the caller writes.
+    """
+    both = source(
+        bounded_configuration("head"),
+        bounded_configuration("tail", max_actions=None),
+    )
+
+    with pytest.raises(fixpoint.FixpointError) as raised:
+        fixpoint.run_fixpoint(both, Refusing())
+
+    error = raised.value
+    assert [failure.configuration for failure in error.failures] == ["head", "tail"], (
+        "every configuration that failed is kept, in order"
+    )
+    assert [failure.stage for failure in error.failures] == [
+        "declared",
+        "materialize",
+    ], "one failed as a run and one never became a run"
+    assert "did not pass at its declared bound" in str(error), (
+        "the earlier failure is still in the message"
+    )
+    assert "max_actions" in str(error), "and the later refusal is there too"
 
 
 def test_only_configurations_that_should_pass_are_compared() -> None:

@@ -11,6 +11,13 @@
 # how the test reproduces the failure this tooling exists to catch: the defect
 # is gone and the configuration that expected it must report that it is.
 #
+# ``MODELCHECK_E2E_ANSWER=unreadable`` and ``=malformed`` reproduce the two ways
+# the evidence a counterexample needs can be unusable: a graph that exists but
+# cannot be read, and one that is readable but is not an error graph. The
+# unreadable mode also prints a runner path and a long transcript, so the
+# end-to-end test can prove the persisted record redacts the path and bounds the
+# capture rather than carrying either whole.
+#
 # ``MODELCHECK_E2E_LOG`` names the file each invocation appends its working
 # directory and arguments to. The test points it at its own scratch directory,
 # so running the command line never writes into the tracked fixture tree. The
@@ -66,10 +73,27 @@ emit_lasso() {
   cat "$directory/lasso-stdout.txt"
 }
 
-if [ "${MODELCHECK_E2E_ANSWER:-recorded}" = "pass" ]; then
-  cat "$directory/pass-stdout.txt"
-  exit 0
-fi
+case "${MODELCHECK_E2E_ANSWER:-recorded}" in
+  pass)
+    cat "$directory/pass-stdout.txt"
+    exit 0
+    ;;
+  unreadable)
+    # A directory where the graph should be is the cheapest unreadable graph.
+    mkdir -p "$output/error-graph.json"
+    printf 'reading %s/model.fizz\n' "$PWD"
+    printf 'x%.0s' {1..5000}
+    printf '\n'
+    cat "$directory/lasso-stdout.txt"
+    exit 0
+    ;;
+  malformed)
+    mkdir -p "$output"
+    printf '{"not": "a list"}' > "$output/error-graph.json"
+    cat "$directory/lasso-stdout.txt"
+    exit 0
+    ;;
+esac
 
 # A fixpoint comparison materializes the same configuration twice: once at the
 # declared bound and once at twice that bound. Answering the doubled bound with

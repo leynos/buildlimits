@@ -272,12 +272,7 @@ def render_fixpoint(
     'fixpoint check: 1 configuration stable, 0 grew'
     """
     stable = sum(1 for found in comparisons if found.is_stable)
-    lines = [
-        f"fixpoint {failure.configuration:<{_CONFIGURATION_WIDTH}}"
-        f"{failure.bound} {failure.stage} bound failed: "
-        f"{_failure_evidence(failure.result)}"
-        for failure in failures
-    ]
+    lines = [_failure_line(failure) for failure in failures]
     lines.extend(
         f"fixpoint {found.configuration:<{_CONFIGURATION_WIDTH}}"
         f"{found.states} -> {found.doubled_states} "
@@ -292,6 +287,41 @@ def render_fixpoint(
         summary = f"{summary}, {_count(len(failures), 'run')} failed"
     lines.append(summary)
     return "\n".join(lines) + "\n"
+
+
+def _failure_line(failure: FixpointFailure) -> str:
+    """Render one failed comparison as a report line.
+
+    Parameters
+    ----------
+    failure : FixpointFailure
+        The comparison run that did not pass.
+
+    Returns
+    -------
+    str
+        The configuration, then the bound and stage the run failed at, then its
+        evidence. A configuration that could not be materialized has no bound,
+        so its line names the stage alone rather than printing ``None`` where a
+        number belongs.
+
+    Examples
+    --------
+    >>> from modelcheck.domain import Errored
+    >>> from modelcheck.fixpoint_failures import FixpointFailure
+    >>> never_ran = FixpointFailure(
+    ...     "tail", "materialize", None, (), Errored("no bound")
+    ... )
+    >>> _failure_line(never_ran)
+    'fixpoint tail                            materialize failed: no bound'
+    """
+    prefix = f"fixpoint {failure.configuration:<{_CONFIGURATION_WIDTH}}"
+    if failure.bound is None:
+        return f"{prefix}{failure.stage} failed: {_failure_evidence(failure.result)}"
+    return (
+        f"{prefix}{failure.bound} {failure.stage} bound failed: "
+        f"{_failure_evidence(failure.result)}"
+    )
 
 
 def _failure_evidence(result: CheckResult) -> str:

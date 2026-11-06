@@ -168,10 +168,13 @@ def fixpoint_record(failure: FixpointFailure) -> dict[str, object]:
     Returns
     -------
     dict[str, object]
-        The configuration, the stage and bound of the run that failed, and the
-        result's own measurements. ``subject`` is ``fixpoint`` so a reader can
-        tell a comparison run from a matrix judgement, and ``met`` is always
-        false: the record exists only because the run did not pass.
+        The configuration, the stage and bound of the run that failed, the kind
+        of result it failed with, and that result's own measurements.
+        ``subject`` is ``fixpoint`` so a reader can tell a comparison run from a
+        matrix judgement, and ``met`` is always false: the record exists only
+        because the run did not pass. ``bound`` is ``None`` for a configuration
+        that could not be materialized, because no bound was ever given and
+        writing one would invent a run that never started.
 
     Examples
     --------
@@ -183,6 +186,8 @@ def fixpoint_record(failure: FixpointFailure) -> dict[str, object]:
     >>> record = fixpoint_record(failure)
     >>> record["subject"], record["stage"], record["bound"], record["detail"]
     ('fixpoint', 'doubled', 16, 'no verdict line')
+    >>> record["result"]
+    'errored'
     """
     record: dict[str, object] = {
         "configuration": failure.configuration,
@@ -192,6 +197,7 @@ def fixpoint_record(failure: FixpointFailure) -> dict[str, object]:
         "fairness": list(failure.fairness),
         "stage": failure.stage,
         "bound": failure.bound,
+        "result": _result_kind(failure.result),
     }
     _result_fields(record, failure.result)
     if isinstance(failure.result, Counterexample):
@@ -210,6 +216,13 @@ def _result_fields(record: dict[str, object], result: CheckResult) -> None:
         The record to extend, in place.
     result : modelcheck.domain.CheckResult
         The result to read.
+
+    Notes
+    -----
+    ``harness_seconds`` is written only for a run the harness itself timed out
+    or errored, and only when the harness measured one. It is kept apart from
+    ``elapsed_seconds`` so a reader is never told that the checker explored for
+    a time it never reported.
     """
     states = states_of(result)
     if states is not None:
@@ -217,8 +230,41 @@ def _result_fields(record: dict[str, object], result: CheckResult) -> None:
     match result:
         case Passed(elapsed_seconds=elapsed) | Counterexample(elapsed_seconds=elapsed):
             record["elapsed_seconds"] = elapsed
-        case Stopped(detail=detail) | Errored(detail=detail):
+        case (
+            Stopped(detail=detail, harness_seconds=seconds)
+            | Errored(detail=detail, harness_seconds=seconds)
+        ):
             record["detail"] = detail
+            if seconds is not None:
+                record["harness_seconds"] = seconds
+
+
+def _result_kind(result: CheckResult) -> str:
+    """Return the kind of result a failed comparison carries.
+
+    The record already said ``verdict: failed``; this field says *what* failed.
+    A counterexample, a run a signal stopped and a run that proved nothing are
+    read very differently, and a reader should not have to infer which from the
+    presence or absence of other fields.
+
+    Parameters
+    ----------
+    result : modelcheck.domain.CheckResult
+        The result the comparison failed with.
+
+    Returns
+    -------
+    str
+        The result's class name in lower case, which is the domain's own
+        vocabulary rather than a second list of names to keep in step.
+
+    Examples
+    --------
+    >>> from modelcheck.domain import Stopped
+    >>> _result_kind(Stopped("the checker was interrupted"))
+    'stopped'
+    """
+    return type(result).__name__.lower()
 
 
 def trace_record(trace: Trace) -> dict[str, object]:

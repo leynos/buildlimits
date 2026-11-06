@@ -127,7 +127,14 @@ the end-to-end tests read.
 `--save-traces` is the one declared exception: it keeps each counterexample's
 normalized path under `models/admission/<half>/traces/`, which is deliberately
 not git-ignored so a maintainer reviews the paths as diffs. After a run those
-files show up as untracked until they are committed or removed.
+files show up as untracked until they are committed or removed. A failed
+comparison's counterexample is kept there too, named
+`<configuration>-fixpoint-<stage>.json`, so it does not overwrite the matrix's
+trace for the same configuration.
+
+The JSON record names the kind of result each failed run produced, and a run
+that reported no exploration time of its own carries the time the harness
+waited for it under a separate field rather than as the checker's duration.
 
 ## Rollback
 

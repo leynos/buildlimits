@@ -348,6 +348,85 @@ def test_a_graph_that_is_not_json_is_a_run_that_proved_nothing(
     assert "could not be parsed" in result.detail, "and the reason names the parse"
 
 
+def test_a_scratch_path_in_the_error_graph_is_redacted(tmp_path: Path) -> None:
+    """A graph kept as evidence is redacted like the transcript beside it.
+
+    The graph is checker-written text about the model, but it is written into
+    the run's scratch directory and can name that directory. Discarded as
+    evidence it would put a runner path into the committed record exactly as a
+    printed one would, so the adapter replaces it before the text leaves.
+    """
+    _stub(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        "mkdir -p out\n"
+        'printf \'{"state": "%s"}\' "$PWD" > out/error-graph.json\n'
+        "printf 'Valid Nodes: 4 Unique states: 4\\n"
+        "FAILED: Liveness check failed\\n'\n",
+    )
+
+    result = FizzbeeChecker(tmp_path / "fizz").check(_spec())
+
+    assert isinstance(result, domain.Errored), "a mapping is not an error graph"
+    assert "the error graph could not be parsed" in result.detail, (
+        "the refusal names the parse"
+    )
+    assert '{"state": "<scratch>"}' in result.detail, "and the runner path is replaced"
+    assert ".model-check" not in result.detail, "with no part of it left behind"
+
+
+def test_a_run_that_proved_nothing_records_the_harness_time(tmp_path: Path) -> None:
+    """A run with no verdict still has a duration, and it is the harness's.
+
+    The checker reports no exploration time for a run that never produced a
+    verdict, so without this the one timing such a run has would be lost. The
+    field is named for the harness because it measures how long the adapter
+    waited, not how long the checker explored.
+    """
+    result = FizzbeeChecker(Path("/nonexistent/fizz")).check(_spec())
+
+    assert isinstance(result, domain.Errored), "the run proved nothing"
+    assert result.harness_seconds is not None, "but the harness timed it"
+    assert result.harness_seconds >= 0.0, "and the time is a real duration"
+
+
+def test_a_timed_out_run_records_the_harness_time(tmp_path: Path) -> None:
+    """A run the adapter killed is timed by the adapter, not by the checker.
+
+    The timeout is the only thing that ended this run, so the wall time is the
+    limit the adapter enforced rather than an exploration duration the checker
+    never reported.
+    """
+    fizz = _stub(tmp_path, "#!/usr/bin/env bash\nsleep 5\n")
+
+    result = FizzbeeChecker(fizz, timeout_seconds=0.2).check(_spec())
+
+    assert isinstance(result, domain.Errored), "a killed run proved nothing"
+    assert "did not finish within" in result.detail, "and the reason names the limit"
+    assert result.harness_seconds is not None, "the harness timed the run"
+    assert result.harness_seconds >= 0.2, "for at least as long as the limit"
+
+
+def test_a_scratch_path_the_checker_printed_is_redacted(tmp_path: Path) -> None:
+    """A runner path is not evidence about the model, so it is replaced.
+
+    The scratch directory's absolute path identifies this machine and this run
+    and nothing about the model. A record that carried it would put a runner
+    path into an artefact a maintainer commits, so the adapter replaces it
+    before the text becomes a diagnostic.
+    """
+    fizz = _stub(
+        tmp_path,
+        "#!/usr/bin/env bash\nprintf 'reading %s/model.fizz\\n' \"$PWD\"\n",
+    )
+
+    result = FizzbeeChecker(fizz).check(_spec())
+
+    assert isinstance(result, domain.Errored), "no verdict line is an error"
+    assert "<scratch>/model.fizz" in result.detail, "the path is replaced"
+    assert ".model-check" not in result.detail, "and the runner path is gone"
+
+
 def test_a_relative_launcher_is_resolved_before_the_run_starts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

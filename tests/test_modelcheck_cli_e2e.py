@@ -39,8 +39,8 @@ from modelcheck_e2e_cases import (
     TIMEOUT_SECONDS,
     ambient,
     check,
+    contents,
     invocations,
-    paths,
     run,
     tree,
 )
@@ -184,20 +184,27 @@ def test_a_run_writes_only_the_traces_it_was_asked_for(tmp_path: Path) -> None:
     reviewable evidence, so those files are the only addition a run may make.
     The model is copied first, because the fixture tree is tracked and this
     check is about what the run wrote rather than about the fixture.
+
+    The comparison is by content, not by name. A listing of paths cannot tell a
+    file the run rewrote from one it left alone, nor a file it deleted if the
+    name reappears: the model's own files must be byte-identical afterwards.
     """
     model = tmp_path / "model"
     shutil.copytree(MODEL, model)
-    before = paths(model)
+    before = contents(model)
     fixture_before = tree()
     log = tmp_path / "seen.log"
 
     result = run("check", str(model), "--fizz", str(FIZZ), "--save-traces", log=log)
 
     assert result.returncode == 0, result.stderr
-    assert sorted(set(paths(model)) - set(before)) == [
-        Path("traces"),
+    after = contents(model)
+    assert sorted(set(after) - set(before)) == [
         Path("traces/incident-1-BEventually.json"),
     ], "only the declared counterexample trace is written"
+    assert {path: after[path] for path in before if path in after} == before, (
+        "and every file the model already held is unchanged and still there"
+    )
     assert tree() == fixture_before, "and the tracked fixture tree is untouched"
 
 
@@ -256,6 +263,74 @@ def test_a_failed_comparison_exits_two_and_keeps_its_evidence(
     assert json.loads(saved.read_text(encoding="utf-8"))["ending"] == "lasso", (
         "the matrix's own trace is still readable after the failure"
     )
+    comparison = model / "traces" / "head-fixpoint-doubled.json"
+    assert json.loads(comparison.read_text(encoding="utf-8"))["ending"] == "lasso", (
+        "and the failed comparison's own path is saved under its stage"
+    )
+
+
+def test_an_unreadable_graph_reaches_the_persisted_record(tmp_path: Path) -> None:
+    """A graph that cannot be read is an error in the record, with bounded evidence.
+
+    The adapter deletes the scratch directory as the run returns, so the
+    checker's transcript is the only evidence left of a run whose graph could
+    not be read. The record must carry the reason and that transcript, bounded
+    and with the runner's own path replaced: the artefact is committed, and a
+    path that only makes sense on the machine that ran it is not evidence about
+    the model. The inherited environment is checked for the same reason — the
+    adapter records what the checker printed, never what it was given.
+    """
+    log = tmp_path / "seen.log"
+    records = tmp_path / "matrix.json"
+    inherited_value = "s3cr3t-do-not-record"
+
+    result = check(
+        "--json",
+        str(records),
+        log=log,
+        MODELCHECK_E2E_ANSWER="unreadable",
+        MODELCHECK_E2E_SECRET=inherited_value,
+    )
+
+    assert result.returncode == 1, "a run that proved nothing meets no expectation"
+    written = typ.cast("list[Record]", json.loads(records.read_text(encoding="utf-8")))
+    assert {record["verdict"] for record in written} == {"error"}, (
+        "every expectation's run is recorded as an error"
+    )
+    detail = typ.cast("str", written[0]["detail"])
+    assert "the error graph could not be read" in detail, "the reason names the read"
+    assert "the checker printed" in detail, "and the transcript is kept"
+    assert "reading <scratch>/model.fizz" in detail, "with the runner path replaced"
+    assert ".model-check" not in detail, "and no part of it left in the record"
+    assert inherited_value not in detail, "nor any inherited environment value"
+    assert "first 4000 of" in detail, "the transcript is bounded and the cut stated"
+    assert detail.count("x") < 5000, "so the whole runaway transcript is not kept"
+    assert detail.endswith("…"), "and the omission is marked"
+    assert typ.cast("float", written[0]["harness_seconds"]) >= 0.0, (
+        "the harness timed the run that reported no duration of its own"
+    )
+
+
+def test_a_malformed_graph_reaches_the_persisted_record(tmp_path: Path) -> None:
+    """A graph that is readable but is not an error graph is recorded as an error.
+
+    The text parses as JSON, so the failure happens in the decoder rather than
+    the reader. The record must name the parse and keep the document, because
+    the scratch directory holding it is deleted as the run returns and a
+    maintainer diagnosing the checker's output needs to see what it wrote.
+    """
+    log = tmp_path / "seen.log"
+    records = tmp_path / "matrix.json"
+
+    result = check("--json", str(records), log=log, MODELCHECK_E2E_ANSWER="malformed")
+
+    assert result.returncode == 1, "a run that proved nothing meets no expectation"
+    written = typ.cast("list[Record]", json.loads(records.read_text(encoding="utf-8")))
+    detail = typ.cast("str", written[0]["detail"])
+    assert "the error graph could not be parsed" in detail, "the reason names the parse"
+    assert "the error graph held" in detail, "and the document is kept"
+    assert '{"not": "a list"}' in detail, "as the checker wrote it"
+    assert "the checker printed" in detail, "beside the transcript"
 
 
 def test_the_stub_refuses_to_write_beside_itself(tmp_path: Path) -> None:
