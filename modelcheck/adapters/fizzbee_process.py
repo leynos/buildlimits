@@ -35,11 +35,10 @@ import typing as typ
 from pathlib import Path
 
 from modelcheck.adapters.fizzbee_evidence import (
-    redacted,
+    redaction_for,
     timeout_detail,
     unreadable_graph,
     with_evidence,
-    without_scratch,
 )
 from modelcheck.adapters.fizzbee_output import parse_output
 from modelcheck.adapters.fizzbee_process_group import kill_group, stopped
@@ -172,18 +171,23 @@ class FizzbeeChecker:
         Notes
         -----
         Both the transcript and the error graph are redacted of this run's
-        scratch directory. The graph is checker-written text that becomes
+        paths and credentials. The graph is checker-written text that becomes
         committed evidence — a trace file on a successful parse, a bounded
-        capture on a failed one — so a runner path left in it would travel into
-        the artefact the same way one printed to the transcript would.
+        capture on a failed one — so a runner path or an echoed credential left
+        in it would travel into the artefact the same way one printed to the
+        transcript would.
         """
         (directory / _SPEC_NAME).write_text(spec.text, encoding="utf-8")
         output = directory / "out"
+        environment = _checker_environment()
+        redaction = redaction_for(directory, self._fizz, environment)
         try:
-            completed = self._run(directory, output)
+            completed = self._run(directory, output, environment)
         except OSError as error:
-            return Errored(f"the checker could not be started: {error}")
-        stdout = redacted(completed.stdout.decode(errors="replace"), directory)
+            return Errored(
+                redaction.apply(f"the checker could not be started: {error}")
+            )
+        stdout = redaction.apply(completed.stdout.decode(errors="replace"))
         if completed.timed_out:
             return Errored(timeout_detail(self.timeout_seconds, stdout))
         try:
@@ -198,10 +202,12 @@ class FizzbeeChecker:
                     (("the checker printed", stdout),),
                 )
             )
-        graph_text = without_scratch(graph, directory)
+        graph_text = None if graph is None else redaction.apply(graph)
         return parse_output(stdout, completed.status, graph_text)
 
-    def _run(self, directory: Path, output: Path) -> _Completed:
+    def _run(
+        self, directory: Path, output: Path, environment: dict[str, str]
+    ) -> _Completed:
         """Run the launcher and wait for it, killing its group on timeout.
 
         Parameters
@@ -210,6 +216,11 @@ class FizzbeeChecker:
             The scratch directory the specification was written into.
         output : pathlib.Path
             Where the checker is told to write its graphs.
+        environment : dict[str, str]
+            The environment the checker is given. It is built once by the
+            caller, which also derives the run's redaction from it, so the text
+            that is scrubbed and the environment that produced it cannot
+            disagree.
 
         Returns
         -------
@@ -236,7 +247,7 @@ class FizzbeeChecker:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=True,
-            env=_checker_environment(),
+            env=environment,
         ) as process:
             try:
                 raw = process.communicate(timeout=self.timeout_seconds)[0]

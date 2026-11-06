@@ -1057,6 +1057,25 @@ explicitly.
   - Focused validation on the working tree: 624 tests and 11 snapshots pass
     across `tests/test_modelcheck_*.py`, `tests/modelcheck_*.py` and the
     package's doctests. Repository gates are delegated to the scrutineer.
+- [x] (2026-11-06) **Review round: evidence is redacted of the runner, not
+    only of the scratch directory.** The one remaining item from the
+    walkthrough's list, recorded as D43.
+  - `redaction_for` replaces the launcher path, the caller's home and
+    temporary directories, and the value of every credential-named variable
+    beside the scratch directory. The environment the checker was given is the
+    source, so a caller that overrode `HOME` for the run has its override
+    replaced rather than the adapter's own.
+  - The line a verdict is read from — an `Error:` diagnostic or the marker a
+    signal left — is bounded like the transcript, because the checker writes
+    it and its length is the checker's choice.
+  - The stub prints a credential, a home path and a 5,000-character line in
+    its `unreadable` mode and writes the credential into the graph in its
+    `malformed` mode, so the end-to-end tests read the persisted record back
+    and prove the replacements rather than asserting on a value that never
+    reached the text.
+  - Focused validation on the working tree: 298 tests and 2 snapshots pass
+    across the evidence, output and command-line suites and the evidence
+    module's doctests. Repository gates are delegated to the scrutineer.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -2607,6 +2626,41 @@ explicitly.
     `test_a_scratch_path_in_the_error_graph_is_redacted` and
     `test_a_failed_comparison_exits_two_and_keeps_its_evidence`, the last of
     which now also asserts the failed comparison's own saved trace.
+
+- **D43. Evidence is redacted of everything that describes the runner, and the
+  line a verdict is read from is bounded.** _Decided 2026-11-06._
+  - Decision: `adapters/fizzbee_evidence.redaction_for` returns the
+    substitutions one run's evidence needs, and `Redaction.apply` performs
+    them. The scratch directory, the launcher, the caller's home and temporary
+    directories, and the value of every credential-named variable are
+    replaced, longest needle first so a path nested inside another is replaced
+    whole. The home and temporary directories are read from the environment
+    the checker was given rather than from this process. A variable is a
+    credential when its name carries a whole underscore-separated word from
+    `token`, `secret`, `password`, `passwd`, `credential`, `api_key`,
+    `private_key`, `access_key`, `auth`, `cookie` or `session`, and its value
+    is at least six characters. `bounded` cuts a deciding line to the same
+    4,000 characters the transcript gets, and `parse_output` applies it to the
+    `Error:` line and to the stopped marker.
+  - Finding: the walkthrough's remaining item on head `d62a7f4` asked for the
+    credential and runner-path exclusion the earlier round had left out, and
+    for the deciding lines to be bounded. The scratch directory was the only
+    path replaced, so a checker that printed a cache path under the caller's
+    home, or echoed a token it inherited, put both into the committed record.
+  - Reason: the record is committed evidence about the model, and the checker
+    runs with the caller's environment and can print any of it. The adapter
+    cannot tell a secret from any other value, so the variable's name is the
+    only signal available; short values are flags and modes, and replacing
+    them would mangle ordinary words without protecting anything. A deciding
+    line is checker-written text, so its length is the checker's choice and it
+    is bounded for the transcript's own reasons.
+  - Evidence: `test_a_credential_the_checker_printed_is_redacted`,
+    `test_a_runner_path_beside_the_scratch_directory_is_redacted`,
+    `test_a_deciding_error_line_is_bounded`,
+    `test_a_deciding_stopped_line_is_bounded`,
+    `test_an_unreadable_graph_reaches_the_persisted_record` and
+    `test_a_malformed_graph_reaches_the_persisted_record`, the last two
+    through the command line into the persisted record.
 
 ## Outcomes & retrospective
 

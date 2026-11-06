@@ -277,10 +277,11 @@ def test_an_unreadable_graph_reaches_the_persisted_record(tmp_path: Path) -> Non
     The adapter deletes the scratch directory as the run returns, so the
     checker's transcript is the only evidence left of a run whose graph could
     not be read. The record must carry the reason and that transcript, bounded
-    and with the runner's own path replaced: the artefact is committed, and a
-    path that only makes sense on the machine that ran it is not evidence about
-    the model. The inherited environment is checked for the same reason — the
-    adapter records what the checker printed, never what it was given.
+    and with the runner's own paths and credentials replaced: the artefact is
+    committed, and a path or a secret that only makes sense on the machine that
+    ran it is not evidence about the model. The stub prints the credential it
+    was given, so the assertion is about a value that really was in the text
+    rather than one that never reached it.
     """
     inherited_value = "s3cr3t-do-not-record"
 
@@ -298,7 +299,9 @@ def test_an_unreadable_graph_reaches_the_persisted_record(tmp_path: Path) -> Non
         {
             "the reason names the read": "the error graph could not be read",
             "the transcript is kept": "the checker printed",
-            "the runner path is replaced": "reading <scratch>/model.fizz",
+            "the scratch path is replaced": "reading <scratch>/model.fizz",
+            "the home path is replaced": "cache <home>/.cache/go-build",
+            "the credential is replaced": "token=<redacted>",
             "the transcript is bounded and the cut stated": "first 4000 of",
         },
     )
@@ -319,9 +322,14 @@ def test_a_malformed_graph_reaches_the_persisted_record(tmp_path: Path) -> None:
     The text parses as JSON, so the failure happens in the decoder rather than
     the reader. The record must name the parse and keep the document, because
     the scratch directory holding it is deleted as the run returns and a
-    maintainer diagnosing the checker's output needs to see what it wrote.
+    maintainer diagnosing the checker's output needs to see what it wrote. The
+    document is checker-written, so it is redacted like the transcript: a
+    credential the checker wrote into it does not reach the committed record.
     """
-    status, written = persisted(tmp_path, "malformed")
+    written_into_the_graph = "s3cr3t-in-the-graph"
+    status, written = persisted(
+        tmp_path, "malformed", MODELCHECK_E2E_SECRET=written_into_the_graph
+    )
 
     assert status == 1, "a run that proved nothing meets no expectation"
     detail = typ.cast("str", written[0]["detail"])
@@ -330,9 +338,12 @@ def test_a_malformed_graph_reaches_the_persisted_record(tmp_path: Path) -> None:
         {
             "the reason names the parse": "the error graph could not be parsed",
             "the document is kept": "the error graph held",
-            "as the checker wrote it": '{"not": "a list"}',
+            "as the checker wrote it": '{"not": "a list", "token": "<redacted>"}',
             "beside the transcript": "the checker printed",
         },
+    )
+    assert written_into_the_graph not in detail, (
+        "the credential the checker echoed into its graph is not recorded"
     )
 
 

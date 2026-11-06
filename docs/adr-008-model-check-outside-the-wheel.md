@@ -194,6 +194,17 @@ its finding, reason and evidence, in the
   is redacted of the run's scratch directory before it becomes evidence, on the
   same reasoning as the transcript: a runner path is not a fact about the
   model, and the graph is committed.
+- **D43, 2026-11-06.** Evidence is redacted of everything that describes the
+  runner, not only the scratch directory. The checker inherits the caller's
+  environment and can print any of it, so the launcher path, the caller's home
+  and temporary directories, and the value of every credential-named variable
+  are replaced beside the scratch directory. The adapter cannot tell a secret
+  from any other value, so the variable's name is the only signal available and
+  short values are left alone: a value under six characters is a flag or a
+  mode, and replacing it would mangle ordinary words without protecting
+  anything. The line a verdict is read from — an `Error:` diagnostic or the
+  marker a signal left — is bounded on the same reasoning as the transcript,
+  because the checker writes it and its length is the checker's choice.
 
 ## References
 

@@ -14,9 +14,11 @@
 # ``MODELCHECK_E2E_ANSWER=unreadable`` and ``=malformed`` reproduce the two ways
 # the evidence a counterexample needs can be unusable: a graph that exists but
 # cannot be read, and one that is readable but is not an error graph. The
-# unreadable mode also prints a runner path and a long transcript, so the
-# end-to-end test can prove the persisted record redacts the path and bounds the
-# capture rather than carrying either whole.
+# unreadable mode also prints a runner path, a credential taken from the
+# environment and a long transcript, and the malformed mode writes the same
+# credential into the graph it saves. The end-to-end tests read the persisted
+# record back to prove it bounds the capture and replaces both the runner path
+# and the credential rather than carrying any of them whole.
 #
 # ``MODELCHECK_E2E_LOG`` names the file each invocation appends its working
 # directory and arguments to. The test points it at its own scratch directory,
@@ -81,6 +83,8 @@ case "${MODELCHECK_E2E_ANSWER:-recorded}" in
   unreadable)
     # A directory where the graph should be is the cheapest unreadable graph.
     mkdir -p "$output/error-graph.json"
+    printf 'token=%s\n' "${MODELCHECK_E2E_SECRET:-}"
+    printf 'cache %s/.cache/go-build\n' "${HOME:-}"
     printf 'reading %s/model.fizz\n' "$PWD"
     printf 'x%.0s' {1..5000}
     printf '\n'
@@ -89,7 +93,8 @@ case "${MODELCHECK_E2E_ANSWER:-recorded}" in
     ;;
   malformed)
     mkdir -p "$output"
-    printf '{"not": "a list"}' > "$output/error-graph.json"
+    printf '{"not": "a list", "token": "%s"}' "${MODELCHECK_E2E_SECRET:-}" \
+      > "$output/error-graph.json"
     cat "$directory/lasso-stdout.txt"
     exit 0
     ;;

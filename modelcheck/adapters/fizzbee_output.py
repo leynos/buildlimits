@@ -27,11 +27,10 @@ error graph is a separate document, and decoding it is
 :mod:`modelcheck.adapters.fizzbee_graph`'s job rather than this module's.
 """
 
-import re
 import typing as typ
 
-from modelcheck.adapters import fizzbee_graph
-from modelcheck.adapters.fizzbee_evidence import with_evidence
+from modelcheck.adapters import fizzbee_graph, fizzbee_names
+from modelcheck.adapters.fizzbee_evidence import bounded, with_evidence
 from modelcheck.adapters.fizzbee_measurements import elapsed, states
 from modelcheck.domain import (
     Counterexample,
@@ -71,9 +70,6 @@ DEADLOCK = "DEADLOCK detected"
 
 STOPPED = "Model checker stopped"
 """A run a signal interrupted, printed by the checker's signal handler."""
-
-_INVARIANT = re.compile(r"^Invariant(?:\s+\d+)?:\s*(?P<name>.+)$")
-"""An assertion name, either ``Invariant: X`` or ``Invariant 0: X``."""
 
 _EMPTY_TRACE = Trace({}, (), Ending.FINITE, None)
 """The path a failing run without an error graph is reported with."""
@@ -125,9 +121,12 @@ def parse_output(stdout: str, exit_status: int, error_graph: str | None) -> Chec
         kind, name = failure
         return _counterexample(name, kind, error_graph, stdout)
     if _mentions(lines, STOPPED):
-        return Stopped(next(line for line in lines if line.startswith(STOPPED)))
+        marker = next(line for line in lines if line.startswith(STOPPED))
+        return Stopped(bounded(marker))
     if _mentions(lines, NEVER_REACHED):
-        return Passed(states(stdout), elapsed(stdout), _probes(lines))
+        return Passed(
+            states(stdout), elapsed(stdout), fizzbee_names.probes(lines, NEVER_REACHED)
+        )
     if _mentions(lines, PASSED):
         return Passed(states(stdout), elapsed(stdout), ())
     return Errored(
@@ -149,11 +148,14 @@ def _error(lines: list[str], exit_status: int) -> str | None:
     -------
     str | None
         The first ``Error:`` line, which names the cause; otherwise a note that
-        the checker exited non-zero; otherwise ``None``.
+        the checker exited non-zero; otherwise ``None``. The line is bounded:
+        the checker writes it, and this detail is persisted beside the record,
+        so a checker that printed its whole transcript on one line would
+        otherwise carry it into the artefact whole.
     """
     for line in lines:
         if line.startswith(ERROR):
-            return line
+            return bounded(line)
     if exit_status != 0:
         return f"the checker exited with status {exit_status}"
     return None
@@ -187,80 +189,10 @@ def _failure(lines: list[str]) -> tuple[CounterexampleKind, str] | None:
         if line.startswith(DEADLOCK):
             return CounterexampleKind.DEADLOCK, ""
         if line.startswith(SAFETY_FAILED):
-            return CounterexampleKind.FINITE, _name(line)
+            return CounterexampleKind.FINITE, fizzbee_names.name(line)
         if line.startswith(LIVENESS_FAILED):
-            return CounterexampleKind.LASSO, _following(lines, index)
+            return CounterexampleKind.LASSO, fizzbee_names.following(lines, index)
     return None
-
-
-def _name(line: str) -> str:
-    """Return the assertion name carried on one line.
-
-    Parameters
-    ----------
-    line : str
-        A line such as ``FAILED: Model checker failed. Invariant:  NeverFull``.
-
-    Returns
-    -------
-    str
-        The name with the marker and surrounding space removed.
-
-    Examples
-    --------
-    >>> _name(SAFETY_FAILED + "  NeverFull")
-    'NeverFull'
-    """
-    _, _, tail = line.partition("Invariant:")
-    return tail.strip()
-
-
-def _following(lines: list[str], index: int) -> str:
-    """Return the assertion name printed after a liveness failure.
-
-    Parameters
-    ----------
-    lines : list[str]
-        The checker's output lines.
-    index : int
-        The index of the ``FAILED: Liveness check failed`` line.
-
-    Returns
-    -------
-    str
-        The name on the next ``Invariant:`` line, or the empty string when the
-        run printed none, so a report still shows the finding without a name it
-        never had.
-    """
-    for line in lines[index + 1 :]:
-        match = _INVARIANT.match(line.strip())
-        if match:
-            return match.group("name").strip()
-    return ""
-
-
-def _probes(lines: list[str]) -> tuple[str, ...]:
-    """Return the ``exists`` assertions a completed run never witnessed.
-
-    Parameters
-    ----------
-    lines : list[str]
-        The checker's output lines.
-
-    Returns
-    -------
-    tuple[str, ...]
-        Each name printed on an ``Invariant N: <name>`` line after the
-        never-reached marker, in the checker's own order.
-    """
-    start = next(
-        index for index, line in enumerate(lines) if line.startswith(NEVER_REACHED)
-    )
-    return tuple(
-        match.group("name").strip()
-        for line in lines[start + 1 :]
-        if (match := _INVARIANT.match(line.strip()))
-    )
 
 
 def _counterexample(

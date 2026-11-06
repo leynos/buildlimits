@@ -1128,6 +1128,18 @@ each half's `configurations.toml` is a second, cheaper check: it is set to half
 the measured count, so it catches a collapsed state space but does not turn a
 legitimate model change into a failure.
 
+A run whose evidence is unusable keeps what it can, bounded and redacted. The
+adapter deletes the scratch directory as the call returns, so a graph that
+cannot be read or parsed would otherwise leave nothing to diagnose; the
+diagnostic carries the checker's transcript and the graph, each cut to 4,000
+characters with the cut stated. Both are checker-written text that becomes a
+committed record, so `adapters/fizzbee_evidence.redaction_for` replaces the
+scratch directory, the launcher, the caller's home and temporary directories,
+and the value of every credential-named variable before the text leaves. The
+line a verdict is read from — an `Error:` diagnostic or the marker a signal
+left — is bounded on the same reasoning. A new path or credential the checker
+can print belongs in that redaction rather than in a test-only exception.
+
 The two obligations have different costs and run in different places.
 `make model-fidelity` runs both drift reports and the drift tests; it compares
 text with an import of the production package, so it costs seconds and runs on

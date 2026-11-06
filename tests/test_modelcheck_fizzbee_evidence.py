@@ -155,6 +155,98 @@ def test_a_scratch_path_in_the_error_graph_is_redacted(tmp_path: Path) -> None:
     assert ".model-check" not in result.detail, "with no part of it left behind"
 
 
+def test_a_credential_the_checker_printed_is_redacted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A credential the checker echoes does not reach the record.
+
+    The checker inherits the caller's environment, so anything in it is a value
+    the checker can print. The adapter cannot tell a secret from any other value
+    except by the variable's name, so it replaces the value of every
+    credential-named variable before the transcript becomes evidence. The stub
+    echoes the value it was given, which is what makes this a test of the
+    redaction rather than of a value that never arrived.
+    """
+    echoed_value = "s3cr3t-do-not-record"
+    monkeypatch.setenv("MODELCHECK_E2E_SECRET", echoed_value)
+    fizz = _stub(
+        tmp_path,
+        "#!/usr/bin/env bash\nprintf 'token=%s\\n' \"$MODELCHECK_E2E_SECRET\"\n",
+    )
+
+    result = FizzbeeChecker(fizz).check(_spec())
+
+    assert isinstance(result, domain.Errored), "no verdict line is an error"
+    assert "token=<redacted>" in result.detail, "the value is replaced whole"
+    assert echoed_value not in result.detail, "and no part of it is left behind"
+
+
+def test_a_runner_path_beside_the_scratch_directory_is_redacted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A home path in the transcript is a runner path, so it is replaced too.
+
+    The scratch directory is not the only path the checker can print. A cache
+    or module path under the caller's home directory identifies the runner just
+    as plainly, and the adapter is handed the home directory because it is in
+    the environment the checker ran with.
+    """
+    runner_home = "/home/runner"
+    monkeypatch.setenv("HOME", runner_home)
+    fizz = _stub(
+        tmp_path,
+        "#!/usr/bin/env bash\nprintf 'cache %s/.cache/go-build\\n' \"$HOME\"\n",
+    )
+
+    result = FizzbeeChecker(fizz).check(_spec())
+
+    assert isinstance(result, domain.Errored), "no verdict line is an error"
+    assert "cache <home>/.cache/go-build" in result.detail, "the home is replaced"
+    assert "/home/runner" not in result.detail, "and the runner path is gone"
+
+
+def test_a_deciding_error_line_is_bounded(tmp_path: Path) -> None:
+    """The line an error verdict is read from is bounded like a transcript.
+
+    The checker writes that line, so its length is the checker's choice. A
+    run whose ``Error:`` line carried a whole dump would otherwise put the dump
+    into the persisted detail, which is bounded for the transcript's own
+    reasons.
+    """
+    fizz = _stub(
+        tmp_path,
+        "#!/usr/bin/env bash\nprintf 'Error: %s\\n' \"$(printf 'x%.0s' {1..5000})\"\n",
+    )
+
+    result = FizzbeeChecker(fizz).check(_spec())
+
+    assert isinstance(result, domain.Errored), "an error line proves nothing"
+    assert result.detail.startswith("Error: "), "the cause is still named"
+    assert "first 4000 of 5007 characters" in result.detail, "and the cut is stated"
+    assert len(result.detail) < 5000, "so the whole line is not kept"
+
+
+def test_a_deciding_stopped_line_is_bounded(tmp_path: Path) -> None:
+    """The marker a cut-short run is read from is bounded for the same reason.
+
+    A stopped run's detail is the marker line itself, and it is persisted with
+    the record. The marker is checker-written text, so it gets the same limit
+    the transcript does rather than being trusted to be short.
+    """
+    fizz = _stub(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        "printf 'Model checker stopped %s\\n' \"$(printf 'y%.0s' {1..5000})\"\n",
+    )
+
+    result = FizzbeeChecker(fizz).check(_spec())
+
+    assert isinstance(result, domain.Stopped), "the marker names a stopped run"
+    assert result.detail.startswith("Model checker stopped "), "the shape is kept"
+    assert "first 4000 of" in result.detail, "and the cut is stated"
+    assert len(result.detail) < 5000, "so the whole line is not kept"
+
+
 def test_a_scratch_path_the_checker_printed_is_redacted(tmp_path: Path) -> None:
     """A runner path is not evidence about the model, so it is replaced.
 
