@@ -9,6 +9,16 @@
 min_states = 1
 holds = ["S1", "BEventually"]
 
+# The table is the whole frontmatter document, so the inner ``options`` is the
+# mapping FizzBee reads; the real models declare theirs the same way. The bound
+# is what ``--fixpoint`` doubles, so a configuration without one cannot be
+# compared. The stub answers the declared bound with the recorded pass and the
+# doubled bound with the recorded lasso: a deeper search finds the liveness
+# violation the truncated run could not, which is the failure the end-to-end
+# test needs in order to prove the evidence survives the exit.
+[configurations.head.options.options]
+max_actions = 8
+
 [configurations.head.fairness]
 F1 = "weak"
 

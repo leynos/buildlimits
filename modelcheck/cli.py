@@ -39,7 +39,8 @@ import cyclopts
 import cyclopts.config
 
 from modelcheck import domain, drift, records, report, service
-from modelcheck.fixpoint import FixpointError, run_fixpoint
+from modelcheck.expectations import subject
+from modelcheck.fixpoint import Fixpoint, FixpointError, run_fixpoint
 from modelcheck.selection import select
 
 if typ.TYPE_CHECKING:
@@ -253,14 +254,23 @@ class _Artefact:
     chosen: tuple[Judgement, ...]
     """The judgements the artefact describes, after ``--only`` narrowed them."""
 
-    def write(self, failures: tuple[FixpointFailure, ...] = ()) -> None:
-        """Write the records, adding any failed fixpoint comparison.
+    def write(
+        self,
+        failures: tuple[FixpointFailure, ...] = (),
+        comparisons: tuple[Fixpoint, ...] = (),
+    ) -> None:
+        """Write the records, adding the fixpoint comparisons that ran.
 
         Parameters
         ----------
         failures : tuple[FixpointFailure, ...]
             The comparisons that did not pass, in the order they ran. Empty
             for a run that did not fail one.
+        comparisons : tuple[Fixpoint, ...]
+            The comparisons that completed, stable or growing. Written as well
+            as the failures, because a growth result also makes the command
+            exit ``1`` and an artefact that omitted it would describe a clean
+            run the status contradicts.
 
         Notes
         -----
@@ -270,7 +280,8 @@ class _Artefact:
         if self.path is None:
             return
         self.path.write_text(
-            records.render_records(self.chosen, failures), encoding="utf-8"
+            records.render_records(self.chosen, failures, comparisons),
+            encoding="utf-8",
         )
 
 
@@ -311,9 +322,10 @@ def _compared(
         stable = run_fixpoint(source, checker)
     except FixpointError as error:
         print(report.render_fixpoint(error.comparisons, error.failures), end="")
-        artefact.write(error.failures)
+        artefact.write(error.failures, error.comparisons)
         raise
     print(report.render_fixpoint(stable), end="")
+    artefact.write(comparisons=stable)
     return status if all(found.is_stable for found in stable) else EXIT_UNMET
 
 
@@ -337,7 +349,7 @@ def _save_traces(judgements: cabc.Sequence[Judgement], model_dir: Path) -> None:
         if not isinstance(judgement.result, domain.Counterexample):
             continue
         directory.mkdir(parents=True, exist_ok=True)
-        name = f"{judgement.configuration}-{report.subject(judgement.expectation)}"
+        name = f"{judgement.configuration}-{subject(judgement.expectation)}"
         record = records.trace_record(judgement.result.trace)
         (directory / f"{name}.json").write_text(
             json.dumps(record, indent=2) + "\n", encoding="utf-8"

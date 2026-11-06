@@ -25,10 +25,11 @@ so a property and an ``exists`` probe are read by the same rule.
 import re
 import typing as typ
 
-from modelcheck.domain import MaterializeError, Reachable
+from modelcheck.domain import MaterializeError
+from modelcheck.expectations import subject
 
 if typ.TYPE_CHECKING:
-    from modelcheck.domain import Configuration, Expectation
+    from modelcheck.domain import Configuration
 
 _ASSERTION = re.compile(
     r"^(?:(?:always[ \t]+eventually|eventually[ \t]+always|always|exists)[ \t]+)?"
@@ -37,7 +38,7 @@ _ASSERTION = re.compile(
 """An assertion's header, in any of the four temporal prefixes.
 
 ``always eventually`` and ``eventually always`` are both liveness spellings,
-and a header the reader does not recognise is left in the text by
+and a header the reader does not recognize is left in the text by
 :func:`strip_assertions`. An unnamed property would then still be checked by a
 run whose report never mentions it, or refused as undeclared when a
 configuration names it.
@@ -118,38 +119,7 @@ def _expected_names(configuration: Configuration) -> frozenset[str]:
         The ``Holds`` and ``FailsAs`` property names together with the
         ``Reachable`` probe names.
     """
-    return frozenset(
-        _name_of(expectation) for expectation in configuration.expectations
-    )
-
-
-def _name_of(expectation: Expectation) -> str:
-    """Return the assertion or probe name one expectation is about.
-
-    Parameters
-    ----------
-    expectation : Expectation
-        The expectation to read.
-
-    Returns
-    -------
-    str
-        The property name of a ``Holds`` or a ``FailsAs``, and the probe name
-        of a ``Reachable``.
-
-    Examples
-    --------
-    >>> from modelcheck import domain
-    >>> _name_of(domain.Holds("S1"))
-    'S1'
-    >>> _name_of(domain.Reachable("P"))
-    'P'
-    """
-    match expectation:
-        case Reachable(probe_name=probe_name):
-            return probe_name
-        case _:
-            return expectation.property_name
+    return frozenset(subject(expectation) for expectation in configuration.expectations)
 
 
 def strip_assertions(lines: list[str], retained: frozenset[str]) -> list[str]:

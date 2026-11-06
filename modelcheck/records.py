@@ -21,21 +21,23 @@ import json
 import typing as typ
 
 from modelcheck.domain import Counterexample, Errored, Passed, Stopped, states_of
-from modelcheck.report import subject
+from modelcheck.expectations import subject
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from modelcheck.domain import CheckResult, Judgement
+    from modelcheck.fixpoint import Fixpoint
     from modelcheck.fixpoint_failures import FixpointFailure
     from modelcheck.trace import Trace
 
-__all__ = ["fixpoint_record", "render_records", "trace_record"]
+__all__ = ["comparison_record", "fixpoint_record", "render_records", "trace_record"]
 
 
 def render_records(
     judgements: cabc.Sequence[Judgement],
     failures: cabc.Sequence[FixpointFailure] = (),
+    comparisons: cabc.Sequence[Fixpoint] = (),
 ) -> str:
     """Render the matrix as the JSON array ``--json`` writes.
 
@@ -48,6 +50,11 @@ def render_records(
         appended to the same array, because the artefact is the one place a
         maintainer looks and a failure the file omitted would be evidence the
         tool discarded.
+    comparisons : collections.abc.Sequence[Fixpoint]
+        Comparisons that completed, whether stable or growing. A growth result
+        is written for the same reason a failure is: the command exits ``1``
+        for it, and an artefact that recorded only the matrix would claim a
+        clean run the exit status contradicts.
 
     Returns
     -------
@@ -73,6 +80,7 @@ def render_records(
     ('S1', 'holds', 4)
     """
     records = [_record(judgement) for judgement in judgements]
+    records.extend(comparison_record(found) for found in comparisons)
     records.extend(fixpoint_record(failure) for failure in failures)
     return json.dumps(records, indent=2) + "\n"
 
@@ -103,6 +111,50 @@ def _record(judgement: Judgement) -> dict[str, object]:
     }
     _result_fields(record, judgement.result)
     return record
+
+
+def comparison_record(found: Fixpoint) -> dict[str, object]:
+    """Render one completed comparison as the object the artefact carries.
+
+    Parameters
+    ----------
+    found : modelcheck.fixpoint.Fixpoint
+        The comparison that ran at both bounds.
+
+    Returns
+    -------
+    dict[str, object]
+        The configuration, both bounds, both state counts and both durations.
+        ``subject`` is ``fixpoint`` so a reader can tell a comparison from a
+        matrix judgement, and ``met`` is the same answer the command's exit
+        status uses, so the file and the status cannot disagree. The bounds are
+        recorded because the counts mean nothing without them: ``8 -> 8`` is
+        evidence of a fixpoint only if the second run really was given twice
+        the bound the first was.
+
+    Examples
+    --------
+    >>> from modelcheck.domain import Passed
+    >>> from modelcheck.fixpoint import Fixpoint
+    >>> found = Fixpoint("head", 8, Passed(8, 0.5, ()), Passed(16, 1.5, ()))
+    >>> record = comparison_record(found)
+    >>> record["verdict"], record["met"], record["doubled_bound"]
+    ('grew', False, 16)
+    >>> record["states"], record["elapsed_seconds"], record["doubled_elapsed_seconds"]
+    (8, 0.5, 1.5)
+    """
+    return {
+        "configuration": found.configuration,
+        "subject": "fixpoint",
+        "verdict": "stable" if found.is_stable else "grew",
+        "met": found.is_stable,
+        "bound": found.bound,
+        "doubled_bound": found.doubled_bound,
+        "states": found.states,
+        "doubled_states": found.doubled_states,
+        "elapsed_seconds": found.declared.elapsed_seconds,
+        "doubled_elapsed_seconds": found.doubled.elapsed_seconds,
+    }
 
 
 def fixpoint_record(failure: FixpointFailure) -> dict[str, object]:

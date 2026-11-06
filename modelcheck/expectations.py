@@ -46,6 +46,37 @@ if typ.TYPE_CHECKING:
     )
 
 
+def subject(expectation: Expectation) -> str:
+    """Return the property or probe name one expectation is about.
+
+    The name is what a report row, a JSON record and a saved trace file are
+    all keyed by, so the three readers share one definition rather than each
+    spelling the ``Reachable`` special case again.
+
+    Parameters
+    ----------
+    expectation : Expectation
+        The expectation to read.
+
+    Returns
+    -------
+    str
+        The probe name for a ``Reachable`` expectation and the property name
+        for the other two.
+
+    Examples
+    --------
+    >>> from modelcheck import domain
+    >>> subject(domain.Holds("L3")), subject(domain.Reachable("StopIssued"))
+    ('L3', 'StopIssued')
+    """
+    match expectation:
+        case Reachable(probe_name=probe_name):
+            return probe_name
+        case _:
+            return expectation.property_name
+
+
 def only_failures(configuration: Configuration) -> bool:
     """Report whether every expectation of a configuration is a failure.
 

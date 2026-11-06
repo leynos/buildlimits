@@ -14,7 +14,7 @@ opens a file, starts a process or reads the clock.
 
 import typing as typ
 
-from modelcheck import report
+from modelcheck.expectations import subject as subject_of
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -132,6 +132,6 @@ def _selected(
         return True
     return any(
         configuration == judgement.configuration
-        and (subject is None or subject == report.subject(judgement.expectation))
+        and (subject is None or subject == subject_of(judgement.expectation))
         for configuration, subject in selections
     )

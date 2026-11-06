@@ -37,21 +37,45 @@ _FIXPOINT_FACTOR = 2
 
 @dc.dataclass(frozen=True, slots=True)
 class Fixpoint:
-    """One configuration's state count at its declared and doubled bound.
+    """One configuration's exploration at its declared and doubled bound.
+
+    Both runs are retained rather than only their counts. A comparison that
+    passed is evidence about the bound, and the artefact has to say which bound
+    it was and how long each run took, or a reader cannot tell a fast traversal
+    of a small bound from a slow one of a large bound. The counts stay
+    available as properties so a caller reads the comparison, not the runs.
 
     Attributes
     ----------
     configuration : str
         The configuration compared.
-    states : int
-        Distinct states explored at the declared bound.
-    doubled_states : int
-        Distinct states explored at twice that bound.
+    bound : int
+        The ``max_actions`` bound the declared run was given.
+    declared : Passed
+        The run at the configuration's own bound.
+    doubled : Passed
+        The run at twice that bound.
     """
 
     configuration: str
-    states: int
-    doubled_states: int
+    bound: int
+    declared: Passed
+    doubled: Passed
+
+    @property
+    def states(self) -> int:
+        """The state count the declared run explored."""
+        return self.declared.states
+
+    @property
+    def doubled_states(self) -> int:
+        """The state count the doubled run explored."""
+        return self.doubled.states
+
+    @property
+    def doubled_bound(self) -> int:
+        """The bound the doubled run was given."""
+        return self.bound * _FIXPOINT_FACTOR
 
     @property
     def is_stable(self) -> bool:
@@ -64,7 +88,9 @@ class Fixpoint:
 
         Examples
         --------
-        >>> Fixpoint("head", 10, 10).is_stable, Fixpoint("head", 10, 20).is_stable
+        >>> stable = Fixpoint("head", 10, Passed(10, 0.5, ()), Passed(10, 0.9, ()))
+        >>> grown = Fixpoint("head", 10, Passed(10, 0.5, ()), Passed(20, 0.9, ()))
+        >>> stable.is_stable, grown.is_stable
         (True, False)
         """
         return self.states == self.doubled_states
@@ -174,7 +200,15 @@ def _compared(
     doubled = _pass_run(text, _doubled(configuration), "doubled", checker)
     if isinstance(doubled, FixpointFailure):
         return None, (doubled,)
-    return Fixpoint(configuration.name, declared.states, doubled.states), ()
+    return (
+        Fixpoint(
+            configuration.name,
+            _declared_bound(configuration),
+            declared,
+            doubled,
+        ),
+        (),
+    )
 
 
 def _pass_run(

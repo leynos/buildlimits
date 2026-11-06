@@ -19,6 +19,10 @@
 - [Migrating to cache-outcome recording](migrating-to-cache-outcome-recording.md)
   gives the opt-in, rollback and downgrade sequence for the outcome store and
   its journal vocabulary.
+- [Migrating to 0.2.0](migrating-to-0.2.0.md) signposts the FizzBee model
+  check, its prerequisites, the `make fizzbee`, `make model-fidelity` and
+  `make model-check` targets, the `python -m modelcheck` command, and what a
+  rollback removes.
 
 ## Decisions
 

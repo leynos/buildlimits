@@ -24,6 +24,14 @@ ignore = [
   # correcting it would make the test assert on a line the checker never
   # prints.
   '\bWriten 1 node files and 1 link files\b',
+  # The misspelt key the configuration reader refuses. It is the fixture, not
+  # a typo: the doctest and the test both assert that the refusal names the
+  # key the maintainer actually wrote, so correcting it would delete the case.
+  '\breacheable\b',
+  # GitHub's published action name, quoted in the nightly workflow's comment
+  # to explain why hidden files need asking for. The action is not ours to
+  # respell.
+  '\bupload-artifact\b',
 ]
 
 [files]

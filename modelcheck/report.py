@@ -33,14 +33,14 @@ from modelcheck.domain import (
     CounterexampleKind,
     Errored,
     Passed,
-    Reachable,
     Stopped,
 )
+from modelcheck.expectations import subject
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-    from modelcheck.domain import Expectation, Judgement
+    from modelcheck.domain import Judgement
     from modelcheck.drift import DriftReport
     from modelcheck.fixpoint import Fixpoint
     from modelcheck.fixpoint_failures import FixpointFailure
@@ -150,33 +150,6 @@ def _fairness(judgement: Judgement) -> str:
     """
     tags = ", ".join(judgement.fairness_in_force) or _NO_FAIRNESS
     return f"fairness: {tags}"
-
-
-def subject(expectation: Expectation) -> str:
-    """Return the property or probe name one expectation is about.
-
-    Parameters
-    ----------
-    expectation : Expectation
-        The expectation to read.
-
-    Returns
-    -------
-    str
-        The probe name for a ``Reachable`` expectation and the property name
-        for the other two.
-
-    Examples
-    --------
-    >>> from modelcheck import domain
-    >>> subject(domain.Holds("L3")), subject(domain.Reachable("StopIssued"))
-    ('L3', 'StopIssued')
-    """
-    match expectation:
-        case Reachable(probe_name=probe_name):
-            return probe_name
-        case _:
-            return expectation.property_name
 
 
 def _evidence(judgement: Judgement) -> list[str]:
@@ -291,7 +264,8 @@ def render_fixpoint(
     Examples
     --------
     >>> from modelcheck.fixpoint import Fixpoint
-    >>> line, summary = render_fixpoint([Fixpoint("head", 8, 8)]).splitlines()
+    >>> found = Fixpoint("head", 8, Passed(8, 0.5, ()), Passed(8, 0.9, ()))
+    >>> line, summary = render_fixpoint([found]).splitlines()
     >>> line
     'fixpoint head                            8 -> 8 stable'
     >>> summary

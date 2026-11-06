@@ -12,6 +12,7 @@ convention in ``docs/repository-layout.md``: ``test_*.py`` modules hold tests,
 anything else here holds helpers.
 """
 
+import json
 import typing as typ
 
 from modelcheck_doubles import FixedSource
@@ -259,6 +260,36 @@ def checked_in(application: cyclopts.App, tmp_path: Path, *options: str) -> int:
     return application(["check", str(tmp_path), *CHECK[2:], *options])
 
 
+def checked_json(
+    application: cyclopts.App, tmp_path: Path, *options: str
+) -> tuple[int, list[dict[str, object]]]:
+    """Run a ``check`` that writes its JSON artefact and read it back.
+
+    The two steps belong together because every caller wants both: the status
+    is what the command exited with and the records are what it persisted, and
+    a test that read only one could not tell a run that wrote nothing from a
+    run that wrote the wrong thing.
+
+    Parameters
+    ----------
+    application : cyclopts.App
+        The app under test.
+    tmp_path : pathlib.Path
+        The model directory the run reads and writes its artefacts into.
+    *options : str
+        Further command-line options, such as ``--fixpoint`` or
+        ``--save-traces``.
+
+    Returns
+    -------
+    tuple[int, list[dict[str, object]]]
+        The command's exit status and the decoded JSON array it wrote.
+    """
+    path = tmp_path / "records.json"
+    status = checked_in(application, tmp_path, *options, "--json", str(path))
+    return status, json.loads(path.read_text(encoding="utf-8"))
+
+
 def listed(directory: Path) -> list[str]:
     """Return the names a directory holds, in sorted order.
 
@@ -319,3 +350,77 @@ def bounded(name: str = "head", *, max_actions: int = 8) -> domain.Configuration
     """
     options = {"options": {"max_actions": max_actions}}
     return domain.Configuration(name, {}, {}, options, 1, (domain.Holds("S1"),))
+
+
+type Record = dict[str, object]
+"""One decoded matrix record: the fields a test reads by name."""
+
+
+def fixpoint_record(records: list[Record]) -> Record:
+    """Return the single ``fixpoint`` record an artefact carried.
+
+    Parameters
+    ----------
+    records : list[Record]
+        The decoded records the artefact carried.
+
+    Returns
+    -------
+    Record
+        The one record whose subject is ``fixpoint``.
+
+    Examples
+    --------
+    >>> fixpoint_record([{"subject": "matrix"}, {"subject": "fixpoint"}])
+    {'subject': 'fixpoint'}
+    """
+    (record,) = [entry for entry in records if entry["subject"] == "fixpoint"]
+    return record
+
+
+def doubled_failure(records: list[Record]) -> tuple[object, object, object, object]:
+    """Return the fields that identify an artefact's doubled-bound failure.
+
+    Two tests read the same failure record for different reasons: the
+    end-to-end module checks that the counterexample survived the process's
+    non-zero exit, and the in-process module checks that the run's diagnostic
+    was kept. Both need the record to identify itself the same way first, and
+    a second copy of these assertions would be a place for the two to drift
+    apart. The reader returns the fields rather than asserting them because
+    this module is linted as production code, where ``assert`` is banned; each
+    caller compares the tuple and supplies its own message.
+
+    Parameters
+    ----------
+    records : list[Record]
+        The decoded records the artefact carried.
+
+    Returns
+    -------
+    tuple[object, object, object, object]
+        The configuration, stage, bound and ``met`` flag of the single
+        ``fixpoint`` record, in that order.
+
+    Examples
+    --------
+    >>> doubled_failure(
+    ...     [
+    ...         {"subject": "matrix", "met": True},
+    ...         {
+    ...             "subject": "fixpoint",
+    ...             "configuration": "head",
+    ...             "stage": "doubled",
+    ...             "bound": 16,
+    ...             "met": False,
+    ...         },
+    ...     ]
+    ... )
+    ('head', 'doubled', 16, False)
+    """
+    record = fixpoint_record(records)
+    return (
+        record["configuration"],
+        record["stage"],
+        record["bound"],
+        record["met"],
+    )

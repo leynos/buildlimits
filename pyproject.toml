@@ -1671,8 +1671,38 @@ members = ["tests/test_fizzbee_spike.py", "tests/test_fizzbee_graphs.py"]
 reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
 
 [[tool.duplication_gate.allow]]
-members = ["tests/modelcheck_cases.py", "tests/test_group_drain_metrics.py", "buildlimits/supervisor_wiring.py", "modelcheck/expectations.py", "tests/test_cache_recovery_telemetry.py", "tests/test_recovery_roots_deadline.py", "buildlimits/group_recovery.py", "modelcheck/report.py", "tests/differential_trace_test_helpers.py", "tests/modelcheck_doubles.py"]
+members = [
+    "tests/modelcheck_cases.py",
+    "tests/test_group_drain_metrics.py",
+    "buildlimits/supervisor_wiring.py",
+    "modelcheck/expectations.py",
+    "modelcheck/records.py",
+    "tests/modelcheck_service_cases.py",
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "modelcheck/report.py",
+    "tests/differential_trace_test_helpers.py",
+    "tests/modelcheck_doubles.py",
+]
 reason = "Matching import lists: each module names the collaborators, protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies. The family spans production, package and test-support modules, so no single helper could hold it."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/cache_recovery.py",
+    "buildlimits/outcome_store.py",
+    "tests/outcome_store_helpers.py",
+    "modelcheck/cli.py",
+]
+reason = "Matching TYPE_CHECKING imports name each module's own deferred annotations: collections.abc, pathlib and the domain or adapter types it reads. Sharing them through a re-export would hide those dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["modelcheck/service.py", "modelcheck/report.py"]
+reason = "Matching import lists: the two modules import the domain result types they read, and sharing them through a re-export module would hide each module's real dependencies. The scheduler materializes and judges, the reporter renders, so no shared helper owns the list."
+
+[[tool.duplication_gate.allow]]
+members = ["modelcheck/report.py", "modelcheck/adapters/fizzbee_output.py"]
+reason = "Matching import lists: the reporter and the output adapter each import the domain result types they read, and a re-export module would hide which module depends on which type. The two read the results for different purposes and share no logic."
 
 [[tool.duplication_gate.allow]]
 members = ["tests/modelcheck_cases.py", "modelcheck/expectations.py"]

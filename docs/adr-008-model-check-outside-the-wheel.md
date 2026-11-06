@@ -69,20 +69,20 @@ The package is a hexagon:
   `drift`, `trace`, `report`, `records`, `ports`, `service`, `assertions`
   (which reads, requires and strips the assertions a configuration names),
   `fixpoint` with `fixpoint_failures` (the doubled-bound comparison and the
-  evidence a failed comparison carries), and `selection` (the `--only`
-  policy). A structural test walks their syntax trees and fails on an import
-  outside the allowlist or on any call to a banned name, so purity is checked
-  rather than promised.
+  evidence a failed comparison carries), and `selection` (the `--only` policy).
+  A structural test walks their syntax trees and fails on an import outside the
+  allowlist or on any call to a banned name, so purity is checked rather than
+  promised.
 - **Adapters** — `fizzbee_process` (the only module that starts a process) with
   `fizzbee_process_group` (the group kill and the bounded wait for it),
   `fizzbee_output`, `fizzbee_graph`, `fizzbee_measurements` and
-  `fizzbee_evidence` (the pure translation of what a run printed: verdict
-  lines are classified in `fizzbee_output`, error-graph records are decoded
-  into domain links and traces in `fizzbee_graph`, and the bounded transcript
-  a failed run keeps is assembled in `fizzbee_evidence`, so no checker key
-  reaches a pure module), `configuration` with its two field readers (the
-  model directory's layout and its TOML schema), and `inventory` (the only
-  module that imports `buildlimits`).
+  `fizzbee_evidence` (the pure translation of what a run printed: verdict lines
+  are classified in `fizzbee_output`, error-graph records are decoded into
+  domain links and traces in `fizzbee_graph`, and the bounded transcript a
+  failed run keeps is assembled in `fizzbee_evidence`, so no checker key
+  reaches a pure module), `configuration` with its two field readers (the model
+  directory's layout and its TOML schema), and `inventory` (the only module
+  that imports `buildlimits`).
 - **Driving adapter** — `cli.py` builds the Cyclopts application from adapter
   *factories*, so a test supplies doubles without a checker and without a model
   directory. `__main__.py` is the only module that constructs the real adapters.
@@ -146,6 +146,38 @@ behavioural scenarios can state what a maintainer must be able to rely on
 without running the 335 MB binary. Keeping the package outside the wheel states
 the same boundary in packaging terms: the tooling exists to verify the product
 and must never become part of it.
+
+## Addendum: decisions taken after acceptance
+
+The decision above is unchanged. The entries below record how the boundary was
+applied during implementation, so a reader of this ADR sees the same
+conclusions the ExecPlan's decision log carries. Each is recorded in full, with
+its finding, reason and evidence, in the
+[ExecPlan's decision log](execplans/fizzbee-model-of-admission-and-recovery.md#decision-log).
+
+- **D37, 2026-11-03.** A liveness violation whose error graph is missing is
+  classified `UNKNOWN`, not `LASSO`: a shape no run demonstrated must not meet
+  an expectation that names it. Malformed evidence becomes `Errored` rather
+  than a guessed path.
+- **D38, 2026-11-04.** The checker's run-record vocabulary stops at the
+  adapter. `adapters/fizzbee_graph` decodes error-graph keys into `trace.Link`
+  values, and `tests/test_modelcheck_vocabulary.py` keeps those keys out of
+  every pure module. The model's *source* syntax stays in the pure modules: it
+  is the domain's input, which is what this ADR and EP-M2 place there
+  deliberately.
+- **D39, 2026-11-04.** `fails_as` refuses `unknown`, and the users' guide
+  matches the flags it documents, including that `--save-traces` leaves
+  `models/admission/<half>/traces/` untracked.
+- **D40, 2026-11-05.** A failed comparison keeps its evidence: `FixpointError`
+  carries every failed run, and the command writes them into the JSON artefact
+  before the error leaves. The cleanliness requirement distinguishes checker
+  scratch output under `.model-check/` from requested trace evidence.
+- **D41, 2026-11-06.** A completed comparison is recorded with the bounds and
+  durations it was measured at, not only its counts. `Fixpoint` retains both
+  `Passed` runs, so the artefact can state `bound`, `doubled_bound`,
+  `elapsed_seconds` and `doubled_elapsed_seconds` beside the two state counts.
+  A count without its bound is not evidence that the second run was given a
+  larger bound at all.
 
 ## References
 

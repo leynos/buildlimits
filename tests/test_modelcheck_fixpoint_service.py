@@ -40,11 +40,26 @@ def test_the_fixpoint_doubles_the_declared_bound() -> None:
 
 
 def test_a_stable_count_is_reported_as_stable() -> None:
-    """An unchanged count at the doubled bound is the fixpoint evidence."""
+    """An unchanged count at the doubled bound is the fixpoint evidence.
+
+    Both runs are retained with the bound they were given, so the record a
+    reader checks can state the bounds as well as the counts: ``80 -> 80`` is
+    only evidence when the second run really was given twice the first's.
+    """
     found = fixpoint.run_fixpoint(source(bounded_configuration()), Bounded())
 
-    assert found == (fixpoint.Fixpoint("head", 80, 80),), "both counts are reported"
-    assert found[0].is_stable, "and the comparison passes"
+    (compared,) = found
+    assert (compared.states, compared.doubled_states) == (80, 80), (
+        "both counts are reported"
+    )
+    assert (compared.bound, compared.doubled_bound) == (8, 16), (
+        "and the bounds the two runs were given"
+    )
+    assert (compared.declared.elapsed_seconds, compared.doubled.elapsed_seconds) == (
+        0.1,
+        0.1,
+    ), "along with each run's own duration"
+    assert compared.is_stable, "and the comparison passes"
 
 
 def test_a_count_that_grows_with_the_bound_is_not_stable() -> None:

@@ -32,6 +32,8 @@ import subprocess
 import typing as typ
 from pathlib import Path
 
+from modelcheck_cli_cases import Record, doubled_failure, fixpoint_record
+
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
@@ -344,6 +346,63 @@ def test_a_run_writes_only_the_traces_it_was_asked_for(tmp_path: Path) -> None:
         Path("traces/incident-1-BEventually.json"),
     ], "only the declared counterexample trace is written"
     assert _tree() == fixture_before, "and the tracked fixture tree is untouched"
+
+
+def test_a_failed_comparison_exits_two_and_keeps_its_evidence(
+    tmp_path: Path,
+) -> None:
+    """A doubled-bound failure is reported, recorded and leaves its traces.
+
+    The matrix passes, so the command's own status would be ``0``; the
+    comparison is what makes the bound part of the run's meaning, and a run
+    that cannot compare exits ``2`` because the checker was asked and did not
+    answer with a count. The artefact is written before the comparison runs, so
+    this is also the regression for the file claiming a clean matrix: the
+    failure record must be there, naming the configuration, the stage and the
+    bound, with the counterexample and its path still readable afterwards.
+    """
+    model = tmp_path / "model"
+    shutil.copytree(_MODEL, model)
+    log = tmp_path / "seen.log"
+    records = tmp_path / "matrix.json"
+
+    result = _run(
+        "check",
+        str(model),
+        "--fizz",
+        str(_FIZZ),
+        "--fixpoint",
+        "--json",
+        str(records),
+        "--save-traces",
+        log=log,
+    )
+
+    assert result.returncode == 2, "a comparison that cannot run is not a pass"
+    assert "did not pass at its doubled bound" in result.stderr, (
+        "the failure names the stage that did not pass"
+    )
+    assert "max_actions=16" in result.stderr, "and the bound it was given"
+    assert "16 doubled bound failed: counterexample for BEventually (lasso)" in (
+        result.stdout
+    ), "the report carries the counterexample the run found"
+
+    written = typ.cast("list[Record]", json.loads(records.read_text(encoding="utf-8")))
+    assert doubled_failure(written) == ("head", "doubled", 16, False), (
+        "the failure record survived the process's non-zero exit"
+    )
+    failure = fixpoint_record(written)
+    assert failure["verdict"] == "failed", "a failed comparison is never met"
+    assert failure["property"] == "BEventually", "the counterexample is kept"
+    assert failure["kind"] == "lasso", "with the shape the checker reported"
+    trace = typ.cast("dict[str, object]", failure["trace"])
+    assert trace["ending"] == "lasso", "and the path it walked"
+    assert trace["steps"], "which is not empty"
+
+    saved = model / "traces" / "incident-1-BEventually.json"
+    assert json.loads(saved.read_text(encoding="utf-8"))["ending"] == "lasso", (
+        "the matrix's own trace is still readable after the failure"
+    )
 
 
 def test_the_stub_refuses_to_write_beside_itself(tmp_path: Path) -> None:

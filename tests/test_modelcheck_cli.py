@@ -24,12 +24,16 @@ from modelcheck_cli_cases import (
     SOURCE,
     BoundSensitive,
     Inventory,
+    Record,
     app,
     bounded,
     checked,
     checked_in,
+    checked_json,
     configuration,
+    doubled_failure,
     fails_as,
+    fixpoint_record,
     holds,
     listed,
 )
@@ -133,18 +137,8 @@ def test_only_accepts_a_single_property(tmp_path: Path) -> None:
         FakeChecker("pass"),
     )
 
-    status = application([
-        "check",
-        str(tmp_path),
-        "--fizz",
-        "/nonexistent/fizz",
-        "--only",
-        "head:S2",
-        "--json",
-        str(tmp_path / "records.json"),
-    ])
+    status, records = checked_json(application, tmp_path, "--only", "head:S2")
 
-    records = json.loads((tmp_path / "records.json").read_text(encoding="utf-8"))
     assert status == cli.EXIT_MET, "the property alone is selected"
     assert [record["subject"] for record in records] == ["S2"], "one row is written"
 
@@ -160,16 +154,8 @@ def test_the_json_holds_one_record_per_reported_judgement(
     """
     application = app([holds("head", "S1")], FakeChecker("pass", property_name="S1"))
 
-    status = application([
-        "check",
-        str(tmp_path),
-        "--fizz",
-        "/nonexistent/fizz",
-        "--json",
-        str(tmp_path / "records.json"),
-    ])
+    status, records = checked_json(application, tmp_path)
 
-    records = json.loads((tmp_path / "records.json").read_text(encoding="utf-8"))
     assert status == cli.EXIT_MET, "the met matrix exits 0"
     assert records == snapshot, "the record's field set is the contract"
 
@@ -330,6 +316,35 @@ def test_fixpoint_growth_exits_unmet(capsys: pytest.CaptureFixture[str]) -> None
     assert "grew" in printed, "and the report says the count moved"
 
 
+def test_a_growing_comparison_is_written_to_the_artefact(tmp_path: Path) -> None:
+    """A growth result reaches the artefact, not only the exit status.
+
+    The command exits ``1`` for a truncated exploration while every matrix row
+    held, so a file holding only the rows would describe a clean run the status
+    contradicts. The record carries both counts and both bounds, which is what
+    lets a reader of the file see how far the exploration ran before the bound
+    cut it off — a count alone cannot show that the second run was given a
+    larger bound at all.
+    """
+    application = app([bounded()], BoundSensitive())
+
+    status, records = checked_json(application, tmp_path, "--fixpoint")
+
+    assert status == cli.EXIT_UNMET, "a truncated exploration is not a pass"
+    (grown,) = [record for record in records if record["subject"] == "fixpoint"]
+    assert grown["verdict"] == "grew", "the record says the count moved"
+    assert grown["met"] is False, "a growing comparison is never met"
+    assert (grown["states"], grown["doubled_states"]) == (8, 16), (
+        "and carries both counts the comparison measured"
+    )
+    assert (grown["bound"], grown["doubled_bound"]) == (8, 16), (
+        "with the bounds the two runs were given"
+    )
+    assert "elapsed_seconds" in grown and "doubled_elapsed_seconds" in grown, (
+        "and each run's own duration"
+    )
+
+
 def test_a_failed_comparison_is_written_to_the_artefact(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -357,13 +372,12 @@ def test_a_failed_comparison_is_written_to_the_artefact(
 
     printed = capsys.readouterr().out
     assert "doubled bound failed" in printed, "the report names the failed run"
-    records = json.loads(path.read_text(encoding="utf-8"))
-    (failure,) = [record for record in records if record["subject"] == "fixpoint"]
-    assert failure["configuration"] == "head", "the record names the configuration"
-    assert failure["stage"] == "doubled", "and the stage that failed"
-    assert failure["bound"] == 16, "with the bound that run was given"
-    assert failure["met"] is False, "a failed run is never met"
-    assert "doubled bound" in failure["detail"], "and its own diagnostic is kept"
+    records = typ.cast("list[Record]", json.loads(path.read_text(encoding="utf-8")))
+    assert doubled_failure(records) == ("head", "doubled", 16, False), (
+        "the record names the configuration, the stage and the bound that failed"
+    )
+    detail = typ.cast("str", fixpoint_record(records)["detail"])
+    assert "doubled bound" in detail, "and its own diagnostic is kept"
 
 
 def test_help_lists_both_commands(capsys: pytest.CaptureFixture[str]) -> None:

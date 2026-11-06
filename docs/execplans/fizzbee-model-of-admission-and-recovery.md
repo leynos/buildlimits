@@ -973,21 +973,24 @@ explicitly.
     closed, and the evidence survives the run.** The hosted CodeRabbit review
     left fourteen inline findings; eleven needed a change and three were
     already discharged by earlier rounds.
-  - `adapters/configuration_fields.py` ignored a key it did not recognise, so
+  - `adapters/configuration_fields.py` ignored a key it did not recognize, so
     a misspelt `reacheable = [...]` dropped the probe the configuration asked
     for and the remaining expectations reported a pass. `_refuse_unknown` now
     refuses the table, naming the key and the keys it may declare;
     `test_an_unknown_field_is_refused_rather_than_ignored` is the regression.
-  - `assertions._ASSERTION` did not recognise the `eventually always` header
-    the RFC documents for liveness. An unrecognised header is left in the text
+  - `assertions._ASSERTION` did not recognize the `eventually always` header
+    the RFC documents for liveness. An unrecognized header is left in the text
     by the strip, so a property the configuration never names would still be
     checked, while one it does name was refused as undeclared.
     `test_an_eventually_always_assertion_is_a_header_like_any_other` pins
     both directions.
   - `_expected_names` tested its argument with `isinstance`, which a later
     member of the expectation union would silently fall through. It now
-    matches structurally through `_name_of`, whose `Reachable` arm names the
-    probe and whose default reads `property_name`.
+    matches structurally through `expectations.subject`, whose `Reachable`
+    arm names the probe and whose default reads `property_name`. `subject`
+    also serves the report, the record and `assertions`, so the rule that
+    names an expectation lives in one pure module rather than in each
+    reader.
   - `_consistent` compared every run's state count, including a safety or
     deadlock counterexample's. Those stop the checker at the violation, so
     their count is search progress rather than graph size, and two runs over
@@ -1005,6 +1008,30 @@ explicitly.
     naming every accepted key overran the 88-column limit in a production
     module, where `line-too-long` is not ignored (it is for `test_*.py`). The
     message is now two lines: the defect, then the keys the table may declare.
+- [x] (2026-11-06) **Review round: the pre-merge errors and the record's
+    missing measurements are closed.** The walkthrough comment `6375941018`
+    raised two errors and four warnings on head `4ab05d4`.
+  - The two errors asked for one end-to-end regression: a matrix that passes
+    whose comparison fails. `test_a_failed_comparison_exits_two_and_keeps_its_evidence`
+    copies the fixture model, runs `--fixpoint --json --save-traces`, and
+    asserts status `2`, the report line naming the stage and bound, the
+    failure record's configuration, stage, bound, property, kind and trace,
+    and that the saved lasso is still readable afterwards. The fixture's
+    `head` configuration now declares a `max_actions` bound, and the stub
+    answers the doubled bound with the recorded lasso.
+  - The observability warning is D41: `Fixpoint` retains both runs, and a
+    completed comparison records its bounds and durations beside its counts.
+  - The user-facing documentation warning adds
+    [Migrating to 0.2.0](../migrating-to-0.2.0.md), indexed from
+    [contents](../contents.md) and signposting the three targets, the command
+    line, prerequisites, exit statuses and rollback.
+  - The architecture warning is declined for the second time, under D38: the
+    model's _source_ syntax is the pure domain's input by design. The
+    developer-documentation warning's ExecPlan half was already discharged in
+    D39 and D40; ADR 006 now carries an addendum recording D37 to D41.
+  - `make duplication` had failed on the four new import-list families the
+    previous round introduced; the existing family was extended and three
+    reasoned entries added, and the gate now reports 175 allowed exceptions.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -2475,6 +2502,38 @@ explicitly.
     `test_a_malformed_graph_keeps_the_evidence_that_explains_it`,
     `test_a_run_whose_graph_cannot_be_read_is_a_run_that_proved_nothing` and
     `test_a_run_writes_only_the_traces_it_was_asked_for`.
+
+- **D41. A completed comparison is recorded with the bounds and durations it
+  was measured at.** _Decided 2026-11-06._
+  - Decision: `Fixpoint` retains both `Passed` runs and the declared bound
+    rather than only their state counts, and `records.comparison_record`
+    writes `bound`, `doubled_bound`, `elapsed_seconds` and
+    `doubled_elapsed_seconds` beside `states` and `doubled_states`. The
+    counts stay available as properties, so the report and the exit status
+    read the comparison rather than the runs. A new end-to-end regression,
+    `test_a_failed_comparison_exits_two_and_keeps_its_evidence`, runs
+    `--fixpoint --json --save-traces` against a matrix that passes and a
+    comparison that fails, and asserts the status, the report line, the
+    failure record and the saved trace. The fixture's `head` configuration
+    declares `[configurations.head.options.options] max_actions = 8`, and the
+    stub answers the doubled bound with the recorded lasso.
+  - Finding: the pre-merge checks on head `4ab05d4`, recorded in the
+    walkthrough comment `6375941018`, raised two errors and four warnings.
+    Both errors asked for an end-to-end regression in which the matrix passes
+    and a comparison fails. The observability warning asked that every
+    fixpoint run be retained as a bounded, configuration-keyed record with its
+    bound, result type, diagnostic, elapsed time and any available trace. The
+    user-facing documentation warning asked for an n+1 migration document.
+  - Reason: a comparison record that says `8 -> 8` without saying which bounds
+    produced those counts cannot be checked by the reader it exists for, and
+    the failure path already recorded its bound while the success path did
+    not. The end-to-end test is the only one that proves the evidence survives
+    the non-zero exit, because every in-process test writes the artefact
+    through a double.
+  - Evidence: `test_a_growing_comparison_is_written_to_the_artefact`,
+    `test_a_stable_count_is_reported_as_stable`,
+    `test_a_failed_comparison_exits_two_and_keeps_its_evidence` and
+    [Migrating to 0.2.0](../migrating-to-0.2.0.md).
 
 ## Outcomes & retrospective
 

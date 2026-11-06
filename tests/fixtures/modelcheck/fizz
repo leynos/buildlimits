@@ -58,17 +58,30 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+emit_lasso() {
+  if [ -n "$output" ]; then
+    mkdir -p "$output"
+    cp "$directory/lasso-error-graph.json" "$output/error-graph.json"
+  fi
+  cat "$directory/lasso-stdout.txt"
+}
+
 if [ "${MODELCHECK_E2E_ANSWER:-recorded}" = "pass" ]; then
   cat "$directory/pass-stdout.txt"
+  exit 0
+fi
+
+# A fixpoint comparison materializes the same configuration twice: once at the
+# declared bound and once at twice that bound. Answering the doubled bound with
+# the lasso gives ``--fixpoint`` a failing comparison, so the end-to-end test
+# can prove the failure and its evidence survive the non-zero exit.
+if grep -q 'assertion S1' "$spec" && grep -q 'max_actions: 16' "$spec"; then
+  emit_lasso
   exit 0
 fi
 
 if grep -q 'assertion S1' "$spec"; then
   cat "$directory/pass-stdout.txt"
 else
-  if [ -n "$output" ]; then
-    mkdir -p "$output"
-    cp "$directory/lasso-error-graph.json" "$output/error-graph.json"
-  fi
-  cat "$directory/lasso-stdout.txt"
+  emit_lasso
 fi

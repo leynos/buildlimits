@@ -81,7 +81,7 @@ def test_an_eventually_always_assertion_is_a_header_like_any_other() -> None:
     """The ``eventually always`` spelling is found, retained and stripped.
 
     The RFC documents it for liveness properties. A header the reader does not
-    recognise is left in the text by the strip, so a property the configuration
+    recognize is left in the text by the strip, so a property the configuration
     never names would still be checked by a run whose report does not mention
     it; and a configuration that does name it would be refused as expecting an
     assertion the model does not declare.
