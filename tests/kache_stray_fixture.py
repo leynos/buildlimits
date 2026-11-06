@@ -116,6 +116,36 @@ def stray_kache_scope(unit: str, slice_unit: str, runtime: Path) -> Stray:
     return Stray(process, unit)
 
 
+def named_kache_binary(directory: Path) -> Path:
+    """Copy ``sleep`` into a directory under the name the guard matches.
+
+    The copy is what gives the process its name: the guard reads the
+    executable link, not the command line, so a renamed ``sleep`` is the
+    cheapest process that presents the evidence the guard looks for. Creating
+    it in a fresh directory means nothing is ever written through a path that
+    might already be a symlink.
+
+    Parameters
+    ----------
+    directory : Path
+        An existing directory to place the copy in.
+
+    Returns
+    -------
+    Path
+        The copy, which is the executable the guard's test reads.
+
+    Examples
+    --------
+    >>> import tempfile
+    >>> named_kache_binary(Path(tempfile.mkdtemp())).name
+    'kache'
+    """
+    binary = directory / "kache"
+    copy("/bin/sleep", binary)
+    return binary
+
+
 def _stray_binary(runtime: Path) -> Path:
     """Copy ``sleep`` to a fresh path named ``kache``.
 
@@ -126,9 +156,7 @@ def _stray_binary(runtime: Path) -> Path:
     """
     directory = runtime / "stray"
     directory.mkdir()
-    binary = directory / "kache"
-    copy("/bin/sleep", binary)
-    return binary
+    return named_kache_binary(directory)
 
 
 def _start_scope(unit: str, pid: int, slice_unit: str) -> None:

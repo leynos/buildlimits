@@ -11,19 +11,15 @@ mechanics: a covered process is never reported, an uncovered one always is,
 and a status query must not consume the journal line the next poll owes.
 """
 
-import os
 import selectors
-import shutil
-import signal
 import subprocess
-import sys
-import time
 import typing as typ
 from pathlib import Path
 
 import pytest
-from harness_processes import pid_alive
+from fake_cache_processes import kill_and_reap
 from kache_guard_helpers import cache_processes, fake_scope
+from kache_stray_fixture import named_kache_binary
 
 from buildlimits import kache_guard
 from buildlimits.cache_backend import CacheBackend, DirectCache
@@ -260,50 +256,47 @@ def test_a_held_group_covers_its_scope(selector: selectors.BaseSelector) -> None
     ], "the covered scopes are exactly the running groups'"
 
 
-def test_the_guard_finds_the_leaked_daemon_the_fixture_starts(
-    monkeypatch: pytest.MonkeyPatch,
+def test_the_guard_finds_a_real_process_named_kache_that_it_was_shown(
     tmp_path: Path,
 ) -> None:
     """The reading recognizes a real process, not only a substituted predicate.
 
     Every other test here replaces ``_is_kache`` with a set membership, which
     exercises the accounting but leaves the executable test itself unproven
-    against a live process. The fake wrapper's leak mode starts exactly the
-    process the guard exists for: a child named ``kache`` that outlives the
-    wrapper, sitting in the slice with no admitted scope covering it. Its own
-    executable name is the evidence, so this test reads ``/proc`` for real.
+    against a live process. A copy of ``sleep`` placed under the name kache is
+    the process the guard exists for: its own executable link is the evidence,
+    so this test reads ``/proc`` for real.
+
+    The test owns the process rather than having the fake wrapper abandon it.
+    A child that outlives a parent which has exited is an orphan, and a host
+    is entitled to reap those -- the hosted CI runner does, within a single
+    poll of this suite. The guard does not care who the parent is or whether
+    one is still running; it reads the slice and then ``/proc``, so the
+    accounting under test is exactly what a process this test still owns
+    exercises.
     """
     slice_dir = tmp_path / "buildlimits-compilers.slice"
     scope = slice_dir / "buildlimits-9-g1.scope"
     scope.mkdir(parents=True)
-    binary = tmp_path / "kache"
-    shutil.copy("/bin/sleep", binary)
-    marker = tmp_path / "leaked.pid"
-    wrapper = Path(__file__).parent / "fixtures" / "fake_kache.py"
-    monkeypatch.setenv("FAKE_KACHE_LEAK_DAEMON", str(marker))
-    monkeypatch.setenv("FAKE_KACHE_LEAK_BINARY", str(binary))
-    compiled = subprocess.run(
-        [sys.executable, str(wrapper), sys.executable, "-c", "pass"],
-        capture_output=True,
-        check=False,
-        timeout=30,
+    binary = named_kache_binary(tmp_path)
+    # The process is owned here and reaped in the ``finally`` below, which is
+    # the same guarantee a ``with`` block gives; this shape keeps the guard
+    # reads, which need the process alive, inside the same try.
+    process = subprocess.Popen(  # pylint: disable=consider-using-with
+        [str(binary), "300"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
-    assert compiled.returncode == 0, "the wrapper still compiles"
-    leaked = int(marker.read_text(encoding="ascii"))
-    # The fixture cannot park its child in a real scope, so the test writes the
+    # A fixture cannot park its process in a real scope, so the test writes the
     # live identifier into the scope's member list. Everything after that point
     # is the production reading: the slice walk, then ``/proc``.
-    (scope / "cgroup.procs").write_text(f"{leaked}\n", encoding="ascii")
+    (scope / "cgroup.procs").write_text(f"{process.pid}\n", encoding="ascii")
     try:
-        assert kache_guard.find(slice_dir, []) == (leaked,), (
+        assert kache_guard.find(slice_dir, []) == (process.pid,), (
             "a live kache process in an unadmitted scope was reported"
         )
         assert not kache_guard.find(slice_dir, [scope]), (
             "the same process is covered once a held scope accounts for it"
         )
     finally:
-        os.kill(leaked, signal.SIGKILL)
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline and pid_alive(leaked):
-        time.sleep(0.02)
-    assert not pid_alive(leaked), "the test removed the process it started"
+        kill_and_reap(process, timeout=10)

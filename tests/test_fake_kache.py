@@ -15,16 +15,15 @@ import contextlib
 import importlib.util
 import json
 import os
-import shutil
 import signal
 import subprocess
 import sys
-import time
 import typing as typ
 from pathlib import Path
 
 from fake_cache_processes import kill_and_reap, start_bound
-from harness_processes import pid_alive
+from harness_processes import pid_alive, wait_for
+from kache_stray_fixture import named_kache_binary
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -201,38 +200,58 @@ def test_the_wrapper_relays_the_compiler_streams_and_status() -> None:
     assert process.stderr == "warning\n", "standard error is relayed"
 
 
-def test_leak_mode_leaves_a_live_process_named_kache(tmp_path: Path) -> None:
-    """The leak is the guard's evidence: a kache process no scope accounts for.
+def test_the_leak_mode_starts_a_process_the_guard_can_see(tmp_path: Path) -> None:
+    """The leak produces the evidence the guard reads, while it is observable.
 
     The binary is copied rather than linked, and into a fresh directory, so the
     fixture can present the name the guard matches without ever writing through
     a path that might already be a symlink.
+
+    The fixture deliberately does not wait for the child: on a real host it is
+    a daemon that outlives the wrapper, and one the wrapper's own group
+    cancellation removes. A hosted CI runner also reaps a child abandoned by an
+    exited parent, so this test observes the child while the wrapper it started
+    it from is still running rather than asserting that an orphan survives.
+    That keeps the assertion on the fixture's own contract -- the name and the
+    recorded identifier -- instead of on a host's orphan policy.
     """
-    binary = tmp_path / "kache"
-    shutil.copy("/bin/sleep", binary)
+    binary = named_kache_binary(tmp_path)
     marker = tmp_path / "leaked.pid"
+    release = tmp_path / "release"
     env = {
         **os.environ,
         "FAKE_KACHE_LEAK_DAEMON": str(marker),
         "FAKE_KACHE_LEAK_BINARY": str(binary),
     }
-    process = subprocess.run(
-        [sys.executable, str(FIXTURE), sys.executable, "-c", "pass"],
-        env=env,
-        capture_output=True,
-        check=False,
-        timeout=30,
+    # The compiler waits for a file, so the wrapper that started the leak stays
+    # running until this test has looked at the child it left behind. A hosted
+    # runner reaps a child abandoned by an exited parent, and the fixture's
+    # contract here is the evidence the guard reads, not its survival.
+    compiler = (
+        "import pathlib, time\n"
+        f"release = pathlib.Path({str(release)!r})\n"
+        "while not release.exists():\n"
+        "    time.sleep(0.02)\n"
     )
-    assert process.returncode == 0, "the wrapper itself still compiles"
-    pid = int(marker.read_text(encoding="ascii"))
+    # The wrapper is owned deliberately: the test must keep it running while it
+    # reads the leaked child, then reap it in the ``finally`` below.
+    wrapper = subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, str(FIXTURE), sys.executable, "-c", compiler],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    leaked: int | None = None
     try:
-        assert pid_alive(pid), "the leaked daemon outlives the wrapper that started it"
-        assert Path(f"/proc/{pid}/exe").resolve().name == "kache", (
+        assert wait_for(marker.exists), "the leak mode recorded the child it started"
+        leaked = int(marker.read_text(encoding="ascii"))
+        assert pid_alive(leaked), "the child runs while the wrapper that started it is"
+        assert Path(f"/proc/{leaked}/exe").resolve().name == "kache", (
             "the guard's evidence is the executable's own name"
         )
     finally:
-        os.kill(pid, signal.SIGKILL)
-    deadline = time.monotonic() + 10.0
-    while time.monotonic() < deadline and pid_alive(pid):
-        time.sleep(0.02)
-    assert not pid_alive(pid), "the recorded pid is the process the caller can remove"
+        if leaked is not None:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(leaked, signal.SIGKILL)
+        release.touch()
+        kill_and_reap(wrapper, timeout=10)

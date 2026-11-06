@@ -808,7 +808,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `harness_processes.py`                    | `wait_for`, `start_adapter`, `journal_records`, `server_children` and host process observations                           |
 | `fake_cache_processes.py`                 | `start_bound` and `kill_and_reap`: the fake sccache and kache stand-ins' start-and-stop pair                              |
 | `kache_unit_files.py`                     | `start_kache_daemon`, the separately managed daemon a kache scenario points its groups at                                 |
-| `kache_stray_fixture.py`                  | `stray_kache_scope` and `remove`: a kache-named process parked in a scope admission never held                            |
+| `kache_stray_fixture.py`                  | `stray_kache_scope`, `remove` and `named_kache_binary`: a kache-named process parked in a scope admission never held      |
 | `harness_status.py`                       | `HarnessStatus`, the status document, readiness and drain-fault queries                                                   |
 | `status_render_states.py`                 | Fixed status documents and their expected summary lines for the status-render tests                                       |
 | `sccache_host.py`                         | `sccache_host_marks` and private-server helpers for the opt-in real-binary check                                          |
@@ -959,6 +959,19 @@ did nothing wrong.
 - **Close subprocess pipes.** Enter a `Popen` as a context manager, or close
   its `stdout` and `stderr`, after killing and reaping it.
 - **Do not call `gc.collect()` to tidy up.** It hides which test leaked.
+- **Keep the process, not just its identifier.** A test that starts a child
+  owns it: keep the `Popen` and kill and reap it in a `finally`. A test that
+  learns an identifier instead has to own the removal itself, and
+  `ProcessLookupError` from the kill means the process was already gone, which
+  is the outcome wanted -- never a failure.
+- **Do not assert that a process abandoned by an exited parent survives.** A
+  hosted CI runner tracks a job's processes through `RUNNER_TRACKING_ID` and
+  reaps orphans, including a child detached into its own session, within a poll
+  or two of the exit. Such a test passes on a developer's machine and fails on
+  every hosted run of the same commit. Observe the child while the parent that
+  started it is still running, or own the child directly. See
+  `tests/test_fake_kache.py` for the first shape and
+  `tests/test_kache_guard.py` for the second.
 
 The autouse fixture in the `descriptor_guard` plugin enforces this.
 `descriptor_guard.no_leaks` suspends the cyclic collector for the length of one

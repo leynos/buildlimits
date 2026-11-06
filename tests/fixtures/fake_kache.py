@@ -150,8 +150,13 @@ def _leak_daemon(env: cabc.Mapping[str, str]) -> None:
 
     The child stays in the wrapper's control group, which is what lets a test
     prove that cancelling the group removes a daemon a client started. It is
-    detached from the wrapper's session so that it survives the wrapper's own
-    exit, as a daemon does.
+    detached from the wrapper's session so that, on a real host, it survives
+    the wrapper's own exit as a daemon does.
+
+    A test must not *require* that survival. A hosted CI runner reaps a child
+    abandoned by an exited parent, so a test that needs one observes the child
+    while the wrapper that started it is still running, or owns a process of
+    its own. See the developers' guide, §11.5.
 
     Parameters
     ----------
