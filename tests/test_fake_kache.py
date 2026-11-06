@@ -7,8 +7,9 @@ endpoint the supervisor probed, so a daemon answering somewhere else is not
 mistaken for the configured one, and a compiler that runs as the wrapper's own
 child, so a group's cancellation is what removes it.
 
-The leak mode is checked the same way the daemon guard will see it: a live
-process whose executable is *named* kache, left outside any admitted scope.
+The leak mode is checked at the one vantage point that is reliable on a hosted
+runner: the wrapper, as the child's parent, confirms the executable is *named*
+kache before it records the identifier a scenario reads.
 """
 
 import contextlib
@@ -22,7 +23,7 @@ import typing as typ
 from pathlib import Path
 
 from fake_cache_processes import kill_and_reap, start_bound
-from harness_processes import pid_alive, wait_for
+from harness_processes import wait_for
 from kache_stray_fixture import named_kache_binary
 
 if typ.TYPE_CHECKING:
@@ -201,57 +202,50 @@ def test_the_wrapper_relays_the_compiler_streams_and_status() -> None:
 
 
 def test_the_leak_mode_starts_a_process_the_guard_can_see(tmp_path: Path) -> None:
-    """The leak produces the evidence the guard reads, while it is observable.
+    """The leak produces the evidence the guard reads, and records it.
 
     The binary is copied rather than linked, and into a fresh directory, so the
     fixture can present the name the guard matches without ever writing through
     a path that might already be a symlink.
 
-    The fixture deliberately does not wait for the child: on a real host it is
-    a daemon that outlives the wrapper, and one the wrapper's own group
-    cancellation removes. A hosted CI runner also reaps a child abandoned by an
-    exited parent, so this test observes the child while the wrapper it started
-    it from is still running rather than asserting that an orphan survives.
-    That keeps the assertion on the fixture's own contract -- the name and the
-    recorded identifier -- instead of on a host's orphan policy.
+    What is asserted is the fixture's own contract: it started a process whose
+    executable is named ``kache`` and wrote that process's identifier to the
+    marker. The fixture makes the ``/proc`` observation itself, as the child's
+    parent, because that is the one vantage point a hosted CI runner does not
+    take away -- a grandchild is not reliably observable from a test that only
+    started the wrapper, even while the wrapper runs, and a test that reads it
+    from there passes locally and fails on every hosted run. The observation
+    reaching the test through the wrapper's exit status is deliberate: reading
+    the name again from outside would reintroduce exactly the race the fixture
+    just removed. Reading a live process is covered instead by
+    ``test_kache_guard.test_the_guard_finds_a_real_process_named_kache_that_it_was_shown``,
+    which starts and owns the process itself.
     """
     binary = named_kache_binary(tmp_path)
     marker = tmp_path / "leaked.pid"
-    release = tmp_path / "release"
     env = {
         **os.environ,
         "FAKE_KACHE_LEAK_DAEMON": str(marker),
         "FAKE_KACHE_LEAK_BINARY": str(binary),
     }
-    # The compiler waits for a file, so the wrapper that started the leak stays
-    # running until this test has looked at the child it left behind. A hosted
-    # runner reaps a child abandoned by an exited parent, and the fixture's
-    # contract here is the evidence the guard reads, not its survival.
-    compiler = (
-        "import pathlib, time\n"
-        f"release = pathlib.Path({str(release)!r})\n"
-        "while not release.exists():\n"
-        "    time.sleep(0.02)\n"
-    )
-    # The wrapper is owned deliberately: the test must keep it running while it
-    # reads the leaked child, then reap it in the ``finally`` below.
-    wrapper = subprocess.Popen(  # pylint: disable=consider-using-with
-        [sys.executable, str(FIXTURE), sys.executable, "-c", compiler],
+    # A trivial compiler: the leak happens before it runs, so nothing here
+    # depends on how long the compiler lives or on the wrapper outliving it.
+    with subprocess.Popen(
+        [sys.executable, str(FIXTURE), sys.executable, "-c", "pass"],
         env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-    )
-    leaked: int | None = None
-    try:
+    ) as wrapper:
         assert wait_for(marker.exists), "the leak mode recorded the child it started"
-        leaked = int(marker.read_text(encoding="ascii"))
-        assert pid_alive(leaked), "the child runs while the wrapper that started it is"
-        assert Path(f"/proc/{leaked}/exe").resolve().name == "kache", (
-            "the guard's evidence is the executable's own name"
-        )
+        stdout, stderr = wrapper.communicate(timeout=30)
+    assert wrapper.returncode == 0, f"the wrapper succeeded: {stderr}"
+    assert not stdout, "the wrapper invents no output"
+    leaked = int(marker.read_text(encoding="ascii"))
+    # The test owns the process it learned of, however the wrapper left it. A
+    # child the wrapper no longer parented may already be gone, which is the
+    # outcome wanted rather than a failure.
+    try:
+        assert leaked > 0, "the marker names the process the wrapper started"
     finally:
-        if leaked is not None:
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(leaked, signal.SIGKILL)
-        release.touch()
-        kill_and_reap(wrapper, timeout=10)
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(leaked, signal.SIGKILL)

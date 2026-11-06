@@ -15,17 +15,20 @@ socket. This fake keeps exactly that shape without a real compiler or daemon:
   stays inside the caller's control group, as the real wrapper's does.
 
 An optional leak mode starts a long-lived child before compiling and records
-its process identifier, so a test can prove what the supervisor does with a
-daemon a client leaves behind.
+its process identifier -- but only once the child's executable link is named
+kache, so a marker always names the evidence the guard reads rather than a
+process that merely exists.
 """
 
 import contextlib
 import json
 import os
 import pathlib
+import signal
 import socket
 import subprocess
 import sys
+import time
 import typing as typ
 
 if typ.TYPE_CHECKING:
@@ -33,6 +36,9 @@ if typ.TYPE_CHECKING:
 
 #: The probe must not hang when a daemon accepts the connection and stalls.
 SOCKET_TIMEOUT_SECONDS = 2.0
+
+#: How long the leak mode waits for its child to exec the named executable.
+NAME_DEADLINE_SECONDS = 5.0
 
 
 def serve(path: str) -> None:
@@ -146,17 +152,21 @@ def compile_with(argv: list[str], env: cabc.Mapping[str, str]) -> int:
 
 
 def _leak_daemon(env: cabc.Mapping[str, str]) -> None:
-    """Start a long-lived child and record its process identifier.
+    """Start a long-lived child and record the evidence the guard reads.
 
     The child stays in the wrapper's control group, which is what lets a test
-    prove that cancelling the group removes a daemon a client started. It is
-    detached from the wrapper's session so that, on a real host, it survives
-    the wrapper's own exit as a daemon does.
+    prove that cancelling the group removes a daemon a client started. Its
+    session is irrelevant to that: the guard walks the compiler slice and then
+    ``/proc``, and neither follows sessions.
 
-    A test must not *require* that survival. A hosted CI runner reaps a child
-    abandoned by an exited parent, so a test that needs one observes the child
-    while the wrapper that started it is still running, or owns a process of
-    its own. See the developers' guide, §11.5.
+    The wrapper writes the marker only once the child's executable link names
+    ``kache``, so the recorded identifier is evidence rather than a promise.
+    It makes that observation because it is the child's parent -- the one
+    process guaranteed to be able to see it. A test reading the marker from
+    outside is not: a hosted CI runner does not reliably keep a grandchild
+    observable for the length of the test that started it, and a test that
+    races that policy passes on a developer's machine and fails on every
+    hosted run. See the developers' guide, §11.5.
 
     Parameters
     ----------
@@ -171,13 +181,54 @@ def _leak_daemon(env: cabc.Mapping[str, str]) -> None:
     binary = env.get("FAKE_KACHE_LEAK_BINARY", "/bin/sleep")
     # The leak is the point: the child must outlive this wrapper so that the
     # group's cancellation is what removes it, so no block may await it here.
+    # It is a plain child: detaching it into its own session would model
+    # nothing the guard reads, and would make the observation unreliable.
     child = subprocess.Popen(  # pylint: disable=consider-using-with
         [binary, "300"],
-        start_new_session=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+    _await_own_name(child.pid, pathlib.Path(binary).name)
     pathlib.Path(marker).write_text(f"{child.pid}\n", encoding="ascii")
+
+
+def _await_own_name(pid: int, wanted: str) -> None:
+    """Wait until *pid*'s executable link reports *wanted*.
+
+    A freshly forked child still links to the interpreter its parent ran; the
+    link names the new program only after ``execve`` succeeds. Waiting here is
+    what makes the marker's identifier mean "a process presenting this name
+    was started", rather than "a process identifier was allocated".
+
+    Parameters
+    ----------
+    pid : int
+        The child to read.
+    wanted : str
+        The executable name the guard matches.
+
+    Raises
+    ------
+    RuntimeError
+        If the child never presents the name, which means the leak mode failed
+        to produce the evidence the guard reads. Reporting it through this
+        fixture's exit status keeps the failure where it happened, instead of
+        leaving a test to infer it from a process it cannot see.
+    """
+    # A bounded wait: a child that cannot start must fail the leak mode rather
+    # than hang the wrapper a scenario is driving.
+    deadline = time.monotonic() + NAME_DEADLINE_SECONDS
+    while time.monotonic() < deadline:
+        with contextlib.suppress(OSError):
+            if pathlib.Path(f"/proc/{pid}/exe").resolve().name == wanted:
+                return
+        time.sleep(0.01)
+    # The child never became the named process, so nothing the guard looks for
+    # exists. Remove it rather than leave a stray sleep behind.
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGKILL)
+    msg = f"the leaked child never presented the executable name {wanted!r}"
+    raise RuntimeError(msg)
 
 
 def main(argv: list[str], env: cabc.Mapping[str, str]) -> int:

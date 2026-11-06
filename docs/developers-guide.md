@@ -964,14 +964,17 @@ did nothing wrong.
   learns an identifier instead has to own the removal itself, and
   `ProcessLookupError` from the kill means the process was already gone, which
   is the outcome wanted -- never a failure.
-- **Do not assert that a process abandoned by an exited parent survives.** A
-  hosted CI runner tracks a job's processes through `RUNNER_TRACKING_ID` and
-  reaps orphans, including a child detached into its own session, within a poll
-  or two of the exit. Such a test passes on a developer's machine and fails on
-  every hosted run of the same commit. Observe the child while the parent that
-  started it is still running, or own the child directly. See
-  `tests/test_fake_kache.py` for the first shape and
-  `tests/test_kache_guard.py` for the second.
+- **Do not assert what a grandchild does from outside its parent.** A hosted CI
+  runner tracks a job's processes through `RUNNER_TRACKING_ID` and reaps
+  orphans, including a child detached into its own session, within a poll or
+  two of the parent's exit. A grandchild is not reliably observable from a test
+  that only started the wrapper, even while that wrapper is still running, so
+  such a test passes on a developer's machine and fails on every hosted run of
+  the same commit. Where a fixture must show something about a child it starts,
+  let the parent make the observation and carry it in the fixture's own exit
+  status, as `tests/fixtures/fake_kache.py::_await_own_name` does. Where a test
+  must read a live process, have it start and own that process itself, as
+  `tests/test_kache_guard.py` does.
 
 The autouse fixture in the `descriptor_guard` plugin enforces this.
 `descriptor_guard.no_leaks` suspends the cyclic collector for the length of one
