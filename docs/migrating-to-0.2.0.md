@@ -62,8 +62,10 @@ the first time, unless the pinned version or digest changes.
    The target downloads the release named by `FIZZBEE_VERSION`, checks it
    against `FIZZBEE_SHA256`, unpacks it into a content-addressed directory
    under the user cache, and links `.tools/fizzbee` at the worktree root. A
-   failed download or a digest mismatch leaves neither a cache entry nor the
-   link, so a later run cannot mistake a partial install for a verified one.
+   failed download or a digest mismatch installs nothing: the partial asset is
+   removed, no cache entry is written, and the link is not created. A cache
+   entry and link left by an earlier successful install are not removed, so a
+   later run still finds the last verified checker rather than a partial one.
    The binary is never committed and never installed system-wide.
 
 3. Run the cheap check, which compares the model's `# maps:` annotations with

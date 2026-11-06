@@ -76,17 +76,18 @@ def test_a_configuration_without_an_action_bound_cannot_be_compared() -> None:
     The refusal is recorded as a failure rather than raised on its own, because
     it is evidence about that configuration: it has no bound to double. A
     caller that only saw an exception would still have to write the failure
-    into the artefact itself.
+    into the artefact itself. The bound is read before the first run, so the
+    checker is never asked for a result the comparison would discard.
     """
+    checker = Bounded()
     with pytest.raises(fixpoint.FixpointError) as raised:
-        fixpoint.run_fixpoint(
-            source(bounded_configuration(max_actions=None)), Bounded()
-        )
+        fixpoint.run_fixpoint(source(bounded_configuration(max_actions=None)), checker)
 
     (failure,) = raised.value.failures
     assert failure.stage == "materialize", "the configuration never became a run"
     assert failure.bound is None, "so it was given no bound to report"
     assert "max_actions" in str(raised.value), "and the refusal names the missing key"
+    assert not checker.spec_texts, "and the checker is never asked"
 
 
 def test_a_later_refusal_keeps_an_earlier_failure() -> None:

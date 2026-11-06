@@ -181,6 +181,30 @@ def test_a_credential_the_checker_printed_is_redacted(
     assert echoed_value not in result.detail, "and no part of it is left behind"
 
 
+def test_a_short_credential_the_checker_printed_is_redacted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A five-character credential is a credential, not a flag.
+
+    The length of a value says nothing about whether it is secret, so a short
+    one is replaced too. It is matched only where it stands alone, which is
+    where a checker prints a value it was given, so the replacement cannot
+    rewrite the middle of an ordinary word.
+    """
+    echoed_value = "a1b2c"
+    monkeypatch.setenv("MODELCHECK_E2E_SECRET", echoed_value)
+    fizz = _stub(
+        tmp_path,
+        "#!/usr/bin/env bash\nprintf 'token=%s\\n' \"$MODELCHECK_E2E_SECRET\"\n",
+    )
+
+    result = FizzbeeChecker(fizz).check(_spec())
+
+    assert isinstance(result, domain.Errored), "no verdict line is an error"
+    assert "token=<redacted>" in result.detail, "the value is replaced whole"
+    assert echoed_value not in result.detail, "and no part of it is left behind"
+
+
 def test_a_runner_path_beside_the_scratch_directory_is_redacted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

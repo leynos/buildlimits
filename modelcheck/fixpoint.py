@@ -227,23 +227,19 @@ def _compared(
     Raises
     ------
     MaterializeError
-        If the configuration declares no ``max_actions`` bound.
-    """  # ruff: ignore[docstring-extraneous-exception] - doubled() raises it.
+        If the configuration declares no ``max_actions`` bound. The bound is
+        read before the first run, so a configuration the comparison cannot
+        use never reaches the checker: its result would have been discarded
+        and the run's time spent proving nothing.
+    """  # ruff: ignore[docstring-extraneous-exception] - declared_bound raises it.
+    bound = declared_bound(configuration)
     declared = _pass_run(text, configuration, "declared", checker)
     if isinstance(declared, FixpointFailure):
         return None, (declared,)
     doubled_run = _pass_run(text, doubled(configuration), "doubled", checker)
     if isinstance(doubled_run, FixpointFailure):
         return None, (doubled_run,)
-    return (
-        Fixpoint(
-            configuration.name,
-            declared_bound(configuration),
-            declared,
-            doubled_run,
-        ),
-        (),
-    )
+    return (Fixpoint(configuration.name, bound, declared, doubled_run), ())
 
 
 def _pass_run(

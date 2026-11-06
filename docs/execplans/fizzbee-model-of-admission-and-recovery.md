@@ -1076,6 +1076,31 @@ explicitly.
   - Focused validation on the working tree: 298 tests and 2 snapshots pass
     across the evidence, output and command-line suites and the evidence
     module's doctests. Repository gates are delegated to the scrutineer.
+- [x] (2026-11-06) **Review round: every form of a credential is redacted, and
+    an unbounded configuration never runs.** The four inline items from the
+    third review round on head `19a0dd8`, recorded as D44.
+  - A credential's JSON-escaped form is a needle beside its literal value, so a
+    graph that escaped a quote or a backslash no longer carries the credential
+    into the persisted `Errored` detail. The fixture's `malformed` mode now
+    escapes the value it writes, as a real JSON writer would, and the
+    end-to-end test reads the record back.
+  - The six-character floor becomes a two-character floor plus a whole-token
+    rule, so a five-character credential is redacted without rewriting the
+    middle of an ordinary word. The one-character residual is recorded in the
+    ADR rather than hidden.
+  - `_compared` reads the action bound before the declared run, so a
+    configuration with no bound never reaches the checker; the existing
+    regression now asserts the checker was never asked.
+  - The install documentation says what a failed fetch really leaves: no new
+    cache entry and no new link, while an earlier verified install stays.
+  - The redaction half of `fizzbee_evidence` moves to `fizzbee_redaction`, and
+    the three persisted-record evidence tests move to
+    `tests/test_modelcheck_cli_evidence_e2e.py`; both splits are forced by the
+    400-line limit and change no behaviour.
+  - Focused validation on the working tree: 67 tests and 1 snapshot pass
+    across the layering, evidence, fixpoint and command-line suites and the
+    changed modules' doctests. Repository gates are delegated to the
+    scrutineer.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -2661,6 +2686,44 @@ explicitly.
     `test_an_unreadable_graph_reaches_the_persisted_record` and
     `test_a_malformed_graph_reaches_the_persisted_record`, the last two
     through the command line into the persisted record.
+
+- **D44. A credential is redacted in every form the checker can write it, and a
+  short one is redacted too.** _Decided 2026-11-06._
+  - Decision: this supersedes the length rule in D43. The redaction half of
+    `adapters/fizzbee_evidence` moves to a new `adapters/fizzbee_redaction`,
+    because the two halves answer different questions — what must not be
+    recorded, and how much of what remains is worth recording — and the
+    combined module had outgrown the 400-line limit. `fizzbee_redaction` gains
+    a `Replacement` value carrying a needle, a placeholder and whether the
+    needle is matched only as a whole token. Each
+    credential value contributes two needles: the literal value and its
+    JSON-escaped form when the two differ. `_MIN_SECRET_LENGTH` becomes 2, and
+    a value shorter than `_WHOLE_WORD_SECRET_LENGTH` (6) is replaced only
+    between characters that cannot continue a token.
+  - Finding: the third review round on head `19a0dd8` raised four inline items.
+    A credential the checker escaped into a graph was not matched by a literal
+    replacement, so an unparsable graph could carry it into the persisted
+    `Errored` detail. A five-character credential was left unredacted outright,
+    which is a secrecy decision made from a value's length. The install
+    documentation claimed a failed fetch leaves no link, which is untrue when
+    an earlier install left one. And `_compared` read the action bound only
+    after the declared run had already reached the checker, so an unbounded
+    configuration spent a run whose result was discarded.
+  - Reason: a value's length says nothing about whether it is secret, and a
+    checker that writes JSON writes the escaped form. A whole-token rule is
+    what makes a short needle safe: replacing `abcde` wherever it occurs would
+    rewrite ordinary words, while replacing it where it stands alone removes
+    the value a checker was given. The one-character residual is kept and
+    recorded because a one-character value is indistinguishable from a state
+    count, and replacing every `1` would destroy the evidence the record
+    exists to carry.
+  - Evidence: `test_a_short_credential_the_checker_printed_is_redacted`,
+    `test_an_escaped_credential_reaches_the_persisted_record_redacted`,
+    `Redaction.apply` and `Replacement.apply`'s doctests, and
+    `test_a_configuration_without_an_action_bound_cannot_be_compared`, which
+    now asserts the checker was never asked. The three persisted-record
+    evidence tests move to `tests/test_modelcheck_cli_evidence_e2e.py`, so
+    neither command-line test module exceeds the 400-line limit.
 
 ## Outcomes & retrospective
 

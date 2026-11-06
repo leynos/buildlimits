@@ -16,9 +16,10 @@
 # cannot be read, and one that is readable but is not an error graph. The
 # unreadable mode also prints a runner path, a credential taken from the
 # environment and a long transcript, and the malformed mode writes the same
-# credential into the graph it saves. The end-to-end tests read the persisted
-# record back to prove it bounds the capture and replaces both the runner path
-# and the credential rather than carrying any of them whole.
+# credential into the graph it saves, JSON-escaped as a real writer would. The
+# end-to-end tests read the persisted record back to prove it bounds the capture
+# and replaces both the runner path and the credential rather than carrying any
+# of them whole.
 #
 # ``MODELCHECK_E2E_LOG`` names the file each invocation appends its working
 # directory and arguments to. The test points it at its own scratch directory,
@@ -93,7 +94,14 @@ case "${MODELCHECK_E2E_ANSWER:-recorded}" in
     ;;
   malformed)
     mkdir -p "$output"
-    printf '{"not": "a list", "token": "%s"}' "${MODELCHECK_E2E_SECRET:-}" \
+    # A JSON writer escapes a quote or a backslash in the value it writes, so
+    # the graph holds the escaped form rather than the value itself. The
+    # redaction has to cover that form too, or a credential containing either
+    # character would reach the record in the one shape the checker used.
+    escaped=${MODELCHECK_E2E_SECRET:-}
+    escaped=${escaped//\\/\\\\}
+    escaped=${escaped//\"/\\\"}
+    printf '{"not": "a list", "token": "%s"}' "$escaped" \
       > "$output/error-graph.json"
     cat "$directory/lasso-stdout.txt"
     exit 0

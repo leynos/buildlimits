@@ -1089,8 +1089,10 @@ make fizzbee
 The target downloads the release named by `FIZZBEE_VERSION`, checks it against
 `FIZZBEE_SHA256`, and unpacks it into a content-addressed directory under the
 user cache. It then links `.tools/fizzbee` at the worktree root. A download
-that fails, or a digest that does not match, leaves neither a cache entry nor
-the link, so a later run cannot mistake a partial install for a verified one.
+that fails, or a digest that does not match, installs nothing: the partial
+asset is removed, no cache entry is written, and the link is not created. A
+cache entry and link left by an earlier successful install are not removed, so
+a later run still finds the last verified checker rather than a partial one.
 The binary is never committed and never installed system-wide; `make test`,
 `make lint`, `make typecheck` and `make check-fmt` never fetch or run it.
 

@@ -75,14 +75,15 @@ The package is a hexagon:
   name, so purity is checked rather than promised.
 - **Adapters** — `fizzbee_process` (the only module that starts a process) with
   `fizzbee_process_group` (the group kill and the bounded wait for it),
-  `fizzbee_output`, `fizzbee_graph`, `fizzbee_measurements` and
-  `fizzbee_evidence` (the pure translation of what a run printed: verdict lines
-  are classified in `fizzbee_output`, error-graph records are decoded into
-  domain links and traces in `fizzbee_graph`, and the bounded transcript a
-  failed run keeps is assembled in `fizzbee_evidence`, so no checker key
-  reaches a pure module), `configuration` with its two field readers (the model
-  directory's layout and its TOML schema), and `inventory` (the only module
-  that imports `buildlimits`).
+  `fizzbee_output`, `fizzbee_graph`, `fizzbee_measurements`, `fizzbee_evidence`
+  and `fizzbee_redaction` (the pure translation of what a run printed: verdict
+  lines are classified in `fizzbee_output`, error-graph records are decoded
+  into domain links and traces in `fizzbee_graph`, the bounded transcript a
+  failed run keeps is assembled in `fizzbee_evidence`, and the runner paths and
+  credentials that must not be kept are replaced in `fizzbee_redaction`, so no
+  checker key reaches a pure module), `configuration` with its two field
+  readers (the model directory's layout and its TOML schema), and `inventory`
+  (the only module that imports `buildlimits`).
 - **Driving adapter** — `cli.py` builds the Cyclopts application from adapter
   *factories*, so a test supplies doubles without a checker and without a model
   directory. `cli_outputs.py` holds the artefact and the traces that run
@@ -205,6 +206,20 @@ its finding, reason and evidence, in the
   anything. The line a verdict is read from — an `Error:` diagnostic or the
   marker a signal left — is bounded on the same reasoning as the transcript,
   because the checker writes it and its length is the checker's choice.
+- **D44, 2026-11-06.** A credential is redacted in every form the checker can
+  write it, and a short one is redacted too. This supersedes the length rule in
+  D43. A checker that writes its graph as JSON escapes a quote or a backslash
+  in the value it writes, so the document holds `a\"b` where the credential is
+  `a"b`; the escaped form is now a needle beside the literal value, or the same
+  credential would reach the record in the one shape the checker used. The
+  six-character floor becomes a two-character floor plus a whole-token rule: a
+  value shorter than six characters is replaced only where it stands alone, so
+  a five-character credential is removed without rewriting the middle of an
+  ordinary word. A one-character value is still not replaced, and that residual
+  is recorded rather than hidden. It is indistinguishable from a state count, a
+  flag or an exit status — `Unique states: 1` is the very evidence a record
+  exists to carry — so replacing every `1` in a transcript would destroy the
+  report without protecting a secret it can no longer express.
 
 ## References
 

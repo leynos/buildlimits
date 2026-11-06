@@ -35,13 +35,13 @@ import typing as typ
 from pathlib import Path
 
 from modelcheck.adapters.fizzbee_evidence import (
-    redaction_for,
     timeout_detail,
     unreadable_graph,
     with_evidence,
 )
 from modelcheck.adapters.fizzbee_output import parse_output
 from modelcheck.adapters.fizzbee_process_group import kill_group, stopped
+from modelcheck.adapters.fizzbee_redaction import redaction_for
 from modelcheck.domain import Errored, Stopped
 
 if typ.TYPE_CHECKING:
