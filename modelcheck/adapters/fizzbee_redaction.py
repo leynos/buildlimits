@@ -88,7 +88,7 @@ A one-character value is not replaced, and that is a deliberate residual. It is
 indistinguishable from a state count, a flag or an exit status: ``Unique states:
 1`` is the very evidence a record exists to carry, so replacing every ``1`` in a
 transcript would destroy the report without protecting a secret it can no
-longer express. Two characters is the shortest value a reader could recognise
+longer express. Two characters is the shortest value a reader could recognize
 as a credential at all.
 """
 
