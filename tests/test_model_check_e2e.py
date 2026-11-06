@@ -91,6 +91,16 @@ token retained for ever while the queue empties between requests, which RFC
 demand qualification would be prose with no run behind it.
 """
 
+FIXPOINT = "fixpoint"
+"""The subject of a bound-comparison row, which judges no expectation.
+
+``--fixpoint`` writes one row per configuration it compared, beside the rows
+that judge properties and probes. The comparison is about the bound rather
+than about a property, so it carries no ``fairness`` and takes no part in
+the per-subject maps these tests read; its own evidence is asserted by
+:func:`test_the_fixpoint_comparison_is_recorded`.
+"""
+
 
 @pytest.fixture(scope="module")
 def records() -> dict[str, list[Record]]:
@@ -111,12 +121,14 @@ def _of(records: list[Record], configuration: str) -> dict[str, Record]:
     Returns
     -------
     dict[str, dict[str, object]]
-        Its records, keyed by the property or probe they judge.
+        Its records, keyed by the property or probe they judge. A comparison
+        row is left out: it is keyed by :data:`FIXPOINT`, which names a bound
+        rather than an expectation.
     """
     return {
         typ.cast("str", record["subject"]): record
         for record in records
-        if record["configuration"] == configuration
+        if record["configuration"] == configuration and record["subject"] != FIXPOINT
     }
 
 
@@ -313,6 +325,34 @@ def test_fixed_configuration_holds(
         record = head[subject]
         assert record["met"] is True, record
         assert record["verdict"] == "reached", record
+
+
+@pytest.mark.fizzbee
+@pytest.mark.parametrize("model", sorted(MODELS))
+def test_the_fixpoint_comparison_is_recorded(
+    records: dict[str, list[Record]], model: str
+) -> None:
+    """``head``'s comparison is recorded with both bounds and both counts.
+
+    ``make model-check`` asks for ``--fixpoint``, so a stable comparison is
+    part of what the run concluded and has to be readable from the artefact it
+    saved. A record carrying only the two counts could not show that the
+    second run was given a larger bound at all.
+    """
+    (comparison,) = [
+        record
+        for record in records[model]
+        if record["subject"] == FIXPOINT and record["configuration"] == "head"
+    ]
+
+    assert comparison["verdict"] == "stable", "head's exploration did not grow"
+    assert comparison["met"] is True, "and the comparison was met"
+    assert comparison["doubled_bound"] == 2 * typ.cast("int", comparison["bound"]), (
+        "the second run was given twice the first run's bound"
+    )
+    assert comparison["states"] == comparison["doubled_states"], (
+        "and the count it explored did not move"
+    )
 
 
 @pytest.mark.fizzbee
