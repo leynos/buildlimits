@@ -810,7 +810,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `pool_helpers.py`                         | `FakePool` and `attach_pool`                                                                                                               |
 | `descriptor_helpers.py`                   | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                                                              |
 | `descriptor_guard.py`                     | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                                                                 |
-| `skip_guard.py`                           | the `--fail-on-skip` option, which makes any skipped test fail the session; see §11.6                                     |
+| `skip_guard.py`                           | the `--fail-on-skip` option, which makes any skipped test fail the session; see §11.6                                                      |
 | `launch_helpers.py`                       | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                                                               |
 | `adapter_doubles.py`                      | `immediate_retry` and `script_adapter` for driving the adapter in-process                                                                  |
 | `toolchain_trees.py`                      | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler                                          |
@@ -857,12 +857,12 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `outcome_shell_test_support.py`           | Pending statistics, fake server and writer ports for shell-loop tests                                                                      |
 | `outcome_store_fixture_helpers.py`        | Single-row reader fixtures and torn UTF-8 tails for outcome-store tests                                                                    |
 | `outcome_vocabulary_test_support.py`      | Shared outcome-token aliases for schema and metrics-sink contract tests                                                                    |
-| `fizzbee_spike.py`                        | The scratch-directory `run_model` runner, output masking and error-graph readers                                                          |
-| `fizzbee_expectations.py`                 | `Expectation`, `check` and `paired`: what one run or a pass/fail pair must show, enforced per test                                        |
-| `modelcheck_cases.py`              | One expectation, result, configuration and trace of each kind, named once for the domain tests                    |
-| `modelcheck_doubles.py`            | `FakeChecker`, `Verbatim`, `Restated` and `FixedSource`: recorded checker output replayed through the real parser |
-| `modelcheck_scenarios.py`          | The model text, the `Matrix` one model-check scenario builds, and the readers its steps use                       |
-| `modelcheck_cli_cases.py`          | The command lines and expected exit statuses the CLI tests share                                                  |
+| `fizzbee_spike.py`                        | The scratch-directory `run_model` runner, output masking and error-graph readers                                                           |
+| `fizzbee_expectations.py`                 | `Expectation`, `check` and `paired`: what one run or a pass/fail pair must show, enforced per test                                         |
+| `modelcheck_cases.py`                     | One expectation, result, configuration and trace of each kind, named once for the domain tests                                             |
+| `modelcheck_doubles.py`                   | `FakeChecker`, `Verbatim`, `Restated` and `FixedSource`: recorded checker output replayed through the real parser                          |
+| `modelcheck_scenarios.py`                 | The model text, the `Matrix` one model-check scenario builds, and the readers its steps use                                                |
+| `modelcheck_cli_cases.py`                 | The command lines and expected exit statuses the CLI tests share                                                                           |
 
 _Table 4: Shared test helper modules._
 
