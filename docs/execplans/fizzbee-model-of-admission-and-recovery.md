@@ -104,13 +104,19 @@ behaviour, thresholds and interfaces are untouched (RFC 0001 non-goals).
   - The one declared exception is requested evidence. `--save-traces` writes
     each counterexample under `models/admission/<half>/traces/`, which is
     deliberately not git-ignored so the paths are reviewed as diffs. Those
-    files are the only addition a run may make to a tracked directory; D39
-    records why the guide and the plan must say so rather than claiming every
-    run leaves the tree untouched.
-  - After any run without `--save-traces`, `git status --porcelain` must be
-    empty — and, because Git cannot see a git-ignored name, so must a
-    recursive listing of every tracked directory the run could write to. A run
-    with `--save-traces` may add only the declared trace files, which
+    files are the only addition a run makes to a tracked directory on its own;
+    D39 records why the guide and the plan must say so rather than claiming
+    every run leaves the tree untouched.
+  - `--json PATH` is the second exception, and the caller owns it. The tool
+    writes to exactly the path it is given and does not check where that path
+    is, so a `--json` inside a tracked directory adds a file. Every target and
+    test names a path under the git-ignored `.model-check/`, which is why the
+    guarantee below is stated for those runs.
+  - After any run that passes neither `--save-traces` nor a `--json` path in a
+    tracked directory, `git status --porcelain` must be empty — and, because
+    Git cannot see a git-ignored name, so must a recursive listing of every
+    tracked directory the run could write to. A run with `--save-traces` may
+    add only the declared trace files, which
     `tests/test_modelcheck_cli_e2e.py` checks end to end. D28 records the case
     that proved why the listing matters: a `.log` file left in a fixture
     directory was invisible to `git status` while it broke the next gate run.
@@ -1112,6 +1118,40 @@ explicitly.
     addresses each. CodeRabbit reported `Review paused` on the new head, so one
     review request is queued through `comenq`; the review of this head is
     pending, not complete.
+- [x] (2026-11-07) **Third rebase onto `origin/main`, and the ten findings of
+    review `5809958245` are answered.** The branch was replayed onto
+    `origin/main` at `3202945` (D45); the review of the pre-rebase head
+    `4ce0b33` left ten inline findings, each of which needed a change (D46).
+  - Five `isinstance` filters become `match` statements, one each in
+    `adapters/fizzbee_evidence.unreadable_graph`, `cli_outputs`,
+    `fixpoint_failures._clause`, `fixpoint` and `records.fixpoint_record`.
+    Each names the result type it reads and lets every other member fall
+    through, which is what the union already meant.
+  - `redaction_for` skips a `HOME` or `TMPDIR` value that is a root or has a
+    single component. Such a value would make a needle of `/`, which replaces
+    every slash in the evidence rather than naming a directory the run used.
+  - The two single-word `[patterns].ignore` entries in `typos.local.toml`
+    become patterns that exempt only the quoted and assignment forms, so a
+    bare misspelling in prose is caught again. The `reacheable` pattern is a
+    TOML basic string because a literal string cannot hold the single quotes
+    the fixture also uses.
+  - The stub launcher and specification the three process test modules share
+    move to `tests/fizzbee_process_stubs.py`, so no `test_*.py` module owns
+    another's helper; the developer's guide's §11.2 inventory and the
+    duplication allowance name it.
+  - The stale-trace finding is answered by documentation rather than by
+    deletion: `--save-traces` replaces the traces it writes and removes
+    nothing else, so a configuration that once failed and now passes keeps
+    its old file until a maintainer deletes it. The `Traces` docstring, the
+    users' guide and the developer's guide now say so, and
+    `test_a_repeat_run_replaces_its_own_trace_and_nothing_else` pins it.
+  - The developer's guide names `adapters/fizzbee_redaction.redaction_for`,
+    which is where the function has lived since D44.
+  - Focused validation on the working tree: 87 tests and 2 snapshots pass
+    across the process, evidence, fixpoint, records and command-line suites.
+    `make fmt` reformatted the guide's table, `make spelling` regenerated
+    `typos.toml` and passes. Repository gates are delegated to the
+    scrutineer.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -2587,8 +2627,12 @@ explicitly.
   - Evidence: `test_a_failed_doubled_run_carries_its_own_evidence`,
     `test_a_failed_comparison_is_written_to_the_artefact`,
     `test_a_malformed_graph_keeps_the_evidence_that_explains_it`,
-    `test_a_run_whose_graph_cannot_be_read_is_a_run_that_proved_nothing` and
-    `test_a_run_writes_only_the_traces_it_was_asked_for`.
+    `test_a_run_whose_graph_cannot_be_read_is_a_run_that_proved_nothing`,
+    `test_a_run_writes_only_the_traces_it_was_asked_for` and
+    `test_a_repeat_run_replaces_its_own_trace_and_nothing_else`. The last two
+    are the cleanliness contract: a trace-taking run adds only the declared
+    files, and a re-run may replace the declared trace path while every other
+    model file keeps its content.
 
 - **D41. A completed comparison is recorded with the bounds and durations it
   was measured at.** _Decided 2026-11-06._
@@ -2665,7 +2709,7 @@ explicitly.
 
 - **D43. Evidence is redacted of everything that describes the runner, and the
   line a verdict is read from is bounded.** _Decided 2026-11-06._
-  - Decision: `adapters/fizzbee_evidence.redaction_for` returns the
+  - Decision: `adapters/fizzbee_redaction.redaction_for` returns the
     substitutions one run's evidence needs, and `Redaction.apply` performs
     them. The scratch directory, the launcher, the caller's home and temporary
     directories, and the value of every credential-named variable are
@@ -2724,10 +2768,12 @@ explicitly.
     checker that writes JSON writes the escaped form. A whole-token rule is
     what makes a short needle safe: replacing `abcde` wherever it occurs would
     rewrite ordinary words, while replacing it where it stands alone removes
-    the value a checker was given. The one-character residual is kept and
-    recorded because a one-character value is indistinguishable from a state
-    count, and replacing every `1` would destroy the evidence the record
-    exists to carry.
+    the value a checker was given. Two residuals are kept and recorded here. A
+    credential of two to five characters is replaced only where it stands
+    alone, so one that sits beside a letter, digit or underscore is kept. And a
+    one-character value is not replaced at all, because it is indistinguishable
+    from a state count, and replacing every `1` would destroy the evidence the
+    record exists to carry.
   - Evidence: `test_a_short_credential_the_checker_printed_is_redacted`,
     `test_an_escaped_credential_reaches_the_persisted_record_redacted`,
     `Redaction.apply` and `Replacement.apply`'s doctests, and
@@ -2735,6 +2781,69 @@ explicitly.
     now asserts the checker was never asked. The three persisted-record
     evidence tests move to `tests/test_modelcheck_cli_evidence_e2e.py`, so
     neither command-line test module exceeds the 400-line limit.
+
+- **D45. The branch was rebased a third time, onto `origin/main` at
+  `3202945`, and the model-check ADR is renumbered 006 to 008.** _Decided
+  2026-11-07._
+  - Decision: the series `bdf8f5f..4ce0b33` — 49 commits — was replayed onto
+    `3202945` with `git rebase --merge --no-fork-point --no-update-refs
+    --no-autostash --reapply-cherry-picks --keep-empty --empty=stop --onto
+    3202945 bdf8f5f fizzbee-model-of-admission-and-recovery`. Weave was
+    bypassed with `-c core.attributesFile=/dev/null`, because the driver was
+    selected only by the ambient global attributes file and not by any
+    tracked `merge=weave` rule. Two repair commits follow the replay.
+  - Finding: the pull request reported `CONFLICTING`/`DIRTY` against its base.
+    The target had meanwhile landed ADR 006 (the kache cache backend) and
+    ADR 007 (the cache-outcome observation port), so
+    `docs/adr-006-model-check-outside-the-wheel.md` collided with both the
+    number and the file name of the first. The branch's ADR is now
+    `docs/adr-008-model-check-outside-the-wheel.md`, and the index, the
+    migration guide, the design documents and every decision that names it
+    follow.
+  - Reason: the alternative — renumbering the target's ADRs — would rewrite
+    history the branch does not own. Renumbering the branch's ADR keeps both
+    landed decisions at the identifiers their own documents already cite.
+  - Evidence: `git range-diff bdf8f5f..4ce0b33 3202945..b7da4e4` matched all
+    49 commits, 21 of them changed by the resolution; a scan for conflict
+    markers (`git grep` and `git log -S`) found none; and a comparison of the
+    files the target did not touch found only the five files that carry the
+    renumbering differ from the pre-rebase series. The replay produced
+    `b7da4e4`; the two repairs are `788cbcb`, which restores the
+    `fixpoint_bounds.py` entry the replay dropped from
+    `docs/repository-layout.md` and reorders the index, and `892db87`, which
+    repoints the migration guide's link at ADR 008. All thirteen commit gates
+    pass on `892db87`. The pre-rebase head `4ce0b33` and the old boundary
+    `bdf8f5f` are kept as recovery refs until the publication is accepted.
+- **D46. Each of the fourth review round's findings is repaired in the way it
+  asked for, except the stale trace, which is documented rather than deleted.**
+  _Decided 2026-11-07._
+  - Decision: five `isinstance` filters become `match` statements;
+    `redaction_for` skips a root or single-component `HOME` or `TMPDIR`;
+    `typos.local.toml`'s two single-word ignores become quoted-form patterns;
+    the shared FizzBee stub helpers move to `tests/fizzbee_process_stubs.py`;
+    the developer's guide names `adapters/fizzbee_redaction.redaction_for`;
+    and the stale-trace behaviour is stated in the `Traces` docstring and
+    both guides. `--save-traces` keeps replacing only the traces it writes
+    and deleting nothing.
+  - Finding: review `5809958245` on head `4ce0b33` raised ten inline findings.
+    Nine were mechanical or documentary. The tenth observed that a trace left
+    by an earlier failing run survives a run that now passes, and asked for
+    the files to be removed or the behaviour documented.
+  - Reason: the adapter cannot tell a trace it wrote from one a maintainer
+    wrote or edited, and a run that deleted files under `traces/` would be a
+    delete tool the flag never promised. A run therefore replaces what it
+    writes; the documentation states the consequence and the new end-to-end
+    test pins both halves — the declared trace is replaced, and nothing else
+    is added or removed. The `reacheable` ignore is a TOML basic string
+    because the fixture also spells the key in single quotes, which a TOML
+    literal string cannot contain; the spelling gate failed on the first
+    attempt at a literal string, which is how that was found.
+  - Evidence: `test_a_repeat_run_replaces_its_own_trace_and_nothing_else`;
+    `tests/fizzbee_process_stubs.py` with `spec` and `stub` imported by the
+    three process modules; the §§11.2 row in the developer's guide; the
+    remaining nine findings are assertions and docstrings already covered by
+    the suites named in the progress entry. Focused validation: 87 tests and
+    2 snapshots pass; `make spelling` regenerates `typos.toml` and passes.
 
 ## Outcomes & retrospective
 

@@ -234,11 +234,13 @@ def _compared(
     """  # ruff: ignore[docstring-extraneous-exception] - declared_bound raises it.
     bound = declared_bound(configuration)
     declared = _pass_run(text, configuration, "declared", checker)
-    if isinstance(declared, FixpointFailure):
-        return None, (declared,)
+    match declared:
+        case FixpointFailure():
+            return None, (declared,)
     doubled_run = _pass_run(text, doubled(configuration), "doubled", checker)
-    if isinstance(doubled_run, FixpointFailure):
-        return None, (doubled_run,)
+    match doubled_run:
+        case FixpointFailure():
+            return None, (doubled_run,)
     return (Fixpoint(configuration.name, bound, declared, doubled_run), ())
 
 
@@ -271,12 +273,14 @@ def _pass_run(
     """
     spec = materialize(text, configuration, expected_failure=None)
     result = checker.check(spec)
-    if isinstance(result, Passed):
-        return result
-    return FixpointFailure(
-        configuration.name,
-        stage,
-        declared_bound(configuration),
-        spec.fairness_in_force,
-        result,
-    )
+    match result:
+        case Passed():
+            return result
+        case _:
+            return FixpointFailure(
+                configuration.name,
+                stage,
+                declared_bound(configuration),
+                spec.fairness_in_force,
+                result,
+            )

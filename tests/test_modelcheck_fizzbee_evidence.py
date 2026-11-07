@@ -12,15 +12,15 @@ scratch directory names this machine and this run and nothing about the model,
 and both texts are committed. A runner path left in either would put a fact
 about the host into an artefact about the model.
 
-The stubs are written by the tests in
-:mod:`tests.test_modelcheck_fizzbee_process`, which owns their helpers; this
-module imports them rather than repeating them.
+The stub launcher and the specification it runs come from
+:mod:`tests.fizzbee_process_stubs`, which the three process test modules share
+rather than each repeating them.
 """
 
 from pathlib import Path
 
 import pytest
-from test_modelcheck_fizzbee_process import _spec, _stub
+from fizzbee_process_stubs import spec, stub
 
 from modelcheck import domain
 from modelcheck.adapters.fizzbee_process import FizzbeeChecker
@@ -48,8 +48,8 @@ def _graph_run(tmp_path: Path, prepare: str) -> domain.CheckResult:
     domain.CheckResult
         What the adapter made of the run.
     """
-    _stub(tmp_path, "#!/usr/bin/env bash\n" + prepare + _FAILED)
-    return FizzbeeChecker(tmp_path / "fizz").check(_spec())
+    stub(tmp_path, "#!/usr/bin/env bash\n" + prepare + _FAILED)
+    return FizzbeeChecker(tmp_path / "fizz").check(spec())
 
 
 def test_an_error_graph_is_read_from_the_named_output_directory() -> None:
@@ -169,12 +169,12 @@ def test_a_credential_the_checker_printed_is_redacted(
     """
     echoed_value = "s3cr3t-do-not-record"
     monkeypatch.setenv("MODELCHECK_E2E_SECRET", echoed_value)
-    fizz = _stub(
+    fizz = stub(
         tmp_path,
         "#!/usr/bin/env bash\nprintf 'token=%s\\n' \"$MODELCHECK_E2E_SECRET\"\n",
     )
 
-    result = FizzbeeChecker(fizz).check(_spec())
+    result = FizzbeeChecker(fizz).check(spec())
 
     assert isinstance(result, domain.Errored), "no verdict line is an error"
     assert "token=<redacted>" in result.detail, "the value is replaced whole"
@@ -193,12 +193,12 @@ def test_a_short_credential_the_checker_printed_is_redacted(
     """
     echoed_value = "a1b2c"
     monkeypatch.setenv("MODELCHECK_E2E_SECRET", echoed_value)
-    fizz = _stub(
+    fizz = stub(
         tmp_path,
         "#!/usr/bin/env bash\nprintf 'token=%s\\n' \"$MODELCHECK_E2E_SECRET\"\n",
     )
 
-    result = FizzbeeChecker(fizz).check(_spec())
+    result = FizzbeeChecker(fizz).check(spec())
 
     assert isinstance(result, domain.Errored), "no verdict line is an error"
     assert "token=<redacted>" in result.detail, "the value is replaced whole"
@@ -217,12 +217,12 @@ def test_a_runner_path_beside_the_scratch_directory_is_redacted(
     """
     runner_home = "/home/runner"
     monkeypatch.setenv("HOME", runner_home)
-    fizz = _stub(
+    fizz = stub(
         tmp_path,
         "#!/usr/bin/env bash\nprintf 'cache %s/.cache/go-build\\n' \"$HOME\"\n",
     )
 
-    result = FizzbeeChecker(fizz).check(_spec())
+    result = FizzbeeChecker(fizz).check(spec())
 
     assert isinstance(result, domain.Errored), "no verdict line is an error"
     assert "cache <home>/.cache/go-build" in result.detail, "the home is replaced"
@@ -237,12 +237,12 @@ def test_a_deciding_error_line_is_bounded(tmp_path: Path) -> None:
     into the persisted detail, which is bounded for the transcript's own
     reasons.
     """
-    fizz = _stub(
+    fizz = stub(
         tmp_path,
         "#!/usr/bin/env bash\nprintf 'Error: %s\\n' \"$(printf 'x%.0s' {1..5000})\"\n",
     )
 
-    result = FizzbeeChecker(fizz).check(_spec())
+    result = FizzbeeChecker(fizz).check(spec())
 
     assert isinstance(result, domain.Errored), "an error line proves nothing"
     assert result.detail.startswith("Error: "), "the cause is still named"
@@ -257,13 +257,13 @@ def test_a_deciding_stopped_line_is_bounded(tmp_path: Path) -> None:
     the record. The marker is checker-written text, so it gets the same limit
     the transcript does rather than being trusted to be short.
     """
-    fizz = _stub(
+    fizz = stub(
         tmp_path,
         "#!/usr/bin/env bash\n"
         "printf 'Model checker stopped %s\\n' \"$(printf 'y%.0s' {1..5000})\"\n",
     )
 
-    result = FizzbeeChecker(fizz).check(_spec())
+    result = FizzbeeChecker(fizz).check(spec())
 
     assert isinstance(result, domain.Stopped), "the marker names a stopped run"
     assert result.detail.startswith("Model checker stopped "), "the shape is kept"
@@ -279,12 +279,12 @@ def test_a_scratch_path_the_checker_printed_is_redacted(tmp_path: Path) -> None:
     path into an artefact a maintainer commits, so the adapter replaces it
     before the text becomes a diagnostic.
     """
-    fizz = _stub(
+    fizz = stub(
         tmp_path,
         "#!/usr/bin/env bash\nprintf 'reading %s/model.fizz\\n' \"$PWD\"\n",
     )
 
-    result = FizzbeeChecker(fizz).check(_spec())
+    result = FizzbeeChecker(fizz).check(spec())
 
     assert isinstance(result, domain.Errored), "no verdict line is an error"
     assert "<scratch>/model.fizz" in result.detail, "the path is replaced"

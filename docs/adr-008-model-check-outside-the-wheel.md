@@ -213,13 +213,15 @@ its finding, reason and evidence, in the
   `a"b`; the escaped form is now a needle beside the literal value, or the same
   credential would reach the record in the one shape the checker used. The
   six-character floor becomes a two-character floor plus a whole-token rule: a
-  value shorter than six characters is replaced only where it stands alone, so
-  a five-character credential is removed without rewriting the middle of an
-  ordinary word. A one-character value is still not replaced, and that residual
-  is recorded rather than hidden. It is indistinguishable from a state count, a
-  flag or an exit status — `Unique states: 1` is the very evidence a record
-  exists to carry — so replacing every `1` in a transcript would destroy the
-  report without protecting a secret it can no longer express.
+  value shorter than six characters is replaced only where it stands alone. A
+  five-character credential printed as `NAME=abcde` is therefore removed, while
+  the same characters inside a longer word are kept. Two residuals remain and
+  are recorded rather than hidden. A two- to five-character value beside a
+  letter, digit or underscore is kept. A one-character value is not replaced at
+  all. It is indistinguishable from a state count, a flag or an exit status —
+  `Unique states: 1` is the very evidence a record exists to carry — so
+  replacing every `1` in a transcript would destroy the report without
+  protecting a secret it can no longer express.
 
 ## References
 

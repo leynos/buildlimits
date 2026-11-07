@@ -1176,14 +1176,17 @@ tracked file. `make model-check` also writes `.model-check/coupling.json` and
 maintainer may commit a trace as evidence, and after a run it shows up as
 untracked until they decide. A failed comparison's counterexample is kept the
 same way, named `<configuration>-fixpoint-<stage>.json` so it sits beside the
-matrix's trace for the same configuration rather than replacing it. The JSON
-record names the kind of result each failed run produced, and a run that
-reported no exploration time of its own is recorded with the time the harness
-waited for it, under a field of its own. A record's `detail` is bounded to
-4,000 characters with the cut stated, and the run's own paths and the values of
-credential-named environment variables are replaced before the text is kept, so
-a committed artefact describes the model rather than the machine that checked
-it. Those tests are opt-in because they need the binary:
+matrix's trace for the same configuration rather than replacing it. A trace is
+written only for a counterexample, so a configuration that once failed and now
+passes keeps its old file until you delete it: the run replaces the traces it
+writes and removes nothing else. The JSON record names the kind of result each
+failed run produced, and a run that reported no exploration time of its own is
+recorded with the time the harness waited for it, under a field of its own. A
+record's `detail` is bounded to 4,000 characters with the cut stated, and the
+run's own paths and the values of credential-named environment variables are
+replaced before the text is kept, so a committed artefact describes the model
+rather than the machine that checked it. Those tests are opt-in because they
+need the binary:
 
 ```bash
 BUILD_LIMITS_MODEL_CHECK=1 .venv/bin/pytest -m fizzbee tests

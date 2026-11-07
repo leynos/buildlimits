@@ -1698,7 +1698,7 @@ members = [
     "tests/test_modelcheck_fizzbee_kill.py",
     "tests/test_modelcheck_fizzbee_evidence.py",
 ]
-reason = "Matching import lists: both modules drive the same process adapter and import the stub helpers its sibling test module owns, and a re-export module would hide that dependency behind a name that says nothing about which adapter is under test."
+reason = "Matching import lists: both modules drive the same process adapter and import its shared stubs from tests/fizzbee_process_stubs.py, and a re-export module would hide each module's direct use of the adapter and domain types behind a name that says nothing about what is under test."
 
 [[tool.duplication_gate.allow]]
 members = [

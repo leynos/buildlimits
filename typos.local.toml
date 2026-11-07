@@ -27,11 +27,15 @@ ignore = [
   # The misspelt key the configuration reader refuses. It is the fixture, not
   # a typo: the doctest and the test both assert that the refusal names the
   # key the maintainer actually wrote, so correcting it would delete the case.
-  '\breacheable\b',
+  # Only the quoted and assignment forms are exempt, so a bare misspelling in
+  # prose is still caught. The character class accepts a backtick or either
+  # quotation mark on each side, which is every way the fixture names the key.
+  "[`\"']reacheable[`\"']|reacheable = ",
   # GitHub's published action name, quoted in the nightly workflow's comment
   # to explain why hidden files need asking for. The action is not ours to
-  # respell.
-  '\bupload-artifact\b',
+  # respell. Only the `uses:` reference, the backticked name and the version
+  # phrase are exempt, so a bare misspelling elsewhere is still caught.
+  '(?:actions/upload-artifact@|`upload-artifact`|upload-artifact v4)',
 ]
 
 [files]

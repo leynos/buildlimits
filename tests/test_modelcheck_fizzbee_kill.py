@@ -10,9 +10,9 @@ returns.
 
 Each test drives the real adapter against a stub that starts such a child and
 then reads the child's state from ``/proc``, because a child that became a
-zombie still occupies a slot. The stubs themselves are written by the tests in
-:mod:`tests.test_modelcheck_fizzbee_process`, which owns their helpers; this
-module imports them rather than repeating them.
+zombie still occupies a slot. The stub launcher and the specification it runs come from
+:mod:`tests.fizzbee_process_stubs`, which the three process test modules share
+rather than each repeating them.
 """
 
 import os
@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 
 import pytest
-from test_modelcheck_fizzbee_process import _spec, _stub
+from fizzbee_process_stubs import spec, stub
 
 from modelcheck import domain
 from modelcheck.adapters.fizzbee_process import FizzbeeChecker
@@ -145,10 +145,10 @@ def test_a_run_that_never_returns_is_killed_with_its_children(
     on the child's exit, read from ``/proc``, because a child that became a
     zombie still occupies a slot on the host the run was supposed to release.
     """
-    fizz = _stub(tmp_path, _NEVER_EXITS)
+    fizz = stub(tmp_path, _NEVER_EXITS)
     checker = FizzbeeChecker(fizz, timeout_seconds=1.0)
 
-    result = checker.check(_spec())
+    result = checker.check(spec())
 
     child = _child_pid(tmp_path)
     assert isinstance(result, domain.Errored), "a run that never returns proves nothing"
@@ -168,12 +168,12 @@ def test_a_launcher_that_exits_still_has_its_stubborn_child_killed(
     than hanging the suite: a blocked worker is left behind as a daemon, and
     the assertions read the outcome only once it has finished.
     """
-    fizz = _stub(tmp_path, _STUBBORN_CHILD)
+    fizz = stub(tmp_path, _STUBBORN_CHILD)
     outcome: dict[str, object] = {}
 
     worker = threading.Thread(
         target=lambda: outcome.update(
-            result=FizzbeeChecker(fizz, timeout_seconds=1.0).check(_spec())
+            result=FizzbeeChecker(fizz, timeout_seconds=1.0).check(spec())
         ),
         daemon=True,
     )
@@ -195,9 +195,9 @@ def test_a_timeout_names_the_limit_and_keeps_what_printed(tmp_path: Path) -> Non
     still exploring or stuck, so the detail carries the checker's output after
     the reason rather than discarding it.
     """
-    fizz = _stub(tmp_path, _NEVER_EXITS)
+    fizz = stub(tmp_path, _NEVER_EXITS)
 
-    result = FizzbeeChecker(fizz, timeout_seconds=1.0).check(_spec())
+    result = FizzbeeChecker(fizz, timeout_seconds=1.0).check(spec())
 
     assert isinstance(result, domain.Errored), "the timed-out run is an error"
     assert result.detail.splitlines()[0] == "the checker did not finish within 1s", (
@@ -221,7 +221,7 @@ def test_an_interrupt_kills_the_group_before_it_propagates(
     the assertion is about a process that really existed rather than one that
     never started.
     """
-    fizz = _stub(tmp_path, _NEVER_EXITS)
+    fizz = stub(tmp_path, _NEVER_EXITS)
     pid_file = tmp_path / "child.pid"
 
     def interrupted(
@@ -241,7 +241,7 @@ def test_an_interrupt_kills_the_group_before_it_propagates(
     monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
 
     with pytest.raises(KeyboardInterrupt):
-        FizzbeeChecker(fizz, timeout_seconds=30.0).check(_spec())
+        FizzbeeChecker(fizz, timeout_seconds=30.0).check(spec())
 
     child = _child_pid(tmp_path)
     assert _is_gone(child), f"child {child} survived an interrupted run"
@@ -254,10 +254,10 @@ def test_a_killed_group_releases_its_pipe(tmp_path: Path) -> None:
     an end of file that never comes, so a test that completes at all is
     evidence the group was killed rather than only the launcher.
     """
-    fizz = _stub(tmp_path, _NEVER_EXITS)
+    fizz = stub(tmp_path, _NEVER_EXITS)
 
     started = os.times().elapsed
-    FizzbeeChecker(fizz, timeout_seconds=1.0).check(_spec())
+    FizzbeeChecker(fizz, timeout_seconds=1.0).check(spec())
     elapsed = os.times().elapsed - started
 
     assert elapsed < 60, "the run returned rather than blocking on the pipe"

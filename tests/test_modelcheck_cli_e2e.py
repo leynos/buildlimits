@@ -39,9 +39,9 @@ from modelcheck_e2e_cases import (
     TIMEOUT_SECONDS,
     ambient,
     check,
-    contents,
     invocations,
     run,
+    traced_run,
     tree,
 )
 
@@ -189,23 +189,48 @@ def test_a_run_writes_only_the_traces_it_was_asked_for(tmp_path: Path) -> None:
     file the run rewrote from one it left alone, nor a file it deleted if the
     name reappears: the model's own files must be byte-identical afterwards.
     """
-    model = tmp_path / "model"
-    shutil.copytree(MODEL, model)
-    before = contents(model)
     fixture_before = tree()
-    log = tmp_path / "seen.log"
 
-    result = run("check", str(model), "--fizz", str(FIZZ), "--save-traces", log=log)
+    traced = traced_run(tmp_path)
 
-    assert result.returncode == 0, result.stderr
-    after = contents(model)
-    assert sorted(set(after) - set(before)) == [
+    assert traced.result.returncode == 0, traced.result.stderr
+    assert sorted(set(traced.after) - set(traced.before)) == [
         Path("traces/incident-1-BEventually.json"),
     ], "only the declared counterexample trace is written"
-    assert {path: after[path] for path in before if path in after} == before, (
-        "and every file the model already held is unchanged and still there"
-    )
+    assert {
+        path: traced.after[path]
+        for path in traced.before
+        if path in traced.after
+    } == traced.before, "and every file the model already held is unchanged"
     assert tree() == fixture_before, "and the tracked fixture tree is untouched"
+
+
+def test_a_repeat_run_replaces_its_own_trace_and_nothing_else(
+    tmp_path: Path,
+) -> None:
+    """A second run overwrites the trace it wrote and leaves the rest alone.
+
+    ``--save-traces`` exists so a counterexample's path stays reviewable, and a
+    re-run must replace that path rather than leave the first run's copy beside
+    a second one. The pre-created file stands in for the first run's output, so
+    the bytes it ends with are the second run's and every other file keeps the
+    content it had.
+    """
+    declared = Path("traces") / "incident-1-BEventually.json"
+
+    traced = traced_run(tmp_path, seed={declared: b'{"from": "an earlier run"}\n'})
+
+    assert traced.result.returncode == 0, traced.result.stderr
+    assert set(traced.after) == set(traced.before), "a re-run adds and removes none"
+    assert traced.after[declared] != traced.before[declared], (
+        "the declared trace is replaced"
+    )
+    untouched = {
+        path: data for path, data in traced.before.items() if path != declared
+    }
+    assert {path: traced.after[path] for path in untouched} == untouched, (
+        "and every other model file is unchanged"
+    )
 
 
 def test_a_failed_comparison_exits_two_and_keeps_its_evidence(

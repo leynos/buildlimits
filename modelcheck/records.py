@@ -200,10 +200,13 @@ def fixpoint_record(failure: FixpointFailure) -> dict[str, object]:
         "result": _result_kind(failure.result),
     }
     _result_fields(record, failure.result)
-    if isinstance(failure.result, Counterexample):
-        record["property"] = failure.result.property_name
-        record["kind"] = str(failure.result.kind)
-        record["trace"] = trace_record(failure.result.trace)
+    match failure.result:
+        case Counterexample(property_name=name, kind=kind, trace=trace):
+            record["property"] = name
+            record["kind"] = str(kind)
+            record["trace"] = trace_record(trace)
+        case _:
+            pass
     return record
 
 

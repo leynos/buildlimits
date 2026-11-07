@@ -13,6 +13,7 @@ anything else here holds helpers.
 
 import json
 import os
+import shutil
 import subprocess
 import typing as typ
 from pathlib import Path
@@ -228,6 +229,67 @@ def paths(root: Path) -> list[Path]:
         compare as sets of names rather than as directory listings.
     """
     return sorted(path.relative_to(root) for path in root.rglob("*"))
+
+
+class TracedRun(typ.NamedTuple):
+    """One ``--save-traces`` run over a copy of the fixture model.
+
+    Attributes
+    ----------
+    model : pathlib.Path
+        The copied model directory the run was pointed at.
+    before : dict[pathlib.Path, bytes]
+        The model's files and their contents before the run.
+    after : dict[pathlib.Path, bytes]
+        The model's files and their contents afterwards.
+    result : subprocess.CompletedProcess
+        The finished run.
+    """
+
+    model: Path
+    before: dict[Path, bytes]
+    after: dict[Path, bytes]
+    result: subprocess.CompletedProcess[str]
+
+
+def traced_run(
+    tmp_path: Path, seed: dict[Path, bytes] | None = None
+) -> TracedRun:
+    """Copy the fixture model and run the command with ``--save-traces``.
+
+    The model is copied rather than run in place because the fixture tree is
+    tracked, and every caller of this helper is asserting what the run did to
+    the model directory rather than to the fixture.
+
+    Parameters
+    ----------
+    tmp_path : pathlib.Path
+        The scratch directory the copy and the stub's record go in.
+    seed : dict[pathlib.Path, bytes] | None
+        Files to write into the copy before the run, relative to it. A test
+        that needs a trace from an earlier run seeds that path here, so the
+        "before" snapshot includes it.
+
+    Returns
+    -------
+    TracedRun
+        The model, its contents before and after the run, and the run itself.
+    """
+    model = tmp_path / "model"
+    shutil.copytree(MODEL, model)
+    for relative, data in (seed or {}).items():
+        (model / relative).parent.mkdir(parents=True, exist_ok=True)
+        (model / relative).write_bytes(data)
+    before = contents(model)
+    result = run(
+        "check",
+        str(model),
+        "--fizz",
+        str(FIZZ),
+        "--save-traces",
+        log=tmp_path / "seen.log",
+    )
+    return TracedRun(model, before, contents(model), result)
 
 
 def contents(root: Path) -> dict[Path, bytes]:

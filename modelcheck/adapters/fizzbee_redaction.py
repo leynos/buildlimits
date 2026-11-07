@@ -24,10 +24,10 @@ import json
 import re
 import tempfile
 import typing as typ
+from pathlib import Path
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-    from pathlib import Path
 
 __all__ = ["Redaction", "Replacement", "redaction_for"]
 
@@ -226,10 +226,10 @@ def redaction_for(
     have its override left in the evidence.
 
     A credential shorter than :data:`_WHOLE_WORD_SECRET_LENGTH` is replaced
-    only where it stands alone, so a five-character value is still removed
-    without rewriting the middle of an ordinary word. A one-character value is
-    not replaced at all; see :data:`_MIN_SECRET_LENGTH` for why that residual
-    is accepted.
+    only where it stands alone, so a five-character value printed as
+    ``NAME=abcde`` is removed while the same characters inside a longer word
+    are kept. A one-character value is not replaced at all; see
+    :data:`_MIN_SECRET_LENGTH` for why that residual is accepted.
 
     Examples
     --------
@@ -248,14 +248,16 @@ def redaction_for(
         Replacement(str(launcher), _LAUNCHER_PLACEHOLDER),
         Replacement(str(launcher.resolve()), _LAUNCHER_PLACEHOLDER),
     ]
-    for name, placeholder in (
-        ("HOME", _HOME_PLACEHOLDER),
-        ("TMPDIR", _TEMP_PLACEHOLDER),
+    for value, placeholder in (
+        (environment.get("HOME"), _HOME_PLACEHOLDER),
+        (environment.get("TMPDIR"), _TEMP_PLACEHOLDER),
+        (tempfile.gettempdir(), _TEMP_PLACEHOLDER),
     ):
-        value = environment.get(name)
-        if value:
+        if value and len(Path(value).parts) > 1:
+            # A root or single-component value would make a needle that
+            # rewrites ordinary text — a ``/`` needle replaces every slash —
+            # rather than naming a directory the run used.
             paths.append(Replacement(value, placeholder))
-    paths.append(Replacement(tempfile.gettempdir(), _TEMP_PLACEHOLDER))
     ordered = sorted(
         paths + _secret_replacements(environment),
         key=lambda replacement: len(replacement.needle),

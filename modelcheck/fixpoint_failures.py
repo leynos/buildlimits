@@ -129,8 +129,9 @@ def _clause(failure: FixpointFailure) -> str:
         instead; that reason already names the configuration and the missing
         key, which are the facts a reader needs to fix it.
     """
-    if failure.bound is None and isinstance(failure.result, Errored):
-        return f"{failure.result.detail}, so it has no state count to compare"
+    match failure.result:
+        case Errored(detail=detail) if failure.bound is None:
+            return f"{detail}, so it has no state count to compare"
     return (
         f"configuration {failure.configuration!r} did not pass at its "
         f"{failure.stage} bound ({_ACTION_BOUND}={failure.bound}), so its "

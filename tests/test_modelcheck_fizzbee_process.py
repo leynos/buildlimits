@@ -16,11 +16,14 @@ is asserted in :mod:`tests.test_modelcheck_fizzbee_evidence`.
 The stubs are shell scripts written by the test into a scratch directory, and
 each records what it was asked to do. A stub that merely exited would let an
 adapter that never ran anything pass, so every test that cares reads the
-record the stub left.
+record the stub left. Writing one and the specification it runs are shared with
+the two modules above through :mod:`tests.fizzbee_process_stubs`.
 """
 
 import typing as typ
 from pathlib import Path
+
+from fizzbee_process_stubs import spec, stub
 
 from modelcheck import domain
 from modelcheck.adapters.fizzbee_process import FizzbeeChecker
@@ -44,41 +47,6 @@ It writes ``error-graph.json`` into the ``out`` directory the adapter names, so
 the test can prove the adapter read the graph from where the checker was told
 to put it rather than from beside the specification.
 """
-
-
-def _stub(directory: Path, script: str, name: str = "fizz") -> Path:
-    """Write an executable launcher into a directory.
-
-    Parameters
-    ----------
-    directory : pathlib.Path
-        Where to write the script.
-    script : str
-        The script's text.
-    name : str
-        The file name to give it.
-
-    Returns
-    -------
-    pathlib.Path
-        The script, made executable.
-    """
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / name
-    path.write_text(script, encoding="utf-8")
-    path.chmod(0o755)
-    return path
-
-
-def _spec() -> domain.MaterializedSpec:
-    """Return a specification to run.
-
-    Returns
-    -------
-    domain.MaterializedSpec
-        A minimal specification; the stub answers regardless of its content.
-    """
-    return domain.MaterializedSpec("head", "action Init:\n  n = 0\n", ())
 
 
 def _record(directory: Path) -> list[str]:
@@ -111,18 +79,18 @@ def _run_and_record(tmp_path: Path) -> list[str]:
         The working directory, arguments and limits the checker saw, in the
         order the stub wrote them.
     """
-    fizz = _stub(tmp_path, _STUB)
+    fizz = stub(tmp_path, _STUB)
 
-    FizzbeeChecker(fizz).check(_spec())
+    FizzbeeChecker(fizz).check(spec())
 
     return _record(tmp_path)
 
 
 def test_a_passing_run_is_classified_from_its_output(tmp_path: Path) -> None:
     """The adapter hands the checker's output to the real parser."""
-    fizz = _stub(tmp_path, _STUB)
+    fizz = stub(tmp_path, _STUB)
 
-    result = FizzbeeChecker(fizz).check(_spec())
+    result = FizzbeeChecker(fizz).check(spec())
 
     assert isinstance(result, domain.Passed), "a pass line is classified as a pass"
     assert result.states == 4, "and the count is the one the checker printed"
@@ -136,9 +104,9 @@ def test_the_checker_runs_in_a_scratch_directory(tmp_path: Path) -> None:
     every run. The stub records its working directory, so this asserts what the
     checker really saw rather than what the adapter intended.
     """
-    fizz = _stub(tmp_path, _STUB)
+    fizz = stub(tmp_path, _STUB)
 
-    FizzbeeChecker(fizz).check(_spec())
+    FizzbeeChecker(fizz).check(spec())
 
     working_directory = Path(_record(tmp_path)[0])
     assert working_directory.parent.name == ".model-check", (
@@ -194,9 +162,9 @@ def test_the_scratch_directory_is_removed(
 
     root = tmp_path / ".model-check"
     monkeypatch.setattr(fizzbee_process, "SCRATCH_ROOT", root)
-    fizz = _stub(tmp_path, _STUB)
+    fizz = stub(tmp_path, _STUB)
 
-    FizzbeeChecker(fizz).check(_spec())
+    FizzbeeChecker(fizz).check(spec())
 
     assert root.is_dir(), "the run made the scratch root on demand"
     assert sorted(path.name for path in root.iterdir()) == [], (
@@ -210,7 +178,7 @@ def test_a_missing_launcher_is_a_run_that_proved_nothing(tmp_path: Path) -> None
     The matrix reports it as a run that proved nothing, which is what it is,
     and the exit status is still un-met rather than the tool crashing.
     """
-    result = FizzbeeChecker(tmp_path / "no-such-fizz").check(_spec())
+    result = FizzbeeChecker(tmp_path / "no-such-fizz").check(spec())
 
     assert isinstance(result, domain.Errored), (
         "a launcher that cannot start proves nothing"
@@ -234,9 +202,9 @@ def test_a_failing_run_keeps_its_counterexample(tmp_path: Path) -> None:
         f"cp {fixture / 'error-graph.json'} out/error-graph.json\n"
         f"cat {fixture / 'stdout.txt'}",
     )
-    fizz = _stub(tmp_path, script)
+    fizz = stub(tmp_path, script)
 
-    result = FizzbeeChecker(fizz).check(_spec())
+    result = FizzbeeChecker(fizz).check(spec())
 
     assert isinstance(result, domain.Counterexample), (
         "the recorded failure is classified as a counterexample"
@@ -255,7 +223,7 @@ def test_a_run_that_proved_nothing_records_the_harness_time(tmp_path: Path) -> N
     field is named for the harness because it measures how long the adapter
     waited, not how long the checker explored.
     """
-    result = FizzbeeChecker(Path("/nonexistent/fizz")).check(_spec())
+    result = FizzbeeChecker(Path("/nonexistent/fizz")).check(spec())
 
     assert isinstance(result, domain.Errored), "the run proved nothing"
     assert result.harness_seconds is not None, "but the harness timed it"
@@ -269,9 +237,9 @@ def test_a_timed_out_run_records_the_harness_time(tmp_path: Path) -> None:
     limit the adapter enforced rather than an exploration duration the checker
     never reported.
     """
-    fizz = _stub(tmp_path, "#!/usr/bin/env bash\nsleep 5\n")
+    fizz = stub(tmp_path, "#!/usr/bin/env bash\nsleep 5\n")
 
-    result = FizzbeeChecker(fizz, timeout_seconds=0.2).check(_spec())
+    result = FizzbeeChecker(fizz, timeout_seconds=0.2).check(spec())
 
     assert isinstance(result, domain.Errored), "a killed run proved nothing"
     assert "did not finish within" in result.detail, "and the reason names the limit"
@@ -291,10 +259,10 @@ def test_a_relative_launcher_is_resolved_before_the_run_starts(
     path when the adapter is built is the fix, and this asserts the adapter's
     behaviour rather than the command line's.
     """
-    _stub(tmp_path, _STUB)
+    stub(tmp_path, _STUB)
     monkeypatch.chdir(tmp_path)
 
-    result = FizzbeeChecker(Path("fizz")).check(_spec())
+    result = FizzbeeChecker(Path("fizz")).check(spec())
 
     assert isinstance(result, domain.Passed), "a relative launcher is found and run"
     assert result.states == 4, "and the run completes as it would by absolute path"
@@ -307,8 +275,8 @@ def test_the_launcher_is_invoked_without_a_shell(tmp_path: Path) -> None:
     words. A launcher found and run under that name proves the argv list was
     used as a list.
     """
-    fizz = _stub(tmp_path, _STUB, name="fizz launcher")
+    fizz = stub(tmp_path, _STUB, name="fizz launcher")
 
-    result = FizzbeeChecker(fizz).check(_spec())
+    result = FizzbeeChecker(fizz).check(spec())
 
     assert isinstance(result, domain.Passed), "the spaced name is one argument"

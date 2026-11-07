@@ -123,9 +123,11 @@ def unreadable_graph(error: OSError | UnicodeDecodeError) -> str:
     >>> unreadable_graph(UnicodeDecodeError("utf-8", b"\\xff", 0, 1, "invalid"))
     'the error graph could not be read: it is not UTF-8 text'
     """
-    if isinstance(error, UnicodeDecodeError):
-        return "the error graph could not be read: it is not UTF-8 text"
-    return f"the error graph could not be read: {error.strerror or error}"
+    match error:
+        case UnicodeDecodeError():
+            return "the error graph could not be read: it is not UTF-8 text"
+        case _:
+            return f"the error graph could not be read: {error.strerror or error}"
 
 
 def timeout_detail(timeout_seconds: float, stdout: str) -> str:

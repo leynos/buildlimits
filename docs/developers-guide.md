@@ -859,6 +859,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `outcome_vocabulary_test_support.py`      | Shared outcome-token aliases for schema and metrics-sink contract tests                                                                    |
 | `fizzbee_spike.py`                        | The scratch-directory `run_model` runner, output masking and error-graph readers                                                           |
 | `fizzbee_expectations.py`                 | `Expectation`, `check` and `paired`: what one run or a pass/fail pair must show, enforced per test                                         |
+| `fizzbee_process_stubs.py`                | `spec` and `stub`: the specification and the record-keeping launcher the three process-adapter test modules share                          |
 | `modelcheck_cases.py`                     | One expectation, result, configuration and trace of each kind, named once for the domain tests                                             |
 | `modelcheck_doubles.py`                   | `FakeChecker`, `Verbatim`, `Restated` and `FixedSource`: recorded checker output replayed through the real parser                          |
 | `modelcheck_scenarios.py`                 | The model text, the `Matrix` one model-check scenario builds, and the readers its steps use                                                |
@@ -1115,9 +1116,11 @@ bound set, of which only `routine` exists today — any other value is refused
 rather than silently checked against the routine bounds, and 1.5.1 adds the
 nightly table — `--only` narrows the report but not the exit status, `--json`
 writes the records, `--fixpoint` adds the doubled-bound comparison and
-`--save-traces` regenerates the reviewed trace files. An empty matrix, or a
-`--only` that matches nothing, is a usage error rather than a vacuously
-successful run.
+`--save-traces` rewrites the trace of every counterexample the run found. It
+does not delete a trace whose configuration now passes; that stale file is
+removed by hand, because the tool deletes nothing it did not write. An empty
+matrix, or a `--only` that matches nothing, is a usage error rather than a
+vacuously successful run.
 
 FizzBee truncates exploration at `max_actions` without printing a marker, so a
 run that exhausted its bound can still report a pass. `--fixpoint` is the
@@ -1133,7 +1136,7 @@ adapter deletes the scratch directory as the call returns, so a graph that
 cannot be read or parsed would otherwise leave nothing to diagnose; the
 diagnostic carries the checker's transcript and the graph, each cut to 4,000
 characters with the cut stated. Both are checker-written text that becomes a
-committed record, so `adapters/fizzbee_evidence.redaction_for` replaces the
+committed record, so `adapters/fizzbee_redaction.redaction_for` replaces the
 scratch directory, the launcher, the caller's home and temporary directories,
 and the value of every credential-named variable before the text leaves. The
 line a verdict is read from — an `Error:` diagnostic or the marker a signal
@@ -1164,10 +1167,14 @@ status, so an opted-in run that checked nothing cannot report success. The
 ordinary `make test` run leaves the flag off, because suites for optional tools
 and privileges skip legitimately.
 
-The service also compares every run of one configuration on its
-`states_explored` count and reports an `Errored` row when they differ.
-Stripping assertions must not change the state graph, so a mismatch means the
-verdict describes a different model from the one the report names.
+The service also compares, for each configuration whose declared and doubled
+runs both passed, the `states` count of one against the other. A run that ended
+in a counterexample is not compared, because its count records how far the
+search got rather than how large the model is; a run that errored is reported
+as a failure line instead. A configuration whose count grew is printed as
+`grew` and makes the command exit `1`. Stripping assertions must not change the
+state graph, so a mismatch means the verdict describes a different model from
+the one the report names.
 
 ## 12. Static-analysis exceptions
 

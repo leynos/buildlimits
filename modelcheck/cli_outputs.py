@@ -86,6 +86,11 @@ class Traces:
     so a re-run replaces its own trace rather than accumulating a directory
     full of timestamps, and a review of the change sees the paths that moved.
 
+    A file is replaced only when its configuration still has a counterexample.
+    When a configuration that once failed now passes, its old trace stays under
+    ``traces/`` and a maintainer removes it by hand: this class writes what the
+    run found and deletes nothing it did not write.
+
     Comparison traces carry their own stage in the name. The matrix has
     already saved a trace for the same configuration and subject, and a
     comparison run is a different run: without the stage, a failed comparison's
@@ -152,8 +157,11 @@ class Traces:
         if not self.enabled:
             return
         for name, result in found:
-            if isinstance(result, domain.Counterexample):
-                self._write(name, result.trace)
+            match result:
+                case domain.Counterexample(trace=trace):
+                    self._write(name, trace)
+                case _:
+                    pass
 
     def _write(self, name: str, trace: Trace) -> None:
         """Write one trace under the model directory's ``traces/``.
