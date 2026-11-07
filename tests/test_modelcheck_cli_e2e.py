@@ -198,9 +198,7 @@ def test_a_run_writes_only_the_traces_it_was_asked_for(tmp_path: Path) -> None:
         Path("traces/incident-1-BEventually.json"),
     ], "only the declared counterexample trace is written"
     assert {
-        path: traced.after[path]
-        for path in traced.before
-        if path in traced.after
+        path: traced.after[path] for path in traced.before if path in traced.after
     } == traced.before, "and every file the model already held is unchanged"
     assert tree() == fixture_before, "and the tracked fixture tree is untouched"
 
@@ -225,9 +223,7 @@ def test_a_repeat_run_replaces_its_own_trace_and_nothing_else(
     assert traced.after[declared] != traced.before[declared], (
         "the declared trace is replaced"
     )
-    untouched = {
-        path: data for path, data in traced.before.items() if path != declared
-    }
+    untouched = {path: data for path, data in traced.before.items() if path != declared}
     assert {path: traced.after[path] for path in untouched} == untouched, (
         "and every other model file is unchanged"
     )
