@@ -1,0 +1,26 @@
+---
+# OQ2: a stutter is the other shape a liveness counterexample takes. Served is
+# enabled only while the gate is open, and with no fair request the gate is
+# closed for ever, so the reported trace is the initial state followed by one
+# `stutter` edge to itself. Deadlock detection is off so that the terminal
+# state is reached through the stutter this model is about rather than
+# reported as a fault first.
+options:
+  max_actions: 12
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  served = False
+  g = 0
+
+atomic action Gate:
+  g = 1 - g
+
+atomic action Serve:
+  require served == False and g == 1
+  served = True
+
+always eventually assertion Served:
+  return served

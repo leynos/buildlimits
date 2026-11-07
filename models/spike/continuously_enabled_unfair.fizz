@@ -1,0 +1,23 @@
+---
+# OQ2, negative control for `continuously_enabled.fizz`: the same two actions
+# with no fairness at all. B is enabled from the initial state and never takes
+# its turn, so the run fails on a stutter from that state. This is the
+# fairness-independent baseline the passing model is compared against.
+options:
+  max_actions: 20
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  a = 0
+  b = False
+
+atomic action A:
+  a = 1 - a
+
+atomic action B:
+  b = True
+
+always eventually assertion BEventually:
+  return b

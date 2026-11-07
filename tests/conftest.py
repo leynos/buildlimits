@@ -1,4 +1,4 @@
-"""Shared fixtures: a recording metric transport and teardown for owned resources.
+"""Shared fixtures and collection policy.
 
 The recording fixtures (``metric_sink``, ``metrics``, ``telemetry``) give
 compile-admission metric tests a transport that keeps bounded native records.
@@ -9,6 +9,10 @@ keep a test from leaving descriptors to the garbage collector:
 resources, and ``owned`` unwinds whatever a test enters into it, such as
 sockets, pools and ``contextlib.closing`` supervisors, in reverse order after
 the test.
+
+The module also carries the collection hook that skips tests marked
+``fizzbee`` unless ``BUILD_LIMITS_MODEL_CHECK=1``; the reason is written once
+there rather than in every module that runs the checker.
 """
 
 import contextlib
@@ -18,6 +22,7 @@ import typing as typ
 
 import pytest
 from cache_recovery_harness import HarnessFactory
+from fizzbee_spike import missing_opt_in_reason
 from restart_world import RestartWorld
 
 from buildlimits.config import SupervisorConfig
@@ -27,6 +32,33 @@ from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     from pathlib import Path
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Skip every ``fizzbee`` test unless the checker run is opted into.
+
+    Running the pinned binary is opt-in, following ``BUILD_LIMITS_HOST_ACCEPTANCE``.
+    Applying the skip here, rather than in each module, keeps the reason in one
+    place, so a new model test cannot forget it and quietly run a checker on a
+    machine that has not installed one.
+
+    Parameters
+    ----------
+    config : pytest.Config
+        Unused; present for the hook's signature.
+    items : list[pytest.Item]
+        The collected tests, edited in place.
+    """
+    del config
+    reason = missing_opt_in_reason()
+    if reason is None:
+        return
+    skip = pytest.mark.skip(reason=reason)
+    for item in items:
+        if item.get_closest_marker("fizzbee") is not None:
+            item.add_marker(skip)
 
 
 @pytest.fixture

@@ -1,0 +1,32 @@
+---
+# OQ2, the lasso shape the earlier capture could not show: `liveness_strict.fizz`
+# cycles straight back to its initial state, so its cycle start is the trace
+# start. Here an initial `Open` step must happen before `Gate` can alternate
+# with `B`, so the cycle starts at the state after Open and the trace has a
+# non-empty prefix. Used by `tests/test_modelcheck_trace.py` to check that a
+# normalized lasso names a cycle start that is not the trace's first step.
+options:
+  max_actions: 12
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  g = 0
+  b = 0
+  opened = False
+
+atomic fair action Open:
+  require not opened
+  opened = True
+
+atomic fair action Gate:
+  require opened
+  g = 1 - g
+
+atomic fair action B:
+  require opened and g == 1
+  b = 1
+
+always eventually assertion BEventually:
+  return b >= 1

@@ -1052,3 +1052,150 @@ To disable admission, restore Cargo's previous `rustc-wrapper` and `rustdoc`
 settings and restart the launchers that hold the old environment. Leave the
 supervisor running until those processes have gone, so that no compiler still
 pointing at the adapters is stranded.
+
+## Check the admission model
+
+Admission behaviour over time — draining the cache while a queue is busy,
+releasing a retained token, noticing a fault — is checked by a FizzBee model
+rather than by the state-machine and property tests that cover the runtime.
+Nothing about an installed buildlimits changes: the model reads the design and
+produces no user-visible behaviour, and the wheel still contains only
+`buildlimits`.
+
+### Prerequisites
+
+Model checking runs on x86-64 Linux, because the pinned release asset is
+`fizzbee-$(FIZZBEE_VERSION)-linux_x86.tar.gz` and the recipe unpacks that name
+from the archive. The Python baseline is 3.14, the same as the package's:
+`make model-check` depends on `make build`, which creates `.venv` and installs
+the development dependencies with `uv`. Run
+
+```bash
+make build
+```
+
+once in a checkout that does not have `.venv`, and install `uv` beforehand if
+it is absent.
+
+The installer itself needs GNU `make`, `curl`, `tar` with gzip support,
+`sha256sum` and `flock` from util-linux. A network connection is needed only
+the first time, unless the cache entry is missing or `FIZZBEE_VERSION` or
+`FIZZBEE_SHA256` changes. Fetch and verify the binary with:
+
+```bash
+make fizzbee
+```
+
+The target downloads the release named by `FIZZBEE_VERSION`, checks it against
+`FIZZBEE_SHA256`, and unpacks it into a content-addressed directory under the
+user cache. It then links `.tools/fizzbee` at the worktree root. A download
+that fails, or a digest that does not match, installs nothing: the partial
+asset is removed, no cache entry is written, and the link is not created. A
+cache entry and link left by an earlier successful install are not removed, so
+a later run still finds the last verified checker rather than a partial one.
+The binary is never committed and never installed system-wide; `make test`,
+`make lint`, `make typecheck` and `make check-fmt` never fetch or run it.
+
+### Run the checks
+
+Two targets cover the two obligations, because they cost very different amounts.
+
+```bash
+make model-fidelity
+```
+
+runs in seconds. It compares the model's `# maps:` annotations with the
+production package and reports any admission event, effect, recovery phase or
+fault kind the model does not account for. It runs on every pull request.
+
+```bash
+make model-check
+```
+
+runs the full matrix in both model halves and takes minutes. Each
+configuration's expectations are judged, and `--fixpoint` re-runs every
+configuration that should pass at twice its declared `max_actions` bound, so a
+run truncated at its bound is reported rather than passed. Unequal
+doubled-bound counts do not by themselves prove a production defect: they mean
+the bound is too low or the exploration has not converged, and the model needs
+a bound that reaches its fixpoint before its expectations can say anything
+about the code. It runs nightly on GitHub runners and can be started by hand
+through `workflow_dispatch`.
+
+Both targets are wrappers. The tool itself is available directly, through
+`uv run` so it uses the environment `make build` created:
+
+```bash
+uv run python -m modelcheck check models/admission/coupling --fizz .tools/fizzbee/fizz
+uv run python -m modelcheck check models/admission/transaction --fizz .tools/fizzbee/fizz
+uv run python -m modelcheck drift models/admission/coupling
+```
+
+`check` prints one line per expectation, naming the configuration, the
+property, the verdict, the fairness assumptions in force and the states
+explored. `--only CONFIG[:PROPERTY]` narrows the report without narrowing the
+check, and `--bounds routine` selects the bound set a model declares. Routine
+is the only set implemented today: any other value is refused with status `2`
+rather than falling back to the routine bounds, because a run that checked
+different bounds from the ones it named would be reported as the run asked for.
+`--json PATH` writes the judgements as JSON and `--save-traces` keeps each
+counterexample's normalized trace under the model's `traces/` directory.
+
+### Exit statuses
+
+Both commands distinguish a wrong model from a tool that could not run:
+
+| Status | Meaning                                                                |
+| ------ | ---------------------------------------------------------------------- |
+| `0`    | Every expectation was met.                                             |
+| `1`    | An expectation was unmet, or a fixpoint comparison grew.               |
+| `2`    | The tool could not run: a usage error or an input it cannot interpret. |
+
+A `2` is never folded into `1`, and the boundary in the other direction is just
+as important. A `2` means the command could not complete and says nothing about
+the model; it can be raised after the checker has already run, for example when
+the path `--json` names cannot be written. A checker that never started is
+different: the command did run, so the matrix records an error judgement naming
+the reason and the status is `1`. So is a counterexample whose error graph
+exists but cannot be read or parsed. `--fixpoint` changes the second case: the
+comparison re-reads each configuration at twice its bound and raises when a run
+that should pass has not, so the report is printed and the same missing checker
+then ends the command with `2`. A script that treats `1` and `2` differently
+should therefore not assume a checker failure keeps the status at `1` when the
+fixpoint comparison is asked for. Only `0` is a pass; a job that treated any
+other status as one would report green for a model that was never checked.
+
+### Generated artefacts
+
+A run copies its specification into a fresh directory under the git-ignored
+`.model-check/` and writes its output there, so the run itself writes no
+tracked file. `make model-check` also writes `.model-check/coupling.json` and
+`.model-check/transaction.json`, which the end-to-end tests read. It passes
+`--save-traces` as well, so each counterexample's normalized path is kept under
+`models/admission/<half>/traces/`; that directory is not ignored, because a
+maintainer may commit a trace as evidence, and after a run it shows up as
+untracked until they decide. A failed comparison's counterexample is kept the
+same way, named `<configuration>-fixpoint-<stage>.json` so it sits beside the
+matrix's trace for the same configuration rather than replacing it. A trace is
+written only for a counterexample, so a configuration that once failed and now
+passes keeps its old file until you delete it: the run replaces the traces it
+writes and removes nothing else. The JSON record names the kind of result each
+failed run produced, and a run that reported no exploration time of its own is
+recorded with the time the harness waited for it, under a field of its own.
+Each captured text in a record's `detail` — the checker's transcript and, when
+a graph could not be decoded, the graph itself — is cut to 4,000 characters
+with the cut stated, so one record can hold two captures. The run's own paths
+and the values of credential-named environment variables are replaced before
+the text is kept, and again in the trace's states once the graph is parsed, so
+a committed artefact describes the model rather than the machine that checked
+it. Two values escape that replacement by design: a credential shorter than six
+characters is replaced only where it stands alone, and a one-character value is
+left alone so a boolean flag cannot rewrite every state count. Read a generated
+artefact before sharing it. Those tests are opt-in because they need the binary:
+
+```bash
+BUILD_LIMITS_MODEL_CHECK=1 .venv/bin/pytest -m fizzbee tests
+```
+
+Model authoring, the split into two halves and the developer's guide's account
+of the materializer are in the [developer's guide](developers-guide.md) §11.6.

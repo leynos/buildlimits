@@ -1,0 +1,12 @@
+# serializer version: 1
+# name: test_a_malformed_graph_keeps_the_evidence_that_explains_it
+  '''
+  the error graph could not be parsed: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+  the checker printed:
+  Valid Nodes: 4 Unique states: 4
+  FAILED: Model checker failed. Invariant:  NeverFull
+  
+  the error graph held:
+  {not json
+  '''
+# ---
