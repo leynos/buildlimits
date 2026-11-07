@@ -1240,12 +1240,13 @@ explicitly.
     the scaffolding moved into `tests/modelcheck_evidence_cases.py` and the
     typed helpers into the module that may assert; the gate now passes with no
     unmatched allowance of this round's.
-  - Final candidate gate round: all thirteen commit gates pass on a
-    byte-identical reproduction of the working tree — `check-lock`,
-    `check-fmt`, `markdownlint`, `nixie`, `lint`, `typecheck`, `test` (3625
-    passed, 78 skipped), `audit`, `lint-actions`, `validate`,
+  - Final candidate gate round: all thirteen commit gates pass on `1f5ce43`
+    in the candidate worktree, with a clean tree afterwards — `check-lock`,
+    `check-fmt`, `markdownlint`, `nixie`, `lint`, `typecheck`, `test` (3626
+    passed, 78 skipped, 73 snapshots), `audit`, `lint-actions`, `validate`,
     `model-fidelity`, `test-workflow-contracts` and `model-check` (14
-    expectations met, fixpoint stable).
+    expectations met, fixpoint stable). Only this plan's text changed after
+    that run, and the Markdown and formatting gates were re-run on it.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
