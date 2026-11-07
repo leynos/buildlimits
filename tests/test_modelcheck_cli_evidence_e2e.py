@@ -160,18 +160,27 @@ def test_a_malformed_graph_reaches_the_persisted_record(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "written_into_the_graph",
+    [
+        pytest.param('a"b\\c-do-not-record', id="escaped-quote-and-backslash"),
+        pytest.param('a"bé-do-not-record', id="escaped-quote-and-literal-unicode"),
+    ],
+)
 def test_an_escaped_credential_reaches_the_persisted_record_redacted(
-    tmp_path: Path,
+    tmp_path: Path, written_into_the_graph: str
 ) -> None:
     r"""A credential a JSON writer escaped is redacted in its escaped form.
 
     A checker that writes its graph as JSON escapes a quote or a backslash in
     the value it writes, so the document holds ``a\\"b\\\\c`` where the
-    credential is ``a"b\\c``. Replacing only the literal value would leave the
-    escaped form — the same credential — in the record, which is where the leak
-    would be committed. The record is read back here for that reason.
+    credential is ``a"b\\c``. A value that also holds a literal non-ASCII
+    character is a third shape: the quote is escaped and the character is not,
+    so a needle built from either the value's bytes or one uniform spelling
+    misses it. Replacing only the literal value would leave the escaped form —
+    the same credential — in the record, which is where the leak would be
+    committed. The record is read back here for that reason.
     """
-    written_into_the_graph = 'a"b\\c-do-not-record'
     detail = _persisted_detail(tmp_path, "malformed", written_into_the_graph)
 
     assert '{"not": "a list", "token": "<redacted>"}' in detail, (
@@ -221,8 +230,15 @@ def test_a_one_character_credential_echoed_as_a_value_is_redacted(
     )
 
 
+@pytest.mark.parametrize(
+    "credential",
+    [
+        pytest.param("a<b-do-not-record", id="go-escaped-less-than"),
+        pytest.param('a"bé-do-not-record', id="escaped-quote-and-literal-unicode"),
+    ],
+)
 def test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence(
-    tmp_path: Path,
+    tmp_path: Path, credential: str
 ) -> None:
     r"""A graph that parses is evidence in decoded form, and it is redacted too.
 
@@ -230,10 +246,12 @@ def test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence(
     how to write. The checker is a Go program, and its encoder writes a
     less-than sign as a Unicode escape, which no Python JSON writer produces:
     a credential containing one survives the text pass and is a plain value
-    once the graph is decoded. The trace is what the saved file and the record
-    carry, so the assertion is made there, on a run that really parsed a lasso.
+    once the graph is decoded. A value mixing an escaped quote with a literal
+    non-ASCII character reaches the same place by a different route, because
+    no one spelling of it is the value. The trace is what the saved file and
+    the record carry, so the assertion is made there, on a run that really
+    parsed a lasso.
     """
-    credential = "a<b-do-not-record"
     records = tmp_path / "matrix.json"
 
     traced = traced_run(

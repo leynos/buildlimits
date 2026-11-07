@@ -1329,6 +1329,35 @@ explicitly.
     queries. The `service` module states the two runs its state-count rule
     leaves alone, and the artefact suite's docstring no longer claims its
     judgement runs unconditionally in the ordinary suite.
+- [x] (2026-11-07) **The tenth round's six findings are answered: the mixed
+    escape spelling is tested where it would be committed, the fairness
+    scenario asserts the status, two docstrings and the developers' guide are
+    corrected, both commands refuse an unreadable configuration file, and
+    redaction is pinned by properties rather than examples.** Recorded as D56.
+  - The persisted-record and saved-trace regressions for an escaped credential
+    are parametrized over `a"b\c` and `a"bé`: the first has every character a
+    writer escapes, the second mixes an escaped quote with a literal non-ASCII
+    character, which is the spelling no single needle list covers.
+  - The fairness scenario now states `Then the model check exits with status
+    0`, so the scenario that reads the report cannot pass on a command that
+    failed to return it.
+  - `service`'s module docstring names a _finite or deadlock_ counterexample
+    and says a lasso's completed exploration is compared; the `modelcheck`
+    artefact suite's docstring says its judgement runs whenever a results file
+    is there. The developers' guide now describes the fixpoint comparison and
+    the matrix consistency check as two comparisons, and qualifies the
+    credential replacement claim with the positional rules.
+  - `test_a_configuration_file_that_is_not_utf8_is_refused_by_both_commands`
+    parametrizes `check` and `drift` over a model whose `configurations.toml`
+    is not UTF-8; both exit `2` and name the decoding. `check` reads the
+    configuration tables and `drift` the exclusions, so the two commands reach
+    the parser by different calls.
+  - `tests/test_modelcheck_redaction_properties.py` draws a credential from an
+    alphabet whose characters writers spell differently, computes every JSON
+    spelling independently of the adapter, and asserts that each is removed or
+    the text withheld. A second property draws a single character from the
+    whole Unicode space and asserts a decoded string containing it is
+    withheld.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -3264,6 +3293,48 @@ explicitly.
     `test_a_file_that_is_not_utf8_is_refused_by_both_queries`; and the twelve
     behavioural scenarios, which now pass through `check` and read the printed
     report and the returned status.
+
+- **D56. Redaction is pinned by properties, the mixed escape spelling is
+  tested where it is committed, and the guide separates the two count
+  comparisons.** _Decided 2026-11-07._
+  - Decision: the persisted-record and saved-trace credential regressions are
+    parametrized over a value with an escaped quote and backslash and one that
+    mixes an escaped quote with a literal non-ASCII character. A new
+    `tests/test_modelcheck_redaction_properties.py` computes every JSON
+    spelling of a generated credential independently of the adapter and
+    asserts each is removed or the text withheld; a second property draws a
+    single character from the whole Unicode space and asserts a decoded string
+    containing it is withheld. The fairness scenario asserts the command's
+    status. `service`'s module docstring names finite or deadlock
+    counterexamples and the lasso exception; the artefact suite's docstring
+    says its judgement runs whenever a results file is there. The developers'
+    guide describes the fixpoint comparison and the matrix consistency check
+    separately, and qualifies the credential claim with the positional rules.
+    `check` and `drift` are each tested against a `configurations.toml` that is
+    not UTF-8.
+  - Finding: the tenth round's assessment found the punctuation fix present but
+    named gaps in coverage and documentation: no end-to-end case mixed a
+    literal Unicode character with an escaped quote or backslash; the fairness
+    scenario did not assert the status; two module docstrings and the
+    developers' guide still described the code's exceptions and comparisons
+    imprecisely; invalid UTF-8 was tested only through the `.fizz` source; and
+    no property covered redaction.
+  - Reason: an example list proves the spellings somebody wrote down, while the
+    claim is about every spelling a writer produces, so the spellings are
+    computed from the generators instead of imported from the implementation.
+    The mixed spelling is a value no single needle form matches, which makes it
+    the case a copied example is most likely to miss. A scenario that reads the
+    report but never checks the status can pass on a command that failed, and a
+    guide that merges two comparisons into one paragraph sends a reader looking
+    for the wrong code when one of them fails.
+  - Evidence:
+    `test_an_escaped_credential_reaches_the_persisted_record_redacted` and
+    `test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence`,
+    both parametrized; the fairness scenario's exit-status step;
+    `test_no_spelling_of_a_credential_survives_redaction` and
+    `test_a_decoded_string_containing_any_one_character_credential_is_withheld`;
+    and
+    `test_a_configuration_file_that_is_not_utf8_is_refused_by_both_commands`.
 
 ## Outcomes & retrospective
 

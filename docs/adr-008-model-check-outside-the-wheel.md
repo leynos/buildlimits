@@ -299,6 +299,19 @@ its finding, reason and evidence, in the
   name the `UnicodeDecodeError` a non-UTF-8 file raises, with a boundary test
   for both queries.
 
+- **D56, 2026-11-07.** Redaction is pinned by properties, and the two count
+  comparisons are described separately. A credential is drawn from an alphabet
+  whose characters JSON writers spell differently, and every spelling is
+  computed in the test rather than read from the adapter, so a needle the
+  implementation forgets is a counterexample rather than an agreement between
+  two copies of one list. The persisted-record and saved-trace regressions
+  parametrize a value mixing an escaped quote with a literal non-ASCII
+  character, which no single needle form matches. The fairness scenario asserts
+  the command's status, `service`'s docstring names finite or deadlock
+  counterexamples and the lasso exception, and the developers' guide separates
+  the fixpoint comparison from the matrix consistency check. `check` and
+  `drift` are each tested against a `configurations.toml` that is not UTF-8.
+
 ## References
 
 - [RFC 0001: FizzBee model of admission and recovery](rfcs/0001-fizzbee-model-of-admission-and-recovery.md)

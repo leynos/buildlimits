@@ -18,8 +18,9 @@ count. Stripping assertions must not change the state graph, so a mismatch
 means the runs explored different models and none of them can be judged (D3).
 Two runs are outside that comparison: one that reported no count at all, which
 is already an error or a stop whose own detail says what went wrong, and a
-counterexample, whose count is how far the search had got rather than the size
-of the graph.
+finite or deadlock counterexample, whose count is how far the search had got
+rather than the size of the graph. A lasso is the exception: its exploration
+completed, so its count is comparable with a pass's.
 
 Nothing here opens a file, starts a process or reads the clock. The model text,
 the configurations and the checker all arrive through the ports, which is what

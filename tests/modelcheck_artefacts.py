@@ -1,8 +1,10 @@
 """Read the matrix artefacts ``make model-check`` writes.
 
 The checker run is expensive and its bounds are the plan's, so the Makefile
-target owns it; judging the result is cheap and belongs in the ordinary test
-run. That split leaves one question the judgement cannot answer by itself:
+target owns it; judging the result is cheap and runs in the ordinary suite
+whenever a results file is there, and the artefact-reading tests are marked so
+they skip when one is not. That split leaves one question the judgement cannot
+answer by itself:
 whether the file it just read describes the model it just loaded. Reading is
 therefore part of the judgement, and it lives here so both the end-to-end
 module and any future reader share one definition of where the artefacts are

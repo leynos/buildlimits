@@ -1753,3 +1753,10 @@ members = [
     "tests/skip_guard.py::pytest_collectreport",
 ]
 reason = "pytest discovers both hooks by name and calls each with its own report type, so neither can be dropped, and the DF12 trivial-alias-wrapper rule rejects routing them through one helper; what remains is the same three-line bookkeeping in two functions with distinct contracts and explanations."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_modelcheck_cli_e2e.py",
+    "tests/test_modelcheck_cli_fixpoint.py",
+]
+reason = "Matching import lists: each module names the artefact readers and case helpers it uses, and sharing them through a re-export module would hide each module's real dependencies. The end-to-end module invokes the published command through `run`, while the fixpoint module builds the app in-process through `app`, so neither imports the other's cases and no shared preamble owns the list."

@@ -76,7 +76,8 @@ Feature: Model check verdicts
     And the model tags fairness "F1, F3, F6" on the actions "L1" relies on
     And the checker output is the fixture "pass"
     When the model check runs
-    Then the report line for "head" "L1" names "F1, F3, F6"
+    Then the model check exits with status 0
+    And the report line for "head" "L1" names "F1, F3, F6"
 
   Scenario: An unmapped effect is drift
     Given the model maps every admission event and effect

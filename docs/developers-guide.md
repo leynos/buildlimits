@@ -1139,10 +1139,12 @@ diagnostic carries the checker's transcript and the graph, each cut to 4,000
 characters with the cut stated. Both are checker-written text that becomes a
 committed record, so `adapters/fizzbee_redaction.redaction_for` replaces the
 scratch directory, the launcher, the caller's home and temporary directories,
-and the value of every credential-named variable before the text leaves. The
-line a verdict is read from — an `Error:` diagnostic or the marker a signal
-left — is bounded on the same reasoning. A new path or credential the checker
-can print belongs in that redaction rather than in a test-only exception.
+and the value of every credential-named variable — under the positional rules
+stated below, which decide _where_ a short value is recognized — before the
+text leaves. The line a verdict is read from — an `Error:` diagnostic or the
+marker a signal left — is bounded on the same reasoning. A new path or
+credential the checker can print belongs in that redaction rather than in a
+test-only exception.
 
 Classification happens before any of that. A replacement is neither injective
 nor type-preserving, so `fizzbee_process` parses the checker's own stdout and
@@ -1204,14 +1206,27 @@ status, so an opted-in run that checked nothing cannot report success. The
 ordinary `make test` run leaves the flag off, because suites for optional tools
 and privileges skip legitimately.
 
-The service also compares, for each configuration whose declared and doubled
-runs both passed, the `states` count of one against the other. A run that ended
-in a counterexample is not compared, because its count records how far the
-search got rather than how large the model is; a run that errored is reported
-as a failure line instead. A configuration whose count grew is printed as
-`grew` and makes the command exit `1`. Stripping assertions must not change the
-state graph, so a mismatch means the verdict describes a different model from
-the one the report names.
+Two different comparisons read a state count, and they answer different
+questions.
+
+The fixpoint comparison is the `--fixpoint` one. For each configuration whose
+declared and doubled runs both passed, the `states` count of one is compared
+with the other. A run that ended in a finite or deadlock counterexample is not
+compared, because its count records how far the search got rather than how
+large the model is; a lasso's exploration completed, so its count is comparable
+with a pass's. A run that errored is reported as a failure line instead. A
+configuration whose count grew is printed as `grew` and makes the command exit
+`1`.
+
+The matrix consistency check compares the runs of one configuration with each
+other, not a configuration at two bounds. Each run strips a different set of
+assertions, and stripping assertions must not change the state graph, so every
+completed run of one configuration must report the same count. A mismatch is
+reported as an `Errored` row naming both counts, because it means the runs
+explored different models and the verdict describes a model the report does not
+name. A run that reported no count at all is left alone — it is already an
+error or a stop whose own detail says what went wrong — and a finite or
+deadlock counterexample is not compared, for the reason above.
 
 ## 12. Static-analysis exceptions
 

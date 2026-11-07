@@ -31,6 +31,7 @@ import subprocess
 import typing as typ
 from pathlib import Path
 
+import pytest
 from modelcheck_artefacts import Record, doubled_failure, fixpoint_record
 from modelcheck_e2e_cases import (
     FIXTURES,
@@ -336,6 +337,33 @@ def test_a_source_that_is_not_utf8_exits_two_and_names_it(tmp_path: Path) -> Non
     (model / "admission.fizz").write_bytes(b"action Init:\n  n = 0\n\xff\n")
 
     result = run("check", str(model), "--fizz", str(FIZZ), log=tmp_path / "seen.log")
+
+    assert result.returncode == 2, "the tool could not run"
+    assert "utf-8" in result.stderr.lower(), "and the message names the decoding"
+
+
+@pytest.mark.parametrize("command", ["check", "drift"])
+def test_a_configuration_file_that_is_not_utf8_is_refused_by_both_commands(
+    tmp_path: Path, command: str
+) -> None:
+    """A configuration file in another encoding is a tool failure, not a verdict.
+
+    ``check`` reads the configuration tables and ``drift`` reads the exclusions,
+    and both decode the same document. A file in another encoding would
+    otherwise be guessed at, and a failed guess reads as a model that declares
+    nothing, so both commands stop with the status that means the checker was
+    never asked and name the decoding failure. The source assertion is separate:
+    a valid ``.fizz`` here keeps the failure about the TOML document alone.
+    """
+    model = tmp_path / "model"
+    model.mkdir()
+    shutil.copy(MODEL / "admission.fizz", model / "admission.fizz")
+    (model / "configurations.toml").write_bytes(b"[configurations.head]\n# \xff\n")
+    arguments = [command, str(model)]
+    if command == "check":
+        arguments.extend(["--fizz", str(FIZZ)])
+
+    result = run(*arguments, log=tmp_path / "seen.log")
 
     assert result.returncode == 2, "the tool could not run"
     assert "utf-8" in result.stderr.lower(), "and the message names the decoding"
