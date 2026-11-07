@@ -1205,7 +1205,9 @@ explicitly.
     quotes the decoded document. A runner path written into a graph the adapter
     refuses, and a credential only the decoder sees, now reach neither the
     record nor the trace: `test_a_scratch_path_in_the_error_graph_is_redacted`,
-    `test_a_credential_only_the_decoder_sees_is_redacted`,
+    `test_a_credential_in_a_malformed_graph_is_redacted` (the refusal quotes
+    the decoded value, and Go's six-character escape for `<` is the spelling
+    no text needle knows), `test_a_credential_only_the_decoder_sees_is_redacted`,
     `test_a_numeric_credential_does_not_invalidate_the_graph` and
     `test_two_credentials_that_redact_alike_keep_the_lasso`.
   - A one-character credential is replaced only in a value position — after

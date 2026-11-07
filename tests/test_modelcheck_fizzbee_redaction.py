@@ -48,6 +48,50 @@ def _errored_run(
     return result
 
 
+def _graph_run(
+    tmp_path: Path,
+    graph_text: str,
+    environ: cabc.Mapping[str, str] | None = None,
+) -> domain.CheckResult:
+    """Run a stub over ``graph_text`` as the error graph it writes.
+
+    Parameters
+    ----------
+    tmp_path : pathlib.Path
+        The scratch directory the stub is written into.
+    graph_text : str
+        The exact text to write as ``out/error-graph.json``.
+    environ : collections.abc.Mapping[str, str] | None
+        Values added to the environment the checker runs with.
+
+    Returns
+    -------
+    domain.CheckResult
+        What the adapter made of the run.
+    """
+    graph = tmp_path / "graph.json"
+    graph.write_text(graph_text, encoding="utf-8")
+    return graph_run(
+        tmp_path, f'mkdir -p out\ncp "{graph}" out/error-graph.json\n', environ
+    )
+
+
+def _errored_graph(
+    tmp_path: Path,
+    graph_text: str,
+    environ: cabc.Mapping[str, str] | None = None,
+) -> domain.Errored:
+    """Run a stub over ``graph_text`` and return the error it produced.
+
+    A graph the adapter refuses is the subject of each test that uses this, so
+    the check that the run ended that way is a precondition here rather than an
+    assertion each test would repeat.
+    """
+    result = _graph_run(tmp_path, graph_text, environ)
+    assert isinstance(result, domain.Errored), "a refused graph is an error"
+    return result
+
+
 def _lasso_run(
     tmp_path: Path,
     edit: cabc.Callable[[str], str],
@@ -58,10 +102,8 @@ def _lasso_run(
     The recorded lasso is the one graph that parses into a trace, so a test
     about classification changes the text and leaves the shape alone.
     """
-    graph = tmp_path / "graph.json"
-    graph.write_text(edit(LASSO_GRAPH.read_text(encoding="utf-8")), encoding="utf-8")
-    result = graph_run(
-        tmp_path, f'mkdir -p out\ncp "{graph}" out/error-graph.json\n', environ
+    result = _graph_run(
+        tmp_path, edit(LASSO_GRAPH.read_text(encoding="utf-8")), environ
     )
     assert isinstance(result, domain.Counterexample), getattr(result, "detail", "")
     return result
@@ -107,6 +149,24 @@ def test_a_scratch_path_in_the_error_graph_is_redacted(tmp_path: Path) -> None:
     assert ".model-check" not in result.detail, "with no part of it left behind"
 
 
+def test_a_credential_in_a_malformed_graph_is_redacted(tmp_path: Path) -> None:
+    """A graph refused before it can be a trace still loses its credential.
+
+    The refusal quotes the document it refused, and it quotes the *decoded*
+    value, so a credential the checker escaped in a spelling the text needles
+    do not know — Go writes a less-than sign as a six-character escape — reaches
+    the reason as the value itself. The reason is evidence, so it is redacted
+    like the graph beside it, and the graph's own spelling is replaced too.
+    """
+    result = _errored_graph(
+        tmp_path, '{"state": "a\\u003cb"}', {"MODELCHECK_E2E_SECRET": "a<b"}
+    )
+
+    assert "<redacted>" in result.detail, "the decoded value is replaced"
+    assert "a<b" not in result.detail, "and the credential is not recorded"
+    assert "\\u003c" not in result.detail, "nor any spelling of it in the capture"
+
+
 @pytest.mark.parametrize("echoed_value", ["s3cr3t-do-not-record", "a1b2c"])
 def test_a_credential_the_checker_printed_is_redacted(
     tmp_path: Path, echoed_value: str
@@ -145,16 +205,12 @@ def test_both_json_spellings_of_a_credential_are_redacted(tmp_path: Path) -> Non
     the value itself nor a single "escaped form" of it. Only replacing every
     spelling keeps the record clean, so the graph written here carries each one.
     """
-    graph = tmp_path / "graph.json"
-    graph.write_text('{"escaped": "a\\"\\u00e9", "literal": "a\\"é"}', encoding="utf-8")
-
-    result = graph_run(
+    result = _errored_graph(
         tmp_path,
-        f'mkdir -p out\ncp "{graph}" out/error-graph.json\n',
+        '{"escaped": "a\\"\\u00e9", "literal": "a\\"é"}',
         {"MODELCHECK_E2E_SECRET": 'a"é'},
     )
 
-    assert isinstance(result, domain.Errored), "a mapping is not an error graph"
     assert result.detail.count("<redacted>") >= 2, "each spelling is replaced"
     assert "\\u00e9" not in result.detail, "and neither is left behind"
     assert "é" not in result.detail, "in its literal spelling either"
