@@ -14,9 +14,19 @@ this module adds is only the traversal: a state is the checker's own JSON, so a
 value may be a string, a number, a boolean, `null`, a list or a nested object,
 and only the strings can carry a credential.
 
-:func:`redact_result` is the entry point a run calls: it decides which results
-carry a decoded document at all, and leaves the text of an error alone because
-the adapter has already redacted it.
+:func:`redact_result` is the entry point a run calls. It runs *after* the run
+has been classified, on the checker's own document: a credential is replaced in
+the evidence, never before the evidence is read. That order matters because a
+replacement is not injective — two distinct state values can become the same
+placeholder, and a number can become a non-number — so sanitizing first could
+change a graph's validity, its ending, or the equality that classifies a lasso.
+The verdict is therefore fixed before any value is replaced.
+
+An error's detail carries the parser's refusal, which quotes the document it
+refused and can therefore hold a decoded credential, so it is redacted here
+too. Every retained string goes through
+:meth:`~modelcheck.adapters.fizzbee_replacements.Redaction.retain`, which
+withholds a text a credential survived in rather than recording it.
 
 The replacements themselves, and the reasoning behind each needle, stay in
 :mod:`modelcheck.adapters.fizzbee_redaction`; this module is separate so both
@@ -28,7 +38,7 @@ import collections.abc as cabc
 import dataclasses as dc
 import typing as typ
 
-from modelcheck.domain import Counterexample
+from modelcheck.domain import Counterexample, Errored
 
 if typ.TYPE_CHECKING:
     from modelcheck.adapters.fizzbee_redaction import Redaction
@@ -39,25 +49,28 @@ __all__ = ["redact_result", "redact_trace"]
 
 
 def redact_result(result: CheckResult, redaction: Redaction) -> CheckResult:
-    """Return ``result`` with a counterexample's decoded path redacted.
+    """Return ``result`` with the evidence it carries redacted.
 
     Parameters
     ----------
     result : modelcheck.domain.CheckResult
-        The classified result of one run.
+        The classified result of one run. It must be classified already: this
+        function changes what the result says, never what it means.
     redaction : Redaction
         The substitutions this run's evidence needs.
 
     Returns
     -------
     modelcheck.domain.CheckResult
-        A counterexample with its action labels and state values redacted, and
-        every other result unchanged. Only a counterexample carries a decoded
-        document; an error's detail is text the adapter already redacted.
+        A counterexample with its action labels and state values redacted, an
+        error with its detail redacted, and every other result unchanged. An
+        error's detail holds the parser's refusal and the document it refused,
+        so it can carry a decoded credential even though the adapter has
+        already redacted the text it printed.
 
     Examples
     --------
-    An error passes through untouched, because its detail is text.
+    An error with nothing to replace is unchanged.
 
     >>> from modelcheck.adapters.fizzbee_redaction import Redaction
     >>> from modelcheck.domain import Errored
@@ -67,6 +80,8 @@ def redact_result(result: CheckResult, redaction: Redaction) -> CheckResult:
     match result:
         case Counterexample(trace=trace):
             return dc.replace(result, trace=redact_trace(trace, redaction))
+        case Errored(detail=detail):
+            return dc.replace(result, detail=redaction.retain(detail))
         case _:
             return result
 
@@ -92,14 +107,15 @@ def redact_trace(trace: Trace, redaction: Redaction) -> Trace:
     -------
     modelcheck.trace.Trace
         The path with every action label and every string in a state replaced.
-        A number, a boolean or ``null`` is a value the model computed, not text
-        the checker wrote around it, and is left as it is.
+        A string a credential survived in is withheld whole rather than
+        recorded. A number, a boolean or ``null`` is a value the model
+        computed, not text the checker wrote around it, and is left as it is.
 
     Examples
     --------
     >>> from modelcheck.adapters.fizzbee_redaction import Redaction, Replacement
     >>> from modelcheck.trace import Ending, Step, Trace
-    >>> redaction = Redaction((Replacement("s3cr3t", "<redacted>"),))
+    >>> redaction = Redaction((Replacement("s3cr3t", "<redacted>"),), ("s3cr3t",))
     >>> trace = Trace({"t": "s3cr3t"}, (Step("Go", {"t": 1}),), Ending.FINITE, None)
     >>> redact_trace(trace, redaction).states[0]
     {'t': '<redacted>'}
@@ -110,7 +126,7 @@ def redact_trace(trace: Trace, redaction: Redaction) -> Trace:
         steps=tuple(
             dc.replace(
                 step,
-                action=redaction.apply(step.action),
+                action=redaction.retain(step.action),
                 state=_redacted_state(step.state, redaction),
             )
             for step in trace.steps
@@ -137,7 +153,7 @@ def _redacted_state(
         replaced.
     """
     return {
-        redaction.apply(key): _redacted_value(value, redaction)
+        redaction.retain(key): _redacted_value(value, redaction)
         for key, value in state.items()
     }
 
@@ -161,10 +177,10 @@ def _redacted_value(value: object, redaction: Redaction) -> object:
     """
     match value:
         case str():
-            return redaction.apply(value)
+            return redaction.retain(value)
         case cabc.Mapping():
             return {
-                redaction.apply(key): _redacted_value(item, redaction)
+                redaction.retain(key): _redacted_value(item, redaction)
                 for key, item in value.items()
             }
         case list():

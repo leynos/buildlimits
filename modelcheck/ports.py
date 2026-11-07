@@ -38,10 +38,11 @@ class ModelChecker(typ.Protocol):
         Raises
         ------
         OSError
-            Only if the adapter cannot make its own scratch directory. A
-            launcher that is missing or refuses to start is not this: it is an
-            ``Errored`` result, because a run that never happened says nothing
-            about the model and must be reported beside the runs that did.
+            If the adapter cannot make its own scratch directory, or cannot
+            write the specification into it. A launcher that is missing or
+            refuses to start is not this: it is an ``Errored`` result, because
+            a run that never happened says nothing about the model and must be
+            reported beside the runs that did.
 
         Notes
         -----

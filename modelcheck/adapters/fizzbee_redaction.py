@@ -10,18 +10,25 @@ runner, and each is replaced here before the text leaves the adapter.
 The adapter cannot tell a secret from any other value, so a variable's name is
 the only signal available. That makes the length of a value the hard part of
 the problem rather than an afterthought: a long value can be replaced wherever
-it occurs, while a short one can occur inside an ordinary word. Both rules are
-stated beside the constant that encodes them.
+it occurs, a short one only where it stands alone, and a one-character value
+only where it is a value rather than a count. All three rules are stated beside
+the constants that encode them.
 
 Text is not the only place a credential reaches evidence. A checker that writes
 its error graph as JSON writes a *spelling* of each value, and there is more
-than one: a quote may or may not be escaped, and a non-ASCII character may be
-written literally or as a Unicode escape. The graph's words are redacted as text
-with every spelling a JSON writer produces, and the values decoded from it are
-redacted again by
+than one: a quote may or may not be escaped, a non-ASCII character may be
+written literally or as a Unicode escape, and Go's encoder writes ``<``, ``>``
+and ``&`` as six-character escapes no Python writer produces. The graph's words
+are redacted as text with every spelling those writers produce, and the values
+decoded from it are redacted again by
 :func:`modelcheck.adapters.fizzbee_trace_redaction.redact_result`, so neither
 the saved trace nor the record can carry the value in a form the text pass did
 not anticipate.
+
+The substitution mechanism itself lives in
+:mod:`modelcheck.adapters.fizzbee_replacements`, together with the check that
+withholds a text a credential survived in. It is re-exported here so a caller
+that thinks about *what* must not be recorded has one module to import.
 
 The bounding half of the same job lives in
 :mod:`modelcheck.adapters.fizzbee_evidence`; the two are separate because they
@@ -34,6 +41,12 @@ import re
 import tempfile
 import typing as typ
 from pathlib import Path
+
+from modelcheck.adapters.fizzbee_replacements import (
+    HIDDEN_VALUE,
+    Redaction,
+    Replacement,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -75,9 +88,6 @@ first; this catches the paths a checker builds beside its own working
 directory.
 """
 
-_HIDDEN_VALUE = "<redacted>"
-"""What a credential's value is replaced with in evidence."""
-
 _SECRET_NAME = re.compile(
     r"(?:^|_)(?:token|secret|password|passwd|credential|api_?key|private_?key"
     r"|access_?key|auth|cookie|session)(?:$|_)",
@@ -102,112 +112,29 @@ replaced wherever it occurs.
 
 
 _MIN_SECRET_LENGTH = 2
-"""The shortest value treated as a credential.
+"""The length below which a credential is replaced only in a value position.
 
-A one-character value is not replaced, and that residual is deliberate. The
-name heuristic cannot tell a secret from a flag: a shell that sets
-``CLAUDE_CODE_SESSION_ATTENDED=0``, or any other credential-named boolean, would
-make ``0`` and ``1`` needles. Replacing them rewrites every state count in the
-transcript and turns the error graph's numbers into placeholders, which is
-malformed JSON rather than redacted evidence — the record would be destroyed,
-and the secret such a value could express is one character.
+A one-character value is too common to be a needle on its own: a shell that
+sets ``CLAUDE_CODE_SESSION_ATTENDED=0``, or any other credential-named boolean,
+would make ``0`` and ``1`` needles. Replacing them rewrites every state count
+in the transcript and turns the error graph's numbers into placeholders, which
+is malformed JSON rather than redacted evidence — the record would be
+destroyed, and the secret such a value could express is one character.
 
-Length is the only signal available, and it is used in only one direction: a
-short value is matched as a whole token rather than wherever it occurs. A value
-of two characters is the shortest that can be a credential a reader would
-recognize, and it is replaced where it stands alone.
+So the rule follows the position rather than the value: a one-character
+credential is replaced where a checker echoes a value it was given — after
+``=``, or between quotes — and left alone in a count, which is not a value the
+checker was handed. A value of two characters is the shortest replaced as a
+standalone token wherever it appears.
 """
 
+_VALUE_CONTEXTS = ("=", '"', "'")
+"""The text that makes a one-character value a value rather than a count.
 
-class Replacement(typ.NamedTuple):
-    """One substitution applied to a run's evidence.
-
-    Attributes
-    ----------
-    needle : str
-        The text to replace.
-    placeholder : str
-        What ``needle`` is replaced with.
-    whole_word : bool
-        Whether ``needle`` is replaced only where it stands alone. A short
-        credential is a value like ``abcde``, and replacing it wherever it
-        occurs would rewrite the middle of ordinary words.
-    """
-
-    needle: str
-    placeholder: str
-    whole_word: bool = False
-
-    def apply(self, text: str) -> str:
-        """Return ``text`` with this replacement made.
-
-        Parameters
-        ----------
-        text : str
-            The checker's output, a message built from a file it wrote, or the
-            error graph itself.
-
-        Returns
-        -------
-        str
-            The text with the needle replaced. A text naming none of it is
-            returned unchanged.
-
-        Examples
-        --------
-        >>> Replacement("/home/runner", "<home>").apply("in /home/runner/x")
-        'in <home>/x'
-        >>> Replacement("abcde", "<redacted>", whole_word=True).apply(
-        ...     "token=abcde beside abcdef"
-        ... )
-        'token=<redacted> beside abcdef'
-        """
-        if not self.whole_word:
-            return text.replace(self.needle, self.placeholder)
-        # A replacement string is not a template, so it is produced by a
-        # callable rather than parsed for backslash escapes the placeholder
-        # never contains.
-        pattern = rf"(?<![0-9A-Za-z_]){re.escape(self.needle)}(?![0-9A-Za-z_])"
-        return re.sub(pattern, lambda _: self.placeholder, text)
-
-
-class Redaction(typ.NamedTuple):
-    """The substitutions one run's evidence gets before it is retained.
-
-    Attributes
-    ----------
-    replacements : tuple[Replacement, ...]
-        The substitutions, longest needle first. Ordering matters: the scratch
-        directory lives under the home and temporary directories, so replacing
-        a shorter needle first would leave the longer path in pieces.
-    """
-
-    replacements: tuple[Replacement, ...]
-
-    def apply(self, text: str) -> str:
-        """Return ``text`` with every replacement made.
-
-        Parameters
-        ----------
-        text : str
-            The checker's output, a message built from a file it wrote, or the
-            error graph itself.
-
-        Returns
-        -------
-        str
-            The text with each needle replaced. A text naming none of them is
-            returned unchanged.
-
-        Examples
-        --------
-        >>> redaction = Redaction((Replacement("/home/runner", "<home>"),))
-        >>> redaction.apply("reading /home/runner/model.fizz")
-        'reading <home>/model.fizz'
-        """
-        for replacement in self.replacements:
-            text = replacement.apply(text)
-        return text
+A checker echoes an inherited variable as ``NAME=value``, in a quoted JSON
+string, or in single quotes in a message. None of those positions holds a
+number the model computed, so replacing there cannot rewrite a state count.
+"""
 
 
 def redaction_for(
@@ -231,9 +158,11 @@ def redaction_for(
     Redaction
         Replacements for the scratch directory, the launcher, the caller's home
         and temporary directories, and every value in ``environment`` whose
-        name marks it as a credential, together with each JSON spelling of that
+        name marks it as a credential, together with each spelling of that
         value that differs from it. Longest needle first, so a path nested
-        inside another is replaced whole.
+        inside another is replaced whole. The credential values of two or more
+        characters are carried beside them, so a text a replacement missed is
+        withheld rather than recorded.
 
     Notes
     -----
@@ -245,8 +174,8 @@ def redaction_for(
     A credential shorter than :data:`_WHOLE_WORD_SECRET_LENGTH` is replaced
     only where it stands alone, so a five-character value printed as
     ``NAME=abcde`` is removed while the same characters inside a longer word
-    are kept. A one-character value is not replaced at all; see
-    :data:`_MIN_SECRET_LENGTH` for the evidence behind that residual.
+    are kept. A one-character value is replaced only after ``=`` or between
+    quotes; see :data:`_MIN_SECRET_LENGTH` and :data:`_VALUE_CONTEXTS`.
 
     Examples
     --------
@@ -258,6 +187,8 @@ def redaction_for(
     ... )
     >>> redaction.apply("open /home/runner/x with ghp_example_value")
     'open <home>/x with <redacted>'
+    >>> redaction.retains_credential("ghp_example_value")
+    True
     """
     paths = [
         Replacement(str(directory), _SCRATCH_PLACEHOLDER),
@@ -275,52 +206,85 @@ def redaction_for(
             # rewrites ordinary text — a ``/`` needle replaces every slash —
             # rather than naming a directory the run used.
             paths.append(Replacement(value, placeholder))
+    secrets = _secret_values(environment)
     ordered = sorted(
-        paths + _secret_replacements(environment),
+        paths + _secret_replacements(secrets),
         key=lambda replacement: len(replacement.needle),
         reverse=True,
     )
-    return Redaction(tuple(ordered))
+    return Redaction(
+        tuple(ordered),
+        tuple(value for value in secrets if len(value) >= _MIN_SECRET_LENGTH),
+    )
 
 
-def _secret_replacements(
-    environment: cabc.Mapping[str, str],
-) -> list[Replacement]:
-    r"""Return the replacements for the credentials in ``environment``.
+def _secret_replacements(values: cabc.Iterable[str]) -> list[Replacement]:
+    r"""Return the replacements for ``values``, the run's credential values.
 
     Parameters
     ----------
-    environment : collections.abc.Mapping[str, str]
-        The environment the checker was given.
+    values : collections.abc.Iterable[str]
+        The values in the checker's environment whose names mark them as
+        credentials.
 
     Returns
     -------
     list[Replacement]
-        One replacement per credential value, plus one for each JSON spelling
-        of it that differs from the value. A checker that writes its graph as
-        JSON escapes a quote or a backslash, and may or may not escape a
-        non-ASCII character; both spellings are written by real JSON writers,
-        so both are needles. Replacing only one would leave the other — the
-        same credential — in the committed record.
+        One replacement per credential value, plus one for each spelling of it
+        that differs from the value. A checker that writes its graph as JSON
+        escapes a quote or a backslash, may or may not escape a non-ASCII
+        character, and — if it is Go — escapes ``<``, ``>`` and ``&`` as well;
+        every one of those spellings is written by a real encoder, so every one
+        is a needle. Replacing only some would leave the same credential in the
+        committed record.
+
+        A one-character value gets one replacement per value position instead
+        of a needle of its own; see :data:`_MIN_SECRET_LENGTH`.
     """
     replacements: list[Replacement] = []
-    for value in _secret_values(environment):
+    for value in values:
+        if len(value) < _MIN_SECRET_LENGTH:
+            replacements.extend(
+                Replacement(value, HIDDEN_VALUE, context=context)
+                for context in _VALUE_CONTEXTS
+            )
+            continue
         whole_word = len(value) < _WHOLE_WORD_SECRET_LENGTH
         replacements.extend(
-            Replacement(needle, _HIDDEN_VALUE, whole_word)
+            Replacement(needle, HIDDEN_VALUE, whole_word)
             for needle in (value, *_escaped_forms(value))
         )
     return replacements
 
 
+_GO_ESCAPES = {
+    "<": r"\u003c",
+    ">": r"\u003e",
+    "&": r"\u0026",
+    "\u2028": r"\u2028",
+    "\u2029": r"\u2029",
+}
+r"""The characters Go's JSON encoder escapes and Python's does not.
+
+``encoding/json`` writes each as a six-character escape so its output is safe
+inside an HTML ``<script>`` element. Those spellings exist in the checker's
+own graphs, and a credential holding one would survive a Python-shaped needle,
+so each is a needle of its own.
+"""
+
+
 def _escaped_forms(value: str) -> tuple[str, ...]:
     r"""Return the JSON spellings of ``value`` that differ from it.
 
-    Two writers both produce valid JSON and disagree about non-ASCII
-    characters: one escapes each as ``\uXXXX`` and the other writes it as
-    itself. A credential mixing an escaped quote with a literal character —
-    ``a\"é`` — is neither the value itself nor either writer's whole spelling
-    of it, so a single escaped form would miss it. Both forms are returned.
+    There are three writers, not one. Python's ``json`` may write a non-ASCII
+    character literally or as ``\uXXXX`` and escapes a quote or a backslash; a
+    credential mixing an escaped quote with a literal character — ``a\"é`` —
+    is neither the value itself nor any single spelling of it, so each form is
+    returned. Go's ``encoding/json`` additionally escapes ``<``, ``>``, ``&``
+    and the line separators as six-character escapes Python never produces.
+    And a diagnostic the adapter builds quotes a decoded value with ``repr``,
+    which escapes a backslash but not the quote character it did not choose;
+    the parser's refusal is built that way, so its spelling is a needle too.
 
     Parameters
     ----------
@@ -330,7 +294,7 @@ def _escaped_forms(value: str) -> tuple[str, ...]:
     Returns
     -------
     tuple[str, ...]
-        Each spelling the JSON encoder produces for ``value``, without the
+        Each spelling an encoder produces for ``value``, without the
         surrounding quotes, that is not the value itself. Sorted so a run's
         needles do not depend on set iteration order.
 
@@ -340,13 +304,43 @@ def _escaped_forms(value: str) -> tuple[str, ...]:
     ()
     >>> _escaped_forms('a"b')
     ('a\\"b',)
+    >>> _escaped_forms("a<b")
+    ('a\\u003cb',)
     >>> len(_escaped_forms('a"é'))
     2
     """
     forms = {
         json.dumps(value, ensure_ascii=ascii_only)[1:-1] for ascii_only in (True, False)
     }
+    forms.add(repr(value)[1:-1])
+    forms |= {_go_escaped(form) for form in forms}
     return tuple(sorted(form for form in forms if form != value))
+
+
+def _go_escaped(form: str) -> str:
+    r"""Return ``form`` with the characters Go's encoder escapes replaced.
+
+    Parameters
+    ----------
+    form : str
+        One spelling of a credential, without its surrounding quotes.
+
+    Returns
+    -------
+    str
+        The same spelling as Go's ``encoding/json`` would write it. A form
+        holding none of those characters is returned unchanged.
+
+    Examples
+    --------
+    >>> _go_escaped("a<b")
+    'a\\u003cb'
+    >>> _go_escaped("plain")
+    'plain'
+    """
+    for character, escape in _GO_ESCAPES.items():
+        form = form.replace(character, escape)
+    return form
 
 
 def _secret_values(environment: cabc.Mapping[str, str]) -> tuple[str, ...]:
@@ -360,19 +354,20 @@ def _secret_values(environment: cabc.Mapping[str, str]) -> tuple[str, ...]:
     Returns
     -------
     tuple[str, ...]
-        Each distinct value long enough to be a credential, longest first, so
-        a value that contains another is replaced whole.
+        Each distinct non-empty value, longest first, so a value that contains
+        another is replaced whole. A one-character value is included: how it is
+        replaced is :func:`_secret_replacements`'s decision rather than this
+        one's, and a text is withheld on a surviving value of two or more
+        characters only.
 
     Notes
     -----
-    A one-character value is excluded here rather than being matched as a whole
-    token, because the name heuristic cannot distinguish a secret from a flag.
-    An empty value is excluded too: replacing it would insert the placeholder
+    An empty value is excluded: replacing it would insert the placeholder
     between every pair of characters rather than remove anything.
     """
     values = {
         value
         for name, value in environment.items()
-        if _SECRET_NAME.search(name) and len(value) >= _MIN_SECRET_LENGTH
+        if _SECRET_NAME.search(name) and value
     }
     return tuple(sorted(values, key=len, reverse=True))

@@ -169,8 +169,10 @@ its finding, reason and evidence, in the
   is the domain's input, which is what this ADR and EP-M2 place there
   deliberately.
 - **D39, 2026-11-04.** `fails_as` refuses `unknown`, and the users' guide
-  matches the flags it documents, including that `--save-traces` leaves
-  `models/admission/<half>/traces/` untracked.
+  matches the flags it documents, including where `--save-traces` writes:
+  `models/admission/<half>/traces/`, whose seven `head-*.json` traces are
+  tracked evidence rather than untracked output. Corrected 2026-11-07; the
+  original entry called the directory untracked.
 - **D40, 2026-11-05.** A failed comparison keeps its evidence: `FixpointError`
   carries every failed run, and the command writes them into the JSON artefact
   before the error leaves. The cleanliness requirement distinguishes checker
@@ -244,6 +246,34 @@ its finding, reason and evidence, in the
   reported as a fault in the model. Redaction is applied where the text leaves
   the process, which is the boundary a test can observe, and D47 closes the
   decoded-value gap that text redaction could not reach.
+- **D49, 2026-11-07.** A run is classified before its evidence is redacted.
+  `fizzbee_process` parses the checker's own stdout and graph and only then
+  applies `redact_result`, and `redact_result` redacts an `Errored` detail as
+  well as a counterexample's trace. A replacement is neither injective nor
+  type-preserving: replacing first turned `"b": 12` into invalid JSON and could
+  make two distinct states compare equal, either of which changes the verdict.
+  The parser's refusal quotes the decoded document, so the credential it can
+  carry is removed at this stage rather than by the text pass.
+- **D50, 2026-11-07.** A one-character credential is replaced only in a value
+  position, and a text a credential survives in is withheld. This supersedes
+  the one-character residual in D44. `_MIN_SECRET_LENGTH` is 2; below it a
+  replacement is anchored after `=`, between quotes, and at a token boundary,
+  so a boolean flag cannot rewrite every state count. Values of two characters
+  or more keep the whole-token rule from D44 and are carried in
+  `Redaction.secrets`; `retain` withholds the text when one survives. The
+  escaped spellings also cover Go's `<`, `>`, `&`, U+2028 and U+2029, and the
+  `repr` form a parse refusal quotes.
+- **D51, 2026-11-07.** The substitution mechanism lives in
+  `adapters/fizzbee_replacements`. `Redaction`, `Replacement`, `HIDDEN_VALUE`
+  and `WITHHELD` moved there so `fizzbee_redaction` stays inside the 400-line
+  limit; which values must be replaced remains in `fizzbee_redaction`, decoded
+  traversal in `fizzbee_trace_redaction`, and bounding in `fizzbee_evidence`.
+- **D52, 2026-11-07.** A contract names the failures its implementation can
+  raise, and documentation names the artefacts that are tracked. `source_text`
+  documents `OSError` and `UnicodeDecodeError`, `check` documents a
+  specification that cannot be written, and the users' guide and ExecPlan state
+  that the seven `models/admission/*/traces/head-*.json` files are tracked
+  rather than untracked.
 
 ## References
 

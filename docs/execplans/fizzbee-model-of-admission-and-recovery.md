@@ -1194,6 +1194,56 @@ explicitly.
     pass for the redaction, error-context, fixpoint, drift, port-boundary and
     trace-property changes respectively. Repository gates are delegated to the
     scrutineer on the final candidate.
+- [x] (2026-11-07) **The sixth review round's findings are answered: the run is
+    classified before its evidence is redacted, the credential boundary is
+    closed, and the contracts say what the code does.** Recorded as D49 to D52.
+  - `fizzbee_process._checked` now parses the checker's own stdout and graph and
+    only then calls `redact_result`, so a credential equal to a JSON number can
+    no longer make a valid graph unparsable and two distinct states can no
+    longer compare equal because they redact alike (D49).
+    `redact_result` redacts an `Errored` detail as well, because a parse refusal
+    quotes the decoded document. A runner path written into a graph the adapter
+    refuses, and a credential only the decoder sees, now reach neither the
+    record nor the trace: `test_a_scratch_path_in_the_error_graph_is_redacted`,
+    `test_a_credential_only_the_decoder_sees_is_redacted`,
+    `test_a_numeric_credential_does_not_invalidate_the_graph` and
+    `test_two_credentials_that_redact_alike_keep_the_lasso`.
+  - A one-character credential is replaced only in a value position — after
+    `=`, or between quotes — while a count is left alone, and a text a
+    credential of two or more characters survives in is withheld (D50).
+    `Redaction.secrets` carries the values the survival check looks for;
+    `_escaped_forms` also covers Go's `<`, `>`, `&`, U+2028 and U+2029 and the
+    `repr` spelling a refusal quotes. Pinned by
+    `test_a_one_character_credential_in_a_value_position_is_redacted`,
+    `test_a_one_character_credential_named_flag_leaves_the_counts_intact` and
+    `test_evidence_a_credential_survives_in_is_withheld`. The value-position
+    test pins the whole diagnostic as a snapshot, because which positions are
+    replaced and which are left is the contract.
+  - The substitution mechanism moved to `adapters/fizzbee_replacements`, which
+    keeps `fizzbee_redaction` inside the 400-line limit without changing what
+    either module decides (D51). The evidence tests were split the same way:
+    `tests/test_modelcheck_fizzbee_redaction.py` holds the replacement tests and
+    `tests/modelcheck_evidence_cases.py` the run they share, so no test module
+    exceeds the limit either.
+  - `ConfigurationSource.source_text` documents `OSError` and
+    `UnicodeDecodeError`, `ModelChecker.check` documents a specification that
+    cannot be written, the users' guide and this plan state that the seven
+    `models/admission/*/traces/head-*.json` files are tracked, and ADR 008 D39
+    is corrected (D52). A non-UTF-8 source exits `2` and names the decoding,
+    pinned by `test_a_source_that_is_not_utf8_exits_two_and_names_it`.
+  - Focused validation on the working tree: 306 tests and two snapshots pass
+    across the evidence, redaction, output and command-line suites. The
+    duplication gate then found the shared run's import block and the repeated
+    `stub`/`check`/`isinstance` scaffolding copied into the new test module, so
+    the scaffolding moved into `tests/modelcheck_evidence_cases.py` and the
+    typed helpers into the module that may assert; the gate now passes with no
+    unmatched allowance of this round's.
+  - Final candidate gate round: all thirteen commit gates pass on a
+    byte-identical reproduction of the working tree — `check-lock`,
+    `check-fmt`, `markdownlint`, `nixie`, `lint`, `typecheck`, `test` (3625
+    passed, 78 skipped), `audit`, `lint-actions`, `validate`,
+    `model-fidelity`, `test-workflow-contracts` and `model-check` (14
+    expectations met, fixpoint stable).
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -2613,9 +2663,10 @@ explicitly.
   flags it documents.** _Decided 2026-11-04._
   - Decision: `fails_as` refuses `unknown`; the users' guide runs the tool
     through `uv run`, names `--bounds routine`, qualifies the checker-error
-    exit status for `--fixpoint`, and states that `--save-traces` leaves
-    `models/admission/<half>/traces/` untracked rather than claiming a run
-    leaves `git status` clean. Three modules were split to stay inside the
+    exit status for `--fixpoint`, and states where `--save-traces` writes:
+    `models/admission/<half>/traces/`, whose seven `head-*.json` traces are
+    tracked, rather than claiming a run leaves `git status` clean or that the
+    directory is untracked. Three modules were split to stay inside the
     400-line limit: `tests/test_modelcheck_vocabulary.py`,
     `modelcheck/adapters/fizzbee_process_group.py` and
     `tests/modelcheck_artefacts.py`. Removing the vocabulary rule from the
@@ -2941,6 +2992,101 @@ explicitly.
     decoded-value gap that text redaction could not reach.
   - Evidence: `_checker_environment` and its callers; the redaction suites
     named in D47; the two residuals recorded in D44 and in the users' guide.
+
+- **D49. A run is classified before its evidence is redacted.** _Decided
+  2026-11-07._
+  - Decision: `fizzbee_process._checked` reads the checker's stdout and graph
+    exactly as the checker wrote them, calls `parse_output` to classify the
+    run, and only then passes the result through `redact_result`. Redaction is
+    still applied to the transcript and graph text for the record, but it no
+    longer feeds the classifier. `redact_result` now also redacts
+    `Errored.detail`, because the parser's refusal quotes the decoded document
+    and can therefore hold a decoded credential.
+  - Finding: the sixth round demonstrated two ways the previous order changed
+    a verdict. A credential equal to a JSON number turned `"b": 12` into
+    `"b": <redacted>`, which is not JSON, so a valid lasso was reported as a
+    run that proved nothing. Two distinct state values redacting to the same
+    placeholder could make two states compare equal and change the ending a
+    lasso is decided by. The same round found a Go-escaped credential reaching
+    the persisted detail through the parse reason.
+  - Reason: a replacement is neither injective nor type-preserving, so it can
+    change a graph's validity, its ending, or the equality that classifies it.
+    Classification must see the checker's own document; the replacement belongs
+    only to the evidence the record carries.
+  - Evidence: `test_a_numeric_credential_does_not_invalidate_the_graph`,
+    `test_two_credentials_that_redact_alike_keep_the_lasso`,
+    `test_a_go_escaped_credential_in_a_malformed_graph_is_redacted`,
+    `test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence`,
+    and `redact_result`'s doctest.
+
+- **D50. A one-character credential is replaced in a value position, and a
+  text a credential survives in is withheld.** _Decided 2026-11-07._
+  - Decision: `_MIN_SECRET_LENGTH` becomes 2. Below it, a value is replaced by
+    a context-anchored rule (after `=`, between double or single quotes, and
+    followed by a terminator) rather than by a needle of its own. Values of two
+    characters or more keep the whole-token rule from D44 and are also carried
+    in `Redaction.secrets`; `retain` returns `WITHHELD` when one of them
+    survives `apply`. `_escaped_forms` gains Go's `<`, `>`, `&`, U+2028 and
+    U+2029 escapes and the `repr` spelling the parser uses when it quotes a
+    decoded value.
+  - Finding: the sixth round observed that D44 left a one-character secret
+    entirely unreplaced, and that a short credential printed inside a longer
+    token survived whole-token replacement. A blanket fail-closed rule for
+    one-character values was rejected: `CLAUDE_CODE_SESSION_ATTENDED` is set
+    in this environment, so every record would be withheld.
+  - Reason: position distinguishes a value the checker was handed from a count
+    the model computed, so anchoring protects the secret without rewriting
+    `Unique states: 4`. A one-character secret expresses almost nothing, while
+    withholding every record over it would destroy the evidence the record
+    exists for; a value of two or more characters is worth failing closed on.
+  - Evidence: `test_a_one_character_credential_in_a_value_position_is_redacted`,
+    `test_a_one_character_credential_named_flag_leaves_the_counts_intact`,
+    `test_a_one_character_credential_echoed_as_a_value_is_redacted`,
+    `test_evidence_a_credential_survives_in_is_withheld`,
+    `test_a_short_credential_the_checker_printed_is_redacted`,
+    `test_both_json_spellings_of_a_credential_are_redacted`, and the doctests
+    for `Redaction.retain` and `_escaped_forms`.
+
+- **D51. The substitution mechanism has a module of its own.** _Decided
+  2026-11-07._
+  - Decision: `Redaction`, `Replacement`, `HIDDEN_VALUE`, `WITHHELD` and the
+    terminator pattern move to `adapters/fizzbee_replacements`. Its scope is
+    the substitution mechanism and the survives-a-replacement check, and
+    nothing else: which values must be replaced stays in `fizzbee_redaction`,
+    decoded-path traversal in `fizzbee_trace_redaction`, and bounding in
+    `fizzbee_evidence`. `fizzbee_redaction` re-exports the two types so a
+    caller that thinks about _what_ must not be recorded has one module to
+    import.
+  - Finding: D49 and D50 added anchored matching, a survival check and three
+    more escaped spellings, which took `fizzbee_redaction` past the
+    repository's 400-line limit.
+  - Reason: mechanism and policy are separable questions, and splitting on that
+    line keeps each module answerable in one sentence. The repository was swept
+    for an existing equivalent first; the two constants that encode the length
+    rules stay beside the policy that uses them.
+  - Evidence: `modelcheck/adapters/fizzbee_replacements.py`; the import sweep
+    for `Redaction` and `Replacement`; `make lint`'s module-length check; the
+    doctests in both modules.
+
+- **D52. The contracts name the failures they can raise, and the docs name the
+  traces that are tracked.** _Decided 2026-11-07._
+  - Decision: `ConfigurationSource.source_text` documents `OSError` and
+    `UnicodeDecodeError`; `ModelChecker.check` documents that the spec it writes
+    can fail, not only the scratch directory; the users' guide states that the
+    seven `models/admission/*/traces/head-*.json` files are tracked; the
+    ExecPlan's idempotence bullet distinguishes scratch output from requested
+    traces; ADR 008 D39 is corrected in place.
+  - Finding: the sixth round found each of those statements claiming less, or
+    more, than the code does. A non-UTF-8 specification was also undocumented
+    as a failure the tool reports; it exits 2, because `UnicodeDecodeError` is
+    a `ValueError` and `modelcheck.__main__` already maps that to the
+    tool-could-not-run status.
+  - Reason: a contract that omits a failure a caller can observe is how a
+    caller comes to catch the wrong exception, and a guide that calls committed
+    evidence untracked is how a maintainer comes to delete it.
+  - Evidence: `test_a_source_that_is_not_utf8_exits_two_and_names_it`;
+    `source_text`'s and `check`'s `Raises` sections; the users' guide's
+    generated-artefacts section; `git ls-files models | grep traces`.
 
 ## Outcomes & retrospective
 
@@ -4410,8 +4556,10 @@ milestone:
   - a partial download leaves only a `.part` file or a temporary directory,
     which the next run replaces;
   - a lock prevents two installs racing.
-- **Checker runs** write only under `.model-check/` and `$(FIZZBEE_HOME)`.
-  Deleting `.model-check/` is always safe.
+- **Checker runs** write their scratch output only under `.model-check/` and
+  `$(FIZZBEE_HOME)`; deleting `.model-check/` is always safe. The one addition
+  a run may make to the tracked tree is a counterexample it was asked to save
+  with `--save-traces`, which the trace-files bullet below covers.
 - **Milestones** are additive, so recovery is reverting the milestone's
   commits.
 - **Trace files** in `models/admission/*/traces/` are regenerated by

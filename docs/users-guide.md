@@ -1172,26 +1172,34 @@ A run copies its specification into a fresh directory under the git-ignored
 tracked file. `make model-check` also writes `.model-check/coupling.json` and
 `.model-check/transaction.json`, which the end-to-end tests read. It passes
 `--save-traces` as well, so each counterexample's normalized path is kept under
-`models/admission/<half>/traces/`; that directory is not ignored, because a
-maintainer may commit a trace as evidence, and after a run it shows up as
-untracked until they decide. A failed comparison's counterexample is kept the
-same way, named `<configuration>-fixpoint-<stage>.json` so it sits beside the
-matrix's trace for the same configuration rather than replacing it. A trace is
-written only for a counterexample, so a configuration that once failed and now
-passes keeps its old file until you delete it: the run replaces the traces it
-writes and removes nothing else. The JSON record names the kind of result each
-failed run produced, and a run that reported no exploration time of its own is
-recorded with the time the harness waited for it, under a field of its own.
-Each captured text in a record's `detail` — the checker's transcript and, when
-a graph could not be decoded, the graph itself — is cut to 4,000 characters
-with the cut stated, so one record can hold two captures. The run's own paths
-and the values of credential-named environment variables are replaced before
-the text is kept, and again in the trace's states once the graph is parsed, so
-a committed artefact describes the model rather than the machine that checked
-it. Two values escape that replacement by design: a credential shorter than six
-characters is replaced only where it stands alone, and a one-character value is
-left alone so a boolean flag cannot rewrite every state count. Read a generated
-artefact before sharing it. Those tests are opt-in because they need the binary:
+`models/admission/<half>/traces/`. That directory is tracked: the seven
+`head-*.json` traces are committed evidence for the incidents the model
+reproduces, and a run rewrites the ones it produces rather than adding
+untracked files beside them. A trace for a configuration or stage that has no
+committed file yet is new, so it shows up as untracked until it is reviewed and
+committed. A failed comparison's counterexample is kept the same way, named
+`<configuration>-fixpoint-<stage>.json` so it sits beside the matrix's trace
+for the same configuration rather than replacing it. A trace is written only
+for a counterexample, so a configuration that once failed and now passes keeps
+its old file until you delete it: the run replaces the traces it writes and
+removes nothing else. The JSON record names the kind of result each failed run
+produced, and a run that reported no exploration time of its own is recorded
+with the time the harness waited for it, under a field of its own. Each
+captured text in a record's `detail` — the checker's transcript and, when a
+graph could not be decoded, the graph itself — is cut to 4,000 characters with
+the cut stated, so one record can hold two captures. The run's own paths and
+the values of credential-named environment variables are replaced before the
+text is kept, and again in the trace's states once the graph is parsed, so a
+committed artefact describes the model rather than the machine that checked it.
+The graph is read before any of that happens, so a replacement cannot turn a
+valid graph into an unparsable one or make two states compare equal.
+Credentials shorter than six characters are replaced only where they stand
+alone, and a one-character value is replaced only where it is a value — after
+`=`, or between quotes — so a boolean flag cannot rewrite every state count. If
+a credential of two or more characters survives any replacement, the text
+holding it is withheld rather than recorded and the record says so. Read a
+generated artefact before sharing it. Those tests are opt-in because they need
+the binary:
 
 ```bash
 BUILD_LIMITS_MODEL_CHECK=1 .venv/bin/pytest -m fizzbee tests

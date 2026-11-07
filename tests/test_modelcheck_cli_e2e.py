@@ -322,6 +322,25 @@ def test_the_stub_refuses_to_write_beside_itself(tmp_path: Path) -> None:
     assert not (FIXTURES / "seen.log").exists(), "and nothing was written there"
 
 
+def test_a_source_that_is_not_utf8_exits_two_and_names_it(tmp_path: Path) -> None:
+    """A model the tooling cannot read is a tool failure, not a verdict.
+
+    ``source_text`` reads every ``.fizz`` file as UTF-8. A file in another
+    encoding would decode to text the model does not contain, and checking that
+    text would answer a question nobody asked, so the run stops with the status
+    that means the checker was never asked and names the decoding failure.
+    """
+    model = tmp_path / "model"
+    model.mkdir()
+    shutil.copy(MODEL / "configurations.toml", model / "configurations.toml")
+    (model / "admission.fizz").write_bytes(b"action Init:\n  n = 0\n\xff\n")
+
+    result = run("check", str(model), "--fizz", str(FIZZ), log=tmp_path / "seen.log")
+
+    assert result.returncode == 2, "the tool could not run"
+    assert "utf-8" in result.stderr.lower(), "and the message names the decoding"
+
+
 def test_a_usage_error_names_the_problem_and_exits_two(tmp_path: Path) -> None:
     """A run the tool cannot perform is distinct from a model that failed.
 

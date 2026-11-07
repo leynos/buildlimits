@@ -1144,6 +1144,15 @@ line a verdict is read from — an `Error:` diagnostic or the marker a signal
 left — is bounded on the same reasoning. A new path or credential the checker
 can print belongs in that redaction rather than in a test-only exception.
 
+Classification happens before any of that. A replacement is neither injective
+nor type-preserving, so `fizzbee_process` parses the checker's own stdout and
+graph first and only then calls `redact_result`; sanitizing the graph first
+could turn `"b": 12` into invalid JSON, or make two distinct states compare
+equal and change the ending a lasso is decided by. The one text that cannot be
+classified first is the parser's refusal, which quotes the document it refused
+and can hold a decoded credential, so `redact_result` redacts an `Errored`
+detail as well as a counterexample's trace.
+
 Redacting the text is not sufficient on its own, because a trace is rebuilt
 from the graph after that text has been parsed. The checker is a Go program,
 and its JSON encoder writes `<`, `>` and `&` as six-character Unicode escapes
@@ -1154,14 +1163,19 @@ therefore walks each decoded state after parsing and replaces the same values
 again, and `fizzbee_process` applies it to every parsed result rather than only
 to a failed one.
 
-Two residuals are deliberate and pinned by tests. A credential shorter than six
+Three residuals are deliberate and pinned by tests. A credential of two to five
 characters is replaced only where it stands alone — after `NAME=`, inside JSON
 quotes — so a short value does not rewrite the words it happens to occur in. A
-one-character value is not replaced at all: the name heuristic cannot tell a
-secret from a flag, and a shell that sets `CLAUDE_CODE_SESSION_ATTENDED=0`
-would otherwise make `0` a needle that rewrites every state count and the
-graph's own indices. Both are reasons an artefact is read before it is
-committed, not reasons to trust one that was not.
+one-character value is replaced only where it is a value: after `=`, or between
+quotes, and not in a count, so `CLAUDE_CODE_SESSION_ATTENDED=0` becomes
+`CLAUDE_CODE_SESSION_ATTENDED=<redacted>` while `Unique states: 4` survives.
+And if a credential of two or more characters survives any replacement,
+`Redaction.retain` returns `WITHHELD` and the record says the text was withheld
+rather than committing it. The mechanism itself is in
+`adapters/fizzbee_replacements`; the module holds the substitution and the
+survival check only, so "what must not be recorded" stays in
+`fizzbee_redaction`. All of this is a reason an artefact is read before it is
+committed, not a reason to trust one that was not.
 
 The two obligations have different costs and run in different places.
 `make model-fidelity` runs both drift reports and the drift tests; it compares

@@ -21,10 +21,10 @@ from modelcheck_e2e_cases import assert_holds, persisted, traced_run
 def _malformed_detail(tmp_path: Path, credential: str) -> str:
     """Run the malformed-graph mode and return the detail it persisted.
 
-    Both malformed-graph tests need the same three things before they can
-    assert anything: a run whose credential is the one under test, the status
-    that says the run proved nothing, and the detail the record kept. Sharing
-    them keeps each test's assertions the only thing that differs.
+    The malformed-graph tests need the same three things before they can assert
+    anything: a run whose credential is the one under test, the status that
+    says the run proved nothing, and the detail the record kept. Sharing them
+    keeps each test's assertions the only thing that differs.
 
     Parameters
     ----------
@@ -134,6 +134,51 @@ def test_an_escaped_credential_reaches_the_persisted_record_redacted(
         "the escaped credential is replaced whole"
     )
     assert "do-not-record" not in detail, "and no part of it is left behind"
+
+
+def test_a_go_escaped_credential_in_a_malformed_graph_is_redacted(
+    tmp_path: Path,
+) -> None:
+    r"""A spelling only the checker's encoder produces is redacted too.
+
+    The malformed graph is retained as the checker wrote it, and the checker is
+    a Go program: its encoder writes ``<`` as ``\u003c``, a spelling no Python
+    JSON writer produces. The parser's refusal quotes the *decoded* document,
+    so the same credential also appears in the reason, in a third spelling.
+    Both are removed before the record is written, and the record is read back
+    to prove it rather than the in-memory value.
+    """
+    written_into_the_graph = "a<b-do-not-record"
+    detail = _malformed_detail(tmp_path, written_into_the_graph)
+
+    assert "the error graph could not be parsed" in detail, "the reason survives"
+    assert "\\u003c" not in detail, "the Go spelling of the value is replaced"
+    assert "do-not-record" not in detail, (
+        "and no part of the credential is left in either spelling"
+    )
+
+
+def test_a_one_character_credential_echoed_as_a_value_is_redacted(
+    tmp_path: Path,
+) -> None:
+    """A flag's value is replaced where it is a value, and a count is not.
+
+    ``CLAUDE_CODE_SESSION_ATTENDED=0`` is a boolean, not a secret, but the
+    adapter cannot know that from the name. A bare ``0`` needle would rewrite
+    every state count in the transcript, so the value is replaced only where a
+    checker echoes it — after ``=`` — and the counts beside it survive.
+    """
+    echoed_flag = "0"
+    status, written = persisted(
+        tmp_path, "unreadable", MODELCHECK_E2E_SECRET=echoed_flag
+    )
+
+    assert status == 1, "a run that proved nothing meets no expectation"
+    detail = typ.cast("str", written[0]["detail"])
+    assert "token=<redacted>" in detail, "the echoed value is replaced"
+    assert "Valid Nodes: 4 Unique states: 4" in detail, (
+        "while a count is not a value the checker was handed"
+    )
 
 
 def test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence(

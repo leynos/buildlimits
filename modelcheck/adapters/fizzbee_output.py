@@ -240,6 +240,13 @@ def _counterexample(
         settled, while a graph that exists but does not parse proves nothing
         rather than reporting a guessed shape.
 
+    Notes
+    -----
+    The refusal's reason is bounded as well as the captures. It quotes the
+    document the parser refused — a repr of whatever the checker wrote — so its
+    length is the checker's choice, and the detail it appears in is persisted
+    beside the record.
+
     Examples
     --------
     >>> result = _counterexample("L3", CounterexampleKind.LASSO, None, "")
@@ -264,7 +271,7 @@ def _counterexample(
         # evidence this run can be diagnosed from.
         return Errored(
             with_evidence(
-                f"the error graph could not be parsed: {error}",
+                bounded(f"the error graph could not be parsed: {error}"),
                 (
                     ("the checker printed", stdout),
                     ("the error graph held", error_graph),

@@ -135,6 +135,13 @@ class FizzbeeChecker:
             start at all is an ``Errored`` rather than an exception, so the
             matrix reports a run that proved nothing; the exit status is un-met.
 
+        Raises
+        ------
+        OSError
+            If the scratch directory or the specification written into it
+            cannot be made. A launcher that is missing or refuses to start is
+            not this: it is an ``Errored`` result.
+
         Examples
         --------
         A missing launcher is reported as a run that proved nothing, not as a
@@ -145,7 +152,7 @@ class FizzbeeChecker:
         ...     MaterializedSpec("head", "action Init:\n  n = 0\n", ())
         ... ).detail.startswith("the checker could not be started:")
         True
-        """
+        """  # ruff: ignore[docstring-extraneous-exception] - _checked writes the spec.
         directory = _scratch()
         started = time.monotonic()
         try:
@@ -171,20 +178,19 @@ class FizzbeeChecker:
 
         Notes
         -----
-        Both the transcript and the error graph are redacted of this run's
-        paths and credentials. The graph is checker-written text that becomes
-        committed evidence — a trace file on a successful parse, a bounded
-        capture on a failed one — so a runner path or an echoed credential left
-        in it would travel into the artefact the same way one printed to the
-        transcript would.
+        The run is classified from the checker's own text, and only then is the
+        evidence it carries redacted. That order is what keeps a credential
+        from changing a verdict: a replacement is not injective, so a value
+        equal to a JSON number could make a graph invalid and two distinct
+        state values could become one — which would change the ending a lasso
+        is classified by. ``redact_result`` therefore runs after
+        ``parse_output``, never before it.
 
-        Redacting the graph's text is not enough for a graph that parses: the
-        trace is that JSON decoded, and a decoded string is a different value
-        from any spelling of it the text pass saw.
-        :func:`~modelcheck.adapters.fizzbee_trace_redaction.redact_result`
-        therefore applies the same replacements to the decoded path, so the
-        trace file and the record carry the placeholder rather than the
-        credential whatever form the checker wrote.
+        Once classified, every retained surface is redacted of this run's paths
+        and credentials: the transcript, an error's detail — which quotes the
+        document the parser refused — and, for a graph that parses, the decoded
+        path. A text a credential survives in is withheld rather than recorded;
+        see :mod:`modelcheck.adapters.fizzbee_replacements`.
         """
         (directory / _SPEC_NAME).write_text(spec.text, encoding="utf-8")
         output = directory / "out"
@@ -194,27 +200,29 @@ class FizzbeeChecker:
             completed = self._run(directory, output, environment)
         except OSError as error:
             return Errored(
-                redaction.apply(f"the checker could not be started: {error}")
+                redaction.retain(f"the checker could not be started: {error}")
             )
-        stdout = redaction.apply(completed.stdout.decode(errors="replace"))
+        stdout = completed.stdout.decode(errors="replace")
         if completed.timed_out:
-            return Errored(timeout_detail(self.timeout_seconds, stdout))
+            return redact_result(
+                Errored(timeout_detail(self.timeout_seconds, stdout)), redaction
+            )
         try:
             graph = _graph(output)
         except (OSError, UnicodeDecodeError) as error:
             # The scratch directory is removed as this call returns, so the
             # checker's transcript is the only evidence left of a run whose
             # graph could not be read.
-            return Errored(
-                with_evidence(
-                    unreadable_graph(error),
-                    (("the checker printed", stdout),),
-                )
+            return redact_result(
+                Errored(
+                    with_evidence(
+                        unreadable_graph(error),
+                        (("the checker printed", stdout),),
+                    )
+                ),
+                redaction,
             )
-        graph_text = None if graph is None else redaction.apply(graph)
-        return redact_result(
-            parse_output(stdout, completed.status, graph_text), redaction
-        )
+        return redact_result(parse_output(stdout, completed.status, graph), redaction)
 
     def _run(
         self, directory: Path, output: Path, environment: dict[str, str]

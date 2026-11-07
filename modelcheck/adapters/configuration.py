@@ -143,7 +143,14 @@ class TomlConfigurations:
         MaterializeError
             If the directory holds no ``.fizz`` file. A run with no source
             would compile nothing and report a pass over an empty state space.
-        """
+        OSError
+            If a source file exists but cannot be read. The tooling cannot
+            answer for a model it could not read.
+        UnicodeDecodeError
+            If a source file is not UTF-8. Decoding it with a replacement
+            character would check text the model does not contain, and a
+            verdict about other text is worse than no verdict.
+        """  # ruff: ignore[docstring-extraneous-exception] - read_text raises both.
         files = sorted(self._directory.glob("*.fizz"))
         if not files:
             msg = f"{self._directory} holds no {_MODEL_SUFFIX} file"

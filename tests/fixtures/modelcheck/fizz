@@ -116,24 +116,32 @@ case "${MODELCHECK_E2E_ANSWER:-recorded}" in
     ;;
   unreadable)
     # A directory where the graph should be is the cheapest unreadable graph.
+    # The lasso's output comes first so that the counts it reports survive the
+    # bound the adapter applies: a test uses them to prove that a one-character
+    # credential was replaced only where it was echoed as a value, rather than
+    # rewriting every number in the transcript. Everything after it is the
+    # runaway text the bound exists for.
     mkdir -p "$output/error-graph.json"
+    cat "$directory/lasso-stdout.txt"
     printf 'token=%s\n' "${MODELCHECK_E2E_SECRET:-}"
     printf 'cache %s/.cache/go-build\n' "${HOME:-}"
     printf 'reading %s/model.fizz\n' "$PWD"
     printf 'x%.0s' {1..5000}
     printf '\n'
-    cat "$directory/lasso-stdout.txt"
     exit 0
     ;;
   malformed)
     mkdir -p "$output"
     # A JSON writer escapes a quote or a backslash in the value it writes, so
-    # the graph holds the escaped form rather than the value itself. The
-    # redaction has to cover that form too, or a credential containing either
-    # character would reach the record in the one shape the checker used.
+    # the graph holds the escaped form rather than the value itself. The real
+    # checker's Go encoder also writes a less-than sign as six characters, so
+    # the graph carries a spelling no Python writer produces. The redaction has
+    # to cover every one of those forms, or a credential would reach the record
+    # in whichever shape the checker happened to use.
     escaped=${MODELCHECK_E2E_SECRET:-}
     escaped=${escaped//\\/\\\\}
     escaped=${escaped//\"/\\\"}
+    escaped=${escaped//</\\u003c}
     printf '{"not": "a list", "token": "%s"}' "$escaped" \
       > "$output/error-graph.json"
     cat "$directory/lasso-stdout.txt"
