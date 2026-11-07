@@ -297,9 +297,12 @@ in that mode.
   operator's to keep: the health check samples the daemon before a group is
   composed, so it narrows the window in which a group is pointed at a stopped
   daemon but does not close it. A daemon that stops between the check and the
-  launch leaves the compile to kache's own auto-start, which creates the daemon
-  inside the group's scope; the stray-process guard reports that state
-  afterwards, and no setting of the supported kache versions prevents it.
+  launch leaves the compile to kache's own auto-start on kache 2.0.0-rc.1,
+  which creates the daemon inside the group's scope; the stray-process guard
+  reports that state afterwards, and no setting of that version prevents it. On
+  kache 1.2.2 the supervisor's fixed `KACHE_LOCAL_ONLY=1` setting makes the
+  remote-gated daemon start paths inert, so that version does not create a
+  daemon here; ADR 006 records the measurement for both versions.
 - A `kache_executable` the supervisor can run. A bare name is resolved on the
   supervisor's `PATH`, so configure an absolute path when the supervisor runs
   under a minimal service environment.

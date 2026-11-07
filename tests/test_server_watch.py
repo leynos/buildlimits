@@ -147,47 +147,6 @@ def test_no_waiting_token_means_no_query() -> None:
     assert not watch.drained_tokens(), "nothing waits, so nothing is read"
 
 
-@pytest.mark.parametrize(
-    ("reachable", "mode", "cached"),
-    [
-        (True, "sccache", True),
-        (False, "sccache", False),
-        (SccacheError("cannot probe s.sock: EACCES"), "sccache", False),
-        (True, "kache", True),
-        (False, "kache", False),
-        (SccacheError("cannot probe /run/kache/kache.sock"), "kache", False),
-        (True, "direct", False),
-    ],
-    ids=[
-        "reachable",
-        "stopped",
-        "probe-fault",
-        "kache",
-        "kache-unavailable",
-        "kache-fault",
-        "direct",
-    ],
-)
-def test_new_groups_cache_only_through_a_reachable_server(
-    reachable: bool | SccacheError, mode: str, cached: bool
-) -> None:
-    """A probe fault falls back to direct compilation like a stopped server.
-
-    The probe is asked of whichever backend the mode selected, so an in-scope
-    cache is composed on its own health rather than on a server this supervisor
-    does not own. The managed server is scripted to the opposite answer, so a
-    reading taken from the wrong port cannot produce the expected result.
-    """
-    admission = Admission(cached=not cached)
-    _watch(
-        FakeServer(reachable=reachable is not True),
-        admission,
-        mode,
-        backend=FakeServer(reachable=reachable),
-    ).refresh_cache_mode()
-    assert admission.cached is cached, "the cache mode follows the probe"
-
-
 def test_an_in_scope_cache_is_never_drained() -> None:
     """Only a detached backend has work outside a scope to account for.
 

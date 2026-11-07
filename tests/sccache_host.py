@@ -199,16 +199,25 @@ def _await_ready(
 def _stop_server(
     executable: str, environment: dict[str, str], process: subprocess.Popen[bytes]
 ) -> None:
-    """Stop the private server, bounding every wait for it to exit."""
-    # ruff: ignore[subprocess-without-shell-equals-true] - stop argv, no shell.
-    subprocess.run(
-        [executable, "--stop-server"],
-        check=False,
-        capture_output=True,
-        env=environment,
-        timeout=15,
-    )
-    end_process(process, timeout=_STOP_TIMEOUT_SECONDS)
+    """Stop the private server, bounding every wait for it to exit.
+
+    ``end_process`` runs even when the stop command outlives its own timeout:
+    ``subprocess.run`` raises ``TimeoutExpired`` regardless of
+    ``check=False``, and the server was started in its own session, so a
+    teardown that skipped the kill would leave it holding the private socket
+    after the test had finished.
+    """
+    try:
+        # ruff: ignore[subprocess-without-shell-equals-true] - stop argv, no shell.
+        subprocess.run(
+            [executable, "--stop-server"],
+            check=False,
+            capture_output=True,
+            env=environment,
+            timeout=15,
+        )
+    finally:
+        end_process(process, timeout=_STOP_TIMEOUT_SECONDS)
 
 
 def _server_pid(environment: cabc.Mapping[str, str]) -> int:

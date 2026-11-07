@@ -41,7 +41,7 @@ from buildlimits.effects import Exit, Launch, ReturnToken
 from buildlimits.metrics import Metrics
 from buildlimits.recovery_barrier import RecoveryBarrier
 from buildlimits.sccache import ManagedSccache
-from buildlimits.server_watch import ServerWatch
+from buildlimits.server_watch import UNREACHABLE_POLLS_BEFORE_DIRECT, ServerWatch
 from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 from buildlimits.timing import Clock
 
@@ -364,12 +364,13 @@ def test_a_kache_health_cycle_journals_only_kache_lines(
     server = _KacheServer(reachable=False)
     watch = _watch(server, Admission(cached=True, cache_detached=False), metrics)
 
-    watch.refresh_cache_mode()
+    for _ in range(UNREACHABLE_POLLS_BEFORE_DIRECT):
+        watch.refresh_cache_mode()
     server.reachable = True
     watch.refresh_cache_mode()
 
     err = capsys.readouterr().err
-    assert server.health_queries == 2, (
+    assert server.health_queries == UNREACHABLE_POLLS_BEFORE_DIRECT + 1, (
         "both journal lines came from a real poll, not from a default reading"
     )
     assert "kache is unavailable; compiling directly" in err, err

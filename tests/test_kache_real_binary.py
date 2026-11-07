@@ -19,6 +19,7 @@ See ``docs/adr-006-kache-cache-backend.md``.
 
 import shutil
 import subprocess
+import sys
 import typing as typ
 from pathlib import Path
 
@@ -46,6 +47,13 @@ pytestmark = kache_host_marks()
 def _toolchain(tmp_path: Path) -> Path:
     """Install the scripted compiler in a private toolchain directory.
 
+    The copy carries the running interpreter in its shebang rather than the
+    ``#!/usr/bin/env python3`` the source file uses. The group runs on a
+    private ``PATH`` -- the toolchain directory, ``/usr/bin`` and ``/bin`` --
+    so an interpreter installed anywhere else, as a ``uv``-managed or Nix
+    environment supplies, would be unreachable: the compile would fail for a
+    host reason rather than a kache one.
+
     Returns
     -------
     Path
@@ -54,7 +62,9 @@ def _toolchain(tmp_path: Path) -> Path:
     toolchain_bin = tmp_path / "toolchain" / "bin"
     toolchain_bin.mkdir(parents=True)
     compiler = toolchain_bin / "rustc"
-    shutil.copy2(Path(__file__).with_name("fake_rustc.py"), compiler)
+    source = Path(__file__).with_name("fake_rustc.py").read_text(encoding="utf-8")
+    _, _, body = source.partition("\n")
+    compiler.write_text(f"#!{sys.executable}\n{body}", encoding="utf-8")
     compiler.chmod(0o755)
     return toolchain_bin
 

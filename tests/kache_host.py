@@ -210,16 +210,25 @@ def _stop_daemon(
     environment: cabc.Mapping[str, str],
     process: subprocess.Popen[bytes],
 ) -> None:
-    """Stop the private daemon, bounding every wait for it to exit."""
-    # ruff: ignore[subprocess-without-shell-equals-true] - stop argv, no shell.
-    subprocess.run(
-        [executable, "daemon", "stop"],
-        check=False,
-        capture_output=True,
-        env=dict(environment),
-        timeout=_PROBE_TIMEOUT_SECONDS,
-    )
-    end_process(process, timeout=_STOP_TIMEOUT_SECONDS)
+    """Stop the private daemon, bounding every wait for it to exit.
+
+    ``end_process`` runs even when the stop command outlives its own timeout:
+    ``subprocess.run`` raises ``TimeoutExpired`` regardless of
+    ``check=False``, and the daemon was started in its own session, so a
+    teardown that skipped the kill would leave it holding the private store
+    and socket after the test had finished.
+    """
+    try:
+        # ruff: ignore[subprocess-without-shell-equals-true] - stop argv, no shell.
+        subprocess.run(
+            [executable, "daemon", "stop"],
+            check=False,
+            capture_output=True,
+            env=dict(environment),
+            timeout=_PROBE_TIMEOUT_SECONDS,
+        )
+    finally:
+        end_process(process, timeout=_STOP_TIMEOUT_SECONDS)
 
 
 def _read_events(store: Path) -> list[dict[str, object]]:

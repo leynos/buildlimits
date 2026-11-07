@@ -199,15 +199,26 @@ belongs here rather than in a silent edit to an accepted record.
 
 ### Decision
 
-kache is unaffected for the same reasons sccache is. Its key is built from the
-compilation and the environment it hashes, neither of which this repair
-touches. The one difference makes the repair safer, not riskier: because kache
+kache is unaffected for the same reasons sccache is, with one configuration
+qualification. Its key is built from the compilation and the environment it
+hashes, and this repair changes neither, **unless** the host's kache
+configuration lists `LD_LIBRARY_PATH` in `[cache] key_env_vars`, or matches it
+with `key_env_pattern`. kache hashes the values of the variables named there
+exactly, and this repair changes `LD_LIBRARY_PATH`, so an operator who names it
+would see the cache key change once when the repair lands. Excluding
+`LD_LIBRARY_PATH` from that setting leaves the key untouched; naming it means
+expecting one round of misses after the repair, not a poisoned entry.
+
+The one difference still makes the repair safer, not riskier: because kache
 wraps the compiler inside the group's own scope
 ([ADR 006](adr-006-kache-cache-backend.md)), the repaired path reaches exactly
 the process that composes the cache key, with no server-side probe in between.
 
 ### Amendment consequences
 
-Nothing changes for an operator or for the adapter. The statement is recorded
-so that a future backend, or a kache version that moves composition
-server-side, is reviewed against it rather than assumed to inherit it.
+Nothing changes for the adapter. An operator has one new check: if the host's
+kache configuration names `LD_LIBRARY_PATH` in `[cache] key_env_vars` or a
+matching `key_env_pattern`, either exclude it or expect the cache to miss once
+per affected key after the repair. The statement is recorded so that a future
+backend, or a kache version that moves composition server-side, is reviewed
+against it rather than assumed to inherit it.

@@ -46,6 +46,16 @@ if typ.TYPE_CHECKING:
     from buildlimits.recovery_barrier import RecoveryBarrier
     from buildlimits.timing import Clock
 
+#: Consecutive unreachable polls required before new groups stop composing
+#: with the cache. One slow ``daemon status`` under load reads as a timeout,
+#: so a single reading is not evidence of a stopped daemon: the deadline-based
+#: hold in :meth:`ServerWatch.hold_cache` already handles the stop-and-restart
+#: window, and this counter absorbs the transient that is not a deadline. Two
+#: is the smallest number that distinguishes "answered slowly once" from
+#: "consistently not answering", and it still falls back within two five-second
+#: poll intervals of a server that really has stopped.
+UNREACHABLE_POLLS_BEFORE_DIRECT = 2
+
 
 @dc.dataclass(slots=True)
 class ServerWatch:
@@ -84,6 +94,7 @@ class ServerWatch:
     _fault: str | None = None
     _reachable: bool | None = None
     _load_unknown: bool = False
+    _unreachable_polls: int = 0
     clock: cabc.Callable[[], float] = time.monotonic
     drain_fault: str | None = None
     drain_fault_kind: FaultKind | None = None
@@ -127,9 +138,18 @@ class ServerWatch:
         reading here rather than deferring it is what closes that window: the
         poll cadence is seconds wide, and the whole stop-and-restart can
         complete inside one interval.
+
+        This reading is deliberately taken *without* the consecutive-failure
+        allowance :meth:`refresh_cache_mode` applies to the periodic poll. That
+        allowance exists to absorb a lone slow probe, which is a claim about a
+        server nobody asked to do anything. This reading follows a restart the
+        transaction has just issued, so an unreachable answer here is evidence
+        the server has not come back rather than noise: composing on the stale
+        reading would hand out a cached group inside the window the hold was
+        taken to close.
         """
         self._cache_hold_until = 0.0
-        self.refresh_cache_mode()
+        self.refresh_cache_mode(_allow_transient_failure=False)
 
     def cache_allowed(self) -> bool:
         """Report whether cache composition is permitted right now.
@@ -213,18 +233,50 @@ class ServerWatch:
     zero_visible_roots: typ.ClassVar = property(server_drain.zero_visible_roots)
     roots_are_visible: typ.ClassVar = property(server_drain.roots_are_visible)
 
-    def refresh_cache_mode(self) -> None:
-        """Compose new groups with the cache only while it can serve work."""
+    def refresh_cache_mode(self, *, _allow_transient_failure: bool = True) -> None:
+        """Compose new groups with the cache only while it can serve work.
+
+        One unreachable reading does not withdraw composition. The probe is
+        bounded at half a second, so a daemon answering slowly under load
+        reads as a timeout rather than as a stopped daemon: acting on a single
+        result would clear ``admission.cached``, and every group composed
+        before the next poll -- up to a five-second interval -- would compile
+        directly with the fallback notice. A stopped or missing daemon fails
+        every poll, so requiring ``UNREACHABLE_POLLS_BEFORE_DIRECT``
+        consecutive failures still falls back within two poll intervals while
+        a lone slow answer is absorbed. A reachable reading always restores
+        composition at once, because coming back is never the unsafe
+        direction.
+
+        Parameters
+        ----------
+        _allow_transient_failure : bool
+            Whether a lone unreachable reading may leave composition
+            unchanged. :meth:`release_cache` passes ``False``, because its
+            reading follows a restart the transaction has just issued and an
+            unreachable answer there is the absence the hold was protecting
+            against, not noise.
+        """
         if not is_cache(self.cache_mode):
+            self._unreachable_polls = 0
             self.admission.cached = False
             return
         try:
             reachable, fault = self.backend.is_reachable(), None
         except CacheError as error:
             reachable, fault = False, str(error)
-        self._announce_reachability(reachable=reachable, fault=fault)
+        self._unreachable_polls = 0 if reachable else self._unreachable_polls + 1
+        # A first failure keeps whatever composition was already permitted, so
+        # a lone slow answer cannot withdraw it. There is nothing to preserve
+        # when the cache was not composing, so an unavailable cache still
+        # settles on its first reading rather than waiting for a second.
+        within_allowance = _allow_transient_failure and (
+            self._unreachable_polls < UNREACHABLE_POLLS_BEFORE_DIRECT
+        )
+        settled = reachable or (self.admission.cached and within_allowance)
+        self._announce_reachability(reachable=settled, fault=fault)
         self._fault = fault
-        self.admission.cached = reachable
+        self.admission.cached = settled
 
     def _announce_reachability(self, *, reachable: bool, fault: str | None) -> None:
         """Journal and meter a reachability reading, once per change."""

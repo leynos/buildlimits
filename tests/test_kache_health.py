@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from buildlimits.kache import Kache
+from buildlimits.kache import STATUS_TIMEOUT_SECONDS, Kache
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -313,18 +313,22 @@ def test_a_stalled_probe_is_unavailable_rather_than_a_stalled_supervisor(
     ``kache daemon status`` normally returns immediately. A client that hangs
     is the failure mode a timeout exists for: without one the supervisor's
     poll would block inside ``subprocess.run`` and every admission would stop
-    with it.
+    with it. The bound is read from the configured timeout rather than fixed
+    here, so raising the budget cannot quietly outgrow an assertion that never
+    noticed.
     """
-    client = _script(tmp_path, "#!/bin/sh\nsleep 300\n")
+    # ``exec`` replaces the shell, so the kill reaches the process that sleeps
+    # instead of leaving an orphaned ``sleep`` behind on every run.
+    client = _script(tmp_path, "#!/bin/sh\nexec sleep 300\n")
 
     started = time.monotonic()
     reachable = Kache(str(client)).is_reachable()
     elapsed = time.monotonic() - started
 
     assert not reachable, "a probe that never answers is not a reachable daemon"
-    assert elapsed < 10.0, (
-        f"the probe returned in {elapsed:.1f}s, so it is bounded rather than "
-        "waiting for a wedged client"
+    assert elapsed < STATUS_TIMEOUT_SECONDS + 5.0, (
+        f"the probe returned in {elapsed:.1f}s, so it is bounded by its own "
+        f"{STATUS_TIMEOUT_SECONDS}s timeout rather than waiting for a wedged client"
     )
 
 

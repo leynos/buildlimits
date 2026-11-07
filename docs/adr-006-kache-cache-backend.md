@@ -319,12 +319,13 @@ The supervisor's obligations are then:
   `kache daemon status --json` naming the configured socket with
   `daemon_running: true`. That subcommand never starts a daemon and exits zero
   with `daemon_running: false` when none is running, so it is safe to call on
-  every admission cycle. The executable health runs is the one resolution of
-  `kache_executable` described under Configuration, and it is that same
-  resolved file that the composed argv names. The directory health checks is
-  `kache_cache_dir`, and the group it admits exports that same directory as
-  `KACHE_CACHE_DIR`; without the key the directory is kache's own and health
-  cannot check it.
+  every admission cycle. The probe carries a 0.5 s timeout; _Probe latency_
+  below records the measurement that budget was chosen from. The executable
+  health runs is the one resolution of `kache_executable` described under
+  Configuration, and it is that same resolved file that the composed argv
+  names. The directory health checks is `kache_cache_dir`, and the group it
+  admits exports that same directory as `KACHE_CACHE_DIR`; without the key the
+  directory is kache's own and health cannot check it.
 - If health fails, the compile runs directly, with the notice on standard
   error and `direct_fallback` in `cache_path`.
 - A `kache` or `kache-engine` process found in `buildlimits-compilers.slice`
@@ -567,6 +568,35 @@ part of `make test`; see the developers' guide. This is a contract check on the
 backend seam, not a replacement for the process-topology measurement in Table
 5: it says the composed group caches and stays healthy, while Table 5 says
 where the compiler it spawns lives.
+
+#### Probe latency
+
+The 0.5 s probe budget was chosen from the following measurement, taken on the
+same host as Table 5 (`rustc 1.99.1`, 24 CPUs) against kache `2.0.0-rc.1`. Each
+sample is one `kache daemon status --json` invocation, timed from exec to exit,
+with a private `HOME`, store and socket so no other build could answer for it.
+The third row adds 24 busy single-core processes to represent a host whose CPUs
+are all occupied, which is the case a slow probe has to survive.
+
+| Condition                       | n   | p50   | p90   | p99    | max    |
+| ------------------------------- | --- | ----- | ----- | ------ | ------ |
+| no daemon running               | 100 | 8 ms  | 10 ms | 54 ms  | 54 ms  |
+| live daemon, idle host          | 200 | 9 ms  | 15 ms | 43 ms  | 76 ms  |
+| live daemon, 24 cores saturated | 100 | 27 ms | 56 ms | 199 ms | 199 ms |
+
+_Table 6: `kache daemon status --json` latency._
+
+Two conclusions follow. First, the ordinary probe finishes in about 9 ms, so
+0.5 s is roughly fifty times the observed median and absorbs the saturated-host
+tail with an order of magnitude to spare. Second, the tail is real: at p99 a
+saturated host is already an order of magnitude slower than an idle one, and
+nothing in the profile proves it cannot exceed the budget under a heavier load.
+A timeout is therefore a possible reading for a daemon that is running, which
+is why `buildlimits.server_watch.ServerWatch` requires two consecutive
+failures before it withdraws composition rather than acting on one. The reading
+taken by a recovery release is exempt from that allowance: it follows a restart
+the transaction has just issued, so an unreachable answer there is the absence
+the hold was protecting against rather than noise.
 
 ### How RFC 0001 and RFC 0002 apply
 

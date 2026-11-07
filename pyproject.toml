@@ -1656,3 +1656,6 @@ members = [
     "tests/sccache_host.py",
 ]
 reason = "Matching import lists: each module names the subprocess, JSON, typing and pytest symbols its own backend needs, and sharing them through a re-export module would hide each module's real dependencies."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_record_codec.py", "tests/test_kache_detached_events.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
