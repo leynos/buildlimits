@@ -1,10 +1,13 @@
 """Read a model directory's source, configurations and drift exclusions.
 
-A model directory holds three things: the ``.fizz`` text, a ``fizz.yaml`` of
-default bounds, and a ``configurations.toml`` naming each variant the matrix
-runs. This adapter reads all three and turns them into the domain's values. It
-is the only place that knows the file layout, so the service and the report
-never learn that a configuration came from TOML.
+A model directory holds three things: the ``.fizz`` text, a ``configurations.toml``
+naming each variant the matrix runs, and a ``fizz.yaml`` of bounds for a
+maintainer running the checker by hand. This adapter reads the first two and
+turns them into the domain's values. It never reads ``fizz.yaml``: each run's
+frontmatter is rendered from the configuration, so the tooling's bounds come
+from the TOML and the YAML is left to a direct run. The adapter is the only
+place that knows the files it reads, so the service and the report never learn
+that a configuration came from TOML.
 
 The TOML schema is the tooling's own, because the plan fixes the *concept* of a
 configuration rather than a file format. Each table is one configuration:
@@ -32,9 +35,10 @@ configuration rather than a file format. Each table is one configuration:
 
 An option the file omits is omitted deliberately: ``options`` is rendered into
 the frontmatter as a whole, so a variant never inherits a bound by accident.
-That is also why ``fizz.yaml`` is read and published rather than merged — the
-checker merges frontmatter *over* the YAML, so a variant that restated only one
-option would otherwise silently keep the rest.
+That is also why the TOML, and not ``fizz.yaml``, is where a matrix run's
+bounds live — the checker merges the frontmatter *over* the YAML beside the
+specification, so a variant that restated only one option would otherwise
+silently keep the rest.
 
 Drift exclusions live in the same file, under ``[exclusions]``, because a
 deliberate omission and a configuration are both statements the maintainer

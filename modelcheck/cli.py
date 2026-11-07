@@ -62,9 +62,12 @@ type _BOUNDS = typ.Literal["routine", "nightly"]
 """The two bound sets a run may ask for.
 
 The numbers behind each name belong to the configuration the model ships, not
-to this module: ``fizz.yaml`` declares them, and ``--bounds`` only selects
-which set is read. Naming them here would put a second copy of a bound in a
-file the model never sees.
+to this module: each configuration's ``options`` table in
+``configurations.toml`` declares them, and ``--bounds`` only says which set the
+run asks for. The models declare only ``routine`` today, so the other name
+reaches the adapter and is refused there rather than being silently ignored.
+Naming the numbers here would put a second copy of a bound in a file the model
+never sees.
 """
 
 _ENVIRONMENT = cyclopts.config.Env("MODELCHECK_", command=False)
@@ -200,6 +203,16 @@ def make_app(  # pylint: disable=too-many-arguments  # ADR 008 supplies three ad
             or the fixpoint check: both are about the model rather than a
             selection of it, so an omitted configuration can still fail the
             command.
+
+        Notes
+        -----
+        With ``--fixpoint``, a configuration that should pass and did not at
+        one of its two bounds raises
+        :class:`~modelcheck.fixpoint_failures.FixpointError` from the
+        comparison. A comparison that never finished says nothing about the
+        model, so the entry point reports it as the tool failing (``2``)
+        rather than as an unmet expectation — the status ``1`` the same
+        configuration gets without ``--fixpoint``.
         """
         source = source_factory(model_dir, bounds)
         results = service.run_matrix(source, checker_factory(fizz))
