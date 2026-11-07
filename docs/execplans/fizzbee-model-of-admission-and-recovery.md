@@ -1588,25 +1588,28 @@ explicitly.
     discovering it at G1.
 
 - **The D35 remediation round breaches the 25-file hard stop, at 27 files
-  when the escalation was raised and 71 at the current head.**
+  when the escalation was raised and 80 at the current head.**
   - Observation: measured on one basis — every path the round has touched
-    since it began, including the working tree — the round now touches 85
+    since it began, including the working tree — the round now touches 94
     paths; the tolerance's exclusions (two `.fizz` models, four syrupy
-    snapshots and eight documentation files) leave 71 in-scope files,
-    forty-six over the limit that D32 explicitly kept for EP-M4 onward. This
+    snapshots and eight documentation files) leave 80 in-scope files,
+    fifty-five over the limit that D32 explicitly kept for EP-M4 onward. This
     supersedes the earlier record of 41, which was the same basis applied at
-    `486507f` when the round touched 50 paths; the same basis applied at
-    `d543b3b`'s replay equivalent, `aa7ff19`, gives the 85 paths above. The
-    escalation was raised when the figure stood at 27 (30 paths, less two
-    `.fizz` models and one syrupy snapshot); the additions since are the D3
-    and D6 enforcements, the adapter-boundary regressions, the assessment's
-    second-round repairs, and the five module splits `C0302` forced, rather
-    than a widening of the remediation scope itself. The seven committed
+    `486507f` when the round touched 50 paths, and the record of 71, which was
+    the same basis applied at `aa7ff19` before the branch was replayed onto
+    its current base; applying it at `c1e12c3`, that commit's replay
+    equivalent, gives the 94 paths above. The escalation was raised when the
+    figure stood at 27 (30 paths, less two `.fizz` models and one syrupy
+    snapshot); the additions since are the D3 and D6 enforcements, the
+    adapter-boundary regressions, the assessment's second-round repairs, the
+    five module splits `C0302` forced, and the fifth review round's decoded
+    trace redaction, drift-boundary and error-context tests, rather than a
+    widening of the remediation scope itself. The seven committed
     `traces/*.json` artefacts are counted as in scope, because they are
     evidence a maintainer reads rather than fixtures a test loads. The count
     is reported here rather than restated as 27 so the open escalation is
     answered against the work that exists.
-  - Evidence: `git diff --name-only aa7ff19` plus `git status --porcelain
+  - Evidence: `git diff --name-only c1e12c3` plus `git status --porcelain
     -uall`, classified by the tolerance's exclusion rule, and the per-file
     line counts in Progress. The excess is the modules the 400-line rule
     forced — `modelcheck/fixpoint.py`, `modelcheck/fixpoint_bounds.py`,
@@ -3059,7 +3062,7 @@ they are affordable: fidelity on every pull request, the matrix nightly.
   67,944 to 65,664.
 - **What it cost.** The 25-file stop was breached again, at 27 files when the
   escalation was raised; that figure is historical, and the round has since
-  grown to 71 in-scope files (Risks, D35). The excess is exactly the run of
+  grown to 80 in-scope files (Risks, D35). The excess is exactly the run of
   modules the 400-line rule forced, plus the later assessment repairs; it does
   not reopen EP-M3's exception. The model has taken two revisions since its
   first full run — the manager guard and the L1 control — which is the
