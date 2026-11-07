@@ -203,9 +203,11 @@ def _stop_server(
 
     ``end_process`` runs even when the stop command outlives its own timeout:
     ``subprocess.run`` raises ``TimeoutExpired`` regardless of
-    ``check=False``, and the server was started in its own session, so a
-    teardown that skipped the kill would leave it holding the private socket
-    after the test had finished.
+    ``check=False``, so a teardown that let that escape would leave the
+    server holding the private socket after the test had finished. Unlike
+    :func:`kache_host._private_daemon`, this launcher does not put the server
+    in its own session, so the kill in ``end_process`` is what ends it rather
+    than a signal already reaching its group.
     """
     try:
         # ruff: ignore[subprocess-without-shell-equals-true] - stop argv, no shell.
