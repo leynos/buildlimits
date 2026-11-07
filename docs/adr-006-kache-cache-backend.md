@@ -7,8 +7,15 @@ selected by `cache_mode = "kache"`. kache runs a cache miss as a child of the
 wrapper inside the admitted scope, so kache groups are admitted as direct work
 is: a group returns its token when its scope empties, and never enters
 `SERVER_DRAIN`, the start-up quiesce or the recovery transaction. An admitted
-group never starts a kache daemon; it is pointed at an already-running,
-separately managed daemon, which the supervisor never starts, stops or owns.
+group is pointed at an already-running, separately managed daemon, which the
+supervisor never starts, stops or owns. The supervisor will not compose a group
+unless its most recent health probe saw that daemon answer, so a group is not
+composed against one already known to be down. That probe is a sample, not a
+guarantee: a daemon that stops between the reading and the launch is not
+detected, and the client then starts one inside the group's scope. Prevention
+rests on the operator keeping the daemon up, with the probe making composition
+against a stopped one unlikely and the stray-process guard making the result
+visible. _The external daemon_ below states what the guard can and cannot see.
 kache's own scheduler is disabled with `KACHE_SCHEDULER=0`.
 
 ## Date
