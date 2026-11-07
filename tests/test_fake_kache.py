@@ -1,0 +1,251 @@
+"""The kache stand-in reproduces the wrapper and daemon shapes acceptance needs.
+
+ADR 006 requires an admitted group to be pointed at a daemon that is already
+answering and never to leave one of its own behind. The fixture must therefore
+stand in for both halves of that model: a status document that names the
+endpoint the supervisor probed, so a daemon answering somewhere else is not
+mistaken for the configured one, and a compiler that runs as the wrapper's own
+child, so a group's cancellation is what removes it.
+
+The leak mode is checked at the one vantage point that is reliable on a hosted
+runner: the wrapper, as the child's parent, confirms the executable is *named*
+kache before it records the identifier a scenario reads.
+"""
+
+import contextlib
+import importlib.util
+import json
+import os
+import signal
+import subprocess
+import sys
+import typing as typ
+from pathlib import Path
+
+from fake_cache_processes import kill_and_reap, start_bound
+from harness_processes import wait_for
+from kache_stray_fixture import named_kache_binary
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+    import pytest
+
+FIXTURE = Path(__file__).parent / "fixtures" / "fake_kache.py"
+
+_SPEC = importlib.util.spec_from_file_location("fake_kache", FIXTURE)
+assert _SPEC is not None and _SPEC.loader is not None, (
+    "the fixture module must be loadable by path"
+)
+fake_kache = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(fake_kache)
+
+
+def _daemon(socket_path: Path) -> subprocess.Popen[bytes]:
+    """Start the fixture daemon on a private socket.
+
+    Parameters
+    ----------
+    socket_path : Path
+        The socket the daemon is told to bind.
+
+    Returns
+    -------
+    subprocess.Popen[bytes]
+        The running daemon. Prefer :func:`_running_daemon`, which reaps it.
+    """
+    env = {**os.environ, "KACHE_SOCKET_PATH": str(socket_path)}
+    # The handle deliberately outlives this helper so the caller can probe the
+    # daemon and then stop it.
+    return start_bound(
+        [sys.executable, str(FIXTURE), "daemon", "run"],
+        env,
+        socket_path,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _envelope(**body: object) -> dict[str, object]:
+    """Wrap a daemon status body in kache's versioned ``--json`` envelope.
+
+    The values are written out rather than read from the fixture so the test
+    pins the contract the supervisor reads independently of the fixture's own
+    constants. ``success`` is the command's, not the daemon's: it stays true
+    when no daemon is running, which is what makes the probe safe to poll.
+    """
+    return {
+        "schema_version": 1,
+        "command": "daemon-status",
+        "success": True,
+        **body,
+    }
+
+
+def _status(
+    socket: str | None, capsys: pytest.CaptureFixture[str]
+) -> dict[str, object]:
+    """Run the fixture's status probe and decode the document it printed."""
+    assert fake_kache.status(socket) == 0, (
+        "a stopped daemon is a document, not a probe failure"
+    )
+    return json.loads(capsys.readouterr().out)
+
+
+def test_a_stopped_daemon_is_reported_in_the_document(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Absence is a field, so the probe can run on every admission cycle."""
+    assert _status(None, capsys) == _envelope(daemon_running=False), (
+        "an unset socket names no daemon and echoes none"
+    )
+    assert fake_kache.is_running(None) is False, "no socket is never running"
+    assert fake_kache.is_running("/nonexistent/kache.sock") is False, (
+        "an unreachable socket is not running"
+    )
+
+
+@contextlib.contextmanager
+def _running_daemon(socket_path: Path) -> cabc.Generator[subprocess.Popen[bytes]]:
+    """Run the fixture daemon on ``socket_path`` for the body of the block.
+
+    Parameters
+    ----------
+    socket_path : Path
+        The socket the daemon is told to bind and the block probes.
+
+    Yields
+    ------
+    subprocess.Popen[bytes]
+        The running daemon, reaped when the block ends however it ends.
+    """
+    daemon = _daemon(socket_path)
+    try:
+        yield daemon
+    finally:
+        kill_and_reap(daemon, timeout=10)
+
+
+def test_a_running_daemon_echoes_the_socket_it_was_probed_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The socket field is what lets a supervisor trust the answer it read."""
+    socket_path = tmp_path / "kache.sock"
+    with _running_daemon(socket_path):
+        document = _status(str(socket_path), capsys)
+        assert document == _envelope(daemon_running=True, socket=str(socket_path)), (
+            "the document names the daemon's endpoint"
+        )
+
+
+def test_a_daemon_answering_elsewhere_does_not_vouch_for_the_configured_socket(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A daemon on another endpoint must read as unavailable.
+
+    This is the case a bare "is anything running" probe gets wrong: another
+    harness's daemon, or a stale one, answers while the configured endpoint is
+    dead, and every group composed against it would queue behind the wrong
+    store.
+    """
+    serving = tmp_path / "serving.sock"
+    configured = tmp_path / "configured.sock"
+    with _running_daemon(serving):
+        document = _status(str(configured), capsys)
+        assert document == _envelope(daemon_running=False, socket=str(configured)), (
+            "the probe reports its own endpoint, not the one that answered"
+        )
+
+
+def test_the_compiler_is_the_wrappers_own_child(tmp_path: Path) -> None:
+    """A cancelled group removes the compiler because kache is its parent.
+
+    The wrapper must not ``exec`` the compiler: a replaced wrapper would leave
+    the compiler as the group leader with nothing left to relay its status.
+    """
+    reported = tmp_path / "parent"
+    script = (
+        "import os, pathlib, sys; "
+        "pathlib.Path(sys.argv[1]).write_text(str(os.getppid()), encoding='ascii')"
+    )
+    with subprocess.Popen(
+        [sys.executable, str(FIXTURE), sys.executable, "-c", script, str(reported)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    ) as process:
+        stdout, stderr = process.communicate(timeout=30)
+        assert process.returncode == 0, f"the compiler succeeded: {stderr}"
+        assert not stdout and not stderr, "the wrapper invents no output"
+        assert int(reported.read_text(encoding="ascii")) == process.pid, (
+            "the compiler's parent is the wrapper, so the compiler stays in its group"
+        )
+
+
+def test_the_wrapper_relays_the_compiler_streams_and_status() -> None:
+    """Compilers talk to the caller through kache, including when they fail."""
+    process = subprocess.run(
+        [
+            sys.executable,
+            str(FIXTURE),
+            sys.executable,
+            "-c",
+            "import sys; print('built'); sys.stderr.write('warning\\n'); sys.exit(7)",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert process.returncode == 7, "the compiler's failure status is relayed verbatim"
+    assert process.stdout == "built\n", "standard output is relayed"
+    assert process.stderr == "warning\n", "standard error is relayed"
+
+
+def test_the_leak_mode_starts_a_process_the_guard_can_see(tmp_path: Path) -> None:
+    """The leak produces the evidence the guard reads, and records it.
+
+    The binary is copied rather than linked, and into a fresh directory, so the
+    fixture can present the name the guard matches without ever writing through
+    a path that might already be a symlink.
+
+    What is asserted is the fixture's own contract: it started a process whose
+    executable is named ``kache`` and wrote that process's identifier to the
+    marker. The fixture makes the ``/proc`` observation itself, as the child's
+    parent, because that is the one vantage point a hosted CI runner does not
+    take away -- a grandchild is not reliably observable from a test that only
+    started the wrapper, even while the wrapper runs, and a test that reads it
+    from there passes locally and fails on every hosted run. The observation
+    reaching the test through the wrapper's exit status is deliberate: reading
+    the name again from outside would reintroduce exactly the race the fixture
+    just removed. Reading a live process is covered instead by
+    ``test_kache_guard.test_the_guard_finds_a_real_process_named_kache_that_it_was_shown``,
+    which starts and owns the process itself.
+    """
+    binary = named_kache_binary(tmp_path)
+    marker = tmp_path / "leaked.pid"
+    env = {
+        **os.environ,
+        "FAKE_KACHE_LEAK_DAEMON": str(marker),
+        "FAKE_KACHE_LEAK_BINARY": str(binary),
+    }
+    # A trivial compiler: the leak happens before it runs, so nothing here
+    # depends on how long the compiler lives or on the wrapper outliving it.
+    with subprocess.Popen(
+        [sys.executable, str(FIXTURE), sys.executable, "-c", "pass"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    ) as wrapper:
+        assert wait_for(marker.exists), "the leak mode recorded the child it started"
+        stdout, stderr = wrapper.communicate(timeout=30)
+    assert wrapper.returncode == 0, f"the wrapper succeeded: {stderr}"
+    assert not stdout, "the wrapper invents no output"
+    leaked = int(marker.read_text(encoding="ascii"))
+    # The test owns the process it learned of, however the wrapper left it. A
+    # child the wrapper no longer parented may already be gone, which is the
+    # outcome wanted rather than a failure.
+    try:
+        assert leaked > 0, "the marker names the process the wrapper started"
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(leaked, signal.SIGKILL)

@@ -8,6 +8,7 @@ import time
 import typing as typ
 
 from buildlimits import (
+    cache_backends,
     cgroups,
     config,
     effect_dispatch,
@@ -41,6 +42,7 @@ if typ.TYPE_CHECKING:
     from pathlib import PurePosixPath
 
     from buildlimits.admission import Effect
+    from buildlimits.cache_backend import CacheBackend
     from buildlimits.tracing import JournalTracer
 TICK_SECONDS = 0.1
 
@@ -96,7 +98,13 @@ class Supervisor:
         )
         self.tracer = observations.tracer
 
-        self.admission = Admission(cached=False, capacity=settings.slots)
+        built = cache_backends.select(settings, self.manager)
+        # Composition sites ask this object for argv, environment and capability.
+        self.backend: CacheBackend = built.composition
+        # The managed server, touched only by the detached-only lifecycle.
+        server = built.managed
+        detached = not self.backend.in_scope_work
+        self.admission = Admission(cache_detached=detached, capacity=settings.slots)
         self.selector = selectors.DefaultSelector()
         self.requests = Requests(
             self.selector,
@@ -104,9 +112,20 @@ class Supervisor:
             metrics=self.metrics,
             counts=self.admission.counts,
         )
-        self.groups = Groups(settings, self.manager, self.selector, self.clock)
+        self.groups = Groups(
+            settings, self.manager, self.selector, self.clock, self.backend
+        )
+        # The watch and the recovery machine are wired together in one place;
+        # the server they both drive is the instance the backend was built on,
+        # so composition and the detached lifecycle never diverge.
         wiring = supervisor_wiring.Wiring(
-            settings, self.manager, self.clock, self.admission, self.metrics
+            settings,
+            self.manager,
+            self.clock,
+            self.admission,
+            self.metrics,
+            server,
+            self.backend,
         )
         self.server, self.recovery = supervisor_wiring.watch_and_recovery(wiring)
         self.pool: TokenPool | None = None
@@ -159,8 +178,8 @@ class Supervisor:
         self._watch_signals()
         self.server.refresh_cache_mode()
         self.outcomes = supervisor_outcomes.build_shell(self)
-        # Only the mode that owns the managed cache may run a recovery.
-        if self.settings.cache_mode == "sccache":
+        # Only a backend that owns a detached service may run a recovery.
+        if not self.backend.in_scope_work:
             self.requests.recovery = lambda: self.recovery.request(
                 "manual", self.clock()
             )

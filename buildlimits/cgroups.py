@@ -279,6 +279,66 @@ def wait_for_membership(
         clock.sleep(0.002)
 
 
+def slice_member_pids(slice_dir: Path) -> list[int]:
+    """List every process under a slice, including nested units and slices.
+
+    The slice is read as a whole rather than one named scope at a time. The
+    supervisor is not the only thing that can put a unit under its slice: a
+    transient service, another harness's scope, or a slice nested inside this
+    one all sit there without carrying the supervisor's scope name, and a
+    reading that visited only the names it recognized would never see the
+    processes inside them.
+
+    Unlike :func:`member_pids`, an unreadable directory is skipped rather than
+    raised. This reading exists to serve a report about strays, and one
+    directory the supervisor cannot read must not blind it to every other
+    scope in the slice. :func:`member_pids` keeps the strict behaviour because
+    it feeds token accounting, where an unreadable group is not an empty one.
+
+    Parameters
+    ----------
+    slice_dir : Path
+        The compilers slice's directory.
+
+    Returns
+    -------
+    list[int]
+        Process identifiers, in path order so that repeated readings of an
+        unchanged slice agree. Empty when the slice has gone.
+
+    Examples
+    --------
+    >>> slice_member_pids(Path("/nonexistent/buildlimits-compilers.slice"))
+    []
+    """
+    pids: list[int] = []
+    for procs in _slice_procs_files(slice_dir):
+        try:
+            text = procs.read_text(encoding="ascii")
+        except OSError:
+            continue
+        pids.extend(int(line) for line in text.split())
+    return pids
+
+
+def _slice_procs_files(slice_dir: Path) -> list[Path]:
+    """List every ``cgroup.procs`` under a slice, in path order.
+
+    Returns
+    -------
+    list[Path]
+        The files, parents before their descendants, or empty when the slice
+        has gone.
+    """
+    # No absent-slice guard: ``walk`` yields nothing for a directory that has
+    # gone, so the empty answer falls out of the same expression.
+    return sorted(
+        current / "cgroup.procs"
+        for current, _dirs, files in slice_dir.walk()
+        if "cgroup.procs" in files
+    )
+
+
 def child_scopes(slice_dir: Path) -> list[Path]:
     """List the supervisor-created scopes under a slice.
 

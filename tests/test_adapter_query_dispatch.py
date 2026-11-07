@@ -42,28 +42,45 @@ def _install_journal(
     return journal
 
 
-def test_query_dispatch_strips_sccache_and_preserves_driver_and_environment(
-    monkeypatch: pytest.MonkeyPatch,
+def _forbid_admission(monkeypatch: pytest.MonkeyPatch, why: str) -> None:
+    """Refuse both admission calls, so an exempt query cannot reach the queue.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        The test's patcher.
+    why : str
+        The assertion message, which names the escape this test forbids.
+    """
+    monkeypatch.setattr(adapter, "in_admitted_scope", lambda _env: False)
+    forbidden = mock.Mock(side_effect=AssertionError(why))
+    monkeypatch.setattr(adapter, "run", forbidden)
+    monkeypatch.setattr(adapter, "connect", forbidden)
+
+
+@pytest.mark.parametrize("layer", ["sccache", "kache"])
+def test_query_dispatch_strips_the_caller_cache_and_preserves_driver_and_environment(
+    monkeypatch: pytest.MonkeyPatch, layer: str
 ) -> None:
-    """A safe wrapped query records exemption before directly execing the driver."""
+    """A safe wrapped query records exemption before directly execing the driver.
+
+    Both cache clients are stripped. A kache-mode probe that reached the backend
+    would be queued behind the compile admission it was exempted from, which is
+    the whole reason the exemption exists, so the classifier and the exec path
+    must treat kache exactly as they treat sccache.
+    """
     events: list[str] = []
     journal = _install_journal(monkeypatch, events)
     effective_env = {"PATH": "/tool/bin", "QUERY_TEST": "same mapping"}
     monkeypatch.setattr(
         adapter, "toolchain_environment", lambda _argv, _env, _cwd: effective_env
     )
-    monkeypatch.setattr(adapter, "in_admitted_scope", lambda _env: False)
-
-    forbidden = mock.Mock(
-        side_effect=AssertionError("exempt query must bypass admission")
-    )
-    monkeypatch.setattr(adapter, "run", forbidden)
-    monkeypatch.setattr(adapter, "connect", forbidden)
+    _forbid_admission(monkeypatch, "exempt query must bypass admission")
     execvpe = mock.Mock(side_effect=_ExecedError)
     monkeypatch.setattr(adapter.os, "execvpe", execvpe)
     with pytest.raises(_ExecedError):
         adapter._main(
-            ["sccache", "clippy-driver", "rustc", "-vV"],
+            [layer, "clippy-driver", "rustc", "-vV"],
             cacheable=True,
             exempt_queries=True,
         )
@@ -113,8 +130,9 @@ def test_admitted_scope_keeps_precedence_over_query_exemption(
     [
         (False, ["rustc", "-vV"]),
         (True, ["rustc", "-vV", "lib.rs"]),
+        (True, ["kache", "/toolchain/bin/rustc", "-vV", "lib.rs"]),
     ],
-    ids=["default-disabled", "unsafe-query-falls-through"],
+    ids=["default-disabled", "unsafe-query-falls-through", "kache-compile-admitted"],
 )
 def test_unexempt_invocations_use_normal_admission(
     monkeypatch: pytest.MonkeyPatch, exempt_queries: bool, argv: list[str]
@@ -148,13 +166,7 @@ def test_exempt_exec_failure_keeps_diagnostic_and_emits_once(
         "toolchain_environment",
         lambda _argv, _env, _cwd: {"PATH": "/tool/bin"},
     )
-    monkeypatch.setattr(adapter, "in_admitted_scope", lambda _env: False)
-
-    forbidden = mock.Mock(
-        side_effect=AssertionError("failed query exec must not admit")
-    )
-    monkeypatch.setattr(adapter, "run", forbidden)
-    monkeypatch.setattr(adapter, "connect", forbidden)
+    _forbid_admission(monkeypatch, "failed query exec must not admit")
     execvpe = mock.Mock(side_effect=FileNotFoundError(2, "No such file or directory"))
     monkeypatch.setattr(adapter.os, "execvpe", execvpe)
     assert (

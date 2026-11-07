@@ -8,77 +8,30 @@ accounting, exit-status semantics and launch outcomes are exercised
 deterministically.
 """
 
-import collections.abc as cabc
 import dataclasses as dc
 import socket
-import subprocess
 import types
 import typing as typ
 from pathlib import Path
 
 import pytest
+from groups_helpers import FakeGroups
 from journal_fixtures import journal_fields, journal_receiver
 from pool_helpers import FakePool, attach_pool
 from request_helpers import crate_pending
+from supervisor_helpers import supervisor
 
 from buildlimits.admission import Group, GroupState
-from buildlimits.config import SupervisorConfig
 from buildlimits.journal_native import MAX_DATAGRAM_BYTES, JournalSink
 from buildlimits.replies import Admitted
-from buildlimits.supervisor import Supervisor
-from buildlimits.systemd import UserManager
 from buildlimits.tracing import JournalTracer
 
 if typ.TYPE_CHECKING:
-    from buildlimits.groups import Groups, Running
+    from buildlimits.groups import Groups
     from buildlimits.pool import TokenPool
-    from buildlimits.requesters import Pending
+    from buildlimits.supervisor import Supervisor
 
-
-@dc.dataclass(slots=True)
-class FakeGroups:
-    """A groups double that scripts whether placement succeeds."""
-
-    order: list[str]
-    running: object | None
-    terminate: cabc.Callable[[str], None] = dc.field(default=lambda _group_id: None)
-
-    def place(self, entry: Pending, group_id: str, *, cached: bool) -> object | None:
-        """Report the scripted placement outcome, admitting ``entry`` on success."""
-        del cached
-        if self.running is not None:
-            entry.group_id = group_id
-        return self.running
-
-    def cache_notice(self, entry: Pending, *, cached: bool) -> str:
-        """Record the cache-notice effect for direct-cache scenarios."""
-        del entry, cached
-        self.order.append("cache_notice")
-        return ""
-
-    def abandon_held(self, running: Running) -> None:
-        """Record that a placed child was abandoned before release."""
-        running.exec_error = None
-        self.order.append("abandon")
-
-    def release(self, running: object) -> None:
-        """Record that the group was released."""
-        del running
-        self.order.append("release")
-
-
-def _empty_runner(argv: cabc.Sequence[str]) -> subprocess.CompletedProcess[str]:
-    """Answer every systemd query with no properties and no load."""
-    return subprocess.CompletedProcess(argv, 0, "", "")
-
-
-@pytest.fixture
-def supervisor() -> cabc.Iterator[Supervisor]:
-    """Build a supervisor over a quiet manager, closing its selector after."""
-    manager = UserManager(_empty_runner)
-    instance = Supervisor(SupervisorConfig(), manager, clock=lambda: 0.0)
-    yield instance
-    instance.selector.close()
+__all__ = ["supervisor"]  # Re-exported so pytest finds the fixture here.
 
 
 # -- _return_token ----------------------------------------------------------------
@@ -149,7 +102,7 @@ def test_launch_failure_refuses_the_request_and_returns_its_token(
 ) -> None:
     """A group that never placed is refused and its token returned."""
     pool = attach_pool(supervisor)
-    supervisor.groups = typ.cast("Groups", FakeGroups(order=[], running=None))
+    supervisor.groups = typ.cast("Groups", FakeGroups(order=[], placed=None))
     supervisor.admission.groups["g1"] = Group(
         "g1", request_id=1, token=b"a", cached=False, state=GroupState.RUNNING
     )
@@ -184,7 +137,7 @@ def test_a_failed_placement_is_retried_only_during_a_graceful_stop(
     """
     stop, reason, keeps_cause = case
     pool = attach_pool(supervisor)
-    supervisor.groups = typ.cast("Groups", FakeGroups(order=[], running=None))
+    supervisor.groups = typ.cast("Groups", FakeGroups(order=[], placed=None))
     supervisor.admission.groups["g1"] = Group(
         "g1", request_id=1, token=b"a", cached=False, state=GroupState.RUNNING
     )
@@ -224,7 +177,7 @@ def test_an_immediate_stop_preempts_retry_after_a_failed_placement(
     """A pending SIGINT prevents a failed placement from being retried."""
     pool = attach_pool(supervisor)
     termination_calls: list[str] = []
-    groups = FakeGroups(order=[], running=None, terminate=termination_calls.append)
+    groups = FakeGroups(order=[], placed=None, terminate=termination_calls.append)
     supervisor.groups = typ.cast("Groups", groups)
     supervisor.admission.groups["g1"] = Group(
         "g1", request_id=1, token=b"a", cached=False, state=GroupState.RUNNING
@@ -283,7 +236,7 @@ def test_launch_notifies_before_release_or_abandons_disconnected_group(
     running = types.SimpleNamespace(exec_error=None)
     groups = FakeGroups(
         order=order,
-        running=running,
+        placed=running,
     )
     supervisor.groups = typ.cast("Groups", groups)
     supervisor.requests.pending[1] = crate_pending(1)
@@ -320,7 +273,7 @@ def test_metrics_admission_and_failure_boundaries(
     supervisor.metrics = metrics
     supervisor.requests.metrics = metrics
     supervisor.requests.pending[1] = crate_pending(1)
-    supervisor.groups = typ.cast("Groups", FakeGroups(order=[], running=None))
+    supervisor.groups = typ.cast("Groups", FakeGroups(order=[], placed=None))
     supervisor.admission.groups["g1"] = Group("g1", 1, b"a", cached=False)
     supervisor._launch(1, "g1", cached=False)
     supervisor.requests.refuse(1, "launch-failed")
@@ -388,7 +341,7 @@ def test_successful_admission_reports_cache_path(
         supervisor.requests.pending[1].request,
         cacheable=cacheable,
     )
-    supervisor.groups = typ.cast("Groups", FakeGroups(order=[], running=object()))
+    supervisor.groups = typ.cast("Groups", FakeGroups(order=[], placed=object()))
     client, connection = socket.socketpair()
     with client, connection:
         supervisor.requests.pending[1].conn = connection

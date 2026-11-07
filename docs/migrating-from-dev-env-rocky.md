@@ -31,6 +31,20 @@ These are unchanged:
   user units, the `buildlimits-compilers.slice` slice, and the runtime paths
   under `$XDG_RUNTIME_DIR/buildlimits`.
 
+An existing `sccache` configuration needs no change: `cache_mode` defaults to
+`sccache`, and the sccache settings, status wording and metrics are the same as
+before. A host that wants kache instead sets `cache_mode = "kache"`, installs
+kache itself, names the socket of a daemon it runs as a separate unit in
+`kache_socket`, and leaves the daemon running -- the supervisor never starts,
+stops or owns one, and provisioned hosts do not get kache from
+`devhost.buildlimits`. The socket key is required in `kache` mode, so a
+configuration that omits it is rejected rather than left to resolve a default.
+Removing the sccache keys is part of the switch: a document that sets
+`cache_mode = "kache"` while still carrying `sccache_unit`, `sccache_socket` or
+`sccache_executable` fails to load rather than ignoring them. The reverse holds
+when a host moves back to `sccache`. See
+[Choose a cache backend](users-guide.md#choose-a-cache-backend).
+
 ## Who is affected
 
 - Operators who install or upgrade the package on a host.

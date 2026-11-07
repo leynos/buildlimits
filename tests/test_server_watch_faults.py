@@ -14,12 +14,16 @@ from pathlib import Path
 from test_server_watch import FakeServer, _draining, _scripted, _watch
 
 from buildlimits import sccache as sccache_module
+from buildlimits import sccache_cgroup
 from buildlimits.proc_trees import count_children
 from buildlimits.sccache import LiveCacheWorkError, ManagedSccache, SccacheError
 from buildlimits.server_watch import ServerWatch
 
 if typ.TYPE_CHECKING:
     import pytest
+
+    from buildlimits.cache_backend import CacheBackend, DetachedCacheBackend
+
 
 # A fault whose root count was never established, so nothing may act on it.
 _UNKNOWN_ROOTS = LiveCacheWorkError(
@@ -164,7 +168,7 @@ def _scripted_live_cache(
     (tmp_path / "cgroup.procs").write_text(procs, encoding="ascii")
     proc = tmp_path / "proc"
     _procfs(proc, stats)
-    monkeypatch.setattr(sccache_module.cgroups, "directory", lambda _path: tmp_path)
+    monkeypatch.setattr(sccache_cgroup.cgroups, "directory", lambda _path: tmp_path)
     wired = functools.partial(count_children, proc=proc)
     monkeypatch.setattr(sccache_module, "count_children", wired, raising=True)
     return _scripted({
@@ -190,7 +194,7 @@ def test_the_real_cgroup_reading_reaches_the_root_proof(
         procs="4242\n",
         stats={4242: "4242 (sccache) S 1 4242 4242 0 -1"},
     )
-    watch = ServerWatch(server, _draining(b"a"), "sccache")
+    watch = ServerWatch(server, _draining(b"a"), "sccache", server)
 
     watch.drained_tokens()
 
@@ -219,7 +223,7 @@ def test_the_real_reader_withdraws_the_proof_for_a_visible_child(
             4243: "4243 (rustc) S 4242 42 42 0 -1",
         },
     )
-    watch = ServerWatch(server, _draining(b"a"), "sccache")
+    watch = ServerWatch(server, _draining(b"a"), "sccache", server)
 
     watch.drained_tokens()
 
@@ -235,10 +239,12 @@ def test_a_pending_automatic_recovery_makes_the_command_a_fallback(
     """The guidance follows whether the supervisor will recover by itself."""
     pending = [True]
     now = [0.0]
+    server = FakeServer(load=_ZERO_ROOTS)
     watch = ServerWatch(
-        typ.cast("ManagedSccache", FakeServer(load=_ZERO_ROOTS)),
+        typ.cast("DetachedCacheBackend", server),
         _draining(b"a"),
         "sccache",
+        typ.cast("CacheBackend", server),
         automatic_recovery_pending=lambda: pending[0],
     )
     watch.clock = lambda: now[0]
@@ -261,10 +267,12 @@ def test_a_pending_automatic_recovery_makes_the_command_a_fallback(
 
 def test_a_manager_fault_is_never_a_fallback() -> None:
     """Only a live-work fault can be cured by the automatic recovery."""
+    server = FakeServer(load=SccacheError("manager down"))
     watch = ServerWatch(
-        typ.cast("ManagedSccache", FakeServer(load=SccacheError("manager down"))),
+        typ.cast("DetachedCacheBackend", server),
         _draining(b"a"),
         "sccache",
+        typ.cast("CacheBackend", server),
         automatic_recovery_pending=lambda: True,
     )
     _spend_the_fault_budget(watch)

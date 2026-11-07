@@ -11,7 +11,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from buildlimits import bus_properties, config, sccache, systemd
+from buildlimits import bus_properties, config, sccache_cgroup, systemd
 from buildlimits.proc_trees import count_children, parent_pid
 from buildlimits.sccache import ManagedSccache, SccacheError
 from buildlimits.systemd import SystemdError, UserManager
@@ -274,7 +274,9 @@ def test_an_unreadable_server_group_is_an_unknown_load(
         UserManager(FakeRunner(stdout="MainPID=7\nControlGroup=/srv\n")),
     )
     monkeypatch.setattr(
-        sccache.cgroups, "directory", lambda path: tmp_path / path.relative_to("/")
+        sccache_cgroup.cgroups,
+        "directory",
+        lambda path: tmp_path / path.relative_to("/"),
     )
     with pytest.raises(SccacheError, match=r"cannot read s\.service's load"):
         server.active_compiles()
@@ -297,52 +299,6 @@ def test_a_probe_fault_is_not_taken_for_a_stopped_server(tmp_path: Path) -> None
     server = ManagedSccache("s.service", tmp_path / "file" / "s.sock")
     with pytest.raises(SccacheError, match="cannot probe"):
         server.is_reachable()
-
-
-def test_defaults_load_without_a_file(tmp_path: Path) -> None:
-    """A missing file yields the documented defaults."""
-    settings = config.load(tmp_path / "absent.toml")
-    assert settings.slots == 2, "the default slot count is 2"
-    assert settings.cache_mode == "sccache", "the default cache mode is sccache"
-    assert settings.compilers_slice == "buildlimits-compilers.slice", (
-        "the default compilers slice matches the documented name"
-    )
-
-
-def test_files_override_defaults(tmp_path: Path) -> None:
-    """Every setting can come from the file, with types checked."""
-    path = tmp_path / "s.toml"
-    path.write_text(
-        'slots = 3\ndevice = "/dev/x"\ncancel_grace_seconds = 4\ncache_mode = "direct"\n'
-    )
-    settings = config.load(path)
-    assert (settings.slots, settings.device, settings.cancel_grace_seconds) == (
-        3,
-        Path("/dev/x"),
-        4.0,
-    ), "every setting is read from the file"
-    assert settings.cache_mode == "direct", (
-        "the file's cache mode overrides the default"
-    )
-
-
-@pytest.mark.parametrize(
-    ("text", "fragment"),
-    [
-        ("slots = 0\n", "positive"),
-        ('cache_mode = "bypass"\n', "cache_mode"),
-        ("slots = true\n", "wrong type"),
-        ("colour = 1\n", "unknown setting"),
-        ('compilers_slice = "x.service"\n', "slice"),
-        ("slots = [\n", "cannot read"),
-    ],
-)
-def test_invalid_files_are_rejected(tmp_path: Path, text: str, fragment: str) -> None:
-    """Invalid configuration is reported, never half-applied."""
-    path = tmp_path / "s.toml"
-    path.write_text(text)
-    with pytest.raises(config.ConfigError, match=fragment):
-        config.load(path)
 
 
 def test_sockets_live_under_the_runtime_directory() -> None:

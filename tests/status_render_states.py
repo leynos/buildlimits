@@ -54,7 +54,13 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
         "open descriptors 12, soft limit unlimited, hard limit unlimited",
     ),
     "cached": (
-        {"capacity": 4, "held": 0, "healthy": True, "caching": True},
+        {
+            "capacity": 4,
+            "held": 0,
+            "healthy": True,
+            "caching": True,
+            "cache_mode": "sccache",
+        },
         "capacity 4, held 0, healthy, caching through sccache",
     ),
     "blocked-admission": (
@@ -131,6 +137,8 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
         "admission unhealthy: supervisor is unhealthy",
     ),
     "legacy-missing-admission": (
+        # Written before the backend was selectable: no ``cache_mode`` at all,
+        # which must still read as sccache rather than as no cache.
         {"capacity": 4, "held": 0, "healthy": True, "caching": True},
         "capacity 4, held 0, healthy, caching through sccache",
     ),
@@ -232,7 +240,10 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
             "caching": True,
             "recovery_action": "restore manager query transport; do not release tokens",
         },
-        "required recovery action: restore manager query transport; do not release tokens",
+        (
+            "required recovery action: restore manager query transport; "
+            "do not release tokens"
+        ),
     ),
     "missing-group-label": (
         {
@@ -242,7 +253,10 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
             "caching": True,
             "groups": [{**_RUNNING, "state": "server-drain", "label": None}],
         },
-        "g3 server-drain (cached): request metadata unavailable; retaining compiler token",
+        (
+            "g3 server-drain (cached): request metadata unavailable; "
+            "retaining compiler token"
+        ),
     ),
     "missing-group-directory": (
         {
@@ -252,7 +266,10 @@ STATES: dict[str, tuple[dict[str, object], str]] = {
             "caching": True,
             "groups": [{**_RUNNING, "state": "server-drain", "directory": None}],
         },
-        "g3 server-drain (cached): request metadata unavailable; retaining compiler token",
+        (
+            "g3 server-drain (cached): request metadata unavailable; "
+            "retaining compiler token"
+        ),
     ),
     "missing-group-duration": (
         {

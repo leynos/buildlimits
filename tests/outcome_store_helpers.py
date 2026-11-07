@@ -109,6 +109,39 @@ def wait_for_results(
     return pytest.fail(f"writer did not report {operation} with reason {reason!r}")
 
 
+def worker_exited(writer: StoreWriter, timeout: float) -> bool:
+    """Wait until the writer's worker has stopped, bounded by ``timeout``.
+
+    ``close`` returns at its caller's bound whether or not the worker finished,
+    so a test that deliberately lets that bound expire can still have a write
+    running when it returns. Waiting here gives that write somewhere to finish:
+    the descriptor guard samples the descriptor table as the test ends, and a
+    write that resumes afterwards is charged to the test that caused it.
+
+    This reads the worker through ``writer._thread``, the same narrow
+    observation ``test_outcome_store_machine`` makes when it asserts that
+    shutdown completed.
+
+    Parameters
+    ----------
+    writer : StoreWriter
+        The writer whose worker to wait for.
+    timeout : float
+        Seconds to wait before reporting that the worker is still running.
+
+    Returns
+    -------
+    bool
+        Whether the worker stopped within the bound.
+    """
+    deadline = time.monotonic() + timeout
+    while writer._thread.is_alive():
+        if time.monotonic() >= deadline:
+            return False
+        threading.Event().wait(0.01)
+    return True
+
+
 def salt_path(path: Path) -> Path:
     """Return the salt path beside one cache-outcome store.
 

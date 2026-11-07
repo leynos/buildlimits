@@ -105,28 +105,40 @@ by `build-limits-supervisor --config PATH`. Every key is optional; a missing
 file yields the defaults. Unknown keys and wrongly typed values stop start-up
 with exit status 2, and nothing is half-applied.
 
-| Key                     | Default                                        | Meaning                                                                                                                                    |
-| ----------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `device`                | `/dev/guild`                                   | The guildmaster token device                                                                                                               |
-| `slots`                 | `2`                                            | The pool's configured capacity, reported by status                                                                                         |
-| `socket_path`           | `$XDG_RUNTIME_DIR/buildlimits/supervisor.sock` | Where the supervisor listens                                                                                                               |
-| `lock_path`             | `$XDG_RUNTIME_DIR/buildlimits/supervisor.lock` | The singleton lock                                                                                                                         |
-| `compilers_slice`       | `buildlimits-compilers.slice`                  | The slice that holds every compiler scope; must end in `.slice`                                                                            |
-| `cancel_grace_seconds`  | `10.0`                                         | Seconds between `SIGTERM` and `SIGKILL` for a terminated group                                                                             |
-| `drain_timeout_seconds` | `120.0`                                        | The longest start-up waits for surviving groups to drain                                                                                   |
-| `cache_mode`            | `sccache`                                      | `sccache` composes admitted compilers with the managed cache; `direct` runs them without it, and recovery then answers `no-cache-recovery` |
-| `cache_outcomes`        | `off`                                          | `record` opts in to observation-only cache outcome recording; it requires `cache_mode = "sccache"`                                         |
-| `sccache_executable`    | `sccache`                                      | The sccache client used in `sccache` mode                                                                                                  |
-| `sccache_unit`          | `buildlimits-sccache.service`                  | The managed cache's user unit                                                                                                              |
-| `sccache_socket`        | `$XDG_RUNTIME_DIR/buildlimits/sccache.sock`    | The managed cache's socket                                                                                                                 |
-| `cache_recovery`        | `starved`                                      | `starved` or `manual`; see [Recover a retained managed cache](#recover-a-retained-managed-cache)                                           |
-| `recovery_marker`       | `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`  | The restart barrier the managed cache unit honours                                                                                         |
+| Key                     | Default                                        | Meaning                                                                                                                                                                                                     |
+| ----------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `device`                | `/dev/guild`                                   | The guildmaster token device                                                                                                                                                                                |
+| `slots`                 | `2`                                            | The pool's configured capacity, reported by status                                                                                                                                                          |
+| `socket_path`           | `$XDG_RUNTIME_DIR/buildlimits/supervisor.sock` | Where the supervisor listens                                                                                                                                                                                |
+| `lock_path`             | `$XDG_RUNTIME_DIR/buildlimits/supervisor.lock` | The singleton lock                                                                                                                                                                                          |
+| `compilers_slice`       | `buildlimits-compilers.slice`                  | The slice that holds every compiler scope; must end in `.slice`                                                                                                                                             |
+| `cancel_grace_seconds`  | `10.0`                                         | Seconds between `SIGTERM` and `SIGKILL` for a terminated group                                                                                                                                              |
+| `drain_timeout_seconds` | `120.0`                                        | The longest start-up waits for surviving groups to drain                                                                                                                                                    |
+| `cache_mode`            | `sccache`                                      | `sccache` composes admitted compilers with the managed cache; `kache` composes them with an unowned kache daemon; `direct` runs them without a cache. See [Choose a cache backend](#choose-a-cache-backend) |
+| `cache_outcomes`        | `off`                                          | `record` opts in to observation-only cache outcome recording; it requires `cache_mode = "sccache"`                                                                                                          |
+| `sccache_executable`    | `sccache`                                      | The sccache client used in `sccache` mode                                                                                                                                                                   |
+| `sccache_unit`          | `buildlimits-sccache.service`                  | The managed cache's user unit                                                                                                                                                                               |
+| `sccache_socket`        | `$XDG_RUNTIME_DIR/buildlimits/sccache.sock`    | The managed cache's socket                                                                                                                                                                                  |
+| `cache_recovery`        | `starved`                                      | `starved` or `manual`; see [Recover a retained managed cache](#recover-a-retained-managed-cache)                                                                                                            |
+| `recovery_marker`       | `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`  | The restart barrier the managed cache unit honours                                                                                                                                                          |
+| `kache_executable`      | `kache`                                        | The kache client used in `kache` mode; see [Choose a cache backend](#choose-a-cache-backend)                                                                                                                |
+| `kache_socket`          | **required** in `kache` mode                   | The separately managed kache daemon's socket, exported as `KACHE_SOCKET_PATH`; there is no default                                                                                                          |
+| `kache_cache_dir`       | unset                                          | The kache store, exported as `KACHE_CACHE_DIR` and checked by health                                                                                                                                        |
 
 _Table 2: Supervisor configuration keys._
 
 Sockets live under `$XDG_RUNTIME_DIR/buildlimits`, falling back to
 `/run/user/UID/buildlimits` when the variable is unset, because Unix socket
 paths are limited to about 108 bytes.
+
+`sccache_executable` and `kache_executable` may each be an absolute path or a
+bare name. A bare `sccache_executable` stays in the composed vector and is
+searched on the build's `PATH`; sccache's health probe runs no executable, so
+nothing else resolves it. A bare `kache_executable` is resolved once on the
+supervisor's own `PATH`, and the file it resolves to is the one both the health
+probe and every composed group run. A supervisor started by systemd inherits a
+minimal `PATH`, so configure an absolute path for a kache client installed
+outside the usual directories.
 
 ```toml
 slots = 4
@@ -241,6 +253,111 @@ _Table 3: Adapter environment variables._
 The two duration variables take seconds. A value that does not parse, or is not
 a finite positive number, is ignored as if it were unset, so a mistyped setting
 falls back to the default instead of failing the build.
+
+## Choose a cache backend
+
+`cache_mode` names the cache that admitted compilers are composed with. The
+default, `sccache`, points them at the managed server this supervisor starts,
+stops and recovers. `kache` points them at a daemon somebody else already runs.
+`direct` composes no cache at all.
+
+| Mode      | Composes with      | Work outlives the group | Recovery |
+| --------- | ------------------ | ----------------------- | -------- |
+| `sccache` | the managed server | yes                     | yes      |
+| `kache`   | an unowned daemon  | no                      | inert    |
+| `direct`  | nothing            | not applicable          | inert    |
+
+_Table 4: Cache modes._
+
+The middle column is why the other two follow. sccache runs a cache miss as a
+child of its server, outside the compiler's own scope, so the scope can empty
+while the compilation still runs; a group's token is held until the server is
+verified empty. kache runs the compiler as a child of its wrapper, inside the
+group, so an empty scope is the proof itself and the token comes back at once.
+A kache group therefore never waits for a server and every detached-only event
+-- the start-up stop, the drain release, the recovery transaction -- is absent
+in that mode.
+
+### Requirements for kache mode
+
+- kache `1.2.2` or `2.0.0-rc.1`. Other versions are unsupported until the
+  verification recorded in
+  [ADR 006](adr-006-kache-cache-backend.md#on-host-verification) is repeated
+  for them. To adopt a release, add it to `tests/kache_host.py`'s
+  `SUPPORTED_KACHE_VERSIONS` and run `make test-kache-host` against that
+  binary; the check runs for every version in the set rather than skipping, so
+  merge the change only once it passes.
+- `kache_socket`, naming a daemon that is already listening. The key is
+  **required** in kache mode: the supervisor's environment and the requesting
+  build's can resolve different kache defaults, so an unnamed socket would let
+  the health check accept one daemon while the group talked to another and
+  started a second one inside the admitted scope. **The supervisor never
+  starts, stops or owns the daemon.** The operator installs and runs it as a
+  separate unit; the repository does not ship one. That requirement is the
+  operator's to keep: the health check samples the daemon before a group is
+  composed, so it narrows the window in which a group is pointed at a stopped
+  daemon but does not close it. A daemon that stops between the check and the
+  launch leaves the compile to kache's own auto-start on kache 2.0.0-rc.1,
+  which creates the daemon inside the group's scope; the stray-process guard
+  reports that state afterwards, and no setting of that version prevents it. On
+  kache 1.2.2 the supervisor's fixed `KACHE_LOCAL_ONLY=1` setting makes the
+  remote-gated daemon start paths inert, so that version does not create a
+  daemon here; ADR 006 records the measurement for both versions.
+- A `kache_executable` the supervisor can run. A bare name is resolved on the
+  supervisor's `PATH`, so configure an absolute path when the supervisor runs
+  under a minimal service environment.
+- The store kache writes. Name it in `kache_cache_dir` when it is not kache's
+  own default of `$XDG_CACHE_HOME/kache` or `~/.cache/kache`: health checks
+  only a path the supervisor was told, and a group is only ever pointed at the
+  store health checked.
+
+`KACHE_SCHEDULER=0` and `KACHE_LOCAL_ONLY=1` are set in every admitted kache
+group. The first stops kache's own scheduler from admitting a compile a second
+time under memory pressure, which the pool would never see; the second keeps
+its remote backends out of scope. Both are fixed settings of the supervisor,
+not tuning knobs.
+
+Writing one backend's settings while another is selected is a configuration
+error, not a silently ignored line. With `cache_mode = "kache"`, a document
+that also sets `sccache_unit` fails to load with
+`setting 'sccache_unit' is only valid when cache_mode is 'sccache', not 'kache'`;
+the reverse applies to `kache_socket`, `kache_executable` and
+`kache_cache_dir` in `sccache` mode. Switching backends therefore means
+removing the other backend's keys, so a mode that was not the one intended
+cannot load and quietly do nothing. `direct` names no backend, so every
+backend's keys are merely inert there.
+
+Do not set `[cache] ignore_env = true` in a host or project kache configuration
+on a host that composes kache. That setting suppresses `KACHE_SCHEDULER` and
+`KACHE_LOCAL_ONLY`, so kache's scheduler can admit a compile the pool does not
+account for. The supervisor cannot detect this setting; the configuration is
+the only place it can be prevented.
+
+If health fails -- the client does not resolve, the store cannot be written, or
+no daemon answers on the configured socket -- the build compiles directly with
+a notice on standard error and `direct_fallback` as its `cache_path`. Nothing
+is held up waiting for a daemon to appear.
+
+A `kache` or `kache-engine` process found outside every admitted scope is
+listed in `stray_kache_processes` in the status document, always present so
+that an empty list means "none found" rather than "not guarded". When the
+reading changes, the guard also writes a plain line to the journal, beginning
+`stray kache process outside admitted scopes:`. The guard reports; it never
+kills. In kache mode no such process ever holds a token, because no second
+admission layer exists to account for.
+
+### What recovery means in each mode
+
+In `sccache` mode, recovery stops the managed server, waits until no live work
+can start, releases the tokens that were waiting on it, and restarts it. See
+[Recover a retained managed cache](#recover-a-retained-managed-cache).
+
+In `kache` mode there is no service for this supervisor to stop or start, so
+`build-limits-recover` answers `no-cache-recovery`. That is the same answer
+`direct` gives in [Status](#status): the mode that owns no cache cannot recover
+one. `cache_recovery` is accepted in the configuration and does nothing,
+because its `starved` default would otherwise make every kache host's
+configuration invalid.
 
 ## What a build sees
 
@@ -386,7 +503,7 @@ recording is off.
 | `1`         | Query or health failure                       | Query or non-truthy health failure              |
 | `3`         | Not used                                      | Readiness is false, missing or malformed        |
 
-_Table 4: `build-limits-status` exit statuses._
+_Table 5: `build-limits-status` exit statuses._
 
 Success without `--ready`, or `healthy` alone, is not evidence of usable
 admission readiness. The status fields describe separate signals:
@@ -421,7 +538,7 @@ provisioning and monitoring, use `--ready` or the JSON readiness field as shown
 below.
 
 `--ready` uses the same plain-text or JSON output with the exit-status contract
-in Table 4. Use it for provisioning checks and monitoring that need usable
+in Table 5. Use it for provisioning checks and monitoring that need usable
 admission:
 
 ```bash
@@ -762,7 +879,9 @@ without the cache do not hold the stop, and every request admitted while a
 transaction runs is composed that way, so a busy queue cannot hold it off. The
 command refuses outright only while the user manager's transport is faulted,
 because a service whose state cannot be read must not be stopped. A supervisor
-in `direct` cache mode manages no cache and answers with `no-cache-recovery`.
+in `direct` cache mode manages no cache, and one in `kache` mode manages no
+service, so both answer with `no-cache-recovery`; see
+[Choose a cache backend](#choose-a-cache-backend).
 
 `--wait` polls the status document every 2 seconds for up to `--wait-timeout`
 seconds (300 by default). A failed step is retried after 30 seconds, then 60,
@@ -781,7 +900,7 @@ already released and the last fault reported.
 | `1`         | The transaction is still running, was blocked, timed out or ended with a fault |
 | `2`         | The supervisor could not be asked, so the transaction's state is unknown       |
 
-_Table 5: `build-limits-recover` exit statuses._
+_Table 6: `build-limits-recover` exit statuses._
 
 Verify the outcome from the supervisor, not from elapsed time:
 
@@ -845,7 +964,7 @@ answer to only one of them:
 | `stopped_populated` | The cache is stopped but its control group still holds work | Inspect the surviving processes and wait for them to exit; tokens stay held until then                                                                                                |
 | `manager`           | The cache's state could not be read at all                  | Restore the systemd user-manager transport. Do not stop or restart the cache                                                                                                          |
 
-_Table 6: Drain fault kinds and their remedies._
+_Table 7: Drain fault kinds and their remedies._
 
 Stopping sccache by hand releases no token, and neither does restarting the
 supervisor; only the accounting does. While a transaction runs, a manual
@@ -878,7 +997,7 @@ journalctl --user BUILD_LIMITS_SCHEMA=1 -o json
 | `--source`      | `all`   | `all`, `supervisor` or `adapter`                           |
 | `--json`        | off     | Emit the report, with bounded event history, as JSON       |
 
-_Table 7: `build-limits-metrics` options._
+_Table 8: `build-limits-metrics` options._
 
 Each query has a 30-second deadline and a 64 MiB output limit; exceeding either
 is a query failure, never a partial report. The command exits 0 with a report,

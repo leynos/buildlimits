@@ -21,6 +21,7 @@ import pytest
 from buildlimits.systemd import run
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
 
@@ -182,6 +183,34 @@ def listening(runtime: Path) -> bool:
         except OSError:
             return False
     return True
+
+
+def stop_units(units: cabc.Iterable[str]) -> None:
+    """Stop and un-fail harness-owned units, in the order given.
+
+    Stopping is synchronous, so the caller's next command sees the state this
+    left rather than one the manager has only queued. A unit that was never
+    started is stopped harmlessly.
+
+    Parameters
+    ----------
+    units : Iterable[str]
+        The units to stop, outermost last.
+    """
+    for unit in units:
+        for arguments, timeout in ((("stop", unit), 90), (("reset-failed", unit), 30)):
+            try:
+                subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - owned fixture units.
+                    ["/usr/bin/systemctl", "--user", *arguments],
+                    capture_output=True,
+                    check=False,
+                    env=manager_env(),
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired:
+                # A hung stop must not strand the units after it, the parent
+                # slice last of all.
+                continue
 
 
 def unit_active(unit: str) -> bool:

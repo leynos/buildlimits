@@ -10,7 +10,6 @@ import dataclasses as dc
 import typing as typ
 
 from buildlimits import cache_recovery
-from buildlimits.sccache import ManagedSccache
 from buildlimits.server_watch import ServerWatch
 
 if typ.TYPE_CHECKING:
@@ -18,6 +17,7 @@ if typ.TYPE_CHECKING:
 
     from buildlimits import config
     from buildlimits.admission import Admission
+    from buildlimits.cache_backend import CacheBackend, DetachedCacheBackend
     from buildlimits.metrics import MetricsPort
     from buildlimits.systemd import UserManager
 
@@ -38,6 +38,13 @@ class Wiring:
         Admission books; recovery reports its token counts here.
     metrics : MetricsPort
         Event metrics shared by the watch and recovery.
+    server : DetachedCacheBackend
+        The managed server the composition root built. The watch probes it and
+        recovery drives its lifecycle, so both must see the same instance.
+    backend : CacheBackend
+        The backend the configured mode selected. The watch reads it for the
+        composition answer, which every cache mode asks, including the
+        in-scope ones whose work never leaves its group.
     """
 
     settings: config.SupervisorConfig
@@ -45,6 +52,8 @@ class Wiring:
     clock: cabc.Callable[[], float]
     admission: Admission
     metrics: MetricsPort
+    server: DetachedCacheBackend
+    backend: CacheBackend
 
 
 def watch_and_recovery(
@@ -63,14 +72,12 @@ def watch_and_recovery(
 
     Examples
     --------
-    ``watch_and_recovery(Wiring(settings, manager, clock, admission, metrics))``
-    returns a watch whose ``automatic_recovery_pending`` reads the recovery
-    machine built in the same call.
+    ``watch_and_recovery(Wiring(settings, manager, clock, admission, metrics,
+    server, backend))`` returns a watch whose ``automatic_recovery_pending``
+    reads the recovery machine built in the same call.
     """
     settings = wiring.settings
-    server = ManagedSccache(
-        settings.sccache_unit, settings.sccache_socket, wiring.manager
-    )
+    server = wiring.server
     holder: list[cache_recovery.CacheRecovery] = []
 
     def automatic_recovery_pending() -> bool:
@@ -87,6 +94,7 @@ def watch_and_recovery(
         server,
         wiring.admission,
         settings.cache_mode,
+        wiring.backend,
         clock=wiring.clock,
         metrics=wiring.metrics,
         automatic_recovery_pending=automatic_recovery_pending,

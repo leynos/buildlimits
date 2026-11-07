@@ -2,6 +2,7 @@
 
 import contextlib
 import dataclasses as dc
+import json
 import os
 import resource
 import signal
@@ -78,6 +79,55 @@ def journal(unit: str, lines: int = 60) -> str:
         check=False,
         timeout=30,
     ).stdout
+
+
+def journal_records(unit: str, lines: int = 200) -> list[dict[str, typ.Any]]:
+    """Return a unit's recent journal as decoded structured records.
+
+    :func:`journal` returns messages only. A scenario that has to read a
+    record's own fields needs the structured form, because the supervisor's
+    metric transport is trust gated on the installed unit name and a harness
+    unit deliberately carries a different one.
+
+    Parameters
+    ----------
+    unit : str
+        The unit whose journal is wanted.
+    lines : int
+        How many recent records to return.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        One decoded record per journal line, oldest first. A line that is not
+        a JSON object is skipped rather than failing the read.
+    """
+    text = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed argv, no shell.
+        [
+            "/usr/bin/journalctl",
+            "--user",
+            "-u",
+            unit,
+            "--no-pager",
+            "-o",
+            "json",
+            "-n",
+            str(lines),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    ).stdout
+    records: list[dict[str, typ.Any]] = []
+    for line in text.splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
 
 
 def pid_alive(pid: int) -> bool:
@@ -230,6 +280,26 @@ def start_adapter(
         stderr=stream,
         text=False,
     )
+
+
+def server_children(unit: str, socket_path: Path) -> int:
+    """Count compilations a fake sccache server is running.
+
+    Parameters
+    ----------
+    unit : str
+        The managed cache's unit name.
+    socket_path : Path
+        The socket the server was configured to bind.
+
+    Returns
+    -------
+    int
+        Direct children of the server process.
+    """
+    from buildlimits.sccache import ManagedSccache
+
+    return ManagedSccache(unit, socket_path).active_compiles()
 
 
 def manager_nofile_limit(requested: int = 524288) -> int:

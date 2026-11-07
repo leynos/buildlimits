@@ -13,7 +13,9 @@ from cache_unit_fake import STOPPED, CacheUnit
 from pool_helpers import attach_pool
 from request_helpers import crate_pending
 
+from buildlimits import kache_guard
 from buildlimits.admission import Group, GroupState
+from buildlimits.cache_backend import CacheBackend, DirectCache
 from buildlimits.config import SupervisorConfig
 from buildlimits.effects import Exit
 from buildlimits.pool import Token
@@ -30,10 +32,42 @@ if typ.TYPE_CHECKING:
 
 @dc.dataclass(slots=True)
 class RecordingGroups:
-    """A groups double that records which groups were terminated."""
+    """A groups double that records which groups were terminated.
+
+    The status path asks the registry which configuration and which backend it
+    stands for, to decide whether a stray cache process could exist at all.
+    The defaults answer ``direct`` with an in-scope backend, so the guard stays
+    off; the fixture replaces both with the supervisor's own, so the double
+    keeps reporting the configuration it is standing in for.
+
+    Attributes
+    ----------
+    terminated : list[str]
+        The identifiers of the groups this double was asked to terminate.
+    running : dict[str, object]
+        The scripted groups, keyed by identifier.
+    settings : SupervisorConfig
+        The configuration the registry reports to the status path.
+    backend : CacheBackend
+        The backend the registry reports, which decides whether the stray-cache
+        guard runs at all.
+    slice_dir : Path or None
+        The compilers' slice the guard would scan, or ``None`` for no scope.
+    guard : kache_guard.Strays
+        The stray-process report the status document reads.
+    terminate : collections.abc.Callable[[str], None]
+        The termination entry point, bound in ``__post_init__`` to append to
+        ``terminated`` instead of signalling a scope.
+    """
 
     terminated: list[str] = dc.field(default_factory=list)
     running: dict[str, object] = dc.field(default_factory=dict)
+    settings: SupervisorConfig = dc.field(
+        default_factory=lambda: SupervisorConfig(cache_mode="direct")
+    )
+    backend: CacheBackend = dc.field(default_factory=DirectCache)
+    slice_dir: Path | None = None
+    guard: kache_guard.Strays = dc.field(default_factory=kache_guard.Strays)
     terminate: cabc.Callable[[str], None] = dc.field(init=False)
 
     def __post_init__(self) -> None:
@@ -59,7 +93,7 @@ def running(tmp_path: Path) -> cabc.Iterator[tuple[Supervisor, RecordingGroups]]
         UserManager(unit.runner),
         clock=lambda: -1.0,
     )
-    groups = RecordingGroups()
+    groups = RecordingGroups(settings=supervisor.settings, backend=supervisor.backend)
     supervisor.groups = typ.cast("Groups", groups)
     attach_pool(supervisor)
     supervisor.admission.groups["g1"] = Group("g1", 1, b"+", cached=False)

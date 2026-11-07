@@ -20,8 +20,7 @@ from cache_recovery_helpers import (
 from pool_helpers import FakePool
 from request_helpers import crate_pending
 
-from buildlimits import cache_recovery
-from buildlimits import sccache as sccache_module
+from buildlimits import cache_recovery, sccache_cgroup
 from buildlimits.admission import Group, GroupState
 from buildlimits.config import SupervisorConfig
 from buildlimits.supervisor import Supervisor
@@ -45,7 +44,7 @@ def _tmp_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         The redirected control-group directory inside the fixture.
     """
     monkeypatch.setattr(
-        sccache_module.cgroups,
+        sccache_cgroup.cgroups,
         "directory",
         lambda path: tmp_path / str(path).lstrip("/"),
     )

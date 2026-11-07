@@ -14,159 +14,47 @@ supervisor's decisions:
 import dataclasses as dc
 import socket
 import typing as typ
-from pathlib import Path, PurePosixPath
 
-from buildlimits import cgroups
+from buildlimits import sccache_cgroup
 from buildlimits.bus_properties import BusQueryError, control_unit
+from buildlimits.cache_backend import (
+    CacheError,
+    LiveCacheWorkError,
+    StartupAccountingError,
+    StoppedPopulatedCacheError,
+)
+from buildlimits.cache_backend import CacheError as SccacheError
 from buildlimits.proc_trees import count_children
 from buildlimits.systemd import SystemdError, UserManager
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    from pathlib import Path
 
+# ``SccacheError`` is the same class object as ``CacheError``, not a subclass:
+# the cache backend seam names the exception for what it is, so every backend
+# raises one vocabulary, while this sccache-specific spelling keeps the name
+# its existing callers and tests use. An ``except`` on either catches the same
+# failures.
 
-class SccacheError(Exception):
-    """The managed server's state cannot be determined."""
-
-
-class LiveCacheWorkError(SccacheError):
-    """A successful manager query observes a live cache with unaccounted work.
-
-    Parameters
-    ----------
-    roots : int or None
-        Visible compiler-root trees at the moment of the query, or None when
-        the count could not be established. The count corroborates starvation
-        in the automatic recovery trigger; it never authorizes token release,
-        because the dangerous wait sits before any compiler exists.
-    """
-
-    def __init__(self, message: str, *, roots: int | None = None) -> None:
-        """Record the fault message and the visible root count it observed.
-
-        Parameters
-        ----------
-        message : str
-            The operator-facing description of the observed work.
-        roots : int or None
-            Visible compiler-root trees, or None when the count could not be
-            established.
-        """
-        super().__init__(message)
-        self.roots = roots
-
-
-class StoppedPopulatedCacheError(SccacheError):
-    """The managed service is stopped but its control group holds work.
-
-    The cgroup need not name the process that holds the retained work; a
-    member may simply be slow to exit. Either way the stopped state cannot
-    account for it, so the diagnosis is separate from both a live service
-    (which may hold accepted requests awaiting a jobserver token) and a
-    manager transport fault.
-    """
-
-
-class StartupAccountingError(SccacheError):
-    """Previous cache work requires operator accounting before admission starts."""
-
-
-def _members(control_group: str) -> list[int]:
-    """Read a validated absolute server cgroup path.
-
-    Returns
-    -------
-    list[int]
-        Processes in the verified hierarchy path.
-
-    Raises
-    ------
-    ValueError
-        If the path is relative or traverses a parent directory.
-    """
-    path = PurePosixPath(control_group)
-    if not path.is_absolute() or ".." in path.parts:
-        msg = "manager returned an invalid server control group"
-        raise ValueError(msg)
-    return cgroups.member_pids(cgroups.directory(path))
-
-
-def _visible_roots(properties: cabc.Mapping[str, str]) -> int:
-    """Count visible trees without authorizing detached-work token release.
-
-    Returns
-    -------
-    int
-        Visible compiler-root trees, including orphaned roots.
-
-    """
-    main_pid = _server_pid(properties)
-    control_group = properties["ControlGroup"]
-    if not control_group:
-        _verify_no_group(main_pid)
-        return 0
-    members = _members(control_group)
-    _verify_membership(main_pid, members)
-    return count_children(main_pid, members) if main_pid else 0
-
-
-def _server_pid(properties: cabc.Mapping[str, str]) -> int:
-    """Require complete server-load properties and a non-negative PID.
-
-    Returns
-    -------
-    int
-        Parsed manager PID, including zero for a stopped server.
-
-    Raises
-    ------
-    ValueError
-        If load properties are missing or the PID is malformed.
-    """
-    if not {"MainPID", "ControlGroup"} <= properties.keys():
-        msg = "manager omitted required server load properties"
-        raise ValueError(msg)
-    main_pid = int(properties["MainPID"])
-    if main_pid < 0:
-        msg = "manager returned a negative server PID"
-        raise ValueError(msg)
-    return main_pid
-
-
-def _verify_no_group(main_pid: int) -> None:
-    """Allow a missing cgroup only for a stopped server.
-
-    Raises
-    ------
-    ValueError
-        If a live server has no verified control group.
-    """
-    if main_pid != 0:
-        msg = "a live server has no verified control group"
-        raise ValueError(msg)
-
-
-def _verify_membership(main_pid: int, members: list[int]) -> None:
-    """Require an empty stopped cgroup or a live server inside its own cgroup.
-
-    Raises
-    ------
-    ValueError
-        If the reported server state contradicts cgroup membership.
-    """
-    if main_pid == 0:
-        if members:
-            msg = "stopped server control group still contains work"
-            raise ValueError(msg)
-        return
-    if main_pid not in members:
-        msg = "server PID is absent from its reported control group"
-        raise ValueError(msg)
+__all__ = [
+    "LiveCacheWorkError",
+    "ManagedSccache",
+    "SccacheError",
+    "StartupAccountingError",
+    "StoppedPopulatedCacheError",
+]
 
 
 @dc.dataclass(slots=True)
 class ManagedSccache:
     """The managed sccache server, as seen by the supervisor.
+
+    This is the detached cache backend: its server runs the miss compilation
+    as a direct child, outside the compiler group's scope, so a scope can
+    empty while its compilation still runs. That is why it also carries the
+    detached-only lifecycle in :meth:`accounted_drain`, :meth:`stop` and
+    :meth:`start`.
 
     Parameters
     ----------
@@ -176,11 +64,77 @@ class ManagedSccache:
         The server's private Unix socket.
     manager : UserManager
         The user manager port.
+    executable : str
+        The client that composes a cached group. It is the configured
+        command, which may be an absolute path or a name resolved on the
+        build's ``PATH``.
     """
 
     unit: str
     socket_path: Path
     manager: UserManager = dc.field(default_factory=UserManager)
+    executable: str = "sccache"
+    name: str = dc.field(init=False, default="sccache")
+    in_scope_work: bool = dc.field(init=False, default=False)
+
+    def compose(
+        self, argv: tuple[str, ...], env: cabc.Mapping[str, str]
+    ) -> tuple[tuple[str, ...], dict[str, str]]:
+        """Compose a compiler invocation with the managed server.
+
+        The client is pointed at this server's socket, so a client that could
+        not reach it would start a server of its own inside the compiler's
+        scope; and it is told to compile in scope rather than fail if the
+        server goes away mid-build.
+
+        Parameters
+        ----------
+        argv : tuple[str, ...]
+            The bare compiler invocation.
+        env : Mapping[str, str]
+            The requesting client's environment.
+
+        Returns
+        -------
+        tuple[tuple[str, ...], dict[str, str]]
+            The invocation prefixed with the cache client, and the
+            environment with the server's address added.
+
+        Examples
+        --------
+        >>> cache = ManagedSccache("s.service", "/run/s.sock")
+        >>> cache.compose(("/t/rustc", "-vV"), {})[0]
+        ('sccache', '/t/rustc', '-vV')
+        """
+        composed = dict(env)
+        composed["SCCACHE_SERVER_UDS"] = str(self.socket_path)
+        # Losing the server mid-build falls back to compiling in scope.
+        composed["SCCACHE_IGNORE_SERVER_IO_ERROR"] = "1"
+        return (self.executable, *argv), composed
+
+    def fallback_notice(  # ruff: ignore[no-self-use] - protocol member.
+        self,
+    ) -> str:
+        """Explain an uncached group that the configuration meant to cache.
+
+        The line names the decision rather than diagnosing it: a group compiles
+        directly both while the server cannot be reached and while a recovery
+        holds the cache out of service, and calling the second case
+        *unreachable* would tell the operator to look for a fault that is not
+        there. What the build can act on is that this compilation is not cached.
+
+        The caller has already excluded rustdoc and configured direct mode, so
+        this line is only ever produced for a build that asked to be cached.
+
+        Returns
+        -------
+        str
+            The line for the build's standard error.
+        """
+        return (
+            "the managed sccache server is not serving compilations; "
+            "compiling without the cache"
+        )
 
     def is_reachable(self, timeout: float = 0.5) -> bool:
         """Check that the server accepts connections on its socket.
@@ -198,7 +152,7 @@ class ManagedSccache:
 
         Raises
         ------
-        SccacheError
+        CacheError
             If the probe fails for any other reason, such as a permission
             fault, so that a misconfiguration is not mistaken for a stopped
             server.
@@ -212,11 +166,26 @@ class ManagedSccache:
             return False
         except OSError as error:
             msg = f"cannot probe {self.socket_path}: {error}"
-            raise SccacheError(msg) from error
+            raise CacheError(msg) from error
         finally:
             if probe is not None:
                 probe.close()
         return True
+
+    def _verify_stopped(  # ruff: ignore[no-self-use] - delegates to sccache_cgroup.
+        self, properties: cabc.Mapping[str, str]
+    ) -> None:
+        """Require stopped unit state and an empty cgroup before accounting.
+
+        Raises
+        ------
+        ValueError
+            If the stopped state cannot be verified.
+        StoppedPopulatedCacheError
+            If the service is stopped but its control group still holds
+            processes, so surviving work may hold a shared jobserver slot.
+        """  # ruff: ignore[docstring-extraneous-exception] - sccache_cgroup raises both.
+        sccache_cgroup.verify_stopped_service(properties)
 
     def active_compiles(self, *, snapshot: cabc.Mapping[str, str] | None = None) -> int:
         """Count visible compiler trees for diagnostics, without proving drain.
@@ -234,10 +203,10 @@ class ManagedSccache:
 
         Raises
         ------
-        SccacheError
+        CacheError
             If the unit, its control group or its processes cannot be read.
-            Callers must then keep holding tokens: an unknown load is not a
-            zero load.
+            ``SccacheError`` names the same class. Callers must then keep
+            holding tokens: an unknown load is not a zero load.
         """
         try:
             properties = (
@@ -245,7 +214,7 @@ class ManagedSccache:
                 if snapshot is None
                 else snapshot
             )
-            return _visible_roots(properties)
+            return sccache_cgroup.visible_roots(properties, counter=count_children)
         except (SystemdError, OSError, ValueError) as error:
             msg = f"cannot read {self.unit}'s load: {error}"
             raise SccacheError(msg) from error
@@ -260,10 +229,11 @@ class ManagedSccache:
 
         Raises
         ------
-        SccacheError
+        CacheError
             If the service is live, contains work, or cannot be inspected.
-            A live server may hold accepted tasks awaiting a jobserver token;
-            zero compiler processes therefore does not prove completion.
+            ``SccacheError`` names the same class. A live server may hold
+            accepted tasks awaiting a jobserver token; zero compiler processes
+            therefore does not prove completion.
         """
         try:
             properties = self.manager.show(
@@ -296,7 +266,7 @@ class ManagedSccache:
                 f"visible compiler roots={shown}; operator accounting required"
             )
             raise LiveCacheWorkError(msg, roots=roots)
-        _verify_stopped_service(properties)
+        self._verify_stopped(properties)
 
     def _diagnostic_roots(self, properties: cabc.Mapping[str, str]) -> int | None:
         """Sample visible work without authorizing token release on any outcome.
@@ -354,22 +324,3 @@ class ManagedSccache:
                     f"{ascii(str(public_error)[:300])[1:-1]}"
                 )
                 raise SystemdError(msg) from public_error
-
-
-def _verify_stopped_service(properties: cabc.Mapping[str, str]) -> None:
-    """Require stopped unit state and empty cgroup before detached work is accounted.
-
-    Raises
-    ------
-    ValueError
-        If the stopped state cannot be verified.
-    StoppedPopulatedCacheError
-        If the service is stopped but its control group still holds processes,
-        so surviving work may hold a shared jobserver slot.
-    """
-    if properties["ActiveState"] not in {"inactive", "failed"}:
-        msg = "server unit is not in a verified stopped state"
-        raise ValueError(msg)
-    if properties["ControlGroup"] and _members(properties["ControlGroup"]):
-        msg = "stopped server control group still contains work"
-        raise StoppedPopulatedCacheError(msg)

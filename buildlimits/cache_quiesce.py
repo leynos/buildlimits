@@ -22,19 +22,19 @@ return.
 
 import typing as typ
 
-from buildlimits.journal import log
-from buildlimits.sccache import (
+from buildlimits.cache_backend import (
+    CacheError,
     LiveCacheWorkError,
-    SccacheError,
     StartupAccountingError,
 )
+from buildlimits.journal import log
 from buildlimits.systemd import SystemdError
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from buildlimits.cache_backend import DetachedCacheBackend
     from buildlimits.recovery_barrier import RecoveryBarrier
-    from buildlimits.sccache import ManagedSccache
     from buildlimits.timing import Clock
 
 # Bounded so that it and the 120-second scope drain still fit inside the
@@ -54,7 +54,7 @@ class QuiesceTimeoutError(StartupAccountingError):
 
 
 def quiesce_and_report(
-    cache: ManagedSccache,
+    cache: DetachedCacheBackend,
     barrier: RecoveryBarrier,
     clock: Clock,
     report: cabc.Callable[[str, float], None],
@@ -63,7 +63,7 @@ def quiesce_and_report(
 
     Parameters
     ----------
-    cache : ManagedSccache
+    cache : DetachedCacheBackend
         The managed server.
     barrier : RecoveryBarrier
         The restart barrier the unit's own condition reads.
@@ -94,7 +94,7 @@ def quiesce_and_report(
 
 
 def quiesce_live_cache(
-    cache: ManagedSccache,
+    cache: DetachedCacheBackend,
     barrier: RecoveryBarrier,
     clock: Clock,
     *,
@@ -110,7 +110,7 @@ def quiesce_live_cache(
 
     Parameters
     ----------
-    cache : ManagedSccache
+    cache : DetachedCacheBackend
         The managed server.
     barrier : RecoveryBarrier
         The restart barrier the unit's own condition reads.
@@ -134,7 +134,7 @@ def quiesce_live_cache(
         cache.accounted_drain()
     except LiveCacheWorkError:
         pass
-    except SccacheError:
+    except CacheError:
         return False
     else:
         return False
@@ -144,7 +144,7 @@ def quiesce_live_cache(
     return True
 
 
-def _stop_under_barrier(cache: ManagedSccache, barrier: RecoveryBarrier) -> None:
+def _stop_under_barrier(cache: DetachedCacheBackend, barrier: RecoveryBarrier) -> None:
     """Write the barrier, then queue the stop; never the stop without the barrier.
 
     Raises
@@ -160,7 +160,7 @@ def _stop_under_barrier(cache: ManagedSccache, barrier: RecoveryBarrier) -> None
             raise StartupAccountingError(msg) from error
 
 
-def _await_stopped(cache: ManagedSccache, clock: Clock, timeout: float) -> None:
+def _await_stopped(cache: DetachedCacheBackend, clock: Clock, timeout: float) -> None:
     """Poll the strict accounting check until it passes or the timeout expires.
 
     Raises
@@ -174,7 +174,7 @@ def _await_stopped(cache: ManagedSccache, clock: Clock, timeout: float) -> None:
     while True:
         try:
             cache.accounted_drain()
-        except SccacheError as error:
+        except CacheError as error:
             last = error
         else:
             return

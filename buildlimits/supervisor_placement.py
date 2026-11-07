@@ -2,7 +2,7 @@
 
 import typing as typ
 
-from buildlimits import effect_dispatch, supervisor_shutdown
+from buildlimits import effect_dispatch, kache_guard, supervisor_shutdown
 from buildlimits.journal import admitted_line, log
 from buildlimits.protocol import Admitted
 
@@ -24,6 +24,12 @@ def launch(
     stop_mode = placement_stop_mode(supervisor)
     try:
         entry = supervisor.requests.pending[request_id]
+        # Read the slice before placing this group, so the reading describes
+        # the state the group is admitted into rather than one that already
+        # includes it. The poll alone would leave up to a poll interval in
+        # which a stray from an earlier group is invisible; admission is when
+        # the supervisor is about to make the same promise again.
+        kache_guard.refresh_guard(supervisor.groups)
         running = supervisor.groups.place(entry, group_id, cached=cached)
         if running is None:
             stop_mode = placement_stop_mode(supervisor)
@@ -44,7 +50,7 @@ def launch(
             outcome = "release_failed"
             failure_category = "launch_release"
         else:
-            log(admitted_line(entry, cached=cached))
+            log(admitted_line(entry, cached=cached, cache_name=supervisor.backend.name))
             supervisor.outcomes.launched(entry, group_id)
             outcome = "admitted"
             failure_category = "none"

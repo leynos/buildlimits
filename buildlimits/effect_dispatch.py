@@ -3,6 +3,7 @@
 import typing as typ
 
 from buildlimits.admission_state import GroupState
+from buildlimits.cache_modes import is_cache
 from buildlimits.effects import (
     Launch,
     NotifyFinished,
@@ -67,20 +68,21 @@ def record_admitted(supervisor: Supervisor, entry: Pending, *, cached: bool) -> 
     entry : Pending
         Request successfully placed inside its compiler group.
     cached : bool
-        Whether this group uses the managed cache server.
+        Whether this group uses the configured cache backend.
     """
     entry.cache_path = (
         "cached"
         if cached
         else (
             "direct_fallback"
-            if supervisor.settings.cache_mode == "sccache" and entry.request.cacheable
+            if is_cache(supervisor.settings.cache_mode) and entry.request.cacheable
             else "direct"
         )
     )
     supervisor._metric(
         "request_admitted",
         cache_path=entry.cache_path,
+        cache_backend=supervisor.backend.name,
         wait_seconds=0.0 if entry.admitted is None else entry.admitted - entry.arrived,
     )
 

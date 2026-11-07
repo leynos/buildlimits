@@ -5,56 +5,61 @@ import typing as typ
 from pathlib import Path
 
 import pytest
+from request_helpers import launch_pending
 
-from buildlimits import attributes, launch
-from buildlimits.attributes import ProcessAttributes
+from buildlimits import launch
+from buildlimits.cache_backend import CacheBackend, DirectCache
+from buildlimits.cache_modes import is_cache
 from buildlimits.config import SupervisorConfig
 from buildlimits.groups import Groups, Running
-from buildlimits.protocol import CompileRequest
-from buildlimits.requesters import Pending
+from buildlimits.kache import Kache
+from buildlimits.sccache import ManagedSccache
 from buildlimits.systemd import SystemdError
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
     from buildlimits.launch import HeldChild
+    from buildlimits.requesters import Pending
     from buildlimits.systemd import UserManager
-
-
-@pytest.fixture
-def selector() -> cabc.Iterator[selectors.BaseSelector]:
-    """Close each test selector deterministically before its descriptors recycle."""
-    with selectors.DefaultSelector() as owned:
-        yield owned
 
 
 def _entry(*, cacheable: bool) -> Pending:
     """Build an admitted request for ``rustc``."""
-    request = CompileRequest(
-        argv=("/bin/sccache", "rustc", "-vV"),
-        cwd="/",
-        env={},
-        attributes=ProcessAttributes(umask=0o22, nice=0, rlimits={}),
-        fd_targets=(),
-        label="rustc",
-        cacheable=cacheable,
-    )
-    plan = attributes.AttributePlan(umask=0o22, nice=0, rlimits={})
-    return Pending(1, None, request, [], plan, arrived=0.0)
+    return launch_pending(("/bin/sccache", "rustc", "-vV"), cacheable=cacheable)
 
 
 def _groups(selector: selectors.BaseSelector, cache_mode: str = "sccache") -> Groups:
-    """Build groups with a configuration and no user manager."""
+    """Build groups with a configuration, a backend and no user manager."""
     settings = SupervisorConfig(
         cache_mode=cache_mode,
         sccache_executable="/managed/sccache",
         sccache_socket=Path("/run/user/1/buildlimits/sccache.sock"),
+        kache_executable="/managed/kache",
+        kache_socket=Path("/run/user/1/buildlimits/kache.sock"),
+        kache_cache_dir=Path("/var/cache/kache"),
     )
+    # The composition root builds this from the mode; these tests exercise the
+    # adapter's argv and environment, so they supply it explicitly.
+    match cache_mode:
+        case "kache":
+            backend: CacheBackend = Kache(
+                settings.kache_executable,
+                settings.kache_socket,
+                settings.kache_cache_dir,
+            )
+        case _ if is_cache(cache_mode):
+            backend = ManagedSccache(
+                settings.sccache_unit,
+                settings.sccache_socket,
+                executable=settings.sccache_executable,
+            )
+        case _:
+            backend = DirectCache()
     return Groups(
         settings,
         typ.cast("UserManager", object()),
         selector,
         lambda: 0.0,
+        backend,
     )
 
 
@@ -66,7 +71,13 @@ def test_an_unavailable_cache_is_announced(selector: selectors.BaseSelector) -> 
 
 @pytest.mark.parametrize(
     ("cache_mode", "cacheable", "cached"),
-    [("sccache", True, True), ("sccache", False, False), ("direct", True, False)],
+    [
+        ("sccache", True, True),
+        ("sccache", False, False),
+        ("kache", True, True),
+        ("kache", False, False),
+        ("direct", True, False),
+    ],
 )
 def test_intended_composition_is_not_announced(
     selector: selectors.BaseSelector, cache_mode: str, cacheable: bool, cached: bool
