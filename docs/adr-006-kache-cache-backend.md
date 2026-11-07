@@ -592,11 +592,11 @@ tail with an order of magnitude to spare. Second, the tail is real: at p99 a
 saturated host is already an order of magnitude slower than an idle one, and
 nothing in the profile proves it cannot exceed the budget under a heavier load.
 A timeout is therefore a possible reading for a daemon that is running, which
-is why `buildlimits.server_watch.ServerWatch` requires two consecutive
-failures before it withdraws composition rather than acting on one. The reading
-taken by a recovery release is exempt from that allowance: it follows a restart
-the transaction has just issued, so an unreachable answer there is the absence
-the hold was protecting against rather than noise.
+is why `buildlimits.server_watch.ServerWatch` requires two consecutive failures
+before it withdraws composition rather than acting on one. The reading taken by
+a recovery release is exempt from that allowance: it follows a restart the
+transaction has just issued, so an unreachable answer there is the absence the
+hold was protecting against rather than noise.
 
 ### How RFC 0001 and RFC 0002 apply
 
