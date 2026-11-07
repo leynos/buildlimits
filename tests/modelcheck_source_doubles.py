@@ -28,7 +28,7 @@ class FixedSource(ConfigurationSource):
 
     def __init__(
         self,
-        configurations: cabc.Sequence[Configuration],
+        configurations: cabc.Sequence[Configuration] = (),
         *,
         source: str = "",
     ) -> None:
@@ -37,7 +37,9 @@ class FixedSource(ConfigurationSource):
         Parameters
         ----------
         configurations : Sequence[Configuration]
-            The configurations the matrix runs, in report order.
+            The configurations the matrix runs, in report order. Empty by
+            default: the drift command reads only the model text, and a double
+            that exists to raise has no configurations to offer.
         source : str
             The concatenated model source.
         """

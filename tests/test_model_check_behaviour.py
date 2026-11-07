@@ -15,6 +15,9 @@ The model text, the scenario state and the readers the steps share live in
 and the assertions they make.
 """
 
+import contextlib
+import io
+
 import modelcheck_scenarios as scenes
 import pytest
 from modelcheck_doubles import NEVER_REACHED, FakeChecker, Verbatim
@@ -191,15 +194,32 @@ def _runs(matrix: scenes.Matrix) -> None:
 
 @when("the drift check runs")
 def _drift_runs(matrix: scenes.Matrix) -> None:
-    """Compare the model's mappings with the inventory."""
-    from modelcheck import drift
+    """Run the drift command as a maintainer does, through the app.
 
-    matrix.drift_report = drift.drift(
-        matrix.mapped,
-        matrix.inventory,
-        lambda path: matrix.resolves.get(path, False),
-        {},
+    Comparing the values directly would prove the comparison and leave the
+    command's own wiring untested, and that wiring is what a CI job consumes:
+    the status it returns and the report it prints. The factories hand the app
+    this scenario's values, so the run still touches no filesystem.
+    """
+    from modelcheck_cli_cases import Inventory
+    from modelcheck_source_doubles import FixedSource
+
+    from modelcheck import cli
+
+    source = FixedSource((), source=matrix.source)
+    inventory = Inventory(
+        matrix.inventory, lambda path: matrix.resolves.get(path, False)
     )
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        status = cli.make_app(
+            checker_factory=lambda _fizz: matrix.checker,
+            source_factory=lambda _directory, _bounds: source,
+            inventory_factory=lambda: inventory,
+        )(["drift", "/model"])
+
+    matrix.drift_status = status
+    matrix.drift_report_text = printed.getvalue()
 
 
 @then(parsers.parse('the report shows "{configuration}" "{subject}" as "{verdict}"'))
@@ -235,8 +255,14 @@ def _names_fairness(
 
 @then(parsers.parse('it fails naming "{path}"'))
 def _names(matrix: scenes.Matrix, path: str) -> None:
-    """Check the drift report is not clean and names the path."""
-    assert matrix.drift_report is not None, "the drift check ran"
-    assert not matrix.drift_report.is_clean, f"{matrix.drift_report} is clean"
-    named = {*matrix.drift_report.unmapped, *matrix.drift_report.stale}
-    assert path in named, f"{path!r} not among {sorted(named)}"
+    """Check the command exits non-zero and its printed report names the path.
+
+    The exit status is what CI acts on and the printed line is what a
+    maintainer reads, so both are asserted. Reading the rendered report rather
+    than the report value is deliberate: a command that computed the right
+    answer and printed a clean one would otherwise pass.
+    """
+    assert matrix.drift_status == 1, "unmapped or stale paths are an unmet check"
+    assert path in matrix.drift_report_text, (
+        f"{path!r} not in {matrix.drift_report_text!r}"
+    )

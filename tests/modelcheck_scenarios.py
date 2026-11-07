@@ -98,7 +98,8 @@ class Matrix:
         self.mapped: frozenset[str] = frozenset()
         self.inventory: frozenset[str] = frozenset()
         self.resolves: dict[str, bool] = {}
-        self.drift_report = None
+        self.drift_status: int | None = None
+        self.drift_report_text = ""
 
     def source_of(self) -> FixedSource:
         """Return the configuration source this scenario describes.

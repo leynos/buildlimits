@@ -861,7 +861,8 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `fizzbee_expectations.py`                 | `Expectation`, `check` and `paired`: what one run or a pass/fail pair must show, enforced per test                                         |
 | `fizzbee_process_stubs.py`                | `spec` and `stub`: the specification and the record-keeping launcher the three process-adapter test modules share                          |
 | `modelcheck_cases.py`                     | One expectation, result, configuration and trace of each kind, named once for the domain tests                                             |
-| `modelcheck_doubles.py`                   | `FakeChecker`, `Verbatim`, `Restated` and `FixedSource`: recorded checker output replayed through the real parser                          |
+| `modelcheck_doubles.py`                   | `FakeChecker`, `Verbatim` and `Restated`: recorded checker output replayed through the real parser                                         |
+| `modelcheck_source_doubles.py`            | `FixedSource`: the model text and configurations a scenario hands the service, as values                                                   |
 | `modelcheck_scenarios.py`                 | The model text, the `Matrix` one model-check scenario builds, and the readers its steps use                                                |
 | `modelcheck_cli_cases.py`                 | The command lines and expected exit statuses the CLI tests share                                                                           |
 
