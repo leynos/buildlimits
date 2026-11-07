@@ -1195,12 +1195,14 @@ that checked it. The graph is read before any of that happens, so a replacement
 cannot turn a valid graph into an unparsable one or make two states compare
 equal. Credentials shorter than six characters are replaced only where they
 stand alone, and a one-character value is replaced only where it is a value —
-after `=`, between quotes, or as a whole decoded state value — so a boolean
-flag cannot rewrite every state count. If a credential of two or more
-characters survives any replacement, including under an equivalent JSON escape
-spelling, the text holding it is withheld rather than recorded and the record
-says so. Read a generated artefact before sharing it. Those tests are opt-in
-because they need the binary:
+after `=`, between quotes, after the label a checker prints beside it, or as a
+whole decoded state value — so a boolean flag cannot rewrite every state count.
+A decoded state string that still contains a one-character credential is
+withheld rather than recorded. If a credential of two or more characters
+survives any replacement, including under an equivalent JSON escape spelling,
+the text holding it is withheld rather than recorded and the record says so.
+Read a generated artefact before sharing it. Those tests are opt-in because
+they need the binary:
 
 ```bash
 BUILD_LIMITS_MODEL_CHECK=1 .venv/bin/pytest -m fizzbee tests

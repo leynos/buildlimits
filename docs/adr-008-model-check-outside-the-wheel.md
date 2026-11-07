@@ -274,6 +274,17 @@ its finding, reason and evidence, in the
   specification that cannot be written, and the users' guide and ExecPlan state
   that the seven `models/admission/*/traces/head-*.json` files are tracked
   rather than untracked.
+- **D53, 2026-11-07.** A one-character credential is recognized by the label a
+  checker prints beside it, and a decoded string that still contains one is
+  withheld. D50 protected the character only where an assignment or a quote
+  marked it as a value, and a checker prints neither as often as it names the
+  variable beside the value: `token x` is an echo too, so the label is matched
+  as a position. A decoded string is one value the checker produced, so a
+  string that contains the character is withheld rather than recorded. The
+  whole text is not withheld on such a character, because a host whose
+  environment holds a one-character credential-named boolean would then lose
+  every record — the residual D44 recorded — while the string-level rule keeps
+  the rest of the trace.
 
 ## References
 

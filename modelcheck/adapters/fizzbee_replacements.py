@@ -5,9 +5,10 @@ the machine that checked it. Two values carry that work. :class:`Replacement`
 is one substitution: the text to find, what to put in its place, and where it
 is allowed to match. A long credential may be replaced wherever it occurs, a
 short one only where it stands alone, and a one-character one only in a
-position that holds a value — a bare character needle would rewrite every state
-count. A :class:`Redaction` is a run's ordered set of them, together with the
-credential values they were built from, so the result can be checked rather
+position that holds a value — after an assignment, between quotes, or after a
+credential's own label — because a bare character needle would rewrite every
+state count. A :class:`Redaction` is a run's ordered set of them, together with
+the credential values they were built from, so the result can be checked rather
 than trusted.
 
 The check is the fail-closed half. A substitution can miss a value it was meant
@@ -118,10 +119,11 @@ class Replacement(typ.NamedTuple):
         credential is a value like ``abcde``, and replacing it wherever it
         occurs would rewrite the middle of ordinary words.
     context : str | None
-        The fixed text that must immediately precede ``needle``, or ``None``
-        when it may occur anywhere. A one-character credential uses it to name
-        a value position, after ``=`` or between quotes, rather than every
-        digit in the transcript.
+        A regular expression that must immediately precede ``needle``, or
+        ``None`` when it may occur anywhere. A one-character credential uses it
+        to name a position that holds a value — after ``=`` or a quote, or after
+        the label a checker prints beside it — rather than every digit in the
+        transcript. The matched context is kept, so only the value disappears.
     """
 
     needle: str
@@ -156,13 +158,21 @@ class Replacement(typ.NamedTuple):
         ...     "token=0 of 10, ratio=0.5"
         ... )
         'token=<redacted> of 10, ratio=0.5'
+        >>> Replacement("x", "<redacted>", context=r"(?i:token|session) ").apply(
+        ...     "token x beside token xyz"
+        ... )
+        'token <redacted> beside token xyz'
         """
         if self.context is not None:
             pattern = (
-                rf"(?<={re.escape(self.context)})"
+                rf"(?P<context>{self.context})"
                 rf"{re.escape(self.needle)}{_TERMINATOR}"
             )
-            return re.sub(pattern, lambda _: self.placeholder, text)
+            return re.sub(
+                pattern,
+                lambda match: match.group("context") + self.placeholder,
+                text,
+            )
         if not self.whole_word:
             return text.replace(self.needle, self.placeholder)
         # A replacement string is not a template, so it is produced by a
@@ -186,10 +196,18 @@ class Redaction(typ.NamedTuple):
         of one character. A single character occurs in every count, so finding
         one says nothing about whether it was echoed; the values of two or more
         characters are the ones a surviving occurrence is evidence of.
+    character_secrets : tuple[str, ...]
+        The credential values of exactly one character. A text is not withheld
+        on one of those, because every transcript on a host that holds a
+        one-character boolean would then be withheld. A decoded string is
+        different: it is a single value the checker produced, so a character
+        inside it cannot be told from the text it was built from, and the
+        string is withheld rather than recorded.
     """
 
     replacements: tuple[Replacement, ...]
     secrets: tuple[str, ...] = ()
+    character_secrets: tuple[str, ...] = ()
 
     def apply(self, text: str) -> str:
         """Return ``text`` with every replacement made.
@@ -283,6 +301,12 @@ class Redaction(typ.NamedTuple):
         a state value that is exactly a credential's one character would
         survive the text rule and reach the saved trace.
 
+        A string that merely *contains* the character is withheld. The text
+        rule cannot see the character there, and a checker that built a state
+        from an inherited value would leave it recoverable; withholding the one
+        string keeps that from being recorded while the rest of the trace
+        survives.
+
         Parameters
         ----------
         value : str
@@ -292,7 +316,7 @@ class Redaction(typ.NamedTuple):
         -------
         str
             The placeholder when the whole string is a credential, otherwise
-            the result of :meth:`retain`.
+            the redacted string, or the marker when one could not be cleaned.
 
         Examples
         --------
@@ -303,4 +327,9 @@ class Redaction(typ.NamedTuple):
         for replacement in self.replacements:
             if replacement.needle == value:
                 return replacement.placeholder
-        return self.retain(value)
+        redacted = self.apply(value)
+        if self.retains_credential(redacted) or any(
+            secret in redacted for secret in self.character_secrets
+        ):
+            return WITHHELD
+        return redacted

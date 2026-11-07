@@ -15,7 +15,7 @@ that run it are shared with :mod:`tests.test_modelcheck_cli_e2e`.
 import typing as typ
 from pathlib import Path
 
-from modelcheck_e2e_cases import assert_holds, persisted, traced_run
+from modelcheck_e2e_cases import TracedRun, assert_holds, persisted, traced_run
 
 from modelcheck.adapters.fizzbee_replacements import WITHHELD
 
@@ -46,6 +46,45 @@ def _persisted_detail(tmp_path: Path, answer: str, credential: str) -> str:
     status, written = persisted(tmp_path, answer, MODELCHECK_E2E_SECRET=credential)
     assert status == 1, "a run that proved nothing meets no expectation"
     return typ.cast("str", written[0]["detail"])
+
+
+_SAVED_TRACE = Path("traces") / "incident-1-BEventually.json"
+"""Where a run asked for traces writes the counterexample it found."""
+
+
+def _saved_trace(traced: TracedRun) -> str:
+    """Return the saved counterexample's text, failing on a run that did not pass.
+
+    The saved file is where a leak would be committed, so a test about
+    redaction reads it back rather than the in-memory trace.
+
+    Parameters
+    ----------
+    traced : modelcheck_e2e_cases.TracedRun
+        A run that was asked to save its traces.
+
+    Returns
+    -------
+    str
+        The text of the counterexample the run saved.
+    """
+    assert traced.result.returncode == 0, traced.result.stderr
+    return (traced.model / _SAVED_TRACE).read_text(encoding="utf-8")
+
+
+def _assert_absent_from_record(records: Path, needle: str, message: str) -> None:
+    """Fail the test when the matrix record carries ``needle``.
+
+    Parameters
+    ----------
+    records : pathlib.Path
+        The JSON artefact the matrix wrote.
+    needle : str
+        The text that must not reach the record.
+    message : str
+        What the absence means, used as the failure message.
+    """
+    assert needle not in records.read_text(encoding="utf-8"), message
 
 
 def test_an_unreadable_graph_reaches_the_persisted_record(tmp_path: Path) -> None:
@@ -204,14 +243,11 @@ def test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence(
         MODELCHECK_E2E_SECRET=credential,
     )
 
-    assert traced.result.returncode == 0, traced.result.stderr
-    saved = (traced.model / "traces" / "incident-1-BEventually.json").read_text(
-        encoding="utf-8"
-    )
+    saved = _saved_trace(traced)
     assert "<redacted>" in saved, "the decoded value is replaced in the saved trace"
     assert "do-not-record" not in saved, "so the credential does not reach the file"
-    assert "do-not-record" not in records.read_text(encoding="utf-8"), (
-        "nor the record the matrix wrote"
+    _assert_absent_from_record(
+        records, "do-not-record", "nor the record the matrix wrote"
     )
 
 
@@ -237,6 +273,56 @@ def test_a_stopped_run_reaches_the_persisted_record_redacted(tmp_path: Path) -> 
     )
     assert inherited_value not in detail, "no credential reaches the record"
     assert ".model-check" not in detail, "and no runner path either"
+
+
+def test_a_one_character_credential_beside_its_label_reaches_the_record_redacted(
+    tmp_path: Path,
+) -> None:
+    """A value the checker names rather than assigns is still a value.
+
+    The marker line a stopped run leaves can name the variable beside its
+    value, and nothing but the label marks the character as a value. The record
+    is read back here because it is where a leak would be committed.
+    """
+    detail = _persisted_detail(tmp_path, "labelled", "x")
+
+    assert_holds(
+        detail,
+        {
+            "the marker is kept": "Model checker stopped",
+            "the labelled value is replaced": "token <redacted>",
+            "the scratch path is replaced": "at <scratch>/model.fizz",
+        },
+    )
+    assert "token x" not in detail, "and the value is not recorded"
+
+
+def test_a_decoded_string_containing_a_one_character_credential_is_withheld(
+    tmp_path: Path,
+) -> None:
+    """A state built from a one-character value is withheld from the trace.
+
+    The graph's text holds the character inside a longer word, which no
+    position rule can recognize, and the decoded string is what the saved trace
+    and the record carry. The string is withheld rather than recorded with the
+    character recoverable from it.
+    """
+    records = tmp_path / "matrix.json"
+    one_character = "x"
+
+    traced = traced_run(
+        tmp_path,
+        "--json",
+        str(records),
+        MODELCHECK_E2E_CREDENTIAL="1",
+        MODELCHECK_E2E_EMBED="1",
+        MODELCHECK_E2E_SECRET=one_character,
+    )
+
+    saved = _saved_trace(traced)
+    assert WITHHELD in saved, "the string is withheld in the saved trace"
+    assert "prefixx" not in saved, "so the character is not recoverable"
+    _assert_absent_from_record(records, "prefixx", "nor in the record the matrix wrote")
 
 
 def test_an_equivalent_escape_spelling_is_withheld_from_the_record(

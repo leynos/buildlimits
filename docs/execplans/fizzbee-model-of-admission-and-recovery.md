@@ -1283,6 +1283,30 @@ explicitly.
     `ruff format --check`, interrogate at 100%, the DF12 pylint plugins and
     `make duplication` pass on the changed files. Repository gates are
     delegated to the scrutineer on the final candidate.
+- [x] (2026-11-07) **The eighth round's one-character finding is answered for
+    both cases it named: a value the checker names beside its label, and a
+    decoded string that contains it.** Recorded as D54.
+  - `_VALUE_CONTEXTS` gains `_LABEL_CONTEXT` — the credential words
+    `_SECRET_NAME` matches, followed by a separator — so `token x` is a value
+    position and not a word in the text. `Replacement.context` is now a regular
+    expression whose matched prefix is kept, which is what lets one pattern
+    name several labels without consuming the one it matched.
+    `test_a_one_character_credential_printed_beside_its_label_is_redacted` and
+    `test_a_one_character_credential_beside_its_label_reaches_the_record_redacted`
+    pin it, the latter through the `labelled` stub mode and the record.
+  - `Redaction` carries `character_secrets`, and `retain_value` withholds one
+    decoded string that still contains one, because a string is a single value
+    the checker produced and the character cannot be told from the text it was
+    built from. `test_a_decoded_string_containing_a_one_character_credential_is_withheld`
+    and the end-to-end test of the same name pin the trace and the record; the
+    `MODELCHECK_E2E_EMBED` stub modifier writes the value inside a longer state
+    string.
+  - The whole text is deliberately not withheld on a one-character value.
+    `CLAUDE_CODE_SESSION_ATTENDED` and `CLAUDE_CODE_CHILD_SESSION` hold one
+    character in this environment, so every record produced here would be
+    withheld — the residual D44 recorded and D50 weighed. `Unique states: 4`
+    still survives, and `test_a_one_character_credential_named_flag_leaves_the_counts_intact`
+    still pins it.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -3153,6 +3177,39 @@ explicitly.
     `test_an_equivalent_escape_spelling_withholds_the_text`,
     `test_an_equivalent_escape_spelling_is_withheld_from_the_record`, and the
     doctests for `Redaction.retain_value` and `_decoded_view`.
+
+- **D54. A one-character credential is recognized by the label a checker
+  prints beside it, and a decoded string that contains one is withheld.**
+  _Decided 2026-11-07._
+  - Decision: `_VALUE_CONTEXTS` gains `_LABEL_CONTEXT`, so a one-character
+    value is replaced after `=`, between quotes, after one of the credential
+    words `_SECRET_NAME` matches and a separator, or where it is a whole
+    decoded state value. `Replacement.context` becomes a regular expression
+    and its matched prefix is kept. `Redaction` gains `character_secrets`, the
+    alphanumeric one-character values, and `retain_value` returns `WITHHELD`
+    for a decoded string that still contains one.
+  - Finding: the eighth round's assessment kept the credential-safety item
+    open. It named two cases D50 did not cover: a stopped marker printing
+    `token x`, where neither `=` nor a quote marks the value, and a decoded
+    state built as `prefixx`, where the character sits inside a longer word and
+    no position rule can see it. It asked for fail-closed behaviour and
+    persisted-record and saved-trace regressions.
+  - Reason: both cases are echoes of a value the checker was handed, so both
+    belong to the same rule — replace a value where a value is, and withhold a
+    text that cannot be proven clean. The finding's blanket remedy, withholding
+    any text containing the character, is the residual D44 recorded and D50
+    rejected: `CLAUDE_CODE_SESSION_ATTENDED` and `CLAUDE_CODE_CHILD_SESSION`
+    hold one character here, so every record produced on this host would be
+    withheld and the evidence the record exists for would be lost. A label is a
+    value position, a decoded string is one value rather than a document, and
+    withholding that one string keeps the rest of the trace.
+  - Evidence:
+    `test_a_one_character_credential_printed_beside_its_label_is_redacted`,
+    `test_a_one_character_credential_beside_its_label_reaches_the_record_redacted`,
+    `test_a_decoded_string_containing_a_one_character_credential_is_withheld`,
+    the end-to-end test of the same name, the `labelled` stub mode,
+    `MODELCHECK_E2E_EMBED`, `Replacement.apply`'s doctest, and the unchanged
+    `test_a_one_character_credential_named_flag_leaves_the_counts_intact`.
 
 ## Outcomes & retrospective
 

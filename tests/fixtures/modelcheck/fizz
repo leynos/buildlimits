@@ -21,6 +21,12 @@
 # and replaces both the runner path and the credential rather than carrying any
 # of them whole.
 #
+# ``MODELCHECK_E2E_ANSWER=labelled`` prints the value after the label the
+# checker gives it rather than as an assignment: a value position that nothing
+# but the label marks. ``MODELCHECK_E2E_EMBED`` makes the credentialed graph
+# write the value inside a longer state string instead, which is a decoded
+# string no position rule can see.
+#
 # ``MODELCHECK_E2E_CREDENTIAL`` makes the recorded lasso carry the value of
 # ``MODELCHECK_E2E_SECRET`` in every state, spelled as the real checker's Go
 # encoder spells it. That spelling is deliberately one no Python JSON writer
@@ -82,15 +88,18 @@ credentialed_graph() {
   # 3-c. Python's JSON writer never escapes that character, so the text pass
   # cannot anticipate this spelling; it is caught only after the graph is
   # decoded into the trace that the saved file and the record carry.
-  local escaped="${MODELCHECK_E2E_SECRET:-}" line
+  local escaped="${MODELCHECK_E2E_SECRET:-}" prefix="" line
   escaped=${escaped//\\/\\\\}
   escaped=${escaped//\"/\\\"}
   escaped=${escaped//</\\u003c}
+  if [ -n "${MODELCHECK_E2E_EMBED:-}" ]; then
+    prefix="prefix"
+  fi
   # The fixture's last line has no trailing newline, and ``read`` fails on it
   # while still placing it in ``line``; testing the variable keeps that line.
   while IFS= read -r line || [ -n "$line" ]; do
     if [ "$line" = '        "b": 0,' ]; then
-      printf '        "b": "%s",\n' "$escaped"
+      printf '        "b": "%s%s",\n' "$prefix" "$escaped"
     else
       printf '%s\n' "$line"
     fi
@@ -164,6 +173,14 @@ case "${MODELCHECK_E2E_ANSWER:-recorded}" in
     # only evidence the record keeps of it, and it carries whatever the checker
     # echoed around the interruption.
     printf 'Model checker stopped: token=%s at %s/model.fizz\n' \
+      "${MODELCHECK_E2E_SECRET:-}" "$PWD"
+    exit 0
+    ;;
+  labelled)
+    # A checker that names the variable beside its value rather than assigning
+    # it. Nothing but the label marks the character as a value, so a redaction
+    # that knew only ``NAME=value`` would leave it in the record.
+    printf 'Model checker stopped: token %s at %s/model.fizz\n' \
       "${MODELCHECK_E2E_SECRET:-}" "$PWD"
     exit 0
     ;;

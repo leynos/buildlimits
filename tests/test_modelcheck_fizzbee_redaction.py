@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 from modelcheck_evidence_cases import graph_run, run_stub
 from modelcheck_redaction_cases import (
+    assert_detail_replaces,
     assert_trace_hides,
     errored_graph,
     errored_run,
@@ -333,8 +334,9 @@ def test_a_runner_path_beside_the_scratch_directory_is_redacted(
         {"HOME": "/home/runner"},
     )
 
-    assert "cache <home>/.cache/go-build" in result.detail, "the home is replaced"
-    assert "/home/runner" not in result.detail, "and the runner path is gone"
+    assert_detail_replaces(
+        result.detail, kept="cache <home>/.cache/go-build", gone="/home/runner"
+    )
 
 
 def test_a_scratch_path_the_checker_printed_is_redacted(tmp_path: Path) -> None:

@@ -184,6 +184,27 @@ def lasso_run(
     return typ.cast("domain.Counterexample", result)
 
 
+def assert_detail_replaces(detail: str, *, kept: str, gone: str) -> None:
+    """Fail the test unless a transcript keeps ``kept`` and drops ``gone``.
+
+    Every transcript redaction test makes the same two claims: the part of the
+    line that says what the checker printed survives, and the value identifying
+    the runner does not. Stating them once keeps each test to the stub that
+    produced the text and the two fragments it is about.
+
+    Parameters
+    ----------
+    detail : str
+        The transcript the adapter kept for the run.
+    kept : str
+        The fragment the record must still carry.
+    gone : str
+        The fragment the record must not carry.
+    """
+    _require(condition=kept in detail, message=f"the detail keeps {kept!r}")
+    _require(condition=gone not in detail, message=f"and does not keep {gone!r}")
+
+
 def assert_trace_hides(result: domain.Counterexample, *credentials: str) -> None:
     """Fail the test when the trace carries no placeholder or a credential.
 

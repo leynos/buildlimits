@@ -113,10 +113,11 @@ def redact_trace(trace: Trace, redaction: Redaction) -> Trace:
     modelcheck.trace.Trace
         The path with every action label and every string in a state replaced.
         A string a credential survived in is withheld whole rather than
-        recorded, and a one-character credential is replaced when it is the
-        whole string, because a decoded string is a value position. A number, a
-        boolean or ``null`` is a value the model computed, not text the checker
-        wrote around it, and is left as it is.
+        recorded, and a decoded string is a value position: a one-character
+        credential is replaced when it is the whole string, and the string is
+        withheld when it merely contains one. A number, a boolean or ``null``
+        is a value the model computed, not text the checker wrote around it,
+        and is left as it is.
 
     Examples
     --------

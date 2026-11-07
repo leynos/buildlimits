@@ -1166,16 +1166,19 @@ to a failed one.
 Three residuals are deliberate and pinned by tests. A credential of two to five
 characters is replaced only where it stands alone — after `NAME=`, inside JSON
 quotes — so a short value does not rewrite the words it happens to occur in. A
-one-character value is replaced only where it is a value: after `=`, or between
-quotes, and not in a count, so `CLAUDE_CODE_SESSION_ATTENDED=0` becomes
-`CLAUDE_CODE_SESSION_ATTENDED=<redacted>` while `Unique states: 4` survives.
-And if a credential of two or more characters survives any replacement,
-`Redaction.retain` returns `WITHHELD` and the record says the text was withheld
-rather than committing it. The mechanism itself is in
-`adapters/fizzbee_replacements`; the module holds the substitution and the
-survival check only, so "what must not be recorded" stays in
-`fizzbee_redaction`. All of this is a reason an artefact is read before it is
-committed, not a reason to trust one that was not.
+one-character value is replaced only where it is a value: after `=`, between
+quotes, or after the label the checker prints beside it (`token x`), and not in
+a count, so `CLAUDE_CODE_SESSION_ATTENDED=0` becomes
+`CLAUDE_CODE_SESSION_ATTENDED=<redacted>` while `Unique states: 4` survives. A
+decoded state string that still contains the character is withheld, because a
+string is one value the checker produced and the character cannot be told from
+the text it was built from; the rest of the trace survives. And if a credential
+of two or more characters survives any replacement, `Redaction.retain` returns
+`WITHHELD` and the record says the text was withheld rather than committing it.
+The mechanism itself is in `adapters/fizzbee_replacements`; the module holds
+the substitution and the survival check only, so "what must not be recorded"
+stays in `fizzbee_redaction`. All of this is a reason an artefact is read
+before it is committed, not a reason to trust one that was not.
 
 The two obligations have different costs and run in different places.
 `make model-fidelity` runs both drift reports and the drift tests; it compares

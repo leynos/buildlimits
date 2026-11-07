@@ -123,17 +123,35 @@ destroyed, and the secret such a value could express is one character.
 
 So the rule follows the position rather than the value: a one-character
 credential is replaced where a checker echoes a value it was given — after
-``=``, or between quotes — and left alone in a count, which is not a value the
-checker was handed. A value of two characters is the shortest replaced as a
-standalone token wherever it appears.
+``=``, between quotes, or after the label it prints beside the value — and left
+alone in a count, which is not a value the checker was handed. A value of two
+characters is the shortest replaced as a standalone token wherever it appears.
+A one-character value that is not a letter or digit is not withheld from a
+decoded string either: a message is full of hyphens and slashes, and a
+credential of one of those expresses nothing a reader could use.
 """
 
-_VALUE_CONTEXTS = ("=", '"', "'")
+_LABEL_CONTEXT = (
+    r"(?i:(?:token|secret|password|passwd|credential|api[_-]?key"
+    r"|private[_-]?key|access[_-]?key|auth|cookie|session))"
+    r"(?:[ \t]*[:=][ \t]*|[ \t]+)"
+)
+r"""The label and separator a checker prints beside a value it was given.
+
+A message names the variable it echoes as often as it assigns it: ``token x``,
+``secret: x``, ``SESSION x``. The label is one of the words
+:data:`_SECRET_NAME` matches, so only a message about a credential is
+rewritten. A separator is required, so a word that merely begins with one of
+those labels — ``tokenizer`` — is left alone.
+"""
+
+_VALUE_CONTEXTS = ("=", '"', "'", _LABEL_CONTEXT)
 """The text that makes a one-character value a value rather than a count.
 
 A checker echoes an inherited variable as ``NAME=value``, in a quoted JSON
-string, or in single quotes in a message. None of those positions holds a
-number the model computed, so replacing there cannot rewrite a state count.
+string, in single quotes in a message, or after the label it prints beside the
+value. None of those positions holds a number the model computed, so replacing
+there cannot rewrite a state count.
 """
 
 
@@ -174,8 +192,11 @@ def redaction_for(
     A credential shorter than :data:`_WHOLE_WORD_SECRET_LENGTH` is replaced
     only where it stands alone, so a five-character value printed as
     ``NAME=abcde`` is removed while the same characters inside a longer word
-    are kept. A one-character value is replaced only after ``=`` or between
-    quotes; see :data:`_MIN_SECRET_LENGTH` and :data:`_VALUE_CONTEXTS`.
+    are kept. A one-character value is replaced only after ``=``, between
+    quotes, or after the label a checker prints beside it; see
+    :data:`_MIN_SECRET_LENGTH` and :data:`_VALUE_CONTEXTS`. A decoded string
+    that still contains one is withheld rather than recorded, so a state built
+    from such a value does not reach the trace.
 
     Examples
     --------
@@ -215,6 +236,11 @@ def redaction_for(
     return Redaction(
         tuple(ordered),
         tuple(value for value in secrets if len(value) >= _MIN_SECRET_LENGTH),
+        tuple(
+            value
+            for value in secrets
+            if len(value) < _MIN_SECRET_LENGTH and value.isalnum()
+        ),
     )
 
 
