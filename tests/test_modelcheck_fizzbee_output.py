@@ -17,23 +17,23 @@ short-circuited on the first marker it found would still pass a test that only
 ever inserted one.
 
 Third, the seven classes are the checker's real ones, not the plan's original
-five. ``FAILED`` is three distinct verdicts, and one of them —
-``FAILED: Expected states never reached`` — is a *completion* marker that
-leaves the domain a ``Passed`` result carrying unsatisfied probes. Folding it
-in with the invariant failure would make ``Verdict.UNREACHABLE``
-unreachable. See D22 in the ExecPlan.
+five: ``FAILED`` is three distinct verdicts, and one of them — ``FAILED:
+Expected states never reached`` — is a *completion* marker that leaves the
+domain a ``Passed`` result carrying unsatisfied probes, so folding it in with
+the invariant failure would make ``Verdict.UNREACHABLE`` unreachable. See D22
+in the ExecPlan.
 
 Fourth, this sweep is one of two halves. It covers the shapes the checker
 *could* print; ``test_modelcheck_fizzbee_fixtures`` covers the shapes it *did*
 print, so a marker that changes shape fails one half or the other rather than
 passing because the enumeration was edited to match.
 
-Truncation is deliberately absent from the enumeration. The pinned checker
-prints no truncation marker — its expander silently skips a node past
-``max_actions`` — so ``tests/fixtures/fizzbee/truncation-safety`` is a plain
-``PASSED`` run over an unexplored state space. The floor catches it, in
-``judge``, and the companion module pins that division: the parser stays
-faithful to the output, and the floor refuses the pass.
+Truncation is deliberately absent. The pinned checker prints no truncation
+marker — its expander silently skips a node past ``max_actions`` — so
+``tests/fixtures/fizzbee/truncation-safety`` is a plain ``PASSED`` run over an
+unexplored state space. The floor catches it, in ``judge``, and the companion
+module pins that division: the parser stays faithful to the output, and the
+floor refuses the pass.
 """
 
 import typing as typ

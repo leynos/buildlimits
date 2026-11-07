@@ -147,17 +147,36 @@ def _error(lines: list[str], exit_status: int) -> str | None:
     Returns
     -------
     str | None
-        The first ``Error:`` line, which names the cause; otherwise a note that
-        the checker exited non-zero; otherwise ``None``. The line is bounded:
-        the checker writes it, and this detail is persisted beside the record,
-        so a checker that printed its whole transcript on one line would
-        otherwise carry it into the artefact whole.
+        The first ``Error:`` line, which names the cause, preceded by the line
+        the checker printed before it; otherwise a note that the checker exited
+        non-zero, with the transcript it printed as evidence; otherwise
+        ``None``. The cause is bounded: the checker writes it, and this detail
+        is persisted beside the record, so a checker that printed its whole
+        transcript on one line would otherwise carry it into the artefact
+        whole.
+
+    Notes
+    -----
+    The line before an ``Error:`` is kept because it is usually the one that
+    says *where* the failure is. A model that fails to parse prints the
+    offending source position — ``line 17:0 mismatched input 'assertion'`` —
+    and then the summary line, so quoting only the summary leaves a maintainer
+    with the fact of a compile failure and no way to locate it. One line is
+    enough for that and keeps the detail from becoming a transcript.
+
+    A non-zero exit status with no ``Error:`` line is a run whose own text says
+    nothing about why, so the transcript it did print is attached as evidence
+    rather than replaced by the status alone.
     """
-    for line in lines:
+    for index, line in enumerate(lines):
         if line.startswith(ERROR):
-            return bounded(line)
+            preceding = lines[index - 1].strip() if index else ""
+            return bounded(f"{preceding}\n{line}" if preceding else line)
     if exit_status != 0:
-        return f"the checker exited with status {exit_status}"
+        return with_evidence(
+            f"the checker exited with status {exit_status}",
+            (("the checker printed", "\n".join(lines)),),
+        )
     return None
 
 
