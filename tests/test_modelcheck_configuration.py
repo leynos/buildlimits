@@ -361,6 +361,24 @@ def test_exclusions_carry_their_reason(tmp_path: Path) -> None:
     }, "the reason travels with the exclusion"
 
 
+def test_a_file_that_is_not_utf8_is_refused_by_both_queries(tmp_path: Path) -> None:
+    """A file in another encoding is refused rather than guessed at.
+
+    The parser decodes the bytes, so invalid UTF-8 reaches the caller as
+    ``UnicodeDecodeError``. Both queries read the same document, so both must
+    report it rather than one of them reading an empty table and reporting a
+    model that declares nothing.
+    """
+    directory = _directory(tmp_path)
+    (directory / "configurations.toml").write_bytes(b"[configurations.head]\n# \xff\n")
+    source = TomlConfigurations(directory)
+
+    with pytest.raises(UnicodeDecodeError):
+        source.configurations()
+    with pytest.raises(UnicodeDecodeError):
+        source.exclusions()
+
+
 def test_the_document_is_read_once(tmp_path: Path) -> None:
     """A second read does not go back to the filesystem.
 

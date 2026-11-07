@@ -12,9 +12,11 @@ quietly dropped a property would leave a matrix that is entirely green.
 
 Keeping the run and the judgement apart is deliberate: the checker run is
 expensive and its bounds are the plan's, so the Makefile target owns it, while
-the judgement is cheap and belongs in the ordinary test run. Each results file
-must also be newer than the model it describes, because a stale artefact is the
-one way this module could pass while the model no longer deserves it.
+the judgement is cheap and reads what that run wrote. Cheap is not the same as
+unconditional, and the marker paragraph below says which tests can run without
+a results file. Each results file must also be newer than the model it
+describes, because a stale artefact is the one way this module could pass while
+the model no longer deserves it.
 
 Two obligations are checked against the real models rather than a test double.
 Every name each configuration expects must still be declared by the model it

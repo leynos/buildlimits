@@ -1307,6 +1307,28 @@ explicitly.
     withheld — the residual D44 recorded and D50 weighed. `Unique states: 4`
     still survives, and `test_a_one_character_credential_named_flag_leaves_the_counts_intact`
     still pins it.
+- [x] (2026-11-07) **The ninth round's three findings are answered: a
+    punctuation credential is withheld from a decoded string, the behavioural
+    scenarios run through the `check` command, and two contracts and two
+    module docstrings name their exceptions.** Recorded as D55.
+  - `character_secrets` carried only alphanumeric one-character values, so a
+    credential of `#` sitting inside `prefix#` survived in a saved trace. The
+    filter is now every non-empty one-character value: a credential is a
+    credential whatever its character, and the cost is bounded to the strings
+    that contain it. Both decoded-string regressions are parametrized over
+    `x` and `#`, at the trace and through the command line.
+  - The behavioural scenarios called `service.run_matrix` directly and
+    asserted the exit status with `cli.exit_status`, which left the `check`
+    command's own wiring untested. `_runs` now calls `cli.make_app`, captures
+    the report it prints and the status it returns, and the steps read those;
+    the drift step already worked this way. All twelve scenarios pass.
+  - `ConfigurationSource.configurations` and `exclusions` name
+    `UnicodeDecodeError`, which the TOML parser raises for a file that is not
+    UTF-8, and
+    `test_a_file_that_is_not_utf8_is_refused_by_both_queries` pins both
+    queries. The `service` module states the two runs its state-count rule
+    leaves alone, and the artefact suite's docstring no longer claims its
+    judgement runs unconditionally in the ordinary suite.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -3186,8 +3208,8 @@ explicitly.
     words `_SECRET_NAME` matches and a separator, or where it is a whole
     decoded state value. `Replacement.context` becomes a regular expression
     and its matched prefix is kept. `Redaction` gains `character_secrets`, the
-    alphanumeric one-character values, and `retain_value` returns `WITHHELD`
-    for a decoded string that still contains one.
+    one-character values, and `retain_value` returns `WITHHELD` for a decoded
+    string that still contains one (widened to every character by D55).
   - Finding: the eighth round's assessment kept the credential-safety item
     open. It named two cases D50 did not cover: a stopped marker printing
     `token x`, where neither `=` nor a quote marks the value, and a decoded
@@ -3210,6 +3232,38 @@ explicitly.
     the end-to-end test of the same name, the `labelled` stub mode,
     `MODELCHECK_E2E_EMBED`, `Replacement.apply`'s doctest, and the unchanged
     `test_a_one_character_credential_named_flag_leaves_the_counts_intact`.
+
+- **D55. A one-character credential is withheld from a decoded string
+  whatever its character, and the behavioural scenarios drive the command.**
+  _Decided 2026-11-07._
+  - Decision: `character_secrets` carries every non-empty one-character
+    credential value rather than only the alphanumeric ones. The behavioural
+    `when` step runs `cli.make_app(["check", ...])` and the steps read the
+    report it printed and the status it returned. `ConfigurationSource`'s
+    `configurations` and `exclusions` name `UnicodeDecodeError`, and the
+    `service` module and the artefact suite's docstring state their
+    exceptions.
+  - Finding: the ninth round's assessment accepted D54's refusal to withhold
+    whole texts, but named three remaining gaps: a punctuation credential
+    such as `#` survives inside `prefix#` because only alphanumeric values
+    reached `character_secrets`; the scenarios called `service.run_matrix`
+    directly and so left the `check` command's wiring untested; and the
+    contracts and module documentation omitted exceptions the code documents.
+  - Reason: a credential is a credential whatever its character, and the cost
+    of the wider rule is bounded to the strings containing that one character,
+    which is nothing like the cost of withholding whole transcripts. The
+    scenario step is the same argument the drift step already makes: the
+    status and the report are what CI consumes, so a scenario that only calls
+    the service proves the judgement and not the command. A contract that
+    omits a reachable exception is wrong about the code it describes, and a
+    module docstring that states a rule without its exceptions misleads the
+    reader who has to apply it.
+  - Evidence:
+    `test_a_decoded_string_containing_a_one_character_credential_is_withheld`
+    and its end-to-end twin, both parametrized over `x` and `#`;
+    `test_a_file_that_is_not_utf8_is_refused_by_both_queries`; and the twelve
+    behavioural scenarios, which now pass through `check` and read the printed
+    report and the returned status.
 
 ## Outcomes & retrospective
 

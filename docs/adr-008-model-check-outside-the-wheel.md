@@ -286,6 +286,19 @@ its finding, reason and evidence, in the
   every record — the residual D44 recorded — while the string-level rule keeps
   the rest of the trace.
 
+- **D55, 2026-11-07.** A one-character credential is withheld from a decoded
+  string whatever its character, and the behavioural scenarios drive the
+  command. D53's `character_secrets` held only alphanumeric values, so a
+  credential of `#` inside `prefix#` survived a saved trace; every non-empty
+  one-character value is now carried, and the cost is bounded to the strings
+  that contain that one character. The model-check scenarios called
+  `service.run_matrix` directly and asserted the status with `exit_status`,
+  which left the `check` command's own wiring untested; the `when` step now runs
+  `cli.make_app` and the steps read the report it printed and the status it
+  returned, as the drift step already did. The configuration-source contracts
+  name the `UnicodeDecodeError` a non-UTF-8 file raises, with a boundary test
+  for both queries.
+
 ## References
 
 - [RFC 0001: FizzBee model of admission and recovery](rfcs/0001-fizzbee-model-of-admission-and-recovery.md)

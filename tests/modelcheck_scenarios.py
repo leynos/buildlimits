@@ -24,10 +24,10 @@ import typing as typ
 from modelcheck_doubles import FakeChecker
 from modelcheck_source_doubles import FixedSource
 
-from modelcheck import domain, report
+from modelcheck import domain
 
 if typ.TYPE_CHECKING:
-    from modelcheck.domain import Configuration, Judgement
+    from modelcheck.domain import Configuration
     from modelcheck.ports import ModelChecker
 
 DEFAULT_SOURCE = """\
@@ -92,7 +92,8 @@ class Matrix:
         self.configurations: list[Configuration] = []
         self.checker: ModelChecker = FakeChecker()
         self.source = DEFAULT_SOURCE
-        self.judgements: tuple[Judgement, ...] = ()
+        self.check_status: int | None = None
+        self.report_text = ""
         self.states_override: int | None = None
         self.fairness: dict[str, str] = {}
         self.mapped: frozenset[str] = frozenset()
@@ -233,7 +234,7 @@ def row(matrix: Matrix, configuration: str, subject: str) -> str:
     Parameters
     ----------
     matrix : Matrix
-        The scenario state holding the judgements.
+        The scenario state holding the report the command printed.
     configuration : str
         The configuration the line must name.
     subject : str
@@ -249,7 +250,7 @@ def row(matrix: Matrix, configuration: str, subject: str) -> str:
     AssertionError
         If no line names both: the report is missing a row the scenario needs.
     """
-    rendered = report.render_report(matrix.judgements)
+    rendered = matrix.report_text
     matches = [
         line
         for line in rendered.splitlines()

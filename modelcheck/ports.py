@@ -134,6 +134,9 @@ class ConfigurationSource(typ.Protocol):
             verdict or bound of the wrong shape.
         OSError
             If a configuration file exists but cannot be read.
+        UnicodeDecodeError
+            If the file is not UTF-8. The parser decodes the bytes, so a file
+            written in another encoding is refused rather than guessed at.
         """
 
     def exclusions(self) -> cabc.Mapping[str, str]:
@@ -151,4 +154,7 @@ class ConfigurationSource(typ.Protocol):
             If the exclusion table exists but is not a table of strings.
         OSError
             If the configuration file exists but cannot be read.
+        UnicodeDecodeError
+            If the file is not UTF-8. The parser decodes the bytes, so a file
+            written in another encoding is refused rather than guessed at.
         """

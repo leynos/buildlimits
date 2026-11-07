@@ -17,6 +17,7 @@ and the assertions they make.
 
 import contextlib
 import io
+import typing as typ
 
 import modelcheck_scenarios as scenes
 import pytest
@@ -24,6 +25,9 @@ from modelcheck_doubles import NEVER_REACHED, FakeChecker, Verbatim
 from pytest_bdd import given, parsers, scenarios, then, when
 
 from modelcheck.domain import CounterexampleKind, FailsAs, Holds, Reachable
+
+if typ.TYPE_CHECKING:
+    from modelcheck.ports import CodeInventory, ConfigurationSource
 
 scenarios("features/model_check.feature")
 
@@ -38,6 +42,50 @@ def matrix() -> scenes.Matrix:
         The state the steps of one scenario build up and read back.
     """
     return scenes.Matrix()
+
+
+def _run_command(
+    matrix: scenes.Matrix,
+    argv: list[str],
+    *,
+    source: ConfigurationSource,
+    inventory: CodeInventory,
+) -> tuple[int, str]:
+    """Run one command through the app and return its status and its report.
+
+    Both commands take a model directory, so only the subcommand and its extra
+    arguments differ. Calling the service directly would prove the judgement
+    and leave the command's own wiring untested, and that wiring is what CI
+    consumes: the status it returns and the report it prints. The factories
+    hand the app this scenario's values, so the run touches no filesystem.
+
+    Parameters
+    ----------
+    matrix : modelcheck_scenarios.Matrix
+        The scenario state whose checker the app is built from.
+    argv : list[str]
+        The command line, beginning with the subcommand, followed by the model
+        directory and any option the command takes.
+    source : modelcheck.ports.ConfigurationSource
+        What the app's source factory returns.
+    inventory : modelcheck.ports.CodeInventory
+        What the app's inventory factory returns.
+
+    Returns
+    -------
+    tuple[int, str]
+        The status the command returned and the report it printed.
+    """
+    from modelcheck import cli
+
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        status = cli.make_app(
+            checker_factory=lambda _fizz: matrix.checker,
+            source_factory=lambda _directory, _bounds: source,
+            inventory_factory=lambda: inventory,
+        )(argv)
+    return status, printed.getvalue()
 
 
 @given("a model check over a model directory")
@@ -182,44 +230,40 @@ def _renamed(matrix: scenes.Matrix) -> None:
 
 @when("the model check runs")
 def _runs(matrix: scenes.Matrix) -> None:
-    """Run the matrix and judge every expectation."""
+    """Run the check command, carrying a stated state count if one was asked for."""
+    from modelcheck_cli_cases import Inventory
     from modelcheck_doubles import Restated
-
-    from modelcheck import service
 
     if matrix.states_override is not None:
         matrix.checker = Restated(matrix.checker, matrix.states_override)
-    matrix.judgements = service.run_matrix(scenes.reconfigured(matrix), matrix.checker)
+    status, report = _run_command(
+        matrix,
+        ["check", "/model", "--fizz", "/fizz"],
+        source=scenes.reconfigured(matrix),
+        inventory=Inventory(frozenset(), lambda _path: False),
+    )
+
+    matrix.check_status = status
+    matrix.report_text = report
 
 
 @when("the drift check runs")
 def _drift_runs(matrix: scenes.Matrix) -> None:
-    """Run the drift command as a maintainer does, through the app.
-
-    Comparing the values directly would prove the comparison and leave the
-    command's own wiring untested, and that wiring is what a CI job consumes:
-    the status it returns and the report it prints. The factories hand the app
-    this scenario's values, so the run still touches no filesystem.
-    """
+    """Run the drift command against the inventory this scenario declares."""
     from modelcheck_cli_cases import Inventory
     from modelcheck_source_doubles import FixedSource
 
-    from modelcheck import cli
-
-    source = FixedSource((), source=matrix.source)
-    inventory = Inventory(
-        matrix.inventory, lambda path: matrix.resolves.get(path, False)
+    status, report = _run_command(
+        matrix,
+        ["drift", "/model"],
+        source=FixedSource((), source=matrix.source),
+        inventory=Inventory(
+            matrix.inventory, lambda path: matrix.resolves.get(path, False)
+        ),
     )
-    printed = io.StringIO()
-    with contextlib.redirect_stdout(printed):
-        status = cli.make_app(
-            checker_factory=lambda _fizz: matrix.checker,
-            source_factory=lambda _directory, _bounds: source,
-            inventory_factory=lambda: inventory,
-        )(["drift", "/model"])
 
     matrix.drift_status = status
-    matrix.drift_report_text = printed.getvalue()
+    matrix.drift_report_text = report
 
 
 @then(parsers.parse('the report shows "{configuration}" "{subject}" as "{verdict}"'))
@@ -234,12 +278,8 @@ def _shows(
 
 @then(parsers.parse("the model check exits with status {status:d}"))
 def _exits(matrix: scenes.Matrix, status: int) -> None:
-    """Check the exit status the command-line interface would return."""
-    from modelcheck import cli, report
-
-    assert cli.exit_status(matrix.judgements) == status, report.render_report(
-        matrix.judgements
-    )
+    """Check the status the command itself returned."""
+    assert matrix.check_status == status, matrix.report_text
 
 
 @then(parsers.parse('the report line for "{configuration}" "{subject}" names "{tags}"'))

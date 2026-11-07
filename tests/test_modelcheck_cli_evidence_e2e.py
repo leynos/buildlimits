@@ -15,6 +15,7 @@ that run it are shared with :mod:`tests.test_modelcheck_cli_e2e`.
 import typing as typ
 from pathlib import Path
 
+import pytest
 from modelcheck_e2e_cases import TracedRun, assert_holds, persisted, traced_run
 
 from modelcheck.adapters.fizzbee_replacements import WITHHELD
@@ -297,18 +298,20 @@ def test_a_one_character_credential_beside_its_label_reaches_the_record_redacted
     assert "token x" not in detail, "and the value is not recorded"
 
 
+@pytest.mark.parametrize("one_character", ["x", "#"])
 def test_a_decoded_string_containing_a_one_character_credential_is_withheld(
-    tmp_path: Path,
+    tmp_path: Path, one_character: str
 ) -> None:
     """A state built from a one-character value is withheld from the trace.
 
     The graph's text holds the character inside a longer word, which no
     position rule can recognize, and the decoded string is what the saved trace
     and the record carry. The string is withheld rather than recorded with the
-    character recoverable from it.
+    character recoverable from it, whether the character is a letter or
+    punctuation.
     """
     records = tmp_path / "matrix.json"
-    one_character = "x"
+    embedded = f"prefix{one_character}"
 
     traced = traced_run(
         tmp_path,
@@ -321,8 +324,8 @@ def test_a_decoded_string_containing_a_one_character_credential_is_withheld(
 
     saved = _saved_trace(traced)
     assert WITHHELD in saved, "the string is withheld in the saved trace"
-    assert "prefixx" not in saved, "so the character is not recoverable"
-    _assert_absent_from_record(records, "prefixx", "nor in the record the matrix wrote")
+    assert embedded not in saved, "so the character is not recoverable"
+    _assert_absent_from_record(records, embedded, "nor in the record the matrix wrote")
 
 
 def test_an_equivalent_escape_spelling_is_withheld_from_the_record(

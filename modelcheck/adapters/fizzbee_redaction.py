@@ -126,9 +126,10 @@ credential is replaced where a checker echoes a value it was given — after
 ``=``, between quotes, or after the label it prints beside the value — and left
 alone in a count, which is not a value the checker was handed. A value of two
 characters is the shortest replaced as a standalone token wherever it appears.
-A one-character value that is not a letter or digit is not withheld from a
-decoded string either: a message is full of hyphens and slashes, and a
-credential of one of those expresses nothing a reader could use.
+A one-character value is withheld from a decoded string whatever its
+character. A credential is a credential: a ``#`` or a ``-`` is as recoverable
+from a state string as a letter is, and the cost of the rule is bounded to the
+strings that contain that one character.
 """
 
 _LABEL_CONTEXT = (
@@ -195,8 +196,8 @@ def redaction_for(
     are kept. A one-character value is replaced only after ``=``, between
     quotes, or after the label a checker prints beside it; see
     :data:`_MIN_SECRET_LENGTH` and :data:`_VALUE_CONTEXTS`. A decoded string
-    that still contains one is withheld rather than recorded, so a state built
-    from such a value does not reach the trace.
+    that still contains one is withheld rather than recorded, whatever the
+    character is, so a state built from such a value does not reach the trace.
 
     Examples
     --------
@@ -236,11 +237,7 @@ def redaction_for(
     return Redaction(
         tuple(ordered),
         tuple(value for value in secrets if len(value) >= _MIN_SECRET_LENGTH),
-        tuple(
-            value
-            for value in secrets
-            if len(value) < _MIN_SECRET_LENGTH and value.isalnum()
-        ),
+        tuple(value for value in secrets if 0 < len(value) < _MIN_SECRET_LENGTH),
     )
 
 

@@ -175,7 +175,10 @@ class TomlConfigurations:
             at. The table readers in
             :mod:`modelcheck.adapters.configuration_fields` raise it for a
             field of the wrong shape.
-        """  # ruff: ignore[docstring-extraneous-exception] - the table readers raise it.
+        UnicodeDecodeError
+            If the file is not UTF-8. The parser decodes the bytes, so a file
+            written in another encoding is refused rather than guessed at.
+        """  # ruff: ignore[docstring-extraneous-exception] - the table readers and the parser raise it.
         tables = self._table("configurations")
         return tuple(itertools.starmap(configuration, tables.items()))
 
@@ -188,7 +191,13 @@ class TomlConfigurations:
             Each excluded dotted path and the reason it was excluded. The
             reason is required: an exclusion without one is a forgotten path
             wearing a considered one's clothes.
-        """
+
+        Raises
+        ------
+        UnicodeDecodeError
+            If the file is not UTF-8. The parser decodes the bytes, so a file
+            written in another encoding is refused rather than guessed at.
+        """  # ruff: ignore[docstring-extraneous-exception] - the parser raises it.
         return {path: str(reason) for path, reason in self._table("exclusions").items()}
 
     def _table(self, name: str) -> dict[str, object]:

@@ -13,6 +13,7 @@ exercise is stated in :mod:`modelcheck.adapters.fizzbee_redaction`.
 
 from pathlib import Path
 
+import pytest
 from modelcheck_redaction_cases import (
     assert_detail_replaces,
     errored_run,
@@ -44,24 +45,29 @@ def test_a_one_character_credential_printed_beside_its_label_is_redacted(
     assert "Valid Nodes: 4" in result.detail, "a count is not a value"
 
 
+@pytest.mark.parametrize("character", ["x", "#"])
 def test_a_decoded_string_containing_a_one_character_credential_is_withheld(
-    tmp_path: Path,
+    tmp_path: Path, character: str
 ) -> None:
     """A state built from a one-character value is withheld, not recorded.
 
     The text rule sees a value only where a label or a quote marks it, so a
     checker that built a state out of an inherited character leaves it inside a
     longer word. The string is one value the checker produced, so the whole
-    string is withheld rather than kept with the character recoverable.
+    string is withheld rather than kept with the character recoverable. A
+    punctuation character is no different: it is as recoverable from the string
+    as a letter is.
     """
+    embedded = f"prefix{character}"
+
     result = lasso_run(
         tmp_path,
-        lambda text: text.replace('"b": 0', '"b": "prefixx"'),
-        {"MODELCHECK_E2E_SECRET": "x"},
+        lambda text: text.replace('"b": 0', f'"b": "{embedded}"'),
+        {"MODELCHECK_E2E_SECRET": character},
     )
 
     recorded = [str(state) for state in result.trace.states]
     assert any(WITHHELD in state for state in recorded), "the string is withheld"
-    assert not any("prefixx" in state for state in recorded), (
+    assert not any(embedded in state for state in recorded), (
         "so the character is not recoverable from it"
     )
