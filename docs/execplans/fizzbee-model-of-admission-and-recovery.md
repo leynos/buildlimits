@@ -1271,10 +1271,13 @@ explicitly.
     `test_an_equivalent_escape_spelling_is_withheld_from_the_record` pin the
     check and the record; the `malformed-escaped` stub mode supplies the graph,
     and the `stopped` mode the marker line.
-  - The duplication gate then matched the two modules' import blocks, recorded
-    as a reasoned exception alongside the repository's existing import-list
-    entries, and three copies of the persisted-detail scaffolding, which moved
-    into `_persisted_detail`.
+  - The duplication gate then matched three copies of the persisted-detail
+    scaffolding, which moved into `_persisted_detail`. The lint gate then found
+    the redaction suite over the 400-line limit, so the typed preconditions and
+    the trace check moved to `tests/modelcheck_redaction_cases.py`; the suite is
+    354 lines and the helpers share one `_errored` precondition. Promoting the
+    helpers also showed the test module's import list no longer duplicated the
+    adapter's, so that reasoned exception was removed rather than left stale.
   - Focused validation on the working tree: 31 tests and one snapshot pass
     across the replacement modules and the two evidence suites; `ruff check`,
     `ruff format --check`, interrogate at 100%, the DF12 pylint plugins and

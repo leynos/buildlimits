@@ -14,14 +14,21 @@ needles were enough — is the failure this module exists to catch.
 
 The stub launcher and the specification it runs come from
 :mod:`tests.fizzbee_process_stubs`; the runs around each test's own graph or
-transcript come from :mod:`tests.modelcheck_evidence_cases`.
+transcript come from :mod:`tests.modelcheck_evidence_cases`, and the typed
+preconditions and the trace check from :mod:`tests.modelcheck_redaction_cases`.
 """
 
 import typing as typ
 from pathlib import Path
 
 import pytest
-from modelcheck_evidence_cases import LASSO_GRAPH, graph_run, run_stub
+from modelcheck_evidence_cases import graph_run, run_stub
+from modelcheck_redaction_cases import (
+    assert_trace_hides,
+    errored_graph,
+    errored_run,
+    lasso_run,
+)
 
 from modelcheck import domain
 from modelcheck.adapters.fizzbee_replacements import (
@@ -32,105 +39,7 @@ from modelcheck.adapters.fizzbee_replacements import (
 )
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
     from syrupy.assertion import SnapshotAssertion
-
-
-def _errored_run(
-    tmp_path: Path,
-    script: str,
-    environ: cabc.Mapping[str, str] | None = None,
-) -> domain.Errored:
-    """Run a stub that prints no verdict and return the error it produced.
-
-    A stub that prints no verdict line is the error every transcript test is
-    about, so the check that the run ended that way is a precondition here
-    rather than an assertion each test would repeat.
-    """
-    result = run_stub(tmp_path, script, environ)
-    assert isinstance(result, domain.Errored), "a run without a verdict is an error"
-    return result
-
-
-def _graph_run(
-    tmp_path: Path,
-    graph_text: str,
-    environ: cabc.Mapping[str, str] | None = None,
-) -> domain.CheckResult:
-    """Run a stub over ``graph_text`` as the error graph it writes.
-
-    Parameters
-    ----------
-    tmp_path : pathlib.Path
-        The scratch directory the stub is written into.
-    graph_text : str
-        The exact text to write as ``out/error-graph.json``.
-    environ : collections.abc.Mapping[str, str] | None
-        Values added to the environment the checker runs with.
-
-    Returns
-    -------
-    domain.CheckResult
-        What the adapter made of the run.
-    """
-    graph = tmp_path / "graph.json"
-    graph.write_text(graph_text, encoding="utf-8")
-    return graph_run(
-        tmp_path, f'mkdir -p out\ncp "{graph}" out/error-graph.json\n', environ
-    )
-
-
-def _errored_graph(
-    tmp_path: Path,
-    graph_text: str,
-    environ: cabc.Mapping[str, str] | None = None,
-) -> domain.Errored:
-    """Run a stub over ``graph_text`` and return the error it produced.
-
-    A graph the adapter refuses is the subject of each test that uses this, so
-    the check that the run ended that way is a precondition here rather than an
-    assertion each test would repeat.
-    """
-    result = _graph_run(tmp_path, graph_text, environ)
-    assert isinstance(result, domain.Errored), "a refused graph is an error"
-    return result
-
-
-def _lasso_run(
-    tmp_path: Path,
-    edit: cabc.Callable[[str], str],
-    environ: cabc.Mapping[str, str] | None = None,
-) -> domain.Counterexample:
-    """Run a stub over a recorded lasso that ``edit`` has rewritten.
-
-    The recorded lasso is the one graph that parses into a trace, so a test
-    about classification changes the text and leaves the shape alone.
-    """
-    result = _graph_run(
-        tmp_path, edit(LASSO_GRAPH.read_text(encoding="utf-8")), environ
-    )
-    assert isinstance(result, domain.Counterexample), getattr(result, "detail", "")
-    return result
-
-
-def _assert_trace_hides(result: domain.Counterexample, *credentials: str) -> None:
-    """Assert the trace carries a placeholder and none of ``credentials``.
-
-    Parameters
-    ----------
-    result : domain.Counterexample
-        A classified lasso whose trace has been redacted.
-    *credentials : str
-        The values the run was given, none of which may reach the trace.
-    """
-    recorded = [str(state) for state in result.trace.states]
-    assert any("<redacted>" in state for state in recorded), (
-        "the decoded value is replaced"
-    )
-    assert not any(value in state for state in recorded for value in credentials), (
-        "and no credential reaches the trace"
-    )
 
 
 def test_a_scratch_path_in_the_error_graph_is_redacted(tmp_path: Path) -> None:
@@ -163,7 +72,7 @@ def test_a_credential_in_a_malformed_graph_is_redacted(tmp_path: Path) -> None:
     the reason as the value itself. The reason is evidence, so it is redacted
     like the graph beside it, and the graph's own spelling is replaced too.
     """
-    result = _errored_graph(
+    result = errored_graph(
         tmp_path, '{"state": "a\\u003cb"}', {"MODELCHECK_E2E_SECRET": "a<b"}
     )
 
@@ -210,7 +119,7 @@ def test_a_credential_the_checker_printed_is_redacted(
     where a checker prints a value it was given, so the replacement cannot
     rewrite the middle of an ordinary word.
     """
-    result = _errored_run(
+    result = errored_run(
         tmp_path,
         "#!/usr/bin/env bash\nprintf 'token=%s\\n' \"$MODELCHECK_E2E_SECRET\"\n",
         {"MODELCHECK_E2E_SECRET": echoed_value},
@@ -230,7 +139,7 @@ def test_both_json_spellings_of_a_credential_are_redacted(tmp_path: Path) -> Non
     the value itself nor a single "escaped form" of it. Only replacing every
     spelling keeps the record clean, so the graph written here carries each one.
     """
-    result = _errored_graph(
+    result = errored_graph(
         tmp_path,
         '{"escaped": "a\\"\\u00e9", "literal": "a\\"é"}',
         {"MODELCHECK_E2E_SECRET": 'a"é'},
@@ -254,13 +163,13 @@ def test_a_credential_only_the_decoder_sees_is_redacted(tmp_path: Path) -> None:
     trace file carry.
     """
     credential = "a<b"
-    result = _lasso_run(
+    result = lasso_run(
         tmp_path,
         lambda text: text.replace('"b": 0', '"b": "a\\u003cb"'),
         {"MODELCHECK_E2E_SECRET": credential},
     )
 
-    _assert_trace_hides(result, credential)
+    assert_trace_hides(result, credential)
 
 
 def test_a_one_character_credential_named_flag_leaves_the_counts_intact(
@@ -275,7 +184,7 @@ def test_a_one_character_credential_named_flag_leaves_the_counts_intact(
     would no longer be JSON. The value is therefore replaced only in a value
     position, so the counts beside it survive.
     """
-    result = _errored_run(
+    result = errored_run(
         tmp_path,
         '#!/usr/bin/env bash\nprintf \'{"current": 0, "counts": {"Gate": 1}}\\n\'\n',
         {"MODELCHECK_E2E_SESSION_ATTENDED": "0"},
@@ -297,7 +206,7 @@ def test_a_one_character_credential_in_a_value_position_is_redacted(
     number beside them is left alone. The whole diagnostic is pinned, because
     which positions it replaces and which it leaves is the contract.
     """
-    result = _errored_run(
+    result = errored_run(
         tmp_path,
         '#!/usr/bin/env bash\nprintf \'token=0\\n{"current": 0, "flag": "0"}\\n\'\n',
         {"MODELCHECK_E2E_SESSION_ATTENDED": "0"},
@@ -316,13 +225,13 @@ def test_a_one_character_credential_in_a_decoded_state_is_redacted(
     A decoded state value has neither, yet the whole string is the value the
     checker was given, so it is replaced rather than left in the saved trace.
     """
-    result = _lasso_run(
+    result = lasso_run(
         tmp_path,
         lambda text: text.replace('"b": 0', '"b": "x"'),
         {"MODELCHECK_E2E_SECRET": "x"},
     )
 
-    _assert_trace_hides(result, "x")
+    assert_trace_hides(result, "x")
 
 
 def test_an_equivalent_escape_spelling_withholds_the_text() -> None:
@@ -351,7 +260,7 @@ def test_evidence_a_credential_survives_in_is_withheld(tmp_path: Path) -> None:
     secret, so the adapter withholds the transcript and says why rather than
     committing the value.
     """
-    result = _errored_run(
+    result = errored_run(
         tmp_path,
         "#!/usr/bin/env bash\nprintf 'token=xabcy\\n'\n",
         {"MODELCHECK_E2E_SECRET": "abc"},
@@ -370,7 +279,7 @@ def test_a_numeric_credential_does_not_invalidate_the_graph(tmp_path: Path) -> N
     it, so the verdict survives; the number is a value the model computed and
     is left as it is.
     """
-    result = _lasso_run(
+    result = lasso_run(
         tmp_path,
         lambda text: text.replace('"b": 0', '"b": 12'),
         {"MODELCHECK_E2E_SECRET": "12"},
@@ -396,7 +305,7 @@ def test_two_credentials_that_redact_alike_keep_the_lasso(tmp_path: Path) -> Non
             text = text.replace('"b": 0', f'"b": "{value}"', 1)
         return text
 
-    result = _lasso_run(
+    result = lasso_run(
         tmp_path,
         edit,
         {"MODELCHECK_E2E_SECRET_A": "a1b2c", "MODELCHECK_E2E_SECRET_B": "d4e5f"},
@@ -405,7 +314,7 @@ def test_two_credentials_that_redact_alike_keep_the_lasso(tmp_path: Path) -> Non
     assert result.kind is domain.CounterexampleKind.LASSO, (
         "the ending is read before either value is replaced"
     )
-    _assert_trace_hides(result, "a1b2c", "d4e5f")
+    assert_trace_hides(result, "a1b2c", "d4e5f")
 
 
 def test_a_runner_path_beside_the_scratch_directory_is_redacted(
@@ -418,7 +327,7 @@ def test_a_runner_path_beside_the_scratch_directory_is_redacted(
     as plainly, and the adapter is handed the home directory because it is in
     the environment the checker ran with.
     """
-    result = _errored_run(
+    result = errored_run(
         tmp_path,
         "#!/usr/bin/env bash\nprintf 'cache %s/.cache/go-build\\n' \"$HOME\"\n",
         {"HOME": "/home/runner"},
@@ -436,7 +345,7 @@ def test_a_scratch_path_the_checker_printed_is_redacted(tmp_path: Path) -> None:
     path into an artefact a maintainer commits, so the adapter replaces it
     before the text becomes a diagnostic.
     """
-    result = _errored_run(
+    result = errored_run(
         tmp_path,
         "#!/usr/bin/env bash\nprintf 'reading %s/model.fizz\\n' \"$PWD\"\n",
     )
