@@ -587,16 +587,32 @@ are all occupied, which is the case a slow probe has to survive.
 _Table 6: `kache daemon status --json` latency._
 
 Two conclusions follow. First, the ordinary probe finishes in about 9 ms, so
-0.5 s is roughly fifty times the observed median and absorbs the saturated-host
-tail with an order of magnitude to spare. Second, the tail is real: at p99 a
-saturated host is already an order of magnitude slower than an idle one, and
-nothing in the profile proves it cannot exceed the budget under a heavier load.
-A timeout is therefore a possible reading for a daemon that is running, which
-is why `buildlimits.server_watch.ServerWatch` requires two consecutive failures
-before it withdraws composition rather than acting on one. The reading taken by
-a recovery release is exempt from that allowance: it follows a restart the
-transaction has just issued, so an unreachable answer there is the absence the
-hold was protecting against rather than noise.
+0.5 s is roughly fifty times the observed median and about 2.5 times the
+saturated-host p99 (199 ms). That margin is adequate for the measured tail but
+it is not generous: a heavier load could exceed it, and nothing in the profile
+proves otherwise. Second, the tail is real: at p99 a saturated host is already
+an order of magnitude slower than an idle one.
+
+A timeout is therefore a possible reading for a daemon that is running. What
+the supervisor does about that reading depends on who owns the cache:
+
+- For a **detached** backend (`sccache`) one slow answer must not withdraw
+  composition, so `buildlimits.server_watch.ServerWatch` requires
+  `UNREACHABLE_POLLS_BEFORE_DIRECT` consecutive failures. Composing against a
+  stopped server costs only a fallback notice, because the composed environment
+  names the managed socket and sets `SCCACHE_IGNORE_SERVER_IO_ERROR=1`, so the
+  group compiles in scope rather than starting anything. The reading taken by a
+  recovery release is exempt from that allowance: it follows a restart the
+  transaction has just issued, so an unreachable answer there is the absence
+  the hold was protecting against rather than noise.
+- For an **in-scope** backend (`kache`) the same allowance would be a hazard,
+  and is not applied. The supervisor owns no daemon to fall back from: a client
+  composed against a socket with no daemon answers starts one _inside the
+  admitted scope_, where it outlives the wrapper (see _Option D_). Measured on
+  2.0.0-rc.1, `KACHE_LOCAL_ONLY=1` does not prevent that start; it only makes
+  the daemon that starts local-only. So an in-scope cache settles on its first
+  unreachable reading, and the probe's own reading is what keeps a daemon out
+  of the scope.
 
 ### How RFC 0001 and RFC 0002 apply
 

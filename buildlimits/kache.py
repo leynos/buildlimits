@@ -56,8 +56,13 @@ if typ.TYPE_CHECKING:
 #: 30-minute fail-open would run a compile the supervisor's pool never saw.
 SCHEDULER_DISABLE = "0"
 
-#: Restrict kache to its local store, which keeps its remote-gated start paths
-#: inert; the remote backends are out of scope for this issue.
+#: Restrict kache to its local store; the remote backends are out of scope for
+#: this issue. This does *not* keep kache's start path inert: measured on
+#: 2.0.0-rc.1, a client with no daemon answering still starts one with this set,
+#: and warns only that the daemon it started will run local-only. What keeps a
+#: daemon out of an admitted scope is the supervisor refusing to compose against
+#: a daemon it has not just seen answer -- see
+#: :data:`buildlimits.server_watch.UNREACHABLE_POLLS_BEFORE_DIRECT`.
 LOCAL_ONLY = "1"
 
 #: The health probe runs on every admission cycle, so it must not hold the

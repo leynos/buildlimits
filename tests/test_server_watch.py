@@ -22,13 +22,22 @@ if typ.TYPE_CHECKING:
 
 @dc.dataclass(slots=True)
 class FakeServer:
-    """A managed server whose answers are scripted."""
+    """A managed server whose answers are scripted.
+
+    ``in_scope_work`` defaults to ``False`` because this fake stands in for a
+    detached server: the supervisor owns its service and composing against a
+    stopped one costs only a fallback notice. A backend whose work runs inside
+    the group's own scope, such as kache, sets it ``True`` — and then the
+    supervisor's composition decisions must treat a dead daemon as final rather
+    than as a possible slow answer.
+    """
 
     load: int | SccacheError = 0
     reachable: bool | SccacheError = True
     unit: str = "s.service"
     stopped: bool = False
     drain_queries: int = 0
+    in_scope_work: bool = False
 
     def active_compiles(self) -> int:
         """Return or raise the scripted load."""

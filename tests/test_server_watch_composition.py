@@ -48,18 +48,21 @@ def test_new_groups_cache_only_through_a_reachable_server(
     reading taken from the wrong port cannot produce the expected result.
 
     The state starts *against* the expected answer, which is what makes each
-    row a transition: withdrawing composition needs the two consecutive
-    failures :data:`UNREACHABLE_POLLS_BEFORE_DIRECT` requires, while restoring
-    it takes the first reachable reading.
+    row a transition. A detached backend withdraws composition only after the
+    failures :data:`UNREACHABLE_POLLS_BEFORE_DIRECT` requires, while an in-scope
+    one settles on its first, because composing a kache group against a dead
+    daemon lets the client start one inside the admitted scope. Restoring
+    composition always takes the first reachable reading.
     """
     admission = Admission(cached=not cached)
     watch = _watch(
         FakeServer(reachable=reachable is not True),
         admission,
         mode,
-        backend=FakeServer(reachable=reachable),
+        backend=FakeServer(reachable=reachable, in_scope_work=mode == "kache"),
     )
-    for _ in range(UNREACHABLE_POLLS_BEFORE_DIRECT):
+    polls = 1 if mode == "kache" else UNREACHABLE_POLLS_BEFORE_DIRECT
+    for _ in range(polls):
         watch.refresh_cache_mode()
     assert admission.cached is cached, "the cache mode follows the probe"
 
@@ -102,6 +105,34 @@ def test_repeated_unreachable_polls_do_withdraw_composition() -> None:
 
     watch.refresh_cache_mode()
     assert not watch.admission.cached, "the last failure withdrew composition"
+
+
+def test_an_in_scope_cache_withdraws_on_the_first_unreachable_reading() -> None:
+    """A kache group must not be composed against a daemon that just stopped.
+
+    The debounce exists because a detached backend only loses caching when a
+    slow answer is believed. An in-scope backend loses something else: kache
+    composed against a dead socket starts a daemon of its own inside the
+    admitted group's scope, where it outlives the wrapper that started it. That
+    was measured on 2.0.0-rc.1 and is not prevented by ``KACHE_LOCAL_ONLY=1``,
+    which only restricts the daemon kache starts rather than the starting of it.
+
+    So an in-scope cache gets no allowance: the first unreachable reading
+    withdraws composition, and the next group compiles directly instead of
+    handing kache the chance to start a daemon in the scope.
+    """
+    admission = Admission(cached=True)
+    server = FakeServer(reachable=True, in_scope_work=True)
+    watch = _watch(server, admission, "kache", backend=server)
+    watch.refresh_cache_mode()
+    assert admission.cached, "a reachable daemon composes"
+
+    server.reachable = False
+    watch.refresh_cache_mode()
+    assert not admission.cached, (
+        "an in-scope backend must not hold composition open for a second "
+        "reading; the fallback is what keeps a daemon out of the scope"
+    )
 
 
 def test_a_reachable_probe_restores_composition_immediately() -> None:

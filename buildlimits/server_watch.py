@@ -47,13 +47,23 @@ if typ.TYPE_CHECKING:
     from buildlimits.timing import Clock
 
 #: Consecutive unreachable polls required before new groups stop composing
-#: with the cache. One slow ``daemon status`` under load reads as a timeout,
-#: so a single reading is not evidence of a stopped daemon: the deadline-based
-#: hold in :meth:`ServerWatch.hold_cache` already handles the stop-and-restart
-#: window, and this counter absorbs the transient that is not a deadline. Two
-#: is the smallest number that distinguishes "answered slowly once" from
-#: "consistently not answering", and it still falls back within two five-second
-#: poll intervals of a server that really has stopped.
+#: with a *detached* cache. One slow ``daemon status`` under load reads as a
+#: timeout, so a single reading is not evidence of a stopped daemon: the
+#: deadline-based hold in :meth:`ServerWatch.hold_cache` already handles the
+#: stop-and-restart window, and this counter absorbs the transient that is not
+#: a deadline. Two is the smallest number that distinguishes "answered slowly
+#: once" from "consistently not answering", and it still falls back within two
+#: five-second poll intervals of a server that really has stopped.
+#:
+#: The allowance is deliberately *not* extended to an in-scope backend. There
+#: the supervisor owns no service, so composing against a dead daemon does not
+#: cost a fallback notice -- the client takes its own start branch and creates a
+#: daemon inside the admitted scope, where it outlives the wrapper that started
+#: it. That is measured, not presumed: kache 2.0.0-rc.1 does it even with
+#: ``KACHE_LOCAL_ONLY=1`` set, which only restricts the daemon it starts rather
+#: than preventing the start. So for an in-scope cache a single unreachable
+#: reading settles at once; the window this allowance would open is precisely
+#: the one the health probe exists to close.
 UNREACHABLE_POLLS_BEFORE_DIRECT = 2
 
 
@@ -236,17 +246,24 @@ class ServerWatch:
     def refresh_cache_mode(self, *, _allow_transient_failure: bool = True) -> None:
         """Compose new groups with the cache only while it can serve work.
 
-        One unreachable reading does not withdraw composition. The probe is
-        bounded at half a second, so a daemon answering slowly under load
-        reads as a timeout rather than as a stopped daemon: acting on a single
-        result would clear ``admission.cached``, and every group composed
-        before the next poll -- up to a five-second interval -- would compile
-        directly with the fallback notice. A stopped or missing daemon fails
-        every poll, so requiring ``UNREACHABLE_POLLS_BEFORE_DIRECT``
-        consecutive failures still falls back within two poll intervals while
-        a lone slow answer is absorbed. A reachable reading always restores
-        composition at once, because coming back is never the unsafe
-        direction.
+        For a detached backend, one unreachable reading does not withdraw
+        composition. The probe is bounded at half a second, so a server
+        answering slowly under load reads as a timeout rather than as a
+        stopped one: acting on a single result would clear ``admission.cached``,
+        and every group composed before the next poll -- up to a five-second
+        interval -- would compile directly with the fallback notice. A stopped
+        or missing server fails every poll, so requiring
+        ``UNREACHABLE_POLLS_BEFORE_DIRECT`` consecutive failures still falls
+        back within two poll intervals while a lone slow answer is absorbed.
+
+        An in-scope backend gets no such allowance and settles on its first
+        reading. There the supervisor owns no service to fall back from:
+        composing against a dead daemon lets the client start one inside the
+        admitted scope, where it outlives the wrapper. kache 2.0.0-rc.1 is
+        measured to do exactly that even with ``KACHE_LOCAL_ONLY=1``, so
+        holding composition open for one extra poll would open the very window
+        the probe exists to close. A reachable reading always restores
+        composition at once, because coming back is never the unsafe direction.
 
         Parameters
         ----------
@@ -267,11 +284,16 @@ class ServerWatch:
             reachable, fault = False, str(error)
         self._unreachable_polls = 0 if reachable else self._unreachable_polls + 1
         # A first failure keeps whatever composition was already permitted, so
-        # a lone slow answer cannot withdraw it. There is nothing to preserve
-        # when the cache was not composing, so an unavailable cache still
-        # settles on its first reading rather than waiting for a second.
-        within_allowance = _allow_transient_failure and (
-            self._unreachable_polls < UNREACHABLE_POLLS_BEFORE_DIRECT
+        # a lone slow answer cannot withdraw it -- but only where composing
+        # against a dead daemon is harmless, which is the case the supervisor
+        # owns the service. There is also nothing to preserve when the cache was
+        # not composing, so an unavailable cache settles on its first reading
+        # rather than waiting for a second.
+        may_outlive_scope = not self.backend.in_scope_work
+        within_allowance = (
+            _allow_transient_failure
+            and may_outlive_scope
+            and (self._unreachable_polls < UNREACHABLE_POLLS_BEFORE_DIRECT)
         )
         settled = reachable or (self.admission.cached and within_allowance)
         self._announce_reachability(reachable=settled, fault=fault)

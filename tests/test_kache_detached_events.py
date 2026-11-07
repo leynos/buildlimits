@@ -76,6 +76,18 @@ class _KacheServer:
     server_queries: int = 0
     health_queries: int = 0
 
+    @property
+    def in_scope_work(self) -> bool:
+        """Every kache compilation runs inside the group's own scope.
+
+        The supervisor resolves this from the backend rather than the mode
+        string, and it is what decides whether a single unreachable reading may
+        leave composition open. For an in-scope cache it may not: a group
+        composed against a dead daemon lets the client start one inside the
+        scope it just entered.
+        """
+        return True
+
     def is_reachable(self) -> bool:
         """Report the scripted health reading, counting the poll.
 
