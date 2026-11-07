@@ -15,7 +15,7 @@ that run it are shared with :mod:`tests.test_modelcheck_cli_e2e`.
 import typing as typ
 from pathlib import Path
 
-from modelcheck_e2e_cases import assert_holds, persisted
+from modelcheck_e2e_cases import assert_holds, persisted, traced_run
 
 
 def _malformed_detail(tmp_path: Path, credential: str) -> str:
@@ -134,3 +134,37 @@ def test_an_escaped_credential_reaches_the_persisted_record_redacted(
         "the escaped credential is replaced whole"
     )
     assert "do-not-record" not in detail, "and no part of it is left behind"
+
+
+def test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence(
+    tmp_path: Path,
+) -> None:
+    r"""A graph that parses is evidence in decoded form, and it is redacted too.
+
+    Redacting the graph's text answers only for the spellings the adapter knows
+    how to write. The checker is a Go program, and its encoder writes a
+    less-than sign as a Unicode escape, which no Python JSON writer produces:
+    a credential containing one survives the text pass and is a plain value
+    once the graph is decoded. The trace is what the saved file and the record
+    carry, so the assertion is made there, on a run that really parsed a lasso.
+    """
+    credential = "a<b-do-not-record"
+    records = tmp_path / "matrix.json"
+
+    traced = traced_run(
+        tmp_path,
+        "--json",
+        str(records),
+        MODELCHECK_E2E_CREDENTIAL="1",
+        MODELCHECK_E2E_SECRET=credential,
+    )
+
+    assert traced.result.returncode == 0, traced.result.stderr
+    saved = (traced.model / "traces" / "incident-1-BEventually.json").read_text(
+        encoding="utf-8"
+    )
+    assert "<redacted>" in saved, "the decoded value is replaced in the saved trace"
+    assert "do-not-record" not in saved, "so the credential does not reach the file"
+    assert "do-not-record" not in records.read_text(encoding="utf-8"), (
+        "nor the record the matrix wrote"
+    )

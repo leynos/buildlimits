@@ -253,7 +253,10 @@ class TracedRun(typ.NamedTuple):
 
 
 def traced_run(
-    tmp_path: Path, seed: dict[Path, bytes] | None = None
+    tmp_path: Path,
+    *extra: str,
+    seed: dict[Path, bytes] | None = None,
+    **overrides: str,
 ) -> TracedRun:
     """Copy the fixture model and run the command with ``--save-traces``.
 
@@ -265,10 +268,15 @@ def traced_run(
     ----------
     tmp_path : pathlib.Path
         The scratch directory the copy and the stub's record go in.
+    *extra : str
+        Further arguments to the ``check`` command, after ``--save-traces``.
     seed : dict[pathlib.Path, bytes] | None
         Files to write into the copy before the run, relative to it. A test
         that needs a trace from an earlier run seeds that path here, so the
         "before" snapshot includes it.
+    **overrides : str
+        Environment variables for this run, such as the stub's answer or the
+        credential it is to write into the graph.
 
     Returns
     -------
@@ -287,7 +295,9 @@ def traced_run(
         "--fizz",
         str(FIZZ),
         "--save-traces",
+        *extra,
         log=tmp_path / "seen.log",
+        **overrides,
     )
     return TracedRun(model, before, contents(model), result)
 

@@ -1143,6 +1143,25 @@ line a verdict is read from — an `Error:` diagnostic or the marker a signal
 left — is bounded on the same reasoning. A new path or credential the checker
 can print belongs in that redaction rather than in a test-only exception.
 
+Redacting the text is not sufficient on its own, because a trace is rebuilt
+from the graph after that text has been parsed. The checker is a Go program,
+and its JSON encoder writes `<`, `>` and `&` as six-character Unicode escapes
+that no needle derived from the value's Python spelling matches; a value
+holding both an escaped quote and a literal non-ASCII character matches neither
+of the two spellings Python produces. `adapters/fizzbee_trace_redaction`
+therefore walks each decoded state after parsing and replaces the same values
+again, and `fizzbee_process` applies it to every parsed result rather than only
+to a failed one.
+
+Two residuals are deliberate and pinned by tests. A credential shorter than six
+characters is replaced only where it stands alone — after `NAME=`, inside JSON
+quotes — so a short value does not rewrite the words it happens to occur in. A
+one-character value is not replaced at all: the name heuristic cannot tell a
+secret from a flag, and a shell that sets `CLAUDE_CODE_SESSION_ATTENDED=0`
+would otherwise make `0` a needle that rewrites every state count and the
+graph's own indices. Both are reasons an artefact is read before it is
+committed, not reasons to trust one that was not.
+
 The two obligations have different costs and run in different places.
 `make model-fidelity` runs both drift reports and the drift tests; it compares
 text with an import of the production package, so it costs seconds and runs on

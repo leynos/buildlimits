@@ -30,6 +30,11 @@ _FAILED = (
 )
 """The output a stub prints after it has written its error graph."""
 
+_LASSO_GRAPH = (
+    Path(__file__).with_name("fixtures") / "modelcheck" / "lasso-error-graph.json"
+)
+"""A recorded lasso the tests use when the graph must parse into a trace."""
+
 
 def _graph_run(tmp_path: Path, prepare: str) -> domain.CheckResult:
     """Run a stub that prepares an error graph and then reports a failure.
@@ -203,6 +208,90 @@ def test_a_short_credential_the_checker_printed_is_redacted(
     assert isinstance(result, domain.Errored), "no verdict line is an error"
     assert "token=<redacted>" in result.detail, "the value is replaced whole"
     assert echoed_value not in result.detail, "and no part of it is left behind"
+
+
+def test_both_json_spellings_of_a_credential_are_redacted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r"""A graph holds a spelling of a credential, and there is more than one.
+
+    Two JSON writers both produce valid documents and disagree about the
+    characters they escape: a non-ASCII character may be written literally or
+    as a Unicode escape, and a quote is escaped by both. A credential mixing the
+    two — ``a"é`` — therefore appears in the graph in a shape that is neither
+    the value itself nor a single "escaped form" of it. Only replacing every
+    spelling keeps the record clean, so the graph written here carries each one.
+    """
+    monkeypatch.setenv("MODELCHECK_E2E_SECRET", 'a"é')
+    graph = tmp_path / "graph.json"
+    graph.write_text('{"escaped": "a\\"\\u00e9", "literal": "a\\"é"}', encoding="utf-8")
+
+    result = _graph_run(tmp_path, f'mkdir -p out\ncp "{graph}" out/error-graph.json\n')
+
+    assert isinstance(result, domain.Errored), "a mapping is not an error graph"
+    assert result.detail.count("<redacted>") >= 2, "each spelling is replaced"
+    assert "\\u00e9" not in result.detail, "and neither is left behind"
+    assert "é" not in result.detail, "in its literal spelling either"
+    assert 'a\\"' not in result.detail, "nor the escaped quote around them"
+
+
+def test_a_credential_only_the_decoder_sees_is_redacted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A spelling the needles do not anticipate is still caught in the trace.
+
+    The text pass knows the spellings :mod:`json` produces, but a checker
+    written in another language escapes more: Go's encoder writes a less-than
+    sign as a Unicode escape of six characters, which no Python writer produces
+    for that character. Replacing
+    the graph's text cannot find a credential spelled that way, so the decoded
+    path is redacted too — and that is what this test observes, because the
+    trace is the value the record and the saved trace file carry.
+    """
+    credential = "a<b"
+    monkeypatch.setenv("MODELCHECK_E2E_SECRET", credential)
+    graph = tmp_path / "graph.json"
+    graph.write_text(
+        _LASSO_GRAPH.read_text(encoding="utf-8").replace('"b": 0', '"b": "a\\u003cb"'),
+        encoding="utf-8",
+    )
+
+    result = _graph_run(tmp_path, f'mkdir -p out\ncp "{graph}" out/error-graph.json\n')
+
+    assert isinstance(result, domain.Counterexample), getattr(result, "detail", "")
+    recorded = [str(state) for state in result.trace.states]
+    assert any("<redacted>" in state for state in recorded), (
+        "the decoded value is replaced"
+    )
+    assert not any(credential in state for state in recorded), (
+        "and the credential reaches neither the trace nor the record"
+    )
+
+
+def test_a_one_character_credential_named_flag_leaves_the_evidence_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A credential-named flag is not a secret, and replacing it destroys evidence.
+
+    The name heuristic matches ``*_SESSION_*``, which shells use for booleans
+    such as ``CLAUDE_CODE_SESSION_ATTENDED=0``. Replacing a one-character value
+    would make ``0`` and ``1`` needles: every state count in the transcript and
+    every number in the error graph would become a placeholder, and the graph
+    would no longer be JSON. The residual is deliberate, so it is pinned here
+    rather than left to be rediscovered after an evidence record is corrupted.
+    """
+    monkeypatch.setenv("MODELCHECK_E2E_SESSION_ATTENDED", "0")
+    fizz = stub(
+        tmp_path,
+        '#!/usr/bin/env bash\nprintf \'{"current": 0, "counts": {"Gate": 1}}\\n\'\n',
+    )
+
+    result = FizzbeeChecker(fizz).check(spec())
+
+    assert isinstance(result, domain.Errored), "no verdict line is an error"
+    assert '{"current": 0, "counts": {"Gate": 1}}' in result.detail, (
+        "the counts survive, because a flag is not a credential"
+    )
 
 
 def test_a_runner_path_beside_the_scratch_directory_is_redacted(

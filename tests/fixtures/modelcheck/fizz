@@ -21,6 +21,13 @@
 # and replaces both the runner path and the credential rather than carrying any
 # of them whole.
 #
+# ``MODELCHECK_E2E_CREDENTIAL`` makes the recorded lasso carry the value of
+# ``MODELCHECK_E2E_SECRET`` in every state, spelled as the real checker's Go
+# encoder spells it. That spelling is deliberately one no Python JSON writer
+# produces, so the value survives a redaction of the graph's text and can only
+# be removed from the decoded trace. The saved trace file and the record are
+# what the end-to-end test reads back.
+#
 # ``MODELCHECK_E2E_LOG`` names the file each invocation appends its working
 # directory and arguments to. The test points it at its own scratch directory,
 # so running the command line never writes into the tracked fixture tree. The
@@ -68,10 +75,36 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+credentialed_graph() {
+  # The recorded lasso with the inherited credential in each state, spelled the
+  # way the real checker's Go encoder spells it: a quote or a backslash is
+  # escaped, and so is a less-than sign, as the six characters backslash-u-0-0-
+  # 3-c. Python's JSON writer never escapes that character, so the text pass
+  # cannot anticipate this spelling; it is caught only after the graph is
+  # decoded into the trace that the saved file and the record carry.
+  local escaped="${MODELCHECK_E2E_SECRET:-}" line
+  escaped=${escaped//\\/\\\\}
+  escaped=${escaped//\"/\\\"}
+  escaped=${escaped//</\\u003c}
+  # The fixture's last line has no trailing newline, and ``read`` fails on it
+  # while still placing it in ``line``; testing the variable keeps that line.
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$line" = '        "b": 0,' ]; then
+      printf '        "b": "%s",\n' "$escaped"
+    else
+      printf '%s\n' "$line"
+    fi
+  done < "$directory/lasso-error-graph.json"
+}
+
 emit_lasso() {
   if [ -n "$output" ]; then
     mkdir -p "$output"
-    cp "$directory/lasso-error-graph.json" "$output/error-graph.json"
+    if [ -n "${MODELCHECK_E2E_CREDENTIAL:-}" ]; then
+      credentialed_graph > "$output/error-graph.json"
+    else
+      cp "$directory/lasso-error-graph.json" "$output/error-graph.json"
+    fi
   fi
   cat "$directory/lasso-stdout.txt"
 }

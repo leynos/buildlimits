@@ -1702,6 +1702,13 @@ reason = "Matching import lists: both modules drive the same process adapter and
 
 [[tool.duplication_gate.allow]]
 members = [
+    "tests/test_adapter_restart.py",
+    "tests/test_modelcheck_fizzbee_evidence.py",
+]
+reason = "Both set one environment variable with monkeypatch.setenv before exercising a subprocess boundary; the match is that single stdlib call, while the variable, its value and the behaviour under test differ. A helper around it would name pytest's fixture rather than a shared behaviour."
+
+[[tool.duplication_gate.allow]]
+members = [
     "buildlimits/cache_recovery.py",
     "buildlimits/outcome_store.py",
     "tests/outcome_store_helpers.py",

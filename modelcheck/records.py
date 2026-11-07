@@ -282,9 +282,13 @@ def trace_record(trace: Trace) -> dict[str, object]:
     -------
     dict[str, object]
         The initial state, every step's action and state, how the path ends and
-        where its cycle starts. The trace is already normalized, so the record
-        needs no further redaction: it carries names and states the model
-        declares, not addresses or timings.
+        where its cycle starts. This function performs no redaction of its own:
+        the trace it is given has already had the runner's paths and
+        credential values replaced, both in the graph's text and in the values
+        decoded from it, by the adapter that read the run. Rendering it again
+        here would have to guess which values were the runner's, and the trace
+        as it arrives carries names and states the model declares rather than
+        addresses or timings.
 
     Examples
     --------

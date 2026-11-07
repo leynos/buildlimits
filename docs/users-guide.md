@@ -1181,12 +1181,17 @@ written only for a counterexample, so a configuration that once failed and now
 passes keeps its old file until you delete it: the run replaces the traces it
 writes and removes nothing else. The JSON record names the kind of result each
 failed run produced, and a run that reported no exploration time of its own is
-recorded with the time the harness waited for it, under a field of its own. A
-record's `detail` is bounded to 4,000 characters with the cut stated, and the
-run's own paths and the values of credential-named environment variables are
-replaced before the text is kept, so a committed artefact describes the model
-rather than the machine that checked it. Those tests are opt-in because they
-need the binary:
+recorded with the time the harness waited for it, under a field of its own.
+Each captured text in a record's `detail` — the checker's transcript and, when
+a graph could not be decoded, the graph itself — is cut to 4,000 characters
+with the cut stated, so one record can hold two captures. The run's own paths
+and the values of credential-named environment variables are replaced before
+the text is kept, and again in the trace's states once the graph is parsed, so
+a committed artefact describes the model rather than the machine that checked
+it. Two values escape that replacement by design: a credential shorter than six
+characters is replaced only where it stands alone, and a one-character value is
+left alone so a boolean flag cannot rewrite every state count. Read a generated
+artefact before sharing it. Those tests are opt-in because they need the binary:
 
 ```bash
 BUILD_LIMITS_MODEL_CHECK=1 .venv/bin/pytest -m fizzbee tests

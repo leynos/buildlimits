@@ -10,9 +10,18 @@ runner, and each is replaced here before the text leaves the adapter.
 The adapter cannot tell a secret from any other value, so a variable's name is
 the only signal available. That makes the length of a value the hard part of
 the problem rather than an afterthought: a long value can be replaced wherever
-it occurs, while a short one can occur inside an ordinary word. Both rules —
-and the one residual they leave — are stated beside the constants that encode
-them.
+it occurs, while a short one can occur inside an ordinary word. Both rules are
+stated beside the constant that encodes them.
+
+Text is not the only place a credential reaches evidence. A checker that writes
+its error graph as JSON writes a *spelling* of each value, and there is more
+than one: a quote may or may not be escaped, and a non-ASCII character may be
+written literally or as a Unicode escape. The graph's words are redacted as text
+with every spelling a JSON writer produces, and the values decoded from it are
+redacted again by
+:func:`modelcheck.adapters.fizzbee_trace_redaction.redact_result`, so neither
+the saved trace nor the record can carry the value in a form the text pass did
+not anticipate.
 
 The bounding half of the same job lives in
 :mod:`modelcheck.adapters.fizzbee_evidence`; the two are separate because they
@@ -81,16 +90,6 @@ signal available. The pattern matches a whole underscore-separated word, so
 ``GITHUB_TOKEN`` and ``AWS_SECRET_ACCESS_KEY`` match while ``AUTHOR`` does not.
 """
 
-_MIN_SECRET_LENGTH = 2
-"""The shortest value treated as a credential.
-
-A one-character value is not replaced, and that is a deliberate residual. It is
-indistinguishable from a state count, a flag or an exit status: ``Unique states:
-1`` is the very evidence a record exists to carry, so replacing every ``1`` in a
-transcript would destroy the report without protecting a secret it can no
-longer express. Two characters is the shortest value a reader could recognize
-as a credential at all.
-"""
 
 _WHOLE_WORD_SECRET_LENGTH = 6
 """The length below which a credential is replaced only as a whole token.
@@ -98,7 +97,25 @@ _WHOLE_WORD_SECRET_LENGTH = 6
 A short value such as ``abcde`` can occur inside an ordinary word, so it is
 matched only where it stands alone. That is exactly where a checker prints a
 value it was given — after ``NAME=``, inside JSON quotes — while ``abcdef`` is
-left intact.
+replaced wherever it occurs.
+"""
+
+
+_MIN_SECRET_LENGTH = 2
+"""The shortest value treated as a credential.
+
+A one-character value is not replaced, and that residual is deliberate. The
+name heuristic cannot tell a secret from a flag: a shell that sets
+``CLAUDE_CODE_SESSION_ATTENDED=0``, or any other credential-named boolean, would
+make ``0`` and ``1`` needles. Replacing them rewrites every state count in the
+transcript and turns the error graph's numbers into placeholders, which is
+malformed JSON rather than redacted evidence — the record would be destroyed,
+and the secret such a value could express is one character.
+
+Length is the only signal available, and it is used in only one direction: a
+short value is matched as a whole token rather than wherever it occurs. A value
+of two characters is the shortest that can be a credential a reader would
+recognize, and it is replaced where it stands alone.
 """
 
 
@@ -214,9 +231,9 @@ def redaction_for(
     Redaction
         Replacements for the scratch directory, the launcher, the caller's home
         and temporary directories, and every value in ``environment`` whose
-        name marks it as a credential, together with that value's JSON-escaped
-        form. Longest needle first, so a path nested inside another is replaced
-        whole.
+        name marks it as a credential, together with each JSON spelling of that
+        value that differs from it. Longest needle first, so a path nested
+        inside another is replaced whole.
 
     Notes
     -----
@@ -229,7 +246,7 @@ def redaction_for(
     only where it stands alone, so a five-character value printed as
     ``NAME=abcde`` is removed while the same characters inside a longer word
     are kept. A one-character value is not replaced at all; see
-    :data:`_MIN_SECRET_LENGTH` for why that residual is accepted.
+    :data:`_MIN_SECRET_LENGTH` for the evidence behind that residual.
 
     Examples
     --------
@@ -279,21 +296,57 @@ def _secret_replacements(
     Returns
     -------
     list[Replacement]
-        One replacement per credential value, plus one for its JSON-escaped
-        form when the two differ. A checker that writes its graph as JSON
-        escapes a quote or a backslash in the value it writes, so the document
-        holds ``a\\"b`` where the credential is ``a"b``; replacing only the
-        literal value would leave the escaped form — the same credential — in
-        the committed record.
+        One replacement per credential value, plus one for each JSON spelling
+        of it that differs from the value. A checker that writes its graph as
+        JSON escapes a quote or a backslash, and may or may not escape a
+        non-ASCII character; both spellings are written by real JSON writers,
+        so both are needles. Replacing only one would leave the other — the
+        same credential — in the committed record.
     """
-    replacements = []
+    replacements: list[Replacement] = []
     for value in _secret_values(environment):
         whole_word = len(value) < _WHOLE_WORD_SECRET_LENGTH
-        replacements.append(Replacement(value, _HIDDEN_VALUE, whole_word))
-        escaped = json.dumps(value)[1:-1]
-        if escaped != value:
-            replacements.append(Replacement(escaped, _HIDDEN_VALUE, whole_word))
+        replacements.extend(
+            Replacement(needle, _HIDDEN_VALUE, whole_word)
+            for needle in (value, *_escaped_forms(value))
+        )
     return replacements
+
+
+def _escaped_forms(value: str) -> tuple[str, ...]:
+    r"""Return the JSON spellings of ``value`` that differ from it.
+
+    Two writers both produce valid JSON and disagree about non-ASCII
+    characters: one escapes each as ``\uXXXX`` and the other writes it as
+    itself. A credential mixing an escaped quote with a literal character —
+    ``a\"é`` — is neither the value itself nor either writer's whole spelling
+    of it, so a single escaped form would miss it. Both forms are returned.
+
+    Parameters
+    ----------
+    value : str
+        A credential's literal value.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Each spelling the JSON encoder produces for ``value``, without the
+        surrounding quotes, that is not the value itself. Sorted so a run's
+        needles do not depend on set iteration order.
+
+    Examples
+    --------
+    >>> _escaped_forms("plain")
+    ()
+    >>> _escaped_forms('a"b')
+    ('a\\"b',)
+    >>> len(_escaped_forms('a"é'))
+    2
+    """
+    forms = {
+        json.dumps(value, ensure_ascii=ascii_only)[1:-1] for ascii_only in (True, False)
+    }
+    return tuple(sorted(form for form in forms if form != value))
 
 
 def _secret_values(environment: cabc.Mapping[str, str]) -> tuple[str, ...]:
@@ -307,8 +360,15 @@ def _secret_values(environment: cabc.Mapping[str, str]) -> tuple[str, ...]:
     Returns
     -------
     tuple[str, ...]
-        Each distinct value long enough to be a credential, longest first, so a
-        value that contains another is replaced whole.
+        Each distinct value long enough to be a credential, longest first, so
+        a value that contains another is replaced whole.
+
+    Notes
+    -----
+    A one-character value is excluded here rather than being matched as a whole
+    token, because the name heuristic cannot distinguish a secret from a flag.
+    An empty value is excluded too: replacing it would insert the placeholder
+    between every pair of characters rather than remove anything.
     """
     values = {
         value

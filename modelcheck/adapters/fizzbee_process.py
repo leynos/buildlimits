@@ -42,6 +42,7 @@ from modelcheck.adapters.fizzbee_evidence import (
 from modelcheck.adapters.fizzbee_output import parse_output
 from modelcheck.adapters.fizzbee_process_group import kill_group, stopped
 from modelcheck.adapters.fizzbee_redaction import redaction_for
+from modelcheck.adapters.fizzbee_trace_redaction import redact_result
 from modelcheck.domain import Errored, Stopped
 
 if typ.TYPE_CHECKING:
@@ -176,6 +177,14 @@ class FizzbeeChecker:
         capture on a failed one — so a runner path or an echoed credential left
         in it would travel into the artefact the same way one printed to the
         transcript would.
+
+        Redacting the graph's text is not enough for a graph that parses: the
+        trace is that JSON decoded, and a decoded string is a different value
+        from any spelling of it the text pass saw.
+        :func:`~modelcheck.adapters.fizzbee_trace_redaction.redact_result`
+        therefore applies the same replacements to the decoded path, so the
+        trace file and the record carry the placeholder rather than the
+        credential whatever form the checker wrote.
         """
         (directory / _SPEC_NAME).write_text(spec.text, encoding="utf-8")
         output = directory / "out"
@@ -203,7 +212,9 @@ class FizzbeeChecker:
                 )
             )
         graph_text = None if graph is None else redaction.apply(graph)
-        return parse_output(stdout, completed.status, graph_text)
+        return redact_result(
+            parse_output(stdout, completed.status, graph_text), redaction
+        )
 
     def _run(
         self, directory: Path, output: Path, environment: dict[str, str]
