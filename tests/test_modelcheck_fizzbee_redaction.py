@@ -24,7 +24,12 @@ import pytest
 from modelcheck_evidence_cases import LASSO_GRAPH, graph_run, run_stub
 
 from modelcheck import domain
-from modelcheck.adapters.fizzbee_replacements import WITHHELD
+from modelcheck.adapters.fizzbee_replacements import (
+    HIDDEN_VALUE,
+    WITHHELD,
+    Redaction,
+    Replacement,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -167,6 +172,26 @@ def test_a_credential_in_a_malformed_graph_is_redacted(tmp_path: Path) -> None:
     assert "\\u003c" not in result.detail, "nor any spelling of it in the capture"
 
 
+def test_a_credential_a_stopped_run_printed_is_redacted(tmp_path: Path) -> None:
+    """A stopped run's marker line is evidence, so it is redacted too.
+
+    The checker prints the marker when a signal cuts the run short, and the
+    line can carry whatever it echoed around the interruption. The record
+    persists the detail, so a credential in it would be committed exactly as
+    one in an error's detail would.
+    """
+    result = run_stub(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        "printf 'Model checker stopped: token=%s\\n' \"$MODELCHECK_E2E_SECRET\"\n",
+        {"MODELCHECK_E2E_SECRET": "s3cr3t-do-not-record"},
+    )
+
+    assert isinstance(result, domain.Stopped), "the marker is a stopped run"
+    assert "token=<redacted>" in result.detail, "the value is replaced"
+    assert "s3cr3t-do-not-record" not in result.detail, "and not recorded"
+
+
 @pytest.mark.parametrize("echoed_value", ["s3cr3t-do-not-record", "a1b2c"])
 def test_a_credential_the_checker_printed_is_redacted(
     tmp_path: Path, echoed_value: str
@@ -279,6 +304,42 @@ def test_a_one_character_credential_in_a_value_position_is_redacted(
     )
 
     assert result.detail == snapshot, "the value positions are replaced, the count kept"
+
+
+def test_a_one_character_credential_in_a_decoded_state_is_redacted(
+    tmp_path: Path,
+) -> None:
+    """A decoded state value is a value position, even without quotes.
+
+    The text rule replaces a one-character credential only after ``=`` or
+    between quotes, because a bare character needle would rewrite every count.
+    A decoded state value has neither, yet the whole string is the value the
+    checker was given, so it is replaced rather than left in the saved trace.
+    """
+    result = _lasso_run(
+        tmp_path,
+        lambda text: text.replace('"b": 0', '"b": "x"'),
+        {"MODELCHECK_E2E_SECRET": "x"},
+    )
+
+    _assert_trace_hides(result, "x")
+
+
+def test_an_equivalent_escape_spelling_withholds_the_text() -> None:
+    r"""A spelling no needle enumerates is still the credential.
+
+    The value ``a<b`` can be written with every character escaped, which is
+    valid JSON and matches neither the literal value nor the Go spelling the
+    needles know. The survival check decodes the text before it looks, so the
+    text is withheld rather than recorded with the value recoverable from it.
+    """
+    redaction = Redaction(
+        (Replacement("a<b", HIDDEN_VALUE, whole_word=True),), ("a<b",)
+    )
+
+    assert redaction.retain('{"token": "\\u0061\\u003c\\u0062"}') == WITHHELD, (
+        "the spelling decodes to the credential, so the text is withheld"
+    )
 
 
 def test_evidence_a_credential_survives_in_is_withheld(tmp_path: Path) -> None:

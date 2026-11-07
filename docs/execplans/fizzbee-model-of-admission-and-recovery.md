@@ -1247,6 +1247,39 @@ explicitly.
     `model-fidelity`, `test-workflow-contracts` and `model-check` (14
     expectations met, fixpoint stable). Only this plan's text changed after
     that run, and the Markdown and formatting gates were re-run on it.
+- [x] (2026-11-07) **The seventh review round's four findings are answered: a
+    stopped run's detail is redacted, a decoded one-character value is
+    replaced, and a spelling no needle enumerates is withheld.** Recorded as
+    D53.
+  - `redact_result` now redacts `Stopped.detail` as well as `Errored.detail`:
+    the marker line a signal leaves behind is the only evidence a stopped run
+    keeps, and it can carry a credential and a runner path (D53).
+    `test_a_credential_a_stopped_run_printed_is_redacted` and
+    `test_a_stopped_run_reaches_the_persisted_record_redacted` pin it, the
+    latter through the record the command line writes.
+  - `Redaction.retain_value` treats one decoded JSON string as a value
+    position, so a one-character credential that is a whole state value is
+    replaced without needing an `=` or a quote. A string equal to a needle
+    becomes that replacement's placeholder.
+    `test_a_one_character_credential_in_a_decoded_state_is_redacted` covers
+    the saved trace.
+  - `Redaction.retains_credential` also looks at `_decoded_view`, the text with
+    JSON's escapes resolved. A credential written with every character escaped
+    matches neither its literal spelling nor the Go one, yet a reader can
+    recover it, so the text is withheld rather than recorded.
+    `test_an_equivalent_escape_spelling_withholds_the_text` and
+    `test_an_equivalent_escape_spelling_is_withheld_from_the_record` pin the
+    check and the record; the `malformed-escaped` stub mode supplies the graph,
+    and the `stopped` mode the marker line.
+  - The duplication gate then matched the two modules' import blocks, recorded
+    as a reasoned exception alongside the repository's existing import-list
+    entries, and three copies of the persisted-detail scaffolding, which moved
+    into `_persisted_detail`.
+  - Focused validation on the working tree: 31 tests and one snapshot pass
+    across the replacement modules and the two evidence suites; `ruff check`,
+    `ruff format --check`, interrogate at 100%, the DF12 pylint plugins and
+    `make duplication` pass on the changed files. Repository gates are
+    delegated to the scrutineer on the final candidate.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -3090,6 +3123,33 @@ explicitly.
   - Evidence: `test_a_source_that_is_not_utf8_exits_two_and_names_it`;
     `source_text`'s and `check`'s `Raises` sections; the users' guide's
     generated-artefacts section; `git ls-files models | grep traces`.
+
+- **D53. A stopped run's detail is redacted, a decoded string is a value
+  position, and a text no needle can prove clean is withheld.** _Decided
+  2026-11-07._
+  - Decision: `redact_result` redacts `Stopped.detail` exactly as it redacts
+    `Errored.detail`. `Redaction.retain_value` replaces a decoded string that is
+    one of the needles with that replacement's placeholder. The survival check
+    `retains_credential` reads both the text and `_decoded_view`, which resolves
+    JSON escapes, so an equivalent spelling of a credential is still found.
+  - Finding: the seventh round showed three residual leaks. A stopped run's
+    marker line reached the record unredacted. A one-character credential that
+    was a whole decoded state value survived, because the text rule anchors on
+    `=` or quotes and a decoded value has neither. A credential written with
+    every character escaped (`a<b`) matched none of the needles,
+    so the text pass left a value a JSON reader can recover.
+  - Reason: the three share one rule — a value the checker was handed is
+    replaced wherever it appears as a value, and a text the adapter cannot prove
+    clean is withheld. Extending the needles cannot cover every escape spelling
+    a writer may choose; decoding the text for the survival check can, and it
+    fails closed. The alternative, withholding every record that contains a
+    backslash-u sequence, would discard ordinary evidence.
+  - Evidence: `test_a_credential_a_stopped_run_printed_is_redacted`,
+    `test_a_stopped_run_reaches_the_persisted_record_redacted`,
+    `test_a_one_character_credential_in_a_decoded_state_is_redacted`,
+    `test_an_equivalent_escape_spelling_withholds_the_text`,
+    `test_an_equivalent_escape_spelling_is_withheld_from_the_record`, and the
+    doctests for `Redaction.retain_value` and `_decoded_view`.
 
 ## Outcomes & retrospective
 

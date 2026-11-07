@@ -45,6 +45,64 @@ number the model computed. Ending the match at the first of those and not the
 others is what keeps the counts intact.
 """
 
+_JSON_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})|\\([\"\\/bfnrt])")
+"""A JSON escape inside a string, as a writer may spell one."""
+
+_ESCAPED_CHARACTERS = {
+    '"': '"',
+    "\\": "\\",
+    "/": "/",
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+}
+"""What each single-character JSON escape stands for."""
+
+
+def _decoded_view(text: str) -> str:
+    r"""Return ``text`` with JSON's escapes resolved, for the survival check.
+
+    A credential can be written in more spellings than any list of needles
+    enumerates: the value ``a<b`` may appear with its less-than sign written as
+    a Unicode escape, with every character so written, or as any mixture of the
+    two. The survival check therefore looks at the text both as it was written
+    and as a JSON reader would decode it, so a spelling nobody anticipated
+    withholds the text rather than being recorded.
+
+    Parameters
+    ----------
+    text : str
+        A text already passed through :meth:`Redaction.apply`.
+
+    Returns
+    -------
+    str
+        The text with every JSON escape resolved and each surrogate pair
+        combined into the character it encodes. A sequence that is not an
+        escape is left as it is.
+    """
+
+    def resolve(match: re.Match[str]) -> str:
+        """Return the character the matched escape stands for.
+
+        Returns
+        -------
+        str
+            The one character the escape encodes.
+        """
+        if match.group(1) is not None:
+            return chr(int(match.group(1), 16))
+        return _ESCAPED_CHARACTERS[match.group(2)]
+
+    decoded = _JSON_ESCAPE.sub(resolve, text)
+    # A writer may split a non-BMP character into two \u escapes. Encoding and
+    # decoding again joins that pair, so a credential containing one is still
+    # found; a lone surrogate, which is not a character, becomes the
+    # replacement character in this view and cannot match a real secret.
+    return decoded.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+
 
 class Replacement(typ.NamedTuple):
     """One substitution applied to a run's evidence.
@@ -169,16 +227,22 @@ class Redaction(typ.NamedTuple):
         Returns
         -------
         bool
-            Whether one of :attr:`secrets` occurs in it. A value a replacement
-            could not remove is what makes the text unsafe to record, whatever
-            the rule that missed it.
+            Whether one of :attr:`secrets` occurs in it, as written or as a
+            JSON reader decodes it. A value a replacement could not remove is
+            what makes the text unsafe to record, whatever the rule that missed
+            it, and a spelling no needle enumerated is still the same value.
 
         Examples
         --------
         >>> Redaction((), ("s3cr3t",)).retains_credential("xs3cr3ty")
         True
         """
-        return any(secret in text for secret in self.secrets)
+        decoded = _decoded_view(text)
+        return any(
+            secret in candidate
+            for candidate in (text, decoded)
+            for secret in self.secrets
+        )
 
     def retain(self, text: str) -> str:
         """Return ``text`` redacted, or the marker withholding it.
@@ -209,3 +273,34 @@ class Redaction(typ.NamedTuple):
         """
         redacted = self.apply(text)
         return WITHHELD if self.retains_credential(redacted) else redacted
+
+    def retain_value(self, value: str) -> str:
+        """Return one decoded JSON string redacted, or the withholding marker.
+
+        A decoded string is a value in its own right, so a one-character
+        credential needs no surrounding ``=`` or quote to be recognized: the
+        whole string is the position it would occupy in the text. Without this,
+        a state value that is exactly a credential's one character would
+        survive the text rule and reach the saved trace.
+
+        Parameters
+        ----------
+        value : str
+            One string decoded from the checker's JSON.
+
+        Returns
+        -------
+        str
+            The placeholder when the whole string is a credential, otherwise
+            the result of :meth:`retain`.
+
+        Examples
+        --------
+        >>> redaction = Redaction((Replacement("0", HIDDEN_VALUE, context="="),))
+        >>> redaction.retain_value("0")
+        '<redacted>'
+        """
+        for replacement in self.replacements:
+            if replacement.needle == value:
+                return replacement.placeholder
+        return self.retain(value)

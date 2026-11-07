@@ -17,29 +17,33 @@ from pathlib import Path
 
 from modelcheck_e2e_cases import assert_holds, persisted, traced_run
 
+from modelcheck.adapters.fizzbee_replacements import WITHHELD
 
-def _malformed_detail(tmp_path: Path, credential: str) -> str:
-    """Run the malformed-graph mode and return the detail it persisted.
 
-    The malformed-graph tests need the same three things before they can assert
-    anything: a run whose credential is the one under test, the status that
-    says the run proved nothing, and the detail the record kept. Sharing them
-    keeps each test's assertions the only thing that differs.
+def _persisted_detail(tmp_path: Path, answer: str, credential: str) -> str:
+    """Run one stub answer with a credential and return the detail it persisted.
+
+    Every test that reads a run's evidence needs the same three things before it
+    can assert anything: a run whose credential is the one under test, the status
+    that says the run proved nothing, and the detail the record kept. Sharing
+    them keeps each test's assertions the only thing that differs.
 
     Parameters
     ----------
     tmp_path : pathlib.Path
         The scratch directory the run owns.
+    answer : str
+        The stub's ``MODELCHECK_E2E_ANSWER``, which selects the checker output
+        the run replays.
     credential : str
-        The value the stub is given as ``MODELCHECK_E2E_SECRET``, which it
-        writes into the graph it produces.
+        The value the stub is given as ``MODELCHECK_E2E_SECRET``.
 
     Returns
     -------
     str
         The persisted detail of the first record.
     """
-    status, written = persisted(tmp_path, "malformed", MODELCHECK_E2E_SECRET=credential)
+    status, written = persisted(tmp_path, answer, MODELCHECK_E2E_SECRET=credential)
     assert status == 1, "a run that proved nothing meets no expectation"
     return typ.cast("str", written[0]["detail"])
 
@@ -100,7 +104,7 @@ def test_a_malformed_graph_reaches_the_persisted_record(tmp_path: Path) -> None:
     credential the checker wrote into it does not reach the committed record.
     """
     written_into_the_graph = "s3cr3t-in-the-graph"
-    detail = _malformed_detail(tmp_path, written_into_the_graph)
+    detail = _persisted_detail(tmp_path, "malformed", written_into_the_graph)
 
     assert_holds(
         detail,
@@ -128,7 +132,7 @@ def test_an_escaped_credential_reaches_the_persisted_record_redacted(
     would be committed. The record is read back here for that reason.
     """
     written_into_the_graph = 'a"b\\c-do-not-record'
-    detail = _malformed_detail(tmp_path, written_into_the_graph)
+    detail = _persisted_detail(tmp_path, "malformed", written_into_the_graph)
 
     assert '{"not": "a list", "token": "<redacted>"}' in detail, (
         "the escaped credential is replaced whole"
@@ -149,7 +153,7 @@ def test_a_go_escaped_credential_in_a_malformed_graph_is_redacted(
     to prove it rather than the in-memory value.
     """
     written_into_the_graph = "a<b-do-not-record"
-    detail = _malformed_detail(tmp_path, written_into_the_graph)
+    detail = _persisted_detail(tmp_path, "malformed", written_into_the_graph)
 
     assert "the error graph could not be parsed" in detail, "the reason survives"
     assert "\\u003c" not in detail, "the Go spelling of the value is replaced"
@@ -169,12 +173,8 @@ def test_a_one_character_credential_echoed_as_a_value_is_redacted(
     checker echoes it — after ``=`` — and the counts beside it survive.
     """
     echoed_flag = "0"
-    status, written = persisted(
-        tmp_path, "unreadable", MODELCHECK_E2E_SECRET=echoed_flag
-    )
+    detail = _persisted_detail(tmp_path, "unreadable", echoed_flag)
 
-    assert status == 1, "a run that proved nothing meets no expectation"
-    detail = typ.cast("str", written[0]["detail"])
     assert "token=<redacted>" in detail, "the echoed value is replaced"
     assert "Valid Nodes: 4 Unique states: 4" in detail, (
         "while a count is not a value the checker was handed"
@@ -213,3 +213,43 @@ def test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence(
     assert "do-not-record" not in records.read_text(encoding="utf-8"), (
         "nor the record the matrix wrote"
     )
+
+
+def test_a_stopped_run_reaches_the_persisted_record_redacted(tmp_path: Path) -> None:
+    """A stopped run's marker is evidence, so the record is redacted too.
+
+    The checker prints the marker when a signal cuts the run short, and the
+    line can carry the credential and the runner path it echoed around the
+    interruption. The record keeps the detail, so both are replaced before it
+    is written; a stopped run is not a special case that escapes redaction.
+    """
+    inherited_value = "s3cr3t-do-not-record"
+
+    detail = _persisted_detail(tmp_path, "stopped", inherited_value)
+
+    assert_holds(
+        detail,
+        {
+            "the marker is kept": "Model checker stopped",
+            "the credential is replaced": "token=<redacted>",
+            "the scratch path is replaced": "at <scratch>/model.fizz",
+        },
+    )
+    assert inherited_value not in detail, "no credential reaches the record"
+    assert ".model-check" not in detail, "and no runner path either"
+
+
+def test_an_equivalent_escape_spelling_is_withheld_from_the_record(
+    tmp_path: Path,
+) -> None:
+    r"""A spelling no needle enumerates is withheld rather than recorded.
+
+    ``a<b-do-not-record`` can be written with every character escaped, which
+    is valid JSON and matches neither the value nor the Go spelling the needles
+    know. A reader can still recover the value from it, so the record must not
+    carry the text at all: the detail is withheld, and the marker says why.
+    """
+    written_into_the_graph = "a<b-do-not-record"
+    detail = _persisted_detail(tmp_path, "malformed-escaped", written_into_the_graph)
+
+    assert detail == WITHHELD, "the evidence is withheld rather than recorded"

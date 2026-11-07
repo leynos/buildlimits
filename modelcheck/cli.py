@@ -9,14 +9,17 @@ caller injected, and turns the result into an exit status.
 The exit status is the contract the matrix is wired into:
 
 - ``0`` when every expectation was met;
-- ``1`` when any expectation was unmet;
-- ``2`` when the tool itself could not run — a usage error, a configuration
-  the model does not support, or an input that could not be read.
+- ``1`` when any expectation was unmet, including a run that never started or
+  proved nothing: an ``Errored`` result is judged unmet like any other;
+- ``2`` when the tool could not finish its own work — a usage error, a
+  configuration or source the tool cannot read, or a ``--fixpoint`` comparison
+  that did not complete.
 
 That third status matters as much as the first two. A CI job that treated a
-crash as a pass would report green for a model that never ran, so a failure to
-start is never folded into ``1``: ``1`` means "the model or the code is wrong",
-and ``2`` means "the checker was not asked".
+crash as a pass would report green for a model that never ran, so the tool's
+own failure is never folded into ``1``. The two answer different questions:
+``1`` means "the model or the code did not meet what was asked of it", and
+``2`` means "the check could not be carried out to the end".
 
 Configuration is environment-first, as the repository's scripting standards
 require: ``MODELCHECK_FIZZ``, ``MODELCHECK_BOUNDS`` and the rest fill in any

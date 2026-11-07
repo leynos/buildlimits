@@ -147,6 +147,26 @@ case "${MODELCHECK_E2E_ANSWER:-recorded}" in
     cat "$directory/lasso-stdout.txt"
     exit 0
     ;;
+  malformed-escaped)
+    # Every character of the value is escaped rather than only the ones Python
+    # or Go escape, so neither the value nor the Go spelling appears in the
+    # graph. A JSON reader can still recover it, so the record must withhold
+    # the text rather than store a value that is recoverable from it.
+    mkdir -p "$output"
+    printf '%s' \
+      '{"not": "a list", "token": "\u0061\u003c\u0062-do-not-record"}' \
+      > "$output/error-graph.json"
+    cat "$directory/lasso-stdout.txt"
+    exit 0
+    ;;
+  stopped)
+    # A signal ended the run before it could decide. The marker line is the
+    # only evidence the record keeps of it, and it carries whatever the checker
+    # echoed around the interruption.
+    printf 'Model checker stopped: token=%s at %s/model.fizz\n' \
+      "${MODELCHECK_E2E_SECRET:-}" "$PWD"
+    exit 0
+    ;;
 esac
 
 # A fixpoint comparison materializes the same configuration twice: once at the

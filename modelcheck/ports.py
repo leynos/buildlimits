@@ -111,6 +111,10 @@ class ConfigurationSource(typ.Protocol):
             would compile nothing and report a pass over an empty state space.
         OSError
             If the directory or a source file exists but cannot be read.
+        UnicodeDecodeError
+            If a source file is not UTF-8. Decoding it with a replacement
+            character would check text the model does not contain, and a
+            verdict about other text is worse than no verdict.
         """
 
     def configurations(self) -> tuple[Configuration, ...]:

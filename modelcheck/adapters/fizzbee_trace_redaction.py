@@ -23,9 +23,13 @@ change a graph's validity, its ending, or the equality that classifies a lasso.
 The verdict is therefore fixed before any value is replaced.
 
 An error's detail carries the parser's refusal, which quotes the document it
-refused and can therefore hold a decoded credential, so it is redacted here
-too. Every retained string goes through
-:meth:`~modelcheck.adapters.fizzbee_replacements.Redaction.retain`, which
+refused and can therefore hold a decoded credential, and a stopped run's detail
+is the marker line the checker printed. Both are redacted here too. A decoded
+string goes through
+:meth:`~modelcheck.adapters.fizzbee_replacements.Redaction.retain_value`,
+because the whole string is a value position, and a text that is not a decoded
+value goes through
+:meth:`~modelcheck.adapters.fizzbee_replacements.Redaction.retain`; either
 withholds a text a credential survived in rather than recording it.
 
 The replacements themselves, and the reasoning behind each needle, stay in
@@ -38,7 +42,7 @@ import collections.abc as cabc
 import dataclasses as dc
 import typing as typ
 
-from modelcheck.domain import Counterexample, Errored
+from modelcheck.domain import Counterexample, Errored, Stopped
 
 if typ.TYPE_CHECKING:
     from modelcheck.adapters.fizzbee_redaction import Redaction
@@ -63,10 +67,11 @@ def redact_result(result: CheckResult, redaction: Redaction) -> CheckResult:
     -------
     modelcheck.domain.CheckResult
         A counterexample with its action labels and state values redacted, an
-        error with its detail redacted, and every other result unchanged. An
-        error's detail holds the parser's refusal and the document it refused,
-        so it can carry a decoded credential even though the adapter has
-        already redacted the text it printed.
+        error or a stopped run with its detail redacted, and every other result
+        unchanged. An error's detail holds the parser's refusal and the
+        document it refused, and a stopped run's detail is the marker line the
+        checker printed, so either can carry a decoded credential even though
+        the adapter has already redacted the text it printed.
 
     Examples
     --------
@@ -80,7 +85,7 @@ def redact_result(result: CheckResult, redaction: Redaction) -> CheckResult:
     match result:
         case Counterexample(trace=trace):
             return dc.replace(result, trace=redact_trace(trace, redaction))
-        case Errored(detail=detail):
+        case Errored(detail=detail) | Stopped(detail=detail):
             return dc.replace(result, detail=redaction.retain(detail))
         case _:
             return result
@@ -108,8 +113,10 @@ def redact_trace(trace: Trace, redaction: Redaction) -> Trace:
     modelcheck.trace.Trace
         The path with every action label and every string in a state replaced.
         A string a credential survived in is withheld whole rather than
-        recorded. A number, a boolean or ``null`` is a value the model
-        computed, not text the checker wrote around it, and is left as it is.
+        recorded, and a one-character credential is replaced when it is the
+        whole string, because a decoded string is a value position. A number, a
+        boolean or ``null`` is a value the model computed, not text the checker
+        wrote around it, and is left as it is.
 
     Examples
     --------
@@ -126,7 +133,7 @@ def redact_trace(trace: Trace, redaction: Redaction) -> Trace:
         steps=tuple(
             dc.replace(
                 step,
-                action=redaction.retain(step.action),
+                action=redaction.retain_value(step.action),
                 state=_redacted_state(step.state, redaction),
             )
             for step in trace.steps
@@ -153,7 +160,7 @@ def _redacted_state(
         replaced.
     """
     return {
-        redaction.retain(key): _redacted_value(value, redaction)
+        redaction.retain_value(key): _redacted_value(value, redaction)
         for key, value in state.items()
     }
 
@@ -177,10 +184,10 @@ def _redacted_value(value: object, redaction: Redaction) -> object:
     """
     match value:
         case str():
-            return redaction.retain(value)
+            return redaction.retain_value(value)
         case cabc.Mapping():
             return {
-                redaction.retain(key): _redacted_value(item, redaction)
+                redaction.retain_value(key): _redacted_value(item, redaction)
                 for key, item in value.items()
             }
         case list():
