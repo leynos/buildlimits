@@ -20,6 +20,22 @@ from modelcheck_service_cases import Bounded, Refusing, bounded_configuration, s
 from modelcheck import domain, fixpoint
 
 
+def _refused_comparison() -> None:
+    """Ask the comparison to compare a run that proved nothing.
+
+    Two tests need a comparison whose declared run reports an error, and the
+    pair — a well-formed configuration and a checker that refuses it — is what
+    produces one. The helper keeps each test's assertion about the refusal
+    apart from the construction of it.
+
+    Notes
+    -----
+    The comparison raises rather than returning, so a caller that reaches the
+    line after this call has a comparison it did not expect.
+    """
+    fixpoint.run_fixpoint(source(bounded_configuration()), Refusing())
+
+
 def test_the_fixpoint_doubles_the_declared_bound() -> None:
     """Twice the declared ``max_actions`` is what the second run is given.
 
@@ -142,7 +158,7 @@ def test_only_configurations_that_should_pass_are_compared() -> None:
 def test_a_run_that_does_not_pass_cannot_be_compared() -> None:
     """A count from a run that proved nothing would compare two errors."""
     with pytest.raises(domain.MaterializeError, match="did not pass"):
-        fixpoint.run_fixpoint(source(bounded_configuration()), Refusing())
+        _refused_comparison()
 
 
 def test_a_failed_doubled_run_carries_its_own_evidence() -> None:
@@ -170,3 +186,34 @@ def test_a_failed_doubled_run_carries_its_own_evidence() -> None:
     assert "did not pass at its doubled bound" in str(error), (
         "the message names the stage"
     )
+
+
+def test_a_failed_doubled_run_keeps_the_declared_count_it_was_compared_with() -> None:
+    """The declared run passed, and its count is part of the failure's evidence.
+
+    A failure naming only the doubled run hides how far the model got: the
+    declared count is the number the comparison was checked against. Discarding
+    it turns a comparison that failed on its second run into a record that
+    reads as though no run had passed at all.
+    """
+    with pytest.raises(fixpoint.FixpointError) as raised:
+        fixpoint.run_fixpoint(
+            source(bounded_configuration(max_actions=8)), FailsDoubled()
+        )
+
+    (failure,) = raised.value.failures
+    assert failure.declared is not None, "the declared pass is kept"
+    assert failure.declared.states == 8, "with the count it reached"
+    assert "reached 8 states at its declared bound" in str(raised.value), (
+        "and the message says so"
+    )
+
+
+def test_a_failed_declared_run_carries_no_declared_pass() -> None:
+    """There is no earlier pass to keep when the first run is the one that failed."""
+    with pytest.raises(fixpoint.FixpointError) as raised:
+        _refused_comparison()
+
+    (failure,) = raised.value.failures
+    assert failure.stage == "declared", "the first run is the one that failed"
+    assert failure.declared is None, "and nothing was compared against it"

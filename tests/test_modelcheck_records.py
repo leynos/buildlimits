@@ -91,6 +91,38 @@ def test_a_run_with_no_harness_time_omits_the_field() -> None:
     assert "harness_seconds" not in record, "but no duration is invented"
 
 
+def test_a_failed_doubled_run_records_the_declared_count() -> None:
+    """The artefact says how far the model got before the comparison failed.
+
+    The declared-bound run did pass, so its count is a fact about the model
+    rather than part of the failure's prose. A record that omitted it would
+    leave a reader unable to tell an exploration that reached eight states from
+    one that reached none.
+    """
+    failure = FixpointFailure(
+        "head",
+        "doubled",
+        16,
+        (),
+        domain.Errored("no verdict line at the doubled bound"),
+        domain.Passed(8, 0.1, ()),
+    )
+
+    record = records.fixpoint_record(failure)
+
+    assert record["declared_states"] == 8, (
+        "the count the comparison was checked against"
+    )
+    assert record["stage"] == "doubled", "beside the stage that failed"
+
+
+def test_a_declared_bound_failure_records_no_declared_count() -> None:
+    """A first run that failed has no earlier count to report."""
+    record = records.fixpoint_record(_failure(domain.Errored("no verdict line")))
+
+    assert "declared_states" not in record, "no count is invented"
+
+
 def test_a_configuration_that_never_ran_carries_no_bound() -> None:
     """A materialization failure is recorded without a bound it never had.
 

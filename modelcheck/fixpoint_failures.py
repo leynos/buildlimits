@@ -19,7 +19,7 @@ import typing as typ
 from modelcheck.domain import Errored, MaterializeError
 
 if typ.TYPE_CHECKING:
-    from modelcheck.domain import CheckResult
+    from modelcheck.domain import CheckResult, Passed
     from modelcheck.fixpoint import Fixpoint
 
 __all__ = ["FixpointError", "FixpointFailure", "Stage"]
@@ -57,6 +57,13 @@ class FixpointFailure:
         What the run returned. It is not a ``Passed``, so it carries either a
         counterexample's path or the diagnostic explaining why it proved
         nothing.
+    declared : modelcheck.domain.Passed | None
+        The pass the declared-bound run produced, when the doubled-bound run is
+        the one that failed. The declared run did complete, and its state count
+        is the number the comparison would have been checked against; dropping
+        it would record a failure that says nothing about how far the model got.
+        ``None`` when the declared run itself failed, or when the configuration
+        never reached a run at all.
     """
 
     configuration: str
@@ -64,6 +71,7 @@ class FixpointFailure:
     bound: int | None
     fairness: tuple[str, ...]
     result: CheckResult
+    declared: Passed | None = None
 
 
 class FixpointError(MaterializeError):
@@ -127,11 +135,21 @@ def _clause(failure: FixpointFailure) -> str:
         it was given. A configuration that could not be materialized has no
         bound, so its clause quotes the materializer's own short reason
         instead; that reason already names the configuration and the missing
-        key, which are the facts a reader needs to fix it.
+        key, which are the facts a reader needs to fix it. A doubled-bound run
+        whose declared-bound run passed quotes the count that run reached,
+        because that is how far the model got before the comparison failed.
     """
     match failure.result:
         case Errored(detail=detail) if failure.bound is None:
             return f"{detail}, so it has no state count to compare"
+    if failure.declared is not None:
+        return (
+            f"configuration {failure.configuration!r} reached "
+            f"{failure.declared.states} states at its declared bound but did "
+            f"not pass at its {failure.stage} bound "
+            f"({_ACTION_BOUND}={failure.bound}), so its state count cannot be "
+            f"compared"
+        )
     return (
         f"configuration {failure.configuration!r} did not pass at its "
         f"{failure.stage} bound ({_ACTION_BOUND}={failure.bound}), so its "

@@ -240,7 +240,11 @@ def _compared(
     doubled_run = _pass_run(text, doubled(configuration), "doubled", checker)
     match doubled_run:
         case FixpointFailure():
-            return None, (doubled_run,)
+            # The declared run did pass, and its count is the number the
+            # comparison was going to check the doubled run against. Keeping
+            # it in the failure is what lets the record say how far the model
+            # got rather than only that a later run failed.
+            return None, (dc.replace(doubled_run, declared=declared),)
     return (Fixpoint(configuration.name, bound, declared, doubled_run), ())
 
 

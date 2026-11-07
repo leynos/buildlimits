@@ -174,7 +174,10 @@ def fixpoint_record(failure: FixpointFailure) -> dict[str, object]:
         matrix judgement, and ``met`` is always false: the record exists only
         because the run did not pass. ``bound`` is ``None`` for a configuration
         that could not be materialized, because no bound was ever given and
-        writing one would invent a run that never started.
+        writing one would invent a run that never started. ``declared_states``
+        is present only when the declared-bound run did pass and the doubled
+        run is the one that failed: it is the count the comparison was checked
+        against, and a reader needs it to judge how far the model explored.
 
     Examples
     --------
@@ -199,6 +202,8 @@ def fixpoint_record(failure: FixpointFailure) -> dict[str, object]:
         "bound": failure.bound,
         "result": _result_kind(failure.result),
     }
+    if failure.declared is not None:
+        record["declared_states"] = failure.declared.states
     _result_fields(record, failure.result)
     match failure.result:
         case Counterexample(property_name=name, kind=kind, trace=trace):
