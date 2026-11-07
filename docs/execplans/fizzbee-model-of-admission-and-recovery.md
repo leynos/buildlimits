@@ -1152,6 +1152,48 @@ explicitly.
     `make fmt` reformatted the guide's table, `make spelling` regenerated
     `typos.toml` and passes. Repository gates are delegated to the
     scrutineer.
+- [x] (2026-11-07) **The fifth review round's findings are answered: redaction
+    reaches decoded traces, evidence keeps the context it was read from, and
+    the contracts each port declares are tested at their boundaries.** Recorded
+    as D47 and D48.
+  - `adapters/fizzbee_trace_redaction` redacts the parsed `Counterexample`'s
+    trace as well as the text it was parsed from (D47). The checker's Go
+    encoder writes `<`, `>` and `&` as six-character Unicode escapes that no
+    Python-derived needle matches, and a value mixing an escaped quote with a
+    literal non-ASCII character matches neither spelling Python produces. The
+    fixture's `credentialed_graph` mode writes such a graph, and
+    `test_a_credential_only_the_decoder_sees_is_redacted` plus
+    `test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence`
+    pin the decoded replacement.
+  - `_error` keeps the line before the checker's `Error:` line, because that is
+    where the checker says which file or action failed, and a non-zero exit
+    with no `Error:` line now carries the transcript as evidence instead of
+    reporting only "the checker exited with status N".
+  - A failed doubled run keeps the state count its declared run reached. The
+    count is what the comparison was checked against, so a reader can tell an
+    exploration that reached eight states from one that reached none; the
+    record writes it as `declared_states`, and the existing stderr sentence is
+    unchanged.
+  - The drift scenarios now run through `cli.make_app` rather than comparing
+    values directly, so the command's own status and printed report are what a
+    scenario reads. Two new service tests pin the boundary the port declares: a
+    source that raises `MaterializeError` or `OSError`, and an inventory that
+    cannot be built, each leave through `2` with the reason on stderr.
+  - `ports.py` states what each method returns and raises, including that a
+    model-level fault is a value rather than an exception and that only the
+    adapter's own scratch directory can raise `OSError` from `check`.
+  - `tests/test_modelcheck_trace_properties.py` states the trace normalizer's
+    contract as four Hypothesis properties over generated paths, because
+    whether a path is a lasso follows from the states it visits rather than
+    from the shape of its links.
+  - Two docstrings are corrected to match the code: the configuration adapter
+    reads the `.fizz` text and `configurations.toml` and never `fizz.yaml`,
+    and the command line's `check` raises (leaving through `2`) when a
+    fixpoint run that should pass does not.
+  - Focused validation on the working tree: 41, 294, 24, 12, 13 and 24 tests
+    pass for the redaction, error-context, fixpoint, drift, port-boundary and
+    trace-property changes respectively. Repository gates are delegated to the
+    scrutineer on the final candidate.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -2844,6 +2886,58 @@ explicitly.
     remaining nine findings are assertions and docstrings already covered by
     the suites named in the progress entry. Focused validation: 87 tests and
     2 snapshots pass; `make spelling` regenerates `typos.toml` and passes.
+
+- **D47. A parsed trace is redacted again after decoding, because text
+  redaction cannot see every spelling the checker writes.** _Decided
+  2026-11-07._
+  - Decision: `adapters/fizzbee_trace_redaction` gains `redact_result` and
+    `redact_trace`. `redact_result` matches a `Counterexample`, rebuilds its
+    `Trace` with every string in every state replaced by the same redaction
+    the text stage applied, and returns every other result unchanged.
+    `fizzbee_process` applies it to the result of every parsed run, not only to
+    a failed one, and `redact_trace` recurses through mappings, sequences and
+    strings so a credential nested in a composite value is reached.
+  - Finding: the fifth review round observed that `Redaction.apply` runs on
+    the checker's text before it is parsed, and that the checker's Go JSON
+    encoder writes `<`, `>` and `&` as six-character Unicode escapes. A
+    credential containing `<` therefore reaches the decoded trace through a
+    spelling no needle derived from its Python form matches. A second spelling
+    gap was found while testing: a value mixing an escaped quote with a
+    literal non-ASCII character matches neither the literal nor the single
+    escaped form.
+  - Reason: after decoding, every spelling of a value has collapsed to one
+    string, so the decoded state is the only stage where the redaction is
+    complete without teaching the text stage to imitate Go's encoder. The
+    fixtures prove the gap rather than describing it: `credentialed_graph`
+    writes a real-looking graph in which the credential is escaped as Go would
+    escape it, and a real lasso still parses from it.
+  - Evidence: `test_a_credential_only_the_decoder_sees_is_redacted`,
+    `test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence`,
+    `_escaped_forms`'s doctests, and `redact_result`'s doctest. The
+    one-character residual recorded in D44 is pinned by
+    `test_a_one_character_credential_named_flag_leaves_the_evidence_intact`,
+    which reads the state counts back from the artefact and shows them
+    intact.
+
+- **D48. The checker keeps the caller's environment; redaction, not a reduced
+  environment, is the control.** _Decided 2026-11-07._
+  - Decision: `_checker_environment` continues to return the caller's
+    environment with only `GOMAXPROCS` and `GOMEMLIMIT` set. A suggestion from
+    the same review round to run the checker under a minimal allowlist is
+    declined, and the reasoning is recorded here rather than left implicit.
+  - Finding: a review finding proposed restricting the checker's environment
+    so that a credential cannot be printed at all, which would make the
+    redaction unnecessary for anything the checker did not already know.
+  - Reason: the checker is a Go program that reads `HOME`, the Go cache and
+    proxy settings, and the caller's own configuration; a run under an
+    allowlist would either fail or explore a different environment from the
+    one a maintainer reproduces by hand, and the failure would surface as a
+    model error. A value the checker never sees cannot leak, but a run that
+    cannot use its toolchain proves nothing. Redaction is applied where the
+    text leaves, which is the boundary a test can observe, and D47 closes the
+    decoded-value gap that text redaction could not reach.
+  - Evidence: `_checker_environment` and its callers; the redaction suites
+    named in D47; the two residuals recorded in D44 and in the users' guide.
 
 ## Outcomes & retrospective
 

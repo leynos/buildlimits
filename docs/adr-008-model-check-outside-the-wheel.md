@@ -222,6 +222,28 @@ its finding, reason and evidence, in the
   `Unique states: 1` is the very evidence a record exists to carry — so
   replacing every `1` in a transcript would destroy the report without
   protecting a secret it can no longer express.
+- **D47, 2026-11-07.** A trace is redacted again after the graph is decoded.
+  Text redaction cannot see every spelling the checker writes: the checker's Go
+  JSON encoder writes `<`, `>` and `&` as six-character Unicode escapes, and a
+  value mixing an escaped quote with a literal non-ASCII character matches
+  neither spelling Python produces, so a needle derived from the value's Python
+  form misses the document's bytes. Once the graph is decoded, every spelling
+  has collapsed to one string, so `adapters/fizzbee_trace_redaction` walks each
+  state of the parsed counterexample and replaces the same values again.
+  `fizzbee_process` applies it to every parsed result rather than only to a
+  failed one, because a passing run's trace can be saved as evidence too. This
+  closes the gap without teaching the text stage to imitate Go's encoder, and
+  the two residuals in D44 still apply unchanged.
+- **D48, 2026-11-07.** The checker inherits the caller's environment, and
+  redaction rather than a reduced environment remains the control. A proposal
+  to run the checker under a minimal allowlist would keep credentials it never
+  receives out of its output, but the checker is a Go program that reads
+  `HOME`, the Go cache and proxy settings and the caller's own configuration; a
+  run under an allowlist would either fail or explore a different environment
+  from the one a maintainer reproduces by hand, and either outcome would be
+  reported as a fault in the model. Redaction is applied where the text leaves
+  the process, which is the boundary a test can observe, and D47 closes the
+  decoded-value gap that text redaction could not reach.
 
 ## References
 
