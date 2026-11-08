@@ -1458,6 +1458,26 @@ explicitly.
     `\u` raised `KeyError: 'u'` instead of reading as the text it is. The
     decoder now lists JSON's eight escapes, as the format does, and treats an
     incomplete escape as literal text.
+- [x] (2026-11-08) **The thirteenth round closes what the twelfth left: a
+    regression for the verdict only the tail keeps, and the last guide claim
+    that every marked test copies a specification.**
+  - `test_a_verdict_at_the_end_of_a_long_transcript_is_kept` is the reason the
+    cut takes from both ends. It writes an unreadable error graph, enough
+    filler to exceed the limit and a closing `FAILED: Liveness check failed`,
+    then requires an error rather than a counterexample, the verdict in the
+    detail, and the note that states the cut. The straddle regressions place a
+    credential at the head's boundary, which a prefix cut would also have kept,
+    so none of them could have failed if the tail were dropped again.
+  - A verdict strictly inside the omitted middle is still lost. The note names
+    the two kept regions, so a reader can tell a cut transcript from one with
+    nothing removed.
+  - The twelfth round corrected two guide claims of the form "every
+    `fizzbee`-marked test runs the checker" and left a third: §11.3 said every
+    marked test copies its spec into pytest's scratch directory, but
+    `tests/test_model_check_e2e.py` is marked and reads only the
+    `.model-check/*.json` artefacts `make model-check` writes. The sentence now
+    scopes the copy to tests that invoke the checker and names that module as
+    the exception, with the Makefile target owning the run.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
