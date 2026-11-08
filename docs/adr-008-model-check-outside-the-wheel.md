@@ -225,7 +225,8 @@ its finding, reason and evidence, in the
   all. It is indistinguishable from a state count, a flag or an exit status —
   `Unique states: 1` is the very evidence a record exists to carry — so
   replacing every `1` in a transcript would destroy the report without
-  protecting a secret it can no longer express.
+  protecting a secret it can no longer express. Its one-character residual is
+  superseded by D50 and D53.
 - **D47, 2026-11-07.** A trace is redacted again after the graph is decoded.
   Text redaction cannot see every spelling the checker writes: the checker's Go
   JSON encoder writes `<`, `>` and `&` as six-character Unicode escapes, and a
@@ -236,8 +237,11 @@ its finding, reason and evidence, in the
   state of the parsed counterexample and replaces the same values again.
   `fizzbee_process` applies it to every parsed result rather than only to a
   failed one, because a passing run's trace can be saved as evidence too. This
-  closes the gap without teaching the text stage to imitate Go's encoder, and
-  the two residuals in D44 still apply unchanged.
+  closes the gap without teaching the text stage to imitate Go's encoder. The
+  whole-token rule for short values still applies: a two- to five-character
+  value is replaced only where it stands alone, and `retain` withholds a text
+  one survives in. The one-character rule is the one D50, D53 and D55 state,
+  not the residual D44 recorded.
 - **D48, 2026-11-07.** The checker inherits the caller's environment, and
   redaction rather than a reduced environment remains the control. A proposal
   to run the checker under a minimal allowlist would keep credentials it never

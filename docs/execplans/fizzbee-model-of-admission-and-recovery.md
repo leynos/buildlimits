@@ -1487,6 +1487,29 @@ explicitly.
     both survive. The limit is now asserted where it is stated, so a change
     that widens or narrows it fails the suite rather than the prose. D50, D53
     and D55 are unchanged; this pins what they decided.
+- [x] (2026-11-08) **The fourteenth round makes the three documents agree about
+    which one-character limit is still policy.**
+  - The explicit review on `ef58006` raised three documentation findings, all
+    anchored to that head and all minor. Each was verified against the tree and
+    was accurate.
+  - D44 still read as current policy: it says a one-character value "is not
+    replaced at all", which D50 reversed. D43 already pointed at D50, but a
+    reader who stopped at D44 took the old rule. D44 now states that its
+    one-character residual is superseded by D50 and D53.
+  - D47 repeated that "the two residuals in D44 still apply unchanged". It now
+    names what is still in force: the whole-token rule for two- to
+    five-character values, and the withholding `retain` applies when one
+    survives. The one-character rule is the one D50, D53 and D55 state.
+  - The developers' guide opened a paragraph with "Three residuals are
+    deliberate" and then listed four items, three of which are rules that
+    remove or withhold a value; the actual residual appeared only in the next
+    paragraph. The paragraph now leads with the single residual and presents
+    the rest as rules, so a maintainer counting leaks counts one.
+  - The users' guide described what redaction removes and ended with "Read a
+    generated artefact before sharing it" without saying what can remain. It
+    now names the residual beside that advice.
+  - No code, test or decision changed. D44's historical reasoning is left in
+    place, with the supersession appended rather than the entry rewritten.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.

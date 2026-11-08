@@ -1171,32 +1171,36 @@ therefore walks each decoded state after parsing and replaces the same values
 again, and `fizzbee_process` applies it to every parsed result rather than only
 to a failed one.
 
-Three residuals are deliberate and pinned by tests. A credential of two to five
-characters is replaced only where it stands alone — after `NAME=`, inside JSON
-quotes — so a short value does not rewrite the words it happens to occur in. A
-one-character value is replaced only where it is a value: after `=`, between
-quotes, or after the label the checker prints beside it (`token x`), and not in
-a count, so `CLAUDE_CODE_SESSION_ATTENDED=0` becomes
-`CLAUDE_CODE_SESSION_ATTENDED=<redacted>` while `Unique states: 4` survives. A
-decoded state string that still contains the character is withheld, because a
-string is one value the checker produced and the character cannot be told from
-the text it was built from; the rest of the trace survives. And if a credential
-of two or more characters survives any replacement, `Redaction.retain` returns
-`WITHHELD` and the record says the text was withheld rather than committing it.
+One residual remains, and it is pinned by a test. A one-character credential
+embedded inside a longer token in free diagnostic text — `Error: prefix#` for a
+credential of `#` — is not recognized and is recorded with the text. The
+exposure is one character in a line of prose, and the alternative is to
+withhold every diagnostic, so the residual is accepted and stated rather than
+closed. The rest are rules that remove or withhold a value:
 
-One-character credentials are the exception to that last rule, and the limit is
-worth stating plainly. They are kept out of the survival check, because a bare
+- A credential of two to five characters is replaced only where it stands alone
+  — after `NAME=`, inside JSON quotes — so a short value does not rewrite the
+  words it happens to occur in.
+- A one-character value is replaced only where it is a value: after `=`,
+  between quotes, or after the label the checker prints beside it (`token x`),
+  and not in a count, so `CLAUDE_CODE_SESSION_ATTENDED=0` becomes
+  `CLAUDE_CODE_SESSION_ATTENDED=<redacted>` while `Unique states: 4` survives.
+- A decoded state string that still contains the character is withheld because
+  a string is one value the checker produced, and the character cannot be told
+  from the text it was built from; the rest of the trace survives.
+- If a credential of two or more characters survives any replacement,
+  `Redaction.retain` returns `WITHHELD`, and the record says the text was
+  withheld rather than committing it.
+
+One-character credentials are kept out of the survival check, because a bare
 `0`, `1` or `x` occurs in nearly every transcript and withholding on one would
-withhold the evidence a maintainer needs. So a one-character credential is
-replaced where it occupies a value position, and withheld entirely from a
-decoded trace string, but a character embedded inside a longer token in free
-diagnostic text — `Error: prefix#` for a credential of `#` — is not recognized
-and is recorded with the text. The exposure is one character in a line of
-prose, and the alternative is to withhold every diagnostic, so the residual is
-accepted and stated rather than closed. Two or more characters have no such
-gap: the survival check withholds the text they survive in. The mechanism
-itself is in `adapters/fizzbee_replacements`; the module holds the substitution
-and the survival check only, so "what must not be recorded" stays in
+withhold the evidence a maintainer needs. That is why the residual above is the
+one gap left: the character is replaced where it occupies a value position, and
+withheld entirely from a decoded trace string, but free diagnostic text is not
+a position the rules can see. Two or more characters have no such gap: the
+survival check withholds the text they survive in. The mechanism itself is in
+`adapters/fizzbee_replacements`; the module holds the substitution and the
+survival check only, so "what must not be recorded" stays in
 `fizzbee_redaction`. All of this is a reason an artefact is read before it is
 committed, not a reason to trust one that was not.
 
