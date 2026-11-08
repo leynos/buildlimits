@@ -183,6 +183,29 @@ def test_a_deciding_stopped_line_is_bounded(tmp_path: Path) -> None:
     assert len(result.detail) < 5000, "so the whole line is not kept"
 
 
+def test_a_verdict_at_the_end_of_a_long_transcript_is_kept(tmp_path: Path) -> None:
+    """The kept tail is where the checker's verdict survives a cut.
+
+    A checker prints why it failed on its last line, and a transcript longer
+    than the limit is cut. Keeping only a prefix therefore dropped the line a
+    maintainer reads, which is why the cut takes from both ends.
+    """
+    fizz = stub(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        "mkdir -p out\n"
+        "printf 'not a graph' > out/error-graph.json\n"
+        "printf 'noise %.0s' {1..700}\n"
+        "printf '\\nFAILED: Liveness check failed\\n'\n",
+    )
+
+    result = FizzbeeChecker(fizz).check(spec())
+
+    assert isinstance(result, domain.Errored), "the graph proved nothing"
+    assert "FAILED: Liveness check failed" in result.detail, "the verdict is kept"
+    assert "first 2000 and last 2000 of" in result.detail, "from the cut's tail"
+
+
 def test_a_credential_the_transcript_cut_would_split_is_scrubbed_whole(
     tmp_path: Path,
 ) -> None:
