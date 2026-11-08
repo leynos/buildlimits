@@ -179,18 +179,21 @@ class FizzbeeChecker:
         Notes
         -----
         The run is classified from the checker's own text, and only then is the
-        evidence it carries redacted. That order is what keeps a credential
-        from changing a verdict: a replacement is not injective, so a value
-        equal to a JSON number could make a graph invalid and two distinct
-        state values could become one — which would change the ending a lasso
-        is classified by. ``redact_result`` therefore runs after
-        ``parse_output``, never before it.
+        evidence it carries redacted. That order keeps a credential from
+        changing a verdict: a replacement is not injective, so a value equal to
+        a JSON number could make a graph invalid and two distinct state values
+        could become one — which would change the ending a lasso is classified
+        by.
 
         Once classified, every retained surface is redacted of this run's paths
         and credentials: the transcript, an error's detail — which quotes the
         document the parser refused — and, for a graph that parses, the decoded
         path. A text a credential survives in is withheld rather than recorded;
         see :mod:`modelcheck.adapters.fizzbee_replacements`.
+
+        The evidence builders are given ``redaction.retain`` so each capture is
+        scrubbed while it is still whole: bounding first would cut a credential
+        in two, and the kept half is a fragment no survival check recognizes.
         """
         (directory / _SPEC_NAME).write_text(spec.text, encoding="utf-8")
         output = directory / "out"
@@ -204,25 +207,22 @@ class FizzbeeChecker:
             )
         stdout = completed.stdout.decode(errors="replace")
         if completed.timed_out:
-            return redact_result(
-                Errored(timeout_detail(self.timeout_seconds, stdout)), redaction
-            )
+            detail = timeout_detail(self.timeout_seconds, stdout, redaction.retain)
+            return redact_result(Errored(detail), redaction)
         try:
             graph = _graph(output)
         except (OSError, UnicodeDecodeError) as error:
             # The scratch directory is removed as this call returns, so the
             # checker's transcript is the only evidence left of a run whose
             # graph could not be read.
-            return redact_result(
-                Errored(
-                    with_evidence(
-                        unreadable_graph(error),
-                        (("the checker printed", stdout),),
-                    )
-                ),
-                redaction,
+            detail = with_evidence(
+                unreadable_graph(error),
+                (("the checker printed", stdout),),
+                redaction.retain,
             )
-        return redact_result(parse_output(stdout, completed.status, graph), redaction)
+            return redact_result(Errored(detail), redaction)
+        classified = parse_output(stdout, completed.status, graph, redaction.retain)
+        return redact_result(classified, redaction)
 
     def _run(
         self, directory: Path, output: Path, environment: dict[str, str]
@@ -327,12 +327,13 @@ def _observed(result: CheckResult, seconds: float) -> CheckResult:
     Returns
     -------
     CheckResult
-        The result with ``harness_seconds`` set when it is a stopped or errored
-        run, and unchanged otherwise.
+        The result with ``harness_seconds`` set for a stopped or errored run.
     """
-    if isinstance(result, (Stopped, Errored)):
-        return dc.replace(result, harness_seconds=seconds)
-    return result
+    match result:
+        case Stopped() | Errored():
+            return dc.replace(result, harness_seconds=seconds)
+        case _:
+            return result
 
 
 def _scratch() -> Path:

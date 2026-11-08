@@ -181,7 +181,11 @@ def states_of(result: CheckResult) -> int | None:
     >>> states_of(Stopped("interrupted")) is None
     True
     """
-    return result.states if isinstance(result, (Passed, Counterexample)) else None
+    match result:
+        case Passed(states=states) | Counterexample(states=states):
+            return states
+        case _:
+            return None
 
 
 @dc.dataclass(frozen=True, slots=True)

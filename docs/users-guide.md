@@ -1205,7 +1205,7 @@ Read a generated artefact before sharing it. Those tests are opt-in because
 they need the binary:
 
 ```bash
-BUILD_LIMITS_MODEL_CHECK=1 .venv/bin/pytest -m fizzbee tests
+BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -m fizzbee tests
 ```
 
 Model authoring, the split into two halves and the developer's guide's account

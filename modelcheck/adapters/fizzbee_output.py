@@ -25,12 +25,17 @@ This module is pure. It classifies text already in hand and never starts the
 checker or touches the filesystem; ``fizzbee_process`` supplies the text. The
 error graph is a separate document, and decoding it is
 :mod:`modelcheck.adapters.fizzbee_graph`'s job rather than this module's.
+
+Classification reads the text exactly as the checker printed it, because a
+replacement is not injective and could change the verdict. Only the evidence a
+refusal carries is scrubbed, and it is scrubbed before it is bounded.
 """
 
+import dataclasses as dc
 import typing as typ
 
 from modelcheck.adapters import fizzbee_graph, fizzbee_names
-from modelcheck.adapters.fizzbee_evidence import bounded, with_evidence
+from modelcheck.adapters.fizzbee_evidence import Scrub, bounded, with_evidence
 from modelcheck.adapters.fizzbee_measurements import elapsed, states
 from modelcheck.domain import (
     Counterexample,
@@ -75,7 +80,12 @@ _EMPTY_TRACE = Trace({}, (), Ending.FINITE, None)
 """The path a failing run without an error graph is reported with."""
 
 
-def parse_output(stdout: str, exit_status: int, error_graph: str | None) -> CheckResult:
+def parse_output(
+    stdout: str,
+    exit_status: int,
+    error_graph: str | None,
+    scrub: Scrub | None = None,
+) -> CheckResult:
     r"""Classify one checker run, failing closed on anything unrecognized.
 
     Parameters
@@ -87,6 +97,9 @@ def parse_output(stdout: str, exit_status: int, error_graph: str | None) -> Chec
     error_graph : str | None
         The text of ``error-graph.json`` when the run wrote one, which is how a
         counterexample's path is read; ``None`` when there is none.
+    scrub : Scrub | None
+        What must be removed from the evidence a detail carries before it is
+        cut, or ``None`` when nothing is. Classification still reads raw text.
 
     Returns
     -------
@@ -113,16 +126,16 @@ def parse_output(stdout: str, exit_status: int, error_graph: str | None) -> Chec
     (True, 'no verdict line in')
     """
     lines = stdout.splitlines()
-    reason = _error(lines, exit_status)
+    reason = _error(lines, exit_status, scrub)
     if reason is not None:
         return Errored(reason)
     failure = _failure(lines)
     if failure is not None:
         kind, name = failure
-        return _counterexample(name, kind, error_graph, stdout)
+        return _counterexample(name, kind, _Text(stdout, error_graph, scrub))
     if _mentions(lines, STOPPED):
         marker = next(line for line in lines if line.startswith(STOPPED))
-        return Stopped(bounded(marker))
+        return Stopped(bounded(marker, scrub))
     if _mentions(lines, NEVER_REACHED):
         return Passed(
             states(stdout), elapsed(stdout), fizzbee_names.probes(lines, NEVER_REACHED)
@@ -130,11 +143,15 @@ def parse_output(stdout: str, exit_status: int, error_graph: str | None) -> Chec
     if _mentions(lines, PASSED):
         return Passed(states(stdout), elapsed(stdout), ())
     return Errored(
-        with_evidence("no verdict line in", (("the checker printed", stdout),))
+        with_evidence(
+            "no verdict line in",
+            (("the checker printed", stdout),),
+            scrub,
+        )
     )
 
 
-def _error(lines: list[str], exit_status: int) -> str | None:
+def _error(lines: list[str], exit_status: int, scrub: Scrub | None) -> str | None:
     """Return why a run proved nothing, or ``None`` when it ran.
 
     Parameters
@@ -143,6 +160,9 @@ def _error(lines: list[str], exit_status: int) -> str | None:
         The checker's output lines.
     exit_status : int
         The process exit status.
+    scrub : Scrub | None
+        What must be removed from the evidence before the cut, or ``None``
+        when nothing is.
 
     Returns
     -------
@@ -150,10 +170,10 @@ def _error(lines: list[str], exit_status: int) -> str | None:
         The first ``Error:`` line, which names the cause, preceded by the line
         the checker printed before it; otherwise a note that the checker exited
         non-zero, with the transcript it printed as evidence; otherwise
-        ``None``. The cause is bounded: the checker writes it, and this detail
-        is persisted beside the record, so a checker that printed its whole
-        transcript on one line would otherwise carry it into the artefact
-        whole.
+        ``None``. The cause is scrubbed and bounded: the checker writes it, and
+        this detail is persisted beside the record, so a checker that printed
+        its whole transcript on one line would otherwise carry it into the
+        artefact whole.
 
     Notes
     -----
@@ -171,11 +191,12 @@ def _error(lines: list[str], exit_status: int) -> str | None:
     for index, line in enumerate(lines):
         if line.startswith(ERROR):
             preceding = lines[index - 1].strip() if index else ""
-            return bounded(f"{preceding}\n{line}" if preceding else line)
+            return bounded(f"{preceding}\n{line}" if preceding else line, scrub)
     if exit_status != 0:
         return with_evidence(
             f"the checker exited with status {exit_status}",
             (("the checker printed", "\n".join(lines)),),
+            scrub,
         )
     return None
 
@@ -214,8 +235,24 @@ def _failure(lines: list[str]) -> tuple[CounterexampleKind, str] | None:
     return None
 
 
+@dc.dataclass(frozen=True, slots=True)
+class _Text:
+    """One run's checker-written text, and what must be removed from it.
+
+    ``stdout`` is what the checker printed, which carries the state count and
+    elapsed time; ``error_graph`` is the text of ``error-graph.json``, or
+    ``None`` when none was written; and ``scrub`` is what must be removed from
+    each capture before it is cut. The three travel together through every
+    builder that turns a refusal into a detail, which is why they are grouped.
+    """
+
+    stdout: str
+    error_graph: str | None
+    scrub: Scrub | None
+
+
 def _counterexample(
-    name: str, marker_kind: CounterexampleKind, error_graph: str | None, stdout: str
+    name: str, marker_kind: CounterexampleKind, text: _Text
 ) -> CheckResult:
     """Return the violation a failing run supports, or why it supports none.
 
@@ -225,10 +262,8 @@ def _counterexample(
         The assertion the run named, empty for a deadlock.
     marker_kind : CounterexampleKind
         The kind the verdict line alone establishes.
-    error_graph : str | None
-        The text of ``error-graph.json``, or ``None`` when none was written.
-    stdout : str
-        The checker's output, which carries the state count and elapsed time.
+    text : _Text
+        What the run left behind, and what must be removed from it.
 
     Returns
     -------
@@ -242,44 +277,51 @@ def _counterexample(
 
     Notes
     -----
-    The refusal's reason is bounded as well as the captures. It quotes the
-    document the parser refused — a repr of whatever the checker wrote — so its
-    length is the checker's choice, and the detail it appears in is persisted
-    beside the record.
+    The refusal's reason is scrubbed and bounded as well as the captures. It
+    quotes the document the parser refused — a repr of whatever the checker
+    wrote — so its length is the checker's choice, and the detail it appears in
+    is persisted beside the record. The graph capture is the whole malformed
+    document, so it is scrubbed before it is cut for the same reason the
+    transcript is.
 
     Examples
     --------
-    >>> result = _counterexample("L3", CounterexampleKind.LASSO, None, "")
+    >>> result = _counterexample("L3", CounterexampleKind.LASSO, _Text("", None, None))
     >>> result.kind is CounterexampleKind.UNKNOWN
     True
     """
-    if error_graph is None:
+    if text.error_graph is None:
         return Counterexample(
             name,
             _reported_kind(marker_kind, None),
             _EMPTY_TRACE,
-            states(stdout),
-            elapsed(stdout),
+            states(text.stdout),
+            elapsed(text.stdout),
         )
     # Untrusted JSON: a scalar, a non-mapping link or a missing key raises
     # before any shape check can name it, and each is malformed evidence.
     try:
-        path = fizzbee_graph.trace(error_graph)
+        path = fizzbee_graph.trace(text.error_graph)
     except (AttributeError, KeyError, TypeError, ValueError) as error:
         # The graph is deleted with the scratch directory after this call, so
         # both the checker's own words and the malformed document are the last
         # evidence this run can be diagnosed from.
         return Errored(
             with_evidence(
-                bounded(f"the error graph could not be parsed: {error}"),
+                bounded(f"the error graph could not be parsed: {error}", text.scrub),
                 (
-                    ("the checker printed", stdout),
-                    ("the error graph held", error_graph),
+                    ("the checker printed", text.stdout),
+                    ("the error graph held", text.error_graph),
                 ),
+                text.scrub,
             )
         )
     return Counterexample(
-        name, _reported_kind(marker_kind, path), path, states(stdout), elapsed(stdout)
+        name,
+        _reported_kind(marker_kind, path),
+        path,
+        states(text.stdout),
+        elapsed(text.stdout),
     )
 
 

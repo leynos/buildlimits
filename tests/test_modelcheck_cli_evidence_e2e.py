@@ -354,9 +354,14 @@ def test_an_equivalent_escape_spelling_is_withheld_from_the_record(
     ``a<b-do-not-record`` can be written with every character escaped, which
     is valid JSON and matches neither the value nor the Go spelling the needles
     know. A reader can still recover the value from it, so the record must not
-    carry the text at all: the detail is withheld, and the marker says why.
+    carry that document: the capture is withheld, and the marker says why. The
+    scrubbing runs on each capture before it is cut, so the diagnosis beside it
+    — which says what the parser objected to — is kept rather than lost with
+    the document.
     """
     written_into_the_graph = "a<b-do-not-record"
     detail = _persisted_detail(tmp_path, "malformed-escaped", written_into_the_graph)
 
-    assert detail == WITHHELD, "the evidence is withheld rather than recorded"
+    assert "the error graph could not be parsed" in detail, "the reason survives"
+    assert WITHHELD in detail, "the document is withheld rather than recorded"
+    assert "do-not-record" not in detail, "so the value is not recoverable"

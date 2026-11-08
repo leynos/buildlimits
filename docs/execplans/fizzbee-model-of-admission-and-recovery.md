@@ -1358,6 +1358,36 @@ explicitly.
     the text withheld. A second property draws a single character from the
     whole Unicode space and asserts a decoded string containing it is
     withheld.
+- [x] (2026-11-08) **The eleventh round's nine inline findings are answered:
+    evidence is scrubbed before it is bounded, an exclusion reason is checked
+    rather than coerced, the installer removes a partial download, and the
+    remaining four are refactorings or documentation corrections.** Recorded as
+    D57.
+  - The transcript, the refused graph and the timeout detail are each kept as a
+    fixed prefix, and a credential placed where the prefix ended was recorded
+    as its first characters — a fragment the survival check cannot recognize,
+    because half a credential is not one. `bounded`, `with_evidence` and
+    `timeout_detail` now take a `Scrub` callable, the process adapter supplies
+    `redaction.retain`, and `parse_output` threads it to the details it builds
+    while still classifying the raw text. Three regressions place a credential
+    across the cut: the no-verdict transcript, the malformed graph, and a timed
+    out run.
+  - `exclusions()` no longer coerces a reason with `str`. A value of another
+    shape, or an empty one, is a `MaterializeError` naming the file and the
+    excluded path; the new test parametrizes an empty string, whitespace and an
+    integer.
+  - The `FIZZBEE_STAMP` recipe removes `$$asset.part` and exits with `curl`'s
+    own status when the fetch fails, which is what both guides already claimed.
+  - `_observed`, `states_of` and `only_failures` read their unions by pattern
+    matching, and `read_records` fails with a named message when a model
+    directory holds no source rather than letting `max` raise an unrelated
+    `ValueError`. D43's entry says it is superseded by D44 and D50, and the
+    users' guide runs the opt-in tests through `uv run pytest -n 0`.
+  - The repairs pushed three files past the 400-line limit, which the gate
+    caught rather than the review. `fizzbee_output.py` and `fizzbee_process.py`
+    were tightened to 399 and 400 lines, and the two exclusion tests moved to
+    `tests/test_modelcheck_configuration_exclusions.py`, which reads the model
+    directory through the configuration module's own helper.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.

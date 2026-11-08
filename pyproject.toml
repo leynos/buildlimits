@@ -1760,3 +1760,10 @@ members = [
     "tests/test_modelcheck_cli_fixpoint.py",
 ]
 reason = "Matching import lists: each module names the artefact readers and case helpers it uses, and sharing them through a re-export module would hide each module's real dependencies. The end-to-end module invokes the published command through `run`, while the fixpoint module builds the app in-process through `app`, so neither imports the other's cases and no shared preamble owns the list."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "modelcheck/adapters/fizzbee_evidence.py::bounded",
+    "modelcheck/adapters/fizzbee_evidence.py::_cut",
+]
+reason = "bounded is the public wrapper around _cut, which does the scrub-then-cut work and is the only place the two steps are ordered; the detector matches their shared docstring sections and the one call between them, not shared logic."

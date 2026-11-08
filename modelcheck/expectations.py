@@ -112,9 +112,37 @@ def only_failures(configuration: Configuration) -> bool:
     ... )
     False
     """
-    return all(
-        isinstance(expectation, FailsAs) for expectation in configuration.expectations
-    )
+    return all(_is_failure(expectation) for expectation in configuration.expectations)
+
+
+def _is_failure(expectation: Expectation) -> bool:
+    """Return whether one expectation expects a defect.
+
+    Parameters
+    ----------
+    expectation : Expectation
+        The expectation to read.
+
+    Returns
+    -------
+    bool
+        Whether it is a :class:`~modelcheck.domain.FailsAs`. The union is read
+        by pattern matching everywhere else in this module, so an
+        ``isinstance`` here would be a second style for the same question.
+
+    Examples
+    --------
+    >>> from modelcheck import domain
+    >>> _is_failure(domain.FailsAs("L3", domain.CounterexampleKind.LASSO))
+    True
+    >>> _is_failure(domain.Holds("S1"))
+    False
+    """
+    match expectation:
+        case FailsAs():
+            return True
+        case _:
+            return False
 
 
 def judge(

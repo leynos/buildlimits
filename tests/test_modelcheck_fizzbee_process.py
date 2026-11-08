@@ -26,6 +26,7 @@ from pathlib import Path
 from fizzbee_process_stubs import spec, stub
 
 from modelcheck import domain
+from modelcheck.adapters.fizzbee_evidence import _TRANSCRIPT_LIMIT
 from modelcheck.adapters.fizzbee_process import FizzbeeChecker
 
 if typ.TYPE_CHECKING:
@@ -245,6 +246,33 @@ def test_a_timed_out_run_records_the_harness_time(tmp_path: Path) -> None:
     assert "did not finish within" in result.detail, "and the reason names the limit"
     assert result.harness_seconds is not None, "the harness timed the run"
     assert result.harness_seconds >= 0.2, "for at least as long as the limit"
+
+
+def test_a_timed_out_transcript_is_scrubbed_before_it_is_cut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The timeout detail is bounded like a transcript, and scrubbed first.
+
+    A killed run's output is the only evidence of where it had got to, so it is
+    kept — bounded, because a runaway run can print far more than a record
+    should hold. A credential placed where that cut falls would otherwise be
+    recorded as its first few characters, a fragment nothing recognizes as a
+    credential.
+    """
+    credential = "s3cr3t-do-not-record"
+    filler = "x" * (_TRANSCRIPT_LIMIT - 10)
+    monkeypatch.setenv("RUNNER_TOKEN", credential)
+    fizz = stub(
+        tmp_path,
+        f"#!/usr/bin/env bash\nprintf '%s%s\\n' '{filler}' '{credential}'\nsleep 5\n",
+    )
+
+    result = FizzbeeChecker(fizz, timeout_seconds=0.2).check(spec())
+
+    assert isinstance(result, domain.Errored), "a killed run proved nothing"
+    assert "did not finish within" in result.detail, "the reason names the limit"
+    assert credential[:5] not in result.detail, "no fragment of it is kept"
+    assert "<redacted>" in result.detail, "the value was replaced, not dropped"
 
 
 def test_a_relative_launcher_is_resolved_before_the_run_starts(

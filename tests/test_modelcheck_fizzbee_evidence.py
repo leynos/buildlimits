@@ -10,7 +10,10 @@ failure rather than against a hand-built value.
 The text beside the graph is bounded before it becomes a diagnostic, because it
 is checker-written and its length is the checker's choice. The same is true of
 the line an error or a stopped run is read from, which is persisted whole
-otherwise.
+otherwise. Bounding is never the first thing done to it: a cut through a
+credential would keep a fragment of it that the survival check cannot
+recognize, so the whole capture is scrubbed first and two of the tests here
+place a credential exactly where the cut falls.
 
 What must be *replaced* rather than bounded — runner paths and credentials — is
 asserted in :mod:`tests.test_modelcheck_fizzbee_redaction`, so each module is
@@ -23,10 +26,26 @@ from pathlib import Path
 
 import pytest
 from fizzbee_process_stubs import spec, stub
-from modelcheck_evidence_cases import graph_run
+from modelcheck_evidence_cases import graph_run, run_stub
 
 from modelcheck import domain
+from modelcheck.adapters.fizzbee_evidence import _TRANSCRIPT_LIMIT
 from modelcheck.adapters.fizzbee_process import FizzbeeChecker
+
+_CREDENTIAL = "s3cr3t-do-not-record"
+"""A credential long enough to be replaced wherever it occurs."""
+
+_STRADDLING = "x" * (_TRANSCRIPT_LIMIT - 10)
+"""Filler that puts a credential across the cut.
+
+The cut keeps :data:`_TRANSCRIPT_LIMIT` characters, so a value placed here is
+split by it: the prefix ends ten characters into the credential. That fragment
+is what a bounding pass that ran first would record, and it is not something
+the survival check can find, because half a credential is not one. Ten is
+chosen so the placeholder that replaces the value still fits inside the kept
+prefix, which lets a test assert the replacement happened rather than only that
+the fragment is gone.
+"""
 
 
 def test_an_error_graph_is_read_from_the_named_output_directory() -> None:
@@ -151,3 +170,49 @@ def test_a_deciding_stopped_line_is_bounded(tmp_path: Path) -> None:
     assert result.detail.startswith("Model checker stopped "), "the shape is kept"
     assert "first 4000 of" in result.detail, "and the cut is stated"
     assert len(result.detail) < 5000, "so the whole line is not kept"
+
+
+def test_a_credential_the_transcript_cut_would_split_is_scrubbed_whole(
+    tmp_path: Path,
+) -> None:
+    """A credential is removed before the transcript is cut, not after it.
+
+    The transcript is kept as a fixed prefix, and a credential placed where
+    that prefix ends would leave part of itself in the kept text. The survival
+    check cannot find a fragment, so the whole capture has to be scrubbed while
+    it is still one string — which is what the adapter does, and what the run's
+    environment here makes observable.
+    """
+    result = run_stub(
+        tmp_path,
+        f"#!/usr/bin/env bash\nprintf '%s%s\\n' '{_STRADDLING}' '{_CREDENTIAL}'\n",
+        {"RUNNER_TOKEN": _CREDENTIAL},
+    )
+
+    assert isinstance(result, domain.Errored), "the run printed no verdict"
+    assert _CREDENTIAL[:5] not in result.detail, "no fragment of it is kept"
+    assert "<redacted>" in result.detail, "the value was replaced, not dropped"
+    assert "first 4000 of 4001 characters" in result.detail, "and the cut is stated"
+
+
+def test_a_credential_the_graph_cut_would_split_is_scrubbed_whole(
+    tmp_path: Path,
+) -> None:
+    """A malformed graph is scrubbed as one document before it is bounded.
+
+    The refused graph is kept as evidence, and it is longer than the limit for
+    the same reason a transcript is: the checker wrote it. Scrubbing each
+    capture before the cut is what keeps half a credential out of the record
+    when the value sits across the boundary.
+    """
+    result = graph_run(
+        tmp_path,
+        "mkdir -p out\n"
+        f"printf '%s%s}}' '{_STRADDLING}' '{_CREDENTIAL}' > out/error-graph.json\n",
+        {"RUNNER_TOKEN": _CREDENTIAL},
+    )
+
+    assert isinstance(result, domain.Errored), "the graph proved nothing"
+    assert _CREDENTIAL[:5] not in result.detail, "no fragment of it is kept"
+    assert "<redacted>" in result.detail, "the value was replaced, not dropped"
+    assert "first 4000 of 4001 characters" in result.detail, "and the cut is stated"

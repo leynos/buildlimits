@@ -346,21 +346,6 @@ def test_configurations_keep_their_file_order(tmp_path: Path) -> None:
     assert names == ["zeta", "alpha"], "the file's order is kept"
 
 
-def test_exclusions_carry_their_reason(tmp_path: Path) -> None:
-    """An exclusion is a considered gap, and the reason travels with it."""
-    directory = _directory(
-        tmp_path,
-        """
-[exclusions]
-"buildlimits.effects.Pause" = "modelled as an unobservable effect"
-""",
-    )
-
-    assert TomlConfigurations(directory).exclusions() == {
-        "buildlimits.effects.Pause": "modelled as an unobservable effect"
-    }, "the reason travels with the exclusion"
-
-
 def test_a_file_that_is_not_utf8_is_refused_by_both_queries(tmp_path: Path) -> None:
     """A file in another encoding is refused rather than guessed at.
 

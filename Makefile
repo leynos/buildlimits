@@ -293,7 +293,11 @@ $(FIZZBEE_STAMP):
 	    rm -f "$$asset.part"; \
 	    curl --fail --location --retry 3 --retry-all-errors \
 	      --connect-timeout 20 --max-time 900 \
-	      --output "$$asset.part" '$(FIZZBEE_URL)'; \
+	      --output "$$asset.part" '$(FIZZBEE_URL)' || { \
+	      status=$$?; \
+	      rm -f "$$asset.part"; \
+	      exit $$status; \
+	    }; \
 	    mv -f "$$asset.part" "$$asset"; \
 	    if ! printf '%s  %s\n' "$$want" "$$asset" | sha256sum --check --status -; then \
 	      printf 'Error: upstream asset changed; do not update FIZZBEE_SHA256 without review\n' >&2; \

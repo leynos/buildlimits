@@ -17,6 +17,13 @@ and must describe the model rather than the machine that checked it. That half
 of the job lives in :mod:`modelcheck.adapters.fizzbee_redaction`: this module
 decides how much of a text is worth keeping, and that one decides what must
 never be kept at all.
+
+The two are applied in one order only: redact, then cut. A cut taken first can
+split a credential in two, and the half it keeps is a fragment no survival
+check can recognize as a credential — the record would carry five characters of
+a secret while looking clean. The caller therefore passes its own scrub
+callable here, and each bounding function runs it while the text is still
+whole.
 """
 
 import typing as typ
@@ -25,18 +32,33 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 __all__ = [
+    "Scrub",
     "bounded",
     "timeout_detail",
     "unreadable_graph",
     "with_evidence",
 ]
 
+type Scrub = cabc.Callable[[str], str]
+"""What a caller supplies to remove from a text what must not be recorded.
+
+A run's own wiring passes
+:meth:`~modelcheck.adapters.fizzbee_replacements.Redaction.retain`, which
+replaces every credential it can and withholds a text one survives in. It is a
+parameter rather than an import so this module decides only how much is kept,
+while the module that owns the needles is the only one that knows them.
+"""
+
 _TRANSCRIPT_LIMIT = 4000
 """How many characters of one captured stream are kept."""
 
 
-def with_evidence(reason: str, captures: cabc.Iterable[tuple[str, str]]) -> str:
-    """Return a diagnostic followed by the output that explains it.
+def with_evidence(
+    reason: str,
+    captures: cabc.Iterable[tuple[str, str]],
+    scrub: Scrub | None = None,
+) -> str:
+    r"""Return a diagnostic followed by the output that explains it.
 
     Parameters
     ----------
@@ -46,6 +68,9 @@ def with_evidence(reason: str, captures: cabc.Iterable[tuple[str, str]]) -> str:
         Label and text for each piece of evidence, in the order it should be
         shown. An empty or whitespace-only capture is omitted rather than
         rendered as an empty section.
+    scrub : Scrub | None
+        What must be removed from each capture before it is cut, or ``None``
+        when nothing is. It runs first: see :func:`bounded`.
 
     Returns
     -------
@@ -62,13 +87,21 @@ def with_evidence(reason: str, captures: cabc.Iterable[tuple[str, str]]) -> str:
     Error: boom
     >>> with_evidence("no graph", [("the checker printed", "  ")])
     'no graph'
+    >>> with_evidence(
+    ...     "no graph",
+    ...     [("the checker printed", "token=abcde")],
+    ...     lambda text: text.replace("abcde", "<redacted>"),
+    ... )
+    'no graph\nthe checker printed:\ntoken=<redacted>'
     """
     parts = [reason]
-    parts.extend(_bounded(label, text) for label, text in captures if text.strip())
+    parts.extend(
+        _bounded(label, text, scrub) for label, text in captures if text.strip()
+    )
     return "\n".join(parts)
 
 
-def bounded(text: str) -> str:
+def bounded(text: str, scrub: Scrub | None = None) -> str:
     """Return ``text`` cut to :data:`_TRANSCRIPT_LIMIT`, saying so when it was cut.
 
     Parameters
@@ -76,11 +109,16 @@ def bounded(text: str) -> str:
     text : str
         One line the parser decided a run's outcome from, such as the
         checker's own ``Error:`` line or the marker a signal left.
+    scrub : Scrub | None
+        What must be removed from ``text`` before it is cut, or ``None`` when
+        nothing is. Applied first, because a cut through a credential would
+        keep a fragment of it that no survival check can recognize; a text the
+        scrub withholds is bounded as the marker it became.
 
     Returns
     -------
     str
-        The text unchanged when it fits, otherwise its first
+        The text, scrubbed and unchanged when it fits, otherwise its first
         :data:`_TRANSCRIPT_LIMIT` characters followed by an ellipsis and a note
         stating how much of the whole was kept. A deciding line is bounded for
         the same reason a transcript is: the checker writes it, so its length
@@ -92,13 +130,44 @@ def bounded(text: str) -> str:
     'Error: Compilation failed'
     >>> bounded("x" * 4001).endswith("(first 4000 of 4001 characters)")
     True
+    >>> def scrub(text):
+    ...     return "<withheld>" if "s3cr3t" in text else text
+    >>> bounded("x" * 3996 + "s3cr3t", scrub)
+    '<withheld>'
     """
+    kept, whole = _cut(text, scrub)
+    if whole is None:
+        return kept
+    return f"{kept}… (first {_TRANSCRIPT_LIMIT} of {whole} characters)"
+
+
+def _cut(text: str, scrub: Scrub | None) -> tuple[str, int | None]:
+    """Return the text scrubbed and cut, and its whole length when it was cut.
+
+    This is the only place the two steps are ordered, so the order cannot be
+    got wrong in one caller and right in the other: a cut taken before the
+    scrub splits a credential, and the half it keeps is a fragment the survival
+    check cannot recognize as a credential. Every bounded detail in the package
+    is built from this function.
+
+    Parameters
+    ----------
+    text : str
+        The capture to bound.
+    scrub : Scrub | None
+        What must be removed before the cut, or ``None`` when nothing is.
+
+    Returns
+    -------
+    tuple[str, int | None]
+        What is kept, and the whole length when something was cut; ``None``
+        when nothing was.
+    """
+    if scrub is not None:
+        text = scrub(text)
     if len(text) <= _TRANSCRIPT_LIMIT:
-        return text
-    return (
-        f"{text[:_TRANSCRIPT_LIMIT]}… "
-        f"(first {_TRANSCRIPT_LIMIT} of {len(text)} characters)"
-    )
+        return text, None
+    return text[:_TRANSCRIPT_LIMIT], len(text)
 
 
 def unreadable_graph(error: OSError | UnicodeDecodeError) -> str:
@@ -130,7 +199,11 @@ def unreadable_graph(error: OSError | UnicodeDecodeError) -> str:
             return f"the error graph could not be read: {error.strerror or error}"
 
 
-def timeout_detail(timeout_seconds: float, stdout: str) -> str:
+def timeout_detail(
+    timeout_seconds: float,
+    stdout: str,
+    scrub: Scrub | None = None,
+) -> str:
     r"""Build the detail for a run the adapter stopped.
 
     Parameters
@@ -138,8 +211,11 @@ def timeout_detail(timeout_seconds: float, stdout: str) -> str:
     timeout_seconds : float
         The limit the run exceeded.
     stdout : str
-        Everything the checker printed before it was killed, already redacted
-        of the run's paths and credentials.
+        Everything the checker printed before it was killed, decoded but not
+        yet redacted. It is scrubbed before it is cut; see :func:`bounded`.
+    scrub : Scrub | None
+        What must be removed from ``stdout`` before it is cut, or ``None`` when
+        nothing is.
 
     Returns
     -------
@@ -158,11 +234,11 @@ def timeout_detail(timeout_seconds: float, stdout: str) -> str:
     ['the checker did not finish within 600s']
     """
     reason = f"the checker did not finish within {timeout_seconds:.0f}s"
-    return with_evidence(reason, (("the checker printed", stdout),))
+    return with_evidence(reason, (("the checker printed", stdout),), scrub)
 
 
-def _bounded(label: str, text: str) -> str:
-    """Return one labelled capture, cut to :data:`_TRANSCRIPT_LIMIT`.
+def _bounded(label: str, text: str, scrub: Scrub | None) -> str:
+    """Return one labelled capture, scrubbed and cut to the transcript limit.
 
     Parameters
     ----------
@@ -170,15 +246,18 @@ def _bounded(label: str, text: str) -> str:
         What the capture is, such as "the checker printed".
     text : str
         The captured text.
+    scrub : Scrub | None
+        What must be removed from ``text`` before it is cut, or ``None`` when
+        nothing is.
 
     Returns
     -------
     str
-        The labelled capture, with an explicit note when it was truncated.
+        The labelled capture, with an explicit note when it was truncated. The
+        scrub runs on the whole capture, so a credential the cut would have
+        split is removed rather than half-kept.
     """
-    if len(text) <= _TRANSCRIPT_LIMIT:
-        return f"{label}:\n{text}"
-    return (
-        f"{label} (first {_TRANSCRIPT_LIMIT} of {len(text)} characters):\n"
-        f"{text[:_TRANSCRIPT_LIMIT]}\n…"
-    )
+    kept, whole = _cut(text, scrub)
+    if whole is None:
+        return f"{label}:\n{kept}"
+    return f"{label} (first {_TRANSCRIPT_LIMIT} of {whole} characters):\n{kept}\n…"

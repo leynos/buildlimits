@@ -128,14 +128,20 @@ def read_records(model: str) -> list[Record]:
             f"{results} is missing; run `make model-check` before this suite",
             pytrace=False,
         )
-    newest_source = max(
+    sources = [
         path.stat().st_mtime
         for path in directory.rglob("*")
         # ``traces/`` is this run's own output, written after the records;
         # only the model's sources can make the artefact stale.
         if _TRACES not in path.relative_to(directory).parts
-    )
-    if results.stat().st_mtime < newest_source:
+    ]
+    if not sources:
+        pytest.fail(
+            f"{directory} holds no source to date the artefact by; "
+            "the model checkout is incomplete",
+            pytrace=False,
+        )
+    if results.stat().st_mtime < max(sources):
         pytest.fail(
             f"{results} is older than the model; run `make model-check` again",
             pytrace=False,

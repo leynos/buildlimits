@@ -194,11 +194,19 @@ class TomlConfigurations:
 
         Raises
         ------
+        MaterializeError
+            If an exclusion's reason is not a non-empty string. Coercing it
+            with ``str`` would turn a number or a table into a reason nobody
+            wrote, and an empty string is a reason only in the sense that it
+            occupies the field.
         UnicodeDecodeError
             If the file is not UTF-8. The parser decodes the bytes, so a file
             written in another encoding is refused rather than guessed at.
         """  # ruff: ignore[docstring-extraneous-exception] - the parser raises it.
-        return {path: str(reason) for path, reason in self._table("exclusions").items()}
+        declared = self._table("exclusions")
+        return {
+            path: _reason(self._path, path, reason) for path, reason in declared.items()
+        }
 
     def _table(self, name: str) -> dict[str, object]:
         """Return one top-level table from ``configurations.toml``.
@@ -273,3 +281,49 @@ class TomlConfigurations:
     def _path(self) -> Path:
         """The configuration file's path."""
         return self._directory / _CONFIGURATIONS
+
+
+def _reason(path: Path, exclusion: str, reason: object) -> str:
+    """Return one exclusion's reason, refusing a value that is not one.
+
+    Parameters
+    ----------
+    path : pathlib.Path
+        The file the exclusion was read from, for the error message.
+    exclusion : str
+        The excluded dotted path, for the error message.
+    reason : object
+        The value the file declared.
+
+    Returns
+    -------
+    str
+        The reason.
+
+    Raises
+    ------
+    MaterializeError
+        If the value is not a non-empty string. A reason is what makes an
+        exclusion a considered decision, so a value of another shape is
+        refused rather than converted into one.
+
+    Examples
+    --------
+    >>> from pathlib import Path
+    >>> _reason(Path("configurations.toml"), "mod.Thing", "not mapped")
+    'not mapped'
+    >>> for declared in ("  ", 3):
+    ...     try:
+    ...         _reason(Path("configurations.toml"), "mod.Thing", declared)
+    ...     except MaterializeError as refusal:
+    ...         "not a non-empty string" in str(refusal)
+    True
+    True
+    """
+    if not isinstance(reason, str) or not reason.strip():
+        msg = (
+            f"{path} gives {exclusion!r} an exclusion reason that is "
+            "not a non-empty string"
+        )
+        raise MaterializeError(msg)
+    return reason
