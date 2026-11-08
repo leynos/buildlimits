@@ -1388,6 +1388,9 @@ explicitly.
     were tightened to 399 and 400 lines, and the two exclusion tests moved to
     `tests/test_modelcheck_configuration_exclusions.py`, which reads the model
     directory through the configuration module's own helper.
+  - The round's scope recount is 88 in-scope files, from 103 touched paths
+    less the tolerance's exclusions. The new test module is the only path this
+    commit adds; the rest of it edits files the round already counted.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -1782,12 +1785,12 @@ explicitly.
     discovering it at G1.
 
 - **The D35 remediation round breaches the 25-file hard stop, at 27 files
-  when the escalation was raised and 87 at the current head.**
+  when the escalation was raised and 88 at the current head.**
   - Observation: measured on one basis — every path the round has touched
-    since it began, including the working tree — the round now touches 102
+    since it began, including the working tree — the round now touches 103
     paths; the tolerance's exclusions (two `.fizz` models, five syrupy
-    snapshots and eight documentation files) leave 87 in-scope files,
-    sixty-two over the limit that D32 explicitly kept for EP-M4 onward. This
+    snapshots and eight documentation files) leave 88 in-scope files,
+    sixty-three over the limit that D32 explicitly kept for EP-M4 onward. This
     supersedes the earlier record of 41, which was the same basis applied at
     `486507f` when the round touched 50 paths, the record of 71, which was the
     same basis applied at `aa7ff19` before the branch was replayed onto its
