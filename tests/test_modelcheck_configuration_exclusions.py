@@ -8,14 +8,15 @@ explanation nobody wrote.
 
 These tests live apart from :mod:`tests.test_modelcheck_configuration` so that
 each module is a coherent subject and neither grows past the repository's size
-limit. The model directory they read is written by that module's helper, so
+limit. The model directory they read is written by
+:mod:`tests.modelcheck_configuration_support`, which both modules import, so
 both assert against one layout rather than two copies of it.
 """
 
 from pathlib import Path
 
 import pytest
-from test_modelcheck_configuration import _directory
+from modelcheck_configuration_support import model_directory
 
 from modelcheck import domain
 from modelcheck.adapters.configuration import TomlConfigurations
@@ -23,7 +24,7 @@ from modelcheck.adapters.configuration import TomlConfigurations
 
 def test_exclusions_carry_their_reason(tmp_path: Path) -> None:
     """An exclusion is a considered gap, and the reason travels with it."""
-    directory = _directory(
+    directory = model_directory(
         tmp_path,
         """
 [exclusions]
@@ -51,7 +52,7 @@ def test_an_exclusion_reason_that_is_not_an_explanation_is_refused(
     Either way the record would claim a considered decision the file does not
     contain.
     """
-    directory = _directory(
+    directory = model_directory(
         tmp_path,
         f'[exclusions]\n"buildlimits.effects.Pause" = {declared}\n',
     )

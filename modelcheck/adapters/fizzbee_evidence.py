@@ -8,9 +8,12 @@ carries it.
 
 What is kept is deliberately bounded. The transcript is a checker dump, and a
 report that embedded all of it would be unreadable and would put the whole of
-a runaway run's output into the JSON artefact. A fixed prefix is enough to
-identify the malformed record or the checker's own complaint; the cut is
-stated rather than silent, so a reader knows the evidence was truncated.
+a runaway run's output into the JSON artefact. A fixed number of characters
+from each end is enough: the head identifies the malformed record or the
+checker's opening complaint, and the tail is where the checker prints its
+verdict, a ``FAILED:`` line or an ``Error:`` that a prefix alone would drop.
+The cut is stated rather than silent, so a reader knows the evidence was
+truncated.
 
 The same evidence is also redacted, because the record it becomes is committed
 and must describe the model rather than the machine that checked it. That half
@@ -52,6 +55,15 @@ while the module that owns the needles is the only one that knows them.
 _TRANSCRIPT_LIMIT = 4000
 """How many characters of one captured stream are kept."""
 
+_HEAD = _TRANSCRIPT_LIMIT // 2
+"""How many of those characters are taken from the stream's start."""
+
+_TAIL = _TRANSCRIPT_LIMIT - _HEAD
+"""How many are taken from its end, where the checker prints its verdict."""
+
+_ELLIPSIS = "\n…\n"
+"""What stands between the kept head and tail of a cut stream."""
+
 
 def with_evidence(
     reason: str,
@@ -76,8 +88,8 @@ def with_evidence(
     -------
     str
         The reason, then each non-empty capture under its label. A capture
-        longer than :data:`_TRANSCRIPT_LIMIT` keeps its first part and says how
-        much of the whole that is.
+        longer than :data:`_TRANSCRIPT_LIMIT` keeps its first and last parts
+        and says how much of the whole that is.
 
     Examples
     --------
@@ -119,8 +131,10 @@ def bounded(text: str, scrub: Scrub | None = None) -> str:
     -------
     str
         The text, scrubbed and unchanged when it fits, otherwise its first
-        :data:`_TRANSCRIPT_LIMIT` characters followed by an ellipsis and a note
-        stating how much of the whole was kept. A deciding line is bounded for
+        :data:`_HEAD` and last :data:`_TAIL` characters around an ellipsis,
+        followed by a note stating how much of the whole was kept. Both ends
+        are kept because a verdict is printed last: a prefix alone would drop
+        the very line that explains the failure. A deciding line is bounded for
         the same reason a transcript is: the checker writes it, so its length
         is the checker's choice rather than the adapter's.
 
@@ -128,7 +142,9 @@ def bounded(text: str, scrub: Scrub | None = None) -> str:
     --------
     >>> bounded("Error: Compilation failed")
     'Error: Compilation failed'
-    >>> bounded("x" * 4001).endswith("(first 4000 of 4001 characters)")
+    >>> bounded("x" * 4001).endswith(
+    ...     "(first 2000 and last 2000 of 4001 characters kept)"
+    ... )
     True
     >>> def scrub(text):
     ...     return "<withheld>" if "s3cr3t" in text else text
@@ -138,7 +154,7 @@ def bounded(text: str, scrub: Scrub | None = None) -> str:
     kept, whole = _cut(text, scrub)
     if whole is None:
         return kept
-    return f"{kept}… (first {_TRANSCRIPT_LIMIT} of {whole} characters)"
+    return f"{kept}\n({_note(whole)})"
 
 
 def _cut(text: str, scrub: Scrub | None) -> tuple[str, int | None]:
@@ -160,14 +176,36 @@ def _cut(text: str, scrub: Scrub | None) -> tuple[str, int | None]:
     Returns
     -------
     tuple[str, int | None]
-        What is kept, and the whole length when something was cut; ``None``
-        when nothing was.
+        What is kept — the text itself when it fits, otherwise its head and
+        tail around :data:`_ELLIPSIS` — and the whole length when something was
+        cut; ``None`` when nothing was.
     """
     if scrub is not None:
         text = scrub(text)
     if len(text) <= _TRANSCRIPT_LIMIT:
         return text, None
-    return text[:_TRANSCRIPT_LIMIT], len(text)
+    return f"{text[:_HEAD]}{_ELLIPSIS}{text[-_TAIL:]}", len(text)
+
+
+def _note(whole: int) -> str:
+    """Return the note stating how much of a cut text was kept.
+
+    Parameters
+    ----------
+    whole : int
+        The length of the scrubbed text before it was cut.
+
+    Returns
+    -------
+    str
+        The note, naming both kept regions and the length they came from.
+
+    Examples
+    --------
+    >>> _note(5000)
+    'first 2000 and last 2000 of 5000 characters kept'
+    """
+    return f"first {_HEAD} and last {_TAIL} of {whole} characters kept"
 
 
 def unreadable_graph(error: OSError | UnicodeDecodeError) -> str:
@@ -253,11 +291,12 @@ def _bounded(label: str, text: str, scrub: Scrub | None) -> str:
     Returns
     -------
     str
-        The labelled capture, with an explicit note when it was truncated. The
-        scrub runs on the whole capture, so a credential the cut would have
-        split is removed rather than half-kept.
+        The labelled capture, with an explicit note when it was truncated and
+        its head and tail kept around an ellipsis. The scrub runs on the whole
+        capture, so a credential the cut would have split is removed rather
+        than half-kept.
     """
     kept, whole = _cut(text, scrub)
     if whole is None:
         return f"{label}:\n{kept}"
-    return f"{label} (first {_TRANSCRIPT_LIMIT} of {whole} characters):\n{kept}\n…"
+    return f"{label} ({_note(whole)}):\n{kept}"

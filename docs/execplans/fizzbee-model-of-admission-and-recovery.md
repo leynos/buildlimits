@@ -1353,11 +1353,14 @@ explicitly.
     configuration tables and `drift` the exclusions, so the two commands reach
     the parser by different calls.
   - `tests/test_modelcheck_redaction_properties.py` draws a credential from an
-    alphabet whose characters writers spell differently, computes every JSON
-    spelling independently of the adapter, and asserts that each is removed or
-    the text withheld. A second property draws a single character from the
-    whole Unicode space and asserts a decoded string containing it is
-    withheld.
+    alphabet whose characters writers spell differently, computes the whole
+    value's JSON spellings independently of the adapter, and asserts that each
+    is removed or the text withheld. A second property escapes each character
+    independently — literal or six-character escape, per position, which no
+    whole-value spelling enumerates — and decodes what was retained with a
+    decoder of its own before looking for the credential. A third draws a
+    single character from the whole Unicode space and asserts a decoded string
+    containing it is withheld.
 - [x] (2026-11-08) **The eleventh round's nine inline findings are answered:
     evidence is scrubbed before it is bounded, an exclusion reason is checked
     rather than coerced, the installer removes a partial download, and the
@@ -1391,6 +1394,70 @@ explicitly.
   - The round's scope recount is 88 in-scope files, from 103 touched paths
     less the tolerance's exclusions. The new test module is the only path this
     commit adds; the rest of it edits files the round already counted.
+- [x] (2026-11-08) **The twelfth round's eight findings are answered: the cut
+    keeps both ends of a transcript, a mixed escape spelling is pinned by a
+    property, and four docstrings and the guide say what the code does.**
+    Amends D57 rather than superseding it: the ordering it fixes is unchanged,
+    and only the shape of the cut moves.
+  - A prefix cut dropped the checker's verdict, which it prints on its last
+    line. `bounded` now keeps `_TRANSCRIPT_LIMIT // 2` characters from each end,
+    joined by an ellipsis, and the note states both figures — "first 2000 and
+    last 2000 of 4011 characters kept". The straddle regressions that place a
+    credential across the boundary place it across the head's end instead, and
+    the end-to-end scenario asserts the ellipsis rather than a trailing one.
+  - The property suite gains the spelling no whole-value list enumerates: each
+    character escaped or literal, per position, decoded afterwards with a
+    decoder the test owns. It passes because `retains_credential` already
+    resolves every escape sequence in `_decoded_view`, which is what makes the
+    property a statement about the contract rather than about one writer.
+  - `redaction_for` already refused a root or single-component path as a
+    needle; nothing asserted it, so `HOME=/` and `TMPDIR=tmp` are now cases and
+    a multi-component home is the control that shows the guard narrows the rule
+    rather than removing it.
+  - Four docstrings were inaccurate against the code and are corrected:
+    `ports.MaterializeError` names the empty and whitespace-only reason,
+    `service`'s module and `_consistent` say a run that reported no count leaves
+    the whole configuration uncompared, and `tests.modelcheck_artefacts` says an
+    opted-in run with no results file fails rather than skips.
+  - The model-directory helper both configuration modules need moved to
+    `tests/modelcheck_configuration_support.py`. It is a support module rather
+    than a `test_*.py`, so it stays subject to the line-length and docstring
+    policies; it carries no doctest, because `Path` is imported only under
+    `TYPE_CHECKING` and an example would raise on import.
+  - The developers' guide names the new support module in its helper table and
+    adds a paragraph separating the three kinds of test a reader confuses: one
+    that runs the checker, one that reads a recorded artefact, and the
+    behavioural scenarios and materializer checks that run in between. Its two
+    other claims that every `fizzbee`-marked test runs the checker are
+    corrected, the evidence section says the cut is 2,000 characters from each
+    end, and it now states the one-character limit plainly: such a credential
+    is replaced in a value position and withheld from a decoded trace string,
+    but one embedded in a longer token in free diagnostic text is recorded with
+    the text, because withholding on a bare character would withhold every
+    diagnostic a maintainer needs.
+  - Two end-to-end tests asserted a credential was absent from the matrix
+    record, which passed whether or not redaction worked: a judgement row
+    carries the verdict and its measurements and never the trace, which is
+    written to the saved-trace file instead. The vacuous assertion is replaced
+    by a guard that fails if a record ever starts carrying a trace, so the
+    saved-trace assertions cannot silently lose their subject.
+  - The commit gates found two defects in that new property. Its decoder is a
+    copy of `_decoded_view`, which the duplication gate reports as a family;
+    that is recorded as a considered exception in `pyproject.toml`, on the
+    precedent already there for a test oracle that restates a production rule —
+    decoding with the adapter's own function would let one mistake satisfy both
+    the redaction and the check that it worked. And the property drew a 2–6
+    element escape pattern and then filtered on its length matching the
+    credential's, so most draws were discarded and Hypothesis failed the run
+    with `filter_too_much`; `_mixed_escape_spelling` now draws the pattern
+    after the credential, at exactly its length, and every draw is used.
+  - That property then failed on a second defect of the same kind. It decoded
+    the retained text with a backslash-anywhere pattern, so when redaction cut
+    a spelling mid-escape — `\u003000000`, the credential `000000` with its
+    first character escaped, is redacted to `\u003<redacted>` — the leftover
+    `\u` raised `KeyError: 'u'` instead of reading as the text it is. The
+    decoder now lists JSON's eight escapes, as the format does, and treats an
+    incomplete escape as literal text.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -3370,6 +3437,41 @@ explicitly.
     and
     `test_a_configuration_file_that_is_not_utf8_is_refused_by_both_commands`.
 
+- **D57. Evidence is redacted before it is bounded, the cut keeps both ends
+  rather than a prefix, and an exclusion's reason is checked rather than
+  coerced.** _Decided 2026-11-08._
+  - Decision: every detail the adapter builds from checker-written text is
+    passed through a `Scrub` callable while the text is still whole, and is cut
+    only afterwards. `bounded`, `with_evidence` and `timeout_detail` take the
+    callable; the process adapter supplies `Redaction.retain`; `parse_output`
+    threads it to the five details it builds while classification still reads
+    the text exactly as the checker printed it. The cut keeps
+    `_TRANSCRIPT_LIMIT // 2` characters from each end, joined by an ellipsis,
+    and states how much of the whole that is. An exclusion's reason is refused
+    unless it is a non-empty string. The installer removes a partial download.
+  - Finding: a credential placed across the cut was recorded as its first few
+    characters while the record looked clean, because a cut taken before the
+    scrub splits a credential into a fragment no survival check recognizes. A
+    prefix cut has the same effect on evidence that is not secret: the checker
+    prints its verdict on the last line, so a prefix alone drops the `FAILED:`
+    or `Error:` a reader needs. `exclusions()` coerced whatever TOML held with
+    `str`, so an integer passed for an explanation nobody wrote, and a failed
+    download could leave an asset a later run treated as installed.
+  - Reason: a replacement is not injective, so scrubbing the graph's text before
+    parsing could change its validity, its ending, or the equality that makes a
+    lasso a lasso; the text is therefore classified as written and scrubbed
+    afterwards. The survival check is what makes redaction a guarantee rather
+    than a set of hopeful needles, and it can only see a credential that is
+    still whole, which fixes the order. Cutting from both ends costs nothing a
+    reader wanted and keeps the verdict.
+  - Evidence:
+    `test_a_credential_the_transcript_cut_would_split_is_scrubbed_whole`,
+    `test_a_credential_the_graph_cut_would_split_is_scrubbed_whole`,
+    `test_a_timed_out_transcript_is_scrubbed_before_it_is_cut`,
+    `test_evidence_a_credential_survives_in_is_withheld` for the marker,
+    `test_an_exclusion_reason_that_is_not_an_explanation_is_refused`, and the
+    `FIZZBEE_STAMP` recipe's removal of `$$asset.part`.
+
 ## Outcomes & retrospective
 
 EP-M1 to EP-M3 are delivered and accepted; EP-M4's implementation is delivered
@@ -3490,7 +3592,7 @@ they are affordable: fidelity on every pull request, the matrix nightly.
   67,944 to 65,664.
 - **What it cost.** The 25-file stop was breached again, at 27 files when the
   escalation was raised; that figure is historical, and the round has since
-  grown to 87 in-scope files (Risks, D35). The excess is exactly the run of
+  grown to 88 in-scope files (Risks, D35). The excess is exactly the run of
   modules the 400-line rule forced, plus the later assessment repairs; it does
   not reopen EP-M3's exception. The model has taken two revisions since its
   first full run — the manager guard and the L1 control — which is the

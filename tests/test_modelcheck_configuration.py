@@ -15,39 +15,13 @@ a model with twenty variants is where that costs the most.
 import typing as typ
 
 import pytest
+from modelcheck_configuration_support import MODEL, model_directory
 
 from modelcheck import domain
 from modelcheck.adapters.configuration import TomlConfigurations
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
-
-MODEL = """\
-action Init:  # maps: buildlimits.admission.Admission.submit
-  n = 0
-"""
-"""The source a model directory holds in these tests."""
-
-
-def _directory(tmp_path: Path, configurations: str = "") -> Path:
-    """Write a model directory and return it.
-
-    Parameters
-    ----------
-    tmp_path : pathlib.Path
-        The scratch directory pytest supplied.
-    configurations : str
-        The ``configurations.toml`` contents, or nothing for no file.
-
-    Returns
-    -------
-    pathlib.Path
-        The directory, holding the model and the configuration file.
-    """
-    (tmp_path / "admission.fizz").write_text(MODEL, encoding="utf-8")
-    if configurations:
-        (tmp_path / "configurations.toml").write_text(configurations, encoding="utf-8")
-    return tmp_path
 
 
 def _only(directory: Path) -> domain.Configuration:
@@ -86,7 +60,7 @@ def _refusal(tmp_path: Path, configurations: str, match: str | None = None) -> s
         The message the adapter raised, for a test that asserts on more than
         the pattern.
     """
-    directory = _directory(tmp_path, configurations)
+    directory = model_directory(tmp_path, configurations)
 
     with pytest.raises(domain.MaterializeError, match=match) as raised:
         TomlConfigurations(directory).configurations()
@@ -96,7 +70,7 @@ def _refusal(tmp_path: Path, configurations: str, match: str | None = None) -> s
 
 def test_the_source_is_the_model_text(tmp_path: Path) -> None:
     """The adapter publishes the model's text, unchanged."""
-    directory = _directory(tmp_path)
+    directory = model_directory(tmp_path)
 
     assert TomlConfigurations(directory).source_text() == MODEL, "the text, unchanged"
 
@@ -113,7 +87,7 @@ def test_a_directory_without_a_model_is_refused(tmp_path: Path) -> None:
 
 def test_every_declared_field_reaches_the_configuration(tmp_path: Path) -> None:
     """The table becomes the domain's value, field by field."""
-    directory = _directory(
+    directory = model_directory(
         tmp_path,
         """
 [configurations.head]
@@ -171,7 +145,7 @@ def test_a_boolean_constant_is_rendered_as_the_model_spells_it(
     format that needs it. The frontmatter is a different surface: it is YAML,
     and :mod:`modelcheck.frontmatter` keeps its lowercase spelling.
     """
-    directory = _directory(
+    directory = model_directory(
         tmp_path,
         """
 [configurations.head.constants]
@@ -191,7 +165,7 @@ def test_a_configuration_may_declare_nothing(tmp_path: Path) -> None:
     Refusing it here would make the *file's* shape a requirement the domain
     never stated; the service is where an empty *matrix* is refused.
     """
-    configuration = _only(_directory(tmp_path, "[configurations.head]\n"))
+    configuration = _only(model_directory(tmp_path, "[configurations.head]\n"))
 
     assert configuration == domain.Configuration("head", {}, {}, {}, 0, ()), (
         "an empty table expects nothing"
@@ -200,7 +174,7 @@ def test_a_configuration_may_declare_nothing(tmp_path: Path) -> None:
 
 def test_a_missing_file_declares_nothing(tmp_path: Path) -> None:
     """A model with no configuration file has no configurations and no exclusions."""
-    directory = _directory(tmp_path)
+    directory = model_directory(tmp_path)
     source = TomlConfigurations(directory)
 
     assert not source.configurations(), "no file declares no configurations"
@@ -215,7 +189,7 @@ def test_a_bound_set_the_models_do_not_declare_is_refused(tmp_path: Path) -> Non
     the requested name, so the request is refused until 1.5.1 adds it.
     """
     with pytest.raises(domain.MaterializeError, match="bound set"):
-        TomlConfigurations(_directory(tmp_path), "nightly")
+        TomlConfigurations(model_directory(tmp_path), "nightly")
 
 
 @pytest.mark.parametrize(
@@ -325,7 +299,7 @@ def test_a_string_field_is_not_iterated_character_by_character(
 @pytest.mark.parametrize("level", ["sometimes", "Fair", ""])
 def test_a_fairness_level_must_be_one_of_three(tmp_path: Path, level: str) -> None:
     """An unknown level cannot be compared with what the checker honours."""
-    directory = _directory(
+    directory = model_directory(
         tmp_path,
         f'[configurations.head.fairness]\nF1 = "{level}"\n',
     )
@@ -336,7 +310,7 @@ def test_a_fairness_level_must_be_one_of_three(tmp_path: Path, level: str) -> No
 
 def test_configurations_keep_their_file_order(tmp_path: Path) -> None:
     """The report shows configurations in the order the file declares them."""
-    directory = _directory(
+    directory = model_directory(
         tmp_path,
         "[configurations.zeta]\n[configurations.alpha]\n",
     )
@@ -354,7 +328,7 @@ def test_a_file_that_is_not_utf8_is_refused_by_both_queries(tmp_path: Path) -> N
     report it rather than one of them reading an empty table and reporting a
     model that declares nothing.
     """
-    directory = _directory(tmp_path)
+    directory = model_directory(tmp_path)
     (directory / "configurations.toml").write_bytes(b"[configurations.head]\n# \xff\n")
     source = TomlConfigurations(directory)
 
@@ -371,7 +345,7 @@ def test_the_document_is_read_once(tmp_path: Path) -> None:
     original, which is what makes ``configurations`` and ``exclusions`` one
     consistent snapshot of a file a concurrent edit could otherwise split.
     """
-    directory = _directory(tmp_path, "[configurations.head]\n")
+    directory = model_directory(tmp_path, "[configurations.head]\n")
     source = TomlConfigurations(directory)
     source.configurations()
     (directory / "configurations.toml").write_text(

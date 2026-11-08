@@ -865,6 +865,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `modelcheck_source_doubles.py`            | `FixedSource`: the model text and configurations a scenario hands the service, as values                                                   |
 | `modelcheck_scenarios.py`                 | The model text, the `Matrix` one model-check scenario builds, and the readers its steps use                                                |
 | `modelcheck_cli_cases.py`                 | The command lines and expected exit statuses the CLI tests share                                                                           |
+| `modelcheck_configuration_support.py`     | `MODEL` and `model_directory`: the model and configuration file every TOML-configuration test reads                                        |
 
 _Table 4: Shared test helper modules._
 
@@ -935,11 +936,12 @@ The `outcome_store_helpers.py`, `outcome_store_fixture_helpers.py` and
 cache-outcome store fixtures and token vocabularies; do not import them from
 production code.
 
-Tests marked `fizzbee` run the pinned model checker, so they are opt-in:
-`tests/conftest.py` skips them unless `BUILD_LIMITS_MODEL_CHECK=1`, and the
-skip reason names the variable. With the variable set, a missing binary is a
-failure rather than a skip, because an opted-in run that checked nothing must
-not report success. `make fizzbee` installs the binary; run the tests with
+Tests marked `fizzbee` need the pinned model checker or the artefacts it wrote,
+so they are opt-in: `tests/conftest.py` skips them unless
+`BUILD_LIMITS_MODEL_CHECK=1`, and the skip reason names the variable. With the
+variable set, a missing binary is a failure rather than a skip, because an
+opted-in run that checked nothing must not report success. `make fizzbee`
+installs the binary; run the tests with
 `BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -m fizzbee`. `make test` never
 runs them and stays hermetic. Every test copies its spec into pytest's scratch
 directory first, so a run leaves `models/` untouched; `tests/fizzbee_spike.py`
@@ -1135,16 +1137,17 @@ legitimate model change into a failure.
 A run whose evidence is unusable keeps what it can, bounded and redacted. The
 adapter deletes the scratch directory as the call returns, so a graph that
 cannot be read or parsed would otherwise leave nothing to diagnose; the
-diagnostic carries the checker's transcript and the graph, each cut to 4,000
-characters with the cut stated. Both are checker-written text that becomes a
-committed record, so `adapters/fizzbee_redaction.redaction_for` replaces the
-scratch directory, the launcher, the caller's home and temporary directories,
-and the value of every credential-named variable — under the positional rules
-stated below, which decide _where_ a short value is recognized — before the
-text leaves. The line a verdict is read from — an `Error:` diagnostic or the
-marker a signal left — is bounded on the same reasoning. A new path or
-credential the checker can print belongs in that redaction rather than in a
-test-only exception.
+diagnostic carries the checker's transcript and the graph, each cut to 2,000
+characters from each end with the cut stated — both ends, because the checker
+prints its verdict, a `FAILED:` or `Error:` line, last. Both are
+checker-written text that becomes a committed record, so
+`adapters/fizzbee_redaction.redaction_for` replaces the scratch directory, the
+launcher, the caller's home and temporary directories, and the value of every
+credential-named variable — under the positional rules stated below, which
+decide _where_ a short value is recognized — before the text leaves. The line a
+verdict is read from — an `Error:` diagnostic or the marker a signal left — is
+bounded on the same reasoning. A new path or credential the checker can print
+belongs in that redaction rather than in a test-only exception.
 
 Classification happens before any of that. A replacement is neither injective
 nor type-preserving, so `fizzbee_process` parses the checker's own stdout and
@@ -1177,10 +1180,22 @@ string is one value the checker produced and the character cannot be told from
 the text it was built from; the rest of the trace survives. And if a credential
 of two or more characters survives any replacement, `Redaction.retain` returns
 `WITHHELD` and the record says the text was withheld rather than committing it.
-The mechanism itself is in `adapters/fizzbee_replacements`; the module holds
-the substitution and the survival check only, so "what must not be recorded"
-stays in `fizzbee_redaction`. All of this is a reason an artefact is read
-before it is committed, not a reason to trust one that was not.
+
+One-character credentials are the exception to that last rule, and the limit is
+worth stating plainly. They are kept out of the survival check, because a bare
+`0`, `1` or `x` occurs in nearly every transcript and withholding on one would
+withhold the evidence a maintainer needs. So a one-character credential is
+replaced where it occupies a value position, and withheld entirely from a
+decoded trace string, but a character embedded inside a longer token in free
+diagnostic text — `Error: prefix#` for a credential of `#` — is not recognized
+and is recorded with the text. The exposure is one character in a line of
+prose, and the alternative is to withhold every diagnostic, so the residual is
+accepted and stated rather than closed. Two or more characters have no such
+gap: the survival check withholds the text they survive in. The mechanism
+itself is in `adapters/fizzbee_replacements`; the module holds the substitution
+and the survival check only, so "what must not be recorded" stays in
+`fizzbee_redaction`. All of this is a reason an artefact is read before it is
+committed, not a reason to trust one that was not.
 
 The two obligations have different costs and run in different places.
 `make model-fidelity` runs both drift reports and the drift tests; it compares
@@ -1195,10 +1210,21 @@ The package is a hexagon: the pure modules hold the policy, `ports.py` names
 the collaborators, and `adapters/` are the only modules that touch a process, a
 file or `buildlimits`. `tests/test_modelcheck_layering.py` walks the pure
 modules' syntax trees so the boundary is checked rather than assumed. Tests
-marked `fizzbee` run the real checker and are skipped unless
-`BUILD_LIMITS_MODEL_CHECK=1`; the behavioural scenarios instead replay recorded
-output through the real parser, so a broken parser fails them without the
-binary.
+marked `fizzbee` need the real checker or the artefacts it wrote, and are
+skipped unless `BUILD_LIMITS_MODEL_CHECK=1`; the behavioural scenarios instead
+replay recorded output through the real parser, so a broken parser fails them
+without the binary.
+
+Three kinds of test are easy to confuse. A `fizzbee`-marked test either runs
+the pinned checker (the spike and fixture modules) or reads the artefacts
+`make model-check` wrote (the end-to-end and artefact suites); both are skipped
+unless `BUILD_LIMITS_MODEL_CHECK=1`, and an opted-in run with a missing binary
+or a missing or stale artefact fails rather than skips. The behavioural
+scenarios replay recorded output through the real parser and need neither, and
+the materializer checks read the models' text without running anything.
+`tests/modelcheck_artefacts.py` is the one reader of the artefact layout, so
+both suites share its definition of where a results file lives and when it is
+too old to trust.
 
 Under `make model-check` a skip is a failure: the target passes
 `--fail-on-skip`, which the `skip_guard` plugin turns into a non-zero session
@@ -1211,12 +1237,11 @@ questions.
 
 The fixpoint comparison is the `--fixpoint` one. For each configuration whose
 declared and doubled runs both passed, the `states` count of one is compared
-with the other. A run that ended in a finite or deadlock counterexample is not
-compared, because its count records how far the search got rather than how
-large the model is; a lasso's exploration completed, so its count is comparable
-with a pass's. A run that errored is reported as a failure line instead. A
-configuration whose count grew is printed as `grew` and makes the command exit
-`1`.
+with the other. Only a `Passed` run is compared: a finite or deadlock
+counterexample's count records how far the search got rather than how large the
+model is, and a lasso is not a pass either, so neither is compared here. A run
+that errored is reported as a failure line instead. A configuration whose count
+grew is printed as `grew` and makes the command exit `1`.
 
 The matrix consistency check compares the runs of one configuration with each
 other, not a configuration at two bounds. Each run strips a different set of
@@ -1224,9 +1249,13 @@ assertions, and stripping assertions must not change the state graph, so every
 completed run of one configuration must report the same count. A mismatch is
 reported as an `Errored` row naming both counts, because it means the runs
 explored different models and the verdict describes a model the report does not
-name. A run that reported no count at all is left alone — it is already an
-error or a stop whose own detail says what went wrong — and a finite or
-deadlock counterexample is not compared, for the reason above.
+name. A finite or deadlock counterexample is outside the comparison, because
+its count is the search's progress rather than the graph's size; a lasso's
+exploration completed, so its count is comparable with a pass's. A run that
+reported no count at all — an error or a stop, whose own detail says what went
+wrong — leaves the whole configuration uncompared rather than merely dropping
+that run: comparing the rest would claim an agreement the matrix never
+established.
 
 ## 12. Static-analysis exceptions
 

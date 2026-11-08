@@ -16,11 +16,13 @@ kinds are read from different runs.
 Every completed run of one configuration must also report the same state
 count. Stripping assertions must not change the state graph, so a mismatch
 means the runs explored different models and none of them can be judged (D3).
-Two runs are outside that comparison: one that reported no count at all, which
-is already an error or a stop whose own detail says what went wrong, and a
-finite or deadlock counterexample, whose count is how far the search had got
-rather than the size of the graph. A lasso is the exception: its exploration
-completed, so its count is comparable with a pass's.
+A run that reported no count at all is already an error or a stop whose own
+detail says what went wrong, and its absence of a count leaves the whole
+configuration uncompared rather than merely excluding that run: a comparison
+among the remaining counts would claim agreement the matrix did not establish.
+A finite or deadlock counterexample is outside the equality check for a
+different reason — its count is how far the search had got rather than the size
+of the graph. A lasso is comparable: its exploration completed.
 
 Nothing here opens a file, starts a process or reads the clock. The model text,
 the configurations and the checker all arrive through the ports, which is what
@@ -208,9 +210,11 @@ def _consistent(
     counts is the cheap proof that it did not, so a mismatch is reported as a
     run that proved nothing rather than as a pass or a finding.
 
-    A run that reported no count at all is left alone. It is already an error
-    or a stop, whose own detail says what went wrong, and replacing it with a
-    count mismatch would hide the cause.
+    A run that reported no count at all leaves the whole configuration
+    uncompared. It is already an error or a stop, whose own detail says what
+    went wrong, and replacing it with a count mismatch would hide the cause;
+    comparing only the others would claim an agreement the matrix did not
+    establish.
 
     Only a run that explored the whole state graph is counted. A safety or
     deadlock counterexample stops the checker at the violation, so the states

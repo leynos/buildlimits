@@ -151,7 +151,9 @@ class ConfigurationSource(typ.Protocol):
         Raises
         ------
         MaterializeError
-            If the exclusion table exists but is not a table of strings.
+            If the exclusion table exists but is not a table of non-empty
+            strings. An empty or whitespace-only reason is refused, because
+            it records no considered decision.
         OSError
             If the configuration file exists but cannot be read.
         UnicodeDecodeError

@@ -260,11 +260,18 @@ def test_a_timed_out_transcript_is_scrubbed_before_it_is_cut(
     credential.
     """
     credential = "s3cr3t-do-not-record"
-    filler = "x" * (_TRANSCRIPT_LIMIT - 10)
+    head = _TRANSCRIPT_LIMIT // 2
+    # The scrub replaces the value with a ten-character placeholder before the
+    # cut, so the credential straddles the head's end while the placeholder
+    # fits inside it. The filler after the value keeps the capture longer than
+    # the limit, so a cut is actually taken.
+    filler = "x" * (head - len("<redacted>"))
+    beyond = "x" * (_TRANSCRIPT_LIMIT - head + len("<redacted>"))
     monkeypatch.setenv("RUNNER_TOKEN", credential)
     fizz = stub(
         tmp_path,
-        f"#!/usr/bin/env bash\nprintf '%s%s\\n' '{filler}' '{credential}'\nsleep 5\n",
+        "#!/usr/bin/env bash\n"
+        f"printf '%s%s%s\\n' '{filler}' '{credential}' '{beyond}'\nsleep 5\n",
     )
 
     result = FizzbeeChecker(fizz, timeout_seconds=0.2).check(spec())

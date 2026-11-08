@@ -342,8 +342,8 @@ def test_a_run_with_no_verdict_keeps_a_bounded_transcript() -> None:
 
     Output carrying no verdict is an error, and the transcript is the only
     evidence of what the run printed. Keeping all of it would put a runaway
-    run's whole output into the artefact, so the parser keeps a fixed prefix
-    and says how much of the whole that is.
+    run's whole output into the artefact, so the parser keeps bounded head and
+    tail regions and says how much of the whole that is.
     """
     from modelcheck import domain
     from modelcheck.adapters import fizzbee_output
@@ -351,5 +351,7 @@ def test_a_run_with_no_verdict_keeps_a_bounded_transcript() -> None:
     result = fizzbee_output.parse_output("x" * 5000, 0, None)
 
     assert isinstance(result, domain.Errored), "no verdict line is an error"
-    assert "first 4000 of 5000 characters" in result.detail, "the cut is stated"
-    assert result.detail.count("x") == 4000, "and only the prefix is kept"
+    assert "first 2000 and last 2000 of 5000 characters kept" in result.detail, (
+        "the cut is stated"
+    )
+    assert result.detail.count("x") == 4000, "and only the two bounded ends are kept"

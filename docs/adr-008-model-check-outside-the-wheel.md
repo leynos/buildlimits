@@ -316,21 +316,24 @@ its finding, reason and evidence, in the
 
 - **D57, 2026-11-08.** Evidence is redacted before it is bounded, and the
   scrub is supplied by the caller. Every detail the adapter builds from
-  checker-written text is cut to a fixed prefix, and a credential surviving a
-  cut is a fragment no survival check can recognize: a value placed across the
-  boundary was recorded as its first few characters while the record looked
-  clean. `bounded`, `with_evidence` and `timeout_detail` therefore take a
-  `Scrub` callable, which the process adapter supplies as `Redaction.retain`,
-  and run it while the text is still whole. `parse_output` threads the same
-  callable through the five details it builds while classification still reads
-  the text exactly as the checker printed it, because a replacement is not
-  injective and could change the verdict. The assembled detail is retained once
-  more afterwards, and a capture the scrub withheld becomes the marker inside
-  the detail rather than replacing it, so the diagnosis beside a withheld
-  document survives. An exclusion's reason is now refused unless it is a
-  non-empty string rather than coerced from whatever TOML held, and the
-  installer removes a partial download so a failed `curl` cannot leave a
-  truncated asset that a later run treats as installed.
+  checker-written text is cut to a fixed number of characters from each end,
+  and a credential surviving a cut is a fragment no survival check can
+  recognize: a value placed across the boundary was recorded as its first few
+  characters while the record looked clean. Both ends are kept because the
+  checker prints its verdict, a `FAILED:` or `Error:` line, on the last one, so
+  a prefix alone would drop the line that explains the failure. `bounded`,
+  `with_evidence` and `timeout_detail` therefore take a `Scrub` callable, which
+  the process adapter supplies as `Redaction.retain`, and run it while the text
+  is still whole. `parse_output` threads the same callable through the five
+  details it builds while classification still reads the text exactly as the
+  checker printed it, because a replacement is not injective and could change
+  the verdict. The assembled detail is retained once more afterwards, and a
+  capture the scrub withheld becomes the marker inside the detail rather than
+  replacing it, so the diagnosis beside a withheld document survives. An
+  exclusion's reason is now refused unless it is a non-empty string rather than
+  coerced from whatever TOML held, and the installer removes a partial download
+  so a failed `curl` cannot leave a truncated asset that a later run treats as
+  installed.
 
 ## References
 

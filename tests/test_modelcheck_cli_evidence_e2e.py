@@ -6,12 +6,16 @@ persisted detail is the only place the checker's transcript and its error graph
 survive; what it carries is what a maintainer will have. That makes the record
 the right place to assert on bounding and redaction: a test against an
 in-process value could pass while the recorded text still carried a runner path
-or a credential.
+or a credential. A counterexample's trace is the exception: a matrix judgement
+row records the verdict and its measurements, and the trace is written to the
+saved-trace file, so the tests that read a trace assert on that file and guard
+that the record still carries none.
 
 The stub's modes are described in :mod:`tests.fixtures.modelcheck`; the helpers
 that run it are shared with :mod:`tests.test_modelcheck_cli_e2e`.
 """
 
+import json
 import typing as typ
 from pathlib import Path
 
@@ -73,19 +77,26 @@ def _saved_trace(traced: TracedRun) -> str:
     return (traced.model / _SAVED_TRACE).read_text(encoding="utf-8")
 
 
-def _assert_absent_from_record(records: Path, needle: str, message: str) -> None:
-    """Fail the test when the matrix record carries ``needle``.
+def _assert_no_trace_in_record(records: Path) -> None:
+    """Fail when a matrix record carries a trace, which the callers rely on.
+
+    A judgement row records the verdict and its measurements; a counterexample
+    the matrix found is written to the saved-trace file instead. The credential
+    assertions of the callers are therefore made on that file, and this guard
+    keeps the reason sound: if the record ever starts carrying traces, the
+    guard fails and the assertion has to move with it. Asserting the credential
+    is absent from the record instead would pass whether or not redaction
+    worked, because the record never held the trace to begin with.
 
     Parameters
     ----------
     records : pathlib.Path
         The JSON artefact the matrix wrote.
-    needle : str
-        The text that must not reach the record.
-    message : str
-        What the absence means, used as the failure message.
     """
-    assert needle not in records.read_text(encoding="utf-8"), message
+    rows = json.loads(records.read_text(encoding="utf-8"))
+    assert not any("trace" in row for row in rows), (
+        "the record carries no trace, so the saved trace is where redaction shows"
+    )
 
 
 def test_an_unreadable_graph_reaches_the_persisted_record(tmp_path: Path) -> None:
@@ -119,7 +130,7 @@ def test_an_unreadable_graph_reaches_the_persisted_record(tmp_path: Path) -> Non
             "the scratch path is replaced": "reading <scratch>/model.fizz",
             "the home path is replaced": "cache <home>/.cache/go-build",
             "the credential is replaced": "token=<redacted>",
-            "the transcript is bounded and the cut stated": "first 4000 of",
+            "the transcript is bounded and the cut stated": "first 2000 and last 2000 of",
         },
     )
     assert ".model-check" not in detail, (
@@ -127,7 +138,7 @@ def test_an_unreadable_graph_reaches_the_persisted_record(tmp_path: Path) -> Non
     )
     assert inherited_value not in detail, "nor any inherited environment value"
     assert detail.count("x") < 5000, "so the whole runaway transcript is not kept"
-    assert detail.endswith("…"), "and the omission is marked"
+    assert "\n…\n" in detail, "and the omission is marked between the kept ends"
     assert typ.cast("float", written[0]["harness_seconds"]) >= 0.0, (
         "the harness timed the run that reported no duration of its own"
     )
@@ -248,9 +259,10 @@ def test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence(
     a credential containing one survives the text pass and is a plain value
     once the graph is decoded. A value mixing an escaped quote with a literal
     non-ASCII character reaches the same place by a different route, because
-    no one spelling of it is the value. The trace is what the saved file and
-    the record carry, so the assertion is made there, on a run that really
-    parsed a lasso.
+    no one spelling of it is the value. The saved trace file is where a leak
+    would be committed: a matrix judgement row records the verdict and its
+    measurements rather than the trace, so the assertion is made on the file,
+    on a run that really parsed a lasso.
     """
     records = tmp_path / "matrix.json"
 
@@ -265,9 +277,7 @@ def test_a_credential_in_a_decoded_trace_never_reaches_the_saved_evidence(
     saved = _saved_trace(traced)
     assert "<redacted>" in saved, "the decoded value is replaced in the saved trace"
     assert "do-not-record" not in saved, "so the credential does not reach the file"
-    _assert_absent_from_record(
-        records, "do-not-record", "nor the record the matrix wrote"
-    )
+    _assert_no_trace_in_record(records)
 
 
 def test_a_stopped_run_reaches_the_persisted_record_redacted(tmp_path: Path) -> None:
@@ -324,9 +334,8 @@ def test_a_decoded_string_containing_a_one_character_credential_is_withheld(
 
     The graph's text holds the character inside a longer word, which no
     position rule can recognize, and the decoded string is what the saved trace
-    and the record carry. The string is withheld rather than recorded with the
-    character recoverable from it, whether the character is a letter or
-    punctuation.
+    carries. The string is withheld rather than recorded with the character
+    recoverable from it, whether the character is a letter or punctuation.
     """
     records = tmp_path / "matrix.json"
     embedded = f"prefix{one_character}"
@@ -343,7 +352,7 @@ def test_a_decoded_string_containing_a_one_character_credential_is_withheld(
     saved = _saved_trace(traced)
     assert WITHHELD in saved, "the string is withheld in the saved trace"
     assert embedded not in saved, "so the character is not recoverable"
-    _assert_absent_from_record(records, embedded, "nor in the record the matrix wrote")
+    _assert_no_trace_in_record(records)
 
 
 def test_an_equivalent_escape_spelling_is_withheld_from_the_record(

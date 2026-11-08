@@ -35,16 +35,25 @@ from modelcheck.adapters.fizzbee_process import FizzbeeChecker
 _CREDENTIAL = "s3cr3t-do-not-record"
 """A credential long enough to be replaced wherever it occurs."""
 
-_STRADDLING = "x" * (_TRANSCRIPT_LIMIT - 10)
-"""Filler that puts a credential across the cut.
+_HEAD = _TRANSCRIPT_LIMIT // 2
+"""How much of a cut capture is kept from its start; the rest comes from its end."""
 
-The cut keeps :data:`_TRANSCRIPT_LIMIT` characters, so a value placed here is
-split by it: the prefix ends ten characters into the credential. That fragment
-is what a bounding pass that ran first would record, and it is not something
-the survival check can find, because half a credential is not one. Ten is
-chosen so the placeholder that replaces the value still fits inside the kept
-prefix, which lets a test assert the replacement happened rather than only that
-the fragment is gone.
+_STRADDLING = "x" * (_HEAD - len("<redacted>"))
+"""Filler that puts a credential across the kept head's boundary.
+
+The scrub replaces a credential with a ten-character placeholder before the
+cut, so a value beginning here ends exactly where the head does. In the text
+the checker wrote it straddles the cut: a bounding pass that ran first would
+keep ten characters of the credential. Ten is chosen so the placeholder still
+fits inside the kept head, which lets a test assert the replacement happened
+rather than only that the fragment is gone.
+"""
+
+_BEYOND = "x" * (_TRANSCRIPT_LIMIT - _HEAD + len("<redacted>"))
+"""Filler that keeps the capture longer than the limit.
+
+A straddling credential is short, so without text after it the capture would
+fit and no cut would be taken at all.
 """
 
 
@@ -147,7 +156,9 @@ def test_a_deciding_error_line_is_bounded(tmp_path: Path) -> None:
 
     assert isinstance(result, domain.Errored), "an error line proves nothing"
     assert result.detail.startswith("Error: "), "the cause is still named"
-    assert "first 4000 of 5007 characters" in result.detail, "and the cut is stated"
+    assert "first 2000 and last 2000 of 5007 characters kept" in result.detail, (
+        "and the cut is stated"
+    )
     assert len(result.detail) < 5000, "so the whole line is not kept"
 
 
@@ -168,7 +179,7 @@ def test_a_deciding_stopped_line_is_bounded(tmp_path: Path) -> None:
 
     assert isinstance(result, domain.Stopped), "the marker names a stopped run"
     assert result.detail.startswith("Model checker stopped "), "the shape is kept"
-    assert "first 4000 of" in result.detail, "and the cut is stated"
+    assert "first 2000 and last 2000 of" in result.detail, "and the cut is stated"
     assert len(result.detail) < 5000, "so the whole line is not kept"
 
 
@@ -177,22 +188,25 @@ def test_a_credential_the_transcript_cut_would_split_is_scrubbed_whole(
 ) -> None:
     """A credential is removed before the transcript is cut, not after it.
 
-    The transcript is kept as a fixed prefix, and a credential placed where
-    that prefix ends would leave part of itself in the kept text. The survival
-    check cannot find a fragment, so the whole capture has to be scrubbed while
-    it is still one string — which is what the adapter does, and what the run's
-    environment here makes observable.
+    The head of the transcript is kept, and a credential placed where that head
+    ends would leave part of itself in the kept text. The survival check cannot
+    find a fragment, so the whole capture has to be scrubbed while it is still
+    one string — which is what the adapter does, and what the run's environment
+    here makes observable.
     """
     result = run_stub(
         tmp_path,
-        f"#!/usr/bin/env bash\nprintf '%s%s\\n' '{_STRADDLING}' '{_CREDENTIAL}'\n",
+        "#!/usr/bin/env bash\n"
+        f"printf '%s%s%s\\n' '{_STRADDLING}' '{_CREDENTIAL}' '{_BEYOND}'\n",
         {"RUNNER_TOKEN": _CREDENTIAL},
     )
 
     assert isinstance(result, domain.Errored), "the run printed no verdict"
     assert _CREDENTIAL[:5] not in result.detail, "no fragment of it is kept"
     assert "<redacted>" in result.detail, "the value was replaced, not dropped"
-    assert "first 4000 of 4001 characters" in result.detail, "and the cut is stated"
+    assert "first 2000 and last 2000 of 4011 characters kept" in result.detail, (
+        "and the cut is stated"
+    )
 
 
 def test_a_credential_the_graph_cut_would_split_is_scrubbed_whole(
@@ -208,11 +222,14 @@ def test_a_credential_the_graph_cut_would_split_is_scrubbed_whole(
     result = graph_run(
         tmp_path,
         "mkdir -p out\n"
-        f"printf '%s%s}}' '{_STRADDLING}' '{_CREDENTIAL}' > out/error-graph.json\n",
+        f"printf '%s%s%s}}' '{_STRADDLING}' '{_CREDENTIAL}' '{_BEYOND}' "
+        "> out/error-graph.json\n",
         {"RUNNER_TOKEN": _CREDENTIAL},
     )
 
     assert isinstance(result, domain.Errored), "the graph proved nothing"
     assert _CREDENTIAL[:5] not in result.detail, "no fragment of it is kept"
     assert "<redacted>" in result.detail, "the value was replaced, not dropped"
-    assert "first 4000 of 4001 characters" in result.detail, "and the cut is stated"
+    assert "first 2000 and last 2000 of 4011 characters kept" in result.detail, (
+        "and the cut is stated"
+    )

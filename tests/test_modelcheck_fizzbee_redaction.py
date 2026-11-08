@@ -32,6 +32,7 @@ from modelcheck_redaction_cases import (
 )
 
 from modelcheck import domain
+from modelcheck.adapters.fizzbee_redaction import redaction_for
 from modelcheck.adapters.fizzbee_replacements import (
     HIDDEN_VALUE,
     WITHHELD,
@@ -337,6 +338,43 @@ def test_a_runner_path_beside_the_scratch_directory_is_redacted(
     assert_detail_replaces(
         result.detail, kept="cache <home>/.cache/go-build", gone="/home/runner"
     )
+
+
+@pytest.mark.parametrize(
+    ("environment", "text"),
+    [
+        ({"HOME": "/"}, "reading /opt/x"),
+        ({"TMPDIR": "tmp"}, "tmp/x"),
+    ],
+    ids=["root-home", "single-component-tmpdir"],
+)
+def test_a_path_that_names_no_directory_is_not_a_needle(
+    environment: dict[str, str], text: str
+) -> None:
+    """A root or single-component path is not replaced.
+
+    ``HOME=/`` and a one-component ``TMPDIR`` would each make a needle that
+    rewrites ordinary text — a ``/`` needle replaces every slash — without
+    naming a directory the run used. The guard keeps them out of the needles,
+    so text that merely contains the character is left alone.
+    """
+    redaction = redaction_for(Path(".model-check/run"), Path("/opt/fizz"), environment)
+
+    assert redaction.apply(text) == text, "the value names no directory to replace"
+
+
+def test_a_multi_component_home_is_still_replaced() -> None:
+    """The guard narrows the rule rather than removing it.
+
+    A home that names a directory is still replaced, which is what makes the
+    guard a condition on the value's shape rather than a way to skip every
+    environment path.
+    """
+    redaction = redaction_for(
+        Path(".model-check/run"), Path("/opt/fizz"), {"HOME": "/home/runner"}
+    )
+
+    assert redaction.apply("/home/runner/x") == "<home>/x", "the home is replaced"
 
 
 def test_a_scratch_path_the_checker_printed_is_redacted(tmp_path: Path) -> None:

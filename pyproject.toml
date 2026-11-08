@@ -1767,3 +1767,10 @@ members = [
     "modelcheck/adapters/fizzbee_evidence.py::_cut",
 ]
 reason = "bounded is the public wrapper around _cut, which does the scrub-then-cut work and is the only place the two steps are ordered; the detector matches their shared docstring sections and the one call between them, not shared logic."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "modelcheck/adapters/fizzbee_replacements.py",
+    "tests/test_modelcheck_redaction_properties.py",
+]
+reason = "The test's decoder (_decoded) restates the adapter's (_decoded_view) independently, which is the point: a property that decoded with the adapter's own function would agree with it whatever it did, including agreeing that a credential was removed when it was not. Sharing one decoder would leave the claim untested, so the two copies stay and the test's says why. The detector reports this family unnamed, so the entry names the files."
