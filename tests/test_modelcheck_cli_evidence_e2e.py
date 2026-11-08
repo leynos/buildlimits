@@ -355,6 +355,29 @@ def test_a_decoded_string_containing_a_one_character_credential_is_withheld(
     _assert_no_trace_in_record(records)
 
 
+def test_a_one_character_credential_embedded_in_a_graph_reaches_the_record(
+    tmp_path: Path,
+) -> None:
+    """The one residual the policy accepts is pinned here, not merely claimed.
+
+    A credential of two or more characters is withheld from the record when a
+    replacement missed it, because the value can be recovered from the text. A
+    single character cannot be a needle: it occurs in every state count, so
+    withholding the texts it survives in would withhold nearly every diagnostic
+    a maintainer needs. The record therefore carries the word the checker hid
+    the character in, together with the diagnosis that makes the record worth
+    reading. What it cannot do is tell that one character from the prose around
+    it, and this test is where that limit is stated rather than where it is
+    closed.
+    """
+    detail = _persisted_detail(tmp_path, "malformed-embedded", "#")
+
+    assert "the error graph could not be parsed" in detail, "the reason survives"
+    assert "prefix#" in detail, (
+        "the character stays inside the word, which is the accepted residual"
+    )
+
+
 def test_an_equivalent_escape_spelling_is_withheld_from_the_record(
     tmp_path: Path,
 ) -> None:

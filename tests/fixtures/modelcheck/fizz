@@ -27,6 +27,12 @@
 # write the value inside a longer state string instead, which is a decoded
 # string no position rule can see.
 #
+# ``MODELCHECK_E2E_ANSWER=malformed-embedded`` writes a graph that is not an
+# error graph at all, with a one-character value inside a longer word. That is
+# the residual the guide states: a single character cannot be a needle, so the
+# record keeps the word it was hidden in. The mode exists so a test says so
+# rather than a paragraph claiming it.
+#
 # ``MODELCHECK_E2E_CREDENTIAL`` makes the recorded lasso carry the value of
 # ``MODELCHECK_E2E_SECRET`` in every state, spelled as the real checker's Go
 # encoder spells it. That spelling is deliberately one no Python JSON writer
@@ -164,6 +170,19 @@ case "${MODELCHECK_E2E_ANSWER:-recorded}" in
     mkdir -p "$output"
     printf '%s' \
       '{"not": "a list", "token": "\u0061\u003c\u0062-do-not-record"}' \
+      > "$output/error-graph.json"
+    cat "$directory/lasso-stdout.txt"
+    exit 0
+    ;;
+  malformed-embedded)
+    # A one-character value the checker built into a longer token in the graph
+    # it wrote, rather than echoing it in a value position. No needle can be a
+    # single character — it occurs in every count — so the text is recorded
+    # with the character in it. This mode pins that accepted residual instead
+    # of leaving it a claim: the record keeps the diagnosis and the word the
+    # character was hidden in, and withholds nothing.
+    mkdir -p "$output"
+    printf '{"not": "a list", "token": "prefix%s"}' "${MODELCHECK_E2E_SECRET:-}" \
       > "$output/error-graph.json"
     cat "$directory/lasso-stdout.txt"
     exit 0

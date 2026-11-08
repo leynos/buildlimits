@@ -1478,6 +1478,15 @@ explicitly.
     `.model-check/*.json` artefacts `make model-check` writes. The sentence now
     scopes the copy to tests that invoke the checker and names that module as
     the exception, with the Makefile target owning the run.
+  - The one-character residual the guide states was still a claim: the guide
+    says all three residuals are pinned by tests, and the third — a character
+    embedded in a longer token in free diagnostic text is recorded with the
+    text — was not. The stub gains `malformed-embedded`, which writes a graph
+    that is not an error graph with the value inside a longer word, and the
+    end-to-end test reads the committed record back: the diagnosis and the word
+    both survive. The limit is now asserted where it is stated, so a change
+    that widens or narrows it fails the suite rather than the prose. D50, D53
+    and D55 are unchanged; this pins what they decided.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
