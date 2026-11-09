@@ -8,6 +8,12 @@ stronger — a committed record does not reveal the credential in *any* spelling
 a writer produces — and that is a claim about every value, not about the ones
 somebody thought to write down.
 
+The credentials drawn here are two to six characters long, the lengths the text
+rule searches for. A one-character credential is covered separately: the text
+rule is positional, so a character embedded in free prose is the accepted
+residual, while a decoded string containing one is withheld by its own property
+below.
+
 The properties below therefore draw the credential, the text around it and the
 spelling from strategies, and compute the expected spellings here rather than
 importing the adapter's own list, so a needle the implementation forgot is a

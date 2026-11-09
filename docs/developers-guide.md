@@ -1185,8 +1185,9 @@ closed. The rest are rules that remove or withhold a value:
   between quotes, or after the label the checker prints beside it (`token x`),
   and not in a count, so `CLAUDE_CODE_SESSION_ATTENDED=0` becomes
   `CLAUDE_CODE_SESSION_ATTENDED=<redacted>` while `Unique states: 4` survives.
-- A decoded state string that still contains the character is withheld because
-  a string is one value the checker produced, and the character cannot be told
+- A decoded state string that is exactly the character becomes `<redacted>`,
+  and one that still contains it after replacement is withheld, because a
+  string is one value the checker produced and the character cannot be told
   from the text it was built from; the rest of the trace survives.
 - Two state variable names that are withheld to the same marker are numbered
   (`<withheld…> #2`), because a dictionary built from the redacted names would

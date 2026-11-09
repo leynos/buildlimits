@@ -1563,6 +1563,54 @@ explicitly.
     state), which failed the GitHub `lint-test` job on `6d03b94`. A test-only
     edit still needs the full gate set; `lint` and `test` alone did not cover
     it.
+- [x] (2026-11-09) **The eighteenth round repairs the documentation precision
+    the pre-merge rows name and covers two boundaries with tests.**
+  - CodeRabbit reviewed `9278447` and raised one inline finding: the new
+    redaction sentences separated "Those tests" from the end-to-end tests it
+    referred to in the users' guide. The sentence now names them.
+  - Five module docstrings and the developers' guide overstated the survival
+    check. `Redaction.retain` withholds a text a credential of two or more
+    characters survived in; a one-character credential is outside that search
+    in free-form diagnostics. Each site now says that, and the guide states
+    the exact-whole-decoded-value rule that only the users' guide had.
+  - The Unit Architecture row asked for direct read-only tests of the
+    configuration queries. `tests/test_modelcheck_configuration_boundaries.py`
+    snapshots every file's bytes, size, modification time and mode, refuses
+    `subprocess` and `os.system`/`os.popen`, proves the refusal is live, then
+    runs each query on a fresh adapter.
+  - The Testing (Property / Proof) row asked for a property over run sets.
+    `tests/test_modelcheck_service_properties.py` draws the expectations,
+    kinds and counts and asserts that disagreeing completed counts make every
+    row one error, that finite and deadlock counts are excluded, that a run
+    without a count leaves the matrix uncompared, and that declaration order
+    does not change the outcome.
+  - The remaining rows — Testing (Overall), Testing (Compile-Time / Ui),
+    Domain Architecture and Observability — repeat decisions already recorded:
+    D50/D53/D55 accept and pin the one-character diagnostic residual, D48
+    declines the environment allowlist, and D38 keeps model-source syntax in
+    the pure modules. No new evidence accompanies them this round.
+- [x] (2026-11-09) **The first gate round on the eighteenth round's tests
+    found five DF12-pylint findings, now repaired.**
+  - Eleven of the twelve gates passed on the working tree, including the
+    sixty-one-second `make test` run, `ty`, and the 465-second `make
+    model-check`. `make lint` exited at `lint-python` on the plugin pass.
+  - The findings were all in the two new test modules. `_FileState` became a
+    PEP 695 `type` statement; the three `_reads_*` wrappers were deleted in
+    favour of the adapter's own methods passed to `parametrize`, so nothing
+    sits between the test and the call a matrix run makes; and the `_COMPLETED`
+    alias was inlined, because assigning an attribute of an imported module is
+    a re-export by that rule whatever the alias is used for.
+  - Lesson: focused `ruff`, `ty`, `interrogate` and `pytest` checks pass
+    without the `df12_python_lints` plugin, which runs only from
+    `lint-python`. A new module needs the `DF12_PYLINT` command line from the
+    Makefile before a gate round, not only after it fails.
+  - A second round reached the `duplication` stage and found two families. The
+    two tests that build and run a pair of lasso expectations now share
+    `_judged_as_lassos`, so the arrange step is written once. The other family
+    was the four single-purpose refusal guards — one in each of three modules
+    and the new `_refuse` — so the existing reasoned exception gained the
+    fourth member rather than a second entry appearing beside it; a duplicate
+    entry for an overlapping family is reported as unmatched by the gate.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.

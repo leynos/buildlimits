@@ -21,9 +21,10 @@ written literally or as a Unicode escape, and Go's encoder writes ``<``, ``>``
 and ``&`` as six-character escapes no Python writer produces. The graph's words
 are redacted as text with every spelling those writers produce, and the values
 decoded from it are redacted again by
-:func:`modelcheck.adapters.fizzbee_trace_redaction.redact_result`, so neither
-the saved trace nor the record can carry the value in a form the text pass did
-not anticipate.
+:func:`modelcheck.adapters.fizzbee_trace_redaction.redact_result`, so a
+credential of two or more characters cannot reach the saved trace or the record
+in a form the text pass did not anticipate, and a decoded string is withheld
+when a one-character credential survives in it.
 
 The substitution mechanism itself lives in
 :mod:`modelcheck.adapters.fizzbee_replacements`, together with the check that

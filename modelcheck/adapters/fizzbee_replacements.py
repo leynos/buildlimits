@@ -15,8 +15,11 @@ The check is the fail-closed half. A substitution can miss a value it was meant
 to remove, and the case that matters is a short credential inside a longer
 token: no rule can tell that from a coincidence without rewriting the text into
 nonsense. :meth:`Redaction.retain` therefore returns a stated marker instead of
-a text a credential still occurs in. A record that says evidence was withheld
-is honest; one that carried the value is not.
+a text a credential of two or more characters still occurs in. A one-character
+credential is outside that search, because it occurs in every count: a
+diagnostic that embeds one keeps it, and that residual is stated rather than
+hidden. A record that says evidence was withheld is honest; one that carried a
+value the rules can see is not.
 
 Which needles exist, and why each one is needed, belongs to
 :mod:`modelcheck.adapters.fizzbee_redaction`. This module holds only the

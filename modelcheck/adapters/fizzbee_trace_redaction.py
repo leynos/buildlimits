@@ -27,10 +27,13 @@ refused and can therefore hold a decoded credential, and a stopped run's detail
 is the marker line the checker printed. Both are redacted here too. A decoded
 string goes through
 :meth:`~modelcheck.adapters.fizzbee_replacements.Redaction.retain_value`,
-because the whole string is a value position, and a text that is not a decoded
-value goes through
-:meth:`~modelcheck.adapters.fizzbee_replacements.Redaction.retain`; either
-withholds a text a credential survived in rather than recording it.
+because the whole string is a value position, and it is withheld when any
+credential survived in it, including a one-character one. A text that is not a
+decoded value goes through
+:meth:`~modelcheck.adapters.fizzbee_replacements.Redaction.retain`, which
+withholds a text a credential of two or more characters survived in; a
+one-character credential embedded in free diagnostic text is the accepted
+residual stated in :mod:`modelcheck.adapters.fizzbee_redaction`.
 
 The replacements themselves, and the reasoning behind each needle, stay in
 :mod:`modelcheck.adapters.fizzbee_redaction`; this module is separate so both

@@ -1018,8 +1018,9 @@ members = [
     "tests/test_adapter_run.py::fail_run",
     "tests/test_nested_cargo_prerequisites.py::forbid",
     "tests/test_rustdoc.py::fail_which",
+    "tests/test_modelcheck_configuration_boundaries.py::_refuse",
 ]
-reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts. The fourth refuses a process call a configuration query must never make."
 
 [[tool.duplication_gate.allow]]
 unit = "tests/test_ports.py"

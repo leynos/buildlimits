@@ -8,9 +8,11 @@ and the redaction happens *after* the run has been classified — a replacement
 is not injective, so sanitizing the graph first could change its validity, its
 ending, or the equality that makes a lasso a lasso.
 
-A text a credential survived in is withheld rather than recorded. That rule is
-asserted here too, because the alternative — committing the text and hoping the
-needles were enough — is the failure this module exists to catch.
+A text a credential of two or more characters survived in is withheld rather
+than recorded. That rule is asserted here too, because the alternative —
+committing the text and hoping the needles were enough — is the failure this
+module exists to catch. A one-character credential embedded in free diagnostic
+text is the accepted residual, pinned by its own test elsewhere.
 
 The stub launcher and the specification it runs come from
 :mod:`tests.fizzbee_process_stubs`; the runs around each test's own graph or

@@ -1205,8 +1205,10 @@ diagnostic text — `Error: prefix#` for a credential of `#` — is not recogniz
 and stays in the record. If a credential of two or more characters survives any
 replacement, including under an equivalent JSON escape spelling, the text
 holding it is withheld rather than recorded and the record says so. Read a
-generated artefact before sharing it. Those tests are opt-in because they need
-the binary:
+generated artefact before sharing it.
+
+The end-to-end tests that read these artefacts are opt-in because they need the
+binary:
 
 ```bash
 BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -m fizzbee tests
