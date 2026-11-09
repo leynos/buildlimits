@@ -1199,13 +1199,14 @@ after `=`, between quotes, after the label a checker prints beside it, or as a
 whole decoded state value — so a boolean flag cannot rewrite every state count.
 A decoded state string that still contains a one-character credential is
 withheld rather than recorded, and state variable names withheld to the same
-marker are numbered so that every variable survives. A one-character credential
-embedded inside a longer token of free diagnostic text — `Error: prefix#` for a
-credential of `#` — is not recognized and stays in the record. If a credential
-of two or more characters survives any replacement, including under an
-equivalent JSON escape spelling, the text holding it is withheld rather than
-recorded and the record says so. Read a generated artefact before sharing it.
-Those tests are opt-in because they need the binary:
+marker are numbered so that every variable survives under one name throughout
+the trace. A one-character credential embedded inside a longer token of free
+diagnostic text — `Error: prefix#` for a credential of `#` — is not recognized
+and stays in the record. If a credential of two or more characters survives any
+replacement, including under an equivalent JSON escape spelling, the text
+holding it is withheld rather than recorded and the record says so. Read a
+generated artefact before sharing it. Those tests are opt-in because they need
+the binary:
 
 ```bash
 BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -m fizzbee tests

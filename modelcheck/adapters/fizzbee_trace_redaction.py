@@ -128,22 +128,87 @@ def redact_trace(trace: Trace, redaction: Redaction) -> Trace:
     >>> redact_trace(trace, redaction).states[0]
     {'t': '<redacted>'}
     """
-    return dc.replace(
-        trace,
-        initial=_redacted_state(trace.initial, redaction),
-        steps=tuple(
-            dc.replace(
-                step,
-                action=redaction.retain_value(step.action),
-                state=_redacted_state(step.state, redaction),
-            )
-            for step in trace.steps
-        ),
+    # The initial state is named first, then each step in order, so the
+    # numbering follows the trace a reader would read it in.
+    names = _KeyNames(redaction)
+    initial = _redacted_state(trace.initial, names)
+    steps = tuple(
+        dc.replace(
+            step,
+            action=redaction.retain_value(step.action),
+            state=_redacted_state(step.state, names),
+        )
+        for step in trace.steps
     )
+    return dc.replace(trace, initial=initial, steps=steps)
+
+
+@dc.dataclass(slots=True)
+class _KeyNames:
+    """Assign every original state key one redacted name for the whole trace.
+
+    Redaction is not injective on keys. :meth:`Redaction.retain_value` returns
+    one marker for every string that contains a one-character credential, so
+    two variables whose names both hold that character redact to the same text.
+    A dictionary built straight from those redactions would keep only the last
+    entry, and the saved trace would lose a variable with nothing to say so.
+    Repeats are therefore numbered (``<withheld...> #2``).
+
+    Numbering a collision from the current state alone would give the same
+    original key different names in different states: ``b0`` is the second
+    withheld key while ``a0`` is present and the first when it is not, so a
+    value would appear to move between variables. The name is therefore
+    assigned once, on first sight, and reused in every later state, whatever
+    keys that state holds and in whatever order.
+
+    The numbering is checked against the names already assigned, so a genuine
+    key that redacts to ``<withheld> #2`` cannot be overwritten by a repeat of
+    ``<withheld>``.
+
+    Attributes
+    ----------
+    redaction : Redaction
+        The substitutions this run's evidence needs.
+    assigned : dict[str, str]
+        The name given to each original key, so a later state reuses it.
+    used : set[str]
+        Every name assigned so far, so a new one cannot collide with them.
+    """
+
+    redaction: Redaction
+    assigned: dict[str, str] = dc.field(default_factory=dict)
+    used: set[str] = dc.field(default_factory=set)
+
+    def name(self, key: str) -> str:
+        """Return the trace-wide redacted name for one original key.
+
+        Parameters
+        ----------
+        key : str
+            One key from a state, as the checker recorded it.
+
+        Returns
+        -------
+        str
+            The name first assigned to this key, or a new one when it has not
+            been seen before.
+        """
+        known = self.assigned.get(key)
+        if known is not None:
+            return known
+        base = self.redaction.retain_value(key)
+        name = base
+        suffix = 1
+        while name in self.used:
+            suffix += 1
+            name = f"{base} #{suffix}"
+        self.used.add(name)
+        self.assigned[key] = name
+        return name
 
 
 def _redacted_state(
-    state: cabc.Mapping[str, object], redaction: Redaction
+    state: cabc.Mapping[str, object], names: _KeyNames
 ) -> dict[str, object]:
     """Return one decoded state with every string it holds redacted.
 
@@ -151,8 +216,8 @@ def _redacted_state(
     ----------
     state : collections.abc.Mapping[str, object]
         One state the checker recorded.
-    redaction : Redaction
-        The substitutions this run's evidence needs.
+    names : _KeyNames
+        The names this trace has given the keys it has seen.
 
     Returns
     -------
@@ -160,32 +225,20 @@ def _redacted_state(
         The state with each key and each string value, however deeply nested,
         replaced.
     """
-    return dict(_redacted_entries(state, redaction))
+    return dict(_redacted_entries(state, names))
 
 
 def _redacted_entries(
-    state: cabc.Mapping[str, object], redaction: Redaction
+    state: cabc.Mapping[str, object], names: _KeyNames
 ) -> cabc.Iterator[tuple[str, object]]:
     """Return one state's entries with its keys redacted and made distinct.
-
-    Redaction is not injective on keys. :meth:`Redaction.retain_value` returns
-    one marker for every string that contains a one-character credential, so
-    two variables whose names both hold that character redact to the same text.
-    A dictionary built straight from those redactions would keep only the last
-    entry, and the saved trace would lose a variable with nothing to say so.
-    Repeats are therefore numbered in encounter order, which keeps as many
-    entries as the state had while leaving the marker itself unchanged.
-
-    The numbering is checked against the names already emitted, so a genuine
-    key that redacts to ``<withheld> #2`` cannot be overwritten by a repeat of
-    ``<withheld>``.
 
     Parameters
     ----------
     state : collections.abc.Mapping[str, object]
         One state the checker recorded, or a nested object within it.
-    redaction : Redaction
-        The substitutions this run's evidence needs.
+    names : _KeyNames
+        The names this trace has given the keys it has seen.
 
     Yields
     ------
@@ -193,19 +246,11 @@ def _redacted_entries(
         One entry per key the state held, in its original order, with the key
         redacted and its value redacted recursively.
     """
-    used: set[str] = set()
     for key, value in state.items():
-        base = redaction.retain_value(key)
-        name = base
-        suffix = 1
-        while name in used:
-            suffix += 1
-            name = f"{base} #{suffix}"
-        used.add(name)
-        yield name, _redacted_value(value, redaction)
+        yield names.name(key), _redacted_value(value, names)
 
 
-def _redacted_value(value: object, redaction: Redaction) -> object:
+def _redacted_value(value: object, names: _KeyNames) -> object:
     """Return one decoded JSON value with every string it holds redacted.
 
     Parameters
@@ -214,8 +259,8 @@ def _redacted_value(value: object, redaction: Redaction) -> object:
         A value from a state the checker recorded. A state is the checker's own
         JSON, so a value is a string, a number, a boolean, ``null``, a list or
         a nested object; only the strings can carry a credential.
-    redaction : Redaction
-        The substitutions this run's evidence needs.
+    names : _KeyNames
+        The names this trace has given the keys it has seen.
 
     Returns
     -------
@@ -224,12 +269,12 @@ def _redacted_value(value: object, redaction: Redaction) -> object:
     """
     match value:
         case str():
-            return redaction.retain_value(value)
+            return names.redaction.retain_value(value)
         case cabc.Mapping():
-            return dict(_redacted_entries(value, redaction))
+            return dict(_redacted_entries(value, names))
         case list():
-            return [_redacted_value(item, redaction) for item in value]
+            return [_redacted_value(item, names) for item in value]
         case tuple():
-            return tuple(_redacted_value(item, redaction) for item in value)
+            return tuple(_redacted_value(item, names) for item in value)
         case _:
             return value

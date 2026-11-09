@@ -11,6 +11,8 @@ The runs come from :mod:`tests.modelcheck_redaction_cases`; the policy they
 exercise is stated in :mod:`modelcheck.adapters.fizzbee_redaction`.
 """
 
+import collections.abc as cabc
+import re
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,33 @@ from modelcheck_redaction_cases import (
 )
 
 from modelcheck.adapters.fizzbee_replacements import WITHHELD
+
+_STATE_BLOCK = re.compile(r'"state": \{[^}]*\}')
+"""One flat state block in the recorded lasso, whatever values it holds."""
+
+
+def _replace_each_state(text: str, states: cabc.Iterable[str]) -> str:
+    """Rewrite the lasso's state blocks, one replacement per node in order.
+
+    Parameters
+    ----------
+    text : str
+        The recorded lasso's JSON text.
+    states : collections.abc.Iterable[str]
+        One JSON object, as text, for each state block, in node order.
+
+    Returns
+    -------
+    str
+        The text with as many state blocks replaced as ``states`` names.
+    """
+    pieces: list[str] = []
+    position = 0
+    for match, state in zip(_STATE_BLOCK.finditer(text), states, strict=False):
+        pieces.extend((text[position : match.start()], f'"state": {state}'))
+        position = match.end()
+    pieces.append(text[position:])
+    return "".join(pieces)
 
 
 def test_a_one_character_credential_printed_beside_its_label_is_redacted(
@@ -93,9 +122,73 @@ def test_state_keys_that_redact_alike_all_survive(tmp_path: Path) -> None:
     )
 
     state = result.trace.initial
-    expected = {WITHHELD, f"{WITHHELD} #2"}
-
-    assert set(state) == expected, "both withheld top-level keys survive"
     nested = state[WITHHELD]
     assert isinstance(nested, dict), "the nested object is still an object"
-    assert set(nested) == expected, "so do the withheld keys inside it"
+
+    assert len(state) == 2, "both withheld top-level keys survive"
+    assert all(key.startswith(WITHHELD) for key in state), "and both are withheld"
+    assert len(nested) == 2, "so do the withheld keys inside it"
+
+
+def test_a_withheld_key_keeps_one_name_across_states(tmp_path: Path) -> None:
+    """A key keeps its numbered name when other keys come, go or reorder.
+
+    Numbering from one state alone would rename ``b0`` as soon as ``a0`` left
+    the state, and the saved trace would show a value moving between
+    variables. The name is assigned on first sight and reused, so the trace
+    names the same variable the same way throughout even as the state around
+    it changes.
+    """
+    result = lasso_run(
+        tmp_path,
+        lambda text: _replace_each_state(
+            text,
+            ['{"a0": 1, "b0": 2}', '{"b0": 2}', '{"b0": 2, "a0": 1}'],
+        ),
+        {"MODELCHECK_E2E_SECRET": "0"},
+    )
+
+    second = f"{WITHHELD} #2"
+    assert result.trace.states[0] == {WITHHELD: 1, second: 2}, "names are assigned"
+    assert result.trace.states[1] == {second: 2}, "b0 keeps its name when alone"
+    assert result.trace.states[2] == {second: 2, WITHHELD: 1}, "and when reordered"
+
+
+def test_a_key_that_already_reads_as_a_suffixed_name_is_kept(
+    tmp_path: Path,
+) -> None:
+    """A genuine key equal to a generated name is not overwritten by one.
+
+    A state can name a variable with the very text the numbering would
+    produce, because that text holds no credential and so redacts to itself.
+    Both mapping levels must then keep every entry: the withheld keys take the
+    next free number rather than the one the genuine key already holds. The
+    credential is ``0`` rather than the ``#`` the marker happens to contain, so
+    the supplied marker really is an input key that survives and the collision
+    is with an unchanged name.
+    """
+    marker = f'"{WITHHELD} #2"'
+    state = (
+        f'{{"box": {{{marker}: 1, "a0": 2, "b0": 3}}, {marker}: 4, "a0": 5, "b0": 6}}'
+    )
+
+    result = lasso_run(
+        tmp_path,
+        lambda text: _replace_each_state(text, [state, state, state]),
+        {"MODELCHECK_E2E_SECRET": "0"},
+    )
+
+    second = f"{WITHHELD} #2"
+    third = f"{WITHHELD} #3"
+    recorded = result.trace.states[0]
+    nested = recorded["box"]
+
+    assert isinstance(nested, dict), "the nested object is still an object"
+    assert len(recorded) == 4, "the top level keeps every entry"
+    assert len(nested) == 3, "so does the nested object"
+    assert recorded[second] == 4, "the genuine marker keeps its own entry"
+    assert nested[second] == 1, "at both mapping levels"
+    assert recorded[WITHHELD] == 5, "the first withheld key takes the marker"
+    assert nested[WITHHELD] == 2, "at both mapping levels"
+    assert recorded[third] == 6, "the second takes the next free number"
+    assert nested[third] == 3, "at both mapping levels"

@@ -1190,7 +1190,9 @@ closed. The rest are rules that remove or withhold a value:
   from the text it was built from; the rest of the trace survives.
 - Two state variable names that are withheld to the same marker are numbered
   (`<withheld…> #2`), because a dictionary built from the redacted names would
-  otherwise keep only the last and lose a variable without saying so.
+  otherwise keep only the last and lose a variable without saying so. A name is
+  assigned once, on first sight in the trace, and reused in every later state,
+  so a variable is not renamed when another appears, disappears or reorders.
 - If a credential of two or more characters survives any replacement,
   `Redaction.retain` returns `WITHHELD`, and the record says the text was
   withheld rather than committing it.

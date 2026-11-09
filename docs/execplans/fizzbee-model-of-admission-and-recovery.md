@@ -1532,6 +1532,37 @@ explicitly.
     finding is invisible to an inline-comments query: it has to be read from
     the review body, which is why the earlier "no inline comments, therefore
     clean" reading was wrong.
+- [x] (2026-11-09) **The sixteenth round gives a withheld key one name for the
+    whole trace.**
+  - CodeRabbit approved `1a0ed77` and raised one trace-integrity issue in the
+    same reply. The numbering was per state: with `a0` and `b0` both withheld,
+    `b0` was the second while `a0` was present and the first when it left, so
+    the saved trace could show a value moving between variables.
+  - The finding is accurate. `_KeyNames` now assigns each original key one
+    redacted name on first sight in the trace and reuses it in every later
+    state, keeping the numbering collision check against names already
+    assigned.
+  - Regressions cover a key appearing, disappearing and changing order across
+    states, and a genuine key that already reads as a suffixed marker at both
+    mapping levels. The cross-state test fails on `1a0ed77` and passes here.
+  - CodeRabbit's reply also repeats two items that belong to the maintainer:
+    a fresh pre-merge assessment and a decision on the unratified 88-file
+    scope exception. Both are reported, not inferred or discharged here.
+- [x] (2026-11-09) **The seventeenth round makes the suffixed-marker
+    regression collide with an unchanged name.**
+  - CodeRabbit confirmed the trace-identity fix and corrected one regression.
+    The supplied `#2` marker contained the test's `#` credential, so
+    `retain_value` withheld that key too: the test never established a
+    collision with an input key that redacts to itself.
+  - The regression now uses the credential `0` with colliding keys `a0` and
+    `b0` and an unchanged `<withheld…> #2` marker at both mapping levels, and
+    asserts every entry at each level. The credential is chosen so the marker
+    stays an input key rather than one the policy also withholds.
+  - The local typecheck gate also caught a shadowed name the restructure had
+    introduced in this test (`state` used for both the JSON text and a decoded
+    state), which failed the GitHub `lint-test` job on `6d03b94`. A test-only
+    edit still needs the full gate set; `lint` and `test` alone did not cover
+    it.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
