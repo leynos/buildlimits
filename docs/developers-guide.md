@@ -1188,6 +1188,9 @@ closed. The rest are rules that remove or withhold a value:
 - A decoded state string that still contains the character is withheld because
   a string is one value the checker produced, and the character cannot be told
   from the text it was built from; the rest of the trace survives.
+- Two state variable names that are withheld to the same marker are numbered
+  (`<withheld…> #2`), because a dictionary built from the redacted names would
+  otherwise keep only the last and lose a variable without saying so.
 - If a credential of two or more characters survives any replacement,
   `Redaction.retain` returns `WITHHELD`, and the record says the text was
   withheld rather than committing it.

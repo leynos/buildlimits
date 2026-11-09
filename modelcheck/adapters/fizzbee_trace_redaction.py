@@ -160,10 +160,49 @@ def _redacted_state(
         The state with each key and each string value, however deeply nested,
         replaced.
     """
-    return {
-        redaction.retain_value(key): _redacted_value(value, redaction)
-        for key, value in state.items()
-    }
+    return dict(_redacted_entries(state, redaction))
+
+
+def _redacted_entries(
+    state: cabc.Mapping[str, object], redaction: Redaction
+) -> cabc.Iterator[tuple[str, object]]:
+    """Return one state's entries with its keys redacted and made distinct.
+
+    Redaction is not injective on keys. :meth:`Redaction.retain_value` returns
+    one marker for every string that contains a one-character credential, so
+    two variables whose names both hold that character redact to the same text.
+    A dictionary built straight from those redactions would keep only the last
+    entry, and the saved trace would lose a variable with nothing to say so.
+    Repeats are therefore numbered in encounter order, which keeps as many
+    entries as the state had while leaving the marker itself unchanged.
+
+    The numbering is checked against the names already emitted, so a genuine
+    key that redacts to ``<withheld> #2`` cannot be overwritten by a repeat of
+    ``<withheld>``.
+
+    Parameters
+    ----------
+    state : collections.abc.Mapping[str, object]
+        One state the checker recorded, or a nested object within it.
+    redaction : Redaction
+        The substitutions this run's evidence needs.
+
+    Yields
+    ------
+    tuple[str, object]
+        One entry per key the state held, in its original order, with the key
+        redacted and its value redacted recursively.
+    """
+    used: set[str] = set()
+    for key, value in state.items():
+        base = redaction.retain_value(key)
+        name = base
+        suffix = 1
+        while name in used:
+            suffix += 1
+            name = f"{base} #{suffix}"
+        used.add(name)
+        yield name, _redacted_value(value, redaction)
 
 
 def _redacted_value(value: object, redaction: Redaction) -> object:
@@ -187,10 +226,7 @@ def _redacted_value(value: object, redaction: Redaction) -> object:
         case str():
             return redaction.retain_value(value)
         case cabc.Mapping():
-            return {
-                redaction.retain_value(key): _redacted_value(item, redaction)
-                for key, item in value.items()
-            }
+            return dict(_redacted_entries(value, redaction))
         case list():
             return [_redacted_value(item, redaction) for item in value]
         case tuple():

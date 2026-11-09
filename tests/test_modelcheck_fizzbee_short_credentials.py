@@ -71,3 +71,31 @@ def test_a_decoded_string_containing_a_one_character_credential_is_withheld(
     assert not any(embedded in state for state in recorded), (
         "so the character is not recoverable from it"
     )
+
+
+def test_state_keys_that_redact_alike_all_survive(tmp_path: Path) -> None:
+    """Two keys withheld to one marker keep both entries under distinct names.
+
+    :meth:`Redaction.retain_value` withholds every string that contains a
+    one-character credential, so two variables whose names both hold that
+    character become the same text. A dictionary built straight from those
+    redactions keeps only the last entry, and the saved trace silently loses a
+    variable. The repeats are therefore numbered, at the top level and inside
+    a nested object alike.
+    """
+    result = lasso_run(
+        tmp_path,
+        lambda text: text.replace(
+            '"b": 0,\n        "g": 0',
+            '"b0": {"x0": 1, "y0": 2},\n        "g0": 3',
+        ),
+        {"MODELCHECK_E2E_SECRET": "0"},
+    )
+
+    state = result.trace.initial
+    expected = {WITHHELD, f"{WITHHELD} #2"}
+
+    assert set(state) == expected, "both withheld top-level keys survive"
+    nested = state[WITHHELD]
+    assert isinstance(nested, dict), "the nested object is still an object"
+    assert set(nested) == expected, "so do the withheld keys inside it"

@@ -1510,6 +1510,28 @@ explicitly.
     now names the residual beside that advice.
   - No code, test or decision changed. D44's historical reasoning is left in
     place, with the supersession appended rather than the entry rewritten.
+- [x] (2026-11-09) **The fifteenth round keeps two similarly withheld state
+    keys apart.**
+  - The review that completed at 06:39:43Z recorded no inline comment and left
+    all 60 threads resolved, but its review body carried an outside-diff
+    finding against `fizzbee_trace_redaction.py`: `_redacted_state` and the
+    `Mapping` branch of `_redacted_value` passed every key through
+    `retain_value`, which returns one marker for any string containing a
+    one-character credential, so two such keys collapsed into one entry and a
+    variable vanished from the saved trace.
+  - The finding is accurate.
+    `tests/test_modelcheck_fizzbee_short_credentials.py`
+    now rewrites the recorded lasso so two top-level keys and two nested keys
+    each contain the credential; the test fails on the old code (one entry
+    where two are required) and passes on the new.
+  - `_redacted_entries` numbers repeats in encounter order (`<withheld…> #2`)
+    and checks each name against those already emitted, so a genuine key that
+    redacts to a numbered marker is not overwritten either. The marker itself
+    is unchanged, so which keys are withheld is unchanged.
+  - The developers' and users' guides state the numbering. An outside-diff
+    finding is invisible to an inline-comments query: it has to be read from
+    the review body, which is why the earlier "no inline comments, therefore
+    clean" reading was wrong.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
