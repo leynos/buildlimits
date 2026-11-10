@@ -1641,6 +1641,49 @@ explicitly.
   - The pre-merge rows are the previous round's five, unchanged in wording; the
     reply points at that reconciliation and at this head's local and hosted
     evidence rather than re-arguing each row.
+- [x] (2026-11-10) **The twenty-first round repairs the second review: a
+    trailing full stop defeated a value-position replacement, and two
+    documents overstated or under-specified what they promised.**
+  - Finding: `_TERMINATOR` refused a match whenever a full stop followed the
+    value, because the full stop was there to protect a decimal. A sentence
+    ending `token=x.` therefore kept a one-character credential that stands in
+    a documented value position, which is not the residual D50, D53 and D55
+    accept. The terminator now refuses a full stop only when a digit follows
+    it, so `ratio=0.5` and `=01` are still left alone while `token=x.`,
+    `token x.` and `"x".` are replaced. Pinned by
+    `test_a_one_character_credential_before_a_full_stop_is_redacted`, which
+    fails on the old terminator, and by the existing decimal case in
+    `Replacement.apply`'s examples.
+  - The users' guide told the reader that a stale trace survives "until you
+    delete it"; the documentation style guide forbids the second person outside
+    the README, so the actor is now a maintainer, and the paragraph is rewrapped
+    to 80 columns.
+  - The D57 reason called the survival check a guarantee without saying which
+    credentials it covers. It now scopes the claim to the credentials the check
+    searches for and names the one-character residual as the stated limit.
+  - The pre-merge table gained two rows this round. Unit Architecture reports
+    that the inventory query imports the production package and so may write
+    bytecode. The import is the design (ADR 008): reflection is what makes
+    drift detection fail when the surface grows, and `modelcheck/__main__.py`
+    already composes the adapter and injects the inventory class, so the
+    loading cannot move without keeping an import somewhere. The write is the
+    interpreter's own cache rather than the query's, and
+    `tests/test_modelcheck_inventory_boundaries.py` now pins that split: a cold
+    subprocess query with `PYTHONPYCACHEPREFIX` set must fill that cache and
+    leave both source trees byte-identical, and the probe that writes a file
+    into `modelcheck/` makes the test fail. Developer Documentation asked for
+    the platform and installer prerequisites; §11.6 of the developers' guide
+    now states the x86-64 Linux platform and the installer's tools and links
+    to the users' guide's prerequisites.
+  - The duplication gate then failed on the new boundary test: its snapshot of
+    the checkout repeated `_snapshot` from
+    `tests/test_modelcheck_configuration_boundaries.py` (value 40.3). Both
+    tests assert the same thing about different adapters -- a read leaves the
+    tree as it was -- so the record now lives in
+    `tests/directory_state_test_helpers.py` as `FileState` and
+    `snapshot_tree`, and each module keeps only the query it exercises. The
+    helper's example is a doctest, so the record it returns is exercised on
+    every run rather than only through the two boundary tests.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -3643,10 +3686,13 @@ explicitly.
   - Reason: a replacement is not injective, so scrubbing the graph's text before
     parsing could change its validity, its ending, or the equality that makes a
     lasso a lasso; the text is therefore classified as written and scrubbed
-    afterwards. The survival check is what makes redaction a guarantee rather
-    than a set of hopeful needles, and it can only see a credential that is
-    still whole, which fixes the order. Cutting from both ends costs nothing a
-    reader wanted and keeps the verdict.
+    afterwards. The survival check is what makes redaction a guarantee for the
+    credentials it searches for, rather than a set of hopeful needles; a
+    one-character value in free diagnostic text is outside that search, so the
+    guarantee is limited to what D50, D53 and D55 decided, and the residual is
+    stated rather than implied. It can also only see a credential that is still
+    whole, which fixes the order. Cutting from both ends costs nothing a reader
+    wanted and keeps the verdict.
   - Evidence:
     `test_a_credential_the_transcript_cut_would_split_is_scrubbed_whole`,
     `test_a_credential_the_graph_cut_would_split_is_scrubbed_whole`,

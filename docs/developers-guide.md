@@ -866,6 +866,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `modelcheck_scenarios.py`                 | The model text, the `Matrix` one model-check scenario builds, and the readers its steps use                                                |
 | `modelcheck_cli_cases.py`                 | The command lines and expected exit statuses the CLI tests share                                                                           |
 | `modelcheck_configuration_support.py`     | `MODEL` and `model_directory`: the model and configuration file every TOML-configuration test reads                                        |
+| `directory_state_test_helpers.py`         | `FileState` and `snapshot_tree`: the before-and-after record both read-boundary tests compare                                              |
 
 _Table 4: Shared test helper modules._
 
@@ -1096,6 +1097,13 @@ and turns one run into a verdict. Run it through the module:
 uv run python -m modelcheck check models/admission/coupling --fizz .tools/fizzbee/fizz
 uv run python -m modelcheck drift models/admission/coupling
 ```
+
+Model checking runs on x86-64 Linux, because the pinned release asset is built
+for that platform, and `make fizzbee` installs it: the recipe needs `curl`,
+`tar` with gzip support, and `sha256sum` and `flock` from util-linux, and it
+unpacks the checker into the shared XDG cache so a second run is a no-op. The
+[users' guide's prerequisites](users-guide.md#prerequisites) state the same
+requirements for a reader who is only running the checks.
 
 The W1 model is split into a coupling half (`models/admission/coupling`,
 properties S1, S2 and L4a) and a transaction half

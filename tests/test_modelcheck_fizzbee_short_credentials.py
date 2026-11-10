@@ -154,6 +154,37 @@ def test_a_withheld_key_keeps_one_name_across_states(tmp_path: Path) -> None:
     assert result.trace.states[2] == {second: 2, WITHHELD: 1}, "and when reordered"
 
 
+def test_a_one_character_credential_before_a_full_stop_is_redacted(
+    tmp_path: Path,
+) -> None:
+    """A sentence's full stop is punctuation after the value, not part of it.
+
+    The rule refuses a character followed by a letter or a digit, because
+    ``=0.5`` is one number the model computed and ``=01`` is two digits. A full
+    stop, though, is how the line ends, so the character before it still stands
+    where a value stands. Only a full stop beginning a fraction keeps the
+    character, and the decimal is why the wider rule cannot simply be dropped:
+    rewriting ``=0.5`` would put a placeholder inside a count.
+    """
+    result = errored_run(
+        tmp_path,
+        "#!/usr/bin/env bash\n"
+        "printf 'token=%s.\\n' \"$MODELCHECK_E2E_SECRET\"\n"
+        "printf 'token %s.\\n' \"$MODELCHECK_E2E_SECRET\"\n"
+        'printf \'"%s".\\n\' "$MODELCHECK_E2E_SECRET"\n'
+        "printf 'ratio=0.5\\n'\n",
+        {"MODELCHECK_E2E_SECRET": "x"},
+    )
+
+    for kept, gone in (
+        ("token=<redacted>.", "token=x."),
+        ("token <redacted>.", "token x."),
+        ('"<redacted>".', '"x".'),
+        ("ratio=0.5", "ratio=<redacted>"),
+    ):
+        assert_detail_replaces(result.detail, kept=kept, gone=gone)
+
+
 def test_a_key_that_already_reads_as_a_suffixed_name_is_kept(
     tmp_path: Path,
 ) -> None:

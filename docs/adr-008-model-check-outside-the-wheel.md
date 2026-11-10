@@ -356,6 +356,17 @@ its finding, reason and evidence, in the
   stub must start and print about 4,000 characters before the kill for there to
   be a capture to scrub; the stub's five-second sleep still ends the run at the
   adapter's limit.
+- **D59, 2026-11-10.** A value position ends at punctuation, so a full stop does
+  not defeat the one-character rule. `_TERMINATOR` refused a match when any of
+  `.`, a letter or a digit followed the value; the dot was there so `=0.5`
+  stayed a number the model computed. It also blocked `token=x.`, a sentence
+  ending in the value, where the character stands exactly in the position D50
+  says is covered — and a one-character credential is outside the survival
+  check, so nothing else removed it. The terminator now refuses a full stop
+  only when a digit follows it: `=0.5` and `=01` are unchanged, while
+  `token=x.`, `token x.` and `"x".` are replaced. This sharpens D50's
+  value-position rule rather than widening the set of positions, and the
+  free-text residual D50, D53 and D55 accept is unchanged.
 
 ## References
 

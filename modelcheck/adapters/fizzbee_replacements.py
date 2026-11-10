@@ -41,12 +41,17 @@ The marker names the reason rather than the value, so a reader knows the
 evidence exists and was not recorded, and the record still says why.
 """
 
-_TERMINATOR = r"(?![0-9A-Za-z_.])"
+_TERMINATOR = r"(?![0-9A-Za-z_]|\.[0-9])"
 """What may not follow a one-character value in a value position.
 
 ``token=0`` is the flag being echoed, while ``=0.5`` and ``=01`` are parts of a
 number the model computed. Ending the match at the first of those and not the
 others is what keeps the counts intact.
+
+A full stop blocks the match only when a digit follows it, because that is the
+spelling of a fraction. A full stop ending the sentence — ``token=0.`` — is
+punctuation after a value, and refusing to match there would leave the
+credential in the text.
 """
 
 _JSON_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})|\\([\"\\/bfnrt])")

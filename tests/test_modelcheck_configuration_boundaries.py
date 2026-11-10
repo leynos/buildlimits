@@ -21,6 +21,7 @@ import typing as typ
 from pathlib import Path
 
 import pytest
+from directory_state_test_helpers import snapshot_tree
 from modelcheck_configuration_support import model_directory
 
 from modelcheck.adapters.configuration import TomlConfigurations
@@ -36,39 +37,6 @@ fails_as = { L3 = "lasso" }
 "buildlimits.effects.Pause" = "modelled as an unobservable effect"
 """
 """A file declaring both a configuration and an exclusion, so every query reads."""
-
-# One file's bytes, size, modification time and mode.
-type _FileState = tuple[bytes, int, int, int]
-
-
-def _snapshot(directory: Path) -> dict[str, _FileState]:
-    """Return every file under ``directory`` as its name and current state.
-
-    Parameters
-    ----------
-    directory : pathlib.Path
-        The model directory to record.
-
-    Returns
-    -------
-    dict[str, tuple[bytes, int, int, int]]
-        One entry per file, keyed by its path relative to the directory, so a
-        renamed, added, removed or rewritten file changes the mapping. The
-        modification time and mode are kept beside the bytes because a rewrite
-        that happened to restore the same content would still be a write.
-    """
-    states: dict[str, _FileState] = {}
-    for path in sorted(directory.rglob("*")):
-        if not path.is_file():
-            continue
-        stat = path.stat()
-        states[str(path.relative_to(directory))] = (
-            path.read_bytes(),
-            stat.st_size,
-            stat.st_mtime_ns,
-            stat.st_mode,
-        )
-    return states
 
 
 def _refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
@@ -113,7 +81,7 @@ def test_a_query_reads_the_directory_without_changing_it(
     a later query would have made.
     """
     directory = model_directory(tmp_path, _CONFIGURATIONS)
-    before = _snapshot(directory)
+    before = snapshot_tree(directory, relative_to=directory)
     for name in ("Popen", "run", "call", "check_call", "check_output"):
         monkeypatch.setattr(subprocess, name, _refuse)
     monkeypatch.setattr(os, "system", _refuse)
@@ -125,4 +93,5 @@ def test_a_query_reads_the_directory_without_changing_it(
 
     query(TomlConfigurations(directory))
 
-    assert _snapshot(directory) == before, "the query rewrote, added or removed a file"
+    after = snapshot_tree(directory, relative_to=directory)
+    assert after == before, "the query rewrote, added or removed a file"
