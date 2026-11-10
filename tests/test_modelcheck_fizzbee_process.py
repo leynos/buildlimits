@@ -257,7 +257,10 @@ def test_a_timed_out_transcript_is_scrubbed_before_it_is_cut(
     kept — bounded, because a runaway run can print far more than a record
     should hold. A credential placed where that cut falls would otherwise be
     recorded as its first few characters, a fragment nothing recognizes as a
-    credential.
+    credential. The adapter's deadline is two seconds rather than a fraction of
+    one, because the stub must start and print its transcript before the kill
+    for there to be a capture to bound; the stub sleeps for five seconds, so the
+    run still ends at the adapter's limit.
     """
     credential = "s3cr3t-do-not-record"
     head = _TRANSCRIPT_LIMIT // 2
@@ -274,7 +277,7 @@ def test_a_timed_out_transcript_is_scrubbed_before_it_is_cut(
         f"printf '%s%s%s\\n' '{filler}' '{credential}' '{beyond}'\nsleep 5\n",
     )
 
-    result = FizzbeeChecker(fizz, timeout_seconds=0.2).check(spec())
+    result = FizzbeeChecker(fizz, timeout_seconds=2.0).check(spec())
 
     assert isinstance(result, domain.Errored), "a killed run proved nothing"
     assert "did not finish within" in result.detail, "the reason names the limit"

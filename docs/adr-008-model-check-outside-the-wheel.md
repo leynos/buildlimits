@@ -339,6 +339,24 @@ its finding, reason and evidence, in the
   so a failed `curl` cannot leave a truncated asset that a later run treats as
   installed.
 
+- **D58, 2026-11-10.** A withheld trace does not replace recorded evidence, and
+  the persisted trace is a rendering of the model rather than of the host that
+  checked it. D53's rule withholds every decoded string that contains a
+  one-character credential, so a run whose environment holds such a value — a
+  credential-named boolean, for instance — produces a trace in which most state
+  variable names are the withholding marker. `--save-traces` writes into
+  `models/admission/<half>/traces/`, which is tracked, so that run would have
+  replaced a committed trace with one that says far less about the model.
+  `Traces` therefore keeps an existing file when the trace it would write
+  carries withheld evidence, and prints the file it left alone; a trace with no
+  file to replace is still written, because nothing is lost and the marker says
+  what was withheld. The one-character rule itself is unchanged: the guard
+  removes the loss of evidence, not the protection. The same round raises the
+  timeout in the scrubbed-transcript regression from 0.2 s to 2 s, because the
+  stub must start and print about 4,000 characters before the kill for there to
+  be a capture to scrub; the stub's five-second sleep still ends the run at the
+  adapter's limit.
+
 ## References
 
 - [RFC 0001: FizzBee model of admission and recovery](rfcs/0001-fizzbee-model-of-admission-and-recovery.md)

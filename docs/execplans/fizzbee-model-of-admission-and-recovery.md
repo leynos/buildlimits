@@ -1611,6 +1611,30 @@ explicitly.
     and the new `_refuse` — so the existing reasoned exception gained the
     fourth member rather than a second entry appearing beside it; a duplicate
     entry for an overlapping family is reported as unmatched by the gate.
+- [x] (2026-11-10) **The twentieth round repairs the first review of the
+    repaired head: one trace-safety gap and one flaky deadline.**
+  - The automatic review was paused after the branch's run of commits, so this
+    head was reviewed through the managed queue. CodeRabbit posted two inline
+    findings and repeated the five failed pre-merge rows the previous round had
+    already reconciled.
+  - Finding: a one-character credential in the run's environment withholds
+    every decoded state string containing that character (D53), so regenerating
+    one of the seven tracked traces on such a host would have replaced committed
+    evidence with a record of the host. `Traces` now keeps an existing file when
+    the trace it would write carries withheld evidence and prints the file it
+    left alone; a trace with no file to replace is still written, because
+    nothing is lost and the marker says what was withheld. The one-character
+    rule is unchanged, so the guard trades no protection for the evidence.
+    Pinned by `tests/test_modelcheck_saved_traces.py`, including the numbered
+    marker a repeated variable is given (D58).
+  - Finding: the scrubbed-transcript regression gave the stub 0.2 s to start and
+    print about 4,000 characters before the kill. That is not a deadline a
+    loaded host can meet, and the capture the assertion reads would be empty.
+    The deadline is now 2 s; the stub's five-second sleep still ends the run at
+    the adapter's limit, so the timeout path is what the test exercises.
+  - The pre-merge rows are the previous round's five, unchanged in wording; the
+    reply points at that reconciliation and at this head's local and hosted
+    evidence rather than re-arguing each row.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.

@@ -1182,30 +1182,36 @@ committed. A failed comparison's counterexample is kept the same way, named
 for the same configuration rather than replacing it. A trace is written only
 for a counterexample, so a configuration that once failed and now passes keeps
 its old file until you delete it: the run replaces the traces it writes and
-removes nothing else. The JSON record names the kind of result each failed run
-produced, and a run that reported no exploration time of its own is recorded
-with the time the harness waited for it, under a field of its own. Each
-captured text in a record's `detail` — the checker's transcript, the graph when
-it could not be decoded, or a stopped run's marker line — is cut to 4,000
-characters with the cut stated, so one record can hold two captures. The run's
-own paths and the values of credential-named environment variables are replaced
-before the text is kept, and again in the trace's states once the graph is
-parsed, so a committed artefact describes the model rather than the machine
-that checked it. The graph is read before any of that happens, so a replacement
-cannot turn a valid graph into an unparsable one or make two states compare
-equal. Credentials shorter than six characters are replaced only where they
-stand alone, and a one-character value is replaced only where it is a value —
-after `=`, between quotes, after the label a checker prints beside it, or as a
-whole decoded state value — so a boolean flag cannot rewrite every state count.
-A decoded state string that still contains a one-character credential is
-withheld rather than recorded, and state variable names withheld to the same
-marker are numbered so that every variable survives under one name throughout
-the trace. A one-character credential embedded inside a longer token of free
-diagnostic text — `Error: prefix#` for a credential of `#` — is not recognized
-and stays in the record. If a credential of two or more characters survives any
-replacement, including under an equivalent JSON escape spelling, the text
-holding it is withheld rather than recorded and the record says so. Read a
-generated artefact before sharing it.
+removes nothing else. It also keeps an existing trace when the new one carries
+evidence redaction had to withhold: a one-character credential in the run's
+environment withholds every decoded state string containing that character, so
+such a trace names fewer variables than the model declares and would replace
+evidence about the model with evidence about the host. The run prints the file
+it left alone, and unsetting that variable lets a later run record the trace
+whole. The JSON record names the kind of result each failed run produced, and a
+run that reported no exploration time of its own is recorded with the time the
+harness waited for it, under a field of its own. Each captured text in a
+record's `detail` — the checker's transcript, the graph when it could not be
+decoded, or a stopped run's marker line — is cut to 4,000 characters with the
+cut stated, so one record can hold two captures. The run's own paths and the
+values of credential-named environment variables are replaced before the text
+is kept, and again in the trace's states once the graph is parsed, so a
+committed artefact describes the model rather than the machine that checked it.
+The graph is read before any of that happens, so a replacement cannot turn a
+valid graph into an unparsable one or make two states compare equal.
+Credentials shorter than six characters are replaced only where they stand
+alone, and a one-character value is replaced only where it is a value — after
+`=`, between quotes, after the label a checker prints beside it, or as a whole
+decoded state value — so a boolean flag cannot rewrite every state count. A
+decoded state string that still contains a one-character credential is withheld
+rather than recorded, and state variable names withheld to the same marker are
+numbered so that every variable survives under one name throughout the trace. A
+one-character credential embedded inside a longer token of free diagnostic text
+— `Error: prefix#` for a credential of `#` — is not recognized and stays in the
+record. If a credential of two or more characters survives any replacement,
+including under an equivalent JSON escape spelling, the text holding it is
+withheld rather than recorded and the record says so. Read a generated artefact
+before sharing it.
 
 The end-to-end tests that read these artefacts are opt-in because they need the
 binary:

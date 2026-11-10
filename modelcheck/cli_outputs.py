@@ -12,15 +12,17 @@ directories, writes files and turns a normalized trace into JSON, so it lives
 outside the package's pure-module allowlist beside :mod:`modelcheck.cli`.
 """
 
+import collections.abc as cabc
 import dataclasses as dc
 import json
+import sys
 import typing as typ
 
 from modelcheck import domain, records
+from modelcheck.adapters.fizzbee_replacements import WITHHELD
 from modelcheck.expectations import subject
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     from pathlib import Path
 
     from modelcheck.domain import Judgement
@@ -90,6 +92,14 @@ class Traces:
     When a configuration that once failed now passes, its old trace stays under
     ``traces/`` and a maintainer removes it by hand: this class writes what the
     run found and deletes nothing it did not write.
+
+    A recorded trace is also kept when the run's own evidence was withheld in
+    part. Redaction withholds a decoded string that contains a one-character
+    credential, so a host whose environment holds one — a credential-named
+    boolean, say — produces a trace that names fewer variables than the model
+    declares. Replacing the committed file with it would trade evidence about
+    the model for evidence about the host that ran the check, so the file is
+    left as it is and the run says which one.
 
     Comparison traces carry their own stage in the name. The matrix has
     already saved a trace for the same configuration and subject, and a
@@ -172,13 +182,65 @@ class Traces:
             The file's name, without the ``.json`` suffix.
         trace : modelcheck.trace.Trace
             The normalized path to write.
+
+        Notes
+        -----
+        An existing file is left alone when the new trace carries withheld
+        evidence, because redaction withholds a decoded string that contains a
+        one-character credential and the run's environment decides which
+        strings those are. Replacing a committed trace with one the host
+        shortened would make the evidence describe the machine rather than the
+        model. A trace with no file to replace is still written, since nothing
+        is lost by recording it, and the marker in it says what was withheld.
         """
         directory = self.model_dir / "traces"
         directory.mkdir(parents=True, exist_ok=True)
         record = records.trace_record(trace)
-        (directory / f"{name}.json").write_text(
-            json.dumps(record, indent=2) + "\n", encoding="utf-8"
-        )
+        path = directory / f"{name}.json"
+        if path.exists() and _holds_withheld(record):
+            print(
+                f"modelcheck: kept {path.as_posix()}: redaction withheld part of"
+                " the new trace, so recorded evidence was not replaced",
+                file=sys.stderr,
+            )
+            return
+        path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+
+def _holds_withheld(record: object) -> bool:
+    """Return whether a rendered trace carries evidence redaction withheld.
+
+    Parameters
+    ----------
+    record : object
+        One trace rendered by :func:`modelcheck.records.trace_record`: nested
+        mappings and sequences of keys, values and scalars.
+
+    Returns
+    -------
+    bool
+        Whether any string in it is the withholding marker, including the
+        numbered form a repeated state variable is given.
+
+    Examples
+    --------
+    >>> _holds_withheld({"halted": WITHHELD})
+    True
+    >>> _holds_withheld({"halted": False})
+    False
+    """
+    match record:
+        case str():
+            return record == WITHHELD or record.startswith(f"{WITHHELD} #")
+        case cabc.Mapping():
+            return any(
+                _holds_withheld(key) or _holds_withheld(value)
+                for key, value in record.items()
+            )
+        case list() | tuple():
+            return any(_holds_withheld(item) for item in record)
+        case _:
+            return False
 
 
 @dc.dataclass(frozen=True, slots=True)
