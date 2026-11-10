@@ -1626,7 +1626,13 @@ explicitly.
     nothing is lost and the marker says what was withheld. The one-character
     rule is unchanged, so the guard trades no protection for the evidence.
     Pinned by `tests/test_modelcheck_saved_traces.py`, including the numbered
-    marker a repeated variable is given (D58).
+    marker a repeated variable is given (D58), driven through `redact_trace` so
+    the producer and the guard are held to one spelling.
+  - Lesson: the hosted spelling gate caught a typo in the new test's state
+    names (`ax`) that the local gate run could not see. `typos-config-builder`
+    scans the index, so a file that is still untracked is outside its scope and
+    a green `make spelling` says nothing about it; the names are now `a0` and
+    `b0`, and a new file has to be staged before that gate means anything.
   - Finding: the scrubbed-transcript regression gave the stub 0.2 s to start and
     print about 4,000 characters before the kill. That is not a deadline a
     loaded host can meet, and the capture the assertion reads would be empty.
