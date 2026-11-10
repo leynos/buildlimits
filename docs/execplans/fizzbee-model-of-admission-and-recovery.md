@@ -1761,15 +1761,14 @@ explicitly.
   - `tests/test_modelcheck_inventory_boundaries.py` now makes two
     observations. The first loads the inventory cold over copied sources and
     compares the production tree with itself. The second copies the packages
-    and `models/admission/coupling`, warms only the tool through
-    `python -m modelcheck --help`, asserts the production cache is still cold,
-    snapshots both packages, and runs the real
-    `python -m modelcheck drift models/admission/coupling` under default
-    bytecode settings. Both packages must be byte-identical afterwards,
-    `__pycache__` included. The warm-up is the interpreter compiling the tool
-    it was asked to run, which happens before any command exists; the
-    production package stays cold, which is the cache a drift check must not
-    write.
+    and `models/admission/coupling` and runs the real
+    `python -m modelcheck drift models/admission/coupling` from a fully cold
+    start — nothing warmed, nothing imported first — under default bytecode
+    settings. The production tree must be byte-identical afterwards,
+    `__pycache__` included. The tool's own tree may gain `.pyc` files under
+    `__pycache__`, which is the interpreter compiling the code it was asked to
+    execute; the test requires that delta to be non-empty and to contain
+    nothing but bytecode, so a run that was not cold cannot pass vacuously.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.

@@ -12,9 +12,10 @@ cache is read rather than compiled, and the inventory it returns answers
 :meth:`BuildlimitsInventory.resolves` from a set it already holds. Two
 observations pin that down. The first loads the inventory cold and compares the
 production sources with themselves. The second runs the real drift command,
-``python -m modelcheck drift``, over a copied checkout and compares both
-packages. Neither observation sets ``PYTHONDONTWRITEBYTECODE`` or a cache
-prefix, so a run that wanted to write would be free to.
+``python -m modelcheck drift``, from a fully cold start — nothing is warmed or
+imported beforehand — and compares the production sources with themselves
+again. Neither observation sets ``PYTHONDONTWRITEBYTECODE`` or a cache prefix,
+so a run that wanted to write would be free to.
 
 The copies are what make the comparison whole. A snapshot of the checkout
 would include caches written by the test session that collected this file, and
@@ -23,11 +24,12 @@ alone, so every file the run creates is one the run is answerable for.
 
 The subprocesses are what make the run cold. A module imported by this test
 file would already be in ``sys.modules``, so an in-process query would prove
-nothing about the imports it does or does not perform. The drift command is
-warmed through ``--help`` first: the interpreter compiles the tool it was
-asked to run before any command exists, and that startup write is the
-interpreter's, not the check's. The production package is left cold in both
-observations, which is the cache a drift check must not write.
+nothing about the imports it does or does not perform. The cold drift run does
+let the interpreter compile the tool it was asked to run, before any command
+exists; the test records that delta and requires it to be nothing but
+``.pyc`` entries under the tool's own ``__pycache__`` directories. The
+production package is the cache a drift check must not write, and it stays
+byte-identical.
 """
 
 import os
@@ -62,9 +64,6 @@ assert inventory.items(), "the inventory is empty"
 print(len(inventory.items()))
 """
 """Load the inventory in a cold interpreter over the copied packages."""
-
-_HELP = (sys.executable, "-m", "modelcheck", "--help")
-"""Build the command line, so the tool's own bytecode is already cached."""
 
 _DRIFT = (sys.executable, "-m", "modelcheck", "drift", str(_MODEL))
 """The real command, run from a directory holding nothing but the copies."""
@@ -178,22 +177,21 @@ def test_a_cold_inventory_load_writes_nothing_beside_the_sources(
     )
 
 
-def test_a_cold_drift_command_creates_no_file(tmp_path: Path) -> None:
-    """The real drift command leaves both copied packages exactly as it found them.
+def test_a_cold_drift_command_creates_no_file_in_the_production_package(
+    tmp_path: Path,
+) -> None:
+    """The real drift command leaves the production package as it found it.
 
-    The tool's own startup is warmed first, because the interpreter compiles
-    the code it is about to run before the command exists. The production
-    package stays cold, and the drift run that follows must add nothing: no
-    new ``__pycache__`` entry, no rewritten source, no removed file.
+    Nothing is warmed and no module is imported first, so this is the command
+    as a maintainer's first run of the day: the interpreter compiles the tool
+    it was asked to run, and the check reads a production package with no
+    cache at all. The production tree must be byte-identical afterwards. The
+    tool's own tree may gain ``.pyc`` files under ``__pycache__`` — that is
+    the interpreter compiling the code it was asked to execute, not the check
+    writing into the package it audits — and nothing else there may change.
     """
     root = tmp_path / "checkout"
     _copied_checkout(root)
-    warmed = _run(_HELP, root)
-    assert warmed.returncode == 0, warmed.stderr
-    assert not list((root / "buildlimits").rglob("__pycache__")), (
-        "the warm-up compiled the production package, so the drift run is not cold"
-    )
-
     before = {name: _snapshot(root, name) for name in _READ_TREES}
 
     completed = _run(_DRIFT, root)
@@ -203,4 +201,29 @@ def test_a_cold_drift_command_creates_no_file(tmp_path: Path) -> None:
         completed.stdout
     )
     after = {name: _snapshot(root, name) for name in _READ_TREES}
-    assert after == before, "the drift command created, rewrote or removed a file"
+    assert after["buildlimits"] == before["buildlimits"], (
+        "the drift command created, rewrote or removed a file in the production package"
+    )
+    tool_writes = {
+        path
+        for path in after["modelcheck"].keys() | before["modelcheck"].keys()
+        if after["modelcheck"].get(path) != before["modelcheck"].get(path)
+    }
+    assert tool_writes, "the run was not cold: the interpreter compiled nothing"
+    assert all(_is_bytecode(path) for path in tool_writes), tool_writes
+
+
+def _is_bytecode(path: str) -> bool:
+    """Report whether a file is the interpreter's compiled form of a module.
+
+    Parameters
+    ----------
+    path : str
+        A path relative to the copied checkout.
+
+    Returns
+    -------
+    bool
+        Whether the path is a ``.pyc`` inside a ``__pycache__`` directory.
+    """
+    return path.endswith(".pyc") and "__pycache__" in Path(path).parts
