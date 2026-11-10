@@ -6,22 +6,28 @@ a query run over a checkout must not create, rewrite or remove a file in either
 package.
 
 Loading and querying are separate steps. :meth:`BuildlimitsInventory.load`
-imports the production package, and an import may write bytecode; the
-inventory it returns answers :meth:`BuildlimitsInventory.items` and
-:meth:`BuildlimitsInventory.resolves` from a set it already holds. This test
-therefore copies both packages into a scratch directory, warms the bytecode
-cache there with one cold subprocess, snapshots the copies, and runs the query
-in a second cold subprocess under the interpreter's default bytecode settings.
-The copies must be byte-identical afterwards, ``__pycache__`` included, so the
-query itself holds no write of its own.
+imports the production package inside :func:`_no_bytecode`, so even a cold
+cache is read rather than compiled, and the inventory it returns answers
+:meth:`BuildlimitsInventory.items` and
+:meth:`BuildlimitsInventory.resolves` from a set it already holds. Two
+observations pin that down. The first loads the inventory cold and compares the
+production sources with themselves. The second runs the real drift command,
+``python -m modelcheck drift``, over a copied checkout and compares both
+packages. Neither observation sets ``PYTHONDONTWRITEBYTECODE`` or a cache
+prefix, so a run that wanted to write would be free to.
 
 The copies are what make the comparison whole. A snapshot of the checkout
 would include caches written by the test session that collected this file, and
 a write into it would dirty the working tree; a copy starts from the sources
-alone, so every file the run creates is one the run is answerable for. The
-subprocesses are what make the query cold: a module imported by this test file
-would already be in ``sys.modules``, so an in-process query would prove nothing
-about the imports it does or does not perform.
+alone, so every file the run creates is one the run is answerable for.
+
+The subprocesses are what make the run cold. A module imported by this test
+file would already be in ``sys.modules``, so an in-process query would prove
+nothing about the imports it does or does not perform. The drift command is
+warmed through ``--help`` first: the interpreter compiles the tool it was
+asked to run before any command exists, and that startup write is the
+interpreter's, not the check's. The production package is left cold in both
+observations, which is the cache a drift check must not write.
 """
 
 import os
@@ -30,13 +36,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-from directory_state_test_helpers import snapshot_tree
+from directory_state_test_helpers import FileState, snapshot_tree
 
 _REPOSITORY = Path(__file__).resolve().parents[1]
 """The checkout whose packages the query reads."""
 
 _READ_TREES = ("buildlimits", "modelcheck")
-"""The packages an inventory query reads, and so must not change."""
+"""The packages the run reads, and so must not change."""
+
+_MODEL = Path("models/admission/coupling")
+"""The model the copied drift command checks."""
 
 _LOAD = """\
 import os
@@ -48,32 +57,21 @@ copy = os.path.realpath(os.environ["MODELCHECK_COPY"])
 assert os.path.realpath(modelcheck.__file__).startswith(copy + os.sep), (
     modelcheck.__file__
 )
-BuildlimitsInventory.load()
-print("loaded")
-"""
-"""The loading step, run once so the query starts from a warm bytecode cache."""
-
-_QUERY = """\
-import os
-
-import modelcheck
-from modelcheck.adapters.inventory import BuildlimitsInventory
-
-copy = os.path.realpath(os.environ["MODELCHECK_COPY"])
-assert os.path.realpath(modelcheck.__file__).startswith(copy + os.sep), (
-    modelcheck.__file__
-)
 inventory = BuildlimitsInventory.load()
-items = inventory.items()
-assert items, "the inventory is empty"
-assert inventory.resolves("buildlimits.effects.Launch"), "a known path resolves"
-print(len(items))
+assert inventory.items(), "the inventory is empty"
+print(len(inventory.items()))
 """
-"""The cold query, as the interpreter runs it."""
+"""Load the inventory in a cold interpreter over the copied packages."""
+
+_HELP = (sys.executable, "-m", "modelcheck", "--help")
+"""Build the command line, so the tool's own bytecode is already cached."""
+
+_DRIFT = (sys.executable, "-m", "modelcheck", "drift", str(_MODEL))
+"""The real command, run from a directory holding nothing but the copies."""
 
 
-def _copied_packages(root: Path) -> None:
-    """Copy the two packages into a scratch directory.
+def _copied_checkout(root: Path) -> None:
+    """Copy the packages and the model into a scratch directory.
 
     Parameters
     ----------
@@ -82,7 +80,7 @@ def _copied_packages(root: Path) -> None:
         are left behind, so the copies start from the sources alone and every
         cache file the run creates is one the run is answerable for.
     """
-    for name in _READ_TREES:
+    for name in (*_READ_TREES, "models"):
         shutil.copytree(
             _REPOSITORY / name,
             root / name,
@@ -113,13 +111,13 @@ def _query_environment(root: Path) -> dict[str, str]:
     return environment
 
 
-def _run(script: str, root: Path) -> subprocess.CompletedProcess[str]:
-    """Run one script in a cold interpreter over the copied packages.
+def _run(argv: tuple[str, ...], root: Path) -> subprocess.CompletedProcess[str]:
+    """Run one command in a cold interpreter over the copied packages.
 
     Parameters
     ----------
-    script : str
-        The program to run.
+    argv : tuple[str, ...]
+        The program and its arguments.
     root : pathlib.Path
         The directory holding the copied packages, which is also the working
         directory so the copy is the first entry on the import path.
@@ -130,7 +128,7 @@ def _run(script: str, root: Path) -> subprocess.CompletedProcess[str]:
         The completed run, with its output captured.
     """
     return subprocess.run(
-        [sys.executable, "-c", script],
+        argv,
         cwd=root,
         env=_query_environment(root),
         capture_output=True,
@@ -139,27 +137,70 @@ def _run(script: str, root: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_a_cold_query_writes_nothing_beside_the_sources(tmp_path: Path) -> None:
-    """The inventory query leaves both copied packages exactly as it found them.
+def _snapshot(root: Path, name: str) -> dict[str, FileState]:
+    """Return the files a copied tree holds, bytecode caches included.
 
-    The loading step runs first, outside the observation window, because it is
-    the one step allowed to import the production package and so the one step
-    that may write bytecode. The query that follows must add nothing: no new
-    ``__pycache__`` entry, no rewritten source, no removed file.
+    Parameters
+    ----------
+    root : pathlib.Path
+        The directory the tree was copied under.
+    name : str
+        The tree's name.
+
+    Returns
+    -------
+    dict[str, FileState]
+        The snapshot to compare across a run.
+    """
+    return snapshot_tree(root / name, relative_to=root)
+
+
+def test_a_cold_inventory_load_writes_nothing_beside_the_sources(
+    tmp_path: Path,
+) -> None:
+    """Loading the inventory cold leaves the production package untouched.
+
+    The copies hold no bytecode, and the run is made with the interpreter's
+    default cache settings, so a load that compiled what it read would leave a
+    ``__pycache__`` entry. There is none: the import is made with bytecode
+    writing switched off.
     """
     root = tmp_path / "checkout"
-    _copied_packages(root)
+    _copied_checkout(root)
+    before = _snapshot(root, "buildlimits")
 
-    loaded = _run(_LOAD, root)
-    assert loaded.returncode == 0, loaded.stderr
-
-    before = {
-        name: snapshot_tree(root / name, relative_to=root) for name in _READ_TREES
-    }
-
-    completed = _run(_QUERY, root)
+    completed = _run((sys.executable, "-c", _LOAD), root)
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip().isdigit(), "the query printed its inventory size"
-    after = {name: snapshot_tree(root / name, relative_to=root) for name in _READ_TREES}
-    assert after == before, "the query created, rewrote or removed a file"
+    assert completed.stdout.strip().isdigit(), "the load printed its inventory size"
+    assert _snapshot(root, "buildlimits") == before, (
+        "the load created, rewrote or removed a file in the production package"
+    )
+
+
+def test_a_cold_drift_command_creates_no_file(tmp_path: Path) -> None:
+    """The real drift command leaves both copied packages exactly as it found them.
+
+    The tool's own startup is warmed first, because the interpreter compiles
+    the code it is about to run before the command exists. The production
+    package stays cold, and the drift run that follows must add nothing: no
+    new ``__pycache__`` entry, no rewritten source, no removed file.
+    """
+    root = tmp_path / "checkout"
+    _copied_checkout(root)
+    warmed = _run(_HELP, root)
+    assert warmed.returncode == 0, warmed.stderr
+    assert not list((root / "buildlimits").rglob("__pycache__")), (
+        "the warm-up compiled the production package, so the drift run is not cold"
+    )
+
+    before = {name: _snapshot(root, name) for name in _READ_TREES}
+
+    completed = _run(_DRIFT, root)
+
+    assert completed.returncode == 0, completed.stderr
+    assert "the model accounts for every production path" in completed.stdout, (
+        completed.stdout
+    )
+    after = {name: _snapshot(root, name) for name in _READ_TREES}
+    assert after == before, "the drift command created, rewrote or removed a file"

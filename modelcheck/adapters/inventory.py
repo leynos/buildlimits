@@ -27,12 +27,15 @@ Loading is separate from querying. :meth:`BuildlimitsInventory.load` imports
 the production modules and is the only step that can touch the filesystem; the
 :class:`BuildlimitsInventory` it returns holds the enumerated paths, so
 :meth:`BuildlimitsInventory.items` and :meth:`BuildlimitsInventory.resolves`
-read a value and import nothing. A drift check can therefore run against a
-checkout without the check itself writing bytecode into it.
+read a value and import nothing. The import itself is made with bytecode
+writing switched off, so a drift check run against a checkout leaves that
+checkout exactly as it found it even when the cache is cold.
 """
 
+import contextlib
 import importlib
 import inspect
+import sys
 import typing as typ
 
 from modelcheck.domain import MaterializeError
@@ -342,7 +345,32 @@ def _module(name: str) -> types.ModuleType:
     'buildlimits.effects'
     """
     try:
-        return importlib.import_module(name)
+        with _no_bytecode():
+            return importlib.import_module(name)
     except ImportError as error:
         msg = f"the production package no longer provides {name}: {error}"
         raise MaterializeError(msg) from error
+
+
+@contextlib.contextmanager
+def _no_bytecode() -> cabc.Generator[None]:
+    """Import without writing bytecode beside the sources being read.
+
+    A drift check reads the production package to learn what it declares. The
+    compiled copy is not evidence, and writing it would mean the check had
+    modified the checkout it was asked to inspect — a cold cache would leave
+    ``__pycache__`` directories behind in a tree the maintainer may be about to
+    commit. The flag is process-wide, so it is restored rather than left set
+    for the rest of the run.
+
+    Yields
+    ------
+    None
+        While the flag is set, so the caller can import inside the block.
+    """
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        yield
+    finally:
+        sys.dont_write_bytecode = previous

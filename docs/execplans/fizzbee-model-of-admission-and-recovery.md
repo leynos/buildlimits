@@ -1744,6 +1744,32 @@ explicitly.
     description now says the cut keeps a verdict only when it falls in a
     retained region, matching the thirteenth round's statement that a verdict
     inside the omitted middle is lost.
+- [x] (2026-11-10) **The twenty-fourth round makes the production import
+    read-only on a cold cache, and runs the real drift command to prove it.**
+  - Finding: the twenty-third round separated loading from querying, but
+    `BuildlimitsInventory.load()` still imported the production package with
+    bytecode writing enabled, and the boundary test warmed that cache before
+    its snapshot. A cold end-to-end drift command could therefore still leave
+    `__pycache__` in the checkout it was asked to inspect.
+  - `_module` now imports inside `_no_bytecode`, a context manager that sets
+    `sys.dont_write_bytecode` for the import and restores the previous value
+    afterwards. The flag is process-wide, so it is scoped to the import rather
+    than left set for the rest of the run. A plain cold import of
+    `buildlimits.effects` writes `buildlimits/__pycache__`; the same import
+    through `_module` writes nothing, which is what makes the test sensitive
+    to the guard.
+  - `tests/test_modelcheck_inventory_boundaries.py` now makes two
+    observations. The first loads the inventory cold over copied sources and
+    compares the production tree with itself. The second copies the packages
+    and `models/admission/coupling`, warms only the tool through
+    `python -m modelcheck --help`, asserts the production cache is still cold,
+    snapshots both packages, and runs the real
+    `python -m modelcheck drift models/admission/coupling` under default
+    bytecode settings. Both packages must be byte-identical afterwards,
+    `__pycache__` included. The warm-up is the interpreter compiling the tool
+    it was asked to run, which happens before any command exists; the
+    production package stays cold, which is the cache a drift check must not
+    write.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
