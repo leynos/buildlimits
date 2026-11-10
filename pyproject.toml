@@ -1775,3 +1775,10 @@ members = [
     "tests/test_modelcheck_redaction_properties.py",
 ]
 reason = "The test's decoder (_decoded) restates the adapter's (_decoded_view) independently, which is the point: a property that decoded with the adapter's own function would agree with it whatever it did, including agreeing that a credential was removed when it was not. Sharing one decoder would leave the claim untested, so the two copies stay and the test's says why. The detector reports this family unnamed, so the entry names the files."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_modelcheck_service_properties.py",
+    "tests/test_modelcheck_service_run_sets_properties.py",
+]
+reason = "Matching import lists: the pair properties and the variable-set property name the same Hypothesis and case-helper symbols, and the module split exists to keep each file under the module length limit. Sharing them through a re-export module would add one more test support module without hiding a real dependency."

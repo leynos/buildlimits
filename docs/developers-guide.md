@@ -866,6 +866,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `modelcheck_scenarios.py`                 | The model text, the `Matrix` one model-check scenario builds, and the readers its steps use                                                |
 | `modelcheck_cli_cases.py`                 | The command lines and expected exit statuses the CLI tests share                                                                           |
 | `modelcheck_configuration_support.py`     | `MODEL` and `model_directory`: the model and configuration file every TOML-configuration test reads                                        |
+| `modelcheck_service_cases.py`             | The model text, bounded configurations and checker doubles the service tests share, including `Answers`, `counterexample` and `mismatch`   |
 | `directory_state_test_helpers.py`         | `FileState` and `snapshot_tree`: the before-and-after record both read-boundary tests compare                                              |
 
 _Table 4: Shared test helper modules._

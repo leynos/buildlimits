@@ -1684,6 +1684,26 @@ explicitly.
     `snapshot_tree`, and each module keeps only the query it exercises. The
     helper's example is a doctest, so the record it returns is exercised on
     every run rather than only through the two boundary tests.
+- [x] (2026-11-10) **The twenty-second round closes the matrix property gap
+    the second review left open.**
+  - Finding: `tests/test_modelcheck_service_properties.py` drew exactly two
+    expected failures, so it could not ask what the comparison does with three
+    or four runs, or with two disagreeing completed runs beside a run that
+    reports no count.
+    `test_a_variable_run_set_is_judged_by_its_completed_counts`, now in
+    `tests/test_modelcheck_service_run_sets_properties.py`, draws three or four
+    names and a run of each kind for each, and steers the draw: either one run
+    reports nothing, or the first two are completed runs whose counts agree or
+    differ. It asserts the three rules on that set — a silent run leaves the
+    configuration uncompared, disagreeing completed counts refuse every row
+    with one detail naming each count, and an agreeing set is judged row by
+    row. The pair properties stay in the original module, which keeps both
+    files under the module length limit; their shared checker double, count
+    builder and mismatch reader moved to `tests/modelcheck_service_cases.py`.
+  - Evidence: widening `_consistent`'s tolerance to two counts fails the new
+    property with "no run can be judged", so the test detects a changed
+    comparison rather than restating it. The two-run examples still cover the
+    smallest sets.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
