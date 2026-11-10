@@ -30,7 +30,7 @@ def _inventory() -> frozenset[str]:
     frozenset[str]
         Every dotted path the adapter enumerates.
     """
-    return BuildlimitsInventory().items()
+    return BuildlimitsInventory.load().items()
 
 
 def _alias_members(alias: object) -> tuple[object, ...]:
@@ -149,7 +149,7 @@ def test_an_accessor_is_not_enumerated(name: str) -> None:
 
 def test_a_path_the_package_has_resolves() -> None:
     """A real path resolves, and a fabricated one does not."""
-    inventory = BuildlimitsInventory()
+    inventory = BuildlimitsInventory.load()
 
     assert inventory.resolves("buildlimits.effects.Launch"), "a real path resolves"
     assert not inventory.resolves("buildlimits.effects.NoSuchEffect"), (
@@ -176,7 +176,7 @@ def test_a_name_that_exists_but_is_not_a_member_does_not_resolve(path: str) -> N
     attribute up would let a model claim to model them, and drift would then
     report the claim as sound.
     """
-    inventory = BuildlimitsInventory()
+    inventory = BuildlimitsInventory.load()
 
     assert _exists(path), f"{path} should exist for this test to mean anything"
     assert not inventory.resolves(path), "the name exists but is not mappable"
@@ -202,7 +202,7 @@ def _exists(path: str) -> bool:
 
 def test_the_inventory_is_built_once() -> None:
     """The set is cached, because a matrix run never reads it and a drift does once."""
-    inventory = BuildlimitsInventory()
+    inventory = BuildlimitsInventory.load()
 
     assert inventory.items() is inventory.items(), "the second read is the cached set"
 

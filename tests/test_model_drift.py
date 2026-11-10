@@ -73,7 +73,7 @@ def test_each_model_accounts_for_what_it_claims(model: str) -> None:
     exclusions. It is not allowed to omit a path silently, and it is not allowed
     to keep claiming a path that no longer resolves.
     """
-    inventory = BuildlimitsInventory()
+    inventory = BuildlimitsInventory.load()
     mapped, exclusions = _accounts(_MODELS[model])
 
     report = drift.drift(mapped, inventory.items(), inventory.resolves, exclusions)
@@ -109,7 +109,7 @@ def test_the_halves_together_cover_the_whole_surface() -> None:
     it. Only the agreed out-of-scope set is allowed to be unmapped, and it must
     still be recorded as an exclusion so a reader sees the decision.
     """
-    inventory = BuildlimitsInventory()
+    inventory = BuildlimitsInventory.load()
     mapped: frozenset[str] = frozenset()
     excluded: frozenset[str] = frozenset()
     for directory in _MODELS.values():

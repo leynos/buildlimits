@@ -1704,6 +1704,46 @@ explicitly.
     property with "no run can be judged", so the test detects a changed
     comparison rather than restating it. The two-run examples still cover the
     smallest sets.
+- [x] (2026-11-10) **The twenty-third round separates loading the inventory
+    from querying it, and pins the case the missing count decides.**
+  - Finding: the unit-architecture row still applied. The inventory query
+    imported the production package on first use, and the boundary test hid
+    whatever bytecode that import wrote by redirecting the cache to
+    `PYTHONPYCACHEPREFIX`, so it did not establish that a query under default
+    settings leaves the checkout alone. This supersedes the twenty-first
+    round's defence of that split: the import could move after all.
+  - `BuildlimitsInventory` now takes the production modules as a mapping and
+    builds its set in the constructor. `BuildlimitsInventory.load()` imports
+    them and is the only step that can touch the filesystem; the composition
+    root in `modelcheck/__main__.py` injects `load` as the inventory factory,
+    so loading stays at the composition boundary and
+    `items()`/`resolves()` read a value. The class subclasses `CodeInventory`
+    and marks both methods `@typ.override`, which is also how the recorded D27
+    decision keeps DF12's trivial-wrapper check quiet.
+  - `tests/test_modelcheck_inventory_boundaries.py` now copies both packages
+    into a scratch directory, warms the bytecode cache there with one cold
+    subprocess, snapshots the copies, and runs the query in a second cold
+    subprocess under the interpreter's default bytecode settings — no
+    `PYTHONPYCACHEPREFIX`, no `PYTHONDONTWRITEBYTECODE` — asserting the copies
+    are byte-identical afterwards, `__pycache__` included. The copies make the
+    comparison whole: a snapshot of the checkout would include caches written
+    by the test session, and a write into it would dirty the working tree. The
+    loading step is outside the observation window because it is the one step
+    allowed to import. A probe that writes a file into the copied `modelcheck`
+    tree makes the test fail.
+  - The matrix property now starts every drawn plan with no absence, so the
+    only silent run is the one `silence` selects, and forces the first two runs
+    to complete whenever a run is silent, so one missing count always sits
+    beside two differing completed counts. The non-disagreement branch asserts
+    each row kept the result object it reported. A new example,
+    `test_a_missing_count_beside_differing_completed_counts_keeps_every_row`,
+    states that set explicitly in both declaration orders and asserts each row
+    keeps its own result and verdict.
+  - The developers' guide now attributes `sha256sum` to GNU coreutils and
+    `flock` to util-linux, rather than both to util-linux. D57's cut
+    description now says the cut keeps a verdict only when it falls in a
+    retained region, matching the thirteenth round's statement that a verdict
+    inside the omitted middle is lost.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
@@ -3712,7 +3752,9 @@ explicitly.
     guarantee is limited to what D50, D53 and D55 decided, and the residual is
     stated rather than implied. It can also only see a credential that is still
     whole, which fixes the order. Cutting from both ends costs nothing a reader
-    wanted and keeps the verdict.
+    wanted and keeps a verdict that falls in either retained region; a verdict
+    strictly inside the omitted middle is still lost, as the thirteenth round
+    recorded.
   - Evidence:
     `test_a_credential_the_transcript_cut_would_split_is_scrubbed_whole`,
     `test_a_credential_the_graph_cut_would_split_is_scrubbed_whole`,

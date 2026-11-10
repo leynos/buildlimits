@@ -1101,8 +1101,9 @@ uv run python -m modelcheck drift models/admission/coupling
 
 Model checking runs on x86-64 Linux, because the pinned release asset is built
 for that platform, and `make fizzbee` installs it: the recipe needs `curl`,
-`tar` with gzip support, and `sha256sum` and `flock` from util-linux, and it
-unpacks the checker into the shared XDG cache so a second run is a no-op. The
+`tar` with gzip support, `sha256sum` from GNU coreutils, and `flock` from
+util-linux, and it unpacks the checker into the shared XDG cache so a second
+run is a no-op. The
 [users' guide's prerequisites](users-guide.md#prerequisites) state the same
 requirements for a reader who is only running the checks.
 

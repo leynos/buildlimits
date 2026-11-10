@@ -22,6 +22,13 @@ types, the five cache-recovery phases, the three drain-fault kinds, and the
 — ``counts``, ``tokens_held``, ``cached_tokens_held`` — is state a model reads
 but cannot map an action to, so listing it would demand a mapping no action
 could ever satisfy.
+
+Loading is separate from querying. :meth:`BuildlimitsInventory.load` imports
+the production modules and is the only step that can touch the filesystem; the
+:class:`BuildlimitsInventory` it returns holds the enumerated paths, so
+:meth:`BuildlimitsInventory.items` and :meth:`BuildlimitsInventory.resolves`
+read a value and import nothing. A drift check can therefore run against a
+checkout without the check itself writing bytecode into it.
 """
 
 import importlib
@@ -29,9 +36,11 @@ import inspect
 import typing as typ
 
 from modelcheck.domain import MaterializeError
+from modelcheck.ports import CodeInventory
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import types
 
 __all__ = ["BuildlimitsInventory"]
 
@@ -50,8 +59,11 @@ _ADMISSION = "buildlimits.admission"
 _MODEL = "Admission"
 """The class whose event methods the model maps."""
 
+_MODULES = (_EFFECTS, _PHASES[0], _FAULTS[0], _ADMISSION)
+"""The production modules the inventory reads, each named once."""
 
-class BuildlimitsInventory:
+
+class BuildlimitsInventory(CodeInventory):
     """Enumerate the production paths a model may map.
 
     Examples
@@ -59,23 +71,64 @@ class BuildlimitsInventory:
     The enumeration is of value members, not of the module's whole contents: a
     helper function is not something a model maps.
 
-    >>> "buildlimits.effects.Launch" in BuildlimitsInventory().items()
+    >>> "buildlimits.effects.Launch" in BuildlimitsInventory.load().items()
     True
-    >>> BuildlimitsInventory().resolves("buildlimits.effects.Launch")
+    >>> BuildlimitsInventory.load().resolves("buildlimits.effects.Launch")
     True
-    >>> BuildlimitsInventory().resolves("buildlimits.effects.NoSuchEffect")
+    >>> BuildlimitsInventory.load().resolves("buildlimits.effects.NoSuchEffect")
     False
     """
 
-    def __init__(self) -> None:
-        """Build the inventory once, on first use.
+    def __init__(self, modules: cabc.Mapping[str, types.ModuleType]) -> None:
+        """Read the surface from modules the caller has already imported.
 
-        The set is cached because a drift check reads it once and a matrix run
-        never reads it; building it eagerly in the constructor would make every
-        ``check`` run pay for an import it does not use.
-        """
-        self._items: frozenset[str] | None = None
+        Parameters
+        ----------
+        modules : collections.abc.Mapping[str, types.ModuleType]
+            The production modules to read, keyed by dotted name. Taking them
+            as values rather than names is what keeps the query free of
+            imports: the caller decides when the production package is loaded,
+            and the inventory only reads what it was handed.
 
+        Raises
+        ------
+        MaterializeError
+            If one of the modules no longer declares a name this adapter reads.
+            That is a change to the surface the model was written against, and
+            it should fail the check rather than quietly reduce the inventory
+            to whatever still imported.
+        """  # ruff: ignore[docstring-extraneous-exception] - _enumerated raises it.
+        self._items = frozenset(_enumerated(modules))
+
+    @classmethod
+    def load(cls) -> BuildlimitsInventory:
+        """Import the production modules and read the surface from them.
+
+        This is the only step that imports the production package, and the
+        composition root calls it once. Everything the returned inventory
+        answers afterwards is read from the set built here.
+
+        Returns
+        -------
+        BuildlimitsInventory
+            The inventory of the production surface as it is now.
+
+        Raises
+        ------
+        MaterializeError
+            If a module the inventory reads cannot be imported, so a rename in
+            the production package fails the drift check rather than skipping
+            half the inventory.
+
+        Examples
+        --------
+        >>> inventory = BuildlimitsInventory.load()
+        >>> "buildlimits.admission.Admission.submit" in inventory.items()
+        True
+        """  # ruff: ignore[docstring-extraneous-exception] - _module raises it.
+        return cls({name: _module(name) for name in _MODULES})
+
+    @typ.override
     def items(self) -> frozenset[str]:
         """Return every dotted path a model may map.
 
@@ -84,19 +137,10 @@ class BuildlimitsInventory:
         frozenset[str]
             The effect types, the phases, the fault kinds and the ``Admission``
             event methods, each as ``module.QualName``.
-
-        Raises
-        ------
-        MaterializeError
-            If the production package no longer declares one of the names this
-            adapter reads. That is a change to the surface the model was
-            written against, and it should fail the check rather than quietly
-            reduce the inventory to whatever still imported.
-        """  # ruff: ignore[docstring-extraneous-exception] - _enumerated raises it.
-        if self._items is None:
-            self._items = frozenset(_enumerated())
+        """
         return self._items
 
+    @typ.override
     def resolves(self, dotted_path: str) -> bool:
         """Report whether a mapped path still names something.
 
@@ -116,8 +160,13 @@ class BuildlimitsInventory:
         return dotted_path in self.items()
 
 
-def _enumerated() -> set[str]:
+def _enumerated(modules: cabc.Mapping[str, types.ModuleType]) -> set[str]:
     """Collect every mappable path.
+
+    Parameters
+    ----------
+    modules : collections.abc.Mapping[str, types.ModuleType]
+        The production modules to read, keyed by dotted name.
 
     Returns
     -------
@@ -130,15 +179,22 @@ def _enumerated() -> set[str]:
         If a module or alias the inventory reads is gone. The three helpers
         that read the production package raise it.
     """  # ruff: ignore[docstring-extraneous-exception] - its readers raise it.
-    found = {f"{_EFFECTS}.{kind.__name__}" for kind in _effect_types()}
-    found.update(f"{_PHASES[0]}.{phase}" for phase in _literals(*_PHASES))
-    found.update(f"{_FAULTS[0]}.{fault}" for fault in _literals(*_FAULTS))
-    found.update(_events())
+    found = {f"{_EFFECTS}.{kind.__name__}" for kind in _effect_types(modules)}
+    found.update(f"{_PHASES[0]}.{phase}" for phase in _literals(modules, *_PHASES))
+    found.update(f"{_FAULTS[0]}.{fault}" for fault in _literals(modules, *_FAULTS))
+    found.update(_events(modules))
     return found
 
 
-def _effect_types() -> tuple[type, ...]:
+def _effect_types(
+    modules: cabc.Mapping[str, types.ModuleType],
+) -> tuple[type, ...]:
     """Return the members of the ``Effect`` alias.
+
+    Parameters
+    ----------
+    modules : collections.abc.Mapping[str, types.ModuleType]
+        The production modules to read.
 
     Returns
     -------
@@ -150,7 +206,7 @@ def _effect_types() -> tuple[type, ...]:
     MaterializeError
         If the alias is missing or no longer holds classes.
     """
-    alias = getattr(_module(_EFFECTS), "Effect", None)
+    alias = getattr(modules[_EFFECTS], "Effect", None)
     members = typ.get_args(getattr(alias, "__value__", ()))
     if not members or not all(inspect.isclass(member) for member in members):
         msg = f"{_EFFECTS}.Effect is no longer a union of effect classes"
@@ -158,11 +214,15 @@ def _effect_types() -> tuple[type, ...]:
     return members
 
 
-def _literals(module_name: str, attribute: str) -> tuple[str, ...]:
+def _literals(
+    modules: cabc.Mapping[str, types.ModuleType], module_name: str, attribute: str
+) -> tuple[str, ...]:
     """Return the members of a ``Literal`` alias the production package declares.
 
     Parameters
     ----------
+    modules : collections.abc.Mapping[str, types.ModuleType]
+        The production modules to read.
     module_name : str
         The module declaring the alias.
     attribute : str
@@ -182,10 +242,10 @@ def _literals(module_name: str, attribute: str) -> tuple[str, ...]:
 
     Examples
     --------
-    >>> _literals(*_FAULTS)[:1]
+    >>> _literals({_FAULTS[0]: _module(_FAULTS[0])}, *_FAULTS)[:1]
     ('live_work',)
     """
-    alias = getattr(_module(module_name), attribute, None)
+    alias = getattr(modules[module_name], attribute, None)
     values = typ.get_args(getattr(alias, "__value__", ()))
     if not values or not all(isinstance(value, str) for value in values):
         msg = f"{module_name}.{attribute} is no longer a Literal of strings"
@@ -193,8 +253,13 @@ def _literals(module_name: str, attribute: str) -> tuple[str, ...]:
     return typ.cast("tuple[str, ...]", values)
 
 
-def _events() -> set[str]:
+def _events(modules: cabc.Mapping[str, types.ModuleType]) -> set[str]:
     """Return the ``Admission`` methods a model action can drive.
+
+    Parameters
+    ----------
+    modules : collections.abc.Mapping[str, types.ModuleType]
+        The production modules to read.
 
     Returns
     -------
@@ -210,7 +275,7 @@ def _events() -> set[str]:
     MaterializeError
         If the class itself is gone.
     """
-    admission = getattr(_module(_ADMISSION), _MODEL, None)
+    admission = getattr(modules[_ADMISSION], _MODEL, None)
     if admission is None:
         msg = f"{_ADMISSION}.{_MODEL} is gone, so no model can map events"
         raise MaterializeError(msg)
@@ -252,7 +317,7 @@ def _returns_effects(member: cabc.Callable[..., object]) -> bool:
     )
 
 
-def _module(name: str) -> object:
+def _module(name: str) -> types.ModuleType:
     """Import a module of the production package.
 
     Parameters
@@ -262,7 +327,7 @@ def _module(name: str) -> object:
 
     Returns
     -------
-    Any
+    types.ModuleType
         The imported module.
 
     Raises

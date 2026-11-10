@@ -93,6 +93,9 @@ def _adapters() -> _Adapters:
         One factory per boundary. Each is a factory rather than a value because
         the checker is built from a path the command line supplies, and the
         source is built from the model directory the command line supplies.
+        The inventory factory is :meth:`BuildlimitsInventory.load`, the one
+        step that imports the production package; the inventory it returns
+        answers every later query without importing anything.
     """
     from modelcheck.adapters.configuration import TomlConfigurations
     from modelcheck.adapters.fizzbee_process import FizzbeeChecker
@@ -101,7 +104,7 @@ def _adapters() -> _Adapters:
     return _Adapters(
         checker=FizzbeeChecker,
         configurations=TomlConfigurations,
-        inventory=BuildlimitsInventory,
+        inventory=BuildlimitsInventory.load,
     )
 
 
