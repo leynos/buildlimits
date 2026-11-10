@@ -154,8 +154,8 @@ def test_the_numbering_the_redaction_writes_is_the_numbering_kept(
     """
     recorded = _recorded(tmp_path)
     redacted = redact_trace(
-        Trace({"ax": False, "bx": True}, (), Ending.FINITE, None),
-        Redaction((), ("x",)),
+        Trace({"a0": False, "b0": True}, (), Ending.FINITE, None),
+        Redaction((), ("0",)),
     )
 
     assert len(redacted.initial) == 2, "both variables survive under distinct names"
