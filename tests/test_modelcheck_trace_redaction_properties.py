@@ -12,10 +12,18 @@ are recorded, every entry survives, each original key keeps one name, and no
 two original keys share a name. The property below draws the credential, the
 keys, the states and the nesting, so a numbering rule that only works for the
 collision somebody wrote down is a counterexample rather than an agreement
-between two copies of one example. Keys are drawn from
+between two copies of one example.
+
+The draws are shaped so the interesting cases cannot be skipped. Every trace
+has at least two states, every state holds every key, and the states are
+permutations of one another, so a name that followed a position rather than a
+key would be caught. At least two keys contain the credential, so every trace
+has a genuine collision to number. Keys are drawn from
 :data:`~modelcheck.adapters.fizzbee_replacements.WITHHELD`'s own numbered
 forms as well, because a genuine key that already looks numbered must not be
-overwritten by a repeat.
+overwritten by a repeat. One state is nested inside a list and a mapping, and
+the observer fails if redaction changes a container's type rather than
+silently treating it as a leaf.
 """
 
 import collections.abc as cabc
@@ -38,6 +46,15 @@ _LAUNCHER = Path("/opt/fizz")
 _SUFFIXED = st.sampled_from([f"{WITHHELD} #{number}" for number in range(1, 6)])
 """Genuine keys that look like the adapter's numbered repeats."""
 
+_CREDENTIALS = st.sampled_from(["a", "b", "#", "<", " ", "0"])
+"""One-character credentials, including ones that appear in ``WITHHELD``.
+
+A credential drawn from a fixed set keeps the shrinker away from character
+intervals: Hypothesis's ``characters`` strategy is drawn through ``st.data``
+here, and shrinking one of its intervals has failed inside the shrinker itself
+rather than reporting the property's own assertion.
+"""
+
 
 def _observe(original: object, redacted: object, observed: dict[str, set[str]]) -> None:
     """Record the name each original key got, and that no entry was lost.
@@ -51,6 +68,14 @@ def _observe(original: object, redacted: object, observed: dict[str, set[str]]) 
     observed : dict[str, set[str]]
         Every name each original key has been given so far, accumulated
         across the whole trace.
+
+    Raises
+    ------
+    AssertionError
+        If an entry was lost, or if redaction turned a mapping or a list into
+        a value of another type. The second check matters because a container
+        that became a leaf would otherwise be compared as one and its entries
+        would never be observed.
 
     Notes
     -----
@@ -71,8 +96,64 @@ def _observe(original: object, redacted: object, observed: dict[str, set[str]]) 
             assert len(original) == len(redacted), "a list entry did not survive"
             for value, changed in zip(original, redacted, strict=True):
                 _observe(value, changed, observed)
+        case (cabc.Mapping() | list(), _):
+            raise AssertionError("redaction changed a container's type")
         case _:
             return
+
+
+def _colliding_keys(data: st.DataObject, credential: str) -> list[str]:
+    """Draw at least two distinct keys that the credential withholds.
+
+    Parameters
+    ----------
+    data : hypothesis.strategies.DataObject
+        The draw source, so the keys can depend on the credential.
+    credential : str
+        The one-character credential the run's environment carries.
+
+    Returns
+    -------
+    list[str]
+        Two or three distinct non-empty keys, each containing the credential,
+        so each redacts to the same withheld text and the adapter must number
+        the repeats.
+    """
+    return data.draw(
+        st.lists(
+            st.text(st.sampled_from([credential, "a", "b"]), min_size=1, max_size=3),
+            min_size=2,
+            max_size=3,
+            unique=True,
+        )
+    )
+
+
+def _value(key: st.SearchStrategy[str]) -> st.SearchStrategy[object]:
+    """Draw a state value, nested to a bounded depth.
+
+    Parameters
+    ----------
+    key : hypothesis.strategies.SearchStrategy[str]
+        The strategy for keys of a nested mapping.
+
+    Returns
+    -------
+    hypothesis.strategies.SearchStrategy[object]
+        A leaf, or a non-empty list or mapping of further values.
+    """
+    return st.recursive(
+        st.one_of(
+            st.none(),
+            st.booleans(),
+            st.integers(),
+            st.text(st.sampled_from(["a", "0", " "]), max_size=4),
+        ),
+        lambda children: st.one_of(
+            st.lists(children, min_size=1, max_size=3),
+            st.dictionaries(key, children, min_size=1, max_size=3),
+        ),
+    )
 
 
 @given(data=st.data())
@@ -82,34 +163,25 @@ def test_every_state_key_keeps_one_distinct_name_across_a_trace(
     """One name per original key, and no name shared by two original keys.
 
     The credential is drawn first and then used in the keys, so every state has
-    at least one genuine collision to number. Keys come from
-    :data:`_SUFFIXED` too, so the draws also make a numbered repeat collide
-    with a key that already carries that number, in either order.
+    at least one genuine collision to number. Keys come from :data:`_SUFFIXED`
+    too, so the draws also make a numbered repeat collide with a key that
+    already carries that number, in either order. The states are permutations
+    of the same key set, so a name that followed a position rather than a key
+    is a counterexample.
     """
-    credential = data.draw(st.characters(blacklist_categories=("Cs",)))
-    key = st.one_of(
-        _SUFFIXED,
-        st.text(
-            st.sampled_from([credential, "a", "b", " "]),
-            min_size=1,
-            max_size=4,
-        ),
-    )
-    value = st.recursive(
-        st.one_of(
-            st.none(),
-            st.booleans(),
-            st.integers(),
-            st.text(st.sampled_from(["a", "0", " "]), max_size=4),
-        ),
-        lambda children: st.one_of(
-            st.lists(children, max_size=3),
-            st.dictionaries(key, children, max_size=3),
-        ),
-    )
-    states = data.draw(
-        st.lists(st.dictionaries(key, value, max_size=4), min_size=1, max_size=4)
-    )
+    credential = data.draw(_CREDENTIALS)
+    colliding = _colliding_keys(data, credential)
+    suffixed = data.draw(st.lists(_SUFFIXED, max_size=2, unique=True))
+    pool = colliding + suffixed
+    key = st.sampled_from(pool)
+    value = _value(key)
+
+    orders = data.draw(st.lists(st.permutations(pool), min_size=2, max_size=4))
+    states = [{name: data.draw(value) for name in order} for order in orders]
+    if data.draw(st.booleans()):
+        nested_key = orders[0][0]
+        states[0][nested_key] = [{"inner": states[0][nested_key]}]
+
     initial, *rest = states
     trace = Trace(
         initial,
@@ -127,7 +199,7 @@ def test_every_state_key_keeps_one_distinct_name_across_a_trace(
     for original, changed in zip(trace.steps, redacted.steps, strict=True):
         _observe(original.state, changed.state, observed)
 
-    unstable = {key: names for key, names in observed.items() if len(names) != 1}
+    unstable = {name: names for name, names in observed.items() if len(names) != 1}
     assert not unstable, f"a key changed name across the trace: {unstable}"
     names = [next(iter(found)) for found in observed.values()]
     assert len(set(names)) == len(names), "two original keys share one name"
