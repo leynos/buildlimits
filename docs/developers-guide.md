@@ -1130,11 +1130,13 @@ rest is handled.
 does not, and 2 when the tool itself failed; `--bounds` names the declared
 bound set, of which only `routine` exists today — any other value is refused
 rather than silently checked against the routine bounds, and 1.5.1 adds the
-nightly table — `--only` narrows the report and the traces `--save-traces`
-writes, but not the exit status, which the full matrix still decides; `--json`
-writes the records, `--fixpoint` adds the doubled-bound comparison and
-`--save-traces` rewrites the trace of every counterexample the run found. It
-does not delete a trace whose configuration now passes; that stale file is
+nightly table — `--only` narrows the report and the matrix traces
+`--save-traces` writes, but not the exit status, which the full matrix still
+decides, nor the fixpoint comparison, whose failed traces are kept for every
+configuration; `--json` writes the records, `--fixpoint` adds the doubled-bound
+comparison, and `--save-traces` rewrites the trace of every matrix
+counterexample the run found and keeps each failed comparison's counterexample.
+It does not delete a trace whose configuration now passes; that stale file is
 removed by hand, because the tool deletes nothing it did not write. It also
 leaves an existing trace alone when the new one carries withheld evidence: a
 one-character credential in the run's environment withholds every decoded state

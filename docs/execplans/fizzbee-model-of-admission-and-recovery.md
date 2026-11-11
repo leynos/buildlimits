@@ -1779,19 +1779,30 @@ explicitly.
   - `tests/test_modelcheck_trace_redaction_properties.py` draws the credential,
     the keys, the states and the nesting with Hypothesis and asserts that every
     entry survives, each original key keeps exactly one name for the whole
-    trace, and no two original keys share a name. Keys are drawn from
-    `WITHHELD`'s own numbered forms as well, so a genuine key that already
-    looks numbered must not be overwritten by a repeat. Making the adapter's
-    `_KeyNames` per-state instead of per-trace makes the property fail with a
-    counterexample, so the test is sensitive to the rule it states.
+    trace, and no two original keys share a name. The draws force the cases the
+    rule exists for: at least two states, every state holding every key, the
+    states drawn as permutations of one another, at least two keys that the
+    credential withholds, one state nested inside a list and a mapping, and
+    keys drawn from `WITHHELD`'s own numbered forms so a genuine key that
+    already looks numbered must not be overwritten by a repeat. The observer
+    fails when redaction changes a container's type, so a mapping that became
+    a leaf cannot hide its entries. The credential is drawn from a small fixed
+    set rather than `st.characters`, because shrinking a character interval
+    drawn through `st.data` failed inside the shrinker instead of reporting the
+    property's assertion. Making the adapter's `_KeyNames` per-state instead of
+    per-trace makes the property fail with a clean counterexample, so the test
+    is sensitive to the rule it states.
   - `docs/users-guide.md` and `docs/migrating-to-0.2.0.md` now say what
     `drift`'s `0` and `1` mean — a clean report, or an unmapped or stale path —
     rather than borrowing `check`'s expectation wording, and `--only` is
-    described as narrowing the report and the traces `--save-traces` writes
-    without narrowing the check or its exit status.
+    described as narrowing the report and the matrix traces `--save-traces`
+    writes without narrowing the check, the exit status or the fixpoint
+    comparison; a failed comparison's trace is kept for every configuration.
   - `docs/developers-guide.md` names `cli.py` and `cli_outputs.py` as the two
     driving adapters, the second being the half that writes the `--json`
-    artefact and the `--save-traces` files.
+    artefact and the `--save-traces` files, and says `--only` does not narrow
+    the exit status or the fixpoint comparison: `--save-traces` rewrites every
+    matrix counterexample and keeps each failed comparison's counterexample.
   - `BuildlimitsInventory.load()`'s docstring now records that the bytecode
     flag is process-wide rather than per-thread, so a second concurrent import
     would have its bytecode suppressed too. The guarantee is about this

@@ -1133,14 +1133,16 @@ uv run python -m modelcheck drift models/admission/coupling
 
 `check` prints one line per expectation, naming the configuration, the
 property, the verdict, the fairness assumptions in force and the states
-explored. `--only CONFIG[:PROPERTY]` narrows the report and the traces
-`--save-traces` writes, without narrowing the check or the exit status, and
-`--bounds routine` selects the bound set a model declares. Routine is the only
-set implemented today: any other value is refused with status `2` rather than
-falling back to the routine bounds, because a run that checked different bounds
-from the ones it named would be reported as the run asked for. `--json PATH`
-writes the judgements as JSON and `--save-traces` keeps each counterexample's
-normalized trace under the model's `traces/` directory.
+explored. `--only CONFIG[:PROPERTY]` narrows the report and the matrix traces
+`--save-traces` writes, without narrowing the check, the exit status or the
+fixpoint comparison; a failed comparison's trace is kept for every
+configuration, whatever `--only` selected. `--bounds routine` selects the bound
+set a model declares. Routine is the only set implemented today: any other
+value is refused with status `2` rather than falling back to the routine
+bounds, because a run that checked different bounds from the ones it named
+would be reported as the run asked for. `--json PATH` writes the judgements as
+JSON and `--save-traces` keeps each counterexample's normalized trace under the
+model's `traces/` directory.
 
 ### Exit statuses
 
