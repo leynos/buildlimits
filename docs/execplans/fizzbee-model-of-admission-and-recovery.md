@@ -1808,6 +1808,17 @@ explicitly.
     would have its bytecode suppressed too. The guarantee is about this
     process's single load, and the composition root calls it before any
     concurrent work starts.
+  - The follow-up inspection found the draws could still miss the cases the
+    docstring claimed. Keys are now built as the credential followed by at
+    least one more character, so each is withheld rather than replaced as a
+    whole-string credential, and a suffix is always present. The first state
+    order is drawn, and the rest exclude it, so the orders are distinct without
+    a filter that rejects whole draws; filtering for all-distinct orders made
+    input generation slow enough to trip Hypothesis's health check. One state
+    is always nested. The developers' guide's `--save-traces` sentence now says
+    "among the configurations the run reports", because `--only` filters matrix
+    traces and an existing trace can be preserved when the replacement would
+    carry withheld evidence.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
