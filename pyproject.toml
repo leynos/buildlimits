@@ -160,6 +160,10 @@ extend-ignore = [
 # systemd tools with fixed argv. Its guards state the fixture preconditions a
 # scenario depends on, so they fail the scenario rather than debug it.
 "tests/cache_recovery_systemd_world.py" = ["assert", "suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# The end-to-end support module runs ``uv run python -m modelcheck`` with a
+# fixed argv, the way a maintainer does. The launcher path is found on PATH
+# because that is where ``uv`` is installed on every host the suite runs on.
+"tests/modelcheck_e2e_cases.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path"]
 [tool.ruff.lint.flake8-import-conventions]
 # Declare the banned `from` imports.
 banned-from = [
@@ -549,6 +553,8 @@ ignore_names = [
     "test_*",
     "pytestmark",
     "pytest_plugins",
+    # pytest calls this hook by name during collection; no test names it.
+    "pytest_collection_modifyitems",
     "teardown",
     "descriptor_leak_guard",
     # Vulture cannot resolve quoted cast types imported only for type checks.
@@ -612,12 +618,15 @@ pytest_add_cli_args_test_selection = ["tests/"]
 # Tests automatically killed after seconds elapsed
 timeout = 30
 # Module doctests are part of the contract, so collection covers the package
-# as well as the test tree.
-testpaths = ["tests", "buildlimits"]
+# as well as the test tree. ``modelcheck`` is a top-level package outside the
+# wheel (ADR 008), so it is collected here too.
+testpaths = ["tests", "buildlimits", "modelcheck"]
 # ``descriptor_guard`` is a plugin, not a conftest fixture, so its autouse leak
 # guard also covers the package's doctests (see tests/descriptor_guard.py).
-pythonpath = ["tests"]
-addopts = ["--doctest-modules", "-p", "descriptor_guard"]
+# The repository root is on the path because ``modelcheck`` is not installed:
+# only ``buildlimits`` is, through the editable install.
+pythonpath = ["tests", "."]
+addopts = ["--doctest-modules", "-p", "descriptor_guard", "-p", "skip_guard"]
 # A descriptor-owning object that is dropped unclosed is a test defect, not
 # noise: the collector closes it during some later test, whose descriptor
 # accounting then fails. tests/descriptor_guard.py catches the objects a
@@ -630,6 +639,7 @@ markers = [
     "kache_host_check: requires opt-in, Linux, and a supported kache",
     "sccache_host_check: requires opt-in, Linux, and a supported sccache",
     "systemd_user: needs a running systemd user manager and busctl",
+    "fizzbee: runs the pinned FizzBee checker; opt in with BUILD_LIMITS_MODEL_CHECK=1",
 ]
 
 [tool.uv]
@@ -1008,8 +1018,9 @@ members = [
     "tests/test_adapter_run.py::fail_run",
     "tests/test_nested_cargo_prerequisites.py::forbid",
     "tests/test_rustdoc.py::fail_which",
+    "tests/test_modelcheck_configuration_boundaries.py::_refuse",
 ]
-reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
+reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts. The fourth refuses a process call a configuration query must never make."
 
 [[tool.duplication_gate.allow]]
 unit = "tests/test_ports.py"
@@ -1659,3 +1670,115 @@ reason = "Matching import lists: each module names the subprocess, JSON, typing 
 [[tool.duplication_gate.allow]]
 members = ["buildlimits/outcome_record_codec.py", "tests/test_kache_detached_events.py"]
 reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_fizzbee_spike.py", "tests/test_fizzbee_graphs.py"]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/modelcheck_cases.py",
+    "modelcheck/cli_outputs.py",
+    "tests/outcome_store_helpers.py",
+    "tests/test_group_drain_metrics.py",
+    "buildlimits/supervisor_wiring.py",
+    "modelcheck/expectations.py",
+    "modelcheck/records.py",
+    "modelcheck/report.py",
+    "tests/modelcheck_service_cases.py",
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "tests/differential_trace_test_helpers.py",
+    "modelcheck/cli.py",
+]
+reason = "Matching import lists: each module names the collaborators, protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies. The family spans production, package and test-support modules, so no single helper could hold it."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_modelcheck_fizzbee_kill.py",
+    "tests/test_modelcheck_fizzbee_evidence.py",
+]
+reason = "Matching import lists: both modules drive the same process adapter and import its shared stubs from tests/fizzbee_process_stubs.py, and a re-export module would hide each module's direct use of the adapter and domain types behind a name that says nothing about what is under test."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_adapter_restart.py",
+    "tests/test_modelcheck_fizzbee_evidence.py",
+]
+reason = "Both set one environment variable with monkeypatch.setenv before exercising a subprocess boundary; the match is that single stdlib call, while the variable, its value and the behaviour under test differ. A helper around it would name pytest's fixture rather than a shared behaviour."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/cache_recovery.py",
+    "buildlimits/outcome_store.py",
+    "tests/outcome_store_helpers.py",
+    "modelcheck/cli.py",
+]
+reason = "Matching TYPE_CHECKING imports name each module's own deferred annotations: collections.abc, pathlib and the domain or adapter types it reads. Sharing them through a re-export would hide those dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["modelcheck/service.py", "modelcheck/report.py"]
+reason = "Matching import lists: the two modules import the domain result types they read, and sharing them through a re-export module would hide each module's real dependencies. The scheduler materializes and judges, the reporter renders, so no shared helper owns the list."
+
+[[tool.duplication_gate.allow]]
+members = ["modelcheck/report.py", "modelcheck/adapters/fizzbee_output.py"]
+reason = "Matching import lists: the reporter and the output adapter each import the domain result types they read, and a re-export module would hide which module depends on which type. The two read the results for different purposes and share no logic."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/modelcheck_cases.py", "modelcheck/expectations.py"]
+reason = "Matching import lists: each module names the domain symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_modelcheck_expectations.py", "tests/test_modelcheck_report.py"]
+reason = "Matching import lists: each module names the case builders it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/test_modelcheck_expectations.py::test_the_truth_table_classifies_every_row", "tests/test_modelcheck_expectations.py::test_judge_returns_the_classified_verdict"]
+reason = "The parametrized row test states one row's full judgement, and the sweep states that every row is classified and every verdict reached; both judge through _judge_row, so only their docstrings and assertions repeat, and merging them would leave T2 with one test where the plan requires a row test and a non-vacuity sweep."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/modelcheck_cases.py::result_of", "tests/modelcheck_cases.py::trace"]
+reason = "Two unrelated builders share only the numpy Returns section and the deferred-import line the test-support module requires; extracting a helper from them would invent a shape neither has."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/fizzbee_spike.py",
+    "tests/test_modelcheck_fizzbee_process.py",
+]
+reason = "Both helpers create a scratch directory before writing into it, and the match is that one stdlib call; a helper around Path.mkdir would name the stdlib rather than a shared behaviour, and the two functions have nothing else in common. The detector reports the fragment unnamed, so the entry names the files."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/skip_guard.py::pytest_runtest_logreport",
+    "tests/skip_guard.py::pytest_collectreport",
+]
+reason = "pytest discovers both hooks by name and calls each with its own report type, so neither can be dropped, and the DF12 trivial-alias-wrapper rule rejects routing them through one helper; what remains is the same three-line bookkeeping in two functions with distinct contracts and explanations."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_modelcheck_cli_e2e.py",
+    "tests/test_modelcheck_cli_fixpoint.py",
+]
+reason = "Matching import lists: each module names the artefact readers and case helpers it uses, and sharing them through a re-export module would hide each module's real dependencies. The end-to-end module invokes the published command through `run`, while the fixpoint module builds the app in-process through `app`, so neither imports the other's cases and no shared preamble owns the list."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "modelcheck/adapters/fizzbee_evidence.py::bounded",
+    "modelcheck/adapters/fizzbee_evidence.py::_cut",
+]
+reason = "bounded is the public wrapper around _cut, which does the scrub-then-cut work and is the only place the two steps are ordered; the detector matches their shared docstring sections and the one call between them, not shared logic."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "modelcheck/adapters/fizzbee_replacements.py",
+    "tests/test_modelcheck_redaction_properties.py",
+]
+reason = "The test's decoder (_decoded) restates the adapter's (_decoded_view) independently, which is the point: a property that decoded with the adapter's own function would agree with it whatever it did, including agreeing that a credential was removed when it was not. Sharing one decoder would leave the claim untested, so the two copies stay and the test's says why. The detector reports this family unnamed, so the entry names the files."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_modelcheck_service_properties.py",
+    "tests/test_modelcheck_service_run_sets_properties.py",
+]
+reason = "Matching import lists: the pair properties and the variable-set property name the same Hypothesis and case-helper symbols, and the module split exists to keep each file under the module length limit. Sharing them through a re-export module would add one more test support module without hiding a real dependency."

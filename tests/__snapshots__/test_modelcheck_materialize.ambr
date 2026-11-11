@@ -1,0 +1,10 @@
+# serializer version: 1
+# name: test_the_frontmatter_is_replaced_whole
+  list([
+    'options:',
+    '  max_actions: 9',
+    '  max_concurrent_actions: 2',
+    'liveness: "strict"',
+    'deadlock_detection: false',
+  ])
+# ---

@@ -48,6 +48,9 @@ investigating a specific failure; reconcile with `make all` before committing.
 | `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
 | `make test-sccache-host` | Opt-in real-binary and outcome latency checks; see §11.4                                          |
 | `make test-kache-host`   | Opt-in health and cacheable-compilation checks against a real kache; see §11.4                    |
+| `make fizzbee`           | Installs the pinned FizzBee checker into the shared XDG cache; a second run is a no-op            |
+| `make model-fidelity`    | Both drift reports and `tests/test_model_drift.py`; cheap, and run on every pull request          |
+| `make model-check`       | Both W1 matrices at the plan's bounds, then the `fizzbee`-marked judgement; nightly only          |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
 
 _Table 1: Make targets and the gates behind them._
@@ -807,6 +810,7 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `pool_helpers.py`                         | `FakePool` and `attach_pool`                                                                                                               |
 | `descriptor_helpers.py`                   | `isolated` disposable-process runs, `open_fds`, `fill_table` and `still_open`                                                              |
 | `descriptor_guard.py`                     | `no_leaks`, the per-test leak guard, and `describe_descriptors`; see §11.5                                                                 |
+| `skip_guard.py`                           | the `--fail-on-skip` option, which makes any skipped test fail the session; see §11.6                                                      |
 | `launch_helpers.py`                       | `plan`, `wait_reaped`, `outcome` and `clean_isolated_launch`                                                                               |
 | `adapter_doubles.py`                      | `immediate_retry` and `script_adapter` for driving the adapter in-process                                                                  |
 | `toolchain_trees.py`                      | `make_toolchain` and `make_shim`: fake toolchain and rustup-proxy trees that never run a compiler                                          |
@@ -853,6 +857,17 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `outcome_shell_test_support.py`           | Pending statistics, fake server and writer ports for shell-loop tests                                                                      |
 | `outcome_store_fixture_helpers.py`        | Single-row reader fixtures and torn UTF-8 tails for outcome-store tests                                                                    |
 | `outcome_vocabulary_test_support.py`      | Shared outcome-token aliases for schema and metrics-sink contract tests                                                                    |
+| `fizzbee_spike.py`                        | The scratch-directory `run_model` runner, output masking and error-graph readers                                                           |
+| `fizzbee_expectations.py`                 | `Expectation`, `check` and `paired`: what one run or a pass/fail pair must show, enforced per test                                         |
+| `fizzbee_process_stubs.py`                | `spec` and `stub`: the specification and the record-keeping launcher the three process-adapter test modules share                          |
+| `modelcheck_cases.py`                     | One expectation, result, configuration and trace of each kind, named once for the domain tests                                             |
+| `modelcheck_doubles.py`                   | `FakeChecker`, `Verbatim` and `Restated`: recorded checker output replayed through the real parser                                         |
+| `modelcheck_source_doubles.py`            | `FixedSource`: the model text and configurations a scenario hands the service, as values                                                   |
+| `modelcheck_scenarios.py`                 | The model text, the `Matrix` one model-check scenario builds, and the readers its steps use                                                |
+| `modelcheck_cli_cases.py`                 | The command lines and expected exit statuses the CLI tests share                                                                           |
+| `modelcheck_configuration_support.py`     | `MODEL` and `model_directory`: the model and configuration file every TOML-configuration test reads                                        |
+| `modelcheck_service_cases.py`             | The model text, bounded configurations and checker doubles the service tests share, including `Answers`, `counterexample` and `mismatch`   |
+| `directory_state_test_helpers.py`         | `FileState` and `snapshot_tree`: the before-and-after record both read-boundary tests compare                                              |
 
 _Table 4: Shared test helper modules._
 
@@ -922,6 +937,37 @@ The `outcome_store_helpers.py`, `outcome_store_fixture_helpers.py` and
 `outcome_vocabulary_test_support.py` modules are test-only APIs. Reuse them for
 cache-outcome store fixtures and token vocabularies; do not import them from
 production code.
+
+Tests marked `fizzbee` need the pinned model checker or the artefacts it wrote,
+so they are opt-in: `tests/conftest.py` skips them unless
+`BUILD_LIMITS_MODEL_CHECK=1`, and the skip reason names the variable. With the
+variable set, a missing binary is a failure rather than a skip, because an
+opted-in run that checked nothing must not report success. `make fizzbee`
+installs the binary; run the tests with
+`BUILD_LIMITS_MODEL_CHECK=1 uv run pytest -n 0 -m fizzbee`. `make test` never
+runs them and stays hermetic. Every test that invokes the checker copies its
+spec into pytest's scratch directory first, so a run leaves `models/`
+untouched. A marked test that only reads what an earlier run wrote copies
+nothing: `tests/test_model_check_e2e.py` judges the artefacts
+`make model-check` writes to `.model-check/`, and the target owns the run.
+`tests/fizzbee_spike.py` holds the shared runner, including the process-group
+kill on timeout. `tests/test_fizzbee_spike.py` asserts the language and checker
+behaviour RFC 0001 records, `tests/test_fizzbee_graphs.py` pins the artefacts a
+run writes and the state counts the RFC quotes, and
+`tests/test_fizzbee_fixtures.py` re-runs every captured class and compares its
+standard output, exit status and error graph with `tests/fixtures/fizzbee/`, so
+a checker version bump that changes any of them fails there. The three modules
+are split this way because a single one outgrew the 400-line limit.
+`tests/test_fizzbee_opt_in.py` pins the opt-in itself: which values enable it,
+that a missing binary fails rather than skips, and that the marker is
+registered. `tests/fizzbee_expectations.py` states what a run must show — the
+`PASSED` line, the `FAILED` line for safety and deadlock failures, or the
+separate `FAILED: Liveness check failed` line — together with the counts it
+must explore and, where the question turns on it, the actions its
+counterexample must step through, in one `Expectation` value. Each test then
+reads as its property rather than as repeated boilerplate. A test that poses a
+fairness or interleaving question as a pass/fail pair calls `paired`, which
+runs both models in their own subdirectories and returns the failing run.
 
 ### 11.4. Host acceptance
 
@@ -1042,6 +1088,209 @@ session- or module-scoped fixture is set up before the baseline and torn down
 after the comparison, so its descriptors are outside the guard and must be
 closed by that fixture's own teardown.
 
+### 11.6. Model checking
+
+`modelcheck/` is a top-level package beside `buildlimits/` and outside the
+wheel (ADR 008). It drives the pinned FizzBee checker over the admission model
+and turns one run into a verdict. Run it through the module:
+
+```sh
+uv run python -m modelcheck check models/admission/coupling --fizz .tools/fizzbee/fizz
+uv run python -m modelcheck drift models/admission/coupling
+```
+
+Model checking runs on x86-64 Linux, because the pinned release asset is built
+for that platform, and `make fizzbee` installs it: the recipe needs `curl`,
+`tar` with gzip support, `sha256sum` from GNU coreutils, and `flock` from
+util-linux, and it unpacks the checker into the shared XDG cache so a second
+run is a no-op. The
+[users' guide's prerequisites](users-guide.md#prerequisites) state the same
+requirements for a reader who is only running the checks.
+
+The W1 model is split into a coupling half (`models/admission/coupling`,
+properties S1, S2 and L4a) and a transaction half
+(`models/admission/transaction`, properties S2, L1, L3 and L4b). S2 appears in
+both because each half restates the token accounting over its own state. One
+model per directory is a requirement, not tidiness: `source_text()`
+concatenates every `*.fizz` file in a directory, so two models side by side
+would be read as one.
+
+Each half omits the production paths the other transcribes and records them
+under `[exclusions]` with a reason, so no single directory's drift report
+proves coverage. `tests/test_model_drift.py` makes the union claim instead: it
+asserts that the halves' mappings together cover every in-scope inventory item,
+that W1's out-of-scope paths are among the agreed exclusions, and that every
+exclusion gives a reason. An exclusion cannot stand in for a mapping: a path
+excluded by both halves and mapped by neither is reported as a gap, so
+subtracting every exclusion from the inventory would hide exactly the loss the
+claim exists to find. Prefer that test to reading one report and assuming the
+rest is handled.
+
+`check` exits 0 when every configuration meets its expectations, 1 when one
+does not, and 2 when the tool itself failed; `--bounds` names the declared
+bound set, of which only `routine` exists today — any other value is refused
+rather than silently checked against the routine bounds, and 1.5.1 adds the
+nightly table — `--only` narrows the report and the matrix traces
+`--save-traces` writes, but not the exit status, which the full matrix still
+decides, nor the fixpoint comparison, whose failed traces are kept for every
+configuration; `--json` writes the records, `--fixpoint` adds the doubled-bound
+comparison, and `--save-traces` rewrites the trace of each selected matrix
+counterexample, and keeps each failed comparison's counterexample. It does not
+delete a trace whose configuration now passes; that stale file is removed by
+hand, because the tool deletes nothing it did not write. It also leaves an
+existing trace alone when the new one carries withheld evidence: a
+one-character credential in the run's environment withholds every decoded state
+string containing it, so writing such a trace over a committed one would lose
+model information the host cannot reproduce. The run prints the file it kept,
+and the marker inside a trace written where no file existed says what was
+withheld. An empty matrix, or a `--only` that matches nothing, is a usage error
+rather than a vacuously successful run.
+
+FizzBee truncates exploration at `max_actions` without printing a marker, so a
+run that exhausted its bound can still report a pass. `--fixpoint` is the
+documented defence: every configuration that should pass is run again at twice
+its bound, and the two state counts must be equal. `make model-check` passes
+it, so the nightly matrix enforces the comparison. The `min_states` floor in
+each half's `configurations.toml` is a second, cheaper check: it is set to half
+the measured count, so it catches a collapsed state space but does not turn a
+legitimate model change into a failure.
+
+A run whose evidence is unusable keeps what it can, bounded and redacted. The
+adapter deletes the scratch directory as the call returns, so a graph that
+cannot be read or parsed would otherwise leave nothing to diagnose; the
+diagnostic carries the checker's transcript and the graph, each cut to 2,000
+characters from each end with the cut stated — both ends, because the checker
+prints its verdict, a `FAILED:` or `Error:` line, last. Both are
+checker-written text that becomes a committed record, so
+`adapters/fizzbee_redaction.redaction_for` replaces the scratch directory, the
+launcher, the caller's home and temporary directories, and the value of every
+credential-named variable — under the positional rules stated below, which
+decide _where_ a short value is recognized — before the text leaves. The line a
+verdict is read from — an `Error:` diagnostic or the marker a signal left — is
+bounded on the same reasoning. A new path or credential the checker can print
+belongs in that redaction rather than in a test-only exception.
+
+Classification happens before any of that. A replacement is neither injective
+nor type-preserving, so `fizzbee_process` parses the checker's own stdout and
+graph first and only then calls `redact_result`; sanitizing the graph first
+could turn `"b": 12` into invalid JSON, or make two distinct states compare
+equal and change the ending a lasso is decided by. The one text that cannot be
+classified first is the parser's refusal, which quotes the document it refused
+and can hold a decoded credential, so `redact_result` redacts an `Errored`
+detail as well as a counterexample's trace.
+
+Redacting the text is not sufficient on its own, because a trace is rebuilt
+from the graph after that text has been parsed. The checker is a Go program,
+and its JSON encoder writes `<`, `>` and `&` as six-character Unicode escapes
+that no needle derived from the value's Python spelling matches; a value
+holding both an escaped quote and a literal non-ASCII character matches neither
+of the two spellings Python produces. `adapters/fizzbee_trace_redaction`
+therefore walks each decoded state after parsing and replaces the same values
+again, and `fizzbee_process` applies it to every parsed result rather than only
+to a failed one.
+
+One residual remains, and it is pinned by a test. A one-character credential
+embedded inside a longer token in free diagnostic text — `Error: prefix#` for a
+credential of `#` — is not recognized and is recorded with the text. The
+exposure is one character in a line of prose, and the alternative is to
+withhold every diagnostic, so the residual is accepted and stated rather than
+closed. The rest are rules that remove or withhold a value:
+
+- A credential of two to five characters is replaced only where it stands alone
+  — after `NAME=`, inside JSON quotes — so a short value does not rewrite the
+  words it happens to occur in.
+- A one-character value is replaced only where it is a value: after `=`,
+  between quotes, or after the label the checker prints beside it (`token x`),
+  and not in a count, so `CLAUDE_CODE_SESSION_ATTENDED=0` becomes
+  `CLAUDE_CODE_SESSION_ATTENDED=<redacted>` while `Unique states: 4` survives.
+- A decoded state string that is exactly the character becomes `<redacted>`,
+  and one that still contains it after replacement is withheld, because a
+  string is one value the checker produced and the character cannot be told
+  from the text it was built from; the rest of the trace survives.
+- Two state variable names that are withheld to the same marker are numbered
+  (`<withheld…> #2`), because a dictionary built from the redacted names would
+  otherwise keep only the last and lose a variable without saying so. A name is
+  assigned once, on first sight in the trace, and reused in every later state,
+  so a variable is not renamed when another appears, disappears or reorders.
+- If a credential of two or more characters survives any replacement,
+  `Redaction.retain` returns `WITHHELD`, and the record says the text was
+  withheld rather than committing it.
+
+One-character credentials are kept out of the survival check, because a bare
+`0`, `1` or `x` occurs in nearly every transcript and withholding on one would
+withhold the evidence a maintainer needs. That is why the residual above is the
+one gap left: the character is replaced where it occupies a value position, and
+withheld entirely from a decoded trace string, but free diagnostic text is not
+a position the rules can see. Two or more characters have no such gap: the
+survival check withholds the text they survive in. The mechanism itself is in
+`adapters/fizzbee_replacements`; the module holds the substitution and the
+survival check only, so "what must not be recorded" stays in
+`fizzbee_redaction`. All of this is a reason an artefact is read before it is
+committed, not a reason to trust one that was not.
+
+The two obligations have different costs and run in different places.
+`make model-fidelity` runs both drift reports and the drift tests; it compares
+text with an import of the production package, so it costs seconds and runs on
+every pull request. `make model-check` explores both state spaces at the plan's
+bounds, writes `.model-check/<half>.json` and then judges those artefacts with
+the `fizzbee`-marked tests; it costs minutes and runs nightly. The nightly
+workflow is the only place the full matrix is expected to run, so a property
+that fails there is a bounds or model regression rather than a slow runner.
+
+The package is a hexagon: the pure modules hold the policy, `ports.py` names
+the collaborators, and everything outside them is where a process, a file or
+`buildlimits` is touched. That outside is the `adapters/` package plus the two
+driving adapters beside it: `cli.py` parses arguments and decides an exit
+status, and `cli_outputs.py` is the half that writes — the `--json` artefact
+and the `--save-traces` files. `tests/test_modelcheck_layering.py` walks the
+pure modules' syntax trees so the boundary is checked rather than assumed.
+Tests marked `fizzbee` need the real checker or the artefacts it wrote, and are
+skipped unless `BUILD_LIMITS_MODEL_CHECK=1`; the behavioural scenarios instead
+replay recorded output through the real parser, so a broken parser fails them
+without the binary.
+
+Three kinds of test are easy to confuse. A `fizzbee`-marked test either runs
+the pinned checker (the spike and fixture modules) or reads the artefacts
+`make model-check` wrote (the end-to-end and artefact suites); both are skipped
+unless `BUILD_LIMITS_MODEL_CHECK=1`, and an opted-in run with a missing binary
+or a missing or stale artefact fails rather than skips. The behavioural
+scenarios replay recorded output through the real parser and need neither, and
+the materializer checks read the models' text without running anything.
+`tests/modelcheck_artefacts.py` is the one reader of the artefact layout, so
+both suites share its definition of where a results file lives and when it is
+too old to trust.
+
+Under `make model-check` a skip is a failure: the target passes
+`--fail-on-skip`, which the `skip_guard` plugin turns into a non-zero session
+status, so an opted-in run that checked nothing cannot report success. The
+ordinary `make test` run leaves the flag off, because suites for optional tools
+and privileges skip legitimately.
+
+Two different comparisons read a state count, and they answer different
+questions.
+
+The fixpoint comparison is the `--fixpoint` one. For each configuration whose
+declared and doubled runs both passed, the `states` count of one is compared
+with the other. Only a `Passed` run is compared: a finite or deadlock
+counterexample's count records how far the search got rather than how large the
+model is, and a lasso is not a pass either, so neither is compared here. A run
+that errored is reported as a failure line instead. A configuration whose count
+grew is printed as `grew` and makes the command exit `1`.
+
+The matrix consistency check compares the runs of one configuration with each
+other, not a configuration at two bounds. Each run strips a different set of
+assertions, and stripping assertions must not change the state graph, so every
+completed run of one configuration must report the same count. A mismatch is
+reported as an `Errored` row naming both counts, because it means the runs
+explored different models and the verdict describes a model the report does not
+name. A finite or deadlock counterexample is outside the comparison, because
+its count is the search's progress rather than the graph's size; a lasso's
+exploration completed, so its count is comparable with a pass's. A run that
+reported no count at all — an error or a stop, whose own detail says what went
+wrong — leaves the whole configuration uncompared rather than merely dropping
+that run: comparing the rest would claim an agreement the matrix never
+established.
+
 ## 12. Static-analysis exceptions
 
 Every exception is recorded in `pyproject.toml` with its reason; review the
@@ -1068,6 +1317,18 @@ reason when the code it names changes.
   fragment in that file, so add one only when no name is available. The
   outcome-shell test support has one such unit exception because the detector
   reports its two fake-port close-log fragments without unit names.
+- **`modelcheck`.** The package needed no Skylos entry point and no Vulture
+  name, and `make dead-code` passes with the exceptions here unchanged.
+  `__main__.py` reaches `main` through its `__main__` guard and constructs the
+  adapters inside a function `main` calls, so the call graph has no edge Skylos
+  cannot follow; the two test-support modules are ordinary helpers whose every
+  name a test calls. Its Ruff findings were each local to one line, so they are
+  inline `# ruff: ignore[...]` suppressions with a reason rather than per-file
+  ignores. Of its six duplication allowances, three are import lists shared
+  with the modules named beside them, one is the pair of tests that must both
+  judge through `_judge_row`, one is two builders that share only the numpy
+  Returns section, and one is a single `Path.mkdir` call two unrelated helpers
+  share.
 
 ## 13. Repository automation
 
@@ -1089,6 +1350,14 @@ composite actions.
 - `act-validation.yml` runs `make test WITH_ACT=1` to exercise the workflows
   locally under `act`.
 - `mutation-testing.yml` runs mutmut over `buildlimits/` daily at 09:30 UTC.
+- `model-check-nightly.yml` runs `make model-check` daily at 04:17 UTC and on
+  dispatch: both W1 state spaces at the plan's bounds, then the
+  `fizzbee`-marked judgement. Its `timeout-minutes: 60` is the nightly
+  tolerance, so a run that exceeds it is a bounds regression rather than a slow
+  machine.
+- `model-fidelity.yml` runs `make model-fidelity` on pull requests: the two
+  drift reports and the drift tests, which compare the models with the
+  production surface rather than exploring a state space.
 - `release.yml` builds the pure-Python wheel when a `v*.*.*` tag is pushed and
   attaches it to the release.
 

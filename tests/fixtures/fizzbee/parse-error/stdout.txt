@@ -1,0 +1,3 @@
+line 17:0 mismatched input 'assertion' expecting <EOF>
+Error: Compilation failed
+Logs at <logs-dir>

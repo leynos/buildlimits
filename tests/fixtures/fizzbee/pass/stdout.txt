@@ -1,0 +1,15 @@
+Model checking continuously_enabled.json
+configFileName: fizz.yaml
+fizz.yaml not found. Using default options
+StateSpaceOptions: options:{max_actions:20  max_concurrent_actions:2}  liveness:"strict"  deadlock_detection:false
+Nodes: 4, queued: <count>, elapsed: <duration>
+Time taken for model checking: <duration>
+Writen graph dotfile: out/run_<timestamp>/graph.dot
+To generate svg, run: 
+dot -Tsvg out/run_<timestamp>/graph.dot -o graph.svg && open graph.svg
+Valid Nodes: 4 Unique states: 4
+Checking always eventually BEventually
+IsLive: true
+Time taken to check liveness: <duration>
+PASSED: Model checker completed successfully
+Writen 1 node files and 1 link files to dir out/run_<timestamp>

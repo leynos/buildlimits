@@ -1,0 +1,22 @@
+digraph G {
+  "0x2ca4d8890680" [label="yield
+Actions: 0, Forks: 0
+State: {\"level\":0}
+", color="black" penwidth="2" ];
+  "0x2ca4d8890680" -> "0x2ca4d8890700" [label="Fill", color="black" penwidth="1" ];
+  "0x2ca4d8890700" [label="yield
+Actions: 1, Forks: 1
+State: {\"level\":1}
+", color="black" penwidth="2" ];
+  "0x2ca4d8890700" -> "0x2ca4d8890980" [label="Fill", color="black" penwidth="1" ];
+  "0x2ca4d8890980" [label="yield
+Actions: 2, Forks: 2
+State: {\"level\":2}
+", color="black" penwidth="2" ];
+  "0x2ca4d8890980" -> "0x2ca4d8890c00" [label="Fill", color="black" penwidth="1" ];
+  "0x2ca4d8890c00" [label="yield
+Actions: 3, Forks: 3
+State: {\"level\":3}
+", color="red" penwidth="2" ];
+  "0x2ca4d8890700" -> "0x2ca4d8890680" [label="Drain", color="black" penwidth="1" ];
+}

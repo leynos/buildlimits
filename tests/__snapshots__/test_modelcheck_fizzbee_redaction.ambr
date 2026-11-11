@@ -1,0 +1,10 @@
+# serializer version: 1
+# name: test_a_one_character_credential_in_a_value_position_is_redacted
+  '''
+  no verdict line in
+  the checker printed:
+  token=<redacted>
+  {"current": 0, "flag": "<redacted>"}
+  
+  '''
+# ---

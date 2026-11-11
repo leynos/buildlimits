@@ -1,0 +1,112 @@
+digraph G {
+  "0x3d4a5567cf00" [label="yield
+Actions: 0, Forks: 0
+State: {\"b\":0,\"g\":0,\"side\":\"none\"}
+", color="black" penwidth="2" ];
+  "0x3d4a5567cf00" -> "0x3d4a5567cf80" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567cf80" [label="Gate
+Actions: 1, Forks: 1
+State: {\"b\":0,\"g\":1,\"side\":\"none\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+  "0x3d4a5567cf80" -> "0x3d4a5567d200" [label="Any:side=\"left\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567d200" [label="yield
+Actions: 1, Forks: 2
+State: {\"b\":0,\"g\":1,\"side\":\"left\"}
+", color="black" penwidth="2" ];
+  "0x3d4a5567d200" -> "0x3d4a5567d480" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567d480" [label="Gate
+Actions: 2, Forks: 3
+State: {\"b\":0,\"g\":0,\"side\":\"left\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+  "0x3d4a5567d480" -> "0x3d4a5567d980" [label="Any:side=\"left\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567d980" [label="yield
+Actions: 2, Forks: 4
+State: {\"b\":0,\"g\":0,\"side\":\"left\"}
+", color="black" penwidth="2" ];
+  "0x3d4a5567d980" -> "0x3d4a5567dc00" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567dc00" [label="Gate
+Actions: 3, Forks: 5
+State: {\"b\":0,\"g\":1,\"side\":\"left\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+  "0x3d4a5567dc00" -> "0x3d4a5567d200" [label="Any:side=\"left\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567dc00" -> "0x3d4a5567d300" [label="Any:side=\"right\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567d300" [label="yield
+Actions: 1, Forks: 2
+State: {\"b\":0,\"g\":1,\"side\":\"right\"}
+", color="black" penwidth="2" ];
+  "0x3d4a5567d300" -> "0x3d4a5567d700" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567d700" [label="Gate
+Actions: 2, Forks: 3
+State: {\"b\":0,\"g\":0,\"side\":\"right\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+  "0x3d4a5567d700" -> "0x3d4a5567d980" [label="Any:side=\"left\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567d700" -> "0x3d4a5567da80" [label="Any:side=\"right\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567da80" [label="yield
+Actions: 2, Forks: 4
+State: {\"b\":0,\"g\":0,\"side\":\"right\"}
+", color="black" penwidth="2" ];
+  "0x3d4a5567da80" -> "0x3d4a5567de80" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567de80" [label="Gate
+Actions: 3, Forks: 5
+State: {\"b\":0,\"g\":1,\"side\":\"right\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+  "0x3d4a5567de80" -> "0x3d4a5567d200" [label="Any:side=\"left\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567de80" -> "0x3d4a5567d300" [label="Any:side=\"right\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567d480" -> "0x3d4a5567da80" [label="Any:side=\"right\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567d200" -> "0x3d4a5567d580" [label="B", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567d580" [label="yield
+Actions: 2, Forks: 3
+State: {\"b\":1,\"g\":1,\"side\":\"left\"}
+", color="green" penwidth="2" ];
+  "0x3d4a5567d580" -> "0x3d4a556c8200" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x3d4a556c8200" [label="Gate
+Actions: 3, Forks: 4
+State: {\"b\":1,\"g\":0,\"side\":\"left\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+  "0x3d4a556c8200" -> "0x3d4a556c8f00" [label="Any:side=\"left\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a556c8f00" [label="yield
+Actions: 3, Forks: 5
+State: {\"b\":1,\"g\":0,\"side\":\"left\"}
+", color="green" penwidth="2" ];
+  "0x3d4a556c8f00" -> "0x3d4a556c9180" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x3d4a556c9180" [label="Gate
+Actions: 4, Forks: 6
+State: {\"b\":1,\"g\":1,\"side\":\"left\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+  "0x3d4a556c9180" -> "0x3d4a5567d580" [label="Any:side=\"left\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a556c9180" -> "0x3d4a556c9800" [label="Any:side=\"right\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a556c9800" [label="yield
+Actions: 4, Forks: 7
+State: {\"b\":1,\"g\":1,\"side\":\"right\"}
+", color="green" penwidth="2" ];
+  "0x3d4a556c9800" -> "0x3d4a556c9a00" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x3d4a556c9a00" [label="Gate
+Actions: 5, Forks: 8
+State: {\"b\":1,\"g\":0,\"side\":\"right\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+  "0x3d4a556c9a00" -> "0x3d4a556c8f00" [label="Any:side=\"left\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a556c9a00" -> "0x3d4a556c9000" [label="Any:side=\"right\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a556c9000" [label="yield
+Actions: 3, Forks: 5
+State: {\"b\":1,\"g\":0,\"side\":\"right\"}
+", color="green" penwidth="2" ];
+  "0x3d4a556c9000" -> "0x3d4a556c9400" [label="Gate", color="forestgreen" penwidth="1" ];
+  "0x3d4a556c9400" [label="Gate
+Actions: 4, Forks: 6
+State: {\"b\":1,\"g\":1,\"side\":\"right\"}
+Threads: 0/1
+", color="black" penwidth="1" ];
+  "0x3d4a556c9400" -> "0x3d4a5567d580" [label="Any:side=\"left\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a556c9400" -> "0x3d4a556c9800" [label="Any:side=\"right\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a556c8200" -> "0x3d4a556c9000" [label="Any:side=\"right\"", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567d580" -> "0x3d4a5567d580" [label="B", color="forestgreen" penwidth="1" ];
+  "0x3d4a5567cf80" -> "0x3d4a5567d300" [label="Any:side=\"right\"", color="forestgreen" penwidth="1" ];
+}

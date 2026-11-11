@@ -1,0 +1,18 @@
+---
+# OQ2, the contrast for `truncation_liveness.fizz`: the same model at
+# `max_actions: 12`. The bound now admits the ten Bump steps ReachesTen needs,
+# so the run passes. The bound-6 model fails with a stutter-terminated
+# counterexample that the bound, not the model, produced.
+options:
+  max_actions: 12
+liveness: "strict"
+---
+
+action Init:
+  n = 0
+
+atomic fair action Bump:
+  n = n + 1
+
+always eventually assertion ReachesTen:
+  return n >= 10

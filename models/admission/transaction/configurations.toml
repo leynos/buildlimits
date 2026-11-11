@@ -1,0 +1,154 @@
+# W1's transaction half: the fixed configuration, the ablations that must still
+# fail, and one control that must still hold. Each mutant declares only the
+# expectation it breaks, so the materializer strips the other assertions and
+# the run can report only the counterexample the configuration was built for.
+# The control names only the property it is evidence for, for the same reason.
+
+[configurations.head]
+# The floor catches a collapsed state space, not a change in its exact size:
+# the fixed model reaches 14,618 states at both 80 and 160 actions, and half
+# that count is the point below which an `Init` guard or a lost phase is the
+# likelier explanation than a legitimate model change. See the EP-M4 record.
+min_states = 7000
+holds = ["S2", "L1", "L3", "L4b"]
+reachable = [
+  "StopIssued",
+  "TokenReleasedByAccounting",
+  "ReachesRestarting",
+  "GroupServerDrain",
+]
+
+# Every fairness tag the model's actions carry, named here so the report can
+# state the assumptions a pass depends on. F3a is listed although the fixed
+# model is expected to hold without relying on it: the ablation below drops it
+# and must fail, which only means anything if the fixed configuration says the
+# assumption is in force.
+[configurations.head.fairness]
+F1 = "weak"
+F2 = "weak"
+F3 = "weak"
+F3a = "weak"
+F4 = "weak"
+F5 = "weak"
+F6 = "weak"
+
+[configurations.head.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+# Without the stale proof, a drain can be retained for ever once the roots
+# reading is visible but the transaction never starts.
+[configurations.head-no-stale-proof]
+fails_as = { L1 = "lasso" }
+
+[configurations.head-no-stale-proof.constants]
+STALE_PROOF = false
+
+[configurations.head-no-stale-proof.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head-no-stale-proof.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+# Without the grace deadline a visible roots reading makes the stop retry for
+# ever, so the retained drain is never released.
+[configurations.head-no-grace-deadline]
+fails_as = { L1 = "lasso" }
+
+[configurations.head-no-grace-deadline.constants]
+GRACE_DEADLINE = false
+
+[configurations.head-no-grace-deadline.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head-no-grace-deadline.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+# With no fair roots reading the roots stay unknown, the stop is never given
+# a verdict, and the drain is retained for ever.
+[configurations.head-unknown-roots]
+fails_as = { L1 = "lasso" }
+
+[configurations.head-unknown-roots.fairness]
+F3a = "unfair"
+
+[configurations.head-unknown-roots.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head-unknown-roots.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+# With no accounting release, a retained token is never returned; L1's
+# demand-conditional form fails while requests keep waiting.
+[configurations.head-no-accounting-release]
+fails_as = { L1 = "lasso" }
+
+[configurations.head-no-accounting-release.constants]
+ACCOUNTING_RELEASE = false
+
+[configurations.head-no-accounting-release.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head-no-accounting-release.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+# A control, not a mutant: the token is retained for ever (no accounting
+# release) while every submission carries a free token, so the queue empties
+# again as soon as F5 admits it. L1 must still hold. RFC 0001 RC5 records that
+# repeated queue-empty intervals permit permanent retention, because no request
+# is ever blocked; the mutant above is the case where one is.
+[configurations.head-retention-idle-queue]
+holds = ["L1"]
+
+[configurations.head-retention-idle-queue.constants]
+ACCOUNTING_RELEASE = false
+QUEUE_OVERFLOWS = false
+
+[configurations.head-retention-idle-queue.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head-retention-idle-queue.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+# With unfair leader exits, cached work need never end, so a transaction can
+# be blocked in `stopping` for ever.
+[configurations.head-unfair-leader-exits]
+fails_as = { L3 = "lasso" }
+
+[configurations.head-unfair-leader-exits.fairness]
+F2 = "unfair"
+
+[configurations.head-unfair-leader-exits.options]
+liveness = "strict"
+deadlock_detection = true
+
+[configurations.head-unfair-leader-exits.options.options]
+max_actions = 80
+max_concurrent_actions = 1
+
+# Paths the transaction model does not transcribe. Each reason names where the
+# path is accounted for instead.
+[exclusions]
+"buildlimits.admission.Admission.cancel" = "cancellation is part of the coupling model's queue"
+"buildlimits.admission.Admission.group_emptied" = "group emptying is part of the coupling model's tick"
+"buildlimits.admission.Admission.begin_closing" = "closing is outside W1's scope (RFC 0001 §1)"
+"buildlimits.admission.Admission.health_failed" = "health is outside W1's scope (RFC 0001 §1)"
+"buildlimits.admission.Admission.launch_failed" = "start-up is outside W1's scope (RFC 0001 §1)"
+"buildlimits.effects.NotifyFinished" = "group emptying's notification is part of the coupling model"
+"buildlimits.effects.Refuse" = "the refusal is L4a's subject, transcribed in the coupling model"
+"buildlimits.effects.RequestToken" = "the token demand is part of the coupling model's queue"
+"buildlimits.effects.Shutdown" = "closing is outside W1's scope (RFC 0001 §1)"

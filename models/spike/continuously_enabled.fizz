@@ -1,0 +1,27 @@
+---
+# OQ2: weak fairness does force a continuously enabled action to run, provided
+# the action stays enabled. B is a sticky flag, so it is enabled at the start
+# and takes no turn until it fires; A alternates a bounded flag for ever. Under
+# `fair` and `fair<strong>` the run passes, and with A and B both unfair it
+# fails on a stutter from the initial state. The earlier reading that weak
+# fairness was ineffective came from an unbounded counter whose exploration the
+# `max_actions` bound truncated; this bounded model is the control that
+# separates the two.
+options:
+  max_actions: 20
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  a = 0
+  b = False
+
+atomic fair action A:
+  a = 1 - a
+
+atomic fair action B:
+  b = True
+
+always eventually assertion BEventually:
+  return b

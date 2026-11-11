@@ -1,0 +1,32 @@
+---
+# OQ1 and RFC 0001 §4: reading the gate into `seen` and then guarding on
+# `seen` with `require` passes. The assignment still yields, but this action is
+# atomic, so a failed `require` discards the step and the action only commits
+# with the snapshot it observed. Read with the adjacent
+# `interleaving_snapshot.fizz`, this shows the hazard is the `if` after the
+# read, not the read itself. A plain action gets the same protection from a
+# leading `require`, and none from a trailing one; see
+# `interleaving_plain_rollback.fizz`.
+options:
+  max_actions: 20
+liveness: "strict"
+deadlock_detection: false
+---
+
+action Init:
+  v = 0
+  done = False
+
+atomic fair<strong> action Step:
+  if v == 0:
+    v = 1
+  else:
+    v = 0
+
+atomic fair<strong> action Deliver:
+  seen = v
+  require seen == 1
+  done = True
+
+always eventually assertion Delivered:
+  return done

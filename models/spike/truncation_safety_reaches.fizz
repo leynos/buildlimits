@@ -1,0 +1,19 @@
+---
+# OQ2, the contrast for `truncation_safety.fizz`: the same model at
+# `max_actions: 4`. Exploration now reaches the level-3 state, NeverFull fails,
+# and the run reports it. Read with the passing bound-2 model, this shows that
+# a pass at a low bound is a statement about the bound, not about the model.
+options:
+  max_actions: 4
+liveness: "false"
+---
+
+action Init:
+  level = 0
+
+atomic action Fill:
+  require level < 3
+  level = level + 1
+
+always assertion NeverFull:
+  return level < 3

@@ -1,0 +1,323 @@
+[
+  {
+    "Node": {
+      "channel_messages": {},
+      "channels": {},
+      "current": 0,
+      "failedInvariants": null,
+      "name": "yield",
+      "returns": "{}",
+      "roles": null,
+      "state": {
+        "b": 0,
+        "g": 0,
+        "side": "none"
+      },
+      "stats": {
+        "totalActions": 0,
+        "counts": {}
+      },
+      "threads": [],
+      "witness": [
+        [
+          false
+        ]
+      ]
+    },
+    "Type": "",
+    "Name": "Init",
+    "Labels": [],
+    "Fairness": 3,
+    "ChoiceFairness": 0,
+    "Messages": null,
+    "ReqId": 0,
+    "ThreadsMap": null,
+    "FailedInvariants": null,
+    "Returns": null
+  },
+  {
+    "Node": {
+      "channel_messages": {},
+      "channels": {},
+      "current": 0,
+      "failedInvariants": null,
+      "name": "Gate",
+      "returns": "{}",
+      "roles": [],
+      "state": {
+        "b": 0,
+        "g": 1,
+        "side": "none"
+      },
+      "stats": {
+        "totalActions": 1,
+        "counts": {
+          "Gate": 1
+        }
+      },
+      "threads": [
+        {
+          "id": 3,
+          "stack": [
+            {
+              "fileIndex": 0,
+              "name": "Gate",
+              "pc": "Actions[1].Block.Stmts[1].any",
+              "scope": {
+                "loopRange": null,
+                "parent": null,
+                "skipstmts": null,
+                "vars": "{}"
+              },
+              "vars": "{}"
+            }
+          ],
+          "fairness": 2
+        }
+      ],
+      "witness": [
+        [
+          false
+        ]
+      ]
+    },
+    "Type": "action",
+    "Name": "Gate",
+    "Labels": null,
+    "Fairness": 2,
+    "ChoiceFairness": 0,
+    "Messages": null,
+    "ReqId": 0,
+    "ThreadsMap": null,
+    "FailedInvariants": null,
+    "Returns": null
+  },
+  {
+    "Node": {
+      "channel_messages": {},
+      "channels": {},
+      "current": 0,
+      "failedInvariants": null,
+      "name": "yield",
+      "returns": "{}",
+      "roles": [],
+      "state": {
+        "b": 0,
+        "g": 1,
+        "side": "left"
+      },
+      "stats": {
+        "totalActions": 1,
+        "counts": {
+          "Gate": 1
+        }
+      },
+      "threads": [],
+      "witness": [
+        [
+          false
+        ]
+      ]
+    },
+    "Type": "",
+    "Name": "Any:side=\"left\"",
+    "Labels": null,
+    "Fairness": 2,
+    "ChoiceFairness": 0,
+    "Messages": null,
+    "ReqId": 0,
+    "ThreadsMap": null,
+    "FailedInvariants": null,
+    "Returns": null
+  },
+  {
+    "Node": {
+      "channel_messages": {},
+      "channels": {},
+      "current": 0,
+      "failedInvariants": null,
+      "name": "Gate",
+      "returns": "{}",
+      "roles": [],
+      "state": {
+        "b": 0,
+        "g": 0,
+        "side": "left"
+      },
+      "stats": {
+        "totalActions": 2,
+        "counts": {
+          "Gate": 2
+        }
+      },
+      "threads": [
+        {
+          "id": 6,
+          "stack": [
+            {
+              "fileIndex": 0,
+              "name": "Gate",
+              "pc": "Actions[1].Block.Stmts[1].any",
+              "scope": {
+                "loopRange": null,
+                "parent": null,
+                "skipstmts": null,
+                "vars": "{}"
+              },
+              "vars": "{}"
+            }
+          ],
+          "fairness": 2
+        }
+      ],
+      "witness": [
+        [
+          false
+        ]
+      ]
+    },
+    "Type": "action",
+    "Name": "Gate",
+    "Labels": null,
+    "Fairness": 2,
+    "ChoiceFairness": 0,
+    "Messages": null,
+    "ReqId": 0,
+    "ThreadsMap": null,
+    "FailedInvariants": null,
+    "Returns": null
+  },
+  {
+    "Node": {
+      "channel_messages": {},
+      "channels": {},
+      "current": 0,
+      "failedInvariants": null,
+      "name": "yield",
+      "returns": "{}",
+      "roles": [],
+      "state": {
+        "b": 0,
+        "g": 0,
+        "side": "left"
+      },
+      "stats": {
+        "totalActions": 2,
+        "counts": {
+          "Gate": 2
+        }
+      },
+      "threads": [],
+      "witness": [
+        [
+          false
+        ]
+      ]
+    },
+    "Type": "",
+    "Name": "Any:side=\"left\"",
+    "Labels": null,
+    "Fairness": 2,
+    "ChoiceFairness": 0,
+    "Messages": null,
+    "ReqId": 0,
+    "ThreadsMap": null,
+    "FailedInvariants": null,
+    "Returns": null
+  },
+  {
+    "Node": {
+      "channel_messages": {},
+      "channels": {},
+      "current": 0,
+      "failedInvariants": null,
+      "name": "Gate",
+      "returns": "{}",
+      "roles": [],
+      "state": {
+        "b": 0,
+        "g": 1,
+        "side": "left"
+      },
+      "stats": {
+        "totalActions": 3,
+        "counts": {
+          "Gate": 3
+        }
+      },
+      "threads": [
+        {
+          "id": 12,
+          "stack": [
+            {
+              "fileIndex": 0,
+              "name": "Gate",
+              "pc": "Actions[1].Block.Stmts[1].any",
+              "scope": {
+                "loopRange": null,
+                "parent": null,
+                "skipstmts": null,
+                "vars": "{}"
+              },
+              "vars": "{}"
+            }
+          ],
+          "fairness": 2
+        }
+      ],
+      "witness": [
+        [
+          false
+        ]
+      ]
+    },
+    "Type": "action",
+    "Name": "Gate",
+    "Labels": null,
+    "Fairness": 2,
+    "ChoiceFairness": 0,
+    "Messages": null,
+    "ReqId": 0,
+    "ThreadsMap": null,
+    "FailedInvariants": null,
+    "Returns": null
+  },
+  {
+    "Node": {
+      "channel_messages": {},
+      "channels": {},
+      "current": 0,
+      "failedInvariants": null,
+      "name": "yield",
+      "returns": "{}",
+      "roles": [],
+      "state": {
+        "b": 0,
+        "g": 1,
+        "side": "left"
+      },
+      "stats": {
+        "totalActions": 1,
+        "counts": {
+          "Gate": 1
+        }
+      },
+      "threads": [],
+      "witness": [
+        [
+          false
+        ]
+      ]
+    },
+    "Type": "",
+    "Name": "Any:side=\"left\"",
+    "Labels": null,
+    "Fairness": 2,
+    "ChoiceFairness": 0,
+    "Messages": null,
+    "ReqId": 0,
+    "ThreadsMap": {},
+    "FailedInvariants": null,
+    "Returns": null
+  }
+]
