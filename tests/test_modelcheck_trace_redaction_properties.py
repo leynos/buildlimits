@@ -115,13 +115,15 @@ def _colliding_keys(data: st.DataObject, credential: str) -> list[str]:
     Returns
     -------
     list[str]
-        Two or three distinct non-empty keys, each containing the credential,
-        so each redacts to the same withheld text and the adapter must number
-        the repeats.
+        Two or three distinct keys, each the credential followed by at least
+        one more character, so each is withheld rather than replaced as a
+        whole-string credential and the adapter must number the repeats.
     """
     return data.draw(
         st.lists(
-            st.text(st.sampled_from([credential, "a", "b"]), min_size=1, max_size=3),
+            st.text(
+                st.sampled_from([credential, "a", "b"]), min_size=1, max_size=3
+            ).map(lambda tail: credential + tail),
             min_size=2,
             max_size=3,
             unique=True,
@@ -156,40 +158,67 @@ def _value(key: st.SearchStrategy[str]) -> st.SearchStrategy[object]:
     )
 
 
-@given(data=st.data())
-def test_every_state_key_keeps_one_distinct_name_across_a_trace(
-    data: st.DataObject,
-) -> None:
-    """One name per original key, and no name shared by two original keys.
+def _drawn_trace(data: st.DataObject, credential: str) -> Trace:
+    """Draw a trace whose states are distinct permutations of one key set.
 
-    The credential is drawn first and then used in the keys, so every state has
-    at least one genuine collision to number. Keys come from :data:`_SUFFIXED`
-    too, so the draws also make a numbered repeat collide with a key that
-    already carries that number, in either order. The states are permutations
-    of the same key set, so a name that followed a position rather than a key
-    is a counterexample.
+    Parameters
+    ----------
+    data : hypothesis.strategies.DataObject
+        The draw source.
+    credential : str
+        The one-character credential the run's environment carries.
+
+    Returns
+    -------
+    modelcheck.trace.Trace
+        Two to four states, each holding every drawn key, with one state
+        nested inside a list and a mapping.
     """
-    credential = data.draw(_CREDENTIALS)
     colliding = _colliding_keys(data, credential)
-    suffixed = data.draw(st.lists(_SUFFIXED, max_size=2, unique=True))
+    suffixed = data.draw(st.lists(_SUFFIXED, min_size=1, max_size=2, unique=True))
     pool = colliding + suffixed
     key = st.sampled_from(pool)
     value = _value(key)
 
-    orders = data.draw(st.lists(st.permutations(pool), min_size=2, max_size=4))
+    first = data.draw(st.permutations(pool))
+    others = data.draw(
+        st.lists(
+            st.permutations(pool).filter(lambda order: tuple(order) != tuple(first)),
+            min_size=1,
+            max_size=3,
+        )
+    )
+    orders = [first, *others]
     states = [{name: data.draw(value) for name in order} for order in orders]
-    if data.draw(st.booleans()):
-        nested_key = orders[0][0]
-        states[0][nested_key] = [{"inner": states[0][nested_key]}]
+    nested_state = data.draw(st.integers(min_value=0, max_value=len(states) - 1))
+    nested_key = data.draw(st.sampled_from(orders[nested_state]))
+    states[nested_state][nested_key] = [{"inner": states[nested_state][nested_key]}]
 
     initial, *rest = states
-    trace = Trace(
+    return Trace(
         initial,
         tuple(Step(f"step-{index}", state) for index, state in enumerate(rest)),
         Ending.FINITE,
         None,
     )
 
+
+@given(data=st.data())
+def test_every_state_key_keeps_one_distinct_name_across_a_trace(
+    data: st.DataObject,
+) -> None:
+    """One name per original key, and no name shared by two original keys.
+
+    The credential is drawn first and then used in at least two keys, so every
+    state has a genuine collision to number. At least one key comes from
+    :data:`_SUFFIXED`, so the draws also make a numbered repeat collide with a
+    key that already carries that number, in either order. The states are
+    distinct permutations of the same key set, so a name that followed a
+    position rather than a key is a counterexample. One state is always nested
+    inside a list and a mapping.
+    """
+    credential = data.draw(_CREDENTIALS)
+    trace = _drawn_trace(data, credential)
     redacted = redact_trace(
         trace, redaction_for(_DIRECTORY, _LAUNCHER, {"GITHUB_TOKEN": credential})
     )
