@@ -104,13 +104,18 @@ the first time, unless the pinned version or digest changes.
 
 Both commands distinguish a wrong model from a tool that could not run.
 
-| Status | Meaning                                                                |
-| ------ | ---------------------------------------------------------------------- |
-| `0`    | Every expectation was met.                                             |
-| `1`    | An expectation was unmet, or a fixpoint comparison grew.               |
-| `2`    | The tool could not run: a usage error or an input it cannot interpret. |
+| Status | Meaning                                                                                           |
+| ------ | ------------------------------------------------------------------------------------------------- |
+| `0`    | Every expectation was met, or `drift` found a clean report.                                       |
+| `1`    | An expectation was unmet, a fixpoint comparison grew, or `drift` found an unmapped or stale path. |
+| `2`    | The tool could not run: a usage error or an input it cannot interpret.                            |
 
 _Table 2: Exit statuses of `python -m modelcheck`._
+
+`check` and `drift` share the statuses but ask different questions. `drift`
+reports `0` when the model accounts for every production path it names, and `1`
+when the report names a path the inventory does not hold (stale) or an
+inventory item the model neither maps nor excludes (unmapped).
 
 A `2` is never folded into `1`. A checker that never started is different: the
 command did run, so the matrix records an error judgement naming the reason and

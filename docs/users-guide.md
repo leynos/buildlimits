@@ -1133,23 +1133,31 @@ uv run python -m modelcheck drift models/admission/coupling
 
 `check` prints one line per expectation, naming the configuration, the
 property, the verdict, the fairness assumptions in force and the states
-explored. `--only CONFIG[:PROPERTY]` narrows the report without narrowing the
-check, and `--bounds routine` selects the bound set a model declares. Routine
-is the only set implemented today: any other value is refused with status `2`
-rather than falling back to the routine bounds, because a run that checked
-different bounds from the ones it named would be reported as the run asked for.
-`--json PATH` writes the judgements as JSON and `--save-traces` keeps each
-counterexample's normalized trace under the model's `traces/` directory.
+explored. `--only CONFIG[:PROPERTY]` narrows the report and the traces
+`--save-traces` writes, without narrowing the check or the exit status, and
+`--bounds routine` selects the bound set a model declares. Routine is the only
+set implemented today: any other value is refused with status `2` rather than
+falling back to the routine bounds, because a run that checked different bounds
+from the ones it named would be reported as the run asked for. `--json PATH`
+writes the judgements as JSON and `--save-traces` keeps each counterexample's
+normalized trace under the model's `traces/` directory.
 
 ### Exit statuses
 
 Both commands distinguish a wrong model from a tool that could not run:
 
-| Status | Meaning                                                                |
-| ------ | ---------------------------------------------------------------------- |
-| `0`    | Every expectation was met.                                             |
-| `1`    | An expectation was unmet, or a fixpoint comparison grew.               |
-| `2`    | The tool could not run: a usage error or an input it cannot interpret. |
+| Status | Meaning                                                                                           |
+| ------ | ------------------------------------------------------------------------------------------------- |
+| `0`    | Every expectation was met, or `drift` found a clean report.                                       |
+| `1`    | An expectation was unmet, a fixpoint comparison grew, or `drift` found an unmapped or stale path. |
+| `2`    | The tool could not run: a usage error or an input it cannot interpret.                            |
+
+`check` and `drift` ask different questions but share the statuses. `check`
+reports `0` when every configuration meets its expectations; `drift` reports
+`0` when the model accounts for every production path it names, and `1` when
+the report names a path the inventory does not hold (stale) or an inventory
+item the model neither maps nor excludes (unmapped). Either command reports `2`
+only when the tool could not run at all.
 
 A `2` is never folded into `1`, and the boundary in the other direction is just
 as important. A `2` means the command could not complete and says nothing about

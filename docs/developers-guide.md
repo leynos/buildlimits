@@ -1130,7 +1130,8 @@ rest is handled.
 does not, and 2 when the tool itself failed; `--bounds` names the declared
 bound set, of which only `routine` exists today — any other value is refused
 rather than silently checked against the routine bounds, and 1.5.1 adds the
-nightly table — `--only` narrows the report but not the exit status, `--json`
+nightly table — `--only` narrows the report and the traces `--save-traces`
+writes, but not the exit status, which the full matrix still decides; `--json`
 writes the records, `--fixpoint` adds the doubled-bound comparison and
 `--save-traces` rewrites the trace of every counterexample the run found. It
 does not delete a trace whose configuration now passes; that stale file is
@@ -1235,10 +1236,13 @@ workflow is the only place the full matrix is expected to run, so a property
 that fails there is a bounds or model regression rather than a slow runner.
 
 The package is a hexagon: the pure modules hold the policy, `ports.py` names
-the collaborators, and `adapters/` are the only modules that touch a process, a
-file or `buildlimits`. `tests/test_modelcheck_layering.py` walks the pure
-modules' syntax trees so the boundary is checked rather than assumed. Tests
-marked `fizzbee` need the real checker or the artefacts it wrote, and are
+the collaborators, and everything outside them is where a process, a file or
+`buildlimits` is touched. That outside is the `adapters/` package plus the two
+driving adapters beside it: `cli.py` parses arguments and decides an exit
+status, and `cli_outputs.py` is the half that writes — the `--json` artefact
+and the `--save-traces` files. `tests/test_modelcheck_layering.py` walks the
+pure modules' syntax trees so the boundary is checked rather than assumed.
+Tests marked `fizzbee` need the real checker or the artefacts it wrote, and are
 skipped unless `BUILD_LIMITS_MODEL_CHECK=1`; the behavioural scenarios instead
 replay recorded output through the real parser, so a broken parser fails them
 without the binary.
