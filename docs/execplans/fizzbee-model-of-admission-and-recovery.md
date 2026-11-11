@@ -1769,6 +1769,34 @@ explicitly.
     `__pycache__`, which is the interpreter compiling the code it was asked to
     execute; the test requires that delta to be non-empty and to contain
     nothing but bytecode, so a run that was not cold cannot pass vacuously.
+- [x] (2026-11-11) **The twenty-fifth round states the trace-wide naming
+    property as a property, and corrects three documentation claims.**
+  - Finding: the assessment on head `e467624` kept three rows open. The
+    trace-wide uniqueness of redacted state-key names was stated by unit tests
+    that each wrote down one collision; the exit-status tables described
+    `drift` with `check`'s wording; and the developers' guide described the
+    writing half of the command line without naming the adapter that owns it.
+  - `tests/test_modelcheck_trace_redaction_properties.py` draws the credential,
+    the keys, the states and the nesting with Hypothesis and asserts that every
+    entry survives, each original key keeps exactly one name for the whole
+    trace, and no two original keys share a name. Keys are drawn from
+    `WITHHELD`'s own numbered forms as well, so a genuine key that already
+    looks numbered must not be overwritten by a repeat. Making the adapter's
+    `_KeyNames` per-state instead of per-trace makes the property fail with a
+    counterexample, so the test is sensitive to the rule it states.
+  - `docs/users-guide.md` and `docs/migrating-to-0.2.0.md` now say what
+    `drift`'s `0` and `1` mean — a clean report, or an unmapped or stale path —
+    rather than borrowing `check`'s expectation wording, and `--only` is
+    described as narrowing the report and the traces `--save-traces` writes
+    without narrowing the check or its exit status.
+  - `docs/developers-guide.md` names `cli.py` and `cli_outputs.py` as the two
+    driving adapters, the second being the half that writes the `--json`
+    artefact and the `--save-traces` files.
+  - `BuildlimitsInventory.load()`'s docstring now records that the bytecode
+    flag is process-wide rather than per-thread, so a second concurrent import
+    would have its bytecode suppressed too. The guarantee is about this
+    process's single load, and the composition root calls it before any
+    concurrent work starts.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.

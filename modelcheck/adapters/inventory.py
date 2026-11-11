@@ -111,6 +111,15 @@ class BuildlimitsInventory(CodeInventory):
         composition root calls it once. Everything the returned inventory
         answers afterwards is read from the set built here.
 
+        Callers must not import concurrently with this call. The import runs
+        with bytecode writing switched off, and that flag is process-wide
+        rather than per-thread, so a second thread importing at the same moment
+        would have its own bytecode suppressed too. Writing no bytecode is
+        harmless there, but the guarantee this method makes — that a drift
+        check leaves the checkout as it found it — is only about this process's
+        one load. Calling :meth:`load` before any concurrent work starts keeps
+        the flag's lifetime inside the composition boundary.
+
         Returns
         -------
         BuildlimitsInventory
