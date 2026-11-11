@@ -9,26 +9,30 @@ appear to move between variables from one state to the next.
 The unit tests state one collision each. What the adapter promises is
 stronger: for every trace, however nested and in whatever order its states
 are recorded, every entry survives, each original key keeps one name, and no
-two original keys share a name. The property below draws the credential, the
-keys, the states and the nesting, so a numbering rule that only works for the
-collision somebody wrote down is a counterexample rather than an agreement
-between two copies of one example.
+two original keys share a name. The property below runs once per credential
+and draws the keys, the states and the nesting, so a numbering rule that only
+works for the collision somebody wrote down is a counterexample rather than an
+agreement between two copies of one example.
 
 The draws are shaped so the interesting cases cannot be skipped. Every trace
 has at least two states, every state holds every key, and the states are
 permutations of one another, so a name that followed a position rather than a
 key would be caught. At least two keys contain the credential, so every trace
 has a genuine collision to number. One key is the withheld placeholder followed
-by a number the adapter will itself generate for this trace's colliding keys,
-so a genuine key and a generated repeat must resolve the same name whichever is
-met first. One state is nested inside a list and a mapping, and the observer
-fails if redaction changes a container's type rather than silently treating it
-as a leaf.
+by a number the adapter will itself generate for this trace's colliding keys.
+``0`` is the credential that leaves that placeholder unchanged, so its run makes
+a genuine numbered key and a generated repeat resolve the same name whichever
+is met first; every other credential withholds the placeholder itself, which is
+a collision of a different kind. One state is nested inside a list and a
+mapping, and the observer fails if redaction changes a container's type rather
+than silently treating it as a leaf.
 """
 
 import collections.abc as cabc
+import itertools
 from pathlib import Path
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -43,13 +47,15 @@ _DIRECTORY = Path(".model-check/run")
 _LAUNCHER = Path("/opt/fizz")
 """The checker launcher, replaced on the same reasoning."""
 
-_CREDENTIALS = st.sampled_from(["a", "b", "#", "<", " ", "0"])
+_CREDENTIALS = ("0", "a", "b", "#", "<", " ")
 """One-character credentials, including ones that appear in ``WITHHELD``.
 
-A credential drawn from a fixed set keeps the shrinker away from character
-intervals: Hypothesis's ``characters`` strategy is drawn through ``st.data``
-here, and shrinking one of its intervals has failed inside the shrinker itself
-rather than reporting the property's own assertion.
+The property runs once per credential, so ``0`` — the one that leaves the
+withheld placeholder unchanged — is always exercised. A fixed set also keeps
+the shrinker away from character intervals: Hypothesis's ``characters``
+strategy is drawn through ``st.data`` here, and shrinking one of its intervals
+has failed inside the shrinker itself rather than reporting the property's own
+assertion.
 """
 
 
@@ -144,8 +150,9 @@ def _numbered_key(data: st.DataObject, colliding: int) -> str:
     str
         ``WITHHELD`` followed by a number the adapter will generate for this
         trace's colliding keys, never a number beyond them. A genuine key
-        carrying that number must therefore resolve the same name as a
-        generated repeat, whichever of the two the trace meets first.
+        carrying that number therefore collides with a generated repeat
+        whenever the credential leaves the marker unchanged, and the two must
+        resolve the same name whichever the trace meets first.
     """
     number = data.draw(st.integers(min_value=2, max_value=colliding))
     return f"{WITHHELD} #{number}"
@@ -200,16 +207,24 @@ def _drawn_trace(data: st.DataObject, credential: str) -> Trace:
     key = st.sampled_from(pool)
     value = _value(key)
 
-    first = data.draw(st.permutations(pool))
-    others = data.draw(
+    # Index into the permutations rather than filtering a drawn order out of a
+    # second draw: a filter rejects whole draws, and enough rejections trip
+    # Hypothesis's load-sensitive "input generation is slow" health check.
+    every_order = list(itertools.permutations(pool))
+    chosen = data.draw(
         st.lists(
-            st.permutations(pool).filter(lambda order: tuple(order) != tuple(first)),
-            min_size=1,
-            max_size=3,
+            st.integers(min_value=0, max_value=len(every_order) - 1),
+            min_size=2,
+            max_size=4,
+            unique=True,
         )
     )
-    orders = [first, *others]
-    states = [{name: data.draw(value) for name in order} for order in orders]
+    orders = [list(every_order[index]) for index in chosen]
+    # One value per key, reused in every state: the property is about the
+    # names keys get, and drawing a fresh value per state only multiplies the
+    # generation cost the health check measures.
+    values = {name: data.draw(value) for name in pool}
+    states = [{name: values[name] for name in order} for order in orders]
     nested_state = data.draw(st.integers(min_value=0, max_value=len(states) - 1))
     nested_key = data.draw(st.sampled_from(orders[nested_state]))
     states[nested_state][nested_key] = [{"inner": states[nested_state][nested_key]}]
@@ -223,21 +238,22 @@ def _drawn_trace(data: st.DataObject, credential: str) -> Trace:
     )
 
 
+@pytest.mark.parametrize("credential", _CREDENTIALS)
 @given(data=st.data())
 def test_every_state_key_keeps_one_distinct_name_across_a_trace(
-    data: st.DataObject,
+    data: st.DataObject, credential: str
 ) -> None:
     """One name per original key, and no name shared by two original keys.
 
-    The credential is drawn first and then used in at least two keys, so every
-    state has a genuine collision to number. One key already reads as a
-    number the adapter will generate for those collisions, so a generated
-    repeat and a genuine key must resolve the same name in whichever order the
-    trace meets them. The states are distinct permutations of the same key
-    set, so a name that followed a position rather than a key is a
-    counterexample. One state is always nested inside a list and a mapping.
+    The credential is a parameter, so every credential in :data:`_CREDENTIALS`
+    is exercised. ``0`` leaves the withheld placeholder unchanged, so its run
+    makes a genuine numbered key and a generated repeat resolve the same name
+    in whichever order the trace meets them. The credential is used in at
+    least two keys, so every state has a genuine collision to number. The
+    states are distinct permutations of the same key set, so a name that
+    followed a position rather than a key is a counterexample. One state is
+    always nested inside a list and a mapping.
     """
-    credential = data.draw(_CREDENTIALS)
     trace = _drawn_trace(data, credential)
     redacted = redact_trace(
         trace, redaction_for(_DIRECTORY, _LAUNCHER, {"GITHUB_TOKEN": credential})

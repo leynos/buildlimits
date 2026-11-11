@@ -1835,10 +1835,21 @@ explicitly.
   - `tests/test_modelcheck_trace_redaction_properties.py` draws the genuine
     numbered key's number from the range the adapter will itself generate for
     this trace's colliding keys — `2` to the number of colliding keys — rather
-    than from a fixed `#1` to `#5` pool. The genuine key and a generated repeat
-    must therefore resolve the same name whichever the trace meets first.
-    Removing the adapter's `used` check makes the property fail with "an entry
-    did not survive", so the forced collision is load-bearing.
+    than from a fixed `#1` to `#5` pool. The property is also parametrized over
+    the credential, so `0` — the one that leaves the withheld marker unchanged
+    — is always exercised; every other credential withholds the marker itself,
+    which is a collision of a different kind. The genuine key and a generated
+    repeat must therefore resolve the same name whichever the trace meets
+    first. Removing the adapter's `used` check makes all six parametrizations
+    fail with "an entry did not survive", so the forced collision is
+    load-bearing.
+  - The first gate run of this round failed `make test` on Hypothesis's
+    load-sensitive "input generation is slow" health check for credential `#`.
+    The generator now indexes a precomputed list of permutations instead of
+    filtering a drawn order out of a second draw, so no draw is rejected, and
+    it draws one value per key and reuses it in every state rather than a fresh
+    value per state. The six parametrizations now run in about 8 seconds
+    instead of 22, and the failing seed passes.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.
