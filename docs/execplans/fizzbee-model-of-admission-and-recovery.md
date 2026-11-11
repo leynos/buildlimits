@@ -1819,6 +1819,26 @@ explicitly.
     "among the configurations the run reports", because `--only` filters matrix
     traces and an existing trace can be preserved when the replacement would
     carry withheld evidence.
+- [x] (2026-11-11) **The twenty-sixth round narrows the `--save-traces`
+    sentence to the selected traces and forces the numbered-key collision.**
+  - Finding: the inspection at `7dd4590` accepted the property's other forced
+    cases but showed two gaps. "Every matrix counterexample among the
+    configurations the run reports" is still broader than the implementation,
+    because `--only CONFIG:PROPERTY` can select one property and omit another
+    counterexample in the same configuration. And the property did not
+    guarantee a collision with a genuine key that already reads as a numbered
+    repeat: a credential of `0` with only `WITHHELD #1` drawn never meets the
+    generated `WITHHELD #2`.
+  - `docs/developers-guide.md` now says `--save-traces` rewrites the trace of
+    each _selected_ matrix counterexample, which is what `traces.save(chosen)`
+    does after `select(results, only)`.
+  - `tests/test_modelcheck_trace_redaction_properties.py` draws the genuine
+    numbered key's number from the range the adapter will itself generate for
+    this trace's colliding keys — `2` to the number of colliding keys — rather
+    than from a fixed `#1` to `#5` pool. The genuine key and a generated repeat
+    must therefore resolve the same name whichever the trace meets first.
+    Removing the adapter's `used` check makes the property fail with "an entry
+    did not survive", so the forced collision is load-bearing.
 - [ ] EP-M5: incident 1 and 3 known-bad configurations, replay and
   comparator.
 - [ ] EP-M6: H1 verdict recorded; stop at G1.

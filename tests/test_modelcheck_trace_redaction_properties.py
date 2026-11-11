@@ -18,12 +18,12 @@ The draws are shaped so the interesting cases cannot be skipped. Every trace
 has at least two states, every state holds every key, and the states are
 permutations of one another, so a name that followed a position rather than a
 key would be caught. At least two keys contain the credential, so every trace
-has a genuine collision to number. Keys are drawn from
-:data:`~modelcheck.adapters.fizzbee_replacements.WITHHELD`'s own numbered
-forms as well, because a genuine key that already looks numbered must not be
-overwritten by a repeat. One state is nested inside a list and a mapping, and
-the observer fails if redaction changes a container's type rather than
-silently treating it as a leaf.
+has a genuine collision to number. One key is the withheld placeholder followed
+by a number the adapter will itself generate for this trace's colliding keys,
+so a genuine key and a generated repeat must resolve the same name whichever is
+met first. One state is nested inside a list and a mapping, and the observer
+fails if redaction changes a container's type rather than silently treating it
+as a leaf.
 """
 
 import collections.abc as cabc
@@ -42,9 +42,6 @@ _DIRECTORY = Path(".model-check/run")
 
 _LAUNCHER = Path("/opt/fizz")
 """The checker launcher, replaced on the same reasoning."""
-
-_SUFFIXED = st.sampled_from([f"{WITHHELD} #{number}" for number in range(1, 6)])
-"""Genuine keys that look like the adapter's numbered repeats."""
 
 _CREDENTIALS = st.sampled_from(["a", "b", "#", "<", " ", "0"])
 """One-character credentials, including ones that appear in ``WITHHELD``.
@@ -131,6 +128,29 @@ def _colliding_keys(data: st.DataObject, credential: str) -> list[str]:
     )
 
 
+def _numbered_key(data: st.DataObject, colliding: int) -> str:
+    """Draw a genuine key that reads as one of the adapter's numbered repeats.
+
+    Parameters
+    ----------
+    data : hypothesis.strategies.DataObject
+        The draw source, so the number can depend on the keys drawn.
+    colliding : int
+        How many keys the credential withholds, which is how far the
+        adapter's numbering will run in this trace.
+
+    Returns
+    -------
+    str
+        ``WITHHELD`` followed by a number the adapter will generate for this
+        trace's colliding keys, never a number beyond them. A genuine key
+        carrying that number must therefore resolve the same name as a
+        generated repeat, whichever of the two the trace meets first.
+    """
+    number = data.draw(st.integers(min_value=2, max_value=colliding))
+    return f"{WITHHELD} #{number}"
+
+
 def _value(key: st.SearchStrategy[str]) -> st.SearchStrategy[object]:
     """Draw a state value, nested to a bounded depth.
 
@@ -175,7 +195,7 @@ def _drawn_trace(data: st.DataObject, credential: str) -> Trace:
         nested inside a list and a mapping.
     """
     colliding = _colliding_keys(data, credential)
-    suffixed = data.draw(st.lists(_SUFFIXED, min_size=1, max_size=2, unique=True))
+    suffixed = [_numbered_key(data, len(colliding))]
     pool = colliding + suffixed
     key = st.sampled_from(pool)
     value = _value(key)
@@ -210,12 +230,12 @@ def test_every_state_key_keeps_one_distinct_name_across_a_trace(
     """One name per original key, and no name shared by two original keys.
 
     The credential is drawn first and then used in at least two keys, so every
-    state has a genuine collision to number. At least one key comes from
-    :data:`_SUFFIXED`, so the draws also make a numbered repeat collide with a
-    key that already carries that number, in either order. The states are
-    distinct permutations of the same key set, so a name that followed a
-    position rather than a key is a counterexample. One state is always nested
-    inside a list and a mapping.
+    state has a genuine collision to number. One key already reads as a
+    number the adapter will generate for those collisions, so a generated
+    repeat and a genuine key must resolve the same name in whichever order the
+    trace meets them. The states are distinct permutations of the same key
+    set, so a name that followed a position rather than a key is a
+    counterexample. One state is always nested inside a list and a mapping.
     """
     credential = data.draw(_CREDENTIALS)
     trace = _drawn_trace(data, credential)
