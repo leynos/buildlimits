@@ -63,7 +63,7 @@ jobs:
       - name: Generate coverage
         env:
           UV_PYTHON: '3.14'
-        uses: leynos/shared-actions/.github/actions/generate-coverage@5a99aed78ce68dcebd3052b75c31e6f173162b1e
+        uses: leynos/shared-actions/.github/actions/generate-coverage@872f59f53717b5bebe8e24b2f4a7496b089a939a
         with:
           python-source: buildlimits,scripts
           output-path: coverage.xml
