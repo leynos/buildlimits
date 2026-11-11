@@ -1134,17 +1134,17 @@ nightly table — `--only` narrows the report and the matrix traces
 `--save-traces` writes, but not the exit status, which the full matrix still
 decides, nor the fixpoint comparison, whose failed traces are kept for every
 configuration; `--json` writes the records, `--fixpoint` adds the doubled-bound
-comparison, and `--save-traces` rewrites the trace of every matrix
-counterexample among the configurations the run reports, and keeps each failed
-comparison's counterexample. It does not delete a trace whose configuration now
-passes; that stale file is removed by hand, because the tool deletes nothing it
-did not write. It also leaves an existing trace alone when the new one carries
-withheld evidence: a one-character credential in the run's environment
-withholds every decoded state string containing it, so writing such a trace
-over a committed one would lose model information the host cannot reproduce.
-The run prints the file it kept, and the marker inside a trace written where no
-file existed says what was withheld. An empty matrix, or a `--only` that
-matches nothing, is a usage error rather than a vacuously successful run.
+comparison, and `--save-traces` rewrites the trace of each selected matrix
+counterexample, and keeps each failed comparison's counterexample. It does not
+delete a trace whose configuration now passes; that stale file is removed by
+hand, because the tool deletes nothing it did not write. It also leaves an
+existing trace alone when the new one carries withheld evidence: a
+one-character credential in the run's environment withholds every decoded state
+string containing it, so writing such a trace over a committed one would lose
+model information the host cannot reproduce. The run prints the file it kept,
+and the marker inside a trace written where no file existed says what was
+withheld. An empty matrix, or a `--only` that matches nothing, is a usage error
+rather than a vacuously successful run.
 
 FizzBee truncates exploration at `max_actions` without printing a marker, so a
 run that exhausted its bound can still report a pass. `--fixpoint` is the
