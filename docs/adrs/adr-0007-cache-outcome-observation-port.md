@@ -49,7 +49,7 @@ was recorded rather than resolved locally.
 The collision has since been resolved on the draft branch. PR #43 commit
 `dcde62a900711aa538f632d28ffb5a00e184cb24` ("Renumber the kache ADR to 006",
 2026-11-03) renumbered that record to
-`docs/adrs/adr-0006-kache-cache-backend.md` and updated its references. No
+`docs/adr-006-kache-cache-backend.md` and updated its references. No
 accepted decision was overwritten, and main's 005 remains the cache-outcome
 recording decision. Both branches therefore now agree on 005 for recording and
 007 for this observation port.
