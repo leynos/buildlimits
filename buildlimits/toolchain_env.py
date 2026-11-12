@@ -13,7 +13,7 @@ through ``env_var::insert_path``). :func:`toolchain_environment` does the same
 for an adapter that runs a real ``rustc`` or ``rustdoc`` itself. It is
 defensive, not causal: the adapter does not set the poisoned value, and a
 build script that Cargo runs without this adapter is outside its reach. See
-``docs/adr-002-toolchain-library-path.md``.
+``docs/adrs/adr-0002-toolchain-library-path.md``.
 
 It differs from rustup in one deliberate way. rustup also sets the variable
 when it is unset; here an unset or empty variable stays as it is, because

@@ -37,7 +37,7 @@ of the supported versions would enforce them:
   what the guard can and cannot see, including a daemon replaced inside a scope
   admission still holds.
 
-See ``docs/adr-006-kache-cache-backend.md``.
+See ``docs/adrs/adr-0006-kache-cache-backend.md``.
 """
 
 import dataclasses as dc

@@ -5,7 +5,7 @@
 # H2's third option, recorded in the ExecPlan after the unsplit model outgrew
 # the memory tolerance.
 #
-# Read `docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md` for the
+# Read `docs/rfcs/rfc-0001-fizzbee-model-of-admission-and-recovery.md` for the
 # fairness table (F1-F7), the properties and the action-to-code mapping.
 #
 # The transaction appears here only as the single switch `stop_taken`, because

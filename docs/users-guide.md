@@ -27,8 +27,8 @@ selected no-input `--print` queries, Cargo's stdin target-information query,
 and those queries behind the recognized Clippy and Dylint workspace drivers.
 Unknown wrappers, compile arguments and rustdoc invocations stay on their
 normal paths. The
-[query admission RFC](rfcs/0003-toolchain-query-admission-exemption.md) records
-the exact grammar and its evidence.
+[query admission RFC](rfcs/rfc-0003-toolchain-query-admission-exemption.md)
+records the exact grammar and its evidence.
 
 | Command                   | Role                                                     |
 | ------------------------- | -------------------------------------------------------- |
@@ -225,13 +225,13 @@ fixtures to `SUPPORTED_SCCACHE_VERSIONS` in the recorder as one change and run
 version instead of skipping, so merge that change only once the check passes.
 
 If the opt-in real-binary check cannot run, follow
-[ADR 005's private real-binary fallback procedure](adr-005-cache-outcome-recording.md#d9-keep-the-real-binary-check-private-and-non-blocking).
+[ADR 005's private real-binary fallback procedure](adrs/adr-0005-cache-outcome-recording.md#d9-keep-the-real-binary-check-private-and-non-blocking).
 Build the same small crate once cold and once warm through the normal admitted
 supervisor, then compare adjacent sccache statistics windows. Do not bypass
 admission with a private compile. The recorder writes final outcome labels and
 keeps no provisional marker, so a fallback run produces no confirmed H2 or H3
 evidence; treat what it observes as unconfirmed.
-[ADR 005's counter confirmation rule](adr-005-cache-outcome-recording.md#d12-confirm-provisional-labels-only-if-needed)
+[ADR 005's counter confirmation rule](adrs/adr-0005-cache-outcome-recording.md#d12-confirm-provisional-labels-only-if-needed)
 applies only if a trailing counter is demonstrated, and this release does not
 demonstrate one.
 
@@ -282,8 +282,8 @@ in that mode.
 
 - kache `1.2.2` or `2.0.0-rc.1`. Other versions are unsupported until the
   verification recorded in
-  [ADR 006](adr-006-kache-cache-backend.md#on-host-verification) is repeated
-  for them. To adopt a release, add it to `tests/kache_host.py`'s
+  [ADR 006](adrs/adr-0006-kache-cache-backend.md#on-host-verification) is
+  repeated for them. To adopt a release, add it to `tests/kache_host.py`'s
   `SUPPORTED_KACHE_VERSIONS` and run `make test-kache-host` against that
   binary; the check runs for every version in the set rather than skipping, so
   merge the change only once it passes.
@@ -416,8 +416,9 @@ A toolchain that ships `rustc-dev` keeps a second `librustc_driver` in
 build scripts. If the real `rustc` is run with that value, the loader binds the
 duplicate driver, whose `$ORIGIN/../lib` has no `libLLVM`, and the compiler
 exits with status 127 before it prints anything. Kani 0.67.0 drives such a
-toolchain, `nightly-2025-11-21`. [ADR 002](adr-002-toolchain-library-path.md)
-records the cause and the decision.
+toolchain, `nightly-2025-11-21`.
+[ADR 002](adrs/adr-0002-toolchain-library-path.md) records the cause and the
+decision.
 
 **Recognize the symptom.** A build script such as `rustversion`'s reads only
 standard output, so the failure appears as an empty version rather than as a

@@ -156,7 +156,7 @@ The decision above is unchanged. The entries below record how the boundary was
 applied during implementation, so a reader of this ADR sees the same
 conclusions the ExecPlan's decision log carries. Each is recorded in full, with
 its finding, reason and evidence, in the
-[ExecPlan's decision log](execplans/fizzbee-model-of-admission-and-recovery.md#decision-log).
+[ExecPlan's decision log](../execplans/fizzbee-model-of-admission-and-recovery.md#decision-log).
 
 - **D37, 2026-11-03.** A liveness violation whose error graph is missing is
   classified `UNKNOWN`, not `LASSO`: a shape no run demonstrated must not meet
@@ -370,6 +370,6 @@ its finding, reason and evidence, in the
 
 ## References
 
-- [RFC 0001: FizzBee model of admission and recovery](rfcs/0001-fizzbee-model-of-admission-and-recovery.md)
-- [Developers' guide §11.6](developers-guide.md#116-model-checking)
-- [ExecPlan: fizzbee-model-of-admission-and-recovery](execplans/fizzbee-model-of-admission-and-recovery.md)
+- [RFC 0001: FizzBee model of admission and recovery](../rfcs/rfc-0001-fizzbee-model-of-admission-and-recovery.md)
+- [Developers' guide §11.6](../developers-guide.md#116-model-checking)
+- [ExecPlan: fizzbee-model-of-admission-and-recovery](../execplans/fizzbee-model-of-admission-and-recovery.md)

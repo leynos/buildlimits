@@ -16,7 +16,7 @@ single function returning the wrong value. Where a test asserts that nothing
 happened, it also pins the reading that *would* have made something happen in
 sccache mode, so a passing assertion cannot mean the fixture was inert.
 
-See ``docs/adr-006-kache-cache-backend.md`` and section 6 of the issue.
+See ``docs/adrs/adr-0006-kache-cache-backend.md`` and section 6 of the issue.
 """
 
 import contextlib

@@ -8,8 +8,9 @@ contains only `buildlimits`, no runtime behaviour, threshold, configuration
 key, status document, metric or journal field moves, and an operator who only
 runs the supervisor has nothing to do.
 
-The design is recorded in [ADR 008](adr-008-model-check-outside-the-wheel.md);
-the operator-facing behaviour is described under
+The design is recorded in
+[ADR 008](adrs/adr-0008-model-check-outside-the-wheel.md); the operator-facing
+behaviour is described under
 [Check the admission model](users-guide.md#check-the-admission-model).
 
 ## What changes

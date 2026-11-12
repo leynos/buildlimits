@@ -10,7 +10,7 @@ Historical-status note (2026-11-03): EP-M8 merged in PR #24 on 2026-10-31, so
 the stated implementation condition has been met. Quiet-host latency acceptance
 and the owner's G1 decision remain outstanding; neither is recorded here as
 complete. The proposed backend-neutral evolution is documented separately in
-[ADR 007](adr-007-cache-outcome-observation-port.md), which does not replace
+[ADR 007](adr-0007-cache-outcome-observation-port.md), which does not replace
 this W1 decision.
 
 ## Date
@@ -72,7 +72,7 @@ W1 is EP-M0 to EP-M8. EP-M9 is W2 and remains gated on the owner's G1 decision.
 No later RFC 0002 workstream is included.
 
 This ADR refines the observation-only scope of
-[ADR 003](adr-003-bounded-restart-tracing.md): cache outcomes are local
+[ADR 003](adr-0003-bounded-restart-tracing.md): cache outcomes are local
 evidence, not admission hints. It keeps ADR 003's fixed trace-record fields and
 extends its bounded vocabularies with `statistics_read`, `outcome_store_load`,
 `outcome_store_save` and `outcome_store_compact`; the `completed` outcome; and
