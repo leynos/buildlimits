@@ -211,8 +211,9 @@ expecting one round of misses after the repair, not a poisoned entry.
 
 The one difference still makes the repair safer, not riskier: because kache
 wraps the compiler inside the group's own scope
-([ADR 006](adr-006-kache-cache-backend.md)), the repaired path reaches exactly
-the process that composes the cache key, with no server-side probe in between.
+([ADR 006](adr-0006-kache-cache-backend.md)), the repaired path reaches
+exactly the process that composes the cache key, with no server-side probe in
+between.
 
 ### Amendment consequences
 

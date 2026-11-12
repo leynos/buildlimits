@@ -1447,16 +1447,17 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   identity. See ADR 007 for version-specific sources and remaining experiments.
 - (2026-11-05) The ADR collision is resolved on the draft branch: PR #43 commit
   `dcde62a900711aa538f632d28ffb5a00e184cb24` renumbered the kache execution
-  record to `docs/adr-006-kache-cache-backend.md`. Main keeps 005 for recording
-  and 007 for observation. PR #43 is still a draft, so 006 is reserved rather
-  than published; recheck the allocation if either branch is abandoned or a
-  third proposal claims 006 or 007. Separately, kache published 2.0.0-rc.2,
-  2.0.0-rc.3, 2.0.0 and 2.0.1 after PR #43's execution pin. The 2.0.0 and 2.0.1
-  report schemas are byte-identical and differ from 1.2.2 and 2.0.0-rc.1, whose
-  schemas are byte-identical to each other. `CrateDetail` gained ten timing
-  fields in 2.0.0 and lost none, carries no producer version in any inspected
-  schema, and the `result` enum is unchanged. The trial pin is not widened by
-  an unverified documentation review; EP-K1 must pin its own binary.
+  record to `docs/adrs/adr-0006-kache-cache-backend.md`. Main keeps 005 for
+  recording and 007 for observation. PR #43 is still a draft, so 006 is
+  reserved rather than published; recheck the allocation if either branch is
+  abandoned or a third proposal claims 006 or 007. Separately, kache published
+  2.0.0-rc.2, 2.0.0-rc.3, 2.0.0 and 2.0.1 after PR #43's execution pin. The
+  2.0.0 and 2.0.1 report schemas are byte-identical and differ from 1.2.2 and
+  2.0.0-rc.1, whose schemas are byte-identical to each other. `CrateDetail`
+  gained ten timing fields in 2.0.0 and lost none, carries no producer version
+  in any inspected schema, and the `result` enum is unchanged. The trial pin is
+  not widened by an unverified documentation review; EP-K1 must pin its own
+  binary.
 
 - S1. In sccache 0.14.0, every result counter for a request is updated under
   one `me.stats.lock().await` guard, inside the spawned task, before `Ok(res)`
@@ -2197,14 +2198,15 @@ replace, the historical conformance basis and obligations below.
 
 - Terms of Reference: none exists for this repository. RFC 0002 supplies the
   upstream intent.
-- Technical design: RFC 0002 (`docs/rfcs/0002-cache-hit-prediction.md`),
+- Technical design: RFC 0002 (`docs/rfcs/rfc-0002-cache-hit-prediction.md`),
   accepted 2026-10-23 at `42f40e4`. There is no separate `*-design.md`; the
   developer's guide is the living interface reference.
 - ADRs:
   - ADR 003 (bounded tracing) governs the spans. ADR 005 amends its scope
     for the new operations.
   - dev-env-rocky ADR 011 governs token coverage.
-  - This plan creates ADR 005 (`docs/adr-005-cache-outcome-recording.md`). Its
+  - This plan creates ADR 005
+    (`docs/adrs/adr-0005-cache-outcome-recording.md`). Its
     initial commit `ddfaeae` recorded D2 to D25 and fixed the thresholds before
     the live stats fixture was captured. Review corrections D27 to D32 are
     recorded in this ExecPlan.
@@ -2849,7 +2851,7 @@ milestone that adds each module.
 ### EP-M0: decisions recorded before any data
 
 - Outcome:
-  - `docs/adr-005-cache-outcome-recording.md` (Status: Proposed; Accepted
+  - `docs/adrs/adr-0005-cache-outcome-recording.md` (Status: Proposed; Accepted
     when EP-M8 merges) records D2 to D25, the fixed thresholds of Table B,
     the 2,000-outcome minimum, the vocabulary and the ADR 003 scope
     amendment. RFC 0002 links to it. This ExecPlan records review corrections
@@ -3293,10 +3295,11 @@ architectural PR. EP-O1 to EP-O3 belong to the next sccache extraction PR;
 EP-K1 to EP-K3 belong to the kache adoption trials. Stable EP-M identifiers,
 completed milestone evidence and earlier decision records above are unchanged.
 The conformance basis is the 2026-11-03 RFC 0002 extension and proposed
-[ADR 007](../adr-007-cache-outcome-observation-port.md). The implementation
-owner is the buildlimits maintainer; the kache trial owner coordinates with the
-dev-env-rocky provisioning maintainer; the repository owner makes empirical
-gate decisions. No named person is assumed to have accepted a new assignment.
+[ADR 007](../adrs/adr-0007-cache-outcome-observation-port.md). The
+implementation owner is the buildlimits maintainer; the kache trial owner
+coordinates with the dev-env-rocky provisioning maintainer; the repository
+owner makes empirical gate decisions. No named person is assumed to have
+accepted a new assignment.
 
 ### Constraints, risks and sequencing
 

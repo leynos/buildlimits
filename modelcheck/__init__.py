@@ -6,7 +6,7 @@ the pure domain decides what a configuration expects and what a result means,
 the ports name the three collaborators, and the adapters are the only modules
 that touch a process, a file or ``buildlimits`` itself.
 
-See ``docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md`` for the
+See ``docs/rfcs/rfc-0001-fizzbee-model-of-admission-and-recovery.md`` for the
 design and ADR 008 for why this lives beside the package rather than inside
 it.
 """

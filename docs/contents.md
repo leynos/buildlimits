@@ -26,32 +26,32 @@
 
 ## Decisions
 
-- [ADR 001: graceful supervisor restart](adr-001-graceful-supervisor-restart.md)
+- [ADR 001: graceful supervisor restart](adrs/adr-0001-graceful-supervisor-restart.md)
   records why a plain `systemctl --user restart` drains running work, how the
   adapters and start-up cooperate, and the options it rejected.
-- [ADR 002: keep a real toolchain compiler's library directory on the loader path](adr-002-toolchain-library-path.md)
+- [ADR 002: keep a real toolchain compiler's library directory on the loader path](adrs/adr-0002-toolchain-library-path.md)
   records why the adapters prefix a real `rustc` or `rustdoc`'s own `lib`
   directory to `LD_LIBRARY_PATH`, how it mirrors rustup, and what stays outside
   the mitigation.
-- [ADR 003: bounded restart tracing](adr-003-bounded-restart-tracing.md)
+- [ADR 003: bounded restart tracing](adrs/adr-0003-bounded-restart-tracing.md)
   records the local OpenTelemetry spans, bounded journal schema and failure
   isolation used at process boundaries.
 - [ADR 004: expose admission readiness in
-  status](adr-004-admission-readiness-status.md) records how readiness differs
-  from supervisor health and cache reachability, while preserving health-only
-  status checks and token accounting.
-- [ADR 005: cache-outcome recording](adr-005-cache-outcome-recording.md)
+  status](adrs/adr-0004-admission-readiness-status.md) records how readiness
+  differs from supervisor health and cache reachability, while preserving
+  health-only status checks and token accounting.
+- [ADR 005: cache-outcome recording](adrs/adr-0005-cache-outcome-recording.md)
   records the fixed thresholds, local outcome store and observation-only design
   approved for RFC 0002 W1.
-- [ADR 006: kache as an in-scope cache backend](adr-006-kache-cache-backend.md)
+- [ADR 006: kache as an in-scope cache backend](adrs/adr-0006-kache-cache-backend.md)
   records the in-scope and detached capability split, the supported kache
   versions, the external-daemon and disabled-scheduler policies, and the
   on-host process-placement evidence behind them.
-- [ADR 007: cache-outcome observation port](adr-007-cache-outcome-observation-port.md)
+- [ADR 007: cache-outcome observation port](adrs/adr-0007-cache-outcome-observation-port.md)
   proposes the shared evidence boundary and staged sccache and kache adapters.
-  It follows [ADR 006](adr-006-kache-cache-backend.md), which records the kache
-  execution backend it observes.
-- [ADR 008: model-check tooling outside the wheel](adr-008-model-check-outside-the-wheel.md)
+  It follows [ADR 006](adrs/adr-0006-kache-cache-backend.md), which records the
+  kache execution backend it observes.
+- [ADR 008: model-check tooling outside the wheel](adrs/adr-0008-model-check-outside-the-wheel.md)
   records why the FizzBee tooling is a top-level hexagonal package excluded
   from the wheel, and the boundaries it maintains.
 
@@ -84,16 +84,16 @@
 
 ## Requests for comments
 
-- [RFC 0001: FizzBee model of compile admission and cache recovery](rfcs/0001-fizzbee-model-of-admission-and-recovery.md)
+- [RFC 0001: FizzBee model of compile admission and cache recovery](rfcs/rfc-0001-fizzbee-model-of-admission-and-recovery.md)
   proposes a formal model of admission and recovery, its safety and liveness
   properties, conformance checks and a gated adoption plan. Accepted 2026-10-18.
 - [RFC 0002: Recording and predicting sccache hits for queued
-  compiles](rfcs/0002-cache-hit-prediction.md) proposes recording each cached
-  compilation's real outcome, adding an advisory hit prediction to status and
-  metrics, and conducting a gated analysis of hit-first admission. Accepted
-  2026-10-23; current collection rules are sccache-specific, while prediction
-  and later policy goals may apply to other backends.
+  compiles](rfcs/rfc-0002-cache-hit-prediction.md) proposes recording each
+  cached compilation's real outcome, adding an advisory hit prediction to
+  status and metrics, and conducting a gated analysis of hit-first admission.
+  Accepted 2026-10-23; current collection rules are sccache-specific, while
+  prediction and later policy goals may apply to other backends.
 - [RFC 0003: Exempting safe rustc queries from compile
-  admission](rfcs/0003-toolchain-query-admission-exemption.md) records the
+  admission](rfcs/rfc-0003-toolchain-query-admission-exemption.md) records the
   package-cache lock hazard, the fail-closed query contract and its host
   evidence. It replaces issue #27's reference to a nonexistent RFC path.

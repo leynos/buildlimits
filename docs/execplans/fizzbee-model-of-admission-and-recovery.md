@@ -39,13 +39,13 @@ machines and CrossHair contracts check safety over short random interleavings.
 None checks progress (liveness: "something good eventually happens"), none
 models a busy queue, and none composes admission with recovery.
 
-[RFC 0001](../rfcs/0001-fizzbee-model-of-admission-and-recovery.md), accepted
-on 2026-10-18, proposes a FizzBee model of the token pool, admission, the
-managed cache, the drain probe and the four-phase recovery transaction. FizzBee
-is an open-source model checker whose specification language is close to
-Python. It explores every reachable state of a model within stated bounds, and
-checks safety and liveness properties under declared fairness. Fairness is an
-assumption that an action which stays enabled is eventually taken.
+[RFC 0001](../rfcs/rfc-0001-fizzbee-model-of-admission-and-recovery.md),
+accepted on 2026-10-18, proposes a FizzBee model of the token pool, admission,
+the managed cache, the drain probe and the four-phase recovery transaction.
+FizzBee is an open-source model checker whose specification language is close
+to Python. It explores every reachable state of a model within stated bounds,
+and checks safety and liveness properties under declared fairness. Fairness is
+an assumption that an action which stays enabled is eventually taken.
 
 After this plan is delivered, a maintainer can run one command:
 
@@ -2944,15 +2944,15 @@ explicitly.
     onto `origin/main` at `9ea1ecc`, became
     `docs/adr-006-model-check-outside-the-wheel.md` when it was rebased onto
     `origin/main` at `f7ef264`, and became
-    `docs/adr-008-model-check-outside-the-wheel.md` when it was rebased onto
+    `docs/adrs/adr-0008-model-check-outside-the-wheel.md` when it was rebased onto
     `origin/main` at `3202945`. Every reference moved with it on each occasion.
   - Reason: while this branch was in flight, `main` merged PR #29, which added
-    `docs/adr-004-admission-readiness-status.md`. Before the second rebase it
-    merged the cache-hit-prediction work, whose
-    `docs/adr-005-cache-outcome-recording.md` records the outcome store, and
+    `docs/adrs/adr-0004-admission-readiness-status.md`. Before the second
+    rebase it merged the cache-hit-prediction work, whose
+    `docs/adrs/adr-0005-cache-outcome-recording.md` records the outcome store, and
     before the third it merged PR #43, whose
-    `docs/adr-006-kache-cache-backend.md` and
-    `docs/adr-007-cache-outcome-observation-port.md` took 006 and 007. Git
+    `docs/adrs/adr-0006-kache-cache-backend.md` and
+    `docs/adrs/adr-0007-cache-outcome-observation-port.md` took 006 and 007. Git
     reported no conflict on any occasion because the filenames differ, but the
     style guide requires a zero-padded sequence number, and duplicate numbers
     leave a reader unable to cite either unambiguously. The ADR that landed
@@ -3112,7 +3112,7 @@ explicitly.
     the "lift it into a base pull request" item this plan carried is therefore
     closed rather than outstanding.
   - Renumbering: this branch's model-check ADR moved from 005 to 006 in
-    `e16ed45`, because the target now owns `docs/adr-005-cache-outcome-recording.md`.
+    `e16ed45`, because the target now owns `docs/adrs/adr-0005-cache-outcome-recording.md`.
     See D29 for the earlier 004-to-005 step.
   - Skylos entry point: the target's `pyproject.toml` block for
     `JournalSink.emit_trace`, and its new `_OtelSpan.finish` entry, are kept
@@ -3500,7 +3500,7 @@ explicitly.
     ADR 007 (the cache-outcome observation port), so
     `docs/adr-006-model-check-outside-the-wheel.md` collided with both the
     number and the file name of the first. The branch's ADR is now
-    `docs/adr-008-model-check-outside-the-wheel.md`, and the index, the
+    `docs/adrs/adr-0008-model-check-outside-the-wheel.md`, and the index, the
     migration guide, the design documents and every decision that names it
     follow.
   - Reason: the alternative — renumbering the target's ADRs — would rewrite

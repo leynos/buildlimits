@@ -7,8 +7,9 @@ private local store. The upgrade order below keeps every journal reader ahead
 of the vocabulary the supervisor can emit.
 
 The design and its thresholds are recorded in
-[ADR 005](adr-005-cache-outcome-recording.md); the operator-facing behaviour is
-described under [Record cache outcomes](users-guide.md#record-cache-outcomes).
+[ADR 005](adrs/adr-0005-cache-outcome-recording.md); the operator-facing
+behaviour is described under
+[Record cache outcomes](users-guide.md#record-cache-outcomes).
 
 ## What changes
 

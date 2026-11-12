@@ -13,7 +13,7 @@ group at different endpoints. No ``KACHE_RUNTIME_DIR`` is named on either
 side, so both resolve the runtime directory to the store they were given and
 the event log lands at ``<store>/events.jsonl``.
 
-See ``docs/adr-006-kache-cache-backend.md``.
+See ``docs/adrs/adr-0006-kache-cache-backend.md``.
 """
 
 import json

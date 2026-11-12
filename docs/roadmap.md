@@ -1,12 +1,13 @@
 # Buildlimits roadmap
 
 This roadmap sequences work accepted in
-[RFC 0001](rfcs/0001-fizzbee-model-of-admission-and-recovery.md) on 2026-10-18
-and [RFC 0002](rfcs/0002-cache-hit-prediction.md) on 2026-10-23. It does not
-promise dates. Each phase carries one testable idea, the steps underneath it
-work to validate or falsify that idea, and each task is a review-sized unit of
-delivery. Tests, model runs and proofs are part of the task that needs them,
-and appear as a `Success:` criterion where the outcome is not obvious.
+[RFC 0001](rfcs/rfc-0001-fizzbee-model-of-admission-and-recovery.md) on
+2026-10-18 and [RFC 0002](rfcs/rfc-0002-cache-hit-prediction.md) on 2026-10-23.
+It does not promise dates. Each phase carries one testable idea, the steps
+underneath it work to validate or falsify that idea, and each task is a
+review-sized unit of delivery. Tests, model runs and proofs are part of the
+task that needs them, and appear as a `Success:` criterion where the outcome is
+not obvious.
 
 Section references of the form "RFC 0001 §n" or "RFC 0002 §n" name numbered
 subsections of the relevant RFC's proposed design. Hypothesis, workstream, gate
@@ -291,8 +292,8 @@ the RFC's gated prediction evaluation without changing admission. Its
 quiet-host latency acceptance and G1 remain open. RFC 0002's current
 acquisition rules are sccache-specific; ADR 007 proposes a shared evidence
 boundary and staged adapters. See RFC 0002 §§1-2,
-[ADR 005](adr-005-cache-outcome-recording.md), and
-[ADR 007](adr-007-cache-outcome-observation-port.md).
+[ADR 005](adrs/adr-0005-cache-outcome-recording.md), and
+[ADR 007](adrs/adr-0007-cache-outcome-observation-port.md).
 
 ### 3.1. Record outcomes and decide G1
 
@@ -303,7 +304,7 @@ closes those items.
 
 - [x] 3.1.1. Complete EP-M1 to EP-M8 of the cache-hit prediction ExecPlan.
   - Completed implementation merged in PR #24; see its historical evidence in
-    the ExecPlan and [ADR 005](adr-005-cache-outcome-recording.md).
+    the ExecPlan and [ADR 005](adrs/adr-0005-cache-outcome-recording.md).
   - The implementation milestone is complete; outstanding acceptance is
     tracked separately in 3.1.2.
 - [ ] 3.1.2. Complete the remaining W1 quiet-host acceptance and owner G1.
@@ -341,7 +342,7 @@ useful.
 - [ ] 3.3.1. Complete EP-O1 to EP-O3 in the cache-hit prediction ExecPlan.
 
   - Requires review and acceptance of [ADR
-    007](adr-007-cache-outcome-observation-port.md).
+    007](adrs/adr-0007-cache-outcome-observation-port.md).
   - Keep implementation limited to the sccache extraction, its current output
     compatibility, red-first differential tests and listed quality gates.
   - Success: event sequences, attributed records, H2/H3 replay, status, metrics,

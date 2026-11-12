@@ -12,7 +12,7 @@ Two objects come out, because two callers need different things:
   on it -- the drain, quiesce and recovery paths -- and those paths are
   unreachable for an in-scope backend, so an unselected adapter is inert.
 
-See ``docs/adr-006-kache-cache-backend.md``.
+See ``docs/adrs/adr-0006-kache-cache-backend.md``.
 """
 
 import dataclasses as dc

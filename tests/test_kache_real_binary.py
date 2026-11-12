@@ -14,7 +14,7 @@ true of that path, and each is checked where kache itself publishes it:
   request as a ``miss`` that ran the compiler and the replay as a
   ``local_hit`` that did not, and ``kache stats --full`` agrees.
 
-See ``docs/adr-006-kache-cache-backend.md``.
+See ``docs/adrs/adr-0006-kache-cache-backend.md``.
 """
 
 import shutil

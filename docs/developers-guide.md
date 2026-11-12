@@ -15,9 +15,9 @@ These documents take precedence over this guide when they disagree with it:
   [ADR 011][adr-011] on sccache under compile admission, [ADR 012][adr-012] on
   the provisioning collection and [ADR 013][adr-013] on compile-admission
   metrics.
-- [ADR 001](adr-001-graceful-supervisor-restart.md) records how a supervisor
-  restart cancels nothing: the graceful `SIGTERM` stop, the adapters' retry and
-  the start-up stop of a live cache.
+- [ADR 001](adrs/adr-0001-graceful-supervisor-restart.md) records how a
+  supervisor restart cancels nothing: the graceful `SIGTERM` stop, the
+  adapters' retry and the start-up stop of a live cache.
 - The [repository layout](repository-layout.md) names every path and its
   responsibility.
 - The [documentation style guide](documentation-style-guide.md) governs all
@@ -624,7 +624,7 @@ current implementation remains the W1 sccache recorder described above; the
 proposal does not imply that kache collection or prediction is implemented.
 Kache execution support itself is a separate decision, recorded as ADR 006 on
 draft PR #43; neither that draft nor this proposal implies the other. See
-[ADR 007](adr-007-cache-outcome-observation-port.md) and the
+[ADR 007](adrs/adr-0007-cache-outcome-observation-port.md) and the
 [cache-hit prediction ExecPlan](execplans/cache-hit-prediction.md) for the
 proposed boundaries and gated milestones.
 
@@ -658,7 +658,7 @@ with the project by `make build` (`uv sync --group dev`).
 through the same non-blocking journal socket; it drops telemetry on failure and
 never records request data, paths, credentials or raw errors. Generated trace
 and span identifiers are fixed-width hexadecimal values. See
-[ADR 003](adr-003-bounded-restart-tracing.md) for the exporter and schema
+[ADR 003](adrs/adr-0003-bounded-restart-tracing.md) for the exporter and schema
 decision. Within `tracing_sdk_export`, the module-private `_TraceSinkPort`
 requires only `emit_trace(record)`, which the production `JournalSink`
 implements. Keep this port scoped to span export rather than treating it as a
@@ -707,8 +707,8 @@ which `<root>/lib` leads a non-empty `LD_LIBRARY_PATH` when the command, after
 leading `sccache` layers, resolves to a real `<root>/bin/rustc` or
 `<root>/bin/rustdoc` with a `librustc_driver-*.so` in `<root>/lib`. It mirrors
 rustup's `set_ldpath` and differs only by leaving an unset or empty variable
-alone; [ADR 002](adr-002-toolchain-library-path.md) records why and cites the
-rustup source.
+alone; [ADR 002](adrs/adr-0002-toolchain-library-path.md) records why and cites
+the rustup source.
 
 Keep these rules when changing it:
 
@@ -734,7 +734,7 @@ Keep these rules when changing it:
 `rustc_main` may run a narrowly allow-listed query without requesting a compile
 slot. `rustdoc_main` does not use this classifier. The contract and source
 evidence are recorded in
-[RFC 0003](rfcs/0003-toolchain-query-admission-exemption.md). The exemption
+[RFC 0003](rfcs/rfc-0003-toolchain-query-admission-exemption.md). The exemption
 accepts one version query (`-V`, `--version`, or `-vV`, optionally with
 `--verbose`), one or more allow-listed `--print=KIND` queries without an input
 file, or Cargo's stdin-based target-information probe. The separate-value

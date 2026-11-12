@@ -15,7 +15,7 @@
   specific to sccache: it reads that server's own outcome signals, and none of
   it applies to `cache_mode = "kache"`, whose compile runs inside the group's
   scope and whose backend has no managed server to record against. See
-  [ADR 006](../adr-006-kache-cache-backend.md).
+  [ADR 006](../adrs/adr-0006-kache-cache-backend.md).
 
 ## Summary
 
@@ -81,12 +81,13 @@ unchanged.
 
 ### Port, evidence and migration
 
-[ADR 007](../adr-007-cache-outcome-observation-port.md) specifies the proposed
-`OutcomeObservationPort` in `buildlimits/outcome_ports.py`, its immutable input
-and result types, module boundaries, failure behaviour and compatibility rules.
-It is the normative source for this extension's evidence contract. The port's
-`descriptor`, `advance`, `poll` and `close` operations serve only the existing
-supervisor lifecycle and evidence consumers; it is not a general cache API.
+[ADR 007](../adrs/adr-0007-cache-outcome-observation-port.md) specifies the
+proposed `OutcomeObservationPort` in `buildlimits/outcome_ports.py`, its
+immutable input and result types, module boundaries, failure behaviour and
+compatibility rules. It is the normative source for this extension's evidence
+contract. The port's `descriptor`, `advance`, `poll` and `close` operations
+serve only the existing supervisor lifecycle and evidence consumers; it is not
+a general cache API.
 
 Each result records backend/version and evidence-schema provenance, optional
 request correlation, an outcome and a separate evidence quality, bounded reason
@@ -1234,13 +1235,13 @@ changes no runtime behaviour: it records the decision to run W1 and W2, not an
 implementation.
 
 The implementation refinements and fixed H1-H5 thresholds for W1 are recorded in
-[ADR 005](../adr-005-cache-outcome-recording.md). Its original status text
-made acceptance conditional on EP-M8 merging; PR #24 has since merged. The
+[ADR 005](../adrs/adr-0005-cache-outcome-recording.md). Its original status
+text made acceptance conditional on EP-M8 merging; PR #24 has since merged. The
 fixed thresholds and H2 classifier remain the sccache commitments. Quiet-host
 acceptance and G1 remain outstanding, and the proposed ADR 007 extension does
 not supersede these decisions.
 
-[^1]: RFC 0001, `docs/rfcs/0001-fizzbee-model-of-admission-and-recovery.md`,
+[^1]: RFC 0001, `docs/rfcs/rfc-0001-fizzbee-model-of-admission-and-recovery.md`,
       accepted 2026-10-18 and present on `main`.
 
 [^2]: ADR 011, dev-env-rocky:

@@ -24,7 +24,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_vocabulary import CacheResult
 
 
-_ADR = Path(__file__).parents[1] / "docs/adr-005-cache-outcome-recording.md"
+_ADR = Path(__file__).parents[1] / "docs/adrs/adr-0005-cache-outcome-recording.md"
 
 
 def _key(index: int) -> CacheKey:

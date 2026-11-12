@@ -4,7 +4,7 @@
 
 Proposed. This decision extends RFC 0002 with an evolutionary observation
 boundary. It authorizes no runtime change or predictor experiment by itself.
-[ADR 005](adr-005-cache-outcome-recording.md) remains the historical W1
+[ADR 005](adr-0005-cache-outcome-recording.md) remains the historical W1
 decision.
 
 Revision note (2026-11-05): the cross-branch number allocation recorded below
@@ -22,9 +22,9 @@ findings are retained where they remain true.
 [PR #24](https://github.com/leynos/buildlimits/pull/24) merged W1 on 2026-10-31
 as `f7ef2643d25f2741f7ad99999fdb6b8e3ff96769`. Its recorder, sequencer,
 attribution, persistence and H2/H3 replay already exist. EP-M6 through EP-M8
-are complete in the [ExecPlan](execplans/cache-hit-prediction.md); quiet-host
-latency acceptance and the owner's G1 decision remain outstanding. An
-abstraction change must neither discard that evidence nor release EP-M9.
+are complete in the [ExecPlan](../execplans/cache-hit-prediction.md);
+quiet-host latency acceptance and the owner's G1 decision remain outstanding.
+An abstraction change must neither discard that evidence nor release EP-M9.
 
 The existing `StatisticsPort` returns sccache statistics text and
 `ServerProcessPort` identifies and samples its server. These are useful test
@@ -40,7 +40,7 @@ observation capabilities. An in-scope cache can still lack correlated evidence.
 
 ### Number allocation and cross-branch collision
 
-Main owns `adr-005-cache-outcome-recording.md`. When this ADR was first
+Main owns `adr-0005-cache-outcome-recording.md`. When this ADR was first
 drafted, PR #43 also called its kache record ADR 005, and labelled it Accepted
 within that unmerged branch. Neither publication nor that branch-local status
 permits replacing main's decision, so this proposal took 007 and the collision

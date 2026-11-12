@@ -671,7 +671,7 @@ reader does not carry its conclusions across to kache.
 ## Migration plan
 
 1. **Record the decision.** This document, indexed from
-   [Documentation contents](contents.md).
+   [Documentation contents](../contents.md).
 2. **Extract the backend seam.** Add the `CacheBackend` protocol,
    backend-neutral exception names, the capability projection into `Admission`,
    backend-named wording, and the `sccache.py` and `cache_recovery.py` splits.
