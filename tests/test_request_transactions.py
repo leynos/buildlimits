@@ -120,11 +120,11 @@ def _completion_logging_failure(monkeypatch: pytest.MonkeyPatch) -> None:
         entry = requests._admit(server, compile_request((8,)), [source])
         assert entry is not None, "the request is recorded with an owned right"
 
-        def fail(_message: str) -> None:
+        def fail(*_finished: object) -> None:
             """Inject a journal failure after the completion reply was sent."""
             raise BrokenPipeError(errno.EPIPE, "injected journal failure")
 
-        monkeypatch.setattr(requesters, "log", fail)
+        monkeypatch.setattr(requesters, "log_finished", fail)
         try:
             with pytest.raises(BrokenPipeError, match="injected"):
                 requests.finish(entry.request_id, Exit(code=0))

@@ -8,7 +8,7 @@ from buildlimits import attributes
 from buildlimits.descriptor_budget import DescriptorBudget
 from buildlimits.descriptors import close_all
 from buildlimits.framing import DescriptorTruncationError
-from buildlimits.journal import log
+from buildlimits.journal import log, log_finished
 from buildlimits.metrics import Metrics, exit_outcome, refusal_reason
 from buildlimits.pending_request import Pending as Pending
 from buildlimits.protocol import (
@@ -311,10 +311,7 @@ class Requests:
             else:
                 self._reply(entry, Finished(exit_))
             runtime = self.clock() - (entry.admitted or entry.arrived)
-            log(
-                f"finished request {request_id} ({entry.group_id}) after "
-                f"{runtime:.1f}s: code={exit_.code} signal={exit_.signal}"
-            )
+            log_finished(entry, runtime, exit_)
         finally:
             self._finished(
                 entry,

@@ -11,10 +11,24 @@ from buildlimits.drain_metrics import DrainMetrics
 from buildlimits.metrics import Metrics
 from buildlimits.sccache import LiveCacheWorkError, SccacheError
 
+if typ.TYPE_CHECKING:
+    from conftest import RecordingSink
+
 
 def _raise(error: Exception) -> typ.Never:
     """Raise the supplied object to check transparent exception preservation."""
     raise error
+
+
+def _states(sink: RecordingSink) -> list[str]:
+    """List the drain states a sink received, in order.
+
+    Returns
+    -------
+    list[str]
+        One state per recorded observation.
+    """
+    return [record["BUILD_LIMITS_DRAIN_STATE"] for record in sink.records]
 
 
 @pytest.mark.parametrize(
@@ -57,8 +71,7 @@ def test_pending_does_not_clear_fault(metric_sink) -> None:
         "empty result remains unchanged"
     )
     observer.call("empty_check", lambda: False, pending=bool)
-    states = [record["BUILD_LIMITS_DRAIN_STATE"] for record in metric_sink.records]
-    assert states == ["failed", "pending", "recovered", "completed"], (
+    assert _states(metric_sink) == ["failed", "pending", "recovered", "completed"], (
         "only the first non-pending successful probe clears a fault"
     )
     assert metric_sink.records[-1]["BUILD_LIMITS_DRAIN_RECOVERIES"] == "1", (
@@ -130,23 +143,34 @@ def test_unknown_operations_execute_without_labels(metric_sink) -> None:
 
 @given(history=st.lists(st.booleans(), min_size=1, max_size=30))
 def test_drain_recovery_history(history: list[bool]) -> None:
-    """Fixed operation counters match an independent success/failure history model."""
+    """Records and their counters match an independent history model."""
     from conftest import RecordingSink
 
     sink = RecordingSink()
-    observer = DrainMetrics(Metrics(sink))
-    faults = recoveries = 0
+    observer = DrainMetrics(Metrics(sink), clock=lambda: 0.0)
+    faults = recoveries = expected_records = 0
     faulted = False
+    last_state = None
     for index, failed in enumerate(history):
         if failed:
             faults += 1
             faulted = True
+            state = "failed"
             with pytest.raises(OSError, match=r"^private$"):
                 observer.call("terminate", lambda: _raise(OSError("private")))
         else:
+            state = "recovered" if faulted else "completed"
             recoveries += int(faulted)
             faulted = False
             observer.call("terminate", lambda: None)
+        if state == "completed" and last_state == "completed":
+            assert len(sink.records) == expected_records, (
+                "a repeated success within the summary interval is not recorded"
+            )
+            continue
+        expected_records += 1
+        last_state = state
+        assert len(sink.records) == expected_records, "a state change is recorded"
         record = sink.records[-1]
         assert int(record["BUILD_LIMITS_DRAIN_ATTEMPTS"]) == index + 1, (
             "each call is one attempt"
@@ -157,6 +181,36 @@ def test_drain_recovery_history(history: list[bool]) -> None:
         assert int(record["BUILD_LIMITS_DRAIN_RECOVERIES"]) == recoveries, (
             "nonpending successes recover faults"
         )
+
+
+def test_repeated_successes_are_summarized(metric_sink) -> None:
+    """Healthy drains write one record per interval, with current counters."""
+    now = [0.0]
+    observer = DrainMetrics(
+        Metrics(metric_sink), clock=lambda: now[0], routine_summary_seconds=600.0
+    )
+    for moment in (0.0, 1.0, 599.0):
+        now[0] = moment
+        observer.call("terminate", lambda: None)
+    assert len(metric_sink.records) == 1, "repeats inside the interval are quiet"
+    now[0] = 600.0
+    observer.call("terminate", lambda: None)
+    assert len(metric_sink.records) == 2, "the interval brings a summary record"
+    assert metric_sink.records[-1]["BUILD_LIMITS_DRAIN_ATTEMPTS"] == "4", (
+        "the summary carries every attempt since the last record"
+    )
+    observer.call("empty_check", lambda: None)
+    assert len(metric_sink.records) == 3, "each operation keeps its own interval"
+
+
+def test_success_after_pending_work_is_recorded(metric_sink) -> None:
+    """Live work that drains is a state change, so it is never summarized away."""
+    observer = DrainMetrics(Metrics(metric_sink), clock=lambda: 0.0)
+    for is_live in (False, True, True, False, False):
+        observer.call("empty_check", lambda is_live=is_live: is_live, pending=bool)
+    assert _states(metric_sink) == ["completed", "pending", "pending", "completed"], (
+        "pending work is always recorded, and so is the success that ends it"
+    )
 
 
 def test_counter_saturation_and_operation_independence(

@@ -666,6 +666,18 @@ general journal or metrics API. Schema validation and capped failure-count
 helpers stay inside the tracing transport; metric counters keep their separate
 owners and limits.
 
+Keep per-request volume out of the journal. `DrainMetrics` records failures,
+pending live work, recoveries and state changes, but summarizes repeated
+successes to one record per operation every `ROUTINE_SUMMARY_SECONDS`; its
+`clock` parameter makes that interval testable. Plain diagnostic lines go
+through `journal.log`. Pass `routine=True` only for a line written for healthy,
+high-volume work, such as an admission or a clean finish. Such a line is
+written only when `BUILD_LIMITS_ROUTINE_LINES` is `1`, and then carries the
+`<7>` debug priority when stderr is the stream that `JOURNAL_STREAM` names. The
+variable is the switch because `LogLevelMax=` on the user unit did not filter
+these lines under systemd 257. Anything an operator may need to act on keeps
+the default priority and is always written.
+
 ## 10. Adapters
 
 `rustc_main` passes its arguments through unchanged. `rustdoc_main` resolves

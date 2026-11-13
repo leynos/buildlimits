@@ -263,7 +263,9 @@ def test_launch_notifies_before_release_or_abandons_disconnected_group(
         "a disconnected requester returns the group token once"
     )
     if requester_present:
-        assert "admitted request 1 as g1" in capsys.readouterr().err, "admission logged"
+        assert "admitted request" not in capsys.readouterr().err, (
+            "a routine admission is left to the metric records by default"
+        )
 
 
 def test_metrics_admission_and_failure_boundaries(
