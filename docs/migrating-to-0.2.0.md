@@ -3,26 +3,35 @@
 This guide is for maintainers moving a checkout from buildlimits 0.1.0 to
 0.2.0. The release adds the FizzBee model check: a model of admission and
 recovery, a pinned checker, and a `modelcheck` command that judges the model's
-results. Nothing about an installed buildlimits changes. The wheel still
-contains only `buildlimits`, no runtime behaviour, threshold, configuration
-key, status document, metric or journal field moves, and an operator who only
-runs the supervisor has nothing to do.
+results. The wheel still contains only `buildlimits`, and no threshold,
+configuration key, status document or metric field moves.
 
-The design is recorded in
+The supervisor's journal does change. A plain line per admission and per clean
+finish is no longer written by default, and repeated drain successes are
+summarized, so a reader that counts those lines or expects one per compile sees
+less. A new variable, `BUILD_LIMITS_ROUTINE_LINES`, restores the routine lines.
+An operator who only runs the supervisor and never reads its journal by hand
+still has nothing to do.
+
+The model-check design is recorded in
 [ADR 008](adrs/adr-0008-model-check-outside-the-wheel.md); the operator-facing
 behaviour is described under
-[Check the admission model](users-guide.md#check-the-admission-model).
+[Check the admission model](users-guide.md#check-the-admission-model) and
+[Routine journal lines](users-guide.md#routine-journal-lines).
 
 ## What changes
 
-| Area           | In 0.1.0                    | In 0.2.0                                               |
-| -------------- | --------------------------- | ------------------------------------------------------ |
-| Wheel contents | `buildlimits`               | `buildlimits` (unchanged)                              |
-| Source tree    | `buildlimits/`, `tests/`    | Adds `modelcheck/` and `models/`                       |
-| Make targets   | Build, test, lint, release  | Adds `fizzbee`, `model-fidelity` and `model-check`     |
-| Command line   | `build-limits-*` scripts    | Adds `python -m modelcheck check` and `drift`          |
-| Dependencies   | Runtime and development set | Unchanged; the checker is an external pinned binary    |
-| CI             | Pull-request and release    | Adds a fidelity job per pull request and a nightly run |
+| Area           | In 0.1.0                                      | In 0.2.0                                               |
+| -------------- | --------------------------------------------- | ------------------------------------------------------ |
+| Wheel contents | `buildlimits`                                 | `buildlimits` (unchanged)                              |
+| Source tree    | `buildlimits/`, `tests/`                      | Adds `modelcheck/` and `models/`                       |
+| Make targets   | Build, test, lint, release                    | Adds `fizzbee`, `model-fidelity` and `model-check`     |
+| Command line   | `build-limits-*` scripts                      | Adds `python -m modelcheck check` and `drift`          |
+| Dependencies   | Runtime and development set                   | Unchanged; the checker is an external pinned binary    |
+| CI             | Pull-request and release                      | Adds a fidelity job per pull request and a nightly run |
+| Journal lines  | One line per admission and per finish         | Routine lines only when requested                      |
+| Drain progress | One `drain_progress` record per drain success | Repeated successes summarized                          |
+| Journal switch | None                                          | Adds `BUILD_LIMITS_ROUTINE_LINES`                      |
 
 _Table 1: What 0.2.0 adds._
 
@@ -101,6 +110,21 @@ the first time, unless the pinned version or digest changes.
    counterexample's normalized trace under the model's `traces/` directory, and
    `--only CONFIG[:PROPERTY]` narrows the report without narrowing the check.
 
+6. If a script or a habit depends on the supervisor's per-request journal
+   lines, restore them with a drop-in and restart the supervisor at a quiet
+   point:
+
+   ```ini
+   [Service]
+   Environment=BUILD_LIMITS_ROUTINE_LINES=1
+   ```
+
+   Admissions and clean finishes then reappear at debug priority, so
+   `journalctl --user --priority info` still hides them. Failed, signalled and
+   unstartable compiles were never suppressed, and a reader that needs only
+   those needs no change. See
+   [Routine journal lines](users-guide.md#routine-journal-lines).
+
 ## Exit statuses
 
 Both commands distinguish a wrong model from a tool that could not run.
@@ -146,8 +170,9 @@ waited for it under a separate field rather than as the checker's duration.
 
 ## Rollback
 
-The release adds no runtime behaviour, so rolling back is reverting the
-checkout to the 0.1.0 tag and rebuilding. The checker cache under
+Rolling back is reverting the checkout to the 0.1.0 tag and rebuilding. That
+restores the per-request journal lines as well as removing the model check, so a
+`BUILD_LIMITS_ROUTINE_LINES` drop-in is then redundant. The checker cache under
 `$XDG_CACHE_HOME/buildlimits/fizzbee/` and the `.tools/fizzbee` link may be
 deleted; neither is read by the package. Trace files committed as evidence are
 ordinary tracked files and are removed by the same revert.

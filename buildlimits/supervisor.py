@@ -29,9 +29,10 @@ from buildlimits.drain_loop import MAX_INTERNAL_FAILURES as MAX_INTERNAL_FAILURE
 from buildlimits.drain_loop import DrainLoop, LoopEffects
 from buildlimits.groups import Groups
 from buildlimits.journal import log
+from buildlimits.journal_policy import RoutineLineWriter
 from buildlimits.metrics import Metrics, MetricsPort, gauge_fields
 from buildlimits.pool import PoolFailure, Token, TokenPool
-from buildlimits.requesters import Requests, listen
+from buildlimits.requesters import RequestObservation, Requests, listen
 from buildlimits.service_readiness import notify_ready
 from buildlimits.systemd import UserManager
 from buildlimits.timing import Clock, as_clock
@@ -57,10 +58,16 @@ class SupervisorTelemetry:
         Event metrics; absent selects the no-op-safe default transport.
     tracer : JournalTracer | None
         Operation spans; absent disables tracing for embedded use and tests.
+    routine_lines : RoutineLineWriter | None
+        The journal writer, holding the resolved routine-line setting and the
+        stream it governs; absent writes no routine line. The service entry
+        point resolves it from the start-up environment and passes it here, so
+        nothing below it consults the environment.
     """
 
     metrics: MetricsPort | None = None
     tracer: JournalTracer | None = None
+    routine_lines: RoutineLineWriter | None = None
 
 
 class Supervisor:
@@ -75,7 +82,8 @@ class Supervisor:
     clock : Callable[[], float] | Clock
         Monotonic time; a Clock also supplies control-fault retry sleep.
     telemetry : SupervisorTelemetry | None
-        Failure-isolated metrics and operation spans; defaults to no tracing.
+        Failure-isolated metrics, operation spans and the journal's
+        routine-line setting; defaults to no tracing and no routine lines.
     """
 
     def __init__(
@@ -97,6 +105,11 @@ class Supervisor:
             observations.metrics if observations.metrics is not None else Metrics()
         )
         self.tracer = observations.tracer
+        self.routine_lines = (
+            observations.routine_lines
+            if observations.routine_lines is not None
+            else RoutineLineWriter()
+        )
 
         built = cache_backends.select(settings, self.manager)
         # Composition sites ask this object for argv, environment and capability.
@@ -109,8 +122,11 @@ class Supervisor:
         self.requests = Requests(
             self.selector,
             self.clock,
-            metrics=self.metrics,
-            counts=self.admission.counts,
+            observation=RequestObservation(
+                metrics=self.metrics,
+                counts=self.admission.counts,
+                lines=self.routine_lines,
+            ),
         )
         self.groups = Groups(
             settings, self.manager, self.selector, self.clock, self.backend

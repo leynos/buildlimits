@@ -22,6 +22,7 @@ from buildlimits import cgroups, config, startup
 from buildlimits.cache_backend import CacheError, StartupAccountingError
 from buildlimits.journal import log
 from buildlimits.journal_native import JournalSink
+from buildlimits.journal_policy import journal_writer
 from buildlimits.metrics import Metrics
 from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 from buildlimits.systemd import SystemdError
@@ -84,6 +85,10 @@ def _supervise(settings: config.SupervisorConfig) -> int:
             telemetry=SupervisorTelemetry(
                 metrics=Metrics(sink, warn=log),
                 tracer=JournalTracer("supervisor", sink),
+                # Resolved once here: the switch and the journal stream are
+                # start-up facts, so nothing below this line consults the
+                # environment.
+                routine_lines=journal_writer(),
             ),
         )
         try:

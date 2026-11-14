@@ -139,7 +139,7 @@ def test_healthy_control_cycles_emit_no_progress(
 class BrokenMetrics:
     """An injected downstream emitter that always raises."""
 
-    def emit(self, event: str, **_fields: object) -> None:
+    def emit(self, event: str, **_fields: object) -> bool:
         """Fail observation without changing the caller's control operations."""
         del event
         msg = "unavailable metrics"

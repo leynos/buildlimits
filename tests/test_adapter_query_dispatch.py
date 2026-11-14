@@ -23,10 +23,11 @@ class _RecordingJournal:
         self.events = events
         self.records: list[dict[str, str]] = []
 
-    def emit(self, record: cabc.Mapping[str, str]) -> None:
+    def emit(self, record: cabc.Mapping[str, str]) -> bool:
         """Keep one record and mark when emission happened."""
         self.records.append(dict(record))
         self.events.append("metric")
+        return True
 
     def close(self) -> None:
         """Record release of the adapter-owned journal transport."""

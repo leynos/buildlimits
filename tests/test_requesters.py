@@ -20,6 +20,7 @@ from buildlimits.protocol import (
     recv_frame,
     send_frame,
 )
+from buildlimits.request_observation import RequestObservation
 from buildlimits.requesters import Pending, Requests, listen
 
 if typ.TYPE_CHECKING:
@@ -124,7 +125,9 @@ def test_terminal_metrics_measure_zero_admission_time(
 ) -> None:
     """An admitted timestamp of zero is present and is not an arrival fallback."""
     with selectors.DefaultSelector() as selector:
-        requests = Requests(selector, clock=lambda: 5.0, metrics=metrics)
+        requests = Requests(
+            selector, clock=lambda: 5.0, observation=RequestObservation(metrics=metrics)
+        )
         requests.pending[1] = _secret_pending(1, None, arrived=-2.0, admitted=0.0)
         if ending == "refuse":
             requests.refuse(1, "launch-failed")
@@ -148,7 +151,9 @@ def test_terminal_metrics_measure_zero_admission_time(
 def test_disconnect_emits_one_terminal_record(metrics, metric_sink) -> None:
     """Queued cancellations finish now; admitted cancellations finish after drain."""
     with selectors.DefaultSelector() as selector:
-        requests = Requests(selector, clock=lambda: 4.0, metrics=metrics)
+        requests = Requests(
+            selector, clock=lambda: 4.0, observation=RequestObservation(metrics=metrics)
+        )
         for number in (1, 2):
             client, server = socket.socketpair()
             requests.pending[number] = _secret_pending(number, server, arrived=0.0)
@@ -166,3 +171,25 @@ def test_disconnect_emits_one_terminal_record(metrics, metric_sink) -> None:
     assert all(r["BUILD_LIMITS_OUTCOME"] == "cancelled" for r in metric_sink.records), (
         "cancellations classified"
     )
+
+
+@pytest.mark.parametrize(
+    ("exit_", "is_written"),
+    [(Exit(code=0), False), (Exit(code=1), True)],
+    ids=["clean-finish", "failed-finish"],
+)
+def test_finish_routes_the_line_through_the_routine_setting(
+    capsys: pytest.CaptureFixture[str], exit_: Exit, *, is_written: bool
+) -> None:
+    """A clean finish is suppressed by default; a failure is always written."""
+    with selectors.DefaultSelector() as selector:
+        requests = Requests(selector, clock=lambda: 1.0)
+        requests.pending[1] = _secret_pending(1, None, arrived=0.0)
+        requests.finish(1, exit_)
+    written = capsys.readouterr().err
+    assert bool(written) is is_written, (
+        "the request table routes the line through the routine setting"
+    )
+    if is_written:
+        assert "finished request 1" in written, "the failure's line reaches stderr"
+        assert "code=1" in written, "the line reports the failing exit status"

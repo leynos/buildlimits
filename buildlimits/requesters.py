@@ -8,7 +8,8 @@ from buildlimits import attributes
 from buildlimits.descriptor_budget import DescriptorBudget
 from buildlimits.descriptors import close_all
 from buildlimits.framing import DescriptorTruncationError
-from buildlimits.journal import log
+from buildlimits.journal import finished_line, log
+from buildlimits.journal_policy import RoutineLineWriter, is_routine_finish
 from buildlimits.metrics import Metrics, exit_outcome, refusal_reason
 from buildlimits.pending_request import Pending as Pending
 from buildlimits.protocol import (
@@ -38,6 +39,7 @@ from buildlimits.request_connections import check_peer as check_peer
 from buildlimits.request_connections import close_quietly as close_quietly
 from buildlimits.request_connections import listen as listen
 from buildlimits.request_connections import send_quietly as send_quietly
+from buildlimits.request_observation import RequestObservation
 from buildlimits.request_validation import (
     CompileContext,
     CompileRefusal,
@@ -55,9 +57,6 @@ if typ.TYPE_CHECKING:
     import selectors
     import socket
 
-    from buildlimits.admission import Counts
-    from buildlimits.metrics import MetricsPort
-
 
 REQUEST_READ_TIMEOUT = 5.0
 
@@ -71,10 +70,8 @@ class Requests:
         The event loop's selector, which watches each open connection.
     clock : Callable[[], float]
         A monotonic clock.
-    metrics : MetricsPort | None
-        Injected failure-isolated metric emitter.
-    counts : Callable[[], Counts] | None
-        Reads current admission gauges for each terminal record.
+    observation : RequestObservation | None
+        Where each outcome is reported; absent observes to the defaults.
     """
 
     def __init__(
@@ -82,14 +79,15 @@ class Requests:
         selector: selectors.BaseSelector,
         clock: cabc.Callable[[], float],
         *,
-        metrics: MetricsPort | None = None,
-        counts: cabc.Callable[[], Counts] | None = None,
+        observation: RequestObservation | None = None,
     ) -> None:
         """Start with no requests."""
-        self.metrics = metrics if metrics is not None else Metrics()
-        self.counts = counts
+        seen = observation if observation is not None else RequestObservation()
+        self.metrics = seen.metrics if seen.metrics is not None else Metrics()
+        self.counts = seen.counts
         self.selector = selector
         self.clock = clock
+        self.lines = seen.lines if seen.lines is not None else RoutineLineWriter()
         # Opening one cache-recovery transaction for a recovery request. The
         # supervisor binds the operator trigger and its clock, so a supervisor
         # without a cache answers the request with a refusal instead.
@@ -311,9 +309,9 @@ class Requests:
             else:
                 self._reply(entry, Finished(exit_))
             runtime = self.clock() - (entry.admitted or entry.arrived)
-            log(
-                f"finished request {request_id} ({entry.group_id}) after "
-                f"{runtime:.1f}s: code={exit_.code} signal={exit_.signal}"
+            self.lines.write(
+                finished_line(entry, runtime, exit_),
+                routine=is_routine_finish(entry, exit_),
             )
         finally:
             self._finished(
