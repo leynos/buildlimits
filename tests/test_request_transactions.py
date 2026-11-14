@@ -124,7 +124,7 @@ def _completion_logging_failure(monkeypatch: pytest.MonkeyPatch) -> None:
             """Inject a journal failure after the completion reply was sent."""
             raise BrokenPipeError(errno.EPIPE, "injected journal failure")
 
-        monkeypatch.setattr(requesters, "log_finished", fail)
+        monkeypatch.setattr(requesters, "finished_line", fail)
         try:
             with pytest.raises(BrokenPipeError, match="injected"):
                 requests.finish(entry.request_id, Exit(code=0))

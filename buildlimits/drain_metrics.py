@@ -1,21 +1,16 @@
 """Observe fixed drain operations without deciding when work is safe to release."""
 
 import contextlib
-import time
 import typing as typ
 
 from buildlimits.cache_backend import LiveCacheWorkError
+from buildlimits.drain_summary import SuccessSummary
 from buildlimits.metrics import MAX_COUNTER, VOCABULARIES, Metrics
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.metrics import MetricsPort
-
-# A healthy supervisor terminates and empty-checks every finished group, so a
-# record per success would dominate the journal. Repeated successes are
-# summarized at most this often, which keeps the lifetime counters current.
-ROUTINE_SUMMARY_SECONDS = 600.0
 
 
 class DrainMetrics:
@@ -26,36 +21,31 @@ class DrainMetrics:
     port : MetricsPort | None
         Failure-isolated observer; absent discards observations. It receives no
         request or group identity.
-    clock : Callable[[], float]
-        Monotonic seconds, used only to space routine success records.
-    routine_summary_seconds : float
-        Minimum interval between records of repeated successes.
+    summary : SuccessSummary | None
+        Decides which success records are worth writing; absent summarizes
+        repeated successes on the monotonic clock.
 
     Notes
     -----
     Failures, pending live work and recoveries are always recorded. A success
     is recorded when it changes the operation's last recorded state, or when
-    ``routine_summary_seconds`` have passed since that operation's last
-    success record.
+    :class:`~buildlimits.drain_summary.SuccessSummary` says its interval has
+    passed since that operation's last success record.
     """
 
     def __init__(
         self,
         port: MetricsPort | None = None,
         *,
-        clock: cabc.Callable[[], float] = time.monotonic,
-        routine_summary_seconds: float = ROUTINE_SUMMARY_SECONDS,
+        summary: SuccessSummary | None = None,
     ) -> None:
         """Reset five fixed operation counters for this supervisor lifetime."""
         self._port = port if port is not None else Metrics()
-        self._clock = clock
-        self._routine_summary_seconds = routine_summary_seconds
+        self._summary = summary if summary is not None else SuccessSummary()
         self._attempts = dict.fromkeys(VOCABULARIES["drain_operation"], 0)
         self._failures = self._attempts.copy()
         self._recoveries = self._attempts.copy()
         self._faulted = dict.fromkeys(self._attempts, False)
-        self._last_state: dict[str, str | None] = dict.fromkeys(self._attempts)
-        self._last_completed: dict[str, float | None] = dict.fromkeys(self._attempts)
 
     def call[T](
         self,
@@ -151,29 +141,12 @@ class DrainMetrics:
         """Saturate a fixed operation counter without wrapping."""
         counters[operation] = min(MAX_COUNTER, counters[operation] + 1)
 
-    def _is_routine_repeat(self, operation: str, state: str) -> bool:
-        """Report whether a success only repeats a recent success record.
-
-        Returns
-        -------
-        bool
-            True when the record would add nothing but a newer counter value.
-        """
-        if state != "completed" or self._last_state[operation] != "completed":
-            return False
-        last = self._last_completed[operation]
-        return last is not None and (
-            self._clock() - last < self._routine_summary_seconds
-        )
-
     def _record(self, operation: str, state: str, reason: str) -> None:
         """Drop observation failures without retaining exception text."""
         with contextlib.suppress(Exception):
-            if self._is_routine_repeat(operation, state):
+            if self._summary.is_repeat(operation, state):
                 return
-            self._last_state[operation] = state
-            if state == "completed":
-                self._last_completed[operation] = self._clock()
+            self._summary.recorded(operation, state)
             self._port.emit(
                 "drain_progress",
                 drain_operation=operation,

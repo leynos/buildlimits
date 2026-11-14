@@ -20,6 +20,7 @@ from buildlimits.protocol import (
     recv_frame,
     send_frame,
 )
+from buildlimits.request_observation import RequestObservation
 from buildlimits.requesters import Pending, Requests, listen
 
 if typ.TYPE_CHECKING:
@@ -124,7 +125,9 @@ def test_terminal_metrics_measure_zero_admission_time(
 ) -> None:
     """An admitted timestamp of zero is present and is not an arrival fallback."""
     with selectors.DefaultSelector() as selector:
-        requests = Requests(selector, clock=lambda: 5.0, metrics=metrics)
+        requests = Requests(
+            selector, clock=lambda: 5.0, observation=RequestObservation(metrics=metrics)
+        )
         requests.pending[1] = _secret_pending(1, None, arrived=-2.0, admitted=0.0)
         if ending == "refuse":
             requests.refuse(1, "launch-failed")
@@ -148,7 +151,9 @@ def test_terminal_metrics_measure_zero_admission_time(
 def test_disconnect_emits_one_terminal_record(metrics, metric_sink) -> None:
     """Queued cancellations finish now; admitted cancellations finish after drain."""
     with selectors.DefaultSelector() as selector:
-        requests = Requests(selector, clock=lambda: 4.0, metrics=metrics)
+        requests = Requests(
+            selector, clock=lambda: 4.0, observation=RequestObservation(metrics=metrics)
+        )
         for number in (1, 2):
             client, server = socket.socketpair()
             requests.pending[number] = _secret_pending(number, server, arrived=0.0)

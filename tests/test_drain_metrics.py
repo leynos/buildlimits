@@ -8,6 +8,7 @@ from hypothesis import strategies as st
 
 from buildlimits import drain_metrics
 from buildlimits.drain_metrics import DrainMetrics
+from buildlimits.drain_summary import SuccessSummary
 from buildlimits.metrics import Metrics
 from buildlimits.sccache import LiveCacheWorkError, SccacheError
 
@@ -147,7 +148,7 @@ def test_drain_recovery_history(history: list[bool]) -> None:
     from conftest import RecordingSink
 
     sink = RecordingSink()
-    observer = DrainMetrics(Metrics(sink), clock=lambda: 0.0)
+    observer = DrainMetrics(Metrics(sink), summary=SuccessSummary(clock=lambda: 0.0))
     faults = recoveries = expected_records = 0
     faulted = False
     last_state = None
@@ -183,11 +184,57 @@ def test_drain_recovery_history(history: list[bool]) -> None:
         )
 
 
+def test_a_success_with_nothing_recorded_before_is_never_a_repeat() -> None:
+    """The first success of an operation is a state change, not a repeat."""
+    summary = SuccessSummary(clock=lambda: 0.0)
+
+    assert not summary.is_repeat("terminate", "completed"), (
+        "an operation with no recorded state has nothing to repeat"
+    )
+    summary.recorded("terminate", "completed")
+    assert not summary.is_repeat("empty_check", "completed"), (
+        "each operation keeps its own interval"
+    )
+
+
+@pytest.mark.parametrize("state", ["failed", "pending", "recovered"])
+def test_only_a_completed_that_follows_a_completed_is_a_repeat(state: str) -> None:
+    """A failure, pending work or a recovery always changes the record."""
+    summary = SuccessSummary(clock=lambda: 0.0)
+    summary.recorded("terminate", "completed")
+
+    assert not summary.is_repeat("terminate", state), (
+        "only a plain success can repeat a plain success"
+    )
+
+
+def test_the_interval_runs_from_the_record_and_not_from_the_call() -> None:
+    """A recorded success restarts the interval that suppresses the next one."""
+    now = [0.0]
+    summary = SuccessSummary(clock=lambda: now[0], interval=600.0)
+    summary.recorded("terminate", "completed")
+
+    now[0] = 599.0
+    assert summary.is_repeat("terminate", "completed"), (
+        "inside the interval the success repeats the record"
+    )
+    now[0] = 600.0
+    assert not summary.is_repeat("terminate", "completed"), (
+        "the interval boundary brings a fresh record"
+    )
+    summary.recorded("terminate", "completed")
+    now[0] = 601.0
+    assert summary.is_repeat("terminate", "completed"), (
+        "the interval runs from the record, so a fresh record restarts it"
+    )
+
+
 def test_repeated_successes_are_summarized(metric_sink) -> None:
     """Healthy drains write one record per interval, with current counters."""
     now = [0.0]
     observer = DrainMetrics(
-        Metrics(metric_sink), clock=lambda: now[0], routine_summary_seconds=600.0
+        Metrics(metric_sink),
+        summary=SuccessSummary(clock=lambda: now[0], interval=600.0),
     )
     for moment in (0.0, 1.0, 599.0):
         now[0] = moment
@@ -205,7 +252,9 @@ def test_repeated_successes_are_summarized(metric_sink) -> None:
 
 def test_success_after_pending_work_is_recorded(metric_sink) -> None:
     """Live work that drains is a state change, so it is never summarized away."""
-    observer = DrainMetrics(Metrics(metric_sink), clock=lambda: 0.0)
+    observer = DrainMetrics(
+        Metrics(metric_sink), summary=SuccessSummary(clock=lambda: 0.0)
+    )
     for is_live in (False, True, True, False, False):
         observer.call("empty_check", lambda is_live=is_live: is_live, pending=bool)
     assert _states(metric_sink) == ["completed", "pending", "pending", "completed"], (

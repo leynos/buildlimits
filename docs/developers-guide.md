@@ -666,17 +666,28 @@ general journal or metrics API. Schema validation and capped failure-count
 helpers stay inside the tracing transport; metric counters keep their separate
 owners and limits.
 
-Keep per-request volume out of the journal. `DrainMetrics` records failures,
-pending live work, recoveries and state changes, but summarizes repeated
-successes to one record per operation every `ROUTINE_SUMMARY_SECONDS`; its
-`clock` parameter makes that interval testable. Plain diagnostic lines go
-through `journal.log`. Pass `routine=True` only for a line written for healthy,
-high-volume work, such as an admission or a clean finish. Such a line is
-written only when `BUILD_LIMITS_ROUTINE_LINES` is `1`, and then carries the
-`<7>` debug priority when stderr is the stream that `JOURNAL_STREAM` names. The
-variable is the switch because `LogLevelMax=` on the user unit did not filter
-these lines under systemd 257. Anything an operator may need to act on keeps
-the default priority and is always written.
+Keep per-request volume out of the journal. `DrainMetrics` counts every
+attempt, fault and recovery, and composes `drain_summary.SuccessSummary` to
+decide which success records are worth writing. The summary records a success
+that changes the operation's last state, and otherwise at most one per
+operation every `drain_summary.ROUTINE_SUMMARY_SECONDS`; the summary's injected
+`clock` makes that interval testable, and the counting rules stay in
+`DrainMetrics`.
+
+`journal` renders line text and writes it; `journal_policy` decides which lines
+are written. `journal.log` takes an explicit `priority_prefix` and reads no
+environment. `journal_policy.RoutineLines` is resolved once by the service
+entry point, which reads `BUILD_LIMITS_ROUTINE_LINES` and `JOURNAL_STREAM`
+there, and travels with the supervisor to the requester and placement code that
+write routine lines. Pass `routine=True` only for a line written for healthy,
+high-volume work, such as an admission or a clean finish.
+`journal_policy.is_routine_finish` classifies a finish without doing I/O, and
+the caller pairs it with `journal.finished_line`. A routine line is written
+only when the variable is `1`, and then carries the `<7>` debug priority when
+stderr is the stream that `JOURNAL_STREAM` names. The variable is the switch
+because `LogLevelMax=` on the user unit did not filter these lines under
+systemd 257. Anything an operator may need to act on keeps the default priority
+and is always written.
 
 ## 10. Adapters
 

@@ -1,6 +1,9 @@
-"""The supervisor's diagnostic lines, which systemd records in the journal."""
+"""Render the supervisor's diagnostic lines and write them to the journal.
 
-import os
+Which lines are worth writing, and at which priority, is decided in
+:mod:`buildlimits.journal_policy`; this module only decides how a line reads.
+"""
+
 import sys
 import typing as typ
 from pathlib import Path
@@ -9,52 +12,28 @@ if typ.TYPE_CHECKING:
     from buildlimits.effects import Exit
     from buildlimits.requesters import Pending
 
-# Routine lines repeat what the metric records already hold, once per compile,
-# so they are written only when an operator asks for them.
-ROUTINE_LINES_VARIABLE = "BUILD_LIMITS_ROUTINE_LINES"
-# systemd reads a leading ``<N>`` as the line's syslog priority when stderr is a
-# journal stream, so requested routine lines stay out of ``journalctl -p info``.
-DEBUG_PRIORITY = "<7>"
 
-
-def log(message: str, *, routine: bool = False) -> None:
+def log(message: str, *, priority_prefix: str = "") -> None:
     """Write one diagnostic line for the journal.
 
     Parameters
     ----------
     message : str
         The line, without the supervisor's prefix.
-    routine : bool
-        Whether the line records healthy, high-volume work. Such a line is
-        written only when ``BUILD_LIMITS_ROUTINE_LINES`` is ``1``, and then at
-        debug priority when stderr is the journal.
+    priority_prefix : str
+        The leading syslog priority a journal stream parses, empty for a line
+        the operator should see at the default priority.
 
     Examples
     --------
     >>> log("cache recovery: stopping")  # doctest: +SKIP
     build-limits-supervisor: cache recovery: stopping
     """
-    if routine and os.environ.get(ROUTINE_LINES_VARIABLE) != "1":
-        return
-    prefix = DEBUG_PRIORITY if routine and _stderr_is_journal() else ""
-    print(f"{prefix}build-limits-supervisor: {message}", file=sys.stderr, flush=True)
-
-
-def _stderr_is_journal() -> bool:
-    """Report whether stderr is the journal stream systemd connected.
-
-    Returns
-    -------
-    bool
-        True only when ``JOURNAL_STREAM`` names stderr's device and inode, so a
-        terminal or a redirected file never sees a priority prefix.
-    """
-    device, _separator, inode = os.environ.get("JOURNAL_STREAM", "").partition(":")
-    try:
-        status = os.fstat(sys.stderr.fileno())
-        return (status.st_dev, status.st_ino) == (int(device), int(inode))
-    except AttributeError, OSError, ValueError:
-        return False
+    print(
+        f"{priority_prefix}build-limits-supervisor: {message}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def admitted_line(entry: Pending, *, cached: bool, cache_name: str = "sccache") -> str:
@@ -87,8 +66,8 @@ def admitted_line(entry: Pending, *, cached: bool, cache_name: str = "sccache") 
     )
 
 
-def log_finished(entry: Pending, runtime: float, exit_: Exit) -> None:
-    """Record a finished request; a clean finish is a routine line.
+def finished_line(entry: Pending, runtime: float, exit_: Exit) -> str:
+    """Describe a finished request without deciding whether it is notable.
 
     Parameters
     ----------
@@ -99,16 +78,17 @@ def log_finished(entry: Pending, runtime: float, exit_: Exit) -> None:
     exit_ : Exit
         How the group's leader ended.
 
+    Returns
+    -------
+    str
+        The journal line.
+
     Examples
     --------
-    A failed compile keeps the default priority:
-
-    >>> log_finished(entry, 1.25, Exit(code=1, signal=None))  # doctest: +SKIP
-    build-limits-supervisor: finished request 7 (g3) after 1.2s: code=1 signal=None
+    >>> finished_line(entry, 1.25, Exit(code=1, signal=None))  # doctest: +SKIP
+    'finished request 7 (g3) after 1.2s: code=1 signal=None'
     """
-    succeeded = entry.exec_error is None and exit_.code == 0 and exit_.signal is None
-    log(
+    return (
         f"finished request {entry.request_id} ({entry.group_id}) after "
-        f"{runtime:.1f}s: code={exit_.code} signal={exit_.signal}",
-        routine=succeeded,
+        f"{runtime:.1f}s: code={exit_.code} signal={exit_.signal}"
     )
