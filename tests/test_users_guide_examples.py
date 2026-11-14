@@ -25,6 +25,10 @@ def _marked_example(identifier: str, language: str) -> str:
     """
     text = GUIDE.read_text(encoding="utf-8")
     marker = f"<!-- tested-example: {identifier} -->"
+    assert text.count(marker) == 1, (
+        "each tested example is identified by exactly one marker, so a "
+        "duplicate cannot hide behind the first one"
+    )
     start = text.index(marker) + len(marker)
     opening = f"\n```{language}\n"
     assert text.startswith(opening, start), (
