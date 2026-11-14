@@ -11,6 +11,7 @@ from buildlimits import journal
 from buildlimits.effects import Exit
 from buildlimits.journal_policy import (
     DEBUG_PRIORITY,
+    JOURNAL_STREAM_VARIABLE,
     ROUTINE_LINES_VARIABLE,
     RoutineLines,
     is_routine_finish,
@@ -59,6 +60,20 @@ def test_the_named_device_and_inode_identify_the_journal_stream(
         assert stream_is_journal(destination, environ), (
             "systemd's own stream is the one it named"
         )
+
+
+def test_a_named_journal_stream_resolves_the_debug_prefix(tmp_path: Path) -> None:
+    """The resolved setting carries the prefix only on systemd's own stream."""
+    with (tmp_path / "stderr").open("w") as destination:
+        status = os.fstat(destination.fileno())
+        environ = {
+            JOURNAL_STREAM_VARIABLE: f"{status.st_dev}:{status.st_ino}",
+            ROUTINE_LINES_VARIABLE: "1",
+        }
+        lines = RoutineLines.from_environment(environ, destination)
+    assert lines == RoutineLines(enabled=True, debug_prefix=DEBUG_PRIORITY), (
+        "a requested line on the journal stream is resolved with the prefix"
+    )
 
 
 @pytest.mark.parametrize(

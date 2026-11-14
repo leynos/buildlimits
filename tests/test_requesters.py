@@ -171,3 +171,25 @@ def test_disconnect_emits_one_terminal_record(metrics, metric_sink) -> None:
     assert all(r["BUILD_LIMITS_OUTCOME"] == "cancelled" for r in metric_sink.records), (
         "cancellations classified"
     )
+
+
+@pytest.mark.parametrize(
+    ("exit_", "is_written"),
+    [(Exit(code=0), False), (Exit(code=1), True)],
+    ids=["clean-finish", "failed-finish"],
+)
+def test_finish_routes_the_line_through_the_routine_setting(
+    capsys: pytest.CaptureFixture[str], exit_: Exit, *, is_written: bool
+) -> None:
+    """A clean finish is suppressed by default; a failure is always written."""
+    with selectors.DefaultSelector() as selector:
+        requests = Requests(selector, clock=lambda: 1.0)
+        requests.pending[1] = _secret_pending(1, None, arrived=0.0)
+        requests.finish(1, exit_)
+    written = capsys.readouterr().err
+    assert bool(written) is is_written, (
+        "the request table routes the line through the routine setting"
+    )
+    if is_written:
+        assert "finished request 1" in written, "the failure's line reaches stderr"
+        assert "code=1" in written, "the line reports the failing exit status"

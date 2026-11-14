@@ -153,6 +153,7 @@ Each module owns one decision. This table is the single module inventory.
 | `request_connections`                                                              | Unrecorded sockets, received rights and refusals                                                       |
 | `request_validation`, `requester_metrics`                                          | Pure validation over explicit context; terminal metric fields                                          |
 | `request_state`                                                                    | Compatibility re-export of `pending_request.Pending`                                                   |
+| `request_observation`                                                              | The metric, gauge and journal dependencies one request table reports through                           |
 | `descriptor_policy`, `descriptor_budget`                                           | Pure budget arithmetic; OS sampling, retention accounting and status                                   |
 | `listener_pressure`                                                                | Listener backpressure after accept-time exhaustion                                                     |
 | `groups`, `group_drain`, `group_recovery`                                          | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                          |
@@ -184,6 +185,7 @@ Each module owns one decision. This table is the single module inventory.
 | `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                                   |
 | `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                            |
 | `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, native journal datagrams, journal queries and reports                               |
+| `journal_policy`                                                                   | Which supervisor lines are written, and at which syslog priority                                       |
 | `outcome_vocabulary`                                                               | Closed cache-outcome and reading-reason vocabularies                                                   |
 | `outcome_stats`                                                                    | Pure parsing of supported sccache statistics into validated counters                                   |
 | `outcome_attribution`                                                              | Pure whole-window classification of labelled sccache counter windows                                   |
@@ -214,6 +216,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_resources`                                                                | Helper-reaper and store-writer ownership, with a non-blocking fault path and a bounded shutdown path   |
 | `outcome_shell_stats`                                                              | Bounded, privacy-safe counters for the optional recording status section                               |
 | `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                              |
+| `drain_summary`                                                                    | Decides when a repeated drain success still deserves its own record                                    |
 
 _Table 2: Package modules._
 
@@ -688,6 +691,15 @@ stderr is the stream that `JOURNAL_STREAM` names. The variable is the switch
 because `LogLevelMax=` on the user unit did not filter these lines under
 systemd 257. Anything an operator may need to act on keeps the default priority
 and is always written.
+
+`request_observation.RequestObservation` bundles the places one request reports
+a terminal outcome: `metrics` is the failure-isolated emitter, `counts` reads
+the current admission gauges, and `lines` is the supervisor's resolved
+`RoutineLines`. Every field defaults to `None`, and `Requests` substitutes its
+own defaults, so `Requests` takes one dependency bundle instead of a growing
+keyword list. The supervisor constructs one bundle from its own telemetry and
+passes it at creation; `Requests.finish` and `supervisor_placement.launch` then
+write through `lines` without consulting the environment.
 
 ## 10. Adapters
 
