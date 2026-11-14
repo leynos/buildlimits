@@ -73,6 +73,15 @@ def test_a_stream_without_a_descriptor_is_reported_as_uninspectable() -> None:
     ), "a stream that cannot be inspected is not silently called a non-journal"
 
 
+def test_a_closed_stream_is_reported_as_uninspectable(tmp_path: Path) -> None:
+    """A closed descriptor answers with an error rather than a device and inode."""
+    with (tmp_path / "stderr").open("w") as destination:
+        pass
+    assert journal_stream(destination, {"JOURNAL_STREAM": "1:1"}) is (
+        JournalStream.UNINSPECTABLE
+    ), "a closed stream is uninspectable, not a crash at start-up"
+
+
 def test_the_named_device_and_inode_identify_the_journal_stream(
     tmp_path: Path,
 ) -> None:

@@ -697,12 +697,13 @@ doing I/O, and the caller pairs it with `journal.finished_line`. A routine line
 is written only when the variable is `1`, and then carries the `<7>` debug
 priority when the stream is the one `JOURNAL_STREAM` names.
 `journal_policy.journal_stream` reports that comparison as a `JournalStream`
-rather than a `bool`, so a stream the probe cannot inspect is reported as
-`UNINSPECTABLE` instead of being folded into `OTHER`; `resolve_routine_lines`
-resolves such a stream without a prefix, keeping the line visible rather than
-printing a literal `<7>`. The variable is the switch because `LogLevelMax=` on
-the user unit did not filter these lines under systemd 257. Anything an
-operator may need to act on keeps the default priority and is always written.
+rather than a `bool`, so a stream the probe cannot inspect — replaced, in
+memory, or already closed — is reported as `UNINSPECTABLE` instead of being
+folded into `OTHER`; `resolve_routine_lines` resolves such a stream without a
+prefix, keeping the line visible rather than printing a literal `<7>`. The
+variable is the switch because `LogLevelMax=` on the user unit did not filter
+these lines under systemd 257. Anything an operator may need to act on keeps
+the default priority and is always written.
 
 `request_observation.RequestObservation` bundles the places one request reports
 a terminal outcome: `metrics` is the failure-isolated emitter, `counts` reads

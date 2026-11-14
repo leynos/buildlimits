@@ -84,13 +84,21 @@ def journal_stream(
         A stream the probe cannot inspect is reported as ``UNINSPECTABLE``
         rather than folded into ``OTHER``, so the caller decides what an
         unreadable descriptor means instead of the probe guessing.
+
+    Notes
+    -----
+    ``fileno`` is not total: a stream without a descriptor raises
+    ``AttributeError``, an in-memory stream raises ``OSError`` through
+    ``io.UnsupportedOperation``, and a closed stream raises ``ValueError``.
+    All three are the same fact for this probe, so all three are inspected
+    rather than raised.
     """
     named = _named_stream(environ)
     if named is None:
         return JournalStream.OTHER
     try:
         status = os.fstat(stream.fileno())
-    except AttributeError, OSError:
+    except AttributeError, OSError, ValueError:
         return JournalStream.UNINSPECTABLE
     if (status.st_dev, status.st_ino) == named:
         return JournalStream.JOURNAL
