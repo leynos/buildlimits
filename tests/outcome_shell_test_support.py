@@ -38,10 +38,16 @@ class RecordingMetrics(Metrics):
         super().__init__()
         self.events: list[tuple[str, dict[str, object]]] = []
 
-    def emit(self, event: str, **fields: object) -> None:
-        """Record an event for assertions, then use the real schema boundary."""
+    def emit(self, event: str, **fields: object) -> bool:
+        """Record an event for assertions, then use the real schema boundary.
+
+        Returns
+        -------
+        bool
+            Whether the schema boundary accepted the record.
+        """
         self.events.append((event, fields))
-        super().emit(event, **fields)
+        return super().emit(event, **fields)
 
 
 class PendingStatistics:

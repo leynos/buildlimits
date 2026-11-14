@@ -128,7 +128,7 @@ def test_resume_failure_preserves_unexpected_registration_errors(
 class BrokenMetrics:
     """A caller-supplied port that refuses every observation."""
 
-    def emit(self, event: str, **_fields: object) -> None:
+    def emit(self, event: str, **_fields: object) -> bool:
         """Inject a telemetry failure without exposing field content."""
         del event
         msg = "unavailable metrics"

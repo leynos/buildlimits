@@ -263,7 +263,36 @@ def test_launch_notifies_before_release_or_abandons_disconnected_group(
         "a disconnected requester returns the group token once"
     )
     if requester_present:
-        assert "admitted request 1 as g1" in capsys.readouterr().err, "admission logged"
+        assert "admitted request" not in capsys.readouterr().err, (
+            "a routine admission is left to the metric records by default"
+        )
+
+
+def test_a_released_admission_is_written_as_a_routine_line(
+    supervisor: Supervisor,
+) -> None:
+    """A successful release writes the admission through the routine setting."""
+    import io
+
+    from buildlimits.journal_policy import RoutineLines, RoutineLineWriter
+
+    out = io.StringIO()
+    supervisor.routine_lines = RoutineLineWriter(RoutineLines(enabled=True), out)
+    supervisor.groups = typ.cast(
+        "Groups", FakeGroups(order=[], placed=types.SimpleNamespace(exec_error=None))
+    )
+    supervisor.requests.pending[1] = crate_pending(1)
+    supervisor.admission.groups["g1"] = Group("g1", 1, b"a", cached=False)
+    attach_pool(supervisor)
+    client, connection = socket.socketpair()
+    with client, connection:
+        supervisor.requests.pending[1].conn = connection
+        supervisor._launch(1, "g1", cached=False)
+
+    written = out.getvalue()
+    assert written.startswith("build-limits-supervisor: admitted request 1"), (
+        "an enabled routine setting still receives the admission: it is routine work"
+    )
 
 
 def test_metrics_admission_and_failure_boundaries(

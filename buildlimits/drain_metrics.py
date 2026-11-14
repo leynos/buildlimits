@@ -4,6 +4,7 @@ import contextlib
 import typing as typ
 
 from buildlimits.cache_backend import LiveCacheWorkError
+from buildlimits.drain_summary import SuccessSummary
 from buildlimits.metrics import MAX_COUNTER, VOCABULARIES, Metrics
 
 if typ.TYPE_CHECKING:
@@ -20,11 +21,27 @@ class DrainMetrics:
     port : MetricsPort | None
         Failure-isolated observer; absent discards observations. It receives no
         request or group identity.
+    summary : SuccessSummary | None
+        Decides which success records are worth writing; absent summarizes
+        repeated successes on the monotonic clock.
+
+    Notes
+    -----
+    Failures, pending live work and recoveries are always recorded. A success
+    is recorded when it changes the operation's last recorded state, or when
+    :class:`~buildlimits.drain_summary.SuccessSummary` says its interval has
+    passed since that operation's last success record.
     """
 
-    def __init__(self, port: MetricsPort | None = None) -> None:
+    def __init__(
+        self,
+        port: MetricsPort | None = None,
+        *,
+        summary: SuccessSummary | None = None,
+    ) -> None:
         """Reset five fixed operation counters for this supervisor lifetime."""
         self._port = port if port is not None else Metrics()
+        self._summary = summary if summary is not None else SuccessSummary()
         self._attempts = dict.fromkeys(VOCABULARIES["drain_operation"], 0)
         self._failures = self._attempts.copy()
         self._recoveries = self._attempts.copy()
@@ -125,9 +142,20 @@ class DrainMetrics:
         counters[operation] = min(MAX_COUNTER, counters[operation] + 1)
 
     def _record(self, operation: str, state: str, reason: str) -> None:
-        """Drop observation failures without retaining exception text."""
+        """Drop observation failures without retaining exception text.
+
+        The summary remembers only records the port accepted, so a lost
+        emission leaves the next identical success looking like a state change
+        and it is written again. Recording first would let one lost emission
+        silence the operation for a whole summary interval with no signal, and
+        an exception is not the only way to lose one: the production port
+        absorbs failure and reports it instead, so the port's answer decides
+        whether the summary may remember the record.
+        """
         with contextlib.suppress(Exception):
-            self._port.emit(
+            if self._summary.is_repeat(operation, state):
+                return
+            accepted = self._port.emit(
                 "drain_progress",
                 drain_operation=operation,
                 drain_state=state,
@@ -136,3 +164,5 @@ class DrainMetrics:
                 drain_failures=self._failures[operation],
                 drain_recoveries=self._recoveries[operation],
             )
+            if accepted:
+                self._summary.recorded(operation, state)

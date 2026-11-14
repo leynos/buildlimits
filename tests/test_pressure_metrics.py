@@ -19,7 +19,7 @@ class FailingPort:
     """Reject observations to test independence from the underlying operation."""
 
     @staticmethod
-    def emit(event: str, **_fields: object) -> None:
+    def emit(event: str, **_fields: object) -> bool:
         """Raise a private error whose details must not leave the observer."""
         del event
         msg = "private transport failure /secret/path"
@@ -93,13 +93,13 @@ def test_failed_emission_still_observes_queue_maximum(metric_sink) -> None:
             """Start with one fault remaining."""
             self.failed = False
 
-        def emit(self, event: str, **fields: object) -> None:
+        def emit(self, event: str, **fields: object) -> bool:
             """Expose one port failure before using the validating emitter."""
             if not self.failed:
                 self.failed = True
                 msg = "private failure"
                 raise OSError(msg)
-            Metrics(metric_sink).emit(event, **fields)
+            return Metrics(metric_sink).emit(event, **fields)
 
     state: dict[str, object] = {"queued": 8}
     observer = PressureMetrics(FailOnce(), lambda: state)

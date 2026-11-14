@@ -153,6 +153,7 @@ Each module owns one decision. This table is the single module inventory.
 | `request_connections`                                                              | Unrecorded sockets, received rights and refusals                                                       |
 | `request_validation`, `requester_metrics`                                          | Pure validation over explicit context; terminal metric fields                                          |
 | `request_state`                                                                    | Compatibility re-export of `pending_request.Pending`                                                   |
+| `request_observation`                                                              | The metric, gauge and journal dependencies one request table reports through                           |
 | `descriptor_policy`, `descriptor_budget`                                           | Pure budget arithmetic; OS sampling, retention accounting and status                                   |
 | `listener_pressure`                                                                | Listener backpressure after accept-time exhaustion                                                     |
 | `groups`, `group_drain`, `group_recovery`                                          | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                          |
@@ -184,6 +185,7 @@ Each module owns one decision. This table is the single module inventory.
 | `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                                   |
 | `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                            |
 | `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, native journal datagrams, journal queries and reports                               |
+| `journal_policy`                                                                   | Which supervisor lines are written, and at which syslog priority                                       |
 | `outcome_vocabulary`                                                               | Closed cache-outcome and reading-reason vocabularies                                                   |
 | `outcome_stats`                                                                    | Pure parsing of supported sccache statistics into validated counters                                   |
 | `outcome_attribution`                                                              | Pure whole-window classification of labelled sccache counter windows                                   |
@@ -214,6 +216,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_resources`                                                                | Helper-reaper and store-writer ownership, with a non-blocking fault path and a bounded shutdown path   |
 | `outcome_shell_stats`                                                              | Bounded, privacy-safe counters for the optional recording status section                               |
 | `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                              |
+| `drain_summary`                                                                    | Decides when a repeated drain success still deserves its own record                                    |
 
 _Table 2: Package modules._
 
@@ -665,6 +668,59 @@ implements. Keep this port scoped to span export rather than treating it as a
 general journal or metrics API. Schema validation and capped failure-count
 helpers stay inside the tracing transport; metric counters keep their separate
 owners and limits.
+
+Keep per-request volume out of the journal. `DrainMetrics` counts every
+attempt, fault and recovery, and composes `drain_summary.SuccessSummary` to
+decide which success records are worth writing. The summary records a success
+that changes the operation's last state, and otherwise at most one per
+operation every `drain_summary.ROUTINE_SUMMARY_SECONDS`; the summary's injected
+`clock` makes that interval testable, and the counting rules stay in
+`DrainMetrics`. `DrainMetrics` emits before it asks the summary to record, and
+records only a record the port reports as accepted, so an emission the operator
+never received is never remembered as written: the next identical success stays
+a state change and is emitted again. Emission therefore answers rather than
+only signalling failure. `MetricsPort.emit` and `MetricsSink.emit` return
+whether the record reached its destination, and `metrics.Metrics` keeps
+absorbing transport exceptions instead of raising them, so the answer is the
+only channel through which a caller can learn that a record was lost.
+`metrics.NullSink` reports success because nothing was configured to send, while
+`JournalSink` reports `False` when the host has no journal socket at its path.
+
+`journal` renders line text and writes it; `journal_policy` decides which lines
+are written and applies that decision. `journal.log` takes the stream it writes
+to and an explicit `priority_prefix`, and reads no environment. The policy has
+two units with one responsibility each: `journal_policy.resolve_routine_lines`
+returns a `RoutineLines` value object from an environment mapping, and
+`journal_policy.RoutineLineWriter` writes lines to one stream, applying that
+value. `journal_policy.journal_writer` is the composition-root entry point: it
+resolves the setting once and binds it to the same stream, so the stream whose
+device and inode decided the `<7>` prefix is always the stream that receives
+the line. The service entry point calls it once, reading
+`BUILD_LIMITS_ROUTINE_LINES` and `JOURNAL_STREAM` there, and the writer travels
+with the supervisor to the requester and placement code. Pass `routine=True`
+only for a line written for healthy, high-volume work, such as an admission or
+a clean finish. `journal_policy.is_routine_finish` classifies a finish without
+doing I/O, and the caller pairs it with `journal.finished_line`. A routine line
+is written only when the variable is `1`, and then carries the `<7>` debug
+priority when the stream is the one `JOURNAL_STREAM` names.
+`journal_policy.journal_stream` reports that comparison as a `JournalStream`
+rather than a `bool`, so a stream the probe cannot inspect — replaced, in
+memory, or already closed — is reported as `UNINSPECTABLE` instead of being
+folded into `OTHER`; `resolve_routine_lines` resolves such a stream without a
+prefix, keeping the line visible rather than printing a literal `<7>`. The
+variable is the switch because `LogLevelMax=` on the user unit did not filter
+these lines under systemd 257. Anything an operator may need to act on keeps
+the default priority and is always written.
+
+`request_observation.RequestObservation` bundles the places one request reports
+a terminal outcome: `metrics` is the failure-isolated emitter, `counts` reads
+the current admission gauges, and `lines` is the supervisor's
+`RoutineLineWriter`. Every field defaults to `None`, and `Requests` substitutes
+its own defaults, so `Requests` takes one dependency bundle instead of a
+growing keyword list. The supervisor constructs one bundle from its own
+telemetry and passes it at creation; `Requests.finish` and
+`supervisor_placement.launch` then write through `lines` without consulting the
+environment.
 
 ## 10. Adapters
 

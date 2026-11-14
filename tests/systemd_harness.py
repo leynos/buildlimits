@@ -142,6 +142,9 @@ class Harness(
         # fixture unit's own).
         self.path_prefix: Path | None = None
         self.kill_mode: str | None = None
+        # Environment for the supervisor's own transient unit, which is how an
+        # operator configures a switch that has no configuration-file key.
+        self.unit_env: dict[str, str] = {}
         self.pool = self.runtime / "pool"
         os.mkfifo(self.pool)
         self._holder: int | None = os.open(self.pool, os.O_RDWR | os.O_CLOEXEC)
@@ -184,7 +187,7 @@ class Harness(
         if self.cached:
             self._start_cached(argv)
         else:
-            run_unit(self.unit, argv, {}, self.placement)
+            run_unit(self.unit, argv, self.unit_env, self.placement)
         if not wait_for(self._listening):
             raise RuntimeError(self.journal())
         wants_cache = self.cached or (self.kache.enabled and self.kache.serving)

@@ -3,7 +3,7 @@
 import typing as typ
 
 from buildlimits import effect_dispatch, kache_guard, supervisor_shutdown
-from buildlimits.journal import admitted_line, log
+from buildlimits.journal import admitted_line
 from buildlimits.protocol import Admitted
 
 if typ.TYPE_CHECKING:
@@ -50,7 +50,10 @@ def launch(
             outcome = "release_failed"
             failure_category = "launch_release"
         else:
-            log(admitted_line(entry, cached=cached, cache_name=supervisor.backend.name))
+            supervisor.routine_lines.write(
+                admitted_line(entry, cached=cached, cache_name=supervisor.backend.name),
+                routine=True,
+            )
             supervisor.outcomes.launched(entry, group_id)
             outcome = "admitted"
             failure_category = "none"

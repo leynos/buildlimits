@@ -51,11 +51,11 @@ def test_large_datagram_is_dropped_without_memfd(tmp_path: Path) -> None:
         })
 
 
-def test_absent_journal_is_a_silent_null_sink(tmp_path: Path) -> None:
-    """Minimal hosts can run the supervisor without any journal socket."""
+def test_absent_journal_reports_the_record_as_undelivered(tmp_path: Path) -> None:
+    """Minimal hosts run without a socket, and the loss is never silent."""
     emitter = Metrics(JournalSink(tmp_path / "absent"))
-    emitter.emit("supervisor_started")
-    assert emitter.dropped_records == 0, "null sink succeeds silently"
+    assert not emitter.emit("supervisor_started"), "nothing reached a journal"
+    assert emitter.dropped_records == 1, "an absent transport is a lost record"
 
 
 def test_socket_error_reopens_on_next_attempt(tmp_path: Path) -> None:

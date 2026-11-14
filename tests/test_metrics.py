@@ -85,7 +85,7 @@ def test_sink_and_warning_failures_are_isolated() -> None:
     class BrokenSink:
         """A transport that exposes an arbitrary failure."""
 
-        def emit(self, record) -> None:
+        def emit(self, record) -> bool:
             """Fail without emitting."""
             msg = "secret raw transport error"
             raise RuntimeError(msg)
@@ -113,6 +113,37 @@ def test_invalid_event_drops_entire_record(metric_sink) -> None:
     emitter.emit("request_custom", queued=1)
     assert not metric_sink.records, "invalid event drops everything"
     assert emitter.dropped_records == 1, "drop counted"
+
+
+def test_emission_reports_whether_the_record_reached_its_destination(
+    metric_sink,
+) -> None:
+    """A kept record reports success; one the boundary refused does not."""
+    emitter = Metrics(metric_sink)
+    assert emitter.emit("request_finished"), "a kept record reports delivery"
+    assert not emitter.emit("request_custom"), (
+        "an unknown event reports that nothing was delivered"
+    )
+
+
+def test_the_default_transport_reports_records_as_handled() -> None:
+    """With no transport configured, nothing was asked to send and nothing lost."""
+    emitter = Metrics()
+    assert emitter.emit("request_finished"), "a deliberate discard is not a loss"
+    assert emitter.dropped_records == 0, "no configured sink reports no failure"
+    """A silent refusal is a lost record, not an accepted one."""
+
+    class UndeliveredSink:
+        """Report every record as undeliverable without raising."""
+
+        @staticmethod
+        def emit(_record) -> bool:
+            """Refuse the record."""
+            return False
+
+    emitter = Metrics(UndeliveredSink())
+    assert not emitter.emit("request_finished"), "the loss is reported"
+    assert emitter.dropped_records == 1, "the loss is counted rather than hidden"
 
 
 def test_gauge_snapshot_is_frozen() -> None:

@@ -1035,6 +1035,32 @@ retries. High-water values are lifetime maxima of the producer, not maxima for
 the window. Drain attempt, failure and recovery counters are cumulative
 snapshots, so the report shows the largest value observed rather than a sum.
 
+The supervisor terminates and empty-checks every finished group, so drain
+progress records only what changes: every failure, pending live work and
+recovery, the first success after a different state, and at most one record of
+repeated successes per operation every 10 minutes. A window's drain observation
+counts therefore exclude routine successes, while the cumulative counters on
+each record still include them.
+
+### Routine journal lines
+
+By default the supervisor does not write a plain line for each admission or
+each clean finish: the metric records already hold the wait, runtime, outcome
+and cache path. Failed, signalled and unstartable compiles are always written.
+To see every admission and finish again, for example while following one
+group's request and group identifiers, set the variable in a drop-in and
+restart the supervisor at a quiet point:
+
+<!-- tested-example: buildlimits-routine-lines-drop-in -->
+```ini
+[Service]
+Environment=BUILD_LIMITS_ROUTINE_LINES=1
+```
+
+The routine lines are then written at debug priority, so
+`journalctl --user --unit buildlimits-supervisor.service --priority info` still
+hides them.
+
 Supervisor records are trusted only when journald supplies
 `_SYSTEMD_USER_UNIT=buildlimits-supervisor.service`; adapter records are
 self-reported. Journal rate limits and retention can lose history, and the raw

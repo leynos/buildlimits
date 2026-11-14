@@ -37,7 +37,7 @@ class PressureMetrics:
         self._snapshot = snapshot
         self._queued_high_water = 0
 
-    def emit(self, event: str, **fields: object) -> None:
+    def emit(self, event: str, **fields: object) -> bool:
         """Emit one enriched event without allowing observation errors out.
 
         Parameters
@@ -46,6 +46,13 @@ class PressureMetrics:
             Existing fixed catalogue event.
         **fields : object
             Event-specific bounded measurements.
+
+        Returns
+        -------
+        bool
+            Whether the underlying port took the record. A failed snapshot
+            emits nothing and reports ``False``, so an observation error never
+            leaves a caller believing a record was written.
         """
         with contextlib.suppress(Exception):
             gauges = dict(self._snapshot())
@@ -56,7 +63,8 @@ class PressureMetrics:
                 )
             fields.update(gauges)
             fields["queued_high_water"] = self._queued_high_water
-            self._port.emit(event, **fields)
+            return bool(self._port.emit(event, **fields))
+        return False
 
 
 def supervisor_metrics(supervisor: Supervisor, port: MetricsPort) -> PressureMetrics:
