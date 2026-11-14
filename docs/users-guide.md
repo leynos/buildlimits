@@ -1051,6 +1051,7 @@ To see every admission and finish again, for example while following one
 group's request and group identifiers, set the variable in a drop-in and
 restart the supervisor at a quiet point:
 
+<!-- tested-example: buildlimits-routine-lines-drop-in -->
 ```ini
 [Service]
 Environment=BUILD_LIMITS_ROUTINE_LINES=1
