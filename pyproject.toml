@@ -531,6 +531,12 @@ full_name = ["buildlimits.journal_native.JournalSink.emit_trace"]
 path = ["buildlimits/journal_native.py"]
 reason = "JournalSpanExporter.export calls self.sink.emit_trace, where the sink is typed as the _TraceSinkPort protocol tracing_sdk_export declares; Skylos resolves the call edge to a concrete class only sometimes, so this method is reported as unused on some scans of an unchanged tree. JournalTracer binds a real JournalSink from service.py, and test_tracing.py asserts the export reaches an injected sink override."
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = ["buildlimits.metrics.NullSink.emit"]
+path = ["buildlimits/metrics.py"]
+reason = "Metrics.__init__ defaults its transport to NullSink when no sink is configured, and Metrics.emit calls self.sink.emit through the MetricsSink protocol, which Skylos does not resolve to the concrete default. test_metrics.py asserts that the default transport reports a record as handled without counting a drop."
+
 [tool.nose]
 version = "0.20.0"
 roots = ["."]

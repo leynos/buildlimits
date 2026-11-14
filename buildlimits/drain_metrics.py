@@ -144,15 +144,18 @@ class DrainMetrics:
     def _record(self, operation: str, state: str, reason: str) -> None:
         """Drop observation failures without retaining exception text.
 
-        The summary remembers only records the sink accepted, so a failed
+        The summary remembers only records the port accepted, so a lost
         emission leaves the next identical success looking like a state change
         and it is written again. Recording first would let one lost emission
-        silence the operation for a whole summary interval with no signal.
+        silence the operation for a whole summary interval with no signal, and
+        an exception is not the only way to lose one: the production port
+        absorbs failure and reports it instead, so the port's answer decides
+        whether the summary may remember the record.
         """
         with contextlib.suppress(Exception):
             if self._summary.is_repeat(operation, state):
                 return
-            self._port.emit(
+            accepted = self._port.emit(
                 "drain_progress",
                 drain_operation=operation,
                 drain_state=state,
@@ -161,4 +164,5 @@ class DrainMetrics:
                 drain_failures=self._failures[operation],
                 drain_recoveries=self._recoveries[operation],
             )
-            self._summary.recorded(operation, state)
+            if accepted:
+                self._summary.recorded(operation, state)

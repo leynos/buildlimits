@@ -675,9 +675,16 @@ decide which success records are worth writing. The summary records a success
 that changes the operation's last state, and otherwise at most one per
 operation every `drain_summary.ROUTINE_SUMMARY_SECONDS`; the summary's injected
 `clock` makes that interval testable, and the counting rules stay in
-`DrainMetrics`. `DrainMetrics` emits before it asks the summary to record, so a
-record the sink refused is never remembered as written: the next identical
-success stays a state change and is emitted again.
+`DrainMetrics`. `DrainMetrics` emits before it asks the summary to record, and
+records only a record the port reports as accepted, so an emission the operator
+never received is never remembered as written: the next identical success stays
+a state change and is emitted again. Emission therefore answers rather than
+only signalling failure. `MetricsPort.emit` and `MetricsSink.emit` return
+whether the record reached its destination, and `metrics.Metrics` keeps
+absorbing transport exceptions instead of raising them, so the answer is the
+only channel through which a caller can learn that a record was lost.
+`metrics.NullSink` reports success because nothing was configured to send, while
+`JournalSink` reports `False` when the host has no journal socket at its path.
 
 `journal` renders line text and writes it; `journal_policy` decides which lines
 are written and applies that decision. `journal.log` takes the stream it writes

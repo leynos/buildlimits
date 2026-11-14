@@ -4,8 +4,6 @@ import socket
 import typing as typ
 from pathlib import Path
 
-from buildlimits.metrics import NullSink
-
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -25,8 +23,9 @@ class JournalSink:
 
     Notes
     -----
-    Missing sockets use a null sink for that attempt. The next attempt probes
-    again, so a journal socket which appears later can receive records.
+    A missing socket sends nothing and reports the record as undelivered. The
+    next attempt probes again, so a journal socket which appears later can
+    receive records, and a caller is never told a record arrived when none did.
     """
 
     def __init__(
@@ -36,9 +35,8 @@ class JournalSink:
         self.path = path
         self.identifier = identifier
         self._socket: socket.socket | None = None
-        self._null = NullSink()
 
-    def emit(self, record: cabc.Mapping[str, str]) -> None:
+    def emit(self, record: cabc.Mapping[str, str]) -> bool:
         """Serialize and send one record, reconnecting after socket errors.
 
         Parameters
@@ -46,12 +44,19 @@ class JournalSink:
         record : Mapping[str, str]
             Validated prefixed fields, without journal-owned names.
 
+        Returns
+        -------
+        bool
+            Whether the datagram was sent. A host without a journal socket
+            reports ``False`` rather than looking like a delivered record, so
+            a caller that summarizes emissions can tell the loss apart.
+
         Notes
         -----
         The native transport can raise ``OSError`` for serialization, size
         validation or sending failures. It performs no blocking retry.
         """
-        self._emit(
+        return self._emit(
             record,
             message=f"build-limits metric {record.get('BUILD_LIMITS_EVENT', '')}",
         )
@@ -82,8 +87,14 @@ class JournalSink:
         if conn is not None:
             conn.close()
 
-    def _emit(self, record: cabc.Mapping[str, str], *, message: str) -> None:
+    def _emit(self, record: cabc.Mapping[str, str], *, message: str) -> bool:
         """Send one bounded record and reconnect after socket errors.
+
+        Returns
+        -------
+        bool
+            Whether the datagram was sent; ``False`` only when this host has no
+            journal socket at the configured path.
 
         Raises
         ------
@@ -94,8 +105,7 @@ class JournalSink:
             payload = self._serialize_message(record, message)
             if self._socket is None:
                 if not self.path.exists():
-                    self._null.emit(record)
-                    return
+                    return False
                 self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
                 self._socket.settimeout(0.0)
                 self._socket.connect(str(self.path))
@@ -103,6 +113,7 @@ class JournalSink:
         except OSError:
             self.close()
             raise
+        return True
 
     def _serialize_message(self, record: cabc.Mapping[str, str], message: str) -> bytes:
         """Encode validated fields with the supplied bounded journal message.

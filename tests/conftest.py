@@ -90,15 +90,21 @@ class RecordingSink:
         """Start without records."""
         self.records: list[dict[str, str]] = []
 
-    def emit(self, record: cabc.Mapping[str, str]) -> None:
+    def emit(self, record: cabc.Mapping[str, str]) -> bool:
         """Keep an independent copy of one record.
 
         Parameters
         ----------
         record : Mapping[str, str]
             Validated journal fields.
+
+        Returns
+        -------
+        bool
+            ``True``: the record was kept, so nothing was lost.
         """
         self.records.append(dict(record))
+        return True
 
     def of_event(self, event: str) -> list[dict[str, str]]:
         """Select the records of one metric event, in emission order.

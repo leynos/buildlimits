@@ -41,6 +41,7 @@ EXPECTED_ENTRYPOINTS = {
     ),
     "buildlimits.outcome_replay.H2Report.as_dict": "buildlimits/outcome_replay.py",
     "buildlimits.outcome_replay.H3Report.as_dict": "buildlimits/outcome_replay.py",
+    "buildlimits.metrics.NullSink.emit": "buildlimits/metrics.py",
 }
 
 

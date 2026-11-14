@@ -46,20 +46,28 @@ if typ.TYPE_CHECKING:
 class MetricsSink(typ.Protocol):
     """Transport for a validated native journal record."""
 
-    def emit(self, record: cabc.Mapping[str, str], /) -> None:
+    def emit(self, record: cabc.Mapping[str, str], /) -> bool:
         """Send one bounded record.
 
         Parameters
         ----------
         record : Mapping[str, str]
             ASCII native journal fields with a fixed vocabulary.
+
+        Returns
+        -------
+        bool
+            Whether the record reached its destination. A transport configured
+            to discard records deliberately reports ``True``; one that wanted
+            to send but could not reports ``False``, so a caller that must know
+            what the operator saw can tell the two apart.
         """
 
 
 class MetricsPort(typ.Protocol):
     """Failure-isolated domain port for metric events."""
 
-    def emit(self, event: str, **fields: object) -> None:
+    def emit(self, event: str, **fields: object) -> bool:
         """Record one event without affecting admission.
 
         Parameters
@@ -68,6 +76,12 @@ class MetricsPort(typ.Protocol):
             A member of the event catalogue.
         **fields : object
             Scalar measurements whose names fix their kinds.
+
+        Returns
+        -------
+        bool
+            Whether the event reached its destination; see
+            :meth:`MetricsSink.emit`.
         """
 
 
@@ -75,14 +89,20 @@ class NullSink:
     """Discard metrics when no transport is available."""
 
     @staticmethod
-    def emit(_record: cabc.Mapping[str, str], /) -> None:
+    def emit(_record: cabc.Mapping[str, str], /) -> bool:
         """Discard a record.
 
         Parameters
         ----------
         _record : Mapping[str, str]
             The already validated record, intentionally discarded.
+
+        Returns
+        -------
+        bool
+            ``True``: nothing was configured to send, so no send was lost.
         """
+        return True
 
 
 def refusal_reason(reason: str) -> str:
@@ -266,7 +286,7 @@ class Metrics:
         self.dropped_fields = 0
         self._warned = False
 
-    def emit(self, event: str, **fields: object) -> None:
+    def emit(self, event: str, **fields: object) -> bool:
         """Emit a bounded record, dropping invalid fields individually.
 
         Parameters
@@ -275,10 +295,17 @@ class Metrics:
             A catalogue event; invalid events drop the whole record.
         **fields : object
             Unprefixed measurements; unknown names never reach the sink.
+
+        Returns
+        -------
+        bool
+            Whether the sink took the record. ``False`` covers an unknown
+            event, a refused field set and a failing transport alike, so a
+            caller can avoid acting on a record the operator never received.
         """
         if not isinstance(event, str) or event not in EVENTS:
             self._drop()
-            return
+            return False
         record = {
             "BUILD_LIMITS_SCHEMA": "1",
             "BUILD_LIMITS_SOURCE": self.source,
@@ -292,9 +319,13 @@ class Metrics:
             else:
                 record[f"BUILD_LIMITS_{name.upper()}"] = bounded
         try:
-            self.sink.emit(record)
+            accepted = self.sink.emit(record)
         except Exception:  # ruff: ignore[blind-except] - telemetry cannot change admission or compiler results.
             self._drop()
+            return False
+        if not accepted:
+            self._drop()
+        return bool(accepted)
 
     def _drop(self) -> None:
         """Count one lost record without retaining its content."""

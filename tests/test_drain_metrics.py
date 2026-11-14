@@ -10,11 +10,16 @@ from hypothesis import strategies as st
 from buildlimits import drain_metrics
 from buildlimits.drain_metrics import DrainMetrics
 from buildlimits.drain_summary import SuccessSummary
+from buildlimits.journal_native import JournalSink
 from buildlimits.metrics import Metrics
 from buildlimits.sccache import LiveCacheWorkError, SccacheError
 
 if typ.TYPE_CHECKING:
+    from pathlib import Path
+
     from conftest import RecordingSink
+
+    from buildlimits.metrics import MetricsPort
 
 
 def _raise(error: Exception) -> typ.Never:
@@ -31,6 +36,26 @@ def _states(sink: RecordingSink) -> list[str]:
         One state per recorded observation.
     """
     return [record["BUILD_LIMITS_DRAIN_STATE"] for record in sink.records]
+
+
+def _repeat_one_success(port: MetricsPort) -> None:
+    """Report the same successful drain twice through ``port``.
+
+    Parameters
+    ----------
+    port : MetricsPort
+        The observation boundary under test.
+
+    Notes
+    -----
+    The summary clock stands still so the second success cannot be summarized
+    away by elapsed time: only the port's answer decides whether it is written.
+    """
+    observer = DrainMetrics(
+        port, summary=SuccessSummary(clock=lambda: 0.0, interval=600.0)
+    )
+    observer.call("terminate", lambda: None)
+    observer.call("terminate", lambda: None)
 
 
 @pytest.mark.parametrize(
@@ -254,7 +279,7 @@ def test_a_lost_record_does_not_silence_the_next_identical_success() -> None:
             self.calls = 0
             self.refused = False
 
-        def emit(self, event: str, **_fields: object) -> None:
+        def emit(self, event: str, **_fields: object) -> bool:
             """Fail once, as an unavailable journal would."""
             del event
             self.calls += 1
@@ -262,15 +287,27 @@ def test_a_lost_record_does_not_silence_the_next_identical_success() -> None:
                 self.refused = True
                 msg = "journal unavailable"
                 raise OSError(msg)
+            return True
 
     port = FailOnce()
-    observer = DrainMetrics(
-        port, summary=SuccessSummary(clock=lambda: 0.0, interval=600.0)
-    )
-    observer.call("terminate", lambda: None)
-    observer.call("terminate", lambda: None)
+    _repeat_one_success(port)
     assert port.calls == 2, (
         "the success after a lost record is written rather than summarized away"
+    )
+
+
+def test_an_undelivered_record_does_not_silence_the_next_identical_success(
+    tmp_path: Path,
+) -> None:
+    """The production port reports a lost datagram, so the summary holds nothing.
+
+    ``Metrics`` absorbs transport failures instead of raising them, so only the
+    port's answer can tell this caller that the operator saw nothing.
+    """
+    emitter = Metrics(JournalSink(tmp_path / "absent"))
+    _repeat_one_success(emitter)
+    assert emitter.dropped_records == 2, (
+        "each identical success is offered again while the journal socket is absent"
     )
 
 
