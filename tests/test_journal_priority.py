@@ -55,10 +55,10 @@ def _journal_environ(
     [None, "", "not-a-stream", "1:1"],
     ids=["unset", "empty", "malformed", "other-file"],
 )
-def test_a_terminal_or_file_never_sees_a_priority_prefix(
+def test_a_stream_the_environment_does_not_name_is_reported_as_other(
     tmp_path: Path, stream: str | None
 ) -> None:
-    """Without a matching journal stream the line is written unchanged."""
+    """A stream the environment does not name, or names badly, is not the journal."""
     environ = {} if stream is None else {"JOURNAL_STREAM": stream}
     with (tmp_path / "stderr").open("w") as destination:
         assert journal_stream(destination, environ) is JournalStream.OTHER, (
@@ -92,6 +92,16 @@ def test_the_named_device_and_inode_identify_the_journal_stream(
         ), "systemd's own stream is the one it named"
 
 
+def test_a_stream_matching_only_the_device_is_not_the_journal(tmp_path: Path) -> None:
+    """The device alone does not decide; systemd also names the inode."""
+    with (tmp_path / "stderr").open("w") as destination:
+        status = os.fstat(destination.fileno())
+        environ = {JOURNAL_STREAM_VARIABLE: f"{status.st_dev}:{status.st_ino + 1}"}
+        assert journal_stream(destination, environ) is JournalStream.OTHER, (
+            "a stream sharing the journal's device is still a different stream"
+        )
+
+
 def test_a_named_journal_stream_resolves_the_debug_prefix(tmp_path: Path) -> None:
     """The resolved setting carries the prefix only on systemd's own stream."""
     with (tmp_path / "stderr").open("w") as destination:
@@ -123,6 +133,65 @@ def test_the_prefix_and_the_line_share_one_stream(
         f"{DEBUG_PRIORITY}build-limits-supervisor: admitted request 1\n"
     ), "the line reaches the stream whose device and inode decided the prefix"
     assert not capsys.readouterr().err, "no part of the line leaks to stderr"
+
+
+def _unrelated_environ(
+    named: str, destination: typ.TextIO, other: typ.TextIO
+) -> dict[str, str]:
+    """Name some stream other than ``destination``, requesting routine lines.
+
+    Parameters
+    ----------
+    named : str
+        How the environment fails to name ``destination``.
+    destination : IO[str]
+        The stream the writer is given.
+    other : IO[str]
+        A second real file, named by the ``another-file`` case.
+
+    Returns
+    -------
+    dict[str, str]
+        The start-up environment the writer resolves its setting from.
+    """
+    status = os.fstat(destination.fileno())
+    match named:
+        case "another-file":
+            return _journal_environ(other, "1")
+        case "same-device":
+            return {
+                JOURNAL_STREAM_VARIABLE: f"{status.st_dev}:{status.st_ino + 1}",
+                ROUTINE_LINES_VARIABLE: "1",
+            }
+        case "malformed":
+            return {
+                JOURNAL_STREAM_VARIABLE: "not-a-stream",
+                ROUTINE_LINES_VARIABLE: "1",
+            }
+        case _:
+            return {ROUTINE_LINES_VARIABLE: "1"}
+
+
+@pytest.mark.parametrize(
+    "named", ["another-file", "same-device", "malformed", "absent"]
+)
+def test_a_requested_routine_line_outside_the_journal_stays_unprefixed(
+    tmp_path: Path, named: str
+) -> None:
+    """A routine line reaches the stream asked for, but only the journal is tagged."""
+    with (
+        (tmp_path / "journal").open("w") as other,
+        (tmp_path / "stderr").open("a+") as destination,
+    ):
+        writer = journal_writer(
+            _unrelated_environ(named, destination, other), destination
+        )
+        writer.write("admitted request 1", routine=True)
+        destination.seek(0)
+        written = destination.read()
+    assert written == "build-limits-supervisor: admitted request 1\n", (
+        "requested routine lines outside the journal keep the default priority"
+    )
 
 
 @pytest.mark.parametrize(
