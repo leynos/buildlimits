@@ -1,4 +1,9 @@
-"""Decide when a repeated drain success still deserves its own record."""
+"""Decide when a repeated drain success still deserves its own record.
+
+:class:`SuccessSummary` owns the last-recorded state and the interval
+bookkeeping. :class:`buildlimits.drain_metrics.DrainMetrics` owns the counting
+rules and asks this module whether a success repeats the last record it wrote.
+"""
 
 import time
 import typing as typ

@@ -1,4 +1,15 @@
-"""Where a finished request's outcome is reported and how much is written."""
+"""The dependency bundle one request table reports its work through.
+
+:class:`RequestObservation` carries the three optional collaborators a
+:class:`buildlimits.requesters.Requests` table uses. ``metrics`` is the
+failure-isolated :class:`buildlimits.metrics.MetricsPort` that records terminal
+outcomes. ``counts`` reads the admission gauges for each terminal record.
+``lines`` is the :class:`buildlimits.journal_policy.RoutineLineWriter` that
+writes the supervisor's journal lines. :class:`buildlimits.supervisor.Supervisor`
+builds the bundle and ``Requests`` receives it. An absent field uses the
+default the class documentation describes, so a caller supplies only what it
+wants to observe.
+"""
 
 import dataclasses
 import typing as typ
