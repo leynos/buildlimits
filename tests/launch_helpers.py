@@ -35,7 +35,7 @@ def plan(
     )
 
 
-def wait_reaped(child: launch.HeldChild, timeout: float = 1.0) -> int:
+def wait_reaped(child: launch.HeldChild, timeout: float = 10.0) -> int:
     """Poll an owned child until it ends or the bounded deadline expires.
 
     Parameters
@@ -43,7 +43,10 @@ def wait_reaped(child: launch.HeldChild, timeout: float = 1.0) -> int:
     child : HeldChild
         Launch whose exit status has not yet been collected.
     timeout : float
-        Maximum polling duration in seconds.
+        Maximum polling duration in seconds. The deadline bounds a hang rather
+        than measuring latency: a disposable ``/bin/true`` normally ends in
+        milliseconds, but a host busy with other builds can schedule the child
+        later than a one-second allowance leaves room for.
 
     Returns
     -------
