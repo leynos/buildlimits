@@ -9,7 +9,7 @@ from buildlimits.descriptor_budget import DescriptorBudget
 from buildlimits.descriptors import close_all
 from buildlimits.framing import DescriptorTruncationError
 from buildlimits.journal import finished_line, log
-from buildlimits.journal_policy import RoutineLines, is_routine_finish
+from buildlimits.journal_policy import RoutineLineWriter, is_routine_finish
 from buildlimits.metrics import Metrics, exit_outcome, refusal_reason
 from buildlimits.pending_request import Pending as Pending
 from buildlimits.protocol import (
@@ -87,7 +87,7 @@ class Requests:
         self.counts = seen.counts
         self.selector = selector
         self.clock = clock
-        self.lines = seen.lines if seen.lines is not None else RoutineLines()
+        self.lines = seen.lines if seen.lines is not None else RoutineLineWriter()
         # Opening one cache-recovery transaction for a recovery request. The
         # supervisor binds the operator trigger and its clock, so a supervisor
         # without a cache answers the request with a refusal instead.

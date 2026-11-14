@@ -13,13 +13,22 @@ if typ.TYPE_CHECKING:
     from buildlimits.requesters import Pending
 
 
-def log(message: str, *, priority_prefix: str = "") -> None:
+def log(
+    message: str,
+    *,
+    stream: typ.TextIO | None = None,
+    priority_prefix: str = "",
+) -> None:
     """Write one diagnostic line for the journal.
 
     Parameters
     ----------
     message : str
         The line, without the supervisor's prefix.
+    stream : IO[str] | None
+        The stream that receives the line, which the caller may have chosen
+        because its device and inode decided ``priority_prefix``; standard
+        error when ``None``.
     priority_prefix : str
         The leading syslog priority a journal stream parses, empty for a line
         the operator should see at the default priority.
@@ -31,7 +40,7 @@ def log(message: str, *, priority_prefix: str = "") -> None:
     """
     print(
         f"{priority_prefix}build-limits-supervisor: {message}",
-        file=sys.stderr,
+        file=sys.stderr if stream is None else stream,
         flush=True,
     )
 

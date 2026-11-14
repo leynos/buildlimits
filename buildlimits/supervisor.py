@@ -29,7 +29,7 @@ from buildlimits.drain_loop import MAX_INTERNAL_FAILURES as MAX_INTERNAL_FAILURE
 from buildlimits.drain_loop import DrainLoop, LoopEffects
 from buildlimits.groups import Groups
 from buildlimits.journal import log
-from buildlimits.journal_policy import RoutineLines
+from buildlimits.journal_policy import RoutineLineWriter
 from buildlimits.metrics import Metrics, MetricsPort, gauge_fields
 from buildlimits.pool import PoolFailure, Token, TokenPool
 from buildlimits.requesters import RequestObservation, Requests, listen
@@ -58,16 +58,16 @@ class SupervisorTelemetry:
         Event metrics; absent selects the no-op-safe default transport.
     tracer : JournalTracer | None
         Operation spans; absent disables tracing for embedded use and tests.
-    routine_lines : RoutineLines | None
-        The resolved routine-line setting for the journal; absent writes no
-        routine line. The service entry point reads it from the start-up
-        environment and passes it here, so nothing below it consults the
-        environment.
+    routine_lines : RoutineLineWriter | None
+        The journal writer, holding the resolved routine-line setting and the
+        stream it governs; absent writes no routine line. The service entry
+        point resolves it from the start-up environment and passes it here, so
+        nothing below it consults the environment.
     """
 
     metrics: MetricsPort | None = None
     tracer: JournalTracer | None = None
-    routine_lines: RoutineLines | None = None
+    routine_lines: RoutineLineWriter | None = None
 
 
 class Supervisor:
@@ -108,7 +108,7 @@ class Supervisor:
         self.routine_lines = (
             observations.routine_lines
             if observations.routine_lines is not None
-            else RoutineLines()
+            else RoutineLineWriter()
         )
 
         built = cache_backends.select(settings, self.manager)

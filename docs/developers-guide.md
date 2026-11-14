@@ -675,31 +675,44 @@ decide which success records are worth writing. The summary records a success
 that changes the operation's last state, and otherwise at most one per
 operation every `drain_summary.ROUTINE_SUMMARY_SECONDS`; the summary's injected
 `clock` makes that interval testable, and the counting rules stay in
-`DrainMetrics`.
+`DrainMetrics`. `DrainMetrics` emits before it asks the summary to record, so a
+record the sink refused is never remembered as written: the next identical
+success stays a state change and is emitted again.
 
 `journal` renders line text and writes it; `journal_policy` decides which lines
-are written. `journal.log` takes an explicit `priority_prefix` and reads no
-environment. `journal_policy.RoutineLines` is resolved once by the service
-entry point, which reads `BUILD_LIMITS_ROUTINE_LINES` and `JOURNAL_STREAM`
-there, and travels with the supervisor to the requester and placement code that
-write routine lines. Pass `routine=True` only for a line written for healthy,
-high-volume work, such as an admission or a clean finish.
-`journal_policy.is_routine_finish` classifies a finish without doing I/O, and
-the caller pairs it with `journal.finished_line`. A routine line is written
-only when the variable is `1`, and then carries the `<7>` debug priority when
-stderr is the stream that `JOURNAL_STREAM` names. The variable is the switch
-because `LogLevelMax=` on the user unit did not filter these lines under
-systemd 257. Anything an operator may need to act on keeps the default priority
-and is always written.
+are written and applies that decision. `journal.log` takes the stream it writes
+to and an explicit `priority_prefix`, and reads no environment. The policy has
+two units with one responsibility each: `journal_policy.resolve_routine_lines`
+returns a `RoutineLines` value object from an environment mapping, and
+`journal_policy.RoutineLineWriter` writes lines to one stream, applying that
+value. `journal_policy.journal_writer` is the composition-root entry point: it
+resolves the setting once and binds it to the same stream, so the stream whose
+device and inode decided the `<7>` prefix is always the stream that receives
+the line. The service entry point calls it once, reading
+`BUILD_LIMITS_ROUTINE_LINES` and `JOURNAL_STREAM` there, and the writer travels
+with the supervisor to the requester and placement code. Pass `routine=True`
+only for a line written for healthy, high-volume work, such as an admission or
+a clean finish. `journal_policy.is_routine_finish` classifies a finish without
+doing I/O, and the caller pairs it with `journal.finished_line`. A routine line
+is written only when the variable is `1`, and then carries the `<7>` debug
+priority when the stream is the one `JOURNAL_STREAM` names.
+`journal_policy.journal_stream` reports that comparison as a `JournalStream`
+rather than a `bool`, so a stream the probe cannot inspect is reported as
+`UNINSPECTABLE` instead of being folded into `OTHER`; `resolve_routine_lines`
+resolves such a stream without a prefix, keeping the line visible rather than
+printing a literal `<7>`. The variable is the switch because `LogLevelMax=` on
+the user unit did not filter these lines under systemd 257. Anything an
+operator may need to act on keeps the default priority and is always written.
 
 `request_observation.RequestObservation` bundles the places one request reports
 a terminal outcome: `metrics` is the failure-isolated emitter, `counts` reads
-the current admission gauges, and `lines` is the supervisor's resolved
-`RoutineLines`. Every field defaults to `None`, and `Requests` substitutes its
-own defaults, so `Requests` takes one dependency bundle instead of a growing
-keyword list. The supervisor constructs one bundle from its own telemetry and
-passes it at creation; `Requests.finish` and `supervisor_placement.launch` then
-write through `lines` without consulting the environment.
+the current admission gauges, and `lines` is the supervisor's
+`RoutineLineWriter`. Every field defaults to `None`, and `Requests` substitutes
+its own defaults, so `Requests` takes one dependency bundle instead of a
+growing keyword list. The supervisor constructs one bundle from its own
+telemetry and passes it at creation; `Requests.finish` and
+`supervisor_placement.launch` then write through `lines` without consulting the
+environment.
 
 ## 10. Adapters
 

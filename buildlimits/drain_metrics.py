@@ -142,11 +142,16 @@ class DrainMetrics:
         counters[operation] = min(MAX_COUNTER, counters[operation] + 1)
 
     def _record(self, operation: str, state: str, reason: str) -> None:
-        """Drop observation failures without retaining exception text."""
+        """Drop observation failures without retaining exception text.
+
+        The summary remembers only records the sink accepted, so a failed
+        emission leaves the next identical success looking like a state change
+        and it is written again. Recording first would let one lost emission
+        silence the operation for a whole summary interval with no signal.
+        """
         with contextlib.suppress(Exception):
             if self._summary.is_repeat(operation, state):
                 return
-            self._summary.recorded(operation, state)
             self._port.emit(
                 "drain_progress",
                 drain_operation=operation,
@@ -156,3 +161,4 @@ class DrainMetrics:
                 drain_failures=self._failures[operation],
                 drain_recoveries=self._recoveries[operation],
             )
+            self._summary.recorded(operation, state)

@@ -1,5 +1,6 @@
 """Exact-once drain actions, fixed observations and fault recovery boundaries."""
 
+import copy
 import typing as typ
 
 import pytest
@@ -226,6 +227,50 @@ def test_the_interval_runs_from_the_record_and_not_from_the_call() -> None:
     now[0] = 601.0
     assert summary.is_repeat("terminate", "completed"), (
         "the interval runs from the record, so a fresh record restarts it"
+    )
+
+
+def test_is_repeat_is_a_query_that_leaves_the_summary_unchanged() -> None:
+    """Asking twice returns the same answer without recording or consuming."""
+    summary = SuccessSummary(clock=lambda: 5.0, interval=600.0)
+    summary.recorded("terminate", "completed")
+    before = copy.deepcopy(vars(summary))
+
+    assert summary.is_repeat("terminate", "completed"), "a recent success repeats"
+    assert summary.is_repeat("terminate", "completed"), (
+        "a second query answers the same, so the first consumed no interval"
+    )
+    assert vars(summary) == before, "the query records nothing"
+
+
+def test_a_lost_record_does_not_silence_the_next_identical_success() -> None:
+    """The summary remembers what the sink accepted, so a failed write repeats."""
+
+    class FailOnce:
+        """Refuse the first record and accept later ones."""
+
+        def __init__(self) -> None:
+            """Start with one refused record remaining."""
+            self.calls = 0
+            self.refused = False
+
+        def emit(self, event: str, **_fields: object) -> None:
+            """Fail once, as an unavailable journal would."""
+            del event
+            self.calls += 1
+            if not self.refused:
+                self.refused = True
+                msg = "journal unavailable"
+                raise OSError(msg)
+
+    port = FailOnce()
+    observer = DrainMetrics(
+        port, summary=SuccessSummary(clock=lambda: 0.0, interval=600.0)
+    )
+    observer.call("terminate", lambda: None)
+    observer.call("terminate", lambda: None)
+    assert port.calls == 2, (
+        "the success after a lost record is written rather than summarized away"
     )
 
 
