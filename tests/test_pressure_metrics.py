@@ -13,6 +13,7 @@ from buildlimits.metrics import (
     Metrics,
     decode_native_fields,
 )
+from buildlimits.metrics_gauges import GAUGE_INTERVAL_SECONDS
 from buildlimits.metrics_pressure import PressureMetrics
 from buildlimits.supervisor import Supervisor
 
@@ -136,6 +137,38 @@ def test_a_lost_snapshot_keeps_its_maximum_for_the_next_record(metric_sink) -> N
     reset = _flush(fresh, metric_sink, now[0])
     assert reset["BUILD_LIMITS_QUEUED_HIGH_WATER"] == "0", (
         "a new supervisor observer resets its lifetime maximum"
+    )
+
+
+def test_a_failed_endpoint_sample_leaves_the_interval_open(metric_sink) -> None:
+    """A read failure at the flush endpoint must not settle a stale interval."""
+    now = [0.0]
+    state: dict[str, object] = {"queued": 2}
+    readable = [True]
+
+    def snapshot() -> dict[str, object]:
+        """Model a cached-state reader that fails on demand."""
+        if not readable[0]:
+            msg = "private cached-state fault"
+            raise RuntimeError(msg)
+        return state
+
+    observer = PressureMetrics(Metrics(metric_sink), snapshot, clock=lambda: now[0])
+    assert _flush(observer, metric_sink, now[0]), "the baseline reached the sink"
+    readable[0] = False
+    now[0] = GAUGE_INTERVAL_SECONDS
+    observer.observe(now[0])
+    assert not observer.flush(now[0]), "no record may end at an unread endpoint"
+    readable[0] = True
+    now[0] = 2 * GAUGE_INTERVAL_SECONDS
+    observer.observe(now[0])
+    assert observer.flush(now[0]), "the next readable endpoint publishes both"
+    record = metric_sink.records[-1]
+    assert record["BUILD_LIMITS_INTERVAL_SECONDS"] == "60.000", (
+        "the published interval spans the unread attempt"
+    )
+    assert record["BUILD_LIMITS_QUEUED_SECONDS"] == "120.000", (
+        "the depth that waited through the unread endpoint is not lost"
     )
 
 

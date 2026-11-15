@@ -14,7 +14,9 @@ Notes
 -----
 A failed emission keeps its peaks and integral so the next record covers both
 intervals. That is why ``observe`` and ``settle`` are separate: only delivery
-decides whether the interval is complete.
+decides whether the interval is complete. The interval start is tracked apart
+from the last delivered record, because a refused baseline must still claim the
+time its retained integral describes rather than report it as zero.
 """
 
 import dataclasses as dc
@@ -122,6 +124,7 @@ class GaugeAccumulator:
     _previous_queued: int | None = None
     _previous_time: float | None = None
     _flushed: float | None = None
+    _anchor: float | None = None
     _flushed_counts: dict[str, int] = dc.field(default_factory=dict)
     _stepped: bool = False
     _deferred_until: float = 0.0
@@ -136,6 +139,10 @@ class GaugeAccumulator:
         now : float
             Monotonic seconds at which the snapshot was read.
         """
+        if self._anchor is None:
+            # The interval starts at the first sample ever taken, so a refused
+            # baseline still claims the time its integral covers when retried.
+            self._anchor = now
         queued = _count(snapshot.get("queued"))
         self._integrate(now)
         if queued is None:
@@ -171,12 +178,14 @@ class GaugeAccumulator:
         """
         if force:
             return True
+        if now < self._deferred_until:
+            # The spacing defers the first retry as well, so a failing sink is
+            # not asked again on every tick while the baseline is missing.
+            return False
         if self._flushed is None:
             # The first record is a baseline: it claims no interval it did not
             # observe, and it anchors every later interval at one instant.
             return True
-        if now < self._deferred_until:
-            return False
         elapsed = max(0.0, now - self._flushed)
         if elapsed >= self.interval:
             return True
@@ -203,7 +212,7 @@ class GaugeAccumulator:
         fields: dict[str, object] = dict(snapshot)
         fields["queued_seconds"] = self.queued_seconds
         fields["interval_seconds"] = (
-            0.0 if self._flushed is None else max(0.0, now - self._flushed)
+            0.0 if self._anchor is None else max(0.0, now - self._anchor)
         )
         fields["queued_high_water"] = self.queued_high_water
         if self.queued_peak is not None:
@@ -236,6 +245,7 @@ class GaugeAccumulator:
         self.queued_peak = _count(snapshot.get("queued"))
         self.held_peak = _count(snapshot.get("held"))
         self._flushed = now
+        self._anchor = now
         self._flushed_counts = {
             name: count
             for name in _STEP_FIELDS

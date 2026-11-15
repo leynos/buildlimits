@@ -114,6 +114,27 @@ class Rig:
         self.observe()
         assert self.flush(), "the first record is always due"
 
+    def refuse_then_retry(self, seconds: float) -> bool:
+        """Refuse one record, prove the spacing defers it, then retry.
+
+        Parameters
+        ----------
+        seconds : float
+            Time to advance before the retry; at least the minimum spacing.
+
+        Returns
+        -------
+        bool
+            Whether the retried record reached the port.
+        """
+        self.port.accepts = False
+        assert not self.flush(), "the record must be refused for this case"
+        assert not self.flush(), "the spacing defers an immediate retry"
+        self.port.accepts = True
+        self.advance(seconds)
+        self.observe()
+        return self.flush()
+
     def record(self, index: int) -> dict[str, object]:
         """Read one published ``gauges`` record.
 
@@ -234,13 +255,7 @@ def test_failed_emission_merges_peaks_and_integral_into_the_next_record() -> Non
         rig.advance(advance)
         rig.state["queued"] = depth
         rig.observe()
-    rig.port.accepts = False
-    assert not rig.flush(), "the sink refused the record"
-    assert not rig.flush(), "the retry is deferred by the spacing"
-    rig.port.accepts = True
-    rig.advance(10.0)
-    rig.observe()
-    assert rig.flush(), "the next interval publishes both"
+    assert rig.refuse_then_retry(10.0), "the next interval publishes both"
     record = rig.record(1)
     assert record["interval_seconds"] == pytest.approx(40.0), (
         "the interval spans the failed attempt"
@@ -249,6 +264,37 @@ def test_failed_emission_merges_peaks_and_integral_into_the_next_record() -> Non
         "depth 2 for 10 s, then 5 for 10 s, then 1 for 20 s"
     )
     assert record["queued_peak"] == 5, "the lost interval keeps its peak"
+
+
+def test_a_refused_baseline_claims_the_interval_it_integrated() -> None:
+    """The retried first record reports the time its retained integral covers."""
+    rig = Rig.start({"queued": 2, "held": 0})
+    rig.observe()
+    assert rig.refuse_then_retry(GAUGE_MIN_SPACING_SECONDS), (
+        "the retried baseline follows the spacing"
+    )
+    record = rig.record(0)
+    assert record["interval_seconds"] == pytest.approx(GAUGE_MIN_SPACING_SECONDS), (
+        "the baseline claims the interval it integrated rather than zero"
+    )
+    assert record["queued_seconds"] == pytest.approx(2 * GAUGE_MIN_SPACING_SECONDS), (
+        "the area the retry carries is the area it claims"
+    )
+
+
+def test_a_refused_baseline_waits_for_the_retry_spacing() -> None:
+    """A missing first record is not retried on every tick."""
+    rig = Rig.start({"queued": 1})
+    rig.observe()
+    rig.port.accepts = False
+    assert not rig.flush(), "the baseline was refused"
+    rig.port.accepts = True
+    rig.advance(GAUGE_MIN_SPACING_SECONDS / 2)
+    rig.observe()
+    assert not rig.flush(), "the spacing defers the first retry as well"
+    rig.advance(GAUGE_MIN_SPACING_SECONDS / 2)
+    rig.observe()
+    assert rig.flush(), "the baseline is due once the spacing has passed"
 
 
 def test_forced_flush_publishes_before_the_heartbeat() -> None:

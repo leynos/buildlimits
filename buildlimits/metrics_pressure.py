@@ -56,7 +56,9 @@ class PressureMetrics:
         self._accumulator: GaugeAccumulator = (
             accumulator if accumulator is not None else GaugeAccumulator()
         )
-        self._latest: dict[str, object] | None = None
+        # One field holds the sample and its time so "did the endpoint get
+        # read" is a single question rather than two that can disagree.
+        self._latest: tuple[dict[str, object], float] | None = None
 
     def emit(self, event: str, **fields: object) -> bool:
         """Forward one event unchanged after folding the current sample.
@@ -110,16 +112,23 @@ class PressureMetrics:
         -------
         bool
             Whether a ``gauges`` record reached its destination. A failed
-            emission leaves the interval open for the next attempt.
+            observation or emission leaves the interval open for the next
+            attempt.
         """
         latest = self._latest
-        if latest is None or not self._accumulator.is_due(now, force=force):
+        # Settling an interval whose endpoint was never read would publish the
+        # gap as zero depth and drop the area that follows it, so the interval
+        # stays open until a sample reaches the endpoint.
+        if latest is None or latest[1] < now:
             return False
-        record = self._accumulator.record(latest, now)
+        if not self._accumulator.is_due(now, force=force):
+            return False
+        snapshot, sampled_at = latest
+        record = self._accumulator.record(snapshot, sampled_at)
         accepted = False
         with contextlib.suppress(Exception):
             accepted = bool(self._port.emit("gauges", **record))
-        self._accumulator.settle(latest, now, accepted=accepted)
+        self._accumulator.settle(snapshot, sampled_at, accepted=accepted)
         return accepted
 
     def _sample(self, now: float) -> dict[str, object] | None:
@@ -140,7 +149,7 @@ class PressureMetrics:
         except Exception:  # ruff: ignore[blind-except] - observation cannot affect admission.
             return None
         self._accumulator.observe(snapshot, now)
-        self._latest = snapshot
+        self._latest = (snapshot, now)
         return snapshot
 
 
