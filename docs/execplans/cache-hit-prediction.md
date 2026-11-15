@@ -3456,9 +3456,9 @@ withholds batch `i-1`, and the report counts the withheld rows as
   `b0 = 2 * (1 - p_origin)`. With no key history, `p_beta = p_origin`, and
   those rows are reported as `beta_prior_rows`. `beta_window_rows` reports the
   actual `n` when the final batch exceeds eight.
-- Majority-class decision baseline (reporting amendment): `p_majority` is 1.0
-  for the class chosen by `p_base >= 0.5` and 0.0 for the other, with ties
-  choosing `hit`; accuracy is reported beside its Brier score.
+- Majority-class decision baseline (reporting amendment): `p_majority` is the
+  predicted probability of a hit, so it is 1.0 when `p_base >= 0.5` (including
+  ties) and 0.0 otherwise. Accuracy is reported beside its Brier score.
 
 **Scores, calibration and uncertainty.** The primary score is the Brier score,
 `mean((p - y)**2)`, where `y` is 1 for a hit and 0 for a miss. Log loss uses

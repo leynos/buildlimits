@@ -343,8 +343,8 @@ extension are recorded in the ExecPlan; none is a gate decision.
 - [ ] 3.2.2. Approve the EP-M9 reporting amendment.
   - Requires 3.1.2's RFC 0002 G1 decision of `proceed` or `narrow`.
   - The amendment adds the majority-class decision baseline, log loss with an
-    explicit clipping rule, calibration-bin counts, dependence-aware intervals
-    and per-origin/time/load reporting. It preserves the H4/H5 thresholds and
+    explicit clipping rule, calibration-bin counts and per-origin/time/load
+    reporting. It preserves the H4/H5 thresholds and
     the 2,000-record minimum. Approval is recorded in the ExecPlan Decision log
     after the G1 decision and before the owner reviews any EP-M9 outcome report.
     The dataset manifest is required whether or not the amendment is approved.

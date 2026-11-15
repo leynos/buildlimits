@@ -1138,14 +1138,13 @@ labels, `observed_at` batch chronology, the base-rate, last-outcome and
 Beta-over-eight parameters, calibration bins, and H4/H5 retained-row semantics.
 It preserves the thresholds in Table 1 and the 2,000-record minimum. The
 ExecPlan also carries a separate reporting amendment (the majority-class
-decision baseline, log loss, calibration-bin counts, dependence-aware intervals
-and per-origin/time/load reporting) and a proposed longitudinal-predictor
-extension (EP-L). Both require explicit owner approval, and EP-L requires a
-separately approved v2 source before strict per-request or load-stratified
-claims. Neither changes this RFC's gates: W2 still requires G1, and the
-extension starts only after its own approval. Recording these documents is
-documentation only; no G1 or G2 decision has occurred, and no scheduling or
-advisory behaviour is authorized.
+decision baseline, log loss, calibration-bin counts and per-origin/time/load
+reporting) and a proposed longitudinal-predictor extension (EP-L). Both require
+explicit owner approval, and EP-L requires a separately approved v2 source
+before strict per-request or load-stratified claims. Neither changes this RFC's
+gates: W2 still requires G1, and the extension starts only after its own
+approval. Recording these documents is documentation only; no G1 or G2 decision
+has occurred, and no scheduling or advisory behaviour is authorized.
 
 ## Compatibility and migration
 
