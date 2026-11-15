@@ -3302,9 +3302,9 @@ milestone that adds each module.
 
 ### EP-M9: W2 offline replay (after G1 says proceed or narrow)
 
-- Preconditions: the owner records RFC 0002 G1 `proceed` or `narrow`, and the
-  reporting-amendment decision below is recorded before the replay runs or its
-  outcome report is reviewed.
+- Preconditions: the owner records RFC 0002 G1 `proceed` or `narrow`, approves
+  the preregistration below, and records the reporting-amendment decision
+  before the replay runs or its outcome report is reviewed.
 - Outcome: `h4`, `h5` and `all` in the replay CLI. They report verdicts,
   sample sizes, the time span the store covers (R8), and the quiet-window
   caveat. Below 2,000 attributed records, the verdict is `insufficient`.
@@ -3432,26 +3432,26 @@ labels of the two batches; it counts as a flip when those labels differ.
 Consecutive pairs separated by an excluded batch are not evaluated. Every
 consecutive pair the sequence contains is counted in one of two buckets:
 `evaluated_pairs`, from the internal and boundary pairs above, and
-`unevaluable_pairs`, made of the `n - 1` internal pairs of each excluded batch
-and one boundary pair for each side on which an excluded batch has a
-same-identity neighbour. The flip rate is flips divided by evaluated pairs, so
-a long unanimous batch contributes its real share of non-flipping pairs rather
-than one batch-level decision. The result is invariant to row order within a
-batch.
+`unevaluable_pairs`, made of the `n - 1` internal pairs of each excluded batch,
+one boundary pair for each side on which an excluded batch has a same-identity
+neighbour, and each identity-changed boundary pair. The flip rate is flips
+divided by evaluated pairs, so a long unanimous batch contributes its real
+share of non-flipping pairs rather than one batch-level decision. The result is
+invariant to row order within a batch.
 
 Exclusions must not silently delete transitions that could change the verdict.
-H5 is therefore `insufficient` when `unevaluable_pairs` exceeds
-`evaluated_pairs`: at that point less than half the key's consecutive pairs
-were observed, and a run of hits after alternating failures could otherwise
-report a 0% flip rate. This is a coverage rule for the existing thresholds, not
-a new flip threshold. A salt change is a new store epoch and is never pooled;
-the reader supplies one header per store. H5 is `insufficient` below 2,000
-attributed outcomes, with no evaluated pairs, or under the coverage rule;
-`supported` at 5% or less, `refuted` above 10%, and `inconclusive` between. The
-thresholds are unchanged, and the retained-tail caveat applies to pairs lost at
-a compaction boundary. `not_collected` is reserved for a store that lacks a
-field a hypothesis needs; a v1 store accepted by the reader has them, so H4/H5
-normally report one of the other four tokens.
+H5 is therefore `insufficient` when the population's `unevaluable_pairs`
+exceeds its `evaluated_pairs`: at that point less than half of the population's
+consecutive pairs were observed, and a run of hits after alternating failures
+could otherwise report a 0% flip rate. This is a coverage rule for the existing
+thresholds, not a new flip threshold. A salt change is a new store epoch and is
+never pooled; the reader supplies one header per store. H5 is `insufficient`
+below 2,000 attributed outcomes, with no evaluated pairs, or under the coverage
+rule; `supported` at 5% or less, `refuted` above 10%, and `inconclusive`
+between. The thresholds are unchanged, and the retained-tail caveat applies to
+pairs lost at a compaction boundary. `not_collected` is reserved for a store
+that lacks a field a hypothesis needs; a v1 store accepted by the reader has
+them, so H4/H5 normally report one of the other four tokens.
 
 **Predictors and parameters.** When predicting a row in batch `i`, the training
 history is every eligible row in batches `0` to `i-2`: the one-batch embargo
