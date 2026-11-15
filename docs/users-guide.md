@@ -1059,13 +1059,15 @@ the queue depth averaged over the time each snapshot describes, and
 `gauge_coverage_seconds` is the sum of the whole intervals those snapshots
 describe. Intervals are not clipped to the query window, so a snapshot whose
 interval began before the window counts in full and the reported coverage can
-exceed the window's length. The maximum queue and held depths take the largest
-value seen in either shape, so a window that spans the upgrade keeps describing
-what an operator saw before it. `queue_sample_mean` remains for compatibility
-and is computed only from records that still carry a per-record sample, such as
-the rare transition records that keep explicit gauges. An ordinary new-format
-window therefore reports `null` there, and the time-weighted mean is the figure
-to read.
+exceed the window's length. A snapshot whose queue depth could not be read
+throughout its interval carries no integral: it still counts towards the
+coverage but not towards the mean, so an unread gap cannot pull the average
+down. The maximum queue and held depths take the largest value seen in either
+shape, so a window that spans the upgrade keeps describing what an operator saw
+before it. `queue_sample_mean` remains for compatibility and is computed only
+from records that still carry a per-record sample, such as the rare transition
+records that keep explicit gauges. An ordinary new-format window therefore
+reports `null` there, and the time-weighted mean is the figure to read.
 
 Deploy the new reader before the new supervisor: an older reader treats
 `gauges` as an unknown event and drops it. `request_queued` is still accepted

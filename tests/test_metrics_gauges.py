@@ -182,13 +182,13 @@ def test_lifetime_maximum_saturates_at_the_schema_bound() -> None:
         pytest.param(
             {},
             [(10.0, None), (10.0, None), (10.0, None)],
-            {"interval": 30.0, "queued_seconds": 0.0, "peak": None},
+            {"interval": 30.0, "queued_seconds": None, "peak": None},
             id="unreadable-depth",
         ),
         pytest.param(
             {},
             [(10.0, 3), (10.0, None), (10.0, 1)],
-            {"interval": 30.0, "queued_seconds": 30.0, "peak": 3},
+            {"interval": 30.0, "queued_seconds": None, "peak": 3},
             id="gap-excluded",
         ),
     ],
@@ -213,11 +213,30 @@ def test_interval_accounting_follows_the_sample_timeline(
     assert record["interval_seconds"] == pytest.approx(expected["interval"]), (
         "the record covers the wall interval since the last delivery"
     )
-    assert record["queued_seconds"] == pytest.approx(expected["queued_seconds"]), (
-        "only readable samples contribute to the integral"
-    )
+    if expected["queued_seconds"] is None:
+        assert "queued_seconds" not in record, (
+            "an interval with unread depth claims no measured mean"
+        )
+    else:
+        assert record["queued_seconds"] == pytest.approx(expected["queued_seconds"]), (
+            "only fully readable intervals publish an integral"
+        )
     assert record.get("queued_peak") == expected["peak"], (
         "an unreadable interval publishes no peak"
+    )
+
+
+def test_an_earlier_observation_never_rewinds_the_integral() -> None:
+    """A service poll may sample later than the tick reading that follows it."""
+    accumulator = GaugeAccumulator()
+    for now in (0.0, 10.0, 5.0, 20.0):
+        accumulator.observe({"queued": 2}, now)
+    record = accumulator.record({"queued": 2}, 20.0)
+    assert record["interval_seconds"] == pytest.approx(20.0), (
+        "the interval still spans the whole observation timeline"
+    )
+    assert record["queued_seconds"] == pytest.approx(40.0), (
+        "the five-to-ten-second segment is integrated exactly once"
     )
 
 

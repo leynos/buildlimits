@@ -16,7 +16,9 @@ A failed emission keeps its peaks and integral so the next record covers both
 intervals. That is why ``observe`` and ``settle`` are separate: only delivery
 decides whether the interval is complete. The interval start is tracked apart
 from the last delivered record, because a refused baseline must still claim the
-time its retained integral describes rather than report it as zero.
+time its retained integral describes rather than report it as zero. An interval
+whose queue depth could not be read at some point publishes no integral at all,
+so the report averages only the intervals it actually measured.
 """
 
 import dataclasses as dc
@@ -105,7 +107,8 @@ class GaugeAccumulator:
     Attributes
     ----------
     queued_seconds : float
-        Integral of queue depth over the interval since the last record.
+        Integral of queue depth over the interval since the last record; it is
+        published only when the whole interval was measured.
     queued_peak : int | None
         Largest queue depth observed in the interval.
     held_peak : int | None
@@ -128,6 +131,7 @@ class GaugeAccumulator:
     _flushed_counts: dict[str, int] = dc.field(default_factory=dict)
     _stepped: bool = False
     _deferred_until: float = 0.0
+    _queue_unobserved: bool = False
 
     def observe(self, snapshot: cabc.Mapping[str, object], now: float) -> None:
         """Fold one supervisor sample into the open interval.
@@ -147,12 +151,17 @@ class GaugeAccumulator:
         self._integrate(now)
         if queued is None:
             # An unreadable depth cannot be integrated as if it were zero, so
-            # the gap stays out of the integral until the next sample.
+            # the gap stays out of the integral until the next sample, and the
+            # interval can no longer claim a measured queue mean.
+            self._queue_unobserved = True
             self._previous_queued = None
             self._previous_time = None
         else:
             self._previous_queued = queued
-            self._previous_time = now
+            # A service poll may sample later than the tick reading that
+            # follows it, so the recorded time only ever moves forward.
+            previous = self._previous_time
+            self._previous_time = now if previous is None else max(previous, now)
             self.queued_high_water = max(self.queued_high_water, queued)
             self.queued_peak = _wider(self.queued_peak, queued)
         held = _count(snapshot.get("held"))
@@ -207,10 +216,14 @@ class GaugeAccumulator:
         -------
         dict[str, object]
             The snapshot fields plus peaks, the lifetime queue maximum, the
-            covered interval and the queue integral.
+            covered interval and, when the whole interval was measured, the
+            queue integral.
         """
         fields: dict[str, object] = dict(snapshot)
-        fields["queued_seconds"] = self.queued_seconds
+        if not self._queue_unobserved:
+            # An interval with an unread depth has no measured mean, and a zero
+            # integral would read as an empty queue rather than a missing one.
+            fields["queued_seconds"] = self.queued_seconds
         fields["interval_seconds"] = (
             0.0 if self._anchor is None else max(0.0, now - self._anchor)
         )
@@ -244,6 +257,7 @@ class GaugeAccumulator:
         self.queued_seconds = 0.0
         self.queued_peak = _count(snapshot.get("queued"))
         self.held_peak = _count(snapshot.get("held"))
+        self._queue_unobserved = False
         self._flushed = now
         self._anchor = now
         self._flushed_counts = {
