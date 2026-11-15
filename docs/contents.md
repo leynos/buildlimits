@@ -19,6 +19,9 @@
 - [Migrating to cache-outcome recording](migrating-to-cache-outcome-recording.md)
   gives the opt-in, rollback and downgrade sequence for the outcome store and
   its journal vocabulary.
+- [Migrating to periodic gauge snapshots](migrating-to-gauge-snapshots.md)
+  gives the reader-before-writer upgrade order, the mixed-window reading rules
+  and the rollback sequence for the new `gauges` event.
 - [Migrating to 0.2.0](migrating-to-0.2.0.md) signposts the FizzBee model
   check, its prerequisites, the `make fizzbee`, `make model-fidelity` and
   `make model-check` targets, the `python -m modelcheck` command, and what a
@@ -54,6 +57,10 @@
 - [ADR 008: model-check tooling outside the wheel](adrs/adr-0008-model-check-outside-the-wheel.md)
   records why the FizzBee tooling is a top-level hexagonal package excluded
   from the wheel, and the boundaries it maintains.
+- [ADR 009: periodic supervisor gauge snapshots](adrs/adr-0009-supervisor-gauge-snapshots.md)
+  records why supervisor-wide counters moved to a periodic `gauges` event, how
+  the time-weighted queue mean and interval peaks work, and the
+  reader-before-writer upgrade order.
 
 ## Conventions
 
