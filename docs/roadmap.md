@@ -316,9 +316,10 @@ closes those items.
   - Run the outstanding quiet-host latency acceptance against the ExecPlan
     bounds, then present H1-H3 results, coverage and sample limitations to the
     owner. The observation-port proposal does not substitute for this evidence.
-  - Record the EP-M9 preregistration approval, the 3.2.2 reporting-amendment
-    decision and any 3.2.3 freeze before the H2/H3 verdicts are read, so G1
-    evidence cannot steer them.
+  - Record the EP-M9 preregistration approval and the 3.2.2 reporting-amendment
+    decision before the H2/H3 verdicts are read, so G1 evidence cannot steer
+    them. Record any 3.2.3 freeze by then too, or apply its fresh-row fallback
+    if a verdict is read first.
   - Success: the quiet-host result is recorded and the owner explicitly records
     an RFC 0002 G1 decision of `proceed`, `narrow` or `stop`, with the limits
     that apply. Until that decision, EP-M9 remains gated and its comparison is

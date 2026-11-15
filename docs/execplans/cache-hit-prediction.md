@@ -3260,14 +3260,19 @@ milestone that adds each module.
    dev-env-rocky role, upgrading every journal reader first. Do not enable
    recording on a release that lacks EP-M8.
 2. Set `cache_outcomes = "record"` and restart the supervisor gracefully.
-3. After 24 hours, check the status line and run
+3. Before any replay runs, record in `Decision log` the owner's approval of the
+   EP-M9 preregistration and the reporting-amendment decision, so the H2/H3
+   verdicts cannot steer them. The amendment decision may be a rejection. An
+   EP-L freeze under roadmap 3.2.3 may also be recorded now; if a verdict is
+   read first, EP-L uses its fresh-row fallback instead.
+4. After 24 hours, check the status line and run
    `build-limits-cache-replay h3` and `build-limits-cache-replay h2`. If
    nothing has been attributed, look at the last reading reason and fix it
    before going on. If `child_sighting` is `unavailable` for nearly every
    record, look at `child_sample_failures` in the `cache_outcomes` report.
-4. Track progress by the attributed count on the status line, not by journal
+5. Track progress by the attributed count on the status line, not by journal
    windows.
-5. When 2,000 attributed outcomes exist, or after 14 days, whichever comes
+6. When 2,000 attributed outcomes exist, or after 14 days, whichever comes
    first, record the evidence:
    - the commit, the sccache version and the date range;
    - the sample facts the existing read-only commands expose: the store path
@@ -3289,7 +3294,7 @@ milestone that adds each module.
    - the H2 verdict, with its agreement, evaluable count, the share of
      misses that were `seen`, and its stated limits;
    - the H3 verdict.
-6. Record the decision in `Decision log`:
+7. Record the decision in `Decision log`:
    - `proceed` moves the plan to `IN PROGRESS` and starts EP-M9;
    - `narrow` starts EP-M9 with the limits recorded;
    - `stop` means: set the key to `off`, delete `~/.local/state/buildlimits/`,
@@ -3340,13 +3345,13 @@ milestone that adds each module.
 
 #### EP-M9 preregistration (fixed before outcome data is read)
 
-This preregistration is fixed before any outcome data is read, and the owner
-approves it together with the reporting amendment before the first G1 replay's
-H2/H3 verdicts are read, so G1 evidence cannot steer it. It adds no threshold
-and releases no gate. EP-M9 still requires an explicit RFC 0002 G1 `proceed` or
-`narrow`. Issue [#60](https://github.com/leynos/buildlimits/issues/60) tracks
-the comparison, and the reporting amendment below requires separate owner
-approval.
+This preregistration is fixed before any outcome data is read. The owner
+approves it, and records a decision on the reporting amendment, before the
+first G1 replay's H2/H3 verdicts are read, so G1 evidence cannot steer either.
+It adds no threshold and releases no gate. EP-M9 still requires an explicit RFC
+0002 G1 `proceed` or `narrow`. Issue
+[#60](https://github.com/leynos/buildlimits/issues/60) tracks the comparison,
+and the reporting amendment below requires separate owner approval.
 
 **Eligible labels and identities.** Only `OutcomeRecord` rows whose `outcome` is
 `hit` or `miss` are eligible predictor labels and H5 pair members. Every other
