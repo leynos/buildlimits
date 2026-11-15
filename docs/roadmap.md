@@ -336,19 +336,20 @@ extension are recorded in the ExecPlan; none is a gate decision.
     rejection under 3.2.2 before the replay runs or its outcome report is
     reviewed.
   - See RFC 0002 §2 and H4-H5. Do not run this step on the live cache.
-  - Success: the replay reports the base-rate, last-outcome and Beta-over-eight
-    comparison, the registry base rate, digest stability and each verdict
-    against ADR 005's fixed minimums and thresholds; the versioned aggregate
-    manifest, sample limitations and retained-history caveats are recorded for
-    G2. The port proposal does not waive G1 or change EP-M9's scope.
+  - Success: the replay reports the base-rate, origin-rate, last-outcome and
+    Beta-over-eight comparison, the registry base rate, digest stability and
+    each verdict against ADR 005's fixed minimums and thresholds; the versioned
+    aggregate manifest, sample limitations and retained-history caveats are
+    recorded for G2. The port proposal does not waive G1 or change EP-M9's
+    scope.
 - [ ] 3.2.2. Approve the EP-M9 reporting amendment.
   - Requires 3.1.2's RFC 0002 G1 decision of `proceed` or `narrow`.
   - The amendment adds the majority-class decision baseline, log loss with an
     explicit clipping rule, calibration-bin counts and per-origin/time/load
-    reporting. It preserves the H4/H5 thresholds and
-    the 2,000-record minimum. Approval is recorded in the ExecPlan Decision log
-    after the G1 decision and before the owner reviews any EP-M9 outcome report.
-    The dataset manifest is required whether or not the amendment is approved.
+    reporting. It preserves the H4/H5 thresholds and the 2,000-record minimum.
+    Approval is recorded in the ExecPlan Decision log after the G1 decision and
+    before the owner reviews any EP-M9 outcome report. The dataset manifest is
+    required whether or not the amendment is approved.
   - Success: the owner records approval or rejection; EP-M9 reports exactly the
     approved items, and a rejection leaves only the original comparison.
 - [ ] 3.2.3. Approve the proposed longitudinal-predictor extension (EP-L).
