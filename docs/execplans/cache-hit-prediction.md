@@ -3441,11 +3441,11 @@ when their full toolchain identities differ.
 
 Each unanimous `hit`/`miss` batch of `n` rows contributes its `n - 1` internal
 consecutive pairs, whose two rows carry the same label and therefore never
-flip. Each pair of adjacent unanimous hit/miss batches of the same identity,
-with no excluded batch between them, contributes one boundary pair between the
-labels of the two batches; it counts as a flip when those labels differ.
-Consecutive pairs separated by an excluded batch are not evaluated. Every
-consecutive pair the sequence contains is counted in one of two buckets:
+flip. Each pair of adjacent unanimous hit/miss batches with the same full
+identity, with no excluded batch between them, contributes one boundary pair
+between the labels of the two batches; it counts as a flip when those labels
+differ. Consecutive pairs separated by an excluded batch are not evaluated.
+Every consecutive pair the sequence contains is counted in one of two buckets:
 `evaluated_pairs`, from the internal and boundary pairs above, and
 `unevaluable_pairs`, made of the `n - 1` internal pairs of each excluded batch,
 one boundary pair for each side on which an excluded batch has a same-identity
