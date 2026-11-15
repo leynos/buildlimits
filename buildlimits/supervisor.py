@@ -123,9 +123,7 @@ class Supervisor:
             self.selector,
             self.clock,
             observation=RequestObservation(
-                metrics=self.metrics,
-                counts=self.admission.counts,
-                lines=self.routine_lines,
+                metrics=self.metrics, lines=self.routine_lines
             ),
         )
         self.groups = Groups(

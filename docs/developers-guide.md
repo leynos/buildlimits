@@ -147,13 +147,13 @@ Each module owns one decision. This table is the single module inventory.
 | `supervisor_signals`, `supervisor_shutdown`                                        | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                                    |
 | `supervisor_outcome_setup`, `supervisor_outcomes`                                  | Resource-free disabled shell and failure-isolated recording shell                                      |
 | `supervisor_wiring`                                                                | Builds the cache watch and recovery machine, including their late-resolved mutual probes               |
-| `supervisor_observability`                                                         | Wires cached pressure and drain observers into existing owners                                         |
+| `supervisor_observability`                                                         | Wires cached pressure, periodic gauges and drain observation into existing owners                      |
 | `effect_dispatch`                                                                  | Effect handlers and their metric and health mappings                                                   |
 | `requesters`, `pending_request`                                                    | Connections, queued requests and replies; recorded request data                                        |
 | `request_connections`                                                              | Unrecorded sockets, received rights and refusals                                                       |
 | `request_validation`, `requester_metrics`                                          | Pure validation over explicit context; terminal metric fields                                          |
 | `request_state`                                                                    | Compatibility re-export of `pending_request.Pending`                                                   |
-| `request_observation`                                                              | The metric, gauge and journal dependencies one request table reports through                           |
+| `request_observation`                                                              | The metric and journal dependencies one request table reports through                                  |
 | `descriptor_policy`, `descriptor_budget`                                           | Pure budget arithmetic; OS sampling, retention accounting and status                                   |
 | `listener_pressure`                                                                | Listener backpressure after accept-time exhaustion                                                     |
 | `groups`, `group_drain`, `group_recovery`                                          | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                          |
@@ -184,7 +184,7 @@ Each module owns one decision. This table is the single module inventory.
 | `admission_readiness`                                                              | Pure admission-progress classification from health, ledger counts and recovery outlook                 |
 | `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                                   |
 | `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                            |
-| `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, native journal datagrams, journal queries and reports                               |
+| `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, periodic gauge accumulator, native journal queries and reports                      |
 | `journal_policy`                                                                   | Which supervisor lines are written, and at which syslog priority                                       |
 | `outcome_vocabulary`                                                               | Closed cache-outcome and reading-reason vocabularies                                                   |
 | `outcome_stats`                                                                    | Pure parsing of supported sccache statistics into validated counters                                   |
@@ -596,6 +596,26 @@ inputs), and `metrics_report` and `metrics_pressure_report` aggregate.
 High-water values are producer-lifetime maxima; drain counters are cumulative
 snapshots and are never summed.
 
+Per-request records carry only request-specific fields. `request_admitted`
+holds the cache path and backend; `request_finished` holds the outcome, reason,
+cancellation, cache path, wait and runtime. Neither repeats a supervisor-wide
+count. `metrics_gauges.GaugeAccumulator` owns that snapshot instead: the
+supervisor folds each sample into interval peaks and a producer-side integral
+of queue depth, and `PressureMetrics.flush` writes one `gauges` record when the
+interval is due, when a stepped count moves by at least `GAUGE_STEP` and
+`GAUGE_MIN_SPACING_SECONDS` has passed, or when shutdown forces a final record.
+`metrics_schema.SUPERVISOR_WIDE_FIELDS` names the split so producers and tests
+can assert it. A failed emission keeps its peaks and integral and defers the
+next attempt by the minimum spacing, so a lost record costs one interval rather
+than the measurements in it.
+
+Gauge readers must be deployed before gauge writers. `metrics_query` accepts
+`gauges` and the fields it carries in this release, while an older reader
+treats the event as unknown and drops it.
+[Migrating to gauge snapshots](migrating-to-gauge-snapshots.md) gives the order
+and the volume figures; [ADR 009](adrs/adr-0009-supervisor-gauge-snapshots.md)
+records the decision.
+
 The outcome event schema is registered before the supervisor integration is
 enabled. `cache_outcome` carries one bounded classification per cached launch;
 `outcome_reading` and `outcome_store` carry aggregate failure and operation
@@ -713,14 +733,15 @@ these lines under systemd 257. Anything an operator may need to act on keeps
 the default priority and is always written.
 
 `request_observation.RequestObservation` bundles the places one request reports
-a terminal outcome: `metrics` is the failure-isolated emitter, `counts` reads
-the current admission gauges, and `lines` is the supervisor's
-`RoutineLineWriter`. Every field defaults to `None`, and `Requests` substitutes
-its own defaults, so `Requests` takes one dependency bundle instead of a
-growing keyword list. The supervisor constructs one bundle from its own
-telemetry and passes it at creation; `Requests.finish` and
-`supervisor_placement.launch` then write through `lines` without consulting the
-environment.
+a terminal outcome: `metrics` is the failure-isolated emitter and `lines` is
+the supervisor's `RoutineLineWriter`. Every field defaults to `None`, and
+`Requests` substitutes its own defaults, so `Requests` takes one dependency
+bundle instead of a growing keyword list. The supervisor-wide gauges are not
+part of the bundle: they reach the journal through the periodic snapshot, and
+`effect_dispatch.record_admitted` emits its own record rather than enriching
+one. The supervisor constructs the bundle from its own telemetry and passes it
+at creation; `Requests.finish` and `supervisor_placement.launch` then write
+through `lines` without consulting the environment.
 
 ## 10. Adapters
 

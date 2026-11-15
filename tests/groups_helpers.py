@@ -121,6 +121,28 @@ class FakeGroups:
         running.exec_error = None
         self.order.append("abandon")
 
+    @staticmethod
+    def advance(draining: cabc.Set[str]) -> list[str]:
+        """Report no scope as empty yet, so admission keeps every group.
+
+        The real registry reads the slice and reports the draining groups whose
+        processes have all exited. A scripted double places nothing, so its
+        scopes never empty on their own; a test that wants an ending drives
+        ``Admission.group_emptied`` directly.
+
+        Parameters
+        ----------
+        draining : Set[str]
+            The group identifiers whose leaders have ended.
+
+        Returns
+        -------
+        list[str]
+            Always empty.
+        """
+        del draining
+        return []
+
     def release(self, running: object) -> None:
         """Record that the group was released.
 

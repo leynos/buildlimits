@@ -107,7 +107,10 @@ def test_legacy_window_keeps_its_gauge_section_shape() -> None:
 
 def test_gauge_schema_registers_the_periodic_event() -> None:
     """The catalogue fixes the event, its field kinds and the wide-field split."""
-    assert "gauges" in EVENTS, "periodic snapshots are accepted"
+    assert {"gauges", "request_queued"} <= EVENTS, (
+        "periodic snapshots are accepted, and an old window still reads the "
+        "retired enqueue event"
+    )
     assert {"queued_peak", "held_peak"} <= COUNTERS, "peaks are counts"
     assert {"interval_seconds", "queued_seconds"} <= DURATIONS, (
         "integrals are durations"

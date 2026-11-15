@@ -6,10 +6,9 @@ never changes a Pending entry, owns no descriptors and retains no identifiers.
 
 import typing as typ
 
-from buildlimits.metrics import gauge_fields, refusal_reason
+from buildlimits.metrics import refusal_reason
 
 if typ.TYPE_CHECKING:
-    from buildlimits.admission_state import Counts
     from buildlimits.pending_request import Pending
 
 
@@ -67,19 +66,3 @@ def rejected_fields(reason: str) -> dict[str, object]:
         "wait_seconds": 0.0,
         "runtime_seconds": 0.0,
     }
-
-
-def admission_fields(counts: Counts | None) -> dict[str, object]:
-    """Map an optional admission snapshot without identifiers.
-
-    Parameters
-    ----------
-    counts : Counts | None
-        Current domain snapshot, or absent for a standalone requester port.
-
-    Returns
-    -------
-    dict[str, object]
-        Six validated gauge names, or no fields when the snapshot is absent.
-    """
-    return {} if counts is None else dict(gauge_fields(counts))

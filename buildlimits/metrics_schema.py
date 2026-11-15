@@ -15,6 +15,8 @@ MAX_COUNTER = 10**12
 EVENTS = frozenset({
     "supervisor_started",
     "supervisor_stopped",
+    # No release writes this event now; it stays accepted so an old window
+    # still reads. The queue is described by ``gauges`` instead (ADR 009).
     "request_queued",
     "request_admitted",
     "request_finished",
