@@ -2261,8 +2261,9 @@ RFC-W1 host check -> EP-M1 -> tests/test_sccache_real_binary.py (opt-in)
 RFC-H1, RFC-H3 -> EP-M7 -> build-limits-metrics cache_outcomes, build-limits-cache-replay h3 -> G1
 RFC-H2 -> Q1 (b), D24, D25 -> EP-M8 -> tests/test_outcome_sightings.py, tests/test_outcome_sightings_properties.py,
   tests/test_outcome_replay_h2.py, build-limits-cache-replay h2 -> G1
-RFC-W2, RFC-H4, RFC-H5 -> EP-M9 preregistration -> EP-M9 -> tests/test_outcome_replay_h4.py,
-  tests/test_outcome_replay_h5.py, tests/__snapshots__/test_outcome_replay.ambr
+RFC-W2, RFC-H4, RFC-H5 -> EP-M9 preregistration -> EP-M9 (gated; not yet run)
+  -> planned tests/test_outcome_replay_h4.py, tests/test_outcome_replay_h5.py,
+  tests/__snapshots__/test_outcome_replay.ambr
 RFC-W2, issue #60 -> proposed EP-L -> EP-L0 owner approval -> G2 (roadmap 3.2.4)
 RFC-COMPAT -> C-DEFAULT, C-SCHEMA, D18 -> EP-M6 -> tests/test_outcome_config.py,
   tests/test_metrics_records_compatibility.py (extended)
@@ -3537,15 +3538,19 @@ rates render as `n/a`.
 #### EP-M9 reporting amendment (owner approval required)
 
 The amendment adds reporting only. It changes no H4/H5 threshold, no H2/H3
-threshold and no 2,000-record minimum. The owner approves or rejects it in the
-Decision log after the RFC 0002 G1 decision and before the owner reviews any
-EP-M9 outcome report, so H2/H3 evidence read for G1 cannot steer it. A rejected
-amendment leaves EP-M9 with the original base-rate, origin-rate, last-outcome
-and Beta-over-eight comparison, the Brier score, coverage, Holm-adjusted paired
-comparisons, the key-clustered and UTC-day intervals and the dataset manifest.
-Those items are fixed before the amendment and do not depend on it; the
-manifest stays mandatory because it records the input rather than an evaluation
-choice.
+threshold and no 2,000-record minimum. Issue
+[#60](https://github.com/leynos/buildlimits/issues/60) lists the majority-class
+decision baseline within the first offline deliverable, so approving this
+amendment is the expected path; recording it as an amendment keeps the approval
+explicit instead of silently widening RFC 0002's comparison. The owner approves
+or rejects it in the Decision log after the RFC 0002 G1 decision and before the
+owner reviews any EP-M9 outcome report, so H2/H3 evidence read for G1 cannot
+steer it. A rejected amendment leaves EP-M9 with the original base-rate,
+origin-rate, last-outcome and Beta-over-eight comparison, the Brier score,
+coverage, Holm-adjusted paired comparisons, the key-clustered and UTC-day
+intervals and the dataset manifest. Those items are fixed before the amendment
+and do not depend on it; the manifest stays mandatory because it records the
+input rather than an evaluation choice.
 
 The amendment adds:
 
