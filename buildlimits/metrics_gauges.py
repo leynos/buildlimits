@@ -269,9 +269,11 @@ class GaugeAccumulator:
         self.queued_seconds = 0.0
         self.queued_peak = _count(snapshot.get("queued"))
         self.held_peak = _count(snapshot.get("held"))
-        # A delivered snapshot without a depth cannot anchor a measured
-        # interval either, so the next one starts unobserved as well.
-        self._queue_unobserved = self.queued_peak is None
+        # The next interval is measured only when the integration pair starts
+        # where this record ends. An unread sample, or a cached endpoint that
+        # no fold ever ran at, leaves the integral short of the time the
+        # interval will claim, so the mean would understate the depth.
+        self._queue_unobserved = self._previous_time != now
         self._flushed = now
         self._anchor = now
         self._flushed_counts = {

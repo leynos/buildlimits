@@ -4,7 +4,7 @@ import pytest
 from conftest import RecordingSink
 from hypothesis import given
 from hypothesis import strategies as st
-from metrics_support import unavailable_snapshot
+from metrics_support import SwitchableSnapshot, unavailable_snapshot
 
 from buildlimits.config import SupervisorConfig
 from buildlimits.metrics import (
@@ -156,24 +156,15 @@ def test_a_lost_snapshot_keeps_its_maximum_for_the_next_record(metric_sink) -> N
 def test_a_failed_endpoint_sample_leaves_the_interval_open(metric_sink) -> None:
     """A read failure at the flush endpoint must not publish a measured mean."""
     now = [0.0]
-    state: dict[str, object] = {"queued": 2}
-    readable = [True]
-
-    def snapshot() -> dict[str, object]:
-        """Model a cached-state reader that fails on demand."""
-        if not readable[0]:
-            msg = "private cached-state fault"
-            raise RuntimeError(msg)
-        return state
-
-    observer = PressureMetrics(Metrics(metric_sink), snapshot, clock=lambda: now[0])
+    reader = SwitchableSnapshot({"queued": 2})
+    observer = PressureMetrics(Metrics(metric_sink), reader, clock=lambda: now[0])
     baseline = _flush(observer, metric_sink, now[0])
     assert baseline["BUILD_LIMITS_EVENT"] == "gauges", "the baseline reached the sink"
-    readable[0] = False
+    reader.readable = False
     now[0] = GAUGE_INTERVAL_SECONDS
     observer.observe(now[0])
     assert not observer.flush(now[0]), "no record may end at an unread endpoint"
-    readable[0] = True
+    reader.readable = True
     now[0] = 2 * GAUGE_INTERVAL_SECONDS
     observer.observe(now[0])
     assert observer.flush(now[0]), "the next readable endpoint publishes both"
@@ -183,6 +174,27 @@ def test_a_failed_endpoint_sample_leaves_the_interval_open(metric_sink) -> None:
     )
     assert "BUILD_LIMITS_QUEUED_SECONDS" not in record, (
         "depth across the unread endpoint was never observed, so it is not a mean"
+    )
+
+
+def test_a_cached_endpoint_never_makes_the_next_interval_measured(
+    metric_sink,
+) -> None:
+    """A poll's sample closes this interval but cannot anchor the next one."""
+    reader = SwitchableSnapshot({"queued": 2})
+    observer = PressureMetrics(Metrics(metric_sink), reader, clock=lambda: 0.0)
+    observer.observe(31.0)  # A service poll reads later than the tick.
+    reader.readable = False
+    observer.observe(30.0)  # The tick's own reading fails.
+    assert observer.flush(30.0), "the cached sample still closes the interval"
+    reader.readable = True
+    observer.observe(40.0)
+    record = _flush(observer, metric_sink, 61.0)
+    assert record["BUILD_LIMITS_INTERVAL_SECONDS"] == "30.000", (
+        "the interval spans the cached endpoint"
+    )
+    assert "BUILD_LIMITS_QUEUED_SECONDS" not in record, (
+        "no fold anchored the interval at its start, so it has no mean"
     )
 
 

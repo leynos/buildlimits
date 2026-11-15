@@ -64,11 +64,16 @@ def connect_requester(
     sent, so the next supervisor accept reads a complete request.
     """
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.connect(listener.getsockname())
-    client.settimeout(1)
-    protocol.send_frame(
-        client, protocol.encode_request(compile_request(rights)), rights
-    )
+    with contextlib.ExitStack() as setup:
+        # The caller only learns the descriptor once the frame is sent, so a
+        # failed connect or send must close it here or the setup path leaks it.
+        setup.callback(client.close)
+        client.connect(listener.getsockname())
+        client.settimeout(1)
+        protocol.send_frame(
+            client, protocol.encode_request(compile_request(rights)), rights
+        )
+        setup.pop_all()  # Hand the live descriptor to the caller.
     return client
 
 
