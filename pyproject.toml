@@ -537,6 +537,19 @@ full_name = ["buildlimits.metrics.NullSink.emit"]
 path = ["buildlimits/metrics.py"]
 reason = "Metrics.__init__ defaults its transport to NullSink when no sink is configured, and Metrics.emit calls self.sink.emit through the MetricsSink protocol, which Skylos does not resolve to the concrete default. test_metrics.py asserts that the default transport reports a record as handled without counting a drop."
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = [
+    "buildlimits.metrics_gauges.GaugeAccumulator.observe",
+    "buildlimits.metrics_gauges.GaugeAccumulator.is_due",
+    "buildlimits.metrics_gauges.GaugeAccumulator.record",
+    "buildlimits.metrics_gauges.GaugeAccumulator.settle",
+    "buildlimits.metrics_gauges.GaugeAccumulator._integrate",
+    "buildlimits.metrics_gauges.GaugeAccumulator._crossed_a_step",
+]
+path = ["buildlimits/metrics_gauges.py"]
+reason = "PressureMetrics calls the accumulator through the collaborator attribute it holds, and observe folds samples through the two private helpers; Skylos does not resolve either edge. The supervisor tick, admission and shutdown paths all drive the accumulator, and tests/test_metrics_gauges.py asserts the cadence, the interval integral and the failed-emission merge."
+
 [tool.nose]
 version = "0.20.0"
 roots = ["."]

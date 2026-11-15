@@ -166,7 +166,9 @@ class Supervisor:
         self._next_server_poll = 0.0
         self._next_health_poll = 0.0
         self._next_cache_poll = 0.0
-        self.pressure = supervisor_observability.configure(self)
+        observers = supervisor_observability.configure(self)
+        self.pressure = observers.pressure
+        self.gauges = observers.gauges
         self._effect_handlers = effect_dispatch.effect_handlers(self)
 
     def start(self, own_cgroup: PurePosixPath) -> None:
@@ -273,7 +275,9 @@ class Supervisor:
                 entry.request_id, cacheable=entry.request.cacheable
             )
             if entry.request_id in self.admission.queue:
-                self._metric("request_queued")
+                # The queue depth a ``request_queued`` record used to carry is
+                # folded into the periodic snapshot instead of a record.
+                supervisor_observability.observe(self, self.clock())
             self._apply(effects)
 
     def _failed_replies(self) -> None:
@@ -343,7 +347,9 @@ class Supervisor:
         self.requests.prune_completed(self.admission.groups)
         group_recovery.retry_termination(self.groups, self.admission)
         group_recovery.empty_groups(self)
-        supervisor_polling.poll_services(self, self.clock())
+        now = self.clock()
+        supervisor_polling.poll_services(self, now)
+        supervisor_observability.observe(self, now)
         if not self.admission.healthy and not self.admission.groups:
             self._shutdown()
 

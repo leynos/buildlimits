@@ -91,7 +91,15 @@ def _accept_exhaustion(report: int, path: str) -> object:
                 for record in sink.records
                 if record["BUILD_LIMITS_EVENT"] == "accept_pressure"
             ]
-            recovered_metrics = sink.records[-1]
+            # The heartbeat owns the supervisor-wide snapshot, so advance to the
+            # next interval and let the periodic record describe the recovery.
+            now[0] = 30.0
+            supervisor._tick()
+            recovered_metrics = [
+                record
+                for record in sink.records
+                if record["BUILD_LIMITS_EVENT"] == "gauges"
+            ][-1]
         finally:
             close_all(filler)
             for request_id in list(supervisor.requests.pending):
