@@ -3391,31 +3391,37 @@ was hit. H4 is `insufficient` below 2,000 attributed outcomes or with no
 evaluated rows, `supported` at a 95% hit share or more, `refuted` below 90%, and
 `inconclusive` between. The thresholds are unchanged.
 
-**H5 retained-row semantics.** H5 groups eligible rows by digest identity,
-partitions each group into batches, and orders the batches by write position. A
-batch that contains more than one full toolchain identity is excluded as
-`mixed_identity_batches_excluded` and takes part in no pair. A batch that
-contains both a `hit` and a `miss` is excluded as `mixed_batches_excluded`,
-because its internal outcome order is not recorded and no consecutive pair
-inside it can be reconstructed without relying on append position. A pair of
-adjacent unanimous batches is excluded as `identity_changed_pairs_excluded`
-when their full toolchain identities differ.
+**H5 retained-row semantics.** H5 groups **all attributed rows** by digest
+identity, including non-hit/miss outcomes, partitions each group into batches,
+and orders the batches by write position. Keeping those rows in the sequence
+preserves consecutive-outcome adjacency: a `failed` or other attributed outcome
+between two hit/miss rows is a boundary, never something the filter deletes so
+that the hits become neighbours. A batch that contains more than one full
+toolchain identity is excluded as `mixed_identity_batches_excluded` and takes
+part in no pair. A batch containing an attributed non-hit/miss outcome is
+excluded as `ineligible_batches_excluded`. A batch that contains both a `hit`
+and a `miss` is excluded as `mixed_batches_excluded`, because its internal
+outcome order is not recorded and no consecutive pair inside it can be
+reconstructed without relying on append position. An excluded batch blocks
+pairing across it. A pair of adjacent unanimous batches is excluded as
+`identity_changed_pairs_excluded` when their full toolchain identities differ.
 
-Each unanimous batch of `n` rows contributes its `n - 1` internal consecutive
-pairs, whose two rows carry the same label and therefore never flip. Each pair
-of adjacent unanimous batches of the same identity contributes one boundary
-pair between the labels of the two batches; it counts as a flip when those
-labels differ. Consecutive pairs separated by an excluded batch are not
-evaluated. The flip rate is flips divided by evaluated pairs, so a long
-unanimous batch contributes its real share of non-flipping pairs rather than
-one batch-level decision. The result is invariant to row order within a batch.
-A salt change is a new store epoch and is never pooled; the reader supplies one
-header per store. H5 is `insufficient` below 2,000 attributed outcomes or with
-no evaluated pairs, `supported` at 5% or less, `refuted` above 10%, and
-`inconclusive` between. The thresholds are unchanged, and the retained-tail
-caveat applies to pairs lost at a compaction boundary. `not_collected` is
-reserved for a store that lacks a field a hypothesis needs; a v1 store accepted
-by the reader has them, so H4/H5 normally report one of the other four tokens.
+Each unanimous `hit`/`miss` batch of `n` rows contributes its `n - 1` internal
+consecutive pairs, whose two rows carry the same label and therefore never
+flip. Each pair of adjacent unanimous hit/miss batches of the same identity,
+with no excluded batch between them, contributes one boundary pair between the
+labels of the two batches; it counts as a flip when those labels differ.
+Consecutive pairs separated by an excluded batch are not evaluated. The flip
+rate is flips divided by evaluated pairs, so a long unanimous batch contributes
+its real share of non-flipping pairs rather than one batch-level decision. The
+result is invariant to row order within a batch. A salt change is a new store
+epoch and is never pooled; the reader supplies one header per store. H5 is
+`insufficient` below 2,000 attributed outcomes or with no evaluated pairs,
+`supported` at 5% or less, `refuted` above 10%, and `inconclusive` between. The
+thresholds are unchanged, and the retained-tail caveat applies to pairs lost at
+a compaction boundary. `not_collected` is reserved for a store that lacks a
+field a hypothesis needs; a v1 store accepted by the reader has them, so H4/H5
+normally report one of the other four tokens.
 
 **Predictors and parameters.** When predicting a row in batch `i`, the training
 history is every eligible row in batches `0` to `i-2`: the one-batch embargo
@@ -3459,7 +3465,11 @@ bootstrap resamples that resample whole keys with replacement and preserve each
 key's chronology; a second interval resamples whole UTC-day blocks. The seed is
 the fixed integer `20261115`.
 
-**Paired tests and the Holm family.** Each raw p-value comes from the same
+**Paired tests and the Holm family.** A paired comparison is `insufficient`
+unless its shared cohort holds at least 30 distinct keys; below that, no
+p-value or interval is computed and the report sets `support_limited: true`,
+because a key-clustered resample over fewer clusters cannot vary enough to
+justify inference. Above the minimum, each raw p-value comes from the same
 1,000 key-clustered resamples used for the intervals. For resample `b`, let
 `d_b` be the mean Brier score difference (candidate minus reference) over that
 resample's shared cohort, and report
