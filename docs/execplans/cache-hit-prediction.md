@@ -280,6 +280,13 @@ These are hard invariants. Violating one requires escalation, not a workaround.
   [#60](https://github.com/leynos/buildlimits/issues/60). Documentation only;
   no runtime code, no threshold change and no G1 or G2 decision. EP-M9 remains
   gated and unstarted.
+- [x] (2026-11-15) Review of the preregistration settled H5's population: pairs
+  that an exclusion leaves unevaluable bound the reported flip rate rather than
+  covering it, a boundary across a known toolchain change is outside the
+  population, and boundaries beside a mixed-identity batch stay unevaluable
+  unless the two identity sets are disjoint. The 5% and 10% thresholds and the
+  2,000-outcome minimum are unchanged, and `make fmt`, `make check-fmt`,
+  `make markdownlint` and `make nixie` pass after each edit.
 - [x] (2026-11-03) Reviewed merged PR #24 and draft PR #43; documented the
   proposed ADR 007 observation boundary without changing runtime code.
 - [x] (2026-11-05) Corrected the ADR-numbering record after PR #43 renumbered to
