@@ -275,8 +275,8 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
 ## Progress
 
-- [x] (2026-11-15) Recorded the EP-M9 preregistration, the reporting amendment
-  and the proposed EP-L extension for issue
+- [x] (2026-11-15) Recorded the EP-M9 preregistration, the proposed reporting
+  amendment and the proposed EP-L extension for issue
   [#60](https://github.com/leynos/buildlimits/issues/60). Documentation only;
   no runtime code, no threshold change and no G1 or G2 decision. EP-M9 remains
   gated and unstarted.
