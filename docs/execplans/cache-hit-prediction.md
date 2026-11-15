@@ -3273,8 +3273,10 @@ milestone that adds each module.
      and version, `salt_id`, record, outcome, origin, parser-class and
      child-sighting counts, eligible `hit`/`miss` rows, distinct keys and
      identities, server and `CACHE_VERSION` values, first and last
-     `observed_at`, the retention bounds, and whether the 10,000-record cap was
-     reached;
+     `observed_at`, the retention bounds, and whether the 10,000-record cap is
+     reached at inspection time. The store records no cap flag; once
+     compaction removes older rows, an earlier cap state cannot be
+     reconstructed;
    - the totals;
    - the coverage by origin, from
      `build-limits-metrics --since 14d --max-records 100000`;
@@ -3300,6 +3302,9 @@ milestone that adds each module.
 
 ### EP-M9: W2 offline replay (after G1 says proceed or narrow)
 
+- Preconditions: the owner records RFC 0002 G1 `proceed` or `narrow`, and the
+  reporting-amendment decision below is recorded before the replay runs or its
+  outcome report is reviewed.
 - Outcome: `h4`, `h5` and `all` in the replay CLI. They report verdicts,
   sample sizes, the time span the store covers (R8), and the quiet-window
   caveat. Below 2,000 attributed records, the verdict is `insufficient`.
@@ -3307,7 +3312,7 @@ milestone that adds each module.
   - `tests/test_outcome_replay.py`: synthetic sets at, above and below each
     threshold.
   - A Hypothesis property that verdicts do not depend on record order within
-    a key.
+    a batch.
   - Snapshots of the text and JSON output, each paired with a semantic
     assertion.
   - End-to-end runs of the console script.
@@ -3387,24 +3392,29 @@ only, as a diagnostic; it does not decide the verdict.
 observation. The report therefore states the retained-tail caveat: the excluded
 batch may be later than the RFC's first attributed observation, so a truncated
 history can bias H4. `record_cap_reached` says whether the 10,000-record bound
-was hit. H4 is `insufficient` below 2,000 attributed outcomes or with no
-evaluated rows, `supported` at a 95% hit share or more, `refuted` below 90%, and
-`inconclusive` between. The thresholds are unchanged.
+is reached at inspection time. The store keeps no cap flag, so a cap reached
+and then undone by compaction is not observable; the report states that limit
+rather than claiming the cap was never reached. H4 is `insufficient` below
+2,000 attributed outcomes or with no evaluated rows, `supported` at a 95% hit
+share or more, `refuted` below 90%, and `inconclusive` between. The thresholds
+are unchanged.
 
-**H5 retained-row semantics.** H5 groups **all attributed rows** by digest
-identity, including non-hit/miss outcomes, partitions each group into batches,
-and orders the batches by write position. Keeping those rows in the sequence
-preserves consecutive-outcome adjacency: a `failed` or other attributed outcome
-between two hit/miss rows is a boundary, never something the filter deletes so
-that the hits become neighbours. A batch that contains more than one full
-toolchain identity is excluded as `mixed_identity_batches_excluded` and takes
-part in no pair. A batch containing an attributed non-hit/miss outcome is
-excluded as `ineligible_batches_excluded`. A batch that contains both a `hit`
-and a `miss` is excluded as `mixed_batches_excluded`, because its internal
-outcome order is not recorded and no consecutive pair inside it can be
-reconstructed without relying on append position. An excluded batch blocks
-pairing across it. A pair of adjacent unanimous batches is excluded as
-`identity_changed_pairs_excluded` when their full toolchain identities differ.
+**H5 retained-row semantics.** H5 groups every stored row that carries a key by
+digest identity, including `unattributed` rows and non-hit/miss outcomes, and
+partitions each group into batches ordered by write position. Keeping those
+rows in the sequence preserves consecutive-outcome adjacency: a `failed`,
+`unattributed` or other outcome between two hit/miss rows is a boundary, never
+something the filter deletes so that the hits become neighbours. A batch that
+contains more than one full toolchain identity is excluded as
+`mixed_identity_batches_excluded` and takes part in no pair. A batch containing
+an `unattributed` row is excluded as `unattributed_batches_excluded`; a batch
+containing another non-hit/miss outcome is excluded as
+`ineligible_batches_excluded`. A batch that contains both a `hit` and a `miss`
+is excluded as `mixed_batches_excluded`, because its internal outcome order is
+not recorded and no consecutive pair inside it can be reconstructed without
+relying on append position. An excluded batch blocks pairing across it. A pair
+of adjacent unanimous batches is excluded as `identity_changed_pairs_excluded`
+when their full toolchain identities differ.
 
 Each unanimous `hit`/`miss` batch of `n` rows contributes its `n - 1` internal
 consecutive pairs, whose two rows carry the same label and therefore never
@@ -3462,8 +3472,12 @@ both class counts. Paired comparisons use only rows where both predictors
 produce a probability, and report that shared cohort and each predictor's
 coverage separately. Intervals are 95% percentile intervals from 1,000 seeded
 bootstrap resamples that resample whole keys with replacement and preserve each
-key's chronology; a second interval resamples whole UTC-day blocks. The seed is
-the fixed integer `20261115`.
+key's chronology; a second interval resamples whole UTC-day blocks. The
+key-clustered interval needs at least 30 distinct keys, and the day-block
+interval needs at least 14 distinct UTC days; below either minimum the interval
+is `n/a` with `support_limited: true`, because resampling one or two clusters
+would report a zero-width interval as if it were precise. The seed is the fixed
+integer `20261115`.
 
 **Paired tests and the Holm family.** A paired comparison is `insufficient`
 unless its shared cohort holds at least 30 distinct keys; below that, no
@@ -3503,22 +3517,23 @@ The amendment adds reporting only. It changes no H4/H5 threshold, no H2/H3
 threshold and no 2,000-record minimum. The owner approves or rejects it in the
 Decision log after the RFC 0002 G1 decision and before the owner reviews any
 EP-M9 outcome report, so H2/H3 evidence read for G1 cannot steer it. A rejected
-amendment leaves EP-M9 with the original base-rate, last-outcome and
-Beta-over-eight comparison, Brier score and coverage; the dataset manifest
-above stays mandatory either way, because it records the input rather than an
-evaluation choice.
+amendment leaves EP-M9 with the original base-rate, origin-rate, last-outcome
+and Beta-over-eight comparison, the Brier score, coverage, Holm-adjusted paired
+comparisons, the key-clustered and UTC-day intervals and the dataset manifest.
+Those items are fixed before the amendment and do not depend on it; the
+manifest stays mandatory because it records the input rather than an evaluation
+choice.
 
 The amendment adds:
 
-- the majority-class decision baseline and its accuracy;
+- the majority-class decision baseline and its accuracy, and adds it to the
+  fixed Holm family;
 - log loss with the clipping rule above;
 - calibration bins with counts;
-- seeded key-clustered and day-block bootstrap intervals;
 - per-origin, per-UTC-day and per-load-stratum results, with a load stratum
   reported as `not_collected` unless a separately approved v2 source records
   workload state before admission;
-- shared-cohort and coverage/risk reporting for every paired comparison;
-- Holm-adjusted paired comparisons.
+- shared-cohort and coverage/risk reporting for every paired comparison.
 
 ## Proposed longitudinal-predictor extension (EP-L; not approved)
 

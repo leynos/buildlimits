@@ -331,7 +331,9 @@ preregistration, the reporting amendment and the proposed longitudinal
 extension are recorded in the ExecPlan; none is a gate decision.
 
 - [ ] 3.2.1. Complete EP-M9 of the cache-hit prediction ExecPlan.
-  - Requires an explicit RFC 0002 G1 decision of `proceed` or `narrow`.
+  - Requires an explicit RFC 0002 G1 decision of `proceed` or `narrow`, and a
+    recorded approval or rejection under 3.2.2 before the replay runs or its
+    outcome report is reviewed.
   - See RFC 0002 §2 and H4-H5. Do not run this step on the live cache.
   - Success: the replay reports the base-rate, last-outcome and Beta-over-eight
     comparison, the registry base rate, digest stability and each verdict
