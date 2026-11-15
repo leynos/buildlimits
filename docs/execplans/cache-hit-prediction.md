@@ -3464,11 +3464,14 @@ withholds batch `i-1`, and the report counts the withheld rows as
   class (`registry`, `git`, `path` or `unknown`), falling back to `p_base`,
   then to 0.5. It is the prior mean for the Beta component and for the proposed
   EP-L components.
-- Last outcome: `p_last` is 1.0 when the most recent batch for the full
-  identity in the training history contains only hits, 0.0 when it contains
-  only misses, and undecided (abstain) when it contains both or no such batch
-  exists. Ambiguous last batches are reported and excluded from that
-  predictor's shared cohort.
+- Last outcome: consider the most recent batch for the full identity in the
+  training history that contains at least one eligible outcome. `p_last` is 1.0
+  when that batch contains only hits, 0.0 when it contains only misses, and
+  undecided (abstain) when it contains both or no such batch exists. A later
+  batch with no eligible outcome carries no label and is skipped rather than
+  ending the search. Ambiguous last batches are counted as
+  `ambiguous_last_batches` and their rows are excluded from that predictor's
+  shared cohort.
 - Beta over eight: take whole batches for the full identity from the training
   history, newest-first, until at least eight eligible outcomes are included,
   including the batch that crosses the threshold. With `h` hits and `n`
