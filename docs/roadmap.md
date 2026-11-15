@@ -316,8 +316,9 @@ closes those items.
   - Run the outstanding quiet-host latency acceptance against the ExecPlan
     bounds, then present H1-H3 results, coverage and sample limitations to the
     owner. The observation-port proposal does not substitute for this evidence.
-  - Record the 3.2.2 reporting-amendment decision and any 3.2.3 freeze before
-    the H2/H3 verdicts are read, so G1 evidence cannot steer either.
+  - Record the EP-M9 preregistration approval, the 3.2.2 reporting-amendment
+    decision and any 3.2.3 freeze before the H2/H3 verdicts are read, so G1
+    evidence cannot steer them.
   - Success: the quiet-host result is recorded and the owner explicitly records
     an RFC 0002 G1 decision of `proceed`, `narrow` or `stop`, with the limits
     that apply. Until that decision, EP-M9 remains gated and its comparison is
@@ -333,10 +334,10 @@ preregistration, the reporting amendment and the proposed longitudinal
 extension are recorded in the ExecPlan; none is a gate decision.
 
 - [ ] 3.2.1. Complete EP-M9 of the cache-hit prediction ExecPlan.
-  - Requires an explicit RFC 0002 G1 decision of `proceed` or `narrow`, the
-    owner's approval of the EP-M9 preregistration, and a recorded approval or
-    rejection under 3.2.2 before the replay runs or its outcome report is
-    reviewed.
+  - Requires the owner's approval of the EP-M9 preregistration and a recorded
+    approval or rejection under 3.2.2 before the G1 H2/H3 verdicts are read,
+    and an explicit RFC 0002 G1 decision of `proceed` or `narrow` before the
+    replay runs or its outcome report is reviewed.
   - See RFC 0002 §2 and H4-H5. Do not run this step on the live cache.
   - Success: the replay reports the base-rate, origin-rate, last-outcome and
     Beta-over-eight comparison, the registry base rate, digest stability and

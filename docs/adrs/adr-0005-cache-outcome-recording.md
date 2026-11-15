@@ -181,10 +181,10 @@ The W2 preregistration in the
 [cache-hit prediction ExecPlan](../execplans/cache-hit-prediction.md) refines
 H4 and H5 without changing these thresholds. H4 excludes a key's whole earliest
 retained batch (`first_batch_rule: earliest_batch`), because rows in a batch
-share `observed_at` and have no recorded order. H5 reports `insufficient` when
-fewer than half of a population's consecutive pairs are evaluable, a
-data-adequacy rule that can only withhold a verdict. The owner approves both
-deviations with the preregistration before any outcome data is read.
+share `observed_at` and have no recorded order. H5 bounds the population flip
+rate by the pairs that exclusions leave unevaluable and withholds any verdict
+those pairs could change. The owner approves both deviations with the
+preregistration before any outcome data is read.
 
 ### D12: confirm provisional labels only if needed
 

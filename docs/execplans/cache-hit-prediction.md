@@ -3306,9 +3306,11 @@ milestone that adds each module.
 
 ### EP-M9: W2 offline replay (after G1 says proceed or narrow)
 
-- Preconditions: the owner records RFC 0002 G1 `proceed` or `narrow`, approves
-  the preregistration below, and records the reporting-amendment decision
-  before the replay runs or its outcome report is reviewed.
+- Preconditions: the owner approves the preregistration below and records the
+  reporting-amendment decision before the first G1 replay's H2/H3 verdicts are
+  read, so neither can be steered by G1 evidence, and then records RFC 0002 G1
+  `proceed` or `narrow` before the replay runs or its outcome report is
+  reviewed.
 - Outcome: `h4`, `h5` and `all` in the replay CLI. They report verdicts,
   sample sizes, the time span the store covers (R8), and the quiet-window
   caveat. Below 2,000 attributed records, the verdict is `insufficient`.
@@ -3338,11 +3340,13 @@ milestone that adds each module.
 
 #### EP-M9 preregistration (fixed before outcome data is read)
 
-This preregistration is fixed before any outcome data is read. It adds no
-threshold and releases no gate. EP-M9 still requires an explicit RFC 0002 G1
-`proceed` or `narrow`. Issue
-[#60](https://github.com/leynos/buildlimits/issues/60) tracks the comparison,
-and the reporting amendment below requires separate owner approval.
+This preregistration is fixed before any outcome data is read, and the owner
+approves it together with the reporting amendment before the first G1 replay's
+H2/H3 verdicts are read, so G1 evidence cannot steer it. It adds no threshold
+and releases no gate. EP-M9 still requires an explicit RFC 0002 G1 `proceed` or
+`narrow`. Issue [#60](https://github.com/leynos/buildlimits/issues/60) tracks
+the comparison, and the reporting amendment below requires separate owner
+approval.
 
 **Eligible labels and identities.** Only `OutcomeRecord` rows whose `outcome` is
 `hit` or `miss` are eligible predictor labels and H5 pair members. Every other
@@ -3450,30 +3454,42 @@ between the labels of the two batches; it counts as a flip when those labels
 differ. Consecutive pairs separated by an excluded batch are not evaluated.
 Every consecutive pair the sequence contains is counted in one of two buckets:
 `evaluated_pairs`, from the internal and boundary pairs above, and
-`unevaluable_pairs`, made of the `n - 1` internal pairs of each excluded batch,
-one boundary pair for each side on which an excluded batch has a same-identity
-neighbour, and each identity-changed boundary pair. The flip rate is flips
-divided by evaluated pairs, so a long unanimous batch contributes its real
-share of non-flipping pairs rather than one batch-level decision. The result is
-invariant to row order within a batch.
+`unevaluable_pairs`, made of the `n - 1` internal pairs of each excluded batch
+plus one pair for every boundary between two batches where at least one side is
+excluded. Each boundary joins two batches and is counted once, including a
+boundary between two adjacent excluded batches. An identity-changed boundary
+which has no excluded batch on either side is unevaluable as well. The observed
+flip rate is flips divided by evaluated pairs, so a long unanimous batch
+contributes its real share of non-flipping pairs rather than one batch-level
+decision. The result is invariant to row order within a batch.
 
 Exclusions must not silently delete transitions that could change the verdict.
-H5 is therefore `insufficient` when the population's `unevaluable_pairs`
-exceeds its `evaluated_pairs`: at that point less than half of the population's
-consecutive pairs were observed, and a run of hits after alternating failures
-could otherwise report a 0% flip rate. This is a data-adequacy rule, not a flip
-threshold: it can only withhold a verdict, never produce a `supported` or
-`refuted` one, and the owner approves it with this preregistration exactly as
-the `first_batch_rule` deviation is approved. RFC 0002's W2 cross-reference
-records it beside the fixed thresholds. A salt change is a new store epoch and
-is never pooled; the reader supplies one header per store. H5 is `insufficient`
-below 2,000 attributed outcomes, with no evaluated pairs, or under the adequacy
-rule; `supported` at 5% or less, `refuted` above 10%, and `inconclusive`
-between. The 5% and 10% flip thresholds and the 2,000-outcome minimum are
-unchanged, and the retained-tail caveat applies to pairs lost at a compaction
-boundary. `not_collected` is reserved for a store that lacks a field a
-hypothesis needs; a v1 store accepted by the reader has them, so H4/H5 normally
-report one of the other four tokens.
+Each unevaluable pair may or may not have flipped, so with `E` evaluated pairs,
+`F` evaluated flips and `U` unevaluable pairs, the population's flip rate lies
+in the closed interval `[F / (E + U), (F + U) / (E + U)]`. H5 compares that
+interval with the fixed thresholds:
+
+- `supported` when its maximum, `(F + U) / (E + U)`, is 5% or less;
+- `refuted` when its minimum, `F / (E + U)`, is above 10%;
+- `inconclusive` when it lies entirely between the thresholds, meaning its
+  minimum is above 5% and its maximum is 10% or less;
+- `insufficient` otherwise, because the unobserved pairs could move the rate
+  across a threshold in either direction.
+
+With no excluded pairs the interval collapses to the observed rate and the
+verdicts reduce exactly to the RFC's thresholds. The rule is a data-adequacy
+rule, not a new flip threshold: it withholds a verdict only when unobserved
+pairs leave it undetermined, and the owner approves it with this
+preregistration exactly as the `first_batch_rule` deviation is approved. RFC
+0002's W2 cross-reference records it beside the fixed thresholds. The report
+gives `E`, `F`, `U`, the interval, and the observed rate `F / E` when `E` is
+non-zero. A salt change is a new store epoch and is never pooled; the reader
+supplies one header per store. H5 is `insufficient` below 2,000 attributed
+outcomes or with no evaluated pairs. The 5% and 10% flip thresholds and the
+2,000-outcome minimum are unchanged, and the retained-tail caveat applies to
+pairs lost at a compaction boundary. `not_collected` is reserved for a store
+that lacks a field a hypothesis needs; a v1 store accepted by the reader has
+them, so H4/H5 normally report one of the other four tokens.
 
 **Predictors and parameters.** When predicting a row in batch `i`, the training
 history is every eligible row in batches `0` to `i-2`: the one-batch embargo
