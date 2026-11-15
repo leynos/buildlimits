@@ -3441,16 +3441,19 @@ rows in the sequence preserves consecutive-outcome adjacency: a `failed`,
 `unattributed` or other outcome between two hit/miss rows is a boundary, never
 something the filter deletes so that the hits become neighbours. A batch that
 contains more than one full toolchain identity is excluded as
-`mixed_identity_batches_excluded` and takes part in no pair. A batch containing
-an `unattributed` row is excluded as `unattributed_batches_excluded`; a batch
-containing another non-hit/miss outcome is excluded as
-`ineligible_batches_excluded`. A batch that contains both a `hit` and a `miss`
-is excluded as `mixed_batches_excluded`, because its internal outcome order is
-not recorded and no consecutive pair inside it can be reconstructed without
-relying on append position. An excluded batch blocks pairing across it. A
-boundary whose two batches have different full toolchain identities is outside
-the H5 population and is reported as `identity_changed_pairs_excluded`, because
-RFC 0002 compares toolchain identity before a pair is counted.
+`mixed_identity_batches_excluded` and contributes no evaluated pair. A batch
+containing an `unattributed` row is excluded as
+`unattributed_batches_excluded`; a batch containing another non-hit/miss
+outcome is excluded as `ineligible_batches_excluded`. A batch that contains
+both a `hit` and a `miss` is excluded as `mixed_batches_excluded`, because its
+internal outcome order is not recorded and no consecutive pair inside it can be
+reconstructed without relying on append position. An excluded batch blocks
+pairing across it. A boundary is outside the H5 population, and reported as
+`identity_changed_pairs_excluded`, only when neither adjoining side shares a
+full toolchain identity with the other, because RFC 0002 compares toolchain
+identity before a pair is counted. A batch excluded for more than one identity
+may hold the neighbour's identity, so a boundary beside it is incomparable only
+when the two identity sets are disjoint.
 
 Each unanimous `hit`/`miss` batch of `n` rows contributes its `n - 1` internal
 consecutive pairs, whose two rows carry the same label and therefore never
@@ -3462,13 +3465,16 @@ Every consecutive pair inside the H5 population is counted in one of two
 buckets: `evaluated_pairs`, from the internal and boundary pairs above, and
 `unevaluable_pairs`, made of the `n - 1` internal pairs of each excluded batch
 plus one pair for every boundary between two batches where at least one side is
-excluded and the identities are equal. Each boundary joins two batches and is
-counted once, including a boundary between two adjacent excluded batches.
-Identity-changed boundaries are in neither bucket, so a known toolchain change
-neither adds a possible flip nor dilutes the rate. The observed flip rate is
-flips divided by evaluated pairs, so a long unanimous batch contributes its
-real share of non-flipping pairs rather than one batch-level decision. The
-result is invariant to row order within a batch.
+excluded and the two sides share at least one full toolchain identity. Each
+boundary joins two batches and is counted once, including a boundary between
+two adjacent excluded batches. Identity-changed boundaries are in neither
+bucket, so a known toolchain change neither adds a possible flip nor dilutes
+the rate. Because a mixed-identity batch may order its identities either way,
+every boundary it has with a neighbour whose identity it contains stays
+unevaluable; only a boundary whose two identity sets are disjoint is dropped.
+The observed flip rate is flips divided by evaluated pairs, so a long unanimous
+batch contributes its real share of non-flipping pairs rather than one
+batch-level decision. The result is invariant to row order within a batch.
 
 Exclusions must not silently delete transitions that could change the verdict.
 Each unevaluable pair may or may not have flipped, so with `E` evaluated pairs,
