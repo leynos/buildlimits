@@ -338,13 +338,14 @@ extension are recorded in the ExecPlan; none is a gate decision.
     against ADR 005's fixed minimums and thresholds; the versioned aggregate
     manifest, sample limitations and retained-history caveats are recorded for
     G2. The port proposal does not waive G1 or change EP-M9's scope.
-- [ ] 3.2.2. Approve the EP-M9 reporting amendment and dataset manifest.
+- [ ] 3.2.2. Approve the EP-M9 reporting amendment.
   - Requires 3.1.2's RFC 0002 G1 decision of `proceed` or `narrow`.
   - The amendment adds the majority-class decision baseline, log loss with an
     explicit clipping rule, calibration-bin counts, dependence-aware intervals
     and per-origin/time/load reporting. It preserves the H4/H5 thresholds and
     the 2,000-record minimum. Approval is recorded in the ExecPlan Decision log
-    before any outcome is read.
+    before any outcome is read. The dataset manifest is required whether or not
+    the amendment is approved.
   - Success: the owner records approval or rejection; EP-M9 reports exactly the
     approved items, and a rejection leaves only the original comparison.
 - [ ] 3.2.3. Approve the proposed longitudinal-predictor extension (EP-L).
@@ -352,6 +353,9 @@ extension are recorded in the ExecPlan; none is a gate decision.
   - EP-L adds rolling-window and exponentially weighted predictors, fixed and
     adaptive weighted ensembles, and v2 per-request evidence boundaries. No
     EP-L milestone starts before the owner approves its bounded plan.
+  - The freeze is recorded before the owner reviews any EP-M9 outcome report,
+    so EP-M9 results cannot steer candidate selection. If EP-M9 is reviewed
+    first, EP-L evaluation uses newly collected, unread rows.
   - Success: the Decision log records approval, narrowing or refusal; an
     unapproved extension leaves EP-M9 as the only comparison.
 - [ ] 3.2.4. Record the RFC 0002 G2 owner decision.
