@@ -1131,6 +1131,22 @@ acyclic, and the identifiers are proposals.
 
 _Table 4: Proposed workstreams, their evidence and the decisions they enable._
 
+W2's offline comparison is preregistered in the
+[cache-hit prediction ExecPlan](../execplans/cache-hit-prediction.md) before
+any outcome data is read. The preregistration fixes eligible `hit` and `miss`
+labels, `observed_at` batch chronology, the base-rate, last-outcome and
+Beta-over-eight parameters, calibration bins, and H4/H5 retained-row semantics.
+It preserves the thresholds in Table 1 and the 2,000-record minimum. The
+ExecPlan also carries a separate reporting amendment (the majority-class
+decision baseline, log loss, calibration-bin counts, dependence-aware intervals
+and per-origin/time/load reporting) and a proposed longitudinal-predictor
+extension (EP-L). Both require explicit owner approval, and EP-L requires a
+separately approved v2 source before strict per-request or load-stratified
+claims. Neither changes this RFC's gates: W2 still requires G1, and the
+extension starts only after its own approval. Recording these documents is
+documentation only; no G1 or G2 decision has occurred, and no scheduling or
+advisory behaviour is authorized.
+
 ## Compatibility and migration
 
 Each layer ships behind a supervisor key that is off by default:
@@ -1239,7 +1255,10 @@ The implementation refinements and fixed H1-H5 thresholds for W1 are recorded in
 text made acceptance conditional on EP-M8 merging; PR #24 has since merged. The
 fixed thresholds and H2 classifier remain the sccache commitments. Quiet-host
 acceptance and G1 remain outstanding, and the proposed ADR 007 extension does
-not supersede these decisions.
+not supersede these decisions. The W2 preregistration and proposed EP-L
+extension are recorded in the ExecPlan for
+[issue #60](https://github.com/leynos/buildlimits/issues/60); they change no
+acceptance term, threshold or gate.
 
 [^1]: RFC 0001, `docs/rfcs/rfc-0001-fizzbee-model-of-admission-and-recovery.md`,
       accepted 2026-10-18 and present on `main`.

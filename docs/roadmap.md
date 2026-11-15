@@ -309,27 +309,59 @@ closes those items.
     tracked separately in 3.1.2.
 - [ ] 3.1.2. Complete the remaining W1 quiet-host acceptance and owner G1.
 
+  - Tracking issue:
+    [#60](https://github.com/leynos/buildlimits/issues/60).
   - Requires the merged EP-M1 to EP-M8 implementation and its recorded
     sequential-gate evidence.
   - Run the outstanding quiet-host latency acceptance against the ExecPlan
     bounds, then present H1-H3 results, coverage and sample limitations to the
     owner. The observation-port proposal does not substitute for this evidence.
-  - Success: the quiet-host result is recorded and the owner explicitly decides
-    whether EP-M9 proceeds, narrows or stops. Until then EP-M9 remains gated.
+  - Success: the quiet-host result is recorded and the owner explicitly records
+    an RFC 0002 G1 decision of `proceed`, `narrow` or `stop`, with the limits
+    that apply. Until that decision, EP-M9 remains gated and its comparison is
+    unrun.
 
 ### 3.2. Evaluate prediction offline after G1
 
 This step is RFC 0002 W2 and requires an explicit RFC 0002 G1 decision to
 proceed. It runs only against stored records and evaluates H4 and H5; its
-outcome informs the separate RFC 0002 G2 decision.
+outcome informs the separate RFC 0002 G2 decision. Tracking issue:
+[#60](https://github.com/leynos/buildlimits/issues/60). The EP-M9
+preregistration, the reporting amendment and the proposed longitudinal
+extension are recorded in the ExecPlan; none is a gate decision.
 
 - [ ] 3.2.1. Complete EP-M9 of the cache-hit prediction ExecPlan.
-  - Requires an explicit RFC 0002 G1 decision to proceed or narrow.
+  - Requires an explicit RFC 0002 G1 decision of `proceed` or `narrow`.
   - See RFC 0002 §2 and H4-H5. Do not run this step on the live cache.
-  - Success: the replay reports the registry base-rate comparison, digest
-    stability and each verdict against ADR 005's fixed minimums and
-    thresholds; evidence and limitations are recorded for G2. The port proposal
-    does not waive G1 or change EP-M9's scope.
+  - Success: the replay reports the base-rate, last-outcome and Beta-over-eight
+    comparison, the registry base rate, digest stability and each verdict
+    against ADR 005's fixed minimums and thresholds; the versioned aggregate
+    manifest, sample limitations and retained-history caveats are recorded for
+    G2. The port proposal does not waive G1 or change EP-M9's scope.
+- [ ] 3.2.2. Approve the EP-M9 reporting amendment and dataset manifest.
+  - Requires 3.1.2's RFC 0002 G1 decision of `proceed` or `narrow`.
+  - The amendment adds the majority-class decision baseline, log loss with an
+    explicit clipping rule, calibration-bin counts, dependence-aware intervals
+    and per-origin/time/load reporting. It preserves the H4/H5 thresholds and
+    the 2,000-record minimum. Approval is recorded in the ExecPlan Decision log
+    before any outcome is read.
+  - Success: the owner records approval or rejection; EP-M9 reports exactly the
+    approved items, and a rejection leaves only the original comparison.
+- [ ] 3.2.3. Approve the proposed longitudinal-predictor extension (EP-L).
+  - Requires 3.2.1 and 3.2.2, and an owner decision separate from RFC 0002 G1.
+  - EP-L adds rolling-window and exponentially weighted predictors, fixed and
+    adaptive weighted ensembles, and v2 per-request evidence boundaries. No
+    EP-L milestone starts before the owner approves its bounded plan.
+  - Success: the Decision log records approval, narrowing or refusal; an
+    unapproved extension leaves EP-M9 as the only comparison.
+- [ ] 3.2.4. Record the RFC 0002 G2 owner decision.
+  - Requires 3.2.1 and any approved 3.2.3 milestones.
+  - G2 decides advisory prediction from offline evidence only. H6's online
+    thresholds are not a G2 criterion. A negative or insufficient result is a
+    valid outcome.
+  - Success: the owner records `proceed`, `narrow` or `stop`. `proceed` requires
+    a separate plan for live advisory or shadow work; no scheduling policy ships
+    in this step.
 
 ### 3.3. Extract the shared observation boundary for sccache
 
