@@ -1139,18 +1139,18 @@ last-outcome and Beta-over-eight predictors, calibration bins, and H4/H5
 retained-row semantics. Two preregistered rules refine those semantics without
 moving a threshold: H4 treats the key's earliest retained batch as its first
 attributed observation (`first_batch_rule: earliest_batch`), and H5 bounds the
-population flip rate by the pairs that exclusions leave unevaluable,
-withholding any verdict those pairs could change. The owner approves both with
-the preregistration. It otherwise preserves the thresholds in Table 1 and the
-2,000-record minimum. The ExecPlan also carries a separate reporting amendment
-(the majority-class decision baseline, log loss, calibration-bin counts and
-per-origin/time/load reporting) and a proposed longitudinal-predictor extension
-(EP-L). Both require explicit owner approval, and EP-L requires a separately
-approved v2 source before strict per-request or load-stratified claims. Neither
-changes this RFC's gates: W2 still requires G1, and the extension starts only
-after its own approval. Recording these documents is documentation only; no G1
-or G2 decision has occurred, and no scheduling or advisory behaviour is
-authorized.
+population flip rate by the pairs that remain unevaluable inside that
+population, withholding any verdict they could change. The owner approves both
+with the preregistration. It otherwise preserves the thresholds in Table 1 and
+the 2,000-record minimum. The ExecPlan also carries a separate reporting
+amendment (the majority-class decision baseline, log loss, calibration-bin
+counts and per-origin/time/load reporting) and a proposed
+longitudinal-predictor extension (EP-L). Both require explicit owner approval,
+and EP-L requires a separately approved v2 source before strict per-request or
+load-stratified claims. Neither changes this RFC's gates: W2 still requires G1,
+and the extension starts only after its own approval. Recording these documents
+is documentation only; no G1 or G2 decision has occurred, and no scheduling or
+advisory behaviour is authorized.
 
 ## Compatibility and migration
 

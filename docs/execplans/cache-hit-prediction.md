@@ -3447,9 +3447,10 @@ containing another non-hit/miss outcome is excluded as
 `ineligible_batches_excluded`. A batch that contains both a `hit` and a `miss`
 is excluded as `mixed_batches_excluded`, because its internal outcome order is
 not recorded and no consecutive pair inside it can be reconstructed without
-relying on append position. An excluded batch blocks pairing across it. A pair
-of adjacent unanimous batches is excluded as `identity_changed_pairs_excluded`
-when their full toolchain identities differ.
+relying on append position. An excluded batch blocks pairing across it. A
+boundary whose two batches have different full toolchain identities is outside
+the H5 population and is reported as `identity_changed_pairs_excluded`, because
+RFC 0002 compares toolchain identity before a pair is counted.
 
 Each unanimous `hit`/`miss` batch of `n` rows contributes its `n - 1` internal
 consecutive pairs, whose two rows carry the same label and therefore never
@@ -3457,16 +3458,17 @@ flip. Each pair of adjacent unanimous hit/miss batches with the same full
 identity, with no excluded batch between them, contributes one boundary pair
 between the labels of the two batches; it counts as a flip when those labels
 differ. Consecutive pairs separated by an excluded batch are not evaluated.
-Every consecutive pair the sequence contains is counted in one of two buckets:
-`evaluated_pairs`, from the internal and boundary pairs above, and
+Every consecutive pair inside the H5 population is counted in one of two
+buckets: `evaluated_pairs`, from the internal and boundary pairs above, and
 `unevaluable_pairs`, made of the `n - 1` internal pairs of each excluded batch
 plus one pair for every boundary between two batches where at least one side is
-excluded. Each boundary joins two batches and is counted once, including a
-boundary between two adjacent excluded batches. An identity-changed boundary
-which has no excluded batch on either side is unevaluable as well. The observed
-flip rate is flips divided by evaluated pairs, so a long unanimous batch
-contributes its real share of non-flipping pairs rather than one batch-level
-decision. The result is invariant to row order within a batch.
+excluded and the identities are equal. Each boundary joins two batches and is
+counted once, including a boundary between two adjacent excluded batches.
+Identity-changed boundaries are in neither bucket, so a known toolchain change
+neither adds a possible flip nor dilutes the rate. The observed flip rate is
+flips divided by evaluated pairs, so a long unanimous batch contributes its
+real share of non-flipping pairs rather than one batch-level decision. The
+result is invariant to row order within a batch.
 
 Exclusions must not silently delete transitions that could change the verdict.
 Each unevaluable pair may or may not have flipped, so with `E` evaluated pairs,
