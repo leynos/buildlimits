@@ -3314,6 +3314,20 @@ milestone that adds each module.
     threshold.
   - A Hypothesis property that verdicts do not depend on record order within
     a batch.
+  - Future-label leakage: a predictor's training history never contains a row
+    from the predicted batch or a later batch, including when a later batch
+    shares the same `observed_at` by clock step.
+  - Post-compilation features: no predictor reads runtime, counters, cache keys
+    produced after compilation or any field the preregistration excludes.
+  - Delayed labels: the one-batch embargo withholds the immediately preceding
+    batch, and the withheld rows are counted as `embargoed_rows`.
+  - Cold starts and missing outcomes: empty history uses the preregistered
+    fallbacks, and no ineligible `CacheResult` value is converted into a miss.
+  - Identity and epoch changes: identity-changed pairs are excluded from H5,
+    and a store with a different salt or schema is never pooled.
+  - Deterministic replay: the replay reads no clock, randomness, network or
+    external command, writes no file, and two runs over one store produce
+    byte-identical reports.
   - Snapshots of the text and JSON output, each paired with a semantic
     assertion.
   - End-to-end runs of the console script.
