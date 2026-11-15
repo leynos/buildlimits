@@ -344,8 +344,8 @@ extension are recorded in the ExecPlan; none is a gate decision.
     explicit clipping rule, calibration-bin counts, dependence-aware intervals
     and per-origin/time/load reporting. It preserves the H4/H5 thresholds and
     the 2,000-record minimum. Approval is recorded in the ExecPlan Decision log
-    before any outcome is read. The dataset manifest is required whether or not
-    the amendment is approved.
+    after the G1 decision and before the owner reviews any EP-M9 outcome report.
+    The dataset manifest is required whether or not the amendment is approved.
   - Success: the owner records approval or rejection; EP-M9 reports exactly the
     approved items, and a rejection leaves only the original comparison.
 - [ ] 3.2.3. Approve the proposed longitudinal-predictor extension (EP-L).

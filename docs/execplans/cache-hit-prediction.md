@@ -3341,33 +3341,43 @@ origin remains eligible for the comparison but not for H4.
 
 **Chronology, batching and label availability.** `observed_at` is the end time
 of the last launch in the quiet window that produced a record, not the time its
-label became available. Every record from one attributed window shares one
-`observed_at`, so rows sharing that value form one batch. The quiet-point
-statistics query that writes the labels runs after the window closes, and the
-recorder serializes queries: while one is in flight no second one starts. A
-launch can nevertheless begin during that query, so the immediately following
-batch may have started before the previous batch's labels were written. The
-replay therefore applies a one-batch embargo: a prediction for a batch uses
-eligible outcomes from all strictly earlier batches except the immediately
-preceding one. Labels from batch `i-2` and earlier are available before batch
-`i` starts, because batch `i-2`'s query completes before batch `i-1`'s quiet
-point, and batch `i`'s launches begin only after that quiet point. This follows
-from the recorder's serialized queries rather than from an assumption about
-timing, and the report states it wherever it describes the training history.
+label became available, and a backward clock step can order timestamps against
+recording order. Batches are therefore defined by the store itself. Scanning
+records in append order, a batch is a maximal contiguous run of records sharing
+one `observed_at`, and batches are ordered by their first position in the
+store. Every record from one attributed window shares one `observed_at`, so a
+batch normally is one window; append order is the order in which labels were
+written and never a wall-clock comparison.
 
-Batches are keyed by `observed_at`, and nothing from a batch trains its own
-predictions or, for the predictors, the next batch. No result therefore depends
-on row order within a batch, on append position, or on set iteration. Replaying
-a permutation of the same rows yields identical aggregate predictions and
-verdicts. H4 and H5 are retrospective measurements rather than predictions, so
-the embargo does not apply to them. Where a report lists values, it sorts them
-lexicographically and never relies on hash or set iteration order.
+The quiet-point statistics query that writes the labels runs after the window
+closes, and the recorder serializes queries: while one is in flight no second
+one starts. A launch can nevertheless begin during that query, so the
+immediately following batch may have started before the previous batch's labels
+were written. The replay therefore applies a one-batch embargo: a prediction
+for a batch uses eligible outcomes from all earlier batches except the
+immediately preceding one. Labels from batch `i-2` and earlier are available
+before batch `i` starts, because batch `i-2`'s query finishes before batch
+`i-1`'s query begins, and batch `i`'s launches begin only after that query
+begins. This follows from the recorder's serialized queries and append order,
+and the report states it wherever it describes the training history.
+
+Nothing from a batch trains its own predictions or, for the predictors, the
+next batch. No prediction therefore depends on row order within a batch or on
+set iteration. Replaying a permutation of rows inside a batch yields identical
+aggregate predictions and verdicts; permuting batches themselves is not a valid
+replay because it changes write order. H4 and H5 are retrospective measurements
+rather than predictions, so the embargo does not apply to them. Where a report
+lists values, it sorts them lexicographically and never relies on hash or set
+iteration order.
 
 **H4 retained-row semantics.** H4 uses eligible rows whose `origin` is
-`registry`. It groups by the full identity, excludes every row in the key's
-earliest retained `observed_at` batch, and reports the hit share over the
-remaining rows. `first_batch_rows_excluded` and `keys_evaluated` are reported.
-The 10,000-record, 30-day and 12-16 MiB bounds can remove a key's true first
+`registry`. It groups by the full identity and finds the key's earliest
+retained batch over **all attributed outcomes**, so a first `failed` or other
+non-hit attribution still counts as the RFC's first attributed observation even
+though it supplies no eligible label. It then excludes the eligible rows in
+that batch and reports the hit share over the remaining eligible rows.
+`first_batch_rows_excluded` and `keys_evaluated` are reported. The
+10,000-record, 30-day and 12-16 MiB bounds can remove a key's true first
 observation. The report therefore states the retained-tail caveat: the excluded
 batch may be later than the RFC's first attributed observation, so a truncated
 history can bias H4. `record_cap_reached` says whether the 10,000-record bound
@@ -3376,25 +3386,30 @@ evaluated rows, `supported` at a 95% hit share or more, `refuted` below 90%, and
 `inconclusive` between. The thresholds are unchanged.
 
 **H5 retained-row semantics.** H5 groups eligible rows by digest identity,
-partitions each group into `observed_at` batches, and orders the batches
-chronologically. It compares each pair of consecutive batches in a group. A
+partitions each group into batches, and orders the batches by write position. A
 batch that contains more than one full toolchain identity is excluded as
-`mixed_identity_batches_excluded` and takes part in no pair. A pair is excluded
-as `identity_changed_pairs_excluded` when the two batches' full toolchain
-identities differ, and as `mixed_batches_excluded` when either batch contains
-both a `hit` and a `miss`. Otherwise each batch is unanimously `hit` or `miss`,
-and the pair is evaluated and counts as a flip when the two batch labels
-differ. The flip rate is flips divided by evaluated pairs. Batches are never
-split or ordered by row position, so the result is invariant to the order of
-rows sharing an `observed_at`; equal timestamps are one batch rather than a
-tied pair. A salt change is a new store epoch and is never pooled; the reader
-supplies one header per store. H5 is `insufficient` below 2,000 attributed
-outcomes or with no evaluated pairs, `supported` at 5% or less, `refuted` above
-10%, and `inconclusive` between. The thresholds are unchanged, and the
-retained-tail caveat applies to pairs lost at a compaction boundary.
-`not_collected` is reserved for a store that lacks a field a hypothesis needs;
-a v1 store accepted by the reader has them, so H4/H5 normally report one of the
-other four tokens.
+`mixed_identity_batches_excluded` and takes part in no pair. A batch that
+contains both a `hit` and a `miss` is excluded as `mixed_batches_excluded`,
+because its internal outcome order is not recorded and no consecutive pair
+inside it can be reconstructed without relying on append position. A pair of
+adjacent unanimous batches is excluded as `identity_changed_pairs_excluded`
+when their full toolchain identities differ.
+
+Each unanimous batch of `n` rows contributes its `n - 1` internal consecutive
+pairs, whose two rows carry the same label and therefore never flip. Each pair
+of adjacent unanimous batches of the same identity contributes one boundary
+pair between the labels of the two batches; it counts as a flip when those
+labels differ. Consecutive pairs separated by an excluded batch are not
+evaluated. The flip rate is flips divided by evaluated pairs, so a long
+unanimous batch contributes its real share of non-flipping pairs rather than
+one batch-level decision. The result is invariant to row order within a batch.
+A salt change is a new store epoch and is never pooled; the reader supplies one
+header per store. H5 is `insufficient` below 2,000 attributed outcomes or with
+no evaluated pairs, `supported` at 5% or less, `refuted` above 10%, and
+`inconclusive` between. The thresholds are unchanged, and the retained-tail
+caveat applies to pairs lost at a compaction boundary. `not_collected` is
+reserved for a store that lacks a field a hypothesis needs; a v1 store accepted
+by the reader has them, so H4/H5 normally report one of the other four tokens.
 
 **Predictors and parameters.** When predicting a row in batch `i`, the training
 history is every eligible row in batches `0` to `i-2`: the one-batch embargo
@@ -3457,10 +3472,12 @@ rates render as `n/a`.
 
 The amendment adds reporting only. It changes no H4/H5 threshold, no H2/H3
 threshold and no 2,000-record minimum. The owner approves or rejects it in the
-Decision log before any outcome is read. A rejected amendment leaves EP-M9 with
-the original base-rate, last-outcome and Beta-over-eight comparison, Brier
-score and coverage; the dataset manifest above stays mandatory either way,
-because it records the input rather than an evaluation choice.
+Decision log after the RFC 0002 G1 decision and before the owner reviews any
+EP-M9 outcome report, so H2/H3 evidence read for G1 cannot steer it. A rejected
+amendment leaves EP-M9 with the original base-rate, last-outcome and
+Beta-over-eight comparison, Brier score and coverage; the dataset manifest
+above stays mandatory either way, because it records the input rather than an
+evaluation choice.
 
 The amendment adds:
 
@@ -3484,7 +3501,8 @@ before all three conditions hold:
 1. the owner records RFC 0002 G1 `proceed` or `narrow`;
 2. the owner approves the EP-M9 preregistration and reporting amendment;
 3. the owner approves this extension and its frozen parameters in the Decision
-   log (EP-L0), frozen before the owner reviews any EP-M9 outcome report.
+   log (EP-L0). The parameters are frozen before the owner reviews any EP-M9
+   outcome report, or the fresh-row fallback below applies.
 
 The freeze may be recorded before EP-M9 completes, but EP-L implementation
 still waits for EP-M9 to finish. If EP-M9 evidence is reviewed before a freeze
@@ -3504,15 +3522,16 @@ adds no replacement threshold for them.
 - Record the candidates, features, window and decay values, priors, ensemble
   rules, primary score, minimum practically useful improvement, uncertainty
   method, abstention rules and stop rules. Freeze them before any EP-L outcome
-  is read and before the owner reviews any EP-M9 outcome report. Record the
-  v1/v2 evidence boundaries below.
-- If EP-M9 evidence is reviewed first, EP-L evaluation uses only rows collected
-  after that review and not inspected while choosing the candidates.
+  is read. Freeze them before the owner reviews any EP-M9 outcome report, or
+  apply the fresh-row fallback below. Record the v1/v2 evidence boundaries.
+- Fresh-row fallback: if EP-M9 evidence is reviewed first, EP-L evaluation
+  uses only rows collected after that review and not inspected while choosing
+  the candidates.
 - The owner records approval, narrowing or refusal. A refusal leaves EP-M9 as
   the only comparison.
-- Success: the Decision log names the approved candidates and parameters, the
-  freeze precedes any EP-M9 outcome review, and no unapproved candidate is
-  implemented.
+- Success: the Decision log names the approved candidates and parameters;
+  either the freeze precedes any EP-M9 outcome review or the fresh-row fallback
+  applies; and no unapproved candidate is implemented.
 
 ### EP-L1: v1 rolling-window and exponentially weighted predictors
 
