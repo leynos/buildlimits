@@ -1136,7 +1136,12 @@ W2's offline comparison is preregistered in the
 any outcome data is read. The preregistration fixes eligible `hit` and `miss`
 labels, `observed_at` batch chronology, the base-rate, origin-rate,
 last-outcome and Beta-over-eight predictors, calibration bins, and H4/H5
-retained-row semantics. It preserves the thresholds in Table 1 and the
+retained-row semantics. Two preregistered rules refine those semantics without
+moving a threshold: H4 treats the key's earliest retained batch as its first
+attributed observation (`first_batch_rule: earliest_batch`), and H5 reports
+`insufficient` when fewer than half of a population's consecutive pairs are
+evaluable, which can only withhold a verdict. The owner approves both with the
+preregistration. It otherwise preserves the thresholds in Table 1 and the
 2,000-record minimum. The ExecPlan also carries a separate reporting amendment
 (the majority-class decision baseline, log loss, calibration-bin counts and
 per-origin/time/load reporting) and a proposed longitudinal-predictor extension

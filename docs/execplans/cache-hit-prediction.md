@@ -3270,17 +3270,20 @@ milestone that adds each module.
 5. When 2,000 attributed outcomes exist, or after 14 days, whichever comes
    first, record the evidence:
    - the commit, the sccache version and the date range;
-   - the dataset manifest described in the EP-M9 preregistration: store format
-     and version, `salt_id`, record, outcome, origin, parser-class and
-     child-sighting counts, eligible `hit`/`miss` rows, distinct keys and
-     identities, server and `CACHE_VERSION` values, first and last
-     `observed_at`, the retention bounds, and whether the 10,000-record cap is
-     reached at inspection time. The store records no cap flag; once
-     compaction removes older rows, an earlier cap state cannot be
-     reconstructed;
+   - the sample facts the existing read-only commands expose: the store path
+     and the `format`, `version`, `salt_id` and `written_at` values in its
+     header line; the outcome, attribution, child-sighting and store-operation
+     counts from `build-limits-metrics --since 14d --max-records 100000`; the
+     attributed totals, first and last `observed_at` and covered span from `h2`
+     and `h3`; and whether the 10,000-record cap is reached at inspection time.
+     The store records no cap flag, so once compaction removes older rows an
+     earlier cap state cannot be reconstructed. Distinct-identity counts and
+     the remaining aggregate manifest fields are produced by the EP-M9 replay,
+     which cannot run until G1 permits it, so they are recorded with EP-M9's
+     report rather than here;
    - the totals;
-   - the coverage by origin, from
-     `build-limits-metrics --since 14d --max-records 100000`;
+   - the coverage by origin, counted from the `cache_outcome` records in that
+     report's JSON output;
    - the H1 verdict, with label agreement taken from EP-M1's fixture
      replay;
    - the H2 verdict, with its agreement, evaluable count, the share of
@@ -3458,15 +3461,19 @@ Exclusions must not silently delete transitions that could change the verdict.
 H5 is therefore `insufficient` when the population's `unevaluable_pairs`
 exceeds its `evaluated_pairs`: at that point less than half of the population's
 consecutive pairs were observed, and a run of hits after alternating failures
-could otherwise report a 0% flip rate. This is a coverage rule for the existing
-thresholds, not a new flip threshold. A salt change is a new store epoch and is
-never pooled; the reader supplies one header per store. H5 is `insufficient`
-below 2,000 attributed outcomes, with no evaluated pairs, or under the coverage
+could otherwise report a 0% flip rate. This is a data-adequacy rule, not a flip
+threshold: it can only withhold a verdict, never produce a `supported` or
+`refuted` one, and the owner approves it with this preregistration exactly as
+the `first_batch_rule` deviation is approved. RFC 0002's W2 cross-reference
+records it beside the fixed thresholds. A salt change is a new store epoch and
+is never pooled; the reader supplies one header per store. H5 is `insufficient`
+below 2,000 attributed outcomes, with no evaluated pairs, or under the adequacy
 rule; `supported` at 5% or less, `refuted` above 10%, and `inconclusive`
-between. The thresholds are unchanged, and the retained-tail caveat applies to
-pairs lost at a compaction boundary. `not_collected` is reserved for a store
-that lacks a field a hypothesis needs; a v1 store accepted by the reader has
-them, so H4/H5 normally report one of the other four tokens.
+between. The 5% and 10% flip thresholds and the 2,000-outcome minimum are
+unchanged, and the retained-tail caveat applies to pairs lost at a compaction
+boundary. `not_collected` is reserved for a store that lacks a field a
+hypothesis needs; a v1 store accepted by the reader has them, so H4/H5 normally
+report one of the other four tokens.
 
 **Predictors and parameters.** When predicting a row in batch `i`, the training
 history is every eligible row in batches `0` to `i-2`: the one-batch embargo
@@ -3557,14 +3564,16 @@ threshold and no 2,000-record minimum. Issue
 decision baseline within the first offline deliverable, so approving this
 amendment is the expected path; recording it as an amendment keeps the approval
 explicit instead of silently widening RFC 0002's comparison. The owner approves
-or rejects it in the Decision log after the RFC 0002 G1 decision and before the
-owner reviews any EP-M9 outcome report, so H2/H3 evidence read for G1 cannot
-steer it. A rejected amendment leaves EP-M9 with the original base-rate,
-origin-rate, last-outcome and Beta-over-eight comparison, the Brier score,
-coverage, Holm-adjusted paired comparisons, the key-clustered and UTC-day
-intervals and the dataset manifest. Those items are fixed before the amendment
-and do not depend on it; the manifest stays mandatory because it records the
-input rather than an evaluation choice.
+or rejects it in the Decision log before the first G1 replay produces H2/H3
+verdicts, and therefore before any outcome-derived verdict is read, so neither
+the G1 evidence nor an EP-M9 outcome report can steer it. A later G1 `stop`
+makes the approval moot without changing any gate. A rejected amendment leaves
+EP-M9 with the original base-rate, origin-rate, last-outcome and
+Beta-over-eight comparison, the Brier score, coverage, Holm-adjusted paired
+comparisons, the key-clustered and UTC-day intervals and the dataset manifest.
+Those items are fixed before the amendment and do not depend on it; the
+manifest stays mandatory because it records the input rather than an evaluation
+choice.
 
 The amendment adds:
 
@@ -3582,18 +3591,19 @@ The amendment adds:
 This section proposes a bounded extension to EP-M9 for issue
 [#60](https://github.com/leynos/buildlimits/issues/60). It releases no gate,
 authorizes no implementation and claims no result. No EP-L milestone starts
-before all three conditions hold:
+before these conditions hold:
 
-1. the owner records RFC 0002 G1 `proceed` or `narrow`;
-2. the owner approves the EP-M9 preregistration and reporting amendment;
-3. the owner approves this extension and its frozen parameters in the Decision
-   log (EP-L0). The parameters are frozen before the owner reviews any EP-M9
-   outcome report, or the fresh-row fallback below applies.
+1. the owner approves the EP-M9 preregistration and reporting amendment;
+2. the owner approves this extension and freezes its parameters in the Decision
+   log (EP-L0), before the first G1 replay's H2/H3 verdicts are read or under
+   the fresh-row fallback below;
+3. for EP-L1 and every later milestone, the owner records RFC 0002 G1
+   `proceed` or `narrow`.
 
-The freeze may be recorded before EP-M9 completes, but EP-L implementation
-still waits for EP-M9 to finish. If EP-M9 evidence is reviewed before a freeze
-exists, every EP-L candidate is instead scored on newly collected rows the
-owner has not seen.
+The freeze may therefore precede G1 and EP-M9, but no EP-L implementation
+starts before EP-M9 has finished. If the owner reviews G1's H2/H3 verdicts or
+any EP-M9 outcome report before a freeze exists, every EP-L candidate is
+instead scored on newly collected rows the owner has not seen.
 
 EP-L reuses EP-M9's eligible rows, `observed_at` batch chronology, one-batch
 embargo, manifest, walk-forward layer and scoring rules. It never reconstructs
@@ -3607,17 +3617,18 @@ adds no replacement threshold for them.
 - Outcome: a recorded, bounded plan. No production code.
 - Record the candidates, features, window and decay values, priors, ensemble
   rules, primary score, minimum practically useful improvement, uncertainty
-  method, abstention rules and stop rules. Freeze them before any EP-L outcome
-  is read. Freeze them before the owner reviews any EP-M9 outcome report, or
-  apply the fresh-row fallback below. Record the v1/v2 evidence boundaries.
-- Fresh-row fallback: if EP-M9 evidence is reviewed first, EP-L evaluation
-  uses only rows collected after that review and not inspected while choosing
-  the candidates.
+  method, abstention rules, the Holm family below and stop rules. Freeze them
+  before any EP-L outcome is read. Freeze them before the owner reads G1's
+  H2/H3 verdicts or any EP-M9 outcome report, or apply the fresh-row fallback
+  below. Record the v1/v2 evidence boundaries.
+- Fresh-row fallback: if the owner reads G1's H2/H3 verdicts or any EP-M9
+  outcome report first, EP-L evaluation uses only rows collected after that
+  review and not inspected while choosing the candidates.
 - The owner records approval, narrowing or refusal. A refusal leaves EP-M9 as
   the only comparison.
-- Success: the Decision log names the approved candidates and parameters;
-  either the freeze precedes any EP-M9 outcome review or the fresh-row fallback
-  applies; and no unapproved candidate is implemented.
+- Success: the Decision log names the approved candidates, parameters and Holm
+  family; either the freeze precedes any G1 verdict or EP-M9 outcome review or
+  the fresh-row fallback applies; and no unapproved candidate is implemented.
 
 ### EP-L1: v1 rolling-window and exponentially weighted predictors
 
@@ -3663,6 +3674,21 @@ adds no replacement threshold for them.
 - Success: paired, Holm-adjusted held-out comparisons with dependence-aware
   intervals, shared-cohort and coverage reporting, and a verdict of `supported`,
   `refuted`, `inconclusive` or `insufficient` under the frozen criteria.
+
+**EP-L Holm family.** EP-L never reuses EP-M9's family, whose members are fixed
+to the base-rate comparisons. EP-L0 freezes a separate family before any EP-L
+outcome is read. For each approved ensemble it contains one comparison against
+each of: the base-rate predictor; equal-weight averaging, omitted when the
+ensemble is itself equal-weight averaging; the strongest individual predictor
+selected on the validation period; and, for each component-removal ablation,
+the ensemble's full form. Every member uses EP-M9's shared-cohort rule, 1,000
+key-clustered resamples, raw p-value formula, seed `20261115` and Holm
+step-down at `alpha = 0.05`. A member with fewer than 30 distinct keys or an
+empty shared cohort is reported as `insufficient` with `support_limited: true`
+and supplies no p-value; the report states the family size and the number of
+members that produced one. No other pair enters the family, and the family is
+fixed before outcome review, so adding a component or an ensemble after the
+freeze requires a new, separately approved plan and fresh rows.
 
 ### EP-L3: v2 per-request and load-stratified evidence (separately approved)
 
