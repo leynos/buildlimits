@@ -44,6 +44,19 @@ def _flush(
     return sink.records[-1]
 
 
+def _mutable_observer(
+    sink: RecordingSink, state: dict[str, object], now: list[float]
+) -> PressureMetrics:
+    """Bind an observer to a mutable snapshot and a hand-held clock.
+
+    Returns
+    -------
+    PressureMetrics
+        Observer whose readings follow *state* and whose time follows *now*.
+    """
+    return PressureMetrics(Metrics(sink), lambda: state, clock=lambda: now[0])
+
+
 def test_real_supervisor_uses_cached_descriptor_snapshot(
     metric_sink, monkeypatch
 ) -> None:
@@ -133,7 +146,7 @@ def test_a_lost_snapshot_keeps_its_maximum_for_the_next_record(metric_sink) -> N
     assert kept["BUILD_LIMITS_QUEUED_HIGH_WATER"] == "8", (
         "the lost interval still counts towards the lifetime maximum"
     )
-    fresh = PressureMetrics(Metrics(metric_sink), lambda: state, clock=lambda: now[0])
+    fresh = _mutable_observer(metric_sink, state, now)
     reset = _flush(fresh, metric_sink, now[0])
     assert reset["BUILD_LIMITS_QUEUED_HIGH_WATER"] == "0", (
         "a new supervisor observer resets its lifetime maximum"
@@ -141,7 +154,7 @@ def test_a_lost_snapshot_keeps_its_maximum_for_the_next_record(metric_sink) -> N
 
 
 def test_a_failed_endpoint_sample_leaves_the_interval_open(metric_sink) -> None:
-    """A read failure at the flush endpoint must not settle a stale interval."""
+    """A read failure at the flush endpoint must not publish a measured mean."""
     now = [0.0]
     state: dict[str, object] = {"queued": 2}
     readable = [True]
@@ -168,25 +181,48 @@ def test_a_failed_endpoint_sample_leaves_the_interval_open(metric_sink) -> None:
     assert record["BUILD_LIMITS_INTERVAL_SECONDS"] == "60.000", (
         "the published interval spans the unread attempt"
     )
-    assert record["BUILD_LIMITS_QUEUED_SECONDS"] == "120.000", (
-        "the depth that waited through the unread endpoint is not lost"
+    assert "BUILD_LIMITS_QUEUED_SECONDS" not in record, (
+        "depth across the unread endpoint was never observed, so it is not a mean"
+    )
+
+
+def test_an_unmeasured_baseline_leaves_the_next_interval_without_a_mean(
+    metric_sink,
+) -> None:
+    """A delivered snapshot without a depth cannot anchor a measured interval."""
+    now = [0.0]
+    state: dict[str, object] = {}
+    observer = _mutable_observer(metric_sink, state, now)
+    baseline = _flush(observer, metric_sink, now[0])
+    assert baseline["BUILD_LIMITS_EVENT"] == "gauges", "the baseline reached the sink"
+    assert "BUILD_LIMITS_QUEUED_SECONDS" not in baseline, (
+        "a baseline that never read a depth publishes no integral"
+    )
+    state["queued"] = 3
+    now[0] = GAUGE_INTERVAL_SECONDS
+    record = _flush(observer, metric_sink, now[0])
+    assert record["BUILD_LIMITS_INTERVAL_SECONDS"] == "30.000", (
+        "the interval still spans the whole heartbeat"
+    )
+    assert "BUILD_LIMITS_QUEUED_SECONDS" not in record, (
+        "the interval starts where no depth was measured, so it has no mean"
     )
 
 
 def test_the_cached_endpoint_keeps_the_freshest_sample(metric_sink) -> None:
     """A tick's earlier clock reading cannot overwrite a later poll sample."""
-    observer = PressureMetrics(
-        Metrics(metric_sink), lambda: {"queued": 2}, clock=lambda: 0.0
-    )
-    for sampled_at in (0.0, 10.0, 4.0):
+    state: dict[str, object] = {}
+    observer = PressureMetrics(Metrics(metric_sink), lambda: state, clock=lambda: 0.0)
+    for sampled_at, depth in ((0.0, 2), (10.0, 5), (4.0, 1), (20.0, 5)):
+        state["queued"] = depth
         observer.observe(sampled_at)
-    assert observer.flush(10.0), "the interval ends at the freshest sample"
+    assert observer.flush(20.0), "the interval ends at the freshest sample"
     record = metric_sink.records[-1]
-    assert record["BUILD_LIMITS_INTERVAL_SECONDS"] == "10.000", (
+    assert record["BUILD_LIMITS_INTERVAL_SECONDS"] == "20.000", (
         "the cached endpoint never moves backwards"
     )
-    assert record["BUILD_LIMITS_QUEUED_SECONDS"] == "20.000", (
-        "the depth is integrated exactly once up to the freshest sample"
+    assert record["BUILD_LIMITS_QUEUED_SECONDS"] == "70.000", (
+        "depth 2 for 10 s, then 5 for 10 s, with the stale 1 excluded"
     )
 
 

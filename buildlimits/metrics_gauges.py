@@ -133,35 +133,47 @@ class GaugeAccumulator:
     _deferred_until: float = 0.0
     _queue_unobserved: bool = False
 
-    def observe(self, snapshot: cabc.Mapping[str, object], now: float) -> None:
+    def observe(self, snapshot: cabc.Mapping[str, object] | None, now: float) -> None:
         """Fold one supervisor sample into the open interval.
 
         Parameters
         ----------
-        snapshot : Mapping[str, object]
-            Current supervisor-wide values; missing fields stay missing.
+        snapshot : Mapping[str, object] | None
+            Current supervisor-wide values, or ``None`` when the reader
+            faulted and no values were available.
         now : float
             Monotonic seconds at which the snapshot was read.
         """
+        if snapshot is None:
+            # A reader fault yields no values, so the depth for this moment is
+            # unknown. Keeping the previous depth active would integrate it
+            # across the unread gap and publish a mean that looks measured.
+            self._queue_unobserved = True
+            self._previous_queued = None
+            self._previous_time = None
+            return
         if self._anchor is None:
             # The interval starts at the first sample ever taken, so a refused
             # baseline still claims the time its integral covers when retried.
             self._anchor = now
         queued = _count(snapshot.get("queued"))
         self._integrate(now)
+        # A service poll may sample later than the tick reading that follows
+        # it. The earlier reading still counts towards the peaks, but it must
+        # not replace the depth that is active at the later sample time.
+        out_of_order = self._previous_time is not None and now < self._previous_time
         if queued is None:
-            # An unreadable depth cannot be integrated as if it were zero, so
-            # the gap stays out of the integral until the next sample, and the
-            # interval can no longer claim a measured queue mean.
-            self._queue_unobserved = True
-            self._previous_queued = None
-            self._previous_time = None
+            if not out_of_order:
+                # An unreadable depth cannot be integrated as if it were zero,
+                # so the gap stays out of the integral until the next sample,
+                # and the interval can no longer claim a measured queue mean.
+                self._queue_unobserved = True
+                self._previous_queued = None
+                self._previous_time = None
         else:
-            self._previous_queued = queued
-            # A service poll may sample later than the tick reading that
-            # follows it, so the recorded time only ever moves forward.
-            previous = self._previous_time
-            self._previous_time = now if previous is None else max(previous, now)
+            if not out_of_order:
+                self._previous_queued = queued
+                self._previous_time = now
             self.queued_high_water = max(self.queued_high_water, queued)
             self.queued_peak = _wider(self.queued_peak, queued)
         held = _count(snapshot.get("held"))
@@ -257,7 +269,9 @@ class GaugeAccumulator:
         self.queued_seconds = 0.0
         self.queued_peak = _count(snapshot.get("queued"))
         self.held_peak = _count(snapshot.get("held"))
-        self._queue_unobserved = False
+        # A delivered snapshot without a depth cannot anchor a measured
+        # interval either, so the next one starts unobserved as well.
+        self._queue_unobserved = self.queued_peak is None
         self._flushed = now
         self._anchor = now
         self._flushed_counts = {

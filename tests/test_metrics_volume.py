@@ -10,7 +10,6 @@ interval instead of once per enqueue.
 
 import contextlib
 import itertools
-import socket
 import types
 import typing as typ
 from pathlib import Path
@@ -60,7 +59,6 @@ def _one_slot_volume(path: Path) -> dict[str, object]:
         telemetry=SupervisorTelemetry(metrics=Metrics(sink)),
     )
     pool = attach_pool(supervisor)
-    clients: list[socket.socket] = []
     with contextlib.ExitStack() as owned:
         owned.callback(supervisor.selector.close)
         listener = owned.enter_context(listen(path))
@@ -72,7 +70,7 @@ def _one_slot_volume(path: Path) -> dict[str, object]:
         )
         for index in range(1, REQUESTS + 1):
             now[0] += STEP_SECONDS
-            clients.append(connect_requester(listener))
+            owned.callback(connect_requester(listener).close)
             # The connection waits behind the single held token, which is what
             # used to produce a ``request_queued`` record of its own.
             supervisor._accept()
@@ -80,8 +78,6 @@ def _one_slot_volume(path: Path) -> dict[str, object]:
             supervisor._pool_events()
             _place_and_finish(supervisor, f"g{index}")
             supervisor._tick()
-        for client in clients:
-            client.close()
     counts: dict[str, int] = {}
     for record in sink.records:
         event = record["BUILD_LIMITS_EVENT"]

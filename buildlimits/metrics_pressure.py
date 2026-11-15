@@ -147,6 +147,7 @@ class PressureMetrics:
         try:
             snapshot = dict(self._snapshot())
         except Exception:  # ruff: ignore[blind-except] - observation cannot affect admission.
+            self._accumulator.observe(None, now)
             return None
         self._accumulator.observe(snapshot, now)
         # A service poll inside a tick may already have sampled at a later
