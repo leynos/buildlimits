@@ -3381,12 +3381,20 @@ iteration order.
 **H4 retained-row semantics.** H4 uses rows whose `origin` is `registry`. It
 groups by the full identity and finds the key's earliest retained batch over
 **all attributed outcomes**, so a first `failed` or other non-hit attribution
-still counts as the RFC's first attributed observation. It then evaluates every
-attributed outcome in the later batches: the numerator is the number of `hit`
-outcomes and the denominator is every attributed outcome, so a non-hit
-attribution counts against the 95% share exactly as the RFC's wording implies.
-The report also gives `eligible_hit_share`, computed over `hit`/`miss` rows
-only, as a diagnostic; it does not decide the verdict.
+still counts as the RFC's first attributed observation. The RFC says "first
+attributed observation", singular, but rows in a batch share `observed_at` and
+their internal order is never used; the whole earliest batch is therefore
+treated as the first observation. The report labels this as
+`first_batch_rule: earliest_batch` and states that it is a preregistered
+deviation from a literal single-row reading, chosen so the verdict cannot
+depend on within-batch order. The owner approves that deviation as part of the
+preregistration.
+
+H4 then evaluates every attributed outcome in the later batches: the numerator
+is the number of `hit` outcomes and the denominator is every attributed
+outcome, so a non-hit attribution counts against the 95% share exactly as the
+RFC's wording implies. The report also gives `eligible_hit_share`, computed over
+`hit`/`miss` rows only, as a diagnostic; it does not decide the verdict.
 `first_batch_rows_excluded` and `keys_evaluated` are reported. The
 10,000-record, 30-day and 12-16 MiB bounds can remove a key's true first
 observation. The report therefore states the retained-tail caveat: the excluded
@@ -3421,12 +3429,24 @@ consecutive pairs, whose two rows carry the same label and therefore never
 flip. Each pair of adjacent unanimous hit/miss batches of the same identity,
 with no excluded batch between them, contributes one boundary pair between the
 labels of the two batches; it counts as a flip when those labels differ.
-Consecutive pairs separated by an excluded batch are not evaluated. The flip
-rate is flips divided by evaluated pairs, so a long unanimous batch contributes
-its real share of non-flipping pairs rather than one batch-level decision. The
-result is invariant to row order within a batch. A salt change is a new store
-epoch and is never pooled; the reader supplies one header per store. H5 is
-`insufficient` below 2,000 attributed outcomes or with no evaluated pairs,
+Consecutive pairs separated by an excluded batch are not evaluated. Every
+consecutive pair the sequence contains is counted in one of two buckets:
+`evaluated_pairs`, from the internal and boundary pairs above, and
+`unevaluable_pairs`, made of the `n - 1` internal pairs of each excluded batch
+and one boundary pair for each side on which an excluded batch has a
+same-identity neighbour. The flip rate is flips divided by evaluated pairs, so
+a long unanimous batch contributes its real share of non-flipping pairs rather
+than one batch-level decision. The result is invariant to row order within a
+batch.
+
+Exclusions must not silently delete transitions that could change the verdict.
+H5 is therefore `insufficient` when `unevaluable_pairs` exceeds
+`evaluated_pairs`: at that point less than half the key's consecutive pairs
+were observed, and a run of hits after alternating failures could otherwise
+report a 0% flip rate. This is a coverage rule for the existing thresholds, not
+a new flip threshold. A salt change is a new store epoch and is never pooled;
+the reader supplies one header per store. H5 is `insufficient` below 2,000
+attributed outcomes, with no evaluated pairs, or under the coverage rule;
 `supported` at 5% or less, `refuted` above 10%, and `inconclusive` between. The
 thresholds are unchanged, and the retained-tail caveat applies to pairs lost at
 a compaction boundary. `not_collected` is reserved for a store that lacks a
