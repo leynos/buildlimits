@@ -154,7 +154,8 @@ def test_a_failed_endpoint_sample_leaves_the_interval_open(metric_sink) -> None:
         return state
 
     observer = PressureMetrics(Metrics(metric_sink), snapshot, clock=lambda: now[0])
-    assert _flush(observer, metric_sink, now[0]), "the baseline reached the sink"
+    baseline = _flush(observer, metric_sink, now[0])
+    assert baseline["BUILD_LIMITS_EVENT"] == "gauges", "the baseline reached the sink"
     readable[0] = False
     now[0] = GAUGE_INTERVAL_SECONDS
     observer.observe(now[0])
@@ -169,6 +170,23 @@ def test_a_failed_endpoint_sample_leaves_the_interval_open(metric_sink) -> None:
     )
     assert record["BUILD_LIMITS_QUEUED_SECONDS"] == "120.000", (
         "the depth that waited through the unread endpoint is not lost"
+    )
+
+
+def test_the_cached_endpoint_keeps_the_freshest_sample(metric_sink) -> None:
+    """A tick's earlier clock reading cannot overwrite a later poll sample."""
+    observer = PressureMetrics(
+        Metrics(metric_sink), lambda: {"queued": 2}, clock=lambda: 0.0
+    )
+    for sampled_at in (0.0, 10.0, 4.0):
+        observer.observe(sampled_at)
+    assert observer.flush(10.0), "the interval ends at the freshest sample"
+    record = metric_sink.records[-1]
+    assert record["BUILD_LIMITS_INTERVAL_SECONDS"] == "10.000", (
+        "the cached endpoint never moves backwards"
+    )
+    assert record["BUILD_LIMITS_QUEUED_SECONDS"] == "20.000", (
+        "the depth is integrated exactly once up to the freshest sample"
     )
 
 

@@ -149,7 +149,12 @@ class PressureMetrics:
         except Exception:  # ruff: ignore[blind-except] - observation cannot affect admission.
             return None
         self._accumulator.observe(snapshot, now)
-        self._latest = (snapshot, now)
+        # A service poll inside a tick may already have sampled at a later
+        # clock reading than the tick's own, so the cached endpoint only moves
+        # forward; the interval that follows starts where the last one ended.
+        latest = self._latest
+        if latest is None or now >= latest[1]:
+            self._latest = (snapshot, now)
         return snapshot
 
 
