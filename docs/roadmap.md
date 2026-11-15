@@ -349,7 +349,8 @@ extension are recorded in the ExecPlan; none is a gate decision.
   - Success: the owner records approval or rejection; EP-M9 reports exactly the
     approved items, and a rejection leaves only the original comparison.
 - [ ] 3.2.3. Approve the proposed longitudinal-predictor extension (EP-L).
-  - Requires 3.2.1 and 3.2.2, and an owner decision separate from RFC 0002 G1.
+  - Requires 3.2.1, approval (not rejection) under 3.2.2, and an owner decision
+    separate from RFC 0002 G1.
   - EP-L adds rolling-window and exponentially weighted predictors, fixed and
     adaptive weighted ensembles, and v2 per-request evidence boundaries. No
     EP-L milestone starts before the owner approves its bounded plan.

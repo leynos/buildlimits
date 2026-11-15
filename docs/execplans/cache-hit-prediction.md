@@ -3322,16 +3322,19 @@ threshold and releases no gate. EP-M9 still requires an explicit RFC 0002 G1
 and the reporting amendment below requires separate owner approval.
 
 **Eligible labels and identities.** Only `OutcomeRecord` rows whose `outcome` is
-`hit` or `miss` are eligible for the predictor comparison and for H4/H5. Every
-other `CacheResult` value is ineligible: `not_cacheable`, `not_cached`,
-`failed`, `error`, `declined`, `not_compile`, `unsupported` and `unattributed`
-are never converted into a miss, and `WindowSummary` rows are not individual
-outcomes. The report keeps the counts separate. A cancelled or lost request has
-no eligible label. An `ambiguous` or `unavailable` child sighting describes a
-clue, not an outcome, and never supplies a label. `attributed_outcomes` follows
-ADR 005 D11 and counts every row whose `outcome` is not `unattributed`; the
-2,000-record minimum uses that count, while `eligible_outcomes` counts only
-`hit`/`miss` rows. Both are reported.
+`hit` or `miss` are eligible predictor labels and H5 pair members. Every other
+`CacheResult` value is ineligible for prediction and pairing: `not_cacheable`,
+`not_cached`, `failed`, `error`, `declined`, `not_compile`, `unsupported` and
+`unattributed` are never converted into a miss, and `WindowSummary` rows are
+not individual outcomes. H4 is different: as the RFC states, its share runs
+over every attributed outcome after the key's first attributed observation, so
+a non-hit attributed outcome counts in H4's denominator even though it is not a
+predictor label. The report keeps all counts separate. A cancelled or lost
+request has no eligible label. An `ambiguous` or `unavailable` child sighting
+describes a clue, not an outcome, and never supplies a label.
+`attributed_outcomes` follows ADR 005 D11 and counts every row whose `outcome`
+is not `unattributed`; the 2,000-record minimum uses that count, while
+`eligible_outcomes` counts only `hit`/`miss` rows. Both are reported.
 
 The full identity is the stored `CacheKey`: crate name, crate origin, target,
 argument digest and toolchain identity. The digest identity omits the toolchain
@@ -3370,12 +3373,15 @@ rather than predictions, so the embargo does not apply to them. Where a report
 lists values, it sorts them lexicographically and never relies on hash or set
 iteration order.
 
-**H4 retained-row semantics.** H4 uses eligible rows whose `origin` is
-`registry`. It groups by the full identity and finds the key's earliest
-retained batch over **all attributed outcomes**, so a first `failed` or other
-non-hit attribution still counts as the RFC's first attributed observation even
-though it supplies no eligible label. It then excludes the eligible rows in
-that batch and reports the hit share over the remaining eligible rows.
+**H4 retained-row semantics.** H4 uses rows whose `origin` is `registry`. It
+groups by the full identity and finds the key's earliest retained batch over
+**all attributed outcomes**, so a first `failed` or other non-hit attribution
+still counts as the RFC's first attributed observation. It then evaluates every
+attributed outcome in the later batches: the numerator is the number of `hit`
+outcomes and the denominator is every attributed outcome, so a non-hit
+attribution counts against the 95% share exactly as the RFC's wording implies.
+The report also gives `eligible_hit_share`, computed over `hit`/`miss` rows
+only, as a diagnostic; it does not decide the verdict.
 `first_batch_rows_excluded` and `keys_evaluated` are reported. The
 10,000-record, 30-day and 12-16 MiB bounds can remove a key's true first
 observation. The report therefore states the retained-tail caveat: the excluded
@@ -3451,8 +3457,21 @@ produce a probability, and report that shared cohort and each predictor's
 coverage separately. Intervals are 95% percentile intervals from 1,000 seeded
 bootstrap resamples that resample whole keys with replacement and preserve each
 key's chronology; a second interval resamples whole UTC-day blocks. The seed is
-the fixed integer `20261115`. Multiple comparisons use Holm's adjustment over
-the preregistered pair comparisons.
+the fixed integer `20261115`.
+
+**Paired tests and the Holm family.** Each raw p-value comes from the same
+1,000 key-clustered resamples used for the intervals. For resample `b`, let
+`d_b` be the mean Brier score difference (candidate minus reference) over that
+resample's shared cohort, and report
+`p = min(1, 2 * min(1 + #(d_b <= 0), 1 + #(d_b >= 0)) / 1001)`. The family has
+one comparison per candidate against the base-rate baseline: origin rate, last
+outcome and Beta over eight, plus the majority-class baseline when the
+reporting amendment is approved. No other pair enters the family, and the
+family is fixed before outcome review. Holm's step-down sorts the raw p-values
+ascending and compares the `k`-th with `0.05 / (m - k + 1)`; the adjusted
+p-value is the running maximum of `(m - k + 1) * p_(k)`, clipped to 1. The same
+resamples and seed produce every interval and p-value, so a replay reproduces
+them exactly.
 
 **Deterministic replay and manifest.** The replay reads only the bounded store,
 uses no clock, randomness, network or external command, and writes no file. The
