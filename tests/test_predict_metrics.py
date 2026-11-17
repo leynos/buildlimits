@@ -4,6 +4,8 @@ import datetime as dt
 import math
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from buildlimits.predict.metrics import (
     ScoredRow,
@@ -126,3 +128,44 @@ def test_summary_averages_the_answered_rows_only() -> None:
     assert metrics.abstentions == 1, "one abstention"
     assert metrics.brier == pytest.approx((0.04 + 0.36) / 2), "mean squared error"
     assert metrics.accuracy == pytest.approx(0.5), "one of the two decisions matched"
+
+
+@given(
+    st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
+    st.integers(min_value=1, max_value=20),
+)
+@settings(max_examples=50, derandomize=True, deadline=None)
+def test_one_answer_lands_in_exactly_one_of_any_number_of_bins(
+    probability: float, bins: int
+) -> None:
+    """Whatever the bin count, one answered row is counted once and once only."""
+    counts = [bin_.count for bin_ in calibrate([_row(probability, 1)], bins=bins)]
+
+    assert len(counts) == bins, "every bin is reported, empty ones included"
+    assert counts.count(1) == 1, "the row lands in exactly one bin"
+
+
+@given(
+    st.lists(
+        st.one_of(
+            st.none(),
+            st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
+        ),
+        max_size=12,
+    ),
+    st.integers(min_value=1, max_value=20),
+)
+@settings(max_examples=50, derandomize=True, deadline=None)
+def test_abstentions_add_no_bin_count(
+    probabilities: list[float | None], bins: int
+) -> None:
+    """The bins partition the answered rows, and only the answered rows."""
+    rows = [
+        _row(probability, index % 2) for index, probability in enumerate(probabilities)
+    ]
+
+    counts = [bin_.count for bin_ in calibrate(rows, bins=bins)]
+
+    assert sum(counts) == sum(
+        probability is not None for probability in probabilities
+    ), "an abstention is left out of every bin"

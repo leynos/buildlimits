@@ -1910,6 +1910,7 @@ reason = "The shared fragment is the command idiom of printing a caught error to
 members = [
     "tests/test_predict_ensembles.py",
     "tests/test_predict_harness.py",
+    "tests/test_predict_metrics.py",
     "tests/test_predict_probability.py",
 ]
-reason = "Matching import lists: the three property suites each name the same Hypothesis entry points (given, settings and the strategies module) beside their own module's imports. Those names come from an installed package rather than from project code, so a re-export module would add a test-support module without hiding a real dependency."
+reason = "Matching import lists: the four property suites each name the same Hypothesis entry points (given, settings and the strategies module) beside their own module's imports. Those names come from an installed package rather than from project code, so a re-export module would add a test-support module without hiding a real dependency."
