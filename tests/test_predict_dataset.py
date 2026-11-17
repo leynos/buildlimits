@@ -82,6 +82,27 @@ def test_saved_snapshot_contains_no_clear_text_crate_name(tmp_path: Path) -> Non
     assert "a" * 64 not in document, "raw argument digest redacted"
 
 
+def test_a_failed_snapshot_write_leaves_the_earlier_file_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A write that fails must not truncate the snapshot it would replace."""
+    path = tmp_path / "history.jsonl"
+    path.write_text("earlier history\n", encoding="utf-8")
+    snapshot = build_snapshot(_decoded((attributed_record(outcome="hit"),)), now=NOW)
+
+    def refuse(_temporary: Path, _target: Path) -> None:
+        """Stand in for a replace that fails once the temporary file is written."""
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "replace", refuse)
+
+    with pytest.raises(OSError, match="disk full"):
+        save_snapshot(path, snapshot)
+
+    assert path.read_text(encoding="utf-8") == "earlier history\n", "kept intact"
+    assert list(tmp_path.iterdir()) == [path], "no temporary file is left behind"
+
+
 def test_unknown_outcomes_are_counted_but_not_labelled() -> None:
     """Unattributed and declined rows appear in the history without a label."""
     records = (
@@ -208,6 +229,12 @@ def _document() -> dict[str, object]:
     "mutate",
     [
         pytest.param(lambda doc: doc.update(snapshot_version=99), id="unknown-version"),
+        pytest.param(
+            lambda doc: doc.update(snapshot_version=True), id="version-is-a-bool"
+        ),
+        pytest.param(
+            lambda doc: doc.update(snapshot_version=1.0), id="version-is-a-float"
+        ),
         pytest.param(lambda doc: doc.update(events={}), id="events-not-a-list"),
         pytest.param(lambda doc: doc.update(source=[]), id="source-not-an-object"),
         pytest.param(lambda doc: doc.update(journal=[]), id="journal-not-an-object"),

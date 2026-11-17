@@ -8,23 +8,43 @@ with the field that is wrong rather than surfacing as a confusing report.
 import datetime as dt
 import json
 import math
+import os
+import tempfile
 import typing as typ
+from pathlib import Path
 
 from buildlimits.predict.dataset import SNAPSHOT_VERSION, Gap, Snapshot, Source
 from buildlimits.predict.events import event_from_dict as _event_from_dict
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-    from pathlib import Path
 
 _SOURCE_COUNT_FIELDS = ("records_total", "outcome_records", "summary_records")
 
 
 def save_snapshot(path: Path, snapshot: Snapshot) -> None:
-    """Write the snapshot as UTF-8 JSON, replacing any earlier file."""
+    """Write the snapshot as UTF-8 JSON, replacing any earlier file.
+
+    The document is written to a temporary file in the destination directory
+    and moved into place only once it is complete, so a failure part way
+    through cannot leave an earlier snapshot truncated. The store rotates, so
+    the data behind that earlier snapshot may already be gone; keeping the old
+    file is the only way to keep it reproducible.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     document = json.dumps(snapshot.to_dict(), indent=2, sort_keys=True)
-    path.write_text(document + "\n", encoding="utf-8")
+    descriptor, name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(document + "\n")
+        temporary.replace(path)
+    finally:
+        # A successful replace leaves nothing behind, so this only removes the
+        # temporary file of a write that failed.
+        temporary.unlink(missing_ok=True)
 
 
 def load_snapshot(path: Path) -> Snapshot:
@@ -50,7 +70,13 @@ def load_snapshot(path: Path) -> Snapshot:
         msg = f"{path} must hold one JSON object"
         raise TypeError(msg)
     document = typ.cast("dict[str, object]", raw)
-    if document.get("snapshot_version") != SNAPSHOT_VERSION:
+    version = document.get("snapshot_version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        # JSON `true` and `1.0` both compare equal to the integer 1, so the
+        # type is checked before the value or a corrupt version would pass.
+        msg = f"{path} must hold an integer snapshot version"
+        raise TypeError(msg)
+    if version != SNAPSHOT_VERSION:
         msg = f"{path} has an unsupported snapshot version"
         raise ValueError(msg)
     events = document.get("events")
