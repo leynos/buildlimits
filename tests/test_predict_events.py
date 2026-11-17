@@ -117,6 +117,50 @@ def _stamped(seconds: int) -> Event:
     )
 
 
+def _admitted(identity: str, *, admitted: int, observed: int) -> Event:
+    """Return one event with explicit admission and label times."""
+    return Event(
+        identity,
+        ORIGIN,
+        EPOCH + dt.timedelta(seconds=admitted),
+        EPOCH + dt.timedelta(seconds=observed),
+        "hit",
+        1.0,
+    )
+
+
+def test_features_exclude_a_label_that_arrived_after_the_admission() -> None:
+    """A build completed after this admission was not load the decision saw."""
+    later = _admitted("a" * 64, admitted=10, observed=20)
+    earlier = _admitted("b" * 64, admitted=0, observed=30)
+
+    rows = features((later, earlier), load_window_seconds=60.0)
+
+    assert rows[1].load == 0, "the later admission is not earlier load"
+
+
+def test_age_is_measured_from_the_admission_moment() -> None:
+    """The age is the gap between this admission and the last known label."""
+    first = _admitted("a" * 64, admitted=0, observed=5)
+    second = _admitted("a" * 64, admitted=10, observed=40)
+
+    rows = features((first, second), load_window_seconds=60.0)
+
+    assert rows[1].age_seconds == pytest.approx(5.0), "five seconds before admission"
+
+
+def test_age_ignores_a_previous_build_still_running_at_admission() -> None:
+    """A label that had not arrived yet cannot set the age of a later row."""
+    first = _admitted("a" * 64, admitted=0, observed=5)
+    running = _admitted("a" * 64, admitted=8, observed=40)
+    third = _admitted("a" * 64, admitted=12, observed=50)
+
+    rows = features((first, running, third), load_window_seconds=60.0)
+
+    assert rows[2].age_seconds == pytest.approx(7.0), "counted from the first label"
+    assert rows[2].load == 1, "only the first label is in the window"
+
+
 def test_load_counts_only_events_strictly_before_the_label_time() -> None:
     """The trailing window is half-open, so a tied time is not load."""
     rows = features(

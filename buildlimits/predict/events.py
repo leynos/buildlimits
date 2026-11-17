@@ -1,8 +1,11 @@
 """One chronological event per recorded compilation, and its known features.
 
-The benchmark orders events by the moment their label became known. Everything
-a predictor may read is derived from earlier events only, so the feature set
-here cannot carry a future label.
+The benchmark orders events by the moment their label became known. Features
+are measured at the moment a request was admitted, when the source recorded
+that time, and at the label time otherwise; only events whose labels were
+already known at that moment can contribute. The feature set therefore
+describes what an admission decision could have seen, and never a label that
+had not yet arrived.
 """
 
 import bisect
@@ -95,9 +98,11 @@ class Features:
     observed_at : datetime
         The prediction time, equal to the label-availability time.
     age_seconds : float | None
-        Seconds since this identity's previous event, or None for a first one.
+        Seconds since this identity's previous label, counted from the moment
+        the row is measured, or None when no earlier label was known then.
     load : int
-        Events observed in the trailing load window, excluding this one.
+        Previously labelled events inside the trailing load window, excluding
+        this one and anything labelled after the row's measurement moment.
     """
 
     identity: str
@@ -161,8 +166,8 @@ def features(
     ----------
     events : Sequence[Event]
         The events sorted by label time, as :func:`ordered` leaves them.
-        ``_load_before`` bisects on that order, so an unsorted sequence would
-        count the wrong neighbours.
+        Bisecting on that order is what limits each row to labels that had
+        already arrived when it is measured.
     load_window_seconds : float
         The trailing window, in seconds, over which load is counted.
 
@@ -181,23 +186,56 @@ def features(
     True
     """
     times = [event.observed_at for event in events]
-    previous: dict[str, dt.datetime] = {}
+    seen: dict[str, list[dt.datetime]] = {}
     rows: list[Features] = []
     for event in events:
-        last = previous.get(event.identity)
+        moment = _measurement_moment(event)
+        previous = seen.setdefault(event.identity, [])
+        last = _last_label_before(previous, moment)
         rows.append(
             Features(
                 identity=event.identity,
                 origin=event.origin,
                 observed_at=event.observed_at,
-                age_seconds=(
-                    None if last is None else (event.observed_at - last).total_seconds()
-                ),
-                load=_load_before(times, event.observed_at, load_window_seconds),
+                age_seconds=None if last is None else (moment - last).total_seconds(),
+                load=_load_before(times, moment, load_window_seconds),
             )
         )
-        previous[event.identity] = event.observed_at
+        previous.append(event.observed_at)
     return tuple(rows)
+
+
+def _measurement_moment(event: Event) -> dt.datetime:
+    """Return the moment an event's features are measured at.
+
+    A decision is made when the request is admitted, so that is the moment the
+    row describes. A source that records no admission time falls back to the
+    label time, and an admission recorded after its own label is treated the
+    same way: the label cannot still be unknown after it arrived.
+
+    Returns
+    -------
+    datetime
+        The admission time, or the label time when admission is unknown.
+    """
+    admitted = event.admitted_at
+    if admitted is None or admitted > event.observed_at:
+        return event.observed_at
+    return admitted
+
+
+def _last_label_before(
+    times: cabc.Sequence[dt.datetime], moment: dt.datetime
+) -> dt.datetime | None:
+    """Return the latest label time at or before ``moment``, if any.
+
+    Returns
+    -------
+    datetime | None
+        The latest known label time, or None when none is early enough.
+    """
+    index = bisect.bisect_right(times, moment) - 1
+    return None if index < 0 else times[index]
 
 
 def fingerprint(events: cabc.Iterable[Event]) -> str:
@@ -276,22 +314,22 @@ def event_from_dict(value: object) -> Event:
 
 
 def _load_before(
-    times: cabc.Sequence[dt.datetime], observed_at: dt.datetime, window_seconds: float
+    times: cabc.Sequence[dt.datetime], moment: dt.datetime, window_seconds: float
 ) -> int:
-    """Count earlier events inside the trailing load window.
+    """Count earlier labels inside the trailing load window.
 
-    The window ends strictly before ``observed_at``, so an event that shares
-    this label time is not load, and a zero-second window counts nothing.
+    The window ends strictly before ``moment``, so an event labelled at the
+    same moment is not load, and a zero-second window counts nothing.
     ``times`` must be sorted, as :func:`ordered` leaves it.
 
     Returns
     -------
     int
-        Events with a label time in ``[observed_at - window, observed_at)``.
+        Events with a label time in ``[moment - window, moment)``.
     """
     window = dt.timedelta(seconds=window_seconds)
-    return bisect.bisect_left(times, observed_at) - bisect.bisect_left(
-        times, observed_at - window
+    return bisect.bisect_left(times, moment) - bisect.bisect_left(
+        times, moment - window
     )
 
 
