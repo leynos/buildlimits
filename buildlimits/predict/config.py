@@ -64,6 +64,10 @@ _EXCLUSIVE_LOW: dict[str, float] = {
     # A floor of zero is no floor, and the adaptive update would keep the
     # weight it drove to zero there for the rest of the stream.
     "hedge_weight_floor": 0.0,
+    # The Beta posterior divides by the prior strength plus the identity's
+    # count, so a zero prior strength would divide by zero the first time an
+    # unseen identity is predicted.
+    "beta_prior_strength": 0.0,
 }
 
 
@@ -272,7 +276,15 @@ def _checked_value(source: Path, name: str, raw: object) -> int | float:
         if isinstance(raw, bool) or not isinstance(raw, int | float):
             msg = f"{source} field {name} must be a number, not {raw!r}"
             raise TypeError(msg)
-        number = float(typ.cast("int | float", raw))
+        try:
+            number = float(typ.cast("int | float", raw))
+        except OverflowError as error:
+            # A JSON integer too large for a float cannot reach the range
+            # comparison below, so it is rejected here as the range error it
+            # is; letting it escape would crash the command instead of
+            # reporting a corrupt parameter file.
+            msg = f"{source} field {name} is outside its allowed range"
+            raise ValueError(msg) from error
     low, high = _BOUNDS[name]
     if name in _EXCLUSIVE_LOW:
         floor = _EXCLUSIVE_LOW[name]

@@ -108,6 +108,20 @@ def test_a_clip_too_small_to_change_one_is_rejected(tmp_path: Path) -> None:
     assert 1.0 - accepted.log_loss_clip < 1.0, "the upper tail is clipped"
 
 
+def test_a_prior_with_no_strength_is_rejected(tmp_path: Path) -> None:
+    """A zero prior strength would divide the first unseen posterior by zero."""
+    with pytest.raises(ValueError, match="above"):
+        load_config(_changed(tmp_path, beta_prior_strength=0))
+
+
+def test_a_number_too_large_to_compare_is_a_configuration_error(
+    tmp_path: Path,
+) -> None:
+    """A 401-digit JSON integer is refused, not left to escape as an overflow."""
+    with pytest.raises(ValueError, match="cold_start"):
+        load_config(_changed(tmp_path, cold_start=10**400))
+
+
 def test_a_whole_number_fills_a_fractional_field(tmp_path: Path) -> None:
     """JSON has one number type, so ``0`` is a valid rate and becomes a float."""
     config = load_config(_changed(tmp_path, cold_start=0))
