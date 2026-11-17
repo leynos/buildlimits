@@ -52,6 +52,8 @@ investigating a specific failure; reconcile with `make all` before committing.
 | `make model-fidelity`    | Both drift reports and `tests/test_model_drift.py`; cheap, and run on every pull request          |
 | `make model-check`       | Both W1 matrices at the plan's bounds, then the `fizzbee`-marked judgement; nightly only          |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
+| `make predict-dataset`   | Snapshots this host's recorded cache outcomes into `build/predict/history.jsonl`                  |
+| `make predict-benchmark` | Compares the cache-hit predictors over that snapshot; see §2.2                                    |
 
 _Table 1: Make targets and the gates behind them._
 
@@ -78,6 +80,30 @@ The package requires Python 3.14. Annotations are therefore evaluated lazily
   under `typ.TYPE_CHECKING` raises `NameError` when something introspects a
   signature. `mock.Mock(spec=SomeClass)` does exactly that; spec a mock by
   attribute names (`spec=dir(SomeClass)`) instead.
+
+### 2.2. Running the prediction benchmark
+
+Two targets compare longitudinal cache-hit predictors against the outcomes this
+host has already recorded. The input is a snapshot, never the live store, so a
+result can be reproduced from a file.
+
+| Target                   | What it writes                                                           |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `make predict-dataset`   | `build/predict/history.jsonl`: the store's events with identities hashed |
+| `make predict-benchmark` | `results.json`, `results.md` and `timings.json` under `build/predict/`   |
+
+`make predict-benchmark` depends on the snapshot target and extracts one when
+the file is absent. The command prints `results.md` and the latency table;
+`results.md` holds the comparison, calibration, difference and ablation tables.
+`results.json` is byte-identical for the same snapshot, config and seed, so it
+can be diffed between runs. The measured latency is host-specific and therefore
+lives in `timings.json` and the printed table only, never in `results.json` or
+`results.md`.
+
+`buildlimits/predict/config.json` pins every parameter, including the training
+fraction, the bootstrap seed and `minimum_labelled_events`. A run with fewer
+labelled events than that minimum reports `insufficient data` with the counts
+it did see; it never substitutes a synthetic stream for real history.
 
 ## 3. Architecture overview
 
@@ -176,6 +202,7 @@ Each module owns one decision. This table is the single module inventory.
 | `tracing`, `tracing_export`, `tracing_sdk_export`                                  | Bounded spans, the fixed journal schema and synchronous native-journal export                          |
 | `outcome_telemetry`                                                                | Maps recorder effects to bounded metrics and spans                                                     |
 | `outcome_replay`, `outcome_replay_cli`                                             | Read-only H2 and H3 evaluation over the local outcome store                                            |
+| `predict`                                                                          | Snapshot, predictors, walk-forward harness and the cache-hit comparison report                         |
 | `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                 |
 | `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper              |
 | `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar       |

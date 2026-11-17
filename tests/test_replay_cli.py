@@ -1,52 +1,15 @@
 """The H3 replay command reports bounded store and usage outcomes."""
 
-import datetime as dt
 import typing as typ
 from pathlib import Path
 
 import pytest
-from outcome_test_helpers import OBSERVED_AT, cache_key
+from outcome_store_fixture_helpers import seed_replay_store
 
-from buildlimits import outcome_evidence, outcome_replay_cli, outcome_store_io
-from buildlimits.outcome_record_format import (
-    OutcomeRecord,
-    StoreHeader,
-    WindowSummary,
-)
+from buildlimits import outcome_evidence, outcome_replay_cli
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
-
-
-def _write_store(path: Path) -> None:
-    """Write one well-formed, private H3 fixture store."""
-    records = (
-        OutcomeRecord(
-            key=cache_key(),
-            outcome="hit",
-            origin="registry",
-            runtime_seconds=0.25,
-            observed_at=OBSERVED_AT,
-            parser_class="cacheable",
-            child_sighting="unavailable",
-            child_samples=0,
-        ),
-        WindowSummary(
-            observed_at=OBSERVED_AT,
-            server_version="0.14.0",
-            window_groups=1,
-            requests_not_compile=0,
-            requests_not_cacheable=0,
-            predicted_not_compile=0,
-            predicted_declined=0,
-            predicted_cacheable=1,
-        ),
-    )
-    outcome_store_io.replace_store(
-        path,
-        StoreHeader("fixed-salt", dt.datetime(2026, 10, 24, tzinfo=dt.UTC)),
-        records,
-    )
 
 
 def test_missing_store_reports_insufficient_json(
@@ -72,7 +35,7 @@ def test_h3_text_output_snapshot(
 ) -> None:
     """The CLI text gives the verdict and sample sizes without private paths."""
     path = tmp_path / "store.jsonl"
-    _write_store(path)
+    seed_replay_store(path)
 
     status = outcome_replay_cli.main(["h3", "--store", str(path)])
     output = capsys.readouterr().out

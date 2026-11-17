@@ -379,6 +379,9 @@ extension are recorded in the ExecPlan; none is a gate decision.
   - Success: the owner records `proceed`, `narrow` or `stop`. `proceed` requires
     a separate plan for live advisory or shadow work; no scheduling policy ships
     in this step.
+- [x] 3.2.5. Provide the offline comparison harness: `make predict-dataset` and
+  `make predict-benchmark` read a redacted snapshot and write the tables; they
+  change no admission behaviour and decide no gate.
 
 ### 3.3. Extract the shared observation boundary for sccache
 

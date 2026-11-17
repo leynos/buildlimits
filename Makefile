@@ -74,7 +74,8 @@ FIZZ ?= .tools/fizzbee/fizz
         check-fmt check-lock check-python-sources \
         markdownlint nixie spelling test test-systemd-user test-sccache-host \
         test-kache-host typecheck dead-code duplication install-nose \
-        lint-actions validate model-check model-fidelity $(TOOLS) $(VENV_TOOLS)
+        lint-actions validate model-check model-fidelity predict-dataset \
+        predict-benchmark $(TOOLS) $(VENV_TOOLS)
 
 .DEFAULT_GOAL := all
 # Shared build caches require sequential gates even when make receives -j.
@@ -196,6 +197,22 @@ nixie: ## Validate Mermaid diagrams
 # The model-check opt-in is cleared here so an opt-in left in the calling
 # shell cannot make `make test` depend on the pinned checker being installed.
 # Tests that need the checker are run by an explicitly opted-in pytest.
+# The benchmark reads the recorded-history snapshot rather than the live store,
+# so a run stays reproducible after the journal rotates. The snapshot is built
+# only when it is missing; refresh it explicitly with `make predict-dataset`.
+PREDICT_SNAPSHOT ?= build/predict/history.jsonl
+PREDICT_OUTPUT ?= build/predict
+
+$(PREDICT_SNAPSHOT):
+	$(UV_ENV) $(UV) run build-limits-predict-dataset --output $@
+
+predict-dataset: build ## Snapshot this host's cache-outcome history
+	$(UV_ENV) $(UV) run build-limits-predict-dataset --output $(PREDICT_SNAPSHOT)
+
+predict-benchmark: build $(PREDICT_SNAPSHOT) ## Compare cache-hit predictors on the snapshot
+	$(UV_ENV) $(UV) run build-limits-predict-benchmark \
+	  --snapshot $(PREDICT_SNAPSHOT) --output $(PREDICT_OUTPUT)
+
 test: build $(VENV_TOOLS) ## Run tests
 	env -u BUILD_LIMITS_MODEL_CHECK $(UV_ENV) $(ACT_TEST_ENV) $(UV) run pytest -v -n $(PYTEST_XDIST_WORKERS)
 

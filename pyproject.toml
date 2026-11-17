@@ -18,6 +18,8 @@ build-limits-status = "buildlimits.status_cli:main"
 build-limits-recover = "buildlimits.recover_cli:main"
 build-limits-metrics = "buildlimits.metrics_cli:main"
 build-limits-cache-replay = "buildlimits.outcome_replay_cli:main"
+build-limits-predict-dataset = "buildlimits.predict.dataset_cli:main"
+build-limits-predict-benchmark = "buildlimits.predict.benchmark_cli:main"
 
 [dependency-groups]
 dev = [
@@ -536,6 +538,55 @@ type = "method"
 full_name = ["buildlimits.metrics.NullSink.emit"]
 path = ["buildlimits/metrics.py"]
 reason = "Metrics.__init__ defaults its transport to NullSink when no sink is configured, and Metrics.emit calls self.sink.emit through the MetricsSink protocol, which Skylos does not resolve to the concrete default. test_metrics.py asserts that the default transport reports a record as handled without counting a drop."
+
+# The prediction benchmark calls every predictor through the Predictor
+# protocol, which a static call graph does not resolve to concrete classes.
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = [
+    "buildlimits.predict.predictors.LastOutcome.predict",
+    "buildlimits.predict.predictors.LastOutcome.update",
+    "buildlimits.predict.predictors.RollingRate.predict",
+    "buildlimits.predict.predictors.RollingRate.update",
+    "buildlimits.predict.predictors.ExponentialRate.predict",
+    "buildlimits.predict.predictors.ExponentialRate.update",
+    "buildlimits.predict.predictors.LogisticModel.predict",
+    "buildlimits.predict.predictors.LogisticModel.update",
+]
+path = ["buildlimits/predict/predictors.py"]
+reason = "single_predictors returns the singles as Predictor tuples, and harness.walk_forward calls predict and update only through that protocol; ensemble_runs repeats the same dispatch through the component matrix. No static edge reaches the concrete classes. test_predict_predictors.py exercises each predictor directly, and the stationary, persistent and drift streams exercise them through the walk."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "function"
+full_name = ["buildlimits.predict.predictors._value"]
+path = ["buildlimits/predict/predictors.py"]
+reason = "The online learners reach _value only from the protocol-dispatched update methods declared above, so its callers are unresolved too. test_predict_predictors.py exercises the outcomes it maps to 1.0 and 0.0."
+
+# These serializers are called on values reached through a dict lookup, a
+# comprehension variable or a function return, so Skylos records no typed call
+# edge. The benchmark CLI tests read back results.json and results.md, and the
+# dataset round-trip test re-reads every field they write.
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = [
+    "buildlimits.predict.bootstrap.Interval.to_dict",
+    "buildlimits.predict.dataset.Gap.to_dict",
+    "buildlimits.predict.dataset.Source.to_dict",
+    "buildlimits.predict.events.Event.to_dict",
+    "buildlimits.predict.harness.Split.to_dict",
+    "buildlimits.predict.metrics.CalibrationBin.to_dict",
+    "buildlimits.predict.metrics.Metrics.to_dict",
+    "buildlimits.predict.report.Report.write",
+]
+path = [
+    "buildlimits/predict/bootstrap.py",
+    "buildlimits/predict/dataset.py",
+    "buildlimits/predict/events.py",
+    "buildlimits/predict/harness.py",
+    "buildlimits/predict/metrics.py",
+    "buildlimits/predict/report.py",
+]
+reason = "Snapshot.to_dict serializes each Event through a comprehension, the stats block serializes gaps the same way, and the report builds its predictor and interval entries from dict lookups; Skylos follows none of those edges. The dataset round-trip test re-reads the fields the snapshot serializers write, and the benchmark CLI tests write and reload results.json, timings.json and results.md through Report.write."
 
 [tool.nose]
 version = "0.20.0"
@@ -1788,3 +1839,39 @@ members = [
     "tests/test_modelcheck_service_run_sets_properties.py",
 ]
 reason = "Matching import lists: the pair properties and the variable-set property name the same Hypothesis and case-helper symbols, and the module split exists to keep each file under the module length limit. Sharing them through a re-export module would add one more test support module without hiding a real dependency."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/predict/render.py::_num", "buildlimits/predict/render.py::_n"]
+reason = "Two table-cell formatters share only the dash they print for an absent value; each is the one place a distinct format specification lives (four decimals for scores, thousands separators for counts), so a shared formatter would push a format argument into every cell."
+[[tool.duplication_gate.allow]]
+members = ["tests/modelcheck_cases.py", "tests/modelcheck_service_cases.py", "buildlimits/predict/report.py", "buildlimits/supervisor_wiring.py", "tests/test_group_drain_metrics.py", "tests/outcome_store_helpers.py", "buildlimits/predict/harness.py", "modelcheck/cli_outputs.py", "modelcheck/expectations.py", "modelcheck/records.py", "modelcheck/report.py", "tests/test_cache_recovery_telemetry.py", "tests/test_recovery_roots_deadline.py", "buildlimits/group_recovery.py", "tests/differential_trace_test_helpers.py", "modelcheck/cli.py"]
+reason = "Matching import lists: each module names the ports, records and helpers it uses, and sharing them through a re-export module would hide each module's real dependencies."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_recorder_types.py", "buildlimits/outcome_recorder_outputs.py", "tests/outcome_shell_test_support.py", "buildlimits/server_watch.py", "buildlimits/cache_recovery.py", "tests/outcome_store_helpers.py", "buildlimits/outcome_store.py"]
+reason = "Matching import lists: each module names the store records, ports and helpers it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/metrics_pressure_report.py", "buildlimits/predict/bootstrap.py", "buildlimits/predict/metrics.py"]
+reason = "The shared fragment is the two-line guard that answers an empty sequence with None. Each function then computes its own measurement (latest record, bootstrap interval, mean Brier, mean log loss, accuracy), so the guard is the whole of the overlap."
+
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/predict/benchmark_cli.py", "buildlimits/outcome_replay_cli.py"]
+reason = "Each command builds its own argument parser and translates argparse's SystemExit into its own exit code. The shared lines are argparse boilerplate, and a helper would have to return the parser's exit code beside the namespace."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_predict_harness.py"
+reason = "The two ordering scenarios construct their own slow, middle and quick events. The shared shape is a keyword constructor call whose differing times and labels are the whole point of each scenario."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_predict_predictors.py"
+reason = "The causal-sequence tests assert successive predictions in one idiom. The probability at each step and the claim it supports are the content of each test, not shared logic."
+
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/predict/dataset.py", "tests/rustc_query_support.py"]
+reason = "A single standard mkdir(parents=True, exist_ok=True) before writing a file. The line is the Python idiom for creating a parent directory, not shared project logic."
+
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/predict/report.py", "tests/cache_recovery_helpers.py"]
+reason = "A single standard mkdir(parents=True, exist_ok=True) before writing files. The line is the Python idiom for creating a parent directory, not shared project logic."
+[[tool.duplication_gate.allow]]
+members = ["tests/outcome_test_helpers.py::attributed_record", "tests/outcome_test_helpers.py::cache_key"]
+reason = "Two independent fixture builders: cache_key constructs the fixed CacheKey, and attributed_record wraps one in an OutcomeRecord. Their overlap is the docstring shape and one constructor call, not logic, and a shared builder would have to take the object being built as a parameter."
