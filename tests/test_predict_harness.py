@@ -5,11 +5,20 @@ import datetime as dt
 import typing as typ
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from buildlimits.predict.config import load_config
 from buildlimits.predict.events import EPOCH, Event
 from buildlimits.predict.harness import walk_forward
-from buildlimits.predict.synthetic import delayed, identity, stationary, with_unknowns
+from buildlimits.predict.scoring import rows_for
+from buildlimits.predict.synthetic import (
+    STEP,
+    delayed,
+    identity,
+    stationary,
+    with_unknowns,
+)
 
 if typ.TYPE_CHECKING:
     from buildlimits.predict.events import Label
@@ -230,3 +239,64 @@ def test_the_replay_keeps_store_order_not_admission_time() -> None:
         events, key=lambda event: typ.cast("dt.datetime", event.admitted_at)
     )
     assert admitted != list(events), "admission order is not write order"
+
+
+_OPPOSITE: dict[str, Label] = {"hit": "miss", "miss": "hit", "unknown": "unknown"}
+
+
+@given(
+    st.integers(min_value=8, max_value=40),
+    st.floats(min_value=0.05, max_value=0.95),
+    st.floats(min_value=0.05, max_value=0.95),
+    st.integers(min_value=0, max_value=1_000),
+)
+@settings(max_examples=50, derandomize=True, deadline=None)
+def test_flipping_a_later_label_never_changes_an_earlier_answer(
+    count: int, cut_share: float, rate: float, seed: int
+) -> None:
+    """A label that arrives after a prediction cannot be part of its answer.
+
+    Every event in a ``stationary`` stream has its own label time, so each is
+    its own batch. Flipping the labels from the cut onwards must leave every
+    answer before the cut byte-identical, whichever predictor gave it.
+    """
+    events = stationary(count=count, rate=rate, seed=seed)
+    cut = max(1, int(count * cut_share))
+    flipped = tuple(
+        dc.replace(event, label=_OPPOSITE[event.label]) if index >= cut else event
+        for index, event in enumerate(events)
+    )
+
+    before = walk_forward(events, load_config())
+    after = walk_forward(flipped, load_config())
+
+    assert flipped != events, "the perturbation changed at least one label"
+    for name, series in before.series.items():
+        assert series.probabilities[:cut] == after.series[name].probabilities[:cut], (
+            f"{name} read a label that had not arrived"
+        )
+
+
+@given(st.lists(st.sampled_from(("hit", "miss", "unknown")), min_size=3, max_size=30))
+@settings(max_examples=50, derandomize=True, deadline=None)
+def test_an_unknown_outcome_never_becomes_a_scored_miss(labels: list[Label]) -> None:
+    """An unattributable outcome is predicted but contributes no scored row."""
+    events = tuple(
+        _event(
+            index,
+            admitted_at=None,
+            observed_at=EPOCH + index * STEP,
+            label=label,
+        )
+        for index, label in enumerate(labels)
+    )
+
+    walk = walk_forward(events, load_config())
+    rows = rows_for(walk, "base-rate", walk.series["base-rate"].probabilities)
+
+    assert len(rows) == sum(label != "unknown" for label in labels), (
+        "every hit and miss is scored, and nothing else"
+    )
+    assert sum(1 for row in rows if row.outcome == 0) == labels.count("miss"), (
+        "an unknown outcome adds no miss"
+    )

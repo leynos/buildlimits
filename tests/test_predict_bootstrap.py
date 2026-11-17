@@ -154,3 +154,38 @@ def test_pairing_ignores_the_observed_time() -> None:
     assert paired_differences(first, shifted) == pytest.approx(differences), (
         "timestamps do not enter the difference"
     )
+
+
+def test_the_interval_narrows_as_the_sample_grows() -> None:
+    """More rows must mean a tighter estimate, not a wider one.
+
+    The same alternating series is resampled at two lengths. Independent rows
+    (block size one) shrink the standard error with the square root of the
+    sample, so the longer interval must be strictly narrower.
+    """
+    config = dc.replace(predict_config(), block_size=1, bootstrap_resamples=1_000)
+    alternating = [0.25, -0.25]
+    short = block_bootstrap(alternating * 20, config=config)
+    long = block_bootstrap(alternating * 200, config=config)
+
+    assert short is not None and long is not None, "both samples are resampled"
+    assert long.high - long.low < short.high - short.low, "the estimate tightens"
+
+
+def test_reversing_the_differences_mirrors_the_interval() -> None:
+    """Negating every difference must reflect every percentile about zero.
+
+    The draws depend only on the series length and the seed, so the mirrored
+    run resamples the negated means in reverse order and its bounds are the
+    negated bounds of the original.
+    """
+    config = dc.replace(predict_config(), block_size=4, bootstrap_resamples=500)
+    differences = [0.4, -0.1, 0.2, 0.0, 0.3, -0.2, 0.1, 0.05]
+
+    forward = block_bootstrap(differences, config=config)
+    backward = block_bootstrap([-value for value in differences], config=config)
+
+    assert forward is not None and backward is not None, "both runs resample"
+    assert backward.difference == pytest.approx(-forward.difference), "the mean flips"
+    assert backward.low == pytest.approx(-forward.high), "the upper tail mirrors"
+    assert backward.high == pytest.approx(-forward.low), "and so does the lower"
