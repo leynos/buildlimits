@@ -33,6 +33,9 @@ from buildlimits.metrics_schema import (
     REASONS as REASONS,
 )
 from buildlimits.metrics_schema import (
+    SUPERVISOR_WIDE_FIELDS as SUPERVISOR_WIDE_FIELDS,
+)
+from buildlimits.metrics_schema import (
     VOCABULARIES as VOCABULARIES,
 )
 

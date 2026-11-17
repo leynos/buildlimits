@@ -598,6 +598,19 @@ path = [
 ]
 reason = "Snapshot.to_dict serializes each Event through a comprehension, the stats block serializes gaps the same way, and the report builds its predictor and interval entries from dict lookups; Skylos follows none of those edges. The dataset round-trip test re-reads the fields the snapshot serializers write, and the benchmark CLI tests write and reload results.json, timings.json and results.md through Report.write."
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = [
+    "buildlimits.metrics_gauges.GaugeAccumulator.observe",
+    "buildlimits.metrics_gauges.GaugeAccumulator.is_due",
+    "buildlimits.metrics_gauges.GaugeAccumulator.record",
+    "buildlimits.metrics_gauges.GaugeAccumulator.settle",
+    "buildlimits.metrics_gauges.GaugeAccumulator._integrate",
+    "buildlimits.metrics_gauges.GaugeAccumulator._crossed_a_step",
+]
+path = ["buildlimits/metrics_gauges.py"]
+reason = "GaugePublisher calls the accumulator through the collaborator attribute it holds, and observe folds samples through the two private helpers; Skylos does not resolve either edge. The supervisor tick, admission and shutdown paths all drive the accumulator through the publisher, and tests/test_metrics_gauges.py with tests/test_metrics_gauges_properties.py assert the cadence, the interval integral, the peaks and the failed-emission merge."
+
 [tool.nose]
 version = "0.20.0"
 roots = ["."]
@@ -1986,3 +1999,10 @@ members = [
     "tests/test_predict_bootstrap.py::_seeded",
 ]
 reason = "The synthetic stream seeds its generator so its draws replay, and the bootstrap test seeds one so an injected draw sequence replays. Sharing either copy would make production code depend on a test helper, or force the test to reach into a private production function, so each side keeps its own one-line seeding call."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_metrics_gauges.py",
+    "tests/test_metrics_gauges_properties.py",
+]
+reason = "Matching import lists: the example module and the property module name the same accumulator and cadence constants, and they stay separate because the properties state their own reference definitions rather than reusing the examples' helpers. Sharing the list through a re-export module would add a test support module without hiding a real dependency."

@@ -15,6 +15,7 @@ Examples
 """
 
 import contextlib
+import json
 import socket
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - builds CompletedProcess results only; nothing is run.
 import typing as typ
@@ -28,6 +29,44 @@ if typ.TYPE_CHECKING:
 type JournalRunner = cabc.Callable[
     [cabc.Sequence[str]], subprocess.CompletedProcess[str]
 ]
+
+
+JOURNAL_UNIT = "buildlimits-supervisor.service"
+BASE_TIMESTAMP_US = 1_767_225_600_000_000
+
+
+def journal_lines(
+    records: cabc.Iterable[tuple[cabc.Mapping[str, str], float]],
+    *,
+    unit: str = JOURNAL_UNIT,
+    base_timestamp_us: int = BASE_TIMESTAMP_US,
+) -> str:
+    """Render validated records as the JSON lines a journal query returns.
+
+    Parameters
+    ----------
+    records : Iterable[tuple[Mapping[str, str], float]]
+        Each validated record paired with the instant it describes, in
+        monotonic seconds.
+    unit : str
+        The systemd user unit the records belong to.
+    base_timestamp_us : int
+        The realtime timestamp, in microseconds, of instant zero.
+
+    Returns
+    -------
+    str
+        Newline-separated journal records the report can order.
+    """
+    lines = []
+    for record, at in records:
+        envelope = {
+            **record,
+            "_SYSTEMD_USER_UNIT": unit,
+            "__REALTIME_TIMESTAMP": str(base_timestamp_us + int(at * 1_000_000)),
+        }
+        lines.append(json.dumps(envelope))
+    return "\n".join(lines)
 
 
 def journal_runner(output: str) -> JournalRunner:

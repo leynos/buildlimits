@@ -102,9 +102,9 @@ def test_close_error_permits_immediate_fresh_native_emission(
         sink = JournalSink(path)
         metrics = Metrics(sink, warn=warnings.append)
         try:
-            metrics.emit("request_queued", queued=1)
+            metrics.emit("gauges", queued=1)
             assert failed.fileno() == -1, "CPython invalidated the failed socket fd"
-            metrics.emit("request_queued", queued=2)
+            metrics.emit("gauges", queued=2)
             payload = receiver.recv(MAX_DATAGRAM_BYTES)
             assert b"BUILD_LIMITS_QUEUED=2\n" in payload, "the next record is delivered"
             assert len(created) == 2, "recovery allocates a fresh socket immediately"
@@ -152,10 +152,10 @@ def test_socket_allocation_failure_recovers_without_leaking(
         sink = JournalSink(path)
         metrics = Metrics(sink, warn=warnings.append)
         try:
-            metrics.emit("request_queued", queued=1)
+            metrics.emit("gauges", queued=1)
             assert not created, "failed construction allocated no owned socket"
-            metrics.emit("request_queued", queued=2)
-            metrics.emit("request_queued", queued=3)
+            metrics.emit("gauges", queued=2)
+            metrics.emit("gauges", queued=3)
             assert b"BUILD_LIMITS_QUEUED=2\n" in receiver.recv(MAX_DATAGRAM_BYTES), (
                 "the first recovery record is delivered"
             )
@@ -227,11 +227,11 @@ def test_transport_failure_closes_once_and_reopens_one_socket(
         sink = JournalSink(path)
         metrics = Metrics(sink)
         try:
-            metrics.emit("request_queued", queued=1)
+            metrics.emit("gauges", queued=1)
             assert failed.fileno() == -1, "the failed descriptor is released"
             assert failed.closes == 1, "failure closes the owned socket once"
-            metrics.emit("request_queued", queued=2)
-            metrics.emit("request_queued", queued=3)
+            metrics.emit("gauges", queued=2)
+            metrics.emit("gauges", queued=3)
             receiver.recv(MAX_DATAGRAM_BYTES)
             receiver.recv(MAX_DATAGRAM_BYTES)
             assert len(created) == 2, "successful emission reuses one replacement"
@@ -249,7 +249,7 @@ def test_repeated_close_does_not_touch_a_reused_descriptor(tmp_path: Path) -> No
     path = tmp_path / "journal"
     with journal_receiver(path):
         sink = JournalSink(path)
-        sink.emit({"BUILD_LIMITS_EVENT": "request_queued"})
+        sink.emit({"BUILD_LIMITS_EVENT": "gauges"})
         owned = sink._socket
         assert owned is not None, "the sink allocated its native socket"
         number = owned.fileno()
@@ -288,10 +288,10 @@ def _recover_at_descriptor_limit(_report: int, *, path: Path) -> dict[str, objec
                 except OSError as error:
                     number = error.errno
                     break
-            metrics.emit("request_queued", queued=1)
+            metrics.emit("gauges", queued=1)
             dropped = metrics.dropped_records
             os.close(fillers.pop())
-            metrics.emit("request_queued", queued=2)
+            metrics.emit("gauges", queued=2)
             payload = receiver.recv(MAX_DATAGRAM_BYTES)
         finally:
             sink.close()
