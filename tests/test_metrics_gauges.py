@@ -17,7 +17,7 @@ from buildlimits.metrics_gauges import (
     GAUGE_STEP,
     GaugeAccumulator,
 )
-from buildlimits.metrics_pressure import PressureMetrics
+from buildlimits.metrics_pressure import EventForwarder, GaugePublisher
 
 type Sample = tuple[float, int | None]
 
@@ -72,11 +72,13 @@ class Rig:
     port: RecordingPort
     state: dict[str, object]
     now: list[float]
-    observer: PressureMetrics = dc.field(init=False)
+    forwarder: EventForwarder = dc.field(init=False)
+    observer: GaugePublisher = dc.field(init=False)
 
     def __post_init__(self) -> None:
-        """Bind the observer to this rig's snapshot and clock."""
-        self.observer = PressureMetrics(
+        """Bind both adapters to this rig's port, snapshot and clock."""
+        self.forwarder = EventForwarder(self.port)
+        self.observer = GaugePublisher(
             self.port, lambda: self.state, clock=lambda: self.now[0]
         )
 
@@ -97,7 +99,7 @@ class Rig:
 
     def observe(self) -> None:
         """Fold the current snapshot into the open interval."""
-        self.observer.observe(self.now[0])
+        self.observer.sample(self.now[0])
 
     def flush(self, *, force: bool = False) -> bool:
         """Publish the open interval when it is due.
@@ -107,7 +109,7 @@ class Rig:
         bool
             Whether a record reached the port.
         """
-        return self.observer.flush(self.now[0], force=force)
+        return self.observer.publish(self.now[0], force=force).is_written
 
     def baseline(self) -> None:
         """Observe and publish the zero-interval first record."""
@@ -333,7 +335,7 @@ def test_forced_flush_publishes_before_the_heartbeat() -> None:
 def test_forwarded_events_keep_exactly_their_producer_fields() -> None:
     """The port no longer enriches other events with supervisor gauges."""
     rig = Rig.start({"queued": 2, "held": 1})
-    assert rig.observer.emit("supervisor_started", health="healthy"), "record took"
+    assert rig.forwarder.emit("supervisor_started", health="healthy"), "record took"
     assert rig.port.records == [("supervisor_started", {"health": "healthy"})], (
         "no gauge is added to the event"
     )
@@ -343,13 +345,14 @@ def test_forwarded_events_keep_exactly_their_producer_fields() -> None:
 def test_snapshot_failure_is_isolated_from_emission() -> None:
     """An unreadable snapshot neither drops events nor invents a record."""
     port = RecordingPort()
-    observer = PressureMetrics(port, unavailable_snapshot)
-    assert observer.emit("pool_failure", operation="read"), "event still forward"
+    forwarder = EventForwarder(port)
+    observer = GaugePublisher(port, unavailable_snapshot)
+    assert forwarder.emit("pool_failure", operation="read"), "event still forward"
     assert port.records == [("pool_failure", {"operation": "read"})], (
         "the event carries only its producer's field"
     )
-    observer.observe(0.0)
-    assert not observer.flush(0.0), "no snapshot means no record"
+    assert not observer.sample(0.0), "the unreadable snapshot yields no sample"
+    assert not observer.publish(0.0).is_written, "no snapshot means no record"
 
 
 def test_the_accumulator_defaults_match_the_documented_cadence() -> None:

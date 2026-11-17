@@ -14,7 +14,7 @@ from buildlimits.metrics import (
     decode_native_fields,
 )
 from buildlimits.metrics_gauges import GAUGE_INTERVAL_SECONDS
-from buildlimits.metrics_pressure import PressureMetrics
+from buildlimits.metrics_pressure import EventForwarder, GaugePublisher, Publication
 from buildlimits.supervisor import Supervisor
 
 
@@ -29,9 +29,7 @@ class FailingPort:
         raise RuntimeError(msg)
 
 
-def _flush(
-    observer: PressureMetrics, sink: RecordingSink, now: float
-) -> dict[str, str]:
+def _flush(observer: GaugePublisher, sink: RecordingSink, now: float) -> dict[str, str]:
     """Publish one forced snapshot and return the native record.
 
     Returns
@@ -39,22 +37,24 @@ def _flush(
     dict[str, str]
         The record the sink received.
     """
-    observer.observe(now)
-    assert observer.flush(now, force=True), "the forced snapshot reached the sink"
+    observer.sample(now)
+    assert observer.publish(now, force=True).is_written, (
+        "the forced snapshot reached the sink"
+    )
     return sink.records[-1]
 
 
 def _mutable_observer(
     sink: RecordingSink, state: dict[str, object], now: list[float]
-) -> PressureMetrics:
+) -> GaugePublisher:
     """Bind an observer to a mutable snapshot and a hand-held clock.
 
     Returns
     -------
-    PressureMetrics
+    GaugePublisher
         Observer whose readings follow *state* and whose time follows *now*.
     """
-    return PressureMetrics(Metrics(sink), lambda: state, clock=lambda: now[0])
+    return GaugePublisher(Metrics(sink), lambda: state, clock=lambda: now[0])
 
 
 def test_real_supervisor_uses_cached_descriptor_snapshot(
@@ -62,7 +62,7 @@ def test_real_supervisor_uses_cached_descriptor_snapshot(
 ) -> None:
     """The production observer reads the actual Requests descriptor-budget owner."""
     from buildlimits import descriptor_budget
-    from buildlimits.metrics_pressure import supervisor_metrics
+    from buildlimits.metrics_pressure import supervisor_publisher
 
     instance = Supervisor(SupervisorConfig(), clock=lambda: 0.0)
     try:
@@ -77,9 +77,11 @@ def test_real_supervisor_uses_cached_descriptor_snapshot(
             raise AssertionError(msg)
 
         monkeypatch.setattr(descriptor_budget, "open_count", forbidden_sample)
-        observer = supervisor_metrics(instance, Metrics(metric_sink))
-        observer.observe(0.0)
-        assert observer.flush(0.0, force=True), "the baseline snapshot is published"
+        observer = supervisor_publisher(instance, Metrics(metric_sink))
+        observer.sample(0.0)
+        assert observer.publish(0.0, force=True).is_written, (
+            "the baseline snapshot is published"
+        )
         record = metric_sink.records[-1]
         assert record["BUILD_LIMITS_EVENT"] == "gauges", "one periodic record"
         assert record["BUILD_LIMITS_FD_RETAINED"] == "0", "no requests are retained"
@@ -104,7 +106,7 @@ def test_queue_high_water_tracks_lifetime(depths: list[int]) -> None:
     sink = RecordingSink()
     state: dict[str, object] = {"queued": 0}
     now = [0.0]
-    observer = PressureMetrics(Metrics(sink), lambda: state, clock=lambda: now[0])
+    observer = GaugePublisher(Metrics(sink), lambda: state, clock=lambda: now[0])
     maxima = []
     for depth in depths:
         state["queued"] = depth
@@ -137,9 +139,9 @@ def test_a_lost_snapshot_keeps_its_maximum_for_the_next_record(metric_sink) -> N
 
     now = [0.0]
     state: dict[str, object] = {"queued": 8}
-    observer = PressureMetrics(FailOnce(), lambda: state, clock=lambda: now[0])
-    observer.observe(now[0])
-    assert not observer.flush(now[0]), "the first attempt is lost"
+    observer = GaugePublisher(FailOnce(), lambda: state, clock=lambda: now[0])
+    observer.sample(now[0])
+    assert not observer.publish(now[0]).is_written, "the first attempt is lost"
     now[0] = 5.0
     state["queued"] = 0
     kept = _flush(observer, metric_sink, now[0])
@@ -157,17 +159,21 @@ def test_a_failed_endpoint_sample_leaves_the_interval_open(metric_sink) -> None:
     """A read failure at the flush endpoint must not publish a measured mean."""
     now = [0.0]
     reader = SwitchableSnapshot({"queued": 2})
-    observer = PressureMetrics(Metrics(metric_sink), reader, clock=lambda: now[0])
+    observer = GaugePublisher(Metrics(metric_sink), reader, clock=lambda: now[0])
     baseline = _flush(observer, metric_sink, now[0])
     assert baseline["BUILD_LIMITS_EVENT"] == "gauges", "the baseline reached the sink"
     reader.readable = False
     now[0] = GAUGE_INTERVAL_SECONDS
-    observer.observe(now[0])
-    assert not observer.flush(now[0]), "no record may end at an unread endpoint"
+    observer.sample(now[0])
+    assert not observer.publish(now[0]).is_written, (
+        "no record may end at an unread endpoint"
+    )
     reader.readable = True
     now[0] = 2 * GAUGE_INTERVAL_SECONDS
-    observer.observe(now[0])
-    assert observer.flush(now[0]), "the next readable endpoint publishes both"
+    observer.sample(now[0])
+    assert observer.publish(now[0]).is_written, (
+        "the next readable endpoint publishes both"
+    )
     record = metric_sink.records[-1]
     assert record["BUILD_LIMITS_INTERVAL_SECONDS"] == "60.000", (
         "the published interval spans the unread attempt"
@@ -182,13 +188,15 @@ def test_a_cached_endpoint_never_makes_the_next_interval_measured(
 ) -> None:
     """A poll's sample closes this interval but cannot anchor the next one."""
     reader = SwitchableSnapshot({"queued": 2})
-    observer = PressureMetrics(Metrics(metric_sink), reader, clock=lambda: 0.0)
-    observer.observe(31.0)  # A service poll reads later than the tick.
+    observer = GaugePublisher(Metrics(metric_sink), reader, clock=lambda: 0.0)
+    observer.sample(31.0)  # A service poll reads later than the tick.
     reader.readable = False
-    observer.observe(30.0)  # The tick's own reading fails.
-    assert observer.flush(30.0), "the cached sample still closes the interval"
+    observer.sample(30.0)  # The tick's own reading fails.
+    assert observer.publish(30.0).is_written, (
+        "the cached sample still closes the interval"
+    )
     reader.readable = True
-    observer.observe(40.0)
+    observer.sample(40.0)
     record = _flush(observer, metric_sink, 61.0)
     assert record["BUILD_LIMITS_INTERVAL_SECONDS"] == "30.000", (
         "the interval spans the cached endpoint"
@@ -224,11 +232,11 @@ def test_an_unmeasured_baseline_leaves_the_next_interval_without_a_mean(
 def test_the_cached_endpoint_keeps_the_freshest_sample(metric_sink) -> None:
     """A tick's earlier clock reading cannot overwrite a later poll sample."""
     state: dict[str, object] = {}
-    observer = PressureMetrics(Metrics(metric_sink), lambda: state, clock=lambda: 0.0)
+    observer = GaugePublisher(Metrics(metric_sink), lambda: state, clock=lambda: 0.0)
     for sampled_at, depth in ((0.0, 2), (10.0, 5), (4.0, 1), (20.0, 5)):
         state["queued"] = depth
-        observer.observe(sampled_at)
-    assert observer.flush(20.0), "the interval ends at the freshest sample"
+        observer.sample(sampled_at)
+    assert observer.publish(20.0).is_written, "the interval ends at the freshest sample"
     record = metric_sink.records[-1]
     assert record["BUILD_LIMITS_INTERVAL_SECONDS"] == "20.000", (
         "the cached endpoint never moves backwards"
@@ -240,22 +248,28 @@ def test_the_cached_endpoint_keeps_the_freshest_sample(metric_sink) -> None:
 
 def test_snapshot_failure_is_isolated_from_forwarding(metric_sink) -> None:
     """An unavailable observation cannot drop events or invent a record."""
-    observer = PressureMetrics(Metrics(metric_sink), unavailable_snapshot)
-    assert observer.emit("supervisor_started", health="healthy"), "event forwarded"
+    forwarder = EventForwarder(Metrics(metric_sink))
+    publisher = GaugePublisher(Metrics(metric_sink), unavailable_snapshot)
+    assert forwarder.emit("supervisor_started", health="healthy"), "event forwarded"
     assert len(metric_sink.records) == 1, "no gauge record accompanies it"
     assert metric_sink.records[0]["BUILD_LIMITS_EVENT"] == "supervisor_started", (
         "only the forwarded event was kept"
     )
-    observer.observe(0.0)
-    assert not observer.flush(0.0), "a missing sample has no interval to publish"
+    assert not publisher.sample(0.0), "an unavailable reader yields no sample"
+    assert not publisher.publish(0.0).is_written, (
+        "a missing sample has no interval to publish"
+    )
 
 
 def test_transport_failure_never_escapes_the_observer() -> None:
     """A failing sink reports refusal without raising into the caller."""
-    observer = PressureMetrics(FailingPort(), lambda: {"queued": 1}, clock=lambda: 0.0)
-    assert not observer.emit("request_finished"), "the event was not delivered"
-    observer.observe(0.0)
-    assert not observer.flush(0.0), "the record was not delivered"
+    forwarder = EventForwarder(FailingPort())
+    publisher = GaugePublisher(FailingPort(), lambda: {"queued": 1}, clock=lambda: 0.0)
+    assert not forwarder.emit("request_finished"), "the event was not delivered"
+    assert publisher.sample(0.0), "the snapshot itself was readable"
+    assert publisher.publish(0.0) is Publication.REFUSED, (
+        "the refused record is reported, not raised"
+    )
 
 
 def test_gauge_records_keep_fail_closed_zero_and_unknown(metric_sink) -> None:
@@ -268,7 +282,7 @@ def test_gauge_records_keep_fail_closed_zero_and_unknown(metric_sink) -> None:
         "fd_high_water": 4,
         "accept_paused": True,
     }
-    observer = PressureMetrics(Metrics(metric_sink), lambda: state, clock=lambda: 0.0)
+    observer = GaugePublisher(Metrics(metric_sink), lambda: state, clock=lambda: 0.0)
     decoded = decode_native_fields(_flush(observer, metric_sink, 0.0))
     assert decoded["fd_budget"] == "0", "present effective zero is retained"
     assert decoded["fd_budget_known"] == "0", "unknown baseline remains explicit"
@@ -278,8 +292,8 @@ def test_gauge_records_keep_fail_closed_zero_and_unknown(metric_sink) -> None:
 
 def test_accept_pressure_events_still_drop_identifiers(metric_sink) -> None:
     """The existing validating schema removes identity and free text."""
-    observer = PressureMetrics(Metrics(metric_sink), dict, clock=lambda: 0.0)
-    observer.emit(
+    forwarder = EventForwarder(Metrics(metric_sink))
+    forwarder.emit(
         "accept_pressure",
         accept_state="paused",
         accept_errno="emfile",
@@ -302,7 +316,7 @@ def test_invalid_queue_sample_cannot_raise_high_water(
 ) -> None:
     """Invalid cached counters do not invent a lifetime maximum."""
     state: dict[str, object] = {"queued": queued}
-    observer = PressureMetrics(Metrics(metric_sink), lambda: state, clock=lambda: 0.0)
+    observer = GaugePublisher(Metrics(metric_sink), lambda: state, clock=lambda: 0.0)
     record = _flush(observer, metric_sink, 0.0)
     assert record["BUILD_LIMITS_QUEUED_HIGH_WATER"] == "0", (
         "invalid queue samples never inflate high-water"

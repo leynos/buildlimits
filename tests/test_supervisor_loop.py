@@ -279,7 +279,9 @@ def test_tick_health_poll_deadlines(
     supervisor.pool = typ.cast("TokenPool", pool) if same_device is not None else None
     supervisor.admission.healthy = healthy
     supervisor.metrics = metrics
-    times = iter([now])
+    # A tick reads the clock once, and an unhealthy tick then shuts down,
+    # whose final gauge record samples at the shutdown instant.
+    times = iter([now, now])
     supervisor.clock = lambda: next(times)
     supervisor._next_health_poll = 10.0
     supervisor._next_server_poll = supervisor._next_cache_poll = float("inf")

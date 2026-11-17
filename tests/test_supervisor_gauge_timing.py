@@ -49,7 +49,7 @@ def test_a_blocked_placement_cannot_extend_the_queue_integral() -> None:
         supervisor._apply(supervisor.admission.submit(1, cacheable=False))
         scenario.clock.time = 10.0
         supervisor._apply(supervisor.admission.token_arrived(b"a"))
-        supervisor_observability.flush(supervisor, force=True)
+        supervisor_observability.publish_final(supervisor)
 
     gauges = [
         record

@@ -115,6 +115,15 @@ class GaugeAccumulator:
         Largest held-token count observed in the interval.
     queued_high_water : int
         Largest queue depth observed for this supervisor's lifetime.
+
+    Notes
+    -----
+    Retry deferral stays here, rather than in the publisher, because it is part
+    of the cadence policy this class already owns: the spacing that makes a
+    step-triggered record wait is the same spacing that keeps a failing sink
+    from being retried on every tick. Moving it to the caller would let each
+    caller pick its own retry rhythm and duplicate the interval state that
+    decides when the next attempt is meaningful.
     """
 
     interval: float = GAUGE_INTERVAL_SECONDS

@@ -320,10 +320,8 @@ class Supervisor:
         """Delegate scope placement to its focused workflow module."""
         supervisor_placement.launch(self, request_id, group_id, cached=cached)
 
-    # The public stop API and the loop's shutdown seam are bound here rather
-    # than defined, so the policy they share lives in ``supervisor_shutdown``
-    # beside its sibling ``supervisor_polling``. A bound method keeps the
-    # name, the signature and the ``self`` binding every caller already uses.
+    # The stop API is bound rather than defined, so the policy it shares lives
+    # in ``supervisor_shutdown`` beside its sibling ``supervisor_polling``.
     request_stop = supervisor_shutdown.request_stop
     request_graceful_stop = supervisor_shutdown.request_graceful_stop
     stop = supervisor_shutdown.stop
@@ -343,7 +341,8 @@ class Supervisor:
         group_recovery.empty_groups(self)
         now = self.clock()
         supervisor_polling.poll_services(self, now)
-        supervisor_observability.observe(self, now)
+        supervisor_observability.sample(self, now)
+        supervisor_observability.publish_due(self, now)
         if not self.admission.healthy and not self.admission.groups:
             self._shutdown()
 
@@ -362,9 +361,11 @@ class Supervisor:
     def _apply(self, effects: list[Effect]) -> None:
         """Carry out admission effects in order."""
         if effects:
-            # Admission already applied the transition, and ``Launch`` blocks
+            # Admission already applied the transition and ``Launch`` blocks
             # in the scope call, so fold the new depth before the handlers run.
-            supervisor_observability.observe(self, self.clock())
+            now = self.clock()
+            supervisor_observability.sample(self, now)
+            supervisor_observability.publish_due(self, now)
         for effect in effects:
             self._effect_handlers[type(effect)](effect)
 

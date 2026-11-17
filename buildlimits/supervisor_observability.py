@@ -1,7 +1,11 @@
 """Assemble supervisor observation ports after resource owners are constructed.
 
 This application boundary shares cached snapshots and fixed drain counters. It
-never opens resources or changes admission, launch or shutdown decisions.
+never opens resources or changes admission, launch or shutdown decisions. The
+gauge write is named at each call site --- :func:`sample` folds a reading,
+:func:`publish_due` writes when the cadence permits, and :func:`publish_final`
+writes the last interval before shutdown --- so a reader can see where records
+come from.
 """
 
 import contextlib
@@ -10,9 +14,16 @@ import typing as typ
 
 from buildlimits.drain_metrics import DrainMetrics
 from buildlimits.listener_pressure import ListenerPressure
-from buildlimits.metrics_pressure import PressureMetrics, supervisor_metrics
+from buildlimits.metrics_pressure import (
+    EventForwarder,
+    GaugePublisher,
+    Publication,
+    supervisor_publisher,
+)
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from buildlimits.supervisor import Supervisor
 
 
@@ -24,12 +35,12 @@ class ObservationPorts:
     ----------
     pressure : ListenerPressure
         Listener policy sharing the supervisor's observation port.
-    gauges : PressureMetrics
-        Snapshot accumulator the tick, admission and shutdown paths drive.
+    gauges : GaugePublisher
+        Snapshot publisher the tick, admission and shutdown paths drive.
     """
 
     pressure: ListenerPressure
-    gauges: PressureMetrics
+    gauges: GaugePublisher
 
 
 def configure(supervisor: Supervisor) -> ObservationPorts:
@@ -45,8 +56,8 @@ def configure(supervisor: Supervisor) -> ObservationPorts:
     ObservationPorts
         Listener policy and gauge publisher sharing the supervisor's port.
     """
-    gauges = supervisor_metrics(supervisor, supervisor.metrics)
-    supervisor.metrics = gauges
+    gauges = supervisor_publisher(supervisor, supervisor.metrics)
+    supervisor.metrics = EventForwarder(supervisor.metrics)
     supervisor.requests.metrics = supervisor.metrics
     supervisor.server.metrics = supervisor.metrics
     # Recovery is the one owner whose port is set at construction and again
@@ -64,7 +75,7 @@ def configure(supervisor: Supervisor) -> ObservationPorts:
     return ObservationPorts(pressure=pressure, gauges=gauges)
 
 
-def observe(supervisor: Supervisor, now: float) -> None:
+def sample(supervisor: Supervisor, now: float) -> None:
     """Fold the current supervisor sample into the open interval.
 
     Parameters
@@ -76,26 +87,72 @@ def observe(supervisor: Supervisor, now: float) -> None:
 
     Notes
     -----
-    Observation is best-effort. An escaping exception would count as a control
+    Sampling is best-effort. An escaping exception would count as a control
     fault in the drain loop, so a persistent telemetry fault could otherwise
     affect admission.
     """
     with contextlib.suppress(Exception):
-        supervisor.gauges.observe(now)
-        supervisor.gauges.flush(now)
+        supervisor.gauges.sample(now)
 
 
-def flush(supervisor: Supervisor, *, force: bool = False) -> None:
-    """Publish the open interval, forcing the final record before shutdown.
+def publish_due(supervisor: Supervisor, now: float) -> Publication:
+    """Write a ``gauges`` record when the cadence says one is due.
 
     Parameters
     ----------
     supervisor : Supervisor
-        Supervisor whose open interval is published.
-    force : bool
-        Whether the record is required regardless of the cadence.
+        Supervisor whose open interval may be published.
+    now : float
+        Monotonic seconds at which the attempt runs.
+
+    Returns
+    -------
+    Publication
+        What the attempt achieved; an escaping fault reports
+        :attr:`~buildlimits.metrics_pressure.Publication.SUPPRESSED`.
+    """
+    return _publish(lambda: supervisor.gauges.publish(now))
+
+
+def publish_final(supervisor: Supervisor) -> Publication:
+    """Write the last interval before the terminal record.
+
+    Parameters
+    ----------
+    supervisor : Supervisor
+        Supervisor whose remaining interval is published.
+
+    Returns
+    -------
+    Publication
+        What the forced attempt achieved; the caller reports it without
+        letting it change the process exit status.
+
+    Notes
+    -----
+    The last record is best-effort. A refusing transport must not change how
+    the process exits, which is why the outcome is returned rather than raised.
+    The interval is sampled at this instant first, because a record may only
+    close on a reading taken at its endpoint.
+    """
+    now = supervisor.clock()
+    sample(supervisor, now)
+    return _publish(lambda: supervisor.gauges.publish(now, force=True))
+
+
+def _publish(publish: cabc.Callable[[], Publication]) -> Publication:
+    """Run one publication attempt behind the telemetry exception boundary.
+
+    Parameters
+    ----------
+    publish : Callable[[], Publication]
+        Attempt bound to the instant the caller read.
+
+    Returns
+    -------
+    Publication
+        The attempt's outcome, or ``SUPPRESSED`` when it raised.
     """
     with contextlib.suppress(Exception):
-        now = supervisor.clock()
-        supervisor.gauges.observe(now)
-        supervisor.gauges.flush(now, force=force)
+        return publish()
+    return Publication.SUPPRESSED

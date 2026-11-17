@@ -27,6 +27,8 @@ if typ.TYPE_CHECKING:
 
     from pool_helpers import FakePool
 
+    from buildlimits.metrics import MetricsPort
+
 
 def _empty_runner(argv: cabc.Sequence[str]) -> subprocess.CompletedProcess[str]:
     """Answer every systemd query with no properties and no load.
@@ -67,11 +69,20 @@ class OneSlotScenario:
 
 
 @contextlib.contextmanager
-def one_slot_supervisor() -> cabc.Generator[OneSlotScenario]:
+def one_slot_supervisor(
+    port_factory: cabc.Callable[[RecordingSink], MetricsPort] = Metrics,
+) -> cabc.Generator[OneSlotScenario]:
     """Yield a fixed-clock one-slot supervisor and its collaborators.
 
     The supervisor is configured for the detached cache path, so no managed
     server is touched, and its selector is closed when the block ends.
+
+    Parameters
+    ----------
+    port_factory : Callable[[RecordingSink], MetricsPort]
+        Builds the emission boundary over the scenario's sink; the default is
+        the real validating emitter, and a test that needs a faulty transport
+        supplies a wrapper.
 
     Yields
     ------
@@ -83,11 +94,14 @@ def one_slot_supervisor() -> cabc.Generator[OneSlotScenario]:
     instance = Supervisor(
         SupervisorConfig(cache_mode="direct", slots=1),
         clock=lambda: clock.time,
-        telemetry=SupervisorTelemetry(metrics=Metrics(sink)),
+        telemetry=SupervisorTelemetry(metrics=port_factory(sink)),
     )
     pool = attach_pool(instance)
     with contextlib.ExitStack() as owned:
         owned.callback(instance.selector.close)
+        # ExitStack runs callbacks in reverse order, so pending requests are
+        # refused before the selector that carries their replies closes.
+        owned.callback(instance.requests.close_all)
         yield OneSlotScenario(instance, sink, clock, pool)
 
 

@@ -217,9 +217,11 @@ def shutdown(supervisor: Supervisor) -> None:
     orderly = supervisor._stopping and supervisor.health_reason is None
     supervisor.exit_status = 0 if orderly and not supervisor.loop.failures else 1
 
-    # Publish the last interval before the terminal record. The flush is
-    # best-effort: a failing transport must not change how the process exits.
-    supervisor_observability.flush(supervisor, force=True)
+    # Publish the last interval before the terminal record. The attempt is
+    # best-effort: a failing transport must not change how the process exits,
+    # so its outcome is reported here rather than raised or retried.
+    published = supervisor_observability.publish_final(supervisor)
+    log(f"stopping: final gauge record {published.value}")
     supervisor._metric(
         "supervisor_stopped", outcome=exit_outcome(Exit(code=supervisor.exit_status))
     )

@@ -13,22 +13,18 @@ cadence to the accumulator, so a peak that rises and falls between two
 published snapshots has to survive inside the interval peak instead.
 """
 
-import json
 import typing as typ
 
 from conftest import RecordingSink
-from journal_fixtures import journal_runner
+from journal_fixtures import journal_lines, journal_runner
 
 from buildlimits.metrics import Metrics
-from buildlimits.metrics_pressure import PressureMetrics
+from buildlimits.metrics_pressure import GaugePublisher
 from buildlimits.metrics_query import query
 from buildlimits.metrics_report import report
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-
-BASE_TIMESTAMP_US = 1_767_225_600_000_000
-SERVICE_UNIT = "buildlimits-supervisor.service"
 
 type Maxima = tuple[float, float]
 type Workload = tuple[tuple[float, int, int], ...]
@@ -61,33 +57,6 @@ PEAK_BETWEEN_SNAPSHOTS: Workload = (
 )
 
 
-def _journal_lines(
-    records: cabc.Iterable[tuple[dict[str, str], float]],
-) -> str:
-    """Render validated records as the JSON lines a journal query returns.
-
-    Parameters
-    ----------
-    records : Iterable[tuple[dict[str, str], float]]
-        Each validated record paired with the workload instant it describes.
-
-    Returns
-    -------
-    str
-        Newline-separated journal records with the supervisor's unit and a
-        timestamp the report can order.
-    """
-    lines = []
-    for record, at in records:
-        envelope = {
-            **record,
-            "_SYSTEMD_USER_UNIT": SERVICE_UNIT,
-            "__REALTIME_TIMESTAMP": str(BASE_TIMESTAMP_US + int(at * 1_000_000)),
-        }
-        lines.append(json.dumps(envelope))
-    return "\n".join(lines)
-
-
 def _instants(workload: Workload) -> cabc.Iterator[float]:
     """Yield the workload's monotonic instants in the order they were recorded.
 
@@ -107,7 +76,7 @@ def _aligned_lines(sink: RecordingSink, workload: Workload) -> str:
     str
         The journal lines for the records the sink accepted.
     """
-    return _journal_lines(zip(sink.records, _instants(workload), strict=True))
+    return journal_lines(zip(sink.records, _instants(workload), strict=True))
 
 
 def _legacy_window(workload: Workload) -> str:
@@ -148,18 +117,18 @@ def _snapshot_window(
     """
     sink = RecordingSink()
     state: dict[str, object] = {}
-    observer = PressureMetrics(Metrics(sink), lambda: state, clock=lambda: 0.0)
+    observer = GaugePublisher(Metrics(sink), lambda: state, clock=lambda: 0.0)
     published: list[float] = []
     for at, queued, held in workload:
         state.update(queued=queued, held=held)
-        observer.observe(at)
-        if observer.flush(at, force=force):
+        observer.sample(at)
+        if observer.publish(at, force=force).is_written:
             published.append(at)
     assert len(published) == len(sink.records), "one record per published instant"
     assert all(record["BUILD_LIMITS_EVENT"] == "gauges" for record in sink.records), (
         "the snapshot window carries no per-record counter samples"
     )
-    return _journal_lines(zip(sink.records, published, strict=True)), tuple(published)
+    return journal_lines(zip(sink.records, published, strict=True)), tuple(published)
 
 
 def _expected_maxima(workload: Workload) -> Maxima:
