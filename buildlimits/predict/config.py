@@ -39,6 +39,7 @@ _BOUNDS: dict[str, tuple[float, float]] = {
     "logistic_learning_rate": (0.0, 1.0),
     "logistic_l2": (0.0, 1.0),
     "hedge_eta": (0.0, 10.0),
+    "hedge_weight_floor": (0.0, 0.5),
     "weight_fit_steps": (1, 100_000),
     "weight_fit_learning_rate": (0.0, 10.0),
     "train_fraction": (0.0, 1.0),
@@ -58,7 +59,12 @@ _BOUNDS: dict[str, tuple[float, float]] = {
 # back to ``1.0``, so a clip that small leaves the upper tail unclipped and a
 # certain miss would take the logarithm of zero. ``2**-53`` still yields the
 # largest float below one, so it is the smallest accepted clip.
-_EXCLUSIVE_LOW: dict[str, float] = {"log_loss_clip": 2.0**-54}
+_EXCLUSIVE_LOW: dict[str, float] = {
+    "log_loss_clip": 2.0**-54,
+    # A floor of zero is no floor, and the adaptive update would keep the
+    # weight it drove to zero there for the rest of the stream.
+    "hedge_weight_floor": 0.0,
+}
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -83,6 +89,9 @@ class Config:
         L2 penalty applied to the feature model's weights.
     hedge_eta : float
         Learning rate of the adaptive ensemble's exponentiated weights.
+    hedge_weight_floor : float
+        Smallest normalized weight kept for a component, so a component that
+        was outperformed for a long spell can still win weight back.
     weight_fit_steps : int
         Projected-gradient steps used to fit fixed ensemble weights.
     weight_fit_learning_rate : float
@@ -122,6 +131,7 @@ class Config:
     logistic_learning_rate: float
     logistic_l2: float
     hedge_eta: float
+    hedge_weight_floor: float
     weight_fit_steps: int
     weight_fit_learning_rate: float
     train_fraction: float

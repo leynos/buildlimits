@@ -8,6 +8,7 @@
   "logistic_learning_rate": 0.05,
   "logistic_l2": 0.001,
   "hedge_eta": 0.5,
+  "hedge_weight_floor": 1e-06,
   "train_fraction": 0.5,
   "block_size": 200,
   "bootstrap_resamples": 1000,

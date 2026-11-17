@@ -160,6 +160,7 @@ def _rebuild(run: EnsembleRun, components: tuple[str, ...], config: Config) -> E
         mode=mode,
         eta=config.hedge_eta,
         clip=config.log_loss_clip,
+        floor=config.hedge_weight_floor,
     )
 
 

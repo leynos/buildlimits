@@ -73,6 +73,35 @@ def test_an_ablation_without_any_weight_left_spreads_evenly() -> None:
     assert ablated.weights == pytest.approx([0.5, 0.5]), "no weight means even"
 
 
+def test_a_long_losing_spell_cannot_eliminate_a_component() -> None:
+    """A component outperformed for long enough must still win weight back.
+
+    Multiplicative weights shrink toward zero, and once a normalized weight is
+    exactly zero no later update can restore it. The configured floor keeps it
+    positive and the recovery test proves it is not merely non-zero.
+    """
+    config = load_config()
+    ensemble = Ensemble(
+        "ensemble-adaptive",
+        ("steady", "late"),
+        [0.5, 0.5],
+        "adaptive",
+        config.hedge_eta,
+        config.log_loss_clip,
+        config.hedge_weight_floor,
+    )
+
+    for _ in range(400):
+        ensemble.update((1.0, 0.0), is_hit=True)
+
+    assert ensemble.weights[1] >= config.hedge_weight_floor, "floored, not zero"
+
+    for _ in range(400):
+        ensemble.update((0.0, 1.0), is_hit=True)
+
+    assert ensemble.weights[1] > 0.4, "the weight is won back"
+
+
 def test_fit_weights_without_outcomes_keeps_even_weights() -> None:
     """A tuning period with no labelled rows cannot distinguish components."""
     weights = fit_weights([(0.9, 0.1)], [], config=load_config())

@@ -39,6 +39,10 @@ class Ensemble:
         Adaptive learning rate; unused by the other modes.
     clip : float
         Probability clip shared with the component scores.
+    floor : float
+        Smallest normalized weight an adaptive update leaves a component.
+        Without it a component that lost for long enough underflows to zero,
+        and multiplying zero can never win the weight back.
     """
 
     name: str
@@ -47,6 +51,7 @@ class Ensemble:
     mode: str
     eta: float
     clip: float
+    floor: float = 0.0
 
     def predict(self, probabilities: cabc.Sequence[float | None]) -> float | None:
         """Average the components that answered at this event.
@@ -82,6 +87,8 @@ class Ensemble:
         components that answered. Leaving its weight untouched would let it
         gain share purely by sitting out the events the others lost, and the
         renormalization below turns that into a larger weight when it returns.
+        The floor keeps every component's weight positive, so a long losing
+        spell cannot eliminate it for the rest of the stream.
 
         Parameters
         ----------
@@ -103,13 +110,13 @@ class Ensemble:
         if not answered:
             return
         shared = sum(answered) / len(answered)
-        self.weights = [
-            weight * math.exp(-self.eta * (shared if loss is None else loss))
-            for weight, loss in zip(self.weights, losses, strict=True)
-        ]
-        total = sum(self.weights)
-        if total > 0:
-            self.weights = [weight / total for weight in self.weights]
+        self.weights = _floored(
+            _normalized([
+                weight * math.exp(-self.eta * (shared if loss is None else loss))
+                for weight, loss in zip(self.weights, losses, strict=True)
+            ]),
+            floor=self.floor,
+        )
 
     def without(self, index: int) -> Ensemble:
         """Return a copy with one component removed, for ablation.
@@ -146,6 +153,28 @@ def _normalized(weights: cabc.Sequence[float]) -> list[float]:
     if total <= 0:
         return [1.0 / len(weights) for _ in weights]
     return [weight / total for weight in weights]
+
+
+def _floored(weights: cabc.Sequence[float], *, floor: float) -> list[float]:
+    """Raise every weight to a positive floor, keeping the total at one.
+
+    A floor above the uniform share cannot be honoured by any distribution, so
+    it is reduced to the uniform share first.
+
+    Returns
+    -------
+    list[float]
+        The weights, unchanged when the floor is disabled.
+    """
+    if not weights or floor <= 0:
+        return list(weights)
+    limit = min(floor, 1.0 / len(weights))
+    lifted = [max(weight, limit) for weight in weights]
+    slack = sum(weight - limit for weight in lifted)
+    excess = sum(lifted) - 1.0
+    if excess <= 0 or slack <= 0:
+        return _normalized(lifted)
+    return [weight - (weight - limit) * excess / slack for weight in lifted]
 
 
 def _normalized_log_loss(probability: float, *, is_hit: bool, clip: float) -> float:
@@ -330,5 +359,6 @@ def build_ensembles(
         "adaptive",
         config.hedge_eta,
         config.log_loss_clip,
+        config.hedge_weight_floor,
     )
     return (equal, fixed, adaptive)
