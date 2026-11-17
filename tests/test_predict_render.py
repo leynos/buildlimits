@@ -36,6 +36,7 @@ def _empty_document() -> dict[str, object]:
         },
         "git_sha": "abc123",
         "config": {"bootstrap_alpha": 0.05},
+        "verdict_alpha": 0.05,
     }
 
 
@@ -70,6 +71,15 @@ def test_insufficient_held_out_evidence_is_not_a_negative_result() -> None:
     assert "**insufficient held-out evidence**" in markdown, "the status is explicit"
     assert "this is not a negative result" in markdown, "the distinction is stated"
     assert "**Insufficient data.**" not in markdown, "nothing is called missing data"
+
+
+def test_the_difference_table_explains_the_correction() -> None:
+    """The reader is told why the interval is wider than the config's level."""
+    markdown = render_markdown(_empty_document())
+
+    assert "widened across the family of comparisons" in markdown, (
+        "the correction is explained"
+    )
 
 
 def test_the_timings_report_keeps_combination_time_apart() -> None:
@@ -146,15 +156,15 @@ def test_an_available_journal_is_reported_as_context_only() -> None:
     assert "1,234 records, context only" in markdown, "counted, not scored"
 
 
-def test_the_interval_column_follows_the_configured_alpha() -> None:
-    """A 90% two-sided interval is labelled as such, not hard-coded."""
+def test_the_interval_column_follows_the_corrected_level() -> None:
+    """A 90% per-comparison level is labelled as such, not hard-coded."""
     document = _empty_document()
-    document["config"] = {"bootstrap_alpha": 0.1}
+    document["verdict_alpha"] = 0.1
 
     markdown = render_markdown(document)
 
     assert "| Predictor | Difference | 90.0% interval | Paired rows |" in markdown, (
-        "the header is derived from the alpha"
+        "the header is derived from the level actually applied"
     )
 
 

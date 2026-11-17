@@ -59,6 +59,10 @@ class Evaluation:
         Each ensemble's held-out score with each component removed.
     against_base_rate : dict[str, Interval | None]
         Held-out Brier difference from the base rate, with its interval.
+    verdict_alpha : float
+        The tail probability each comparison with the base rate is tested at,
+        after the configured level has been shared across the whole family of
+        comparisons that could be named.
     best_single : str | None
         The single predictor with the best Brier on the tuning rows the
         weight fit may read.
@@ -77,6 +81,7 @@ class Evaluation:
     metrics: dict[str, dict[str, Metrics]]
     ablation_metrics: dict[str, dict[str, Metrics]]
     against_base_rate: dict[str, Interval | None]
+    verdict_alpha: float
     best_single: str | None
     against_best_single: dict[str, Interval | None]
     verdict: str
@@ -148,6 +153,7 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
         metrics=metrics,
         ablation_metrics=ablated,
         against_base_rate=compared.against_base_rate,
+        verdict_alpha=compared.verdict_alpha,
         best_single=compared.best_single,
         against_best_single=compared.against_best_single,
         verdict=_verdict(status, labelled, compared.against_base_rate, config),
@@ -162,6 +168,11 @@ def _compare(
 ) -> _Comparisons:
     """Compare every predictor with the base rate and the best single.
 
+    Every comparison with the base rate is tested at a level shared across the
+    whole family of predictors that could be named. Testing each at the full
+    configured level would give the verdict several independent chances to
+    clear zero on noise, which is not what that level claims.
+
     Returns
     -------
     _Comparisons
@@ -170,12 +181,14 @@ def _compare(
     series = series_map(walk, ensembles)
     comparisons = _Comparison(walk, series)
     best_single = _best_on_training(walk, series, walk.components(), config)
+    family = [name for name in series if name != "base-rate"]
+    alpha = _verdict_alpha(config, len(family))
+    corrected = dc.replace(config, bootstrap_alpha=alpha)
     return _Comparisons(
         against_base_rate={
-            name: comparisons.versus(name, "base-rate", config)
-            for name in series
-            if name != "base-rate"
+            name: comparisons.versus(name, "base-rate", corrected) for name in family
         },
+        verdict_alpha=alpha,
         best_single=best_single,
         against_best_single=(
             {}
@@ -188,6 +201,22 @@ def _compare(
     )
 
 
+def _verdict_alpha(config: Config, family: int) -> float:
+    """Return the level one comparison with the base rate is tested at.
+
+    Bonferroni divides the configured level across the family, so the verdict
+    as a whole holds at that level even though any one predictor could be
+    named. The cost is a wider interval for each predictor, which is the
+    honest price of asking several of them at once.
+
+    Returns
+    -------
+    float
+        The two-sided tail probability applied to each comparison.
+    """
+    return config.bootstrap_alpha / max(1, family)
+
+
 @dc.dataclass(frozen=True, slots=True)
 class _Comparisons:
     """The held-out comparisons assembled for one evaluation.
@@ -196,6 +225,8 @@ class _Comparisons:
     ----------
     against_base_rate : dict[str, Interval | None]
         Each predictor's Brier difference from the base rate.
+    verdict_alpha : float
+        The level those differences are tested at, shared across the family.
     best_single : str | None
         The tuning-period winner among the singles.
     against_best_single : dict[str, Interval | None]
@@ -203,6 +234,7 @@ class _Comparisons:
     """
 
     against_base_rate: dict[str, Interval | None]
+    verdict_alpha: float
     best_single: str | None
     against_best_single: dict[str, Interval | None]
 
@@ -321,7 +353,9 @@ def _verdict(
 
     A predictor may only be said to beat the base rate when its interval lies
     wholly below zero *and* it was paired over enough held-out rows, spread
-    over at least two blocks, for that interval to mean anything.
+    over at least two blocks, for that interval to mean anything. That
+    interval has already been widened for the family of comparisons, so the
+    claim as a whole holds at the configured level.
 
     Returns
     -------

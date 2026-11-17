@@ -143,10 +143,16 @@ require gating every update on the admission time as well. The best single that
 each ensemble is compared against is chosen on the same rows the weight fit may
 read, so the withheld tuning batch cannot decide the comparator either. The
 tuning/held-out split falls between batches, so every row a store wrote
-together stays in one phase. The commit named in the report is read from the
-repository that holds the benchmark module, and only when that repository
-tracks the module's own path; an installed copy therefore reports `unknown`
-rather than borrowing its host project's commit.
+together stays in one phase. Each predictor's difference from the base rate is
+tested at the configured `bootstrap_alpha` divided across every predictor the
+verdict could name (Bonferroni), so the verdict as a whole holds at the level
+the config pins rather than giving several predictors independent chances to
+clear zero on noise. `results.json` records that per-comparison level as
+`verdict_alpha`, and the difference table labels its interval column with it.
+The commit named in the report is read from the repository that holds the
+benchmark module, and only when that repository tracks the module's own path;
+an installed copy therefore reports `unknown` rather than borrowing its host
+project's commit.
 
 `make predict-dataset` refuses any `--output` path that resolves to the store
 it is reading, including through a symbolic link, so it cannot replace the

@@ -100,6 +100,7 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
         "status": evaluation.status,
         "verdict": evaluation.verdict,
         "config": provenance.config.as_dict(),
+        "verdict_alpha": evaluation.verdict_alpha,
         "data": {
             "fingerprint": provenance.fingerprint,
             "stats": provenance.snapshot.stats(),

@@ -226,16 +226,17 @@ def _difference_table(
     list[str]
         Markdown lines.
     """
-    config = typ.cast("dict[str, object]", document["config"])
-    interval_name = (
-        f"{as_percent(1.0 - typ.cast('float', config['bootstrap_alpha']))} interval"
-    )
+    alpha = typ.cast("float", document["verdict_alpha"])
+    interval_name = f"{as_percent(1.0 - alpha)} interval"
     lines = [
         "## Difference from the base rate",
         "",
         (
             "Negative means fewer Brier points than the base rate. The "
-            "interval is a block bootstrap over contiguous held-out events."
+            "interval is a block bootstrap over contiguous held-out events, "
+            "widened across the family of comparisons with the base rate "
+            "(Bonferroni), so the verdict as a whole holds at the level the "
+            "config pins."
         ),
         "",
         f"| Predictor | Difference | {interval_name} | Paired rows |",

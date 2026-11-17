@@ -3,6 +3,7 @@
 import dataclasses as dc
 import typing as typ
 
+import pytest
 from predict_test_helpers import predict_config
 
 from buildlimits.predict.evaluation import (
@@ -77,6 +78,18 @@ def test_a_real_improvement_is_named_in_the_verdict() -> None:
 
     assert result.verdict.startswith("beats the base rate"), result.verdict
     assert "last-outcome" in result.verdict, "the persistent signal is named"
+
+
+def test_the_base_rate_comparisons_share_the_configured_level() -> None:
+    """Several chances to beat the rate may not inflate the verdict."""
+    config = predict_config()
+    result = _persistent_result()
+
+    family = len(result.against_base_rate)
+    assert family == len(result.metrics) - 1, "every predictor but the rate is compared"
+    assert result.verdict_alpha == pytest.approx(config.bootstrap_alpha / family), (
+        "the configured level is divided across the family"
+    )
 
 
 def test_the_verdict_needs_enough_paired_rows() -> None:
