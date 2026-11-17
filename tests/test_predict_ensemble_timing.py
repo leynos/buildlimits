@@ -269,8 +269,12 @@ def test_the_ensemble_replay_times_itself_with_the_supplied_clock() -> None:
     walk = walk_forward(_eight_events(eight), config)
     runs = run_ensembles(walk, config, timer=lambda: next(ticks))
 
+    assert runs, "the fixture produces ensembles to time"
     for name, run in runs.items():
         answered = [value for value in run.elapsed if value]
+        # An empty list would satisfy both assertions below, so an ensemble
+        # that stopped answering would otherwise pass without being timed.
+        assert answered, f"{name} answered at least one event"
         assert answered == pytest.approx([step] * len(answered)), (
             f"{name} timed its combination with the supplied clock"
         )
