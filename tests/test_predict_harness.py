@@ -2,6 +2,7 @@
 
 import dataclasses as dc
 import datetime as dt
+import itertools
 import typing as typ
 
 import pytest
@@ -350,3 +351,20 @@ def test_an_unknown_outcome_never_becomes_a_scored_miss(labels: list[Label]) -> 
     assert sum(1 for row in rows if row.outcome == 0) == labels.count("miss"), (
         "an unknown outcome adds no miss"
     )
+
+
+def test_the_walk_records_what_the_injected_clock_reported() -> None:
+    """A stub clock makes every recorded latency exactly the interval it gave."""
+    step = 0.25
+    ticks = itertools.count(0.0, step)
+    events = tuple(
+        _causal(index, observed_at=EPOCH + index * STEP, label="hit")
+        for index in range(3)
+    )
+
+    walk = walk_forward(events, load_config(), timer=lambda: next(ticks))
+
+    for name, series in walk.series.items():
+        assert series.elapsed == pytest.approx((step,) * 3), (
+            f"{name} timed its predictions with the supplied clock"
+        )

@@ -1,5 +1,6 @@
 """End-to-end contracts for the dataset command."""
 
+import datetime as dt
 import typing as typ
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from outcome_test_helpers import cache_key
 from predict_test_helpers import STORE_HEADER, outcome_record, write_store
 
 from buildlimits import outcome_store_io
+from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict import dataset_cli
 from buildlimits.predict.snapshot_store import load_snapshot
 
@@ -16,6 +18,7 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.outcome_vocabulary import CacheResult
     from buildlimits.predict.config import Config
+    from buildlimits.predict.dataset import Snapshot
 
 
 class _RaisingJournal:
@@ -195,7 +198,8 @@ def _journal_snapshot(
     write_store(store, 8)
 
     status = dataset_cli.main(
-        ["--store", str(store), "--output", str(output)], journal=journal
+        ["--store", str(store), "--output", str(output)],
+        edges=dataset_cli.Edges(journal=journal),
     )
     return status, load_snapshot(output).journal
 
@@ -241,3 +245,48 @@ def test_dataset_command_warns_when_nothing_is_labelled(
 
     assert status == 0, "the snapshot is written"
     assert "insufficient data" in capsys.readouterr().err, "the reader is warned"
+
+
+def test_the_command_reads_through_the_injected_clock_and_store(
+    tmp_path: Path,
+) -> None:
+    """Injected edges let a test fix the time and observe the written snapshot."""
+    clock = dt.datetime(2026, 3, 4, 5, 6, 7, tzinfo=dt.UTC)
+    written: list[Snapshot] = []
+    snapshot = tmp_path / "history.jsonl"
+
+    def read_store(_store: Path) -> DecodedStore:
+        """Stand in for the host store with an empty but decoded one."""
+        return _decoded(())
+
+    def write_snapshot(value: Snapshot, _output: Path) -> int:
+        """Record the snapshot the command built instead of writing it."""
+        written.append(value)
+        return 0
+
+    status = dataset_cli.main(
+        [
+            "--store",
+            str(tmp_path / "store.jsonl"),
+            "--output",
+            str(snapshot),
+            "--skip-journal",
+        ],
+        edges=dataset_cli.Edges(
+            now=lambda: clock,
+            read_store=read_store,
+            write_snapshot=write_snapshot,
+        ),
+    )
+
+    assert status == 0, "the command succeeds through the injected edges"
+    assert written and written[0].created_at == clock, "the clock is the one supplied"
+    assert not snapshot.exists(), "the writer, not the command, decides output"
+
+
+def _decoded(records: tuple[object, ...]) -> DecodedStore:
+    """Wrap records in a store header, as a decoded store file would."""
+    written = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    return DecodedStore(
+        StoreHeader("fixed-salt", written), typ.cast("typ.Any", records)
+    )

@@ -89,9 +89,11 @@ class Evaluation:
 
         Every predictor with at least one scored held-out row is ranked by its
         Brier score, so the table never hides a poor result. A predictor that
-        scored fewer than ``minimum_scored_events`` rows is flagged rather than
-        reordered, because its position is still the score it earned. Names
-        without any held-out score follow the ranked ones.
+        scored fewer than ``minimum_scored_events`` rows is placed after every
+        qualified predictor rather than in the position its score would earn:
+        a mean over too few rows is still reported, but it must not displace a
+        predictor whose score rests on enough evidence. Names without any
+        held-out score follow the ranked ones.
 
         Returns
         -------

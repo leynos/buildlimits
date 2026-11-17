@@ -235,13 +235,7 @@ def event_from_dict(value: object) -> Event:
     if origin not in ORIGINS or label not in LABELS:
         msg = "origin and label must use the accepted vocabulary"
         raise ValueError(msg)
-    if not isinstance(runtime, (int, float)) or isinstance(runtime, bool):
-        msg = "runtime_seconds must be numeric"
-        raise TypeError(msg)
-    runtime_seconds = float(runtime)
-    if not math.isfinite(runtime_seconds):
-        msg = "runtime_seconds must be finite"
-        raise ValueError(msg)
+    runtime_seconds = _runtime_seconds(runtime)
     observed = _parse_stamp(row["observed_at"])
     if observed is None:
         msg = "observed_at must be a UTC timestamp"
@@ -254,6 +248,38 @@ def event_from_dict(value: object) -> Event:
         label=typ.cast("Label", label),
         runtime_seconds=runtime_seconds,
     )
+
+
+def _runtime_seconds(value: object) -> float:
+    """Validate the runtime recorded for one compilation.
+
+    Returns
+    -------
+    float
+        The runtime in seconds.
+
+    Raises
+    ------
+    TypeError
+        If the value is not a number.
+    ValueError
+        If the value is not finite, including an integer too large for a float
+        to hold.
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        msg = "runtime_seconds must be numeric"
+        raise TypeError(msg)
+    try:
+        seconds = float(value)
+    except OverflowError as error:
+        # A JSON integer can be larger than a float can hold. That is a bad
+        # field value like any other, not a crash in the snapshot loader.
+        msg = "runtime_seconds must be finite"
+        raise ValueError(msg) from error
+    if not math.isfinite(seconds):
+        msg = "runtime_seconds must be finite"
+        raise ValueError(msg)
+    return seconds
 
 
 def _stamp(value: dt.datetime | None) -> str | None:

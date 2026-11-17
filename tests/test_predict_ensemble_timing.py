@@ -7,6 +7,7 @@ after the label arrived.
 
 import dataclasses as dc
 import datetime as dt
+import itertools
 import typing as typ
 
 import pytest
@@ -20,11 +21,13 @@ from buildlimits.predict.ensemble_runs import (
 )
 from buildlimits.predict.events import EPOCH, Event
 from buildlimits.predict.harness import walk_forward
-from buildlimits.predict.scoring import heldout_rows, metric_block
+from buildlimits.predict.scoring import heldout_rows, metric_block, rows_for
 from buildlimits.predict.synthetic import drift, persistence_shift
 
 if typ.TYPE_CHECKING:
+    from buildlimits.predict.config import Config
     from buildlimits.predict.events import Label
+    from buildlimits.predict.harness import Walk
 
 
 def _flipped(label: str) -> str:
@@ -43,6 +46,25 @@ def _eight_events(admissions: tuple[dt.datetime | None, ...]) -> tuple[Event, ..
         )
         for index in range(8)
     )
+
+
+def _fitted_fixed_on_drift(count: int, seed: int) -> tuple[Walk, Config, EnsembleRun]:
+    """Return a drifting walk, its config and the fixed ensemble fitted over it.
+
+    Both drift scenarios arrange the same way: a stream whose hit rate falls
+    part way through is walked forward, then the fixed weights are fitted on
+    the tuning labels the split leaves readable.
+
+    Returns
+    -------
+    tuple[Walk, Config, EnsembleRun]
+        The walk, the parameters it was built with, and the fitted ensemble.
+    """
+    config = predict_config()
+    walk = walk_forward(
+        drift(count=count, first_rate=0.9, second_rate=0.1, seed=seed), config
+    )
+    return walk, config, run_ensembles(walk, config)["ensemble-fixed"]
 
 
 def test_the_weight_fit_stops_at_the_first_held_out_admission() -> None:
@@ -105,11 +127,7 @@ def test_an_early_tuning_label_still_shapes_the_fixed_weights() -> None:
     tuning label is readable at the first held-out decision and the fit moves
     off the uniform prior.
     """
-    config = predict_config()
-    walk = walk_forward(
-        drift(count=120, first_rate=0.9, second_rate=0.1, seed=5), config
-    )
-    fixed = run_ensembles(walk, config)["ensemble-fixed"]
+    walk, _config, fixed = _fitted_fixed_on_drift(120, 5)
     uniform = [1.0 / len(fixed.initial_weights)] * len(fixed.initial_weights)
 
     assert len(tuning_indices(walk)) == walk.split.train_labelled, (
@@ -211,3 +229,51 @@ def test_adaptive_weights_shift_towards_the_better_component_after_drift() -> No
     assert adaptive_loss < equal_loss, (
         "the shifted weights pay off on the held-out period"
     )
+
+
+def test_a_fixed_ensemble_scores_only_rows_it_could_have_predicted() -> None:
+    """The phase restriction covers the overall block, not only the phases.
+
+    A fixed ensemble's weights were fitted on the tuning labels, so its tuning
+    rows are in-sample. ``overall`` and the per-origin entries must report the
+    same held-out population as ``held-out`` instead of folding those
+    retrospective rows back in. The fixture holds tuning rows to exclude, so
+    the equality is not vacuous.
+    """
+    walk, config, run = _fitted_fixed_on_drift(200, 7)
+    rows = rows_for(walk, run.name, run.probabilities)
+
+    block = metric_block(rows, config, phases=run.scored_phases)
+
+    heldout = [row for row in rows if row.phase == "held-out"]
+    origins = [key for key in block if key.startswith("origin:")]
+    assert run.scored_phases == ("held-out",), "the fit makes tuning in-sample"
+    assert any(row.phase == "train" for row in rows), "there are rows to exclude"
+    assert block["overall"] == block["held-out"], "overall repeats the honest phase"
+    assert block["overall"].labelled == len(heldout), "no tuning row survives"
+    assert origins, "the fixture has at least one origin class"
+    for key in origins:
+        origin = key.removeprefix("origin:")
+        assert block[key].labelled == sum(
+            1 for row in heldout if row.origin == origin
+        ), "each origin entry is drawn from the held-out rows only"
+
+
+def test_the_ensemble_replay_times_itself_with_the_supplied_clock() -> None:
+    """Every combined answer is charged the interval the injected clock gave."""
+    step = 0.125
+    ticks = itertools.count(0.0, step)
+    config = dc.replace(predict_config(), train_fraction=0.5)
+    eight = tuple(EPOCH + index * dt.timedelta(seconds=30) for index in range(8))
+
+    walk = walk_forward(_eight_events(eight), config)
+    runs = run_ensembles(walk, config, timer=lambda: next(ticks))
+
+    for name, run in runs.items():
+        answered = [value for value in run.elapsed if value]
+        assert answered == pytest.approx([step] * len(answered)), (
+            f"{name} timed its combination with the supplied clock"
+        )
+        assert len(answered) == sum(
+            1 for value in run.probabilities if value is not None
+        ), "every answered event was timed and no other"

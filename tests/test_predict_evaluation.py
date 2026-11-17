@@ -7,6 +7,7 @@ import typing as typ
 import pytest
 from predict_test_helpers import predict_config
 
+from buildlimits.predict.ensemble_runs import tuning_indices
 from buildlimits.predict.evaluation import (
     STATUS_INSUFFICIENT_HELDOUT,
     STATUS_OK,
@@ -14,13 +15,17 @@ from buildlimits.predict.evaluation import (
 )
 from buildlimits.predict.events import EPOCH, Event
 from buildlimits.predict.harness import Series, walk_forward
+from buildlimits.predict.metrics import summarize
+from buildlimits.predict.scoring import rows_for
 from buildlimits.predict.synthetic import STEP, identity, persistent
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
+    from buildlimits.predict.config import Config
     from buildlimits.predict.evaluation import Evaluation
     from buildlimits.predict.events import Label
     from buildlimits.predict.harness import Walk
+    from buildlimits.predict.metrics import Metrics
 
 ORIGIN = typ.cast("Origin", "registry")
 
@@ -219,3 +224,56 @@ def test_the_best_single_ignores_a_tuning_label_that_arrived_too_late() -> None:
     assert late_brier < early_brier, "every tuning row would favour the second"
 
     assert result.best_single == names[0], "the readable tuning rows decide"
+
+
+def _tuning_metrics(walk: Walk, name: str, config: Config) -> Metrics:
+    """Return one single's metrics over the rows a weight fit may read.
+
+    Returns
+    -------
+    Metrics
+        The score over the tuning rows eligible for the fit.
+    """
+    return summarize(
+        rows_for(
+            walk, name, walk.series[name].probabilities, indices=tuning_indices(walk)
+        ),
+        clip=config.log_loss_clip,
+        threshold=config.decision_threshold,
+        bins=config.calibration_bins,
+    )
+
+
+def test_the_best_single_is_ranked_on_the_rows_every_single_answered() -> None:
+    """A single cannot win by abstaining on the tuning rows it would get wrong.
+
+    ``honest`` answers all eight readable tuning rows and errs on the first
+    two. ``picky`` abstains on exactly those two and errs once among the six it
+    keeps, so on its own population it looks the better of the two. Ranking the
+    singles on the rows both answered shows that advantage came from a
+    different population rather than from a better answer, and leaves
+    ``honest`` the winner.
+    """
+    walk = _late_held_out_admission()
+    names = walk.components()
+    outcomes = [1 if event.label == "hit" else 0 for event in walk.events]
+    honest = tuple(
+        _answer(outcomes[index], is_correct=index >= 2) for index in range(30)
+    )
+    picky = tuple(
+        None
+        if index < 2 or index >= 8
+        else _answer(outcomes[index], is_correct=index != 2)
+        for index in range(30)
+    )
+    answered = _answered(walk, {0: honest, 1: picky})
+    config = predict_config(train_fraction=20 / 30, minimum_scored_events=1)
+
+    own = [_tuning_metrics(answered, names[position], config) for position in range(2)]
+    result = evaluate(answered, config)
+
+    assert own[0].brier is not None and own[1].brier is not None, "both were scored"
+    assert own[1].brier < own[0].brier, (
+        "on its own answered rows the abstaining single looks better"
+    )
+    assert result.best_single == names[0], "one shared population decides"

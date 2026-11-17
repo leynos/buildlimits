@@ -117,13 +117,27 @@ def paired_differences(
 
 
 def block_bootstrap(
-    differences: cabc.Sequence[float | None], *, config: Config
+    differences: cabc.Sequence[float | None],
+    *,
+    config: Config,
+    generator: random.Random | None = None,
 ) -> Interval | None:
     """Resample contiguous blocks and report a percentile interval.
 
     Each replication draws whole blocks from the original positions and
     averages the differences it found, so an unanswered position contributes
     no value but also does not shorten the block it sits in.
+
+    Parameters
+    ----------
+    differences : Sequence[float | None]
+        The paired difference at each stream position, None where unanswered.
+    config : Config
+        The pinned parameters: block size, resamples, level and seed.
+    generator : random.Random | None
+        The source of draws. None builds one from the configured seed, which
+        is what makes a run reproducible; a caller may supply its own to
+        replay a known sequence.
 
     Returns
     -------
@@ -147,10 +161,10 @@ def block_bootstrap(
     size = len(differences)
     # ruff: ignore[suspicious-non-cryptographic-random-usage] - a seeded bootstrap
     # needs reproducible, not secret, draws.
-    generator = random.Random(config.bootstrap_seed)
+    draws = generator if generator is not None else random.Random(config.bootstrap_seed)
     means: list[float] = []
     for _ in range(config.bootstrap_resamples):
-        mean = _resampled_mean(generator, differences, stride, size)
+        mean = _resampled_mean(draws, differences, stride, size)
         if mean is not None:
             means.append(mean)
     if not means:

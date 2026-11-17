@@ -172,6 +172,26 @@ def write_admitted_snapshot(tmp_path: Path, count: int) -> Path:
     return path
 
 
+def benchmark_argv(
+    snapshot: Path, output: Path, config: Path | None = None
+) -> list[str]:
+    """Return the command line one end-to-end benchmark run needs.
+
+    Every run names the same history and report directory and differs only in
+    whether it supplies a parameter file, so the argument order lives here
+    rather than being retyped at each call site.
+
+    Returns
+    -------
+    list[str]
+        The arguments, with ``--config`` left out when the defaults apply.
+    """
+    argv = ["--snapshot", str(snapshot), "--output", str(output)]
+    if config is not None:
+        argv += ["--config", str(config)]
+    return argv
+
+
 def write_fast_config(tmp_path: Path) -> Path:
     """Write a config that keeps an end-to-end run quick but well-founded.
 

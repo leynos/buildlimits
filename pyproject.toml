@@ -1857,7 +1857,16 @@ reason = "Table-cell formatters share only the dash they print for an absent val
 members = ["tests/modelcheck_cases.py", "tests/modelcheck_service_cases.py", "buildlimits/predict/report.py", "buildlimits/supervisor_wiring.py", "tests/test_group_drain_metrics.py", "tests/outcome_store_helpers.py", "buildlimits/predict/harness.py", "modelcheck/cli_outputs.py", "modelcheck/expectations.py", "modelcheck/records.py", "modelcheck/report.py", "tests/test_cache_recovery_telemetry.py", "tests/test_recovery_roots_deadline.py", "buildlimits/group_recovery.py", "tests/differential_trace_test_helpers.py", "tests/predict_test_helpers.py", "modelcheck/cli.py", "tests/test_predict_evaluation.py"]
 reason = "Matching import lists: each module names the ports, records and helpers it uses, and sharing them through a re-export module would hide each module's real dependencies."
 [[tool.duplication_gate.allow]]
-members = ["buildlimits/outcome_recorder_types.py", "buildlimits/outcome_recorder_outputs.py", "tests/outcome_shell_test_support.py", "buildlimits/server_watch.py", "buildlimits/cache_recovery.py", "tests/outcome_store_helpers.py", "buildlimits/outcome_store.py"]
+members = [
+    "buildlimits/outcome_recorder_types.py",
+    "buildlimits/outcome_recorder_outputs.py",
+    "tests/outcome_shell_test_support.py",
+    "buildlimits/server_watch.py",
+    "buildlimits/cache_recovery.py",
+    "tests/predict_test_helpers.py",
+    "tests/test_predict_evaluation.py",
+    "buildlimits/outcome_store.py",
+]
 reason = "Matching import lists: each module names the store records, ports and helpers it uses, and sharing them through a re-export module would hide each module's real dependencies."
 
 [[tool.duplication_gate.allow]]
@@ -1943,3 +1952,17 @@ members = [
     "tests/test_predict_evaluation.py",
 ]
 reason = "Matching type-checking preambles: each module guards the same standard-library aliases (collections.abc, datetime) and its own typed imports behind if typ.TYPE_CHECKING. The names come from the standard library and each module's real dependencies, so a shared module would hide what each file actually imports."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_store.py::_utc_now",
+    "buildlimits/predict/dataset_cli.py::_utc_now",
+]
+reason = "Each module owns the default for its own injectable clock edge: the store takes a wall_clock callable and the dataset command takes a now callable. The shared body is one call to the standard-library UTC constructor, so a shared helper would add a module whose only contract is to be replaced in tests."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/synthetic.py::_next",
+    "tests/test_predict_bootstrap.py::_seeded",
+]
+reason = "The synthetic stream seeds its generator so its draws replay, and the bootstrap test seeds one so an injected draw sequence replays. Sharing either copy would make production code depend on a test helper, or force the test to reach into a private production function, so each side keeps its own one-line seeding call."

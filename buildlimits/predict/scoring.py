@@ -107,10 +107,18 @@ def metric_block(
 ) -> dict[str, Metrics]:
     """Score one row set overall, per phase and per origin.
 
+    Every entry is drawn from the requested phases only. The overall and
+    per-origin scores are not a wider view of the same run: a fixed ensemble's
+    weights were fitted on the tuning labels, so a tuning row is in-sample
+    there. Reporting it under ``overall`` would publish a retrospective score
+    as if it were a prediction, which is exactly what the phase restriction
+    exists to prevent.
+
     Returns
     -------
     dict[str, Metrics]
-        The overall score, each requested phase and every origin.
+        The overall score, each requested phase and every origin, all drawn
+        from the same rows.
     """
 
     def scored(rows: cabc.Sequence[ScoredRow]) -> Metrics:
@@ -128,10 +136,12 @@ def metric_block(
             bins=config.calibration_bins,
         )
 
-    block = {"overall": scored(rows)}
+    allowed = frozenset(phases)
+    eligible = [row for row in rows if row.phase in allowed]
+    block = {"overall": scored(eligible)}
     for phase in phases:
-        block[phase] = scored([row for row in rows if row.phase == phase])
-    for origin, group in per_origin(rows).items():
+        block[phase] = scored([row for row in eligible if row.phase == phase])
+    for origin, group in per_origin(eligible).items():
         block[f"origin:{origin}"] = scored(group)
     return block
 

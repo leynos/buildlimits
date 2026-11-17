@@ -215,6 +215,14 @@ def count_journal(
     therefore reported as unavailable, with the record counts and the
     retention span that *are* available, rather than guessed at.
 
+    The result is deliberately an ordinary mapping rather than a typed record.
+    It is the provenance block the snapshot stores and the report renders, and
+    an unavailable journal is a shorter mapping that names its reason: every
+    key below is optional by contract, and the renderer reports only what is
+    present. A record here would have to be flattened back to this mapping at
+    the same boundary, so it would add a second definition of the block without
+    constraining either consumer.
+
     Parameters
     ----------
     since : str

@@ -27,6 +27,7 @@ from buildlimits.predict.history import (
     released_labels,
 )
 from buildlimits.predict.predictors import single_predictors, update_all
+from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -67,7 +68,7 @@ class Split:
         return {
             "train_labelled": self.train_labelled,
             "heldout_labelled": self.heldout_labelled,
-            "boundary": (None if self.boundary is None else self.boundary.isoformat()),
+            "boundary": (None if self.boundary is None else utc_text(self.boundary)),
         }
 
 
@@ -139,7 +140,12 @@ class Walk:
         return tuple(self.series)
 
 
-def walk_forward(events: cabc.Iterable[Event], config: Config) -> Walk:
+def walk_forward(
+    events: cabc.Iterable[Event],
+    config: Config,
+    *,
+    timer: cabc.Callable[[], float] = time.perf_counter,
+) -> Walk:
     """Predict every event at its admission, updating from released labels.
 
     Parameters
@@ -148,6 +154,8 @@ def walk_forward(events: cabc.Iterable[Event], config: Config) -> Walk:
         The recorded stream, in store append order.
     config : Config
         The pinned parameters, including the load window and split fraction.
+    timer : Callable[[], float]
+        Monotonic seconds, injected so a test can record known timings.
 
     Returns
     -------
@@ -158,7 +166,12 @@ def walk_forward(events: cabc.Iterable[Event], config: Config) -> Walk:
     moments = prediction_moments(stream)
     rows = features(stream, load_window_seconds=config.load_window_seconds)
     phases = _phases(stream, train_fraction=config.train_fraction)
-    replay = _replay(single_predictors(config), rows, stream, moments)
+    replay = _replay(
+        single_predictors(config),
+        rows,
+        _Stream(stream, moments),
+        timer=timer,
+    )
     series = {
         name: Series(
             name, tuple(replay.probabilities[name]), tuple(replay.elapsed[name])
@@ -200,6 +213,22 @@ class _Replay:
     unapplied_labels: int
 
 
+@dc.dataclass(frozen=True, slots=True)
+class _Stream:
+    """The two orderings a replay answers in.
+
+    Attributes
+    ----------
+    events : tuple[Event, ...]
+        The stream in store append order.
+    moments : tuple[tuple[int, ...], ...]
+        The admission moments, earliest first, each holding its stream indices.
+    """
+
+    events: tuple[Event, ...]
+    moments: tuple[tuple[int, ...], ...]
+
+
 @dc.dataclass(slots=True)
 class _Answers:
     """The per-predictor columns a replay is filling in.
@@ -210,17 +239,21 @@ class _Answers:
         Answers per predictor, in store order.
     elapsed : dict[str, list[float]]
         Seconds spent predicting each event, per predictor.
+    timer : Callable[[], float]
+        Monotonic seconds, injected rather than read from the wall clock.
     """
 
     probabilities: dict[str, list[float | None]]
     elapsed: dict[str, list[float]]
+    timer: cabc.Callable[[], float]
 
 
 def _replay(
     predictors: cabc.Sequence[Predictor],
     rows: cabc.Sequence[Features | None],
-    events: cabc.Sequence[Event],
-    moments: cabc.Sequence[tuple[int, ...]],
+    stream: _Stream,
+    *,
+    timer: cabc.Callable[[], float],
 ) -> _Replay:
     """Answer every admission moment, releasing only earlier labels first.
 
@@ -229,15 +262,17 @@ def _replay(
     _Replay
         The answers, timings and the label accounting.
     """
+    events = stream.events
     answers = _Answers(
         probabilities={
             predictor.name: [None] * len(events) for predictor in predictors
         },
         elapsed={predictor.name: [0.0] * len(events) for predictor in predictors},
+        timer=timer,
     )
     released = released_labels(events)
     applied = 0
-    for due, group in admission_schedule(events, moments, released):
+    for due, group in admission_schedule(events, stream.moments, released):
         for index in due:
             _learn(predictors, rows, events, index)
         applied += len(due)
@@ -269,12 +304,16 @@ def _predict_row(
     index: int,
     answers: _Answers,
 ) -> None:
-    """Ask every predictor about one predictable row and record the answer."""
+    """Ask every predictor about one predictable row and record the answer.
+
+    The clock travels with the answers it fills, so every recorded interval
+    comes from the same source as the columns it is written into.
+    """
     known = typ.cast("Features", row)
     for predictor in predictors:
-        started = time.perf_counter()
+        started = answers.timer()
         answer = predictor.predict(known)
-        answers.elapsed[predictor.name][index] = time.perf_counter() - started
+        answers.elapsed[predictor.name][index] = answers.timer() - started
         answers.probabilities[predictor.name][index] = answer
 
 

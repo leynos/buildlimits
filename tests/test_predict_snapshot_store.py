@@ -99,6 +99,34 @@ def _document() -> dict[str, object]:
             lambda doc: doc.update(journal={"available": True, "records": -1}),
             id="journal-count-negative",
         ),
+        pytest.param(
+            lambda doc: doc.update(
+                journal={"available": True, "records": 2, "restarts": "2"}
+            ),
+            id="journal-restarts-not-an-object",
+        ),
+        pytest.param(
+            lambda doc: doc.update(
+                journal={"available": True, "records": 2, "restarts": {"count": "2"}}
+            ),
+            id="journal-restarts-count-not-an-integer",
+        ),
+        pytest.param(
+            lambda doc: doc.update(
+                journal={"available": True, "records": 2, "restarts": {"count": -1}}
+            ),
+            id="journal-restarts-count-negative",
+        ),
+        pytest.param(
+            lambda doc: doc.update(
+                journal={
+                    "available": True,
+                    "records": 2,
+                    "restarts": {"count": 1, "first": 7},
+                }
+            ),
+            id="journal-restarts-bound-not-text",
+        ),
     ],
 )
 def test_a_malformed_snapshot_is_refused(

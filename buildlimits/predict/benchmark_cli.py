@@ -8,6 +8,7 @@ import argparse
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed git command, never a shell.
 import sys
+import typing as typ
 from pathlib import Path
 
 from buildlimits.predict.config import load_config
@@ -19,18 +20,34 @@ from buildlimits.predict.paths import same_file
 from buildlimits.predict.report import RESULT_FILES, Provenance, build_report
 from buildlimits.predict.snapshot_store import load_snapshot
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
 DEFAULT_SNAPSHOT = Path("build/predict/history.jsonl")
-DEFAULT_OUTPUT = Path("build/predict")
+DEFAULT_OUTPUT_DIR = Path("build/predict")
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    git_sha: cabc.Callable[[], str] | None = None,
+) -> int:
     """Run the benchmark end to end and print the comparison tables.
+
+    Parameters
+    ----------
+    argv : list[str] | None
+        The command line, or None to read ``sys.argv``.
+    git_sha : Callable[[], str] | None
+        The commit the report records. None reads it from this checkout; a test
+        supplies its own so it need not sit inside a Git checkout.
 
     Returns
     -------
     int
-        0 when a report was produced, 1 when the snapshot cannot be read,
-        and 2 on invalid usage or an unreadable config.
+        0 when a report was produced, 1 when the snapshot cannot be read or the
+        report cannot be written, and 2 on invalid usage or an unreadable
+        config.
     """
     parser = argparse.ArgumentParser(prog="build-limits-predict-benchmark")
     parser.add_argument(
@@ -42,8 +59,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=DEFAULT_OUTPUT,
-        help=f"directory for results.json and results.md (default {DEFAULT_OUTPUT})",
+        default=DEFAULT_OUTPUT_DIR,
+        help=f"directory for the report files (default {DEFAULT_OUTPUT_DIR})",
     )
     parser.add_argument(
         "--config", type=Path, default=None, help="pinned parameters to use"
@@ -76,11 +93,15 @@ def main(argv: list[str] | None = None) -> int:
         Provenance(
             snapshot=snapshot,
             config=config,
-            git_sha=_git_sha(),
+            git_sha=(git_sha or _git_sha)(),
             fingerprint=fingerprint(snapshot.events),
         ),
     )
-    report.write(options.output)
+    try:
+        report.write(options.output)
+    except OSError as error:
+        print(f"build-limits-predict-benchmark: {error}", file=sys.stderr)
+        return 1
     print(report.markdown)
     print(render_timings(report.timings))
     written = ", ".join(str(options.output / name) for name in RESULT_FILES)

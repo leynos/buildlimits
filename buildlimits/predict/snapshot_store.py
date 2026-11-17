@@ -140,10 +140,11 @@ def _journal_from(path: Path, value: cabc.Mapping[str, object]) -> dict[str, obj
     """Validate the journal note the report renders.
 
     The report reads whether the journal was available, the record count it
-    printed, and the reason it printed when it was not. Checking those three
-    at load time keeps a hand-edited document from failing inside the Markdown
-    formatter, where a count written as text reaches an integer format. An
-    empty note is accepted: it means the snapshot target queried no journal.
+    printed, the reason it printed when it was not, and the supervisor-start
+    block it describes. Checking those at load time keeps a hand-edited
+    document from failing inside the Markdown formatter, where a count written
+    as text reaches an integer format. An empty note is accepted: it means the
+    snapshot target queried no journal.
 
     Returns
     -------
@@ -156,7 +157,7 @@ def _journal_from(path: Path, value: cabc.Mapping[str, object]) -> dict[str, obj
         If a field the report reads has the wrong type, or an available note
         omits the count it would print.
     ValueError
-        If an available note reports a negative count.
+        If the record count is negative.
     """
     journal = dict(value)
     available = journal.get("available")
@@ -172,13 +173,63 @@ def _journal_from(path: Path, value: cabc.Mapping[str, object]) -> dict[str, obj
         msg = f"{path} available journal must hold a records count"
         raise TypeError(msg)
     if records is not None:
-        if isinstance(records, bool) or not isinstance(records, int):
-            msg = f"{path} journal records must be an integer"
-            raise TypeError(msg)
-        if records < 0:
+        count = _count(path, "records", records)
+        if count < 0:
             msg = f"{path} journal records must not be negative"
             raise ValueError(msg)
+    restarts = journal.get("restarts")
+    if restarts is not None:
+        if not isinstance(restarts, dict):
+            msg = f"{path} journal restarts must be an object"
+            raise TypeError(msg)
+        _validate_restarts(path, typ.cast("dict[str, object]", restarts))
     return journal
+
+
+def _count(path: Path, name: str, value: object) -> int:
+    """Return a count the report would print as a number.
+
+    Returns
+    -------
+    int
+        The count, which the caller checks for a negative value.
+
+    Raises
+    ------
+    TypeError
+        If the value is not an integer.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = f"{path} journal {name} must be an integer"
+        raise TypeError(msg)
+    return value
+
+
+def _validate_restarts(path: Path, value: cabc.Mapping[str, object]) -> None:
+    """Validate the supervisor-start block the report renders.
+
+    The report prints the count as a number and the two bounds as text, so a
+    hand-edited snapshot naming either in another type is rejected here rather
+    than inside the Markdown renderer.
+
+    Raises
+    ------
+    TypeError
+        If a field has the wrong type.
+    ValueError
+        If the count is negative.
+    """
+    count = value.get("count")
+    if count is not None:
+        starts = _count(path, "restarts count", count)
+        if starts < 0:
+            msg = f"{path} journal restarts count must not be negative"
+            raise ValueError(msg)
+    for key in ("first", "last"):
+        stamp = value.get(key)
+        if stamp is not None and not isinstance(stamp, str):
+            msg = f"{path} journal restarts {key} must be text"
+            raise TypeError(msg)
 
 
 def _gaps_from(path: Path, stats: object) -> tuple[Gap, ...]:

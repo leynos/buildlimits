@@ -78,6 +78,7 @@ def test_the_origin_and_label_vocabulary_is_closed(origin: str, label: str) -> N
         pytest.param(
             float("-inf"), ValueError, "must be finite", id="negative-infinity"
         ),
+        pytest.param(10**400, ValueError, "must be finite", id="too-large-for-a-float"),
     ],
 )
 def test_runtime_must_be_a_finite_number(

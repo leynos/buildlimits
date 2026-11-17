@@ -49,6 +49,8 @@ class EnsembleRun:
     ----------
     name : str
         Stable identifier used in results.
+    mode : str
+        How the weights combine: ``fixed``, ``equal`` or ``adaptive``.
     probabilities : tuple[float | None, ...]
         One answer per event, in store order; None where no prediction was
         possible or the ensemble abstained.
@@ -64,6 +66,7 @@ class EnsembleRun:
     """
 
     name: str
+    mode: str
     probabilities: tuple[float | None, ...]
     weights: tuple[float, ...]
     initial_weights: tuple[float, ...]
@@ -71,7 +74,28 @@ class EnsembleRun:
     scored_phases: tuple[Phase, ...]
 
 
-def run_ensembles(walk: Walk, config: Config) -> dict[str, EnsembleRun]:
+@dc.dataclass(frozen=True, slots=True)
+class _Scoring:
+    """How one ensemble run is scored and timed.
+
+    Attributes
+    ----------
+    phases : tuple[Phase, ...]
+        The phases whose rows are honest scores for this ensemble.
+    timer : Callable[[], float]
+        Monotonic seconds for each combined answer.
+    """
+
+    phases: tuple[Phase, ...]
+    timer: cabc.Callable[[], float]
+
+
+def run_ensembles(
+    walk: Walk,
+    config: Config,
+    *,
+    timer: cabc.Callable[[], float] = time.perf_counter,
+) -> dict[str, EnsembleRun]:
     """Fit each ensemble and answer every event with it.
 
     Parameters
@@ -80,6 +104,8 @@ def run_ensembles(walk: Walk, config: Config) -> dict[str, EnsembleRun]:
         The replayed stream whose component answers and phases are combined.
     config : Config
         The pinned parameters, including the weight-fitting schedule.
+    timer : Callable[[], float]
+        Monotonic seconds, injected so a test can record known timings.
 
     Returns
     -------
@@ -100,14 +126,21 @@ def run_ensembles(walk: Walk, config: Config) -> dict[str, EnsembleRun]:
             ensemble,
             matrix,
             walk,
-            scored_phases=(HELDOUT_ONLY if ensemble.mode == "fixed" else BOTH_PHASES),
+            scoring=_Scoring(
+                phases=HELDOUT_ONLY if ensemble.mode == "fixed" else BOTH_PHASES,
+                timer=timer,
+            ),
         )
         for ensemble in fitted
     }
 
 
 def run_ablations(
-    walk: Walk, config: Config, ensembles: cabc.Mapping[str, EnsembleRun]
+    walk: Walk,
+    config: Config,
+    ensembles: cabc.Mapping[str, EnsembleRun],
+    *,
+    timer: cabc.Callable[[], float] = time.perf_counter,
 ) -> dict[str, dict[str, EnsembleRun]]:
     """Repeat each ensemble with each component removed.
 
@@ -121,6 +154,8 @@ def run_ablations(
         The fitted runs; each ablation restarts from that run's
         ``initial_weights``, so removing a component removes its contribution
         rather than its already-adapted share.
+    timer : Callable[[], float]
+        Monotonic seconds, injected so a test can record known timings.
 
     Returns
     -------
@@ -131,14 +166,13 @@ def run_ablations(
     matrix = component_matrix(walk)
     results: dict[str, dict[str, EnsembleRun]] = {}
     for run in ensembles.values():
-        mode = run.name.removeprefix("ensemble-")
         base = _rebuild(run, components, config)
-        results[mode] = {
+        results[run.mode] = {
             component: _run_ensemble(
                 base.without(index),
                 [row[:index] + row[index + 1 :] for row in matrix],
                 walk,
-                scored_phases=run.scored_phases,
+                scoring=_Scoring(phases=run.scored_phases, timer=timer),
             )
             for index, component in enumerate(components)
         }
@@ -235,12 +269,11 @@ def _rebuild(run: EnsembleRun, components: tuple[str, ...], config: Config) -> E
     Ensemble
         The ensemble in the state it was in before the first event.
     """
-    mode = run.name.removeprefix("ensemble-")
     return Ensemble(
         name=run.name,
         components=components,
         weights=list(run.initial_weights),
-        mode=mode,
+        mode=run.mode,
         eta=config.hedge_eta,
         clip=config.log_loss_clip,
         floor=config.hedge_weight_floor,
@@ -252,7 +285,7 @@ def _run_ensemble(
     matrix: cabc.Sequence[cabc.Sequence[float | None]],
     walk: Walk,
     *,
-    scored_phases: tuple[Phase, ...],
+    scoring: _Scoring,
 ) -> EnsembleRun:
     """Answer one ensemble across the stream in admission order.
 
@@ -269,16 +302,17 @@ def _run_ensemble(
         for index in due:
             _apply_label(ensemble, matrix[index], walk.events[index])
         for index in group:
-            started = time.perf_counter()
+            started = scoring.timer()
             probabilities[index] = ensemble.predict(matrix[index])
-            elapsed[index] = time.perf_counter() - started
+            elapsed[index] = scoring.timer() - started
     return EnsembleRun(
         name=ensemble.name,
+        mode=ensemble.mode,
         probabilities=tuple(probabilities),
         weights=tuple(ensemble.weights),
         initial_weights=initial_weights,
         elapsed=tuple(elapsed),
-        scored_phases=scored_phases,
+        scored_phases=scoring.phases,
     )
 
 

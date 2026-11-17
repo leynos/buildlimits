@@ -142,7 +142,12 @@ reported as missing with that limitation stated. The equal and adaptive
 ensembles learn only from labels already delivered, so they are scored on both
 phases. The best single each ensemble is compared against is chosen on the same
 tuning rows the weight fit could read, so a late label cannot decide the
-comparator either.
+comparator either. Those candidates are ranked on one population: the tuning
+rows every contender answered. A single that abstains on the hard rows would
+otherwise be scored on a smaller, easier set and could become the baseline
+every ensemble is measured against without ever having faced those rows. A
+single that answered too little to be ranked does not shrink the population the
+others share.
 
 The bootstrap resamples blocks of consecutive stream positions rather than of
 answered rows alone. An abstention keeps its position as an empty slot, so a

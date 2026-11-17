@@ -5,6 +5,7 @@ snapshot, and says how much history the snapshot really represents.
 """
 
 import argparse
+import dataclasses as dc
 import datetime as dt
 import os
 import sys
@@ -33,19 +34,16 @@ if typ.TYPE_CHECKING:
 DEFAULT_OUTPUT = Path("build/predict/history.jsonl")
 
 
-def main(
-    argv: list[str] | None = None,
-    *,
-    journal: cabc.Callable[..., cabc.Mapping[str, object]] = count_journal,
-) -> int:
+def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
     """Extract the live history into the benchmark snapshot.
 
     Parameters
     ----------
     argv : list[str] | None
         Command-line arguments, or process arguments when absent.
-    journal : Callable[..., Mapping[str, object]]
-        Callable used to describe the user journal; tests inject a stub.
+    edges : Edges | None
+        The journal, clock, store reader and snapshot writer. None uses this
+        host's, which is what the installed command does.
 
     Returns
     -------
@@ -53,6 +51,7 @@ def main(
         0 on success, 1 when the store cannot be read or the snapshot cannot
         be written, 2 on invalid usage or an unreadable parameter file.
     """
+    chosen = Edges() if edges is None else edges
     parser = argparse.ArgumentParser(prog="build-limits-predict-dataset")
     parser.add_argument(
         "--store",
@@ -98,21 +97,21 @@ def main(
             file=sys.stderr,
         )
         return 2
-    decoded = _read(store)
+    decoded = chosen.read_store(store)
     if isinstance(decoded, int):
         return decoded
     note = (
         {"available": False, "reason": "journal query skipped"}
         if options.skip_journal
-        else _journal_note(journal, options.journal_span)
+        else _journal_note(chosen.journal, options.journal_span)
     )
     snapshot = build_snapshot(
         decoded,
-        now=dt.datetime.now(dt.UTC),
+        now=chosen.now(),
         journal=note,
         gap_threshold_seconds=config.gap_threshold_seconds,
     )
-    return _write(snapshot, options.output)
+    return chosen.write_snapshot(snapshot, options.output)
 
 
 def _journal_span(text: str) -> str:
@@ -241,3 +240,41 @@ def _report(snapshot: Snapshot, output: Path) -> None:
             "insufficient admission times rather than use the label time",
             file=sys.stderr,
         )
+
+
+def _utc_now() -> dt.datetime:
+    """Return the current time in UTC.
+
+    Returns
+    -------
+    datetime
+        The host clock, in UTC.
+    """
+    return dt.datetime.now(dt.UTC)
+
+
+@dc.dataclass(frozen=True, slots=True)
+class Edges:
+    """The external edges the dataset command reads through.
+
+    They travel together because every test that replaces one replaces the
+    others: a fixed clock without a stub reader would still touch this host's
+    store, and a stub writer without a clock would stamp the snapshot with the
+    wall time the test is trying to exclude.
+
+    Attributes
+    ----------
+    journal : Callable[..., Mapping[str, object]]
+        Describes the user journal, or reports why it cannot.
+    now : Callable[[], datetime]
+        The clock the snapshot records.
+    read_store : Callable[[Path], DecodedStore | int]
+        Reads the outcome store, or returns an exit status on failure.
+    write_snapshot : Callable[[Snapshot, Path], int]
+        Writes the snapshot and reports what it holds.
+    """
+
+    journal: cabc.Callable[..., cabc.Mapping[str, object]] = count_journal
+    now: cabc.Callable[[], dt.datetime] = _utc_now
+    read_store: cabc.Callable[[Path], DecodedStore | int] = _read
+    write_snapshot: cabc.Callable[[Snapshot, Path], int] = _write

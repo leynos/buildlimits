@@ -2,6 +2,7 @@
 
 import dataclasses as dc
 import datetime as dt
+import random
 import typing as typ
 
 import pytest
@@ -247,3 +248,38 @@ def test_reversing_the_differences_mirrors_the_interval() -> None:
     assert backward.difference == pytest.approx(-forward.difference), "the mean flips"
     assert backward.low == pytest.approx(-forward.high), "the upper tail mirrors"
     assert backward.high == pytest.approx(-forward.low), "and so does the lower"
+
+
+def _seeded(seed: int) -> random.Random:
+    """Return a seeded generator.
+
+    Returns
+    -------
+    random.Random
+        A generator whose draws replay exactly for the same seed.
+    """
+    return random.Random(seed)  # ruff: ignore[suspicious-non-cryptographic-random-usage] - a test replay needs reproducible, not secret, draws.
+
+
+def test_an_injected_generator_makes_the_resampling_replayable() -> None:
+    """The same injected draw sequence reproduces the same interval exactly."""
+    differences = [0.1, None, -0.2, 0.3, None, 0.05] * 6
+    config = dc.replace(
+        predict_config(), bootstrap_resamples=20, block_size=5, bootstrap_seed=3
+    )
+
+    first = block_bootstrap(
+        differences, config=config, generator=_seeded(config.bootstrap_seed)
+    )
+    second = block_bootstrap(
+        differences, config=config, generator=_seeded(config.bootstrap_seed)
+    )
+    other = block_bootstrap(
+        differences, config=config, generator=_seeded(config.bootstrap_seed + 1)
+    )
+
+    assert first == second, "the same draw sequence gives the same interval"
+    assert first != other, "and a different sequence is genuinely different"
+    assert first is not None and first.positions == len(differences), (
+        "an abstention still occupies its stream position"
+    )

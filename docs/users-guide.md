@@ -281,7 +281,8 @@ records cannot show what was knowable before each decision, so no prediction is
 reported. The report never pads the history with synthetic rows to reach a
 threshold, and a negative comparison is printed as found rather than explained
 away. Both commands exit with status 0 on success, 1 when the snapshot or store
-cannot be read, and 2 on invalid usage or an unreadable configuration.
+cannot be read or the output cannot be written, and 2 on invalid usage or an
+unreadable configuration.
 
 ### Adapter environment
 

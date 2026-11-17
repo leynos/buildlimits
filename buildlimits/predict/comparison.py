@@ -140,16 +140,34 @@ def best_on_training(
     Choosing it from every tuning row would let a batch no ensemble could
     learn from decide the comparator.
 
+    The candidates are also scored on one population: only the tuning events
+    every contender answered. A predictor that abstains on the hard rows
+    otherwise competes on a smaller, easier set and can win on rows its rivals
+    never saw, which would then become the baseline every ensemble is measured
+    against. A single that answered too little to be ranked cannot become that
+    baseline either, so it does not shrink the population the others share.
+
     Returns
     -------
     str | None
         The winner, or None when no single predictor scored enough rows.
     """
     tuning = frozenset(tuning_indices(walk))
+    contenders = [
+        name
+        for name in singles
+        if sum(1 for index in tuning if series[name][index] is not None)
+        >= config.minimum_scored_events
+    ]
+    common = frozenset(
+        index
+        for index in tuning
+        if all(series[name][index] is not None for name in contenders)
+    )
     best: tuple[str, float] | None = None
-    for name in singles:
+    for name in contenders:
         block = summarize(
-            rows_for(walk, name, series[name], indices=tuning),
+            rows_for(walk, name, series[name], indices=common),
             clip=config.log_loss_clip,
             threshold=config.decision_threshold,
             bins=config.calibration_bins,
