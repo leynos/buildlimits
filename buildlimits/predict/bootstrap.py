@@ -146,7 +146,7 @@ def block_bootstrap(
     --------
     A constant difference has a degenerate interval:
 
-    >>> from buildlimits.predict.config import load_config
+    >>> from buildlimits.predict.config_loader import load_config
     >>> interval = block_bootstrap([0.05] * 40, config=load_config())
     >>> round(interval.difference, 2), round(interval.low, 2)
     (0.05, 0.05)

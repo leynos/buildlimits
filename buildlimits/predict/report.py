@@ -13,6 +13,7 @@ import typing as typ
 from buildlimits.predict.paths import same_file
 from buildlimits.predict.render import render_markdown
 from buildlimits.predict.report_codec import (
+    config_to_dict,
     interval_to_dict,
     metrics_to_dict,
     split_to_dict,
@@ -142,7 +143,7 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
         "git_sha": provenance.git_sha,
         "status": evaluation.status,
         "verdict": evaluation.verdict,
-        "config": provenance.config.as_dict(),
+        "config": config_to_dict(provenance.config),
         "verdict_alpha": evaluation.verdict_alpha,
         "data": {
             "fingerprint": provenance.fingerprint,

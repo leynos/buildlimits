@@ -16,7 +16,7 @@ from buildlimits import outcome_store_io
 from buildlimits.metrics_query import window_seconds
 from buildlimits.outcome_record_format import RecordFailure
 from buildlimits.outcome_store_salt import store_path
-from buildlimits.predict.config import load_config as _read_config
+from buildlimits.predict.config_loader import load_config as _read_config
 from buildlimits.predict.dataset import (
     DEFAULT_JOURNAL_SPAN,
     Snapshot,

@@ -6,14 +6,27 @@ serialization concern, so the encoders live here rather than on the values.
 layout in one place.
 """
 
+import dataclasses as dc
 import typing as typ
 
 from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
     from buildlimits.predict.bootstrap import Interval
+    from buildlimits.predict.config import Config
     from buildlimits.predict.harness import Split
     from buildlimits.predict.metrics import CalibrationBin, Metrics
+
+
+def config_to_dict(config: Config) -> dict[str, object]:
+    """Return the pinned parameters as the report's JSON-ready mapping.
+
+    Returns
+    -------
+    dict[str, object]
+        Every parameter under its file name.
+    """
+    return dc.asdict(config)
 
 
 def calibration_bin_to_dict(bin_: CalibrationBin) -> dict[str, object]:

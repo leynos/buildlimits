@@ -7,7 +7,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from predict_test_helpers import predict_config
 
-from buildlimits.predict.config import load_config
+from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.ensemble_runs import (
     EnsembleRun,
     component_matrix,

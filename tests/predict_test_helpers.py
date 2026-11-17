@@ -10,7 +10,7 @@ from outcome_test_helpers import OBSERVED_AT, cache_key
 from buildlimits import outcome_store_io
 from buildlimits.outcome_record_format import OutcomeRecord, StoreHeader
 from buildlimits.predict import dataset_cli
-from buildlimits.predict.config import load_config
+from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.dataset import Snapshot, Source
 from buildlimits.predict.events import Event
 from buildlimits.predict.snapshot_store import save_snapshot
@@ -221,4 +221,4 @@ def write_fast_config(tmp_path: Path) -> Path:
         weight_fit_steps=40,
         block_size=20,
     )
-    return write_json(tmp_path / "config.json", config.as_dict())
+    return write_json(tmp_path / "config.json", dc.asdict(config))

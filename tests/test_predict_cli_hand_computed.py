@@ -13,9 +13,10 @@ import pytest
 from predict_test_helpers import benchmark_argv, read_results, write_json
 
 from buildlimits.predict import benchmark_cli
-from buildlimits.predict.config import load_config
+from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.dataset import Snapshot, Source
 from buildlimits.predict.events import EPOCH, Event
+from buildlimits.predict.report_codec import config_to_dict
 from buildlimits.predict.snapshot_store import save_snapshot
 
 IDENTITY_A = "a" * 64
@@ -88,7 +89,7 @@ def _write_hand_config(root: Path) -> Path:
         minimum_labelled_events=1,
         minimum_scored_events=1,
     )
-    return write_json(root / "hand-config.json", config.as_dict())
+    return write_json(root / "hand-config.json", config_to_dict(config))
 
 
 @pytest.fixture(scope="module")

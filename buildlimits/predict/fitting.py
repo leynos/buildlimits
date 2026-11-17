@@ -81,7 +81,7 @@ def fit_weights(
     --------
     A component that always matches the outcome takes all the weight:
 
-    >>> from buildlimits.predict.config import load_config
+    >>> from buildlimits.predict.config_loader import load_config
     >>> fit_weights([(1.0, 0.0)] * 8, [1.0] * 8, config=load_config())[0] > 0.9
     True
     """

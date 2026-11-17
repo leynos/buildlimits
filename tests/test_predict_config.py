@@ -5,19 +5,20 @@ from pathlib import Path
 import pytest
 from predict_test_helpers import write_json
 
-from buildlimits.predict.config import CONFIG_VERSION, load_config
+from buildlimits.predict.config_loader import CONFIG_VERSION, load_config
+from buildlimits.predict.report_codec import config_to_dict
 
 
 def _changed(tmp_path: Path, **changes: object) -> Path:
     """Write the packaged parameters with ``changes`` applied."""
-    document = load_config().as_dict()
+    document = config_to_dict(load_config())
     document.update(changes)
     return write_json(tmp_path / "config.json", document)
 
 
 def _without(tmp_path: Path, name: str) -> Path:
     """Write the packaged parameters with one key removed."""
-    document = load_config().as_dict()
+    document = config_to_dict(load_config())
     del document[name]
     return write_json(tmp_path / "config.json", document)
 
@@ -36,7 +37,7 @@ def test_a_non_integer_version_is_a_type_error(tmp_path: Path) -> None:
 
 def test_the_version_is_checked_before_the_key_set(tmp_path: Path) -> None:
     """A file from a later build reports its version, not its odd keys."""
-    document = load_config().as_dict()
+    document = config_to_dict(load_config())
     document["config_version"] = CONFIG_VERSION + 1
     document["a_key_from_the_future"] = 1
 

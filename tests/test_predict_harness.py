@@ -10,7 +10,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from predict_test_helpers import hand_event
 
-from buildlimits.predict.config import load_config
+from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.events import EPOCH, Event
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.scoring import rows_for

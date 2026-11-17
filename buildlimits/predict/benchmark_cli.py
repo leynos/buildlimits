@@ -9,7 +9,7 @@ import sys
 import typing as typ
 from pathlib import Path
 
-from buildlimits.predict.config import CONFIG_PATH, load_config
+from buildlimits.predict.config_loader import CONFIG_PATH, load_config
 from buildlimits.predict.evaluation import evaluate
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.latency import render_timings

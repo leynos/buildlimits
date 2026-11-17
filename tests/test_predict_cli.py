@@ -13,7 +13,7 @@ from predict_test_helpers import (
 )
 
 from buildlimits.predict import benchmark_cli
-from buildlimits.predict.config import CONFIG_PATH
+from buildlimits.predict.config_loader import CONFIG_PATH
 
 
 def _run_admitted_benchmark(tmp_path: Path, output: Path, count: int) -> int:
