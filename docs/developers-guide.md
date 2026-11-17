@@ -119,14 +119,17 @@ before it has not been applied either, because its labels may have been written
 after this batch's builds started. A prediction's history therefore ends two
 batches back. The report counts the labels withheld that way as
 `embargoed_rows`, and the final batch's labels, which no prediction follows, as
-`unapplied_rows`. A row's age and load are measured at the request's admission
-when the source recorded that time, and at the label time otherwise; only
-eligible hit/miss labels that arrived strictly before that moment contribute,
-so a completion labelled after the admission is not counted as load the
-decision could have seen, a label landing at the very instant of measurement is
-excluded, and an unknown outcome never becomes history. The tuning/held-out
-split is made at a label time, so every row sharing a timestamp stays in one
-phase.
+`unapplied_rows`. The fixed ensemble's weights are fitted on the tuning period
+but stop one tuning batch short of the held-out split, for the same reason: the
+weights every later answer starts from must not depend on labels a held-out
+prediction could not yet have seen. A row's age and load are measured at the
+request's admission when the source recorded that time, and at the label time
+otherwise; only eligible hit/miss labels that arrived strictly before that
+moment contribute, so a completion labelled after the admission is not counted
+as load the decision could have seen, a label landing at the very instant of
+measurement is excluded, and an unknown outcome never becomes history. The
+tuning/held-out split is made at a label time, so every row sharing a timestamp
+stays in one phase.
 The commit named in the report is read from the repository that holds the
 benchmark module, and only when that repository tracks the module's own path;
 an installed copy therefore reports `unknown` rather than borrowing its host

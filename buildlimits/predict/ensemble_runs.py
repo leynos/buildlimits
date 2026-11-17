@@ -1,13 +1,14 @@
 """Fit the consensus ensembles and walk each one across the event stream.
 
-The fixed ensemble's weights are fitted on the tuning period alone, so the
-held-out period cannot influence them. Every ensemble is then replayed under
-the same one-batch embargo as the single predictors: a batch's labels are
-applied only after the next batch has been answered. Ablation restarts each
-ensemble from the weights it began with and simply drops one component's column
-from the matrix. Starting from the final weights instead would carry what the
-stream taught the adaptive ensemble about held-out labels into the ablated
-comparison.
+The fixed ensemble's weights are fitted on the tuning period alone, and stop
+one tuning batch short of the first held-out batch: the fitted weights are the
+history every later answer starts from, so they must end where an embargoed
+prediction's history ends. Every ensemble is then replayed under the same
+one-batch embargo as the single predictors: a batch's labels are applied only
+after the next batch has been answered. Ablation restarts each ensemble from
+the weights it began with and simply drops one component's column from the
+matrix. Starting from the final weights instead would carry what the stream
+taught the adaptive ensemble about held-out labels into the ablated comparison.
 """
 
 import dataclasses as dc
@@ -68,16 +69,7 @@ def run_ensembles(walk: Walk, config: Config) -> dict[str, EnsembleRun]:
     """
     components = walk.components()
     matrix = component_matrix(walk)
-    training = [
-        (row, outcome)
-        for row, outcome, phase in zip(
-            matrix,
-            (_outcome(event) for event in walk.events),
-            walk.phases,
-            strict=True,
-        )
-        if phase == "train"
-    ]
+    training = _tuning(walk, matrix)
     weights = fit_weights(
         [row for row, _ in training],
         [outcome for _, outcome in training],
@@ -145,6 +137,51 @@ def component_matrix(
         tuple(walk.series[name].probabilities[index] for name in components)
         for index in range(len(walk.events))
     ]
+
+
+def _tuning(
+    walk: Walk, matrix: cabc.Sequence[tuple[float | None, ...]]
+) -> list[tuple[tuple[float | None, ...], float]]:
+    """Return the rows and outcomes a fixed weight fit may read.
+
+    The last tuning batch is withheld for the same reason the replay withholds
+    it: its labels may have been written after the first held-out builds
+    started, so the weights every prediction starts from must not depend on
+    them.
+
+    Returns
+    -------
+    list[tuple[tuple[float | None, ...], float]]
+        One component-answer row and outcome per remaining tuning event.
+    """
+    withheld = _embargoed_tuning(walk)
+    return [
+        (matrix[index], _outcome(walk.events[index]))
+        for index, phase in enumerate(walk.phases)
+        if phase == "train" and index not in withheld
+    ]
+
+
+def _embargoed_tuning(walk: Walk) -> frozenset[int]:
+    """Return the tuning indices the weight fit must leave out.
+
+    The tuning period ends at a label time, so the last batch holding a tuning
+    row is the batch immediately before the first held-out one.
+
+    Returns
+    -------
+    frozenset[int]
+        Event indices in the last tuning batch, or empty without one.
+    """
+    last = max(
+        (
+            position
+            for position, batch in enumerate(walk.batches)
+            if any(walk.phases[index] == "train" for index in batch)
+        ),
+        default=None,
+    )
+    return frozenset() if last is None else frozenset(walk.batches[last])
 
 
 def _rebuild(run: EnsembleRun, components: tuple[str, ...], config: Config) -> Ensemble:
