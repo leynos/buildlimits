@@ -1,9 +1,14 @@
 """Report rendering when there is nothing ranked to show."""
 
+import re
 import typing as typ
 
 from buildlimits.predict.latency import render_timings
 from buildlimits.predict.render import render_markdown
+
+# A calibration row opens with its closed interval; the predictor tables share
+# the report, so the opening cell is what tells the two apart.
+_BIN_ROW = re.compile(r"^\| \d\.\d{4}-\d\.\d{4} \|")
 
 
 def _empty_document() -> dict[str, object]:
@@ -38,6 +43,75 @@ def _empty_document() -> dict[str, object]:
         "config": {"bootstrap_alpha": 0.05},
         "verdict_alpha": 0.05,
     }
+
+
+def _scored_document() -> dict[str, object]:
+    """Return a report with one predictor scored in every held-out column."""
+    document = _empty_document()
+    document["status"] = "ok"
+    document["verdict"] = "no predictor beats the base rate"
+    document["predictors"] = {
+        "base-rate": {
+            "held-out": {
+                "brier": 0.25,
+                "log_loss": 0.693147,
+                "accuracy": 0.75,
+                "coverage": 1.0,
+                "calibration": [
+                    {
+                        "lower": 0.0,
+                        "upper": 0.5,
+                        "count": 2,
+                        "mean_probability": 0.25,
+                        "observed_rate": 0.5,
+                    },
+                    {
+                        "lower": 0.5,
+                        "upper": 1.0,
+                        "count": 2,
+                        "mean_probability": 0.75,
+                        "observed_rate": 0.5,
+                    },
+                ],
+            },
+            "against_base_rate": {
+                "difference": -0.0125,
+                "low": -0.03,
+                "high": 0.005,
+                "rows": 1234,
+            },
+            "by_origin": {"git": {"brier": 0.2}},
+        }
+    }
+    document["ranking"] = ["base-rate"]
+    return document
+
+
+def test_a_scored_report_prints_its_tables_exactly() -> None:
+    """Each table carries its values in the formats a reader is told to expect.
+
+    The comparison row mixes four-decimal scores with a percentage, the
+    difference row brackets a signed value, and a calibration bin keeps its
+    count beside two rates. The origin table shares the predictor's row prefix,
+    so its row is pinned here too.
+    """
+    lines = render_markdown(_scored_document()).splitlines()
+    rows = {
+        "predictor": [line for line in lines if line.startswith("| `base-rate` |")],
+        "bins": [line for line in lines if _BIN_ROW.match(line)],
+    }
+
+    assert rows == {
+        "predictor": [
+            "| `base-rate` | 0.2500 | 0.6931 | 0.7500 | 100.0% | 0.2500 |",
+            "| `base-rate` | -0.0125 | [-0.0300, 0.0050] | 1,234 |",
+            "| `base-rate` | 0.2000 |",
+        ],
+        "bins": [
+            "| 0.0000-0.5000 | 2 | 0.2500 | 0.5000 |",
+            "| 0.5000-1.0000 | 2 | 0.7500 | 0.5000 |",
+        ],
+    }, "the documented formats, row by row"
 
 
 def test_an_unranked_report_omits_the_detail_tables() -> None:
