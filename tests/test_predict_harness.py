@@ -53,6 +53,25 @@ def test_order_is_label_time_not_admission_time() -> None:
     assert walk.events == (quick, slow), "ordered by when the label arrived"
 
 
+def test_labels_that_arrive_together_cannot_inform_each_other() -> None:
+    """A batch of outcomes is answered in full before any of it is learned."""
+    stamp = EPOCH + dt.timedelta(minutes=5)
+    first = _event(0, admitted_at=None, observed_at=stamp, label="hit")
+    second = _event(1, admitted_at=None, observed_at=stamp, label="miss")
+    later = _event(
+        2, admitted_at=None, observed_at=stamp + dt.timedelta(minutes=1), label="hit"
+    )
+
+    walk = walk_forward((first, second, later), load_config())
+
+    assert walk.series["base-rate"].probabilities[:2] == (0.5, 0.5), (
+        "the second row is predicted before the first row's hit is learned"
+    )
+    assert walk.series["base-rate"].probabilities[2] == pytest.approx(0.5), (
+        "the next batch sees both delivered labels"
+    )
+
+
 def test_a_delayed_label_is_unavailable_to_an_intervening_prediction() -> None:
     """Work started earlier but finished later cannot inform the middle event."""
     slow = _event(

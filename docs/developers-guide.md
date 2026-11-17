@@ -112,9 +112,19 @@ comparison was paired over `minimum_scored_events` rows, or every paired row
 fell in a single bootstrap block, in which case the resampling has no width to
 judge.
 
+The replay is prequential: a row is predicted when its label arrives, and the
+label is applied afterwards. Rows whose labels arrived at the same moment are
+predicted as a batch before any of them is applied, so two simultaneous
+outcomes cannot inform each other. The commit named in the report is read from
+the repository that holds the benchmark module, and only when that repository
+tracks the module's own path; an installed copy therefore reports `unknown`
+rather than borrowing its host project's commit.
+
 `make predict-dataset` refuses an `--output` that resolves to the store it is
 reading, including through a symbolic link, so it cannot replace the outcome
-store with a snapshot document.
+store with a snapshot document. An output path that cannot be written, such as
+a directory or a read-only location, is reported as a command failure with
+status 1 rather than a traceback.
 
 ## 3. Architecture overview
 

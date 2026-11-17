@@ -87,7 +87,10 @@ def _git_sha() -> str:
 
     The commit is read from the repository holding this module rather than
     from the working directory, so a report produced inside an unrelated
-    checkout still names the code that produced it.
+    checkout still names the code that produced it. A copy installed inside
+    another project's virtual environment sits in that project's repository,
+    whose commit is not this benchmark's provenance, so the module's own path
+    inside the repository is verified before the commit is accepted.
 
     Returns
     -------
@@ -97,10 +100,17 @@ def _git_sha() -> str:
     executable = shutil.which("git")
     if executable is None:
         return "unknown"
-    source = Path(__file__).resolve().parent
+    source = Path(__file__).resolve()
     try:
         result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed git argument vector.
-            [executable, "-C", str(source), "rev-parse", "HEAD"],
+            [
+                executable,
+                "-C",
+                str(source.parent),
+                "rev-parse",
+                "HEAD",
+                "--show-toplevel",
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -108,4 +118,19 @@ def _git_sha() -> str:
         )
     except OSError, subprocess.SubprocessError:
         return "unknown"
-    return result.stdout.strip() or "unknown"
+    if result.returncode != 0:
+        return "unknown"
+    commit, _, root = result.stdout.partition("\n")
+    return commit.strip() if _owns(root.strip(), source) else "unknown"
+
+
+def _owns(root: str, source: Path) -> bool:
+    """Return whether the repository at ``root`` tracks ``source``.
+
+    Returns
+    -------
+    bool
+        Whether the module sits at its canonical path inside that repository.
+    """
+    canonical = Path(root) / "buildlimits" / "predict" / source.name
+    return bool(root) and canonical.resolve() == source

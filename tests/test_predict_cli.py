@@ -172,6 +172,22 @@ def test_git_sha_is_unknown_when_git_cannot_answer(
     assert marker == "unknown", "explicit marker"
 
 
+def _repo_root() -> Path:
+    """Return the repository root that holds the installed benchmark module."""
+    return Path(benchmark_cli.__file__).resolve().parents[2]
+
+
+def _answering_git(calls: list[list[str]], root: Path) -> cabc.Callable[..., object]:
+    """Return a fake git that reports one commit and the supplied root."""
+
+    def answer(command: list[str], **_options: object) -> object:
+        """Record the git invocation and report a commit."""
+        calls.append(command)
+        return mock.Mock(stdout=f"abc123\n{root}\n", returncode=0)
+
+    return answer
+
+
 def test_git_sha_names_the_benchmark_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
     """The commit comes from the repository holding the benchmark code.
 
@@ -179,16 +195,32 @@ def test_git_sha_names_the_benchmark_checkout(monkeypatch: pytest.MonkeyPatch) -
     whenever a report is produced from another checkout.
     """
     calls: list[list[str]] = []
-
-    def answer(command: list[str], **_options: object) -> object:
-        """Record the git invocation and report a commit."""
-        calls.append(command)
-        return mock.Mock(stdout="abc123\n")
-
-    _git(monkeypatch, lambda _name: "/usr/bin/git", answer)
+    _git(
+        monkeypatch,
+        lambda _name: "/usr/bin/git",
+        _answering_git(calls, _repo_root()),
+    )
 
     commit = benchmark_cli._git_sha()
 
     assert commit == "abc123", "the commit is reported"
     assert calls[0][1] == "-C", "git is pointed at an explicit directory"
     assert calls[0][2].endswith("buildlimits/predict"), "the benchmark's own source"
+
+
+def test_git_sha_ignores_a_repository_that_does_not_own_the_module(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An installed copy must not borrow its host project's commit.
+
+    A virtual environment inside another project sits in that project's
+    repository, so a bare ``git -C`` would report the host's HEAD.
+    """
+    calls: list[list[str]] = []
+    _git(
+        monkeypatch,
+        lambda _name: "/usr/bin/git",
+        _answering_git(calls, tmp_path),
+    )
+
+    assert benchmark_cli._git_sha() == "unknown", "provenance is refused"

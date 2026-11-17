@@ -1,8 +1,11 @@
 """The prequential walk over one chronological event stream.
 
 Every event is predicted from what earlier events already revealed, and only
-then may its label update anyone. The order is the data's own order; nothing
-is shuffled, so a predictor cannot meet a label before its event.
+then may its label update anyone. Outcomes that arrive together are predicted
+together: a batch of rows is answered in full before any of its labels is
+applied, so two outcomes that became known at the same moment cannot inform
+each other. The order is the data's own order; nothing is shuffled, so a
+predictor cannot meet a label before its event.
 """
 
 import dataclasses as dc
@@ -124,15 +127,17 @@ def walk_forward(events: cabc.Iterable[Event], config: Config) -> Walk:
         predictor.name: [] for predictor in predictors
     }
     elapsed: dict[str, list[float]] = {predictor.name: [] for predictor in predictors}
-    for row, event in zip(rows, stream, strict=True):
-        for predictor in predictors:
-            started = time.perf_counter()
-            answer = predictor.predict(row)
-            elapsed[predictor.name].append(time.perf_counter() - started)
-            probabilities[predictor.name].append(answer)
-        label = scored_label(event)
-        if label is not None:
-            update_all(predictors, row, label)
+    for batch in _label_batches(rows, stream):
+        for row, _ in batch:
+            for predictor in predictors:
+                started = time.perf_counter()
+                answer = predictor.predict(row)
+                elapsed[predictor.name].append(time.perf_counter() - started)
+                probabilities[predictor.name].append(answer)
+        for row, event in batch:
+            label = scored_label(event)
+            if label is not None:
+                update_all(predictors, row, label)
     series = {
         name: Series(name, tuple(probabilities[name]), tuple(elapsed[name]))
         for name in probabilities
@@ -144,6 +149,30 @@ def walk_forward(events: cabc.Iterable[Event], config: Config) -> Walk:
         series=series,
         split=_split(stream, phases),
     )
+
+
+def _label_batches(
+    rows: cabc.Sequence[Features], events: cabc.Sequence[Event]
+) -> cabc.Iterator[list[tuple[Features, Event]]]:
+    """Group consecutive rows whose labels arrived at the same moment.
+
+    A batch is predicted in full before any of its labels is applied: two
+    outcomes that became known together could not have informed each other.
+    The events are already ordered by label time, so equal times are adjacent.
+
+    Yields
+    ------
+    list[tuple[Features, Event]]
+        One batch per distinct label time, in stream order.
+    """
+    batch: list[tuple[Features, Event]] = []
+    for row, event in zip(rows, events, strict=True):
+        if batch and event.observed_at != batch[0][1].observed_at:
+            yield batch
+            batch = []
+        batch.append((row, event))
+    if batch:
+        yield batch
 
 
 def _phases(

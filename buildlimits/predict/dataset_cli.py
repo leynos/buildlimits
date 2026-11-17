@@ -48,8 +48,8 @@ def main(
     Returns
     -------
     int
-        0 on success, 1 when the store cannot be read, 2 on invalid usage or an
-        unreadable parameter file.
+        0 on success, 1 when the store cannot be read or the snapshot cannot
+        be written, 2 on invalid usage or an unreadable parameter file.
     """
     parser = argparse.ArgumentParser(prog="build-limits-predict-dataset")
     parser.add_argument(
@@ -109,8 +109,28 @@ def main(
         journal=note,
         gap_threshold_seconds=config.gap_threshold_seconds,
     )
-    save_snapshot(options.output, snapshot)
-    _report(snapshot, options.output)
+    return _write(snapshot, options.output)
+
+
+def _write(snapshot: Snapshot, output: Path) -> int:
+    """Write the snapshot and report an output that cannot be written.
+
+    A read-only directory, a full disk or an output path that names a
+    directory all raise ``OSError`` from the writer. The command answers with
+    a message and a status, like every other failure path, rather than a
+    traceback.
+
+    Returns
+    -------
+    int
+        0 when the snapshot is written, 1 when it cannot be.
+    """
+    try:
+        save_snapshot(output, snapshot)
+    except OSError as error:
+        print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
+        return 1
+    _report(snapshot, output)
     return 0
 
 

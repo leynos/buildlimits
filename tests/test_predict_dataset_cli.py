@@ -121,6 +121,29 @@ def test_dataset_command_reports_an_unreadable_config(
     assert status == 2, "an unusable config is a usage failure"
 
 
+def test_dataset_command_reports_an_unwritable_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An output path that cannot be written fails with a status, not a traceback."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, 4)
+    blocked = tmp_path / "history.jsonl"
+    blocked.mkdir()
+
+    status = dataset_cli.main([
+        "--store",
+        str(store),
+        "--output",
+        str(blocked),
+        "--skip-journal",
+    ])
+
+    assert status == 1, "an unwritable output is a command failure"
+    assert "build-limits-predict-dataset:" in capsys.readouterr().err, (
+        "the reason is reported"
+    )
+
+
 def test_dataset_command_reports_a_rejected_store(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
