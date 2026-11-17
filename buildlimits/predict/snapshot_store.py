@@ -350,14 +350,21 @@ def _seconds_from(path: Path, value: object) -> float:
     TypeError
         If the value is not a number.
     ValueError
-        If the number is not finite. ``NaN`` and the infinities are not valid
-        JSON numbers, so carrying one into a report would produce a document
-        other readers cannot parse.
+        If the number is not finite, including an integer too large for a
+        float to hold. ``NaN``, the infinities and an overflowing integer are
+        not lengths a report can carry, so the gap's field is named instead of
+        letting the loader fail on the conversion.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         msg = f"{path} stats gap must hold a numeric seconds"
         raise TypeError(msg)
-    seconds = float(value)
+    try:
+        seconds = float(value)
+    except OverflowError as error:
+        # A JSON integer can be larger than a float can hold. That is a bad
+        # field value like any other, not a crash in the snapshot loader.
+        msg = f"{path} stats gap must hold finite seconds"
+        raise ValueError(msg) from error
     if not math.isfinite(seconds):
         msg = f"{path} stats gap must hold finite seconds"
         raise ValueError(msg)

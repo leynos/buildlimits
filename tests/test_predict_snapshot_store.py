@@ -152,11 +152,15 @@ def test_a_malformed_snapshot_is_refused(
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
 
-@pytest.mark.parametrize("seconds", [float("nan"), float("inf")])
+@pytest.mark.parametrize("seconds", [float("nan"), float("inf"), 10**400])
 def test_a_non_finite_gap_length_is_refused_by_field(
-    tmp_path: Path, seconds: float
+    tmp_path: Path, seconds: float | int
 ) -> None:
-    """A non-finite length is not a JSON number, so the gap field is named."""
+    """A length no finite float can hold is refused, and the gap field is named.
+
+    A JSON integer may be far larger than a float, so the conversion itself can
+    overflow rather than produce an infinity.
+    """
     document = _document()
     stats = typ.cast("dict[str, object]", document["stats"])
     stats.update(
