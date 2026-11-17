@@ -169,11 +169,11 @@ def count_journal(
 
     The result is deliberately an ordinary mapping rather than a typed record.
     It is the provenance block the snapshot stores and the report renders, and
-    an unavailable journal is a shorter mapping that names its reason: every
-    key below is optional by contract, and the renderer reports only what is
-    present. A record here would have to be flattened back to this mapping at
-    the same boundary, so it would add a second definition of the block without
-    constraining either consumer.
+    an unavailable journal becomes a shorter mapping that names its reason at
+    the command boundary: every key below is optional by contract, and the
+    renderer reports only what is present. A record here would have to be
+    flattened back to this mapping at the same boundary, so it would add a
+    second definition of the block without constraining either consumer.
 
     Parameters
     ----------
@@ -189,11 +189,15 @@ def count_journal(
         Availability, counts by source and event, the supervisor starts the
         window saw, the retention the query covers and the correlation it
         cannot support.
+
+    Raises
+    ------
+    metrics_query.MetricsQueryError
+        If the journal cannot be read. Deciding that provenance may continue
+        without it belongs to the command boundary, which knows the snapshot
+        is written from the store and must not be lost to a side query.
     """
-    try:
-        window = query(since=since, max_records=_MAX_JOURNAL_RECORDS, source="all")
-    except metrics_query.MetricsQueryError as error:
-        return {"available": False, "span": since, "reason": str(error)}
+    window = query(since=since, max_records=_MAX_JOURNAL_RECORDS, source="all")
     by_source: dict[str, int] = {}
     by_event: dict[str, int] = {}
     for record in window.records:

@@ -184,17 +184,20 @@ def test_snapshot_round_trip_preserves_events_and_gaps(tmp_path: Path) -> None:
     assert loaded.source.salt_id == "fixed-salt", "store provenance survives"
 
 
-def test_journal_failure_is_reported_not_raised() -> None:
-    """An unreadable journal becomes an availability note."""
+def test_a_journal_failure_reaches_the_caller() -> None:
+    """The reader reports its failure; the command decides provenance can go on.
+
+    Returning an unavailable note here would make the reader answer a question
+    about failure as if it were a journal, and leave the command unable to
+    tell an unreachable journal from an empty one.
+    """
 
     def fail(**_options: object) -> Window:
         """Stand in for a journal query the host cannot serve."""
         raise MetricsQueryError("journal unavailable")
 
-    note = count_journal(query=fail)
-
-    assert note["available"] is False, "availability is explicit"
-    assert note["reason"] == "journal unavailable", "reason preserved"
+    with pytest.raises(MetricsQueryError, match="journal unavailable"):
+        count_journal(query=fail)
 
 
 def test_journal_counts_name_their_join_limitation() -> None:
