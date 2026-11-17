@@ -225,10 +225,12 @@ def _resampled_mean(
     used = 0
     size = len(differences)
     while seen < length:
-        block = circular_block(differences, generator.randrange(size), stride)
+        # The last block is cut to what the replication still needs. Drawing a
+        # full block and discarding its tail would read the same positions but
+        # build values no draw can use.
+        remaining = min(stride, length - seen)
+        block = circular_block(differences, generator.randrange(size), remaining)
         for value in block:
-            if seen == length:
-                break
             if value is not None:
                 total += value
                 used += 1
