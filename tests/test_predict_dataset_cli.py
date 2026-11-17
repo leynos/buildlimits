@@ -78,6 +78,28 @@ def test_dataset_command_refuses_to_write_over_its_store(
     assert store.read_bytes() == before, "the store is untouched"
 
 
+def test_dataset_command_refuses_an_unparsable_journal_span(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A malformed lookback is a usage failure, not a silent journal note."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    snapshot = tmp_path / "history.jsonl"
+    write_store(store, 4)
+
+    status = dataset_cli.main([
+        "--store",
+        str(store),
+        "--output",
+        str(snapshot),
+        "--journal-span",
+        "soon",
+    ])
+
+    assert status == 2, "a malformed span is a usage failure"
+    assert "--journal-span" in capsys.readouterr().err, "the option is named"
+    assert not snapshot.exists(), "nothing is written behind the bad option"
+
+
 def test_dataset_command_reports_a_missing_store(tmp_path: Path) -> None:
     """A store that cannot be read is a command failure, not a snapshot."""
     status = dataset_cli.main([

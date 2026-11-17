@@ -12,6 +12,7 @@ import typing as typ
 from pathlib import Path
 
 from buildlimits import outcome_store_io
+from buildlimits.metrics_query import window_seconds
 from buildlimits.outcome_record_format import RecordFailure
 from buildlimits.outcome_store_salt import store_path
 from buildlimits.predict.config import load_config
@@ -66,6 +67,7 @@ def main(
     )
     parser.add_argument(
         "--journal-span",
+        type=_journal_span,
         default=DEFAULT_JOURNAL_SPAN,
         help="journal lookback used only for the provenance note",
     )
@@ -110,6 +112,33 @@ def main(
         gap_threshold_seconds=config.gap_threshold_seconds,
     )
     return _write(snapshot, options.output)
+
+
+def _journal_span(text: str) -> str:
+    """Return a journal lookback once it parses as a positive duration.
+
+    The provenance note is best effort, so an unparsable span would otherwise
+    be swallowed by the note's own failure handling: the command would write a
+    snapshot with a generic ``journal query failed`` note and still exit 0,
+    leaving the usage error invisible. Validating at parse time reports it the
+    way every other bad option is reported.
+
+    Returns
+    -------
+    str
+        The span, unchanged.
+
+    Raises
+    ------
+    argparse.ArgumentTypeError
+        When the span is not a positive duration such as ``30m`` or ``1h``.
+    """
+    try:
+        window_seconds(text)
+    except ValueError as error:
+        msg = "must be a positive duration such as 30m or 1h"
+        raise argparse.ArgumentTypeError(msg) from error
+    return text
 
 
 def _write(snapshot: Snapshot, output: Path) -> int:
