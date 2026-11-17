@@ -98,12 +98,23 @@ the file is absent. The command prints `results.md` and the latency table;
 `results.json` is byte-identical for the same snapshot, config and seed, so it
 can be diffed between runs. The measured latency is host-specific and therefore
 lives in `timings.json` and the printed table only, never in `results.json` or
-`results.md`.
+`results.md`. Single-predictor latency and ensemble combination latency are
+reported in separate tables: an ensemble only combines answers its components
+had already produced, so its elapsed time is not a prediction time.
 
 `buildlimits/predict/config.json` pins every parameter, including the training
 fraction, the bootstrap seed and `minimum_labelled_events`. A run with fewer
 labelled events than that minimum reports `insufficient data` with the counts
-it did see; it never substitutes a synthetic stream for real history.
+it did see; it never substitutes a synthetic stream for real history. A run
+that clears that minimum but holds too little of it in the held-out period
+reports `insufficient held-out evidence` instead of a negative result: no
+comparison was paired over `minimum_scored_events` rows, or every paired row
+fell in a single bootstrap block, in which case the resampling has no width to
+judge.
+
+`make predict-dataset` refuses an `--output` that resolves to the store it is
+reading, including through a symbolic link, so it cannot replace the outcome
+store with a snapshot document.
 
 ## 3. Architecture overview
 

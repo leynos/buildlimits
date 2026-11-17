@@ -156,24 +156,29 @@ def _predictor_entry(
 
 
 def build_timings(evaluation: Evaluation) -> dict[str, object]:
-    """Aggregate prediction latency per predictor.
+    """Aggregate measured latency per predictor and per ensemble.
+
+    An ensemble's elapsed time covers only combining the answers its
+    components had already produced, so it is reported apart from the single
+    predictors' prediction latency rather than in the same table.
 
     Returns
     -------
     dict[str, object]
-        Total and per-event seconds overall, per phase and per origin.
+        Total and per-event seconds overall, per phase and per origin, split
+        into ``predictors`` and ``ensembles``.
     """
     phases = evaluation.walk.phases
     origins = [event.origin for event in evaluation.walk.events]
-    elapsed: dict[str, tuple[float, ...]] = {
-        name: series.elapsed for name, series in evaluation.walk.series.items()
-    }
-    elapsed.update({name: run.elapsed for name, run in evaluation.ensembles.items()})
     return {
         "predictors": {
-            name: _timing_entry(values, phases, origins)
-            for name, values in elapsed.items()
-        }
+            name: _timing_entry(series.elapsed, phases, origins)
+            for name, series in evaluation.walk.series.items()
+        },
+        "ensembles": {
+            name: _timing_entry(run.elapsed, phases, origins)
+            for name, run in evaluation.ensembles.items()
+        },
     }
 
 

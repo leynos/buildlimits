@@ -33,6 +33,9 @@ class Interval:
         Bootstrap replications drawn.
     block_size : int
         Consecutive rows per resampled block.
+    blocks : int
+        Non-overlapping blocks the series holds; fewer than two means the
+        resampling cannot show any sampling variability.
     rows : int
         Paired rows the difference was computed over.
     """
@@ -42,6 +45,7 @@ class Interval:
     high: float
     resamples: int
     block_size: int
+    blocks: int
     rows: int
 
     def to_dict(self) -> dict[str, object]:
@@ -58,6 +62,7 @@ class Interval:
             "high": self.high,
             "resamples": self.resamples,
             "block_size": self.block_size,
+            "blocks": self.blocks,
             "rows": self.rows,
         }
 
@@ -105,39 +110,39 @@ def block_bootstrap(
     if not differences:
         return None
     stride = max(1, config.block_size)
-    blocks = [
-        list(differences[start : start + stride])
-        for start in range(0, len(differences), stride)
-    ]
+    size = len(differences)
     # ruff: ignore[suspicious-non-cryptographic-random-usage] - a seeded bootstrap
     # needs reproducible, not secret, draws.
     generator = random.Random(config.bootstrap_seed)
     means = [
-        _resampled_mean(generator, blocks, len(differences))
+        _resampled_mean(generator, differences, stride, size)
         for _ in range(config.bootstrap_resamples)
     ]
     means.sort()
     return Interval(
-        difference=sum(differences) / len(differences),
+        difference=sum(differences) / size,
         low=_percentile(means, config.bootstrap_alpha / 2),
         high=_percentile(means, 1 - config.bootstrap_alpha / 2),
         resamples=config.bootstrap_resamples,
         block_size=stride,
-        rows=len(differences),
+        blocks=math.ceil(size / stride),
+        rows=size,
     )
 
 
 def _resampled_mean(
     generator: random.Random,
-    blocks: cabc.Sequence[cabc.Sequence[float]],
+    differences: cabc.Sequence[float],
+    stride: int,
     length: int,
 ) -> float:
-    """Draw blocks with replacement until ``length`` rows are collected.
+    """Draw circular blocks with replacement and average ``length`` values.
 
-    The final block is truncated, so every replication averages exactly
-    ``length`` rows. Drawing a fixed count of blocks would average fewer rows
-    whenever the blocks do not divide the series evenly, which biases the
-    interval.
+    Each block starts at a uniformly chosen row and wraps around the end of
+    the series, so every block is the same length and every row is equally
+    likely to be drawn. Forming a shorter final block from the leftover rows
+    would sample it at the same rate as a full one and shift the resampled
+    mean.
 
     Returns
     -------
@@ -146,14 +151,38 @@ def _resampled_mean(
     """
     total = 0.0
     seen = 0
+    size = len(differences)
     while seen < length:
-        block = blocks[generator.randrange(len(blocks))]
+        block = circular_block(differences, generator.randrange(size), stride)
         for value in block:
             if seen == length:
                 break
             total += value
             seen += 1
     return total / length
+
+
+def circular_block(
+    differences: cabc.Sequence[float], start: int, stride: int
+) -> list[float]:
+    """Return one full-length block, wrapping around the end of the series.
+
+    Every block holds exactly ``stride`` values, so no block is drawn at a
+    shorter length than another. Wrapping also means each row appears in the
+    same number of blocks, which is what keeps the resampled mean unbiased.
+
+    Returns
+    -------
+    list[float]
+        The block's values, beginning at ``start``.
+
+    Examples
+    --------
+    >>> circular_block([1.0, 2.0, 3.0], 2, 2)
+    [3.0, 1.0]
+    """
+    size = len(differences)
+    return [differences[(start + offset) % size] for offset in range(stride)]
 
 
 def _percentile(ordered: cabc.Sequence[float], fraction: float) -> float:

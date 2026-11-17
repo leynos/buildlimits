@@ -5,8 +5,13 @@ from predict_test_helpers import predict_config
 
 from buildlimits.predict.config import load_config
 from buildlimits.predict.ensemble_runs import run_ablations, run_ensembles
-from buildlimits.predict.ensembles import Ensemble, fit_weights
+from buildlimits.predict.ensembles import (
+    Ensemble,
+    _log_loss_gradient,
+    fit_weights,
+)
 from buildlimits.predict.harness import walk_forward
+from buildlimits.predict.metrics import log_loss_of
 from buildlimits.predict.synthetic import drift
 
 
@@ -78,6 +83,50 @@ def test_fit_weights_without_outcomes_keeps_even_weights() -> None:
 def test_fit_weights_without_rows_returns_no_weights() -> None:
     """No rows and no components give an empty weight vector."""
     assert fit_weights([], [], config=load_config()) == [], "nothing to fit"
+
+
+def _mean_loss(
+    rows: list[tuple[float | None, float | None]],
+    outcomes: list[float],
+    weights: list[float],
+    *,
+    clip: float,
+) -> float:
+    """Return the mean clipped log loss of a raw-weight consensus."""
+    losses: list[float] = []
+    for row, outcome in zip(rows, outcomes, strict=True):
+        ensemble = Ensemble("probe", ("a", "b"), weights, "fixed", 0.0, clip)
+        probability = ensemble.predict(row)
+        if probability is not None:
+            losses.append(log_loss_of(probability, int(outcome), clip=clip))
+    return sum(losses) / len(losses)
+
+
+@pytest.mark.parametrize("index", [0, 1])
+def test_the_gradient_matches_a_finite_difference_under_abstention(index: int) -> None:
+    """The consensus mean's normalization is part of its derivative.
+
+    With one component abstaining, the remaining component's weight cancels
+    out of the consensus mean, so its true partial derivative is zero. A
+    gradient that omits the normalization term would step it anyway.
+    """
+    rows: list[tuple[float | None, float | None]] = [(0.8, None), (0.6, 0.3)]
+    outcomes = [1.0, 0.0]
+    weights = [0.4, 0.6]
+    clip = 1e-6
+    step = 1e-7
+    up = list(weights)
+    up[index] += step
+    down = list(weights)
+    down[index] -= step
+
+    numeric = (
+        _mean_loss(rows, outcomes, up, clip=clip)
+        - _mean_loss(rows, outcomes, down, clip=clip)
+    ) / (2 * step)
+    gradient = _log_loss_gradient(rows, outcomes, weights, clip)
+
+    assert gradient[index] == pytest.approx(numeric, abs=1e-4), "true derivative"
 
 
 def test_ablation_restarts_each_ensemble_from_its_starting_weights() -> None:

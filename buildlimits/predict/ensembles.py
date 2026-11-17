@@ -193,10 +193,14 @@ def _log_loss_gradient(
 ) -> list[float]:
     """Return the mean gradient of the log loss over the rows.
 
-    With ``m`` the clipped consensus probability, ``y`` the outcome and
-    ``M`` the total weight of the components that answered, the derivative
-    of the log loss with respect to a component's weight is
-    ``(m - y) * p / (M * m * (1 - m))``.
+    With ``m`` the clipped consensus probability, ``y`` the outcome, ``M`` the
+    total weight of the components that answered and ``p`` the component's
+    own answer, the consensus mean is a ratio whose denominator ``M`` also
+    depends on the fitted weights. Its derivative with respect to a weight is
+    therefore ``(p - m) / M`` rather than ``p / M``, and the derivative of the
+    log loss follows as ``(m - y) * (p - m) / (M * m * (1 - m))``. Dropping
+    the ``m`` term would step against the normalization whenever a component
+    abstains.
 
     Returns
     -------
@@ -223,7 +227,7 @@ def _log_loss_gradient(
         curvature = max(probability * (1.0 - probability), _MIN_CURVATURE)
         error = probability - outcome
         for index, value in zip(available, values, strict=True):
-            gradient[index] += error * value / (mass * curvature)
+            gradient[index] += error * (value - mean) / (mass * curvature)
     return [value / len(outcomes) for value in gradient]
 
 

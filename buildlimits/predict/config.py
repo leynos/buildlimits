@@ -54,6 +54,11 @@ _BOUNDS: dict[str, tuple[float, float]] = {
     "gap_threshold_seconds": (0.0, 31_536_000.0),
     "calibration_bins": (1, 1_000),
 }
+# A range floor some parameters must strictly exceed. ``1.0 - 2**-54`` rounds
+# back to ``1.0``, so a clip that small leaves the upper tail unclipped and a
+# certain miss would take the logarithm of zero. ``2**-53`` still yields the
+# largest float below one, so it is the smallest accepted clip.
+_EXCLUSIVE_LOW: dict[str, float] = {"log_loss_clip": 2.0**-54}
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -259,7 +264,15 @@ def _checked_value(source: Path, name: str, raw: object) -> int | float:
             raise TypeError(msg)
         number = float(typ.cast("int | float", raw))
     low, high = _BOUNDS[name]
-    if not low <= number <= high:
+    if name in _EXCLUSIVE_LOW:
+        floor = _EXCLUSIVE_LOW[name]
+        if not floor < number <= high:
+            msg = (
+                f"{source} field {name} must be above {floor} and at most "
+                f"{high}, not {number}"
+            )
+            raise ValueError(msg)
+    elif not low <= number <= high:
         msg = f"{source} field {name} must be within [{low}, {high}], not {number}"
         raise ValueError(msg)
     return number

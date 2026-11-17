@@ -7,12 +7,28 @@ written to ``timings.json`` instead.
 
 import typing as typ
 
-from buildlimits.predict.evaluation import STATUS_OK
+from buildlimits.predict.evaluation import (
+    STATUS_INSUFFICIENT,
+    STATUS_INSUFFICIENT_HELDOUT,
+)
+from buildlimits.predict.formatting import MISSING, as_count, as_percent, as_score
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-_MISSING = "-"
+# A status that needs explaining is looked up rather than compared in a chain:
+# a new status may be added without editing this module.
+_STATUS_NOTES = {
+    STATUS_INSUFFICIENT: (
+        "> **Insufficient data.** These numbers describe the history "
+        "that is available; no synthetic result is substituted."
+    ),
+    STATUS_INSUFFICIENT_HELDOUT: (
+        "> **Insufficient held-out evidence.** The history is large "
+        "enough to run, but too little of it lies in the held-out "
+        "period to compare predictors; this is not a negative result."
+    ),
+}
 
 
 def render_markdown(document: cabc.Mapping[str, object]) -> str:
@@ -68,19 +84,19 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
         f"- Verdict: {document['verdict']}",
         f"- Predictors compared: {count}",
         (
-            f"- History: {_n(stats['events'])} events, "
-            f"{_n(stats['labelled'])} labelled "
-            f"({_pct(stats['labelled_fraction'])}), "
-            f"{_n(stats['identities'])} identities"
+            f"- History: {as_count(stats['events'])} events, "
+            f"{as_count(stats['labelled'])} labelled "
+            f"({as_percent(stats['labelled_fraction'])}), "
+            f"{as_count(stats['identities'])} identities"
         ),
         f"- Window: {stats['span_start']} to {stats['span_end']}",
         (f"- Gaps over threshold: {len(typ.cast('list[object]', stats['gaps']))}"),
         (
-            f"- Split: {_n(split['train_labelled'])} tuning, "
-            f"{_n(split['heldout_labelled'])} held-out"
+            f"- Split: {as_count(split['train_labelled'])} tuning, "
+            f"{as_count(split['heldout_labelled'])} held-out"
         ),
         (
-            f"- Store: {_n(source['records_total'])} rows from salt "
+            f"- Store: {as_count(source['records_total'])} rows from salt "
             f"`{source['salt_id']}` written {source['written_at']}"
         ),
         f"- Journal: {_journal_note(journal)}",
@@ -88,14 +104,9 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
         f"- Commit: `{document['git_sha']}`",
         "",
     ]
-    if status != STATUS_OK:
-        lines += [
-            (
-                "> **Insufficient data.** These numbers describe the history "
-                "that is available; no synthetic result is substituted."
-            ),
-            "",
-        ]
+    note = _STATUS_NOTES.get(typ.cast("str", status))
+    if note is not None:
+        lines += [note, ""]
     return lines
 
 
@@ -109,7 +120,7 @@ def _journal_note(journal: cabc.Mapping[str, object]) -> str:
     """
     if not journal.get("available"):
         return f"unavailable ({journal.get('reason', 'no records')})"
-    return f"{_n(journal.get('records'))} records, context only"
+    return f"{as_count(journal.get('records'))} records, context only"
 
 
 def _comparison_table(
@@ -132,10 +143,10 @@ def _comparison_table(
     for name in ranking:
         heldout = typ.cast("dict[str, object]", predictors[name]["held-out"])
         lines.append(
-            f"| `{name}` | {_num(heldout['brier'])} "
-            f"| {_num(heldout['log_loss'])} "
-            f"| {_num(heldout['accuracy'])} | {_pct(heldout['coverage'])} "
-            f"| {_num(_calibration_error(heldout))} |"
+            f"| `{name}` | {as_score(heldout['brier'])} "
+            f"| {as_score(heldout['log_loss'])} "
+            f"| {as_score(heldout['accuracy'])} | {as_percent(heldout['coverage'])} "
+            f"| {as_score(_calibration_error(heldout))} |"
         )
     lines.append("")
     return lines
@@ -188,9 +199,9 @@ def _calibration_table(
         "| --- | ---: | ---: | ---: |",
     ]
     lines.extend(
-        f"| {_num(bin_['lower'])}-{_num(bin_['upper'])} "
-        f"| {bin_['count']} | {_num(bin_['mean_probability'])} "
-        f"| {_num(bin_['observed_rate'])} |"
+        f"| {as_score(bin_['lower'])}-{as_score(bin_['upper'])} "
+        f"| {bin_['count']} | {as_score(bin_['mean_probability'])} "
+        f"| {as_score(bin_['observed_rate'])} |"
         for bin_ in bins
     )
     lines.append("")
@@ -211,7 +222,7 @@ def _difference_table(
     """
     config = typ.cast("dict[str, object]", document["config"])
     interval_name = (
-        f"{_pct(1.0 - typ.cast('float', config['bootstrap_alpha']))} interval"
+        f"{as_percent(1.0 - typ.cast('float', config['bootstrap_alpha']))} interval"
     )
     lines = [
         "## Difference from the base rate",
@@ -230,9 +241,9 @@ def _difference_table(
             continue
         value = typ.cast("dict[str, object]", interval)
         lines.append(
-            f"| `{name}` | {_num(value['difference'])} "
-            f"| [{_num(value['low'])}, {_num(value['high'])}] "
-            f"| {_n(value['rows'])} |"
+            f"| `{name}` | {as_score(value['difference'])} "
+            f"| [{as_score(value['low'])}, {as_score(value['high'])}] "
+            f"| {as_count(value['rows'])} |"
         )
     lines.append("")
     return lines
@@ -259,8 +270,8 @@ def _ablation_table(document: cabc.Mapping[str, object]) -> list[str]:
         for component in sorted(ablation[mode]):
             value = ablation[mode][component]
             lines.append(
-                f"| {mode} | `{component}` | {_num(value['brier'])} "
-                f"| {_num(value['log_loss'])} | {_pct(value['coverage'])} |"
+                f"| {mode} | `{component}` | {as_score(value['brier'])} "
+                f"| {as_score(value['log_loss'])} | {as_percent(value['coverage'])} |"
             )
     lines.append("")
     return lines
@@ -297,75 +308,12 @@ def _origin_table(
         lines.append(
             f"| `{name}` | "
             + " | ".join(
-                _MISSING
+                MISSING
                 if origin not in by_origin
-                else _num(by_origin[origin]["brier"])
+                else as_score(by_origin[origin]["brier"])
                 for origin in origins
             )
             + " |"
         )
     lines.append("")
     return lines
-
-
-def render_timings(timings: cabc.Mapping[str, object]) -> str:
-    """Render the measured prediction latency as Markdown.
-
-    Returns
-    -------
-    str
-        The latency table, kept out of the durable report.
-    """
-    entries = typ.cast("dict[str, dict[str, object]]", timings["predictors"])
-    lines = [
-        "## Prediction latency",
-        "",
-        "Measured on this host; not part of the deterministic JSON.",
-        "",
-        "| Predictor | Calls | Total ms | Mean us | Held-out mean us |",
-        "| --- | ---: | ---: | ---: | ---: |",
-    ]
-    for name in sorted(entries):
-        value = entries[name]
-        seconds = typ.cast("dict[str, float]", value["seconds"])
-        each = typ.cast("dict[str, float]", value["microseconds_each"])
-        lines.append(
-            f"| `{name}` | {_n(value['predictions'])} "
-            f"| {1e3 * seconds['overall']:.3f} | {each['overall']:.3f} "
-            f"| {each['held-out']:.3f} |"
-        )
-    lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def _num(value: object) -> str:
-    """Format a score or rate as four decimals.
-
-    Returns
-    -------
-    str
-        Four decimals, or a dash when absent.
-    """
-    return _MISSING if value is None else f"{typ.cast('float', value):.4f}"
-
-
-def _n(value: object) -> str:
-    """Format a count with thousands separators.
-
-    Returns
-    -------
-    str
-        The count, or a dash when absent.
-    """
-    return _MISSING if value is None else f"{typ.cast('int', value):,}"
-
-
-def _pct(value: object) -> str:
-    """Format a fraction as a percentage.
-
-    Returns
-    -------
-    str
-        One decimal place, or a dash when absent.
-    """
-    return _MISSING if value is None else f"{100 * typ.cast('float', value):.1f}%"

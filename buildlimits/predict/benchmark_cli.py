@@ -14,7 +14,7 @@ from buildlimits.predict.config import load_config
 from buildlimits.predict.evaluation import evaluate
 from buildlimits.predict.events import fingerprint
 from buildlimits.predict.harness import walk_forward
-from buildlimits.predict.render import render_timings
+from buildlimits.predict.latency import render_timings
 from buildlimits.predict.report import Provenance, build_report
 from buildlimits.predict.snapshot_store import load_snapshot
 
@@ -83,7 +83,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _git_sha() -> str:
-    """Return the current commit, or an explicit marker when unavailable.
+    """Return the commit that holds this benchmark, or an explicit marker.
+
+    The commit is read from the repository holding this module rather than
+    from the working directory, so a report produced inside an unrelated
+    checkout still names the code that produced it.
 
     Returns
     -------
@@ -93,9 +97,10 @@ def _git_sha() -> str:
     executable = shutil.which("git")
     if executable is None:
         return "unknown"
+    source = Path(__file__).resolve().parent
     try:
         result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed git argument vector.
-            [executable, "rev-parse", "HEAD"],
+            [executable, "-C", str(source), "rev-parse", "HEAD"],
             capture_output=True,
             text=True,
             check=False,

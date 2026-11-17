@@ -31,6 +31,9 @@ if typ.TYPE_CHECKING:
 
 STATUS_OK = "ok"
 STATUS_INSUFFICIENT = "insufficient data"
+STATUS_INSUFFICIENT_HELDOUT = "insufficient held-out evidence"
+# One block resamples to itself, so its interval has no width to judge.
+MINIMUM_BLOCKS = 2
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -124,9 +127,7 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
     ablated = ablation_metrics(walk, ablations, config)
     compared = _compare(walk, ensembles, metrics, config)
     labelled = sum(1 for phase in walk.phases if phase is not None)
-    status = (
-        STATUS_OK if labelled >= config.minimum_labelled_events else STATUS_INSUFFICIENT
-    )
+    status = _status(labelled, compared.against_base_rate, config)
     return Evaluation(
         status=status,
         walk=walk,
@@ -244,6 +245,47 @@ def _best_on_training(
     return None if not scored else min(scored, key=operator.itemgetter(1))[0]
 
 
+def _status(
+    labelled: int,
+    against_base: cabc.Mapping[str, Interval | None],
+    config: Config,
+) -> str:
+    """Return the status the evidence supports.
+
+    A run with too much history for ``insufficient data`` can still hold too
+    little held-out evidence to compare anything: every comparison may have
+    been paired over too few rows, or over rows that form a single block, in
+    which case every replication averages the same values. That is reported
+    separately rather than as a negative result.
+
+    Returns
+    -------
+    str
+        ``ok``, ``insufficient data`` or ``insufficient held-out evidence``.
+    """
+    if labelled < config.minimum_labelled_events:
+        return STATUS_INSUFFICIENT
+    if not any(_is_evidence(interval, config) for interval in against_base.values()):
+        return STATUS_INSUFFICIENT_HELDOUT
+    return STATUS_OK
+
+
+def _is_evidence(interval: Interval | None, config: Config) -> bool:
+    """Return whether an interval carries enough held-out evidence to judge.
+
+    Returns
+    -------
+    bool
+        Whether the interval was paired over enough rows, in at least two
+        blocks, for its width to mean anything.
+    """
+    return (
+        interval is not None
+        and interval.rows >= config.minimum_scored_events
+        and interval.blocks >= MINIMUM_BLOCKS
+    )
+
+
 def _verdict(
     status: str,
     labelled: int,
@@ -253,25 +295,29 @@ def _verdict(
     """State the outcome in one sentence, negative results included.
 
     A predictor may only be said to beat the base rate when its interval lies
-    wholly below zero *and* it was paired over enough held-out rows for that
-    interval to mean anything.
+    wholly below zero *and* it was paired over enough held-out rows, spread
+    over at least two blocks, for that interval to mean anything.
 
     Returns
     -------
     str
         The verdict.
     """
-    if status != STATUS_OK:
+    if status == STATUS_INSUFFICIENT:
         return (
             f"insufficient data: {labelled} labelled events, "
             f"{config.minimum_labelled_events} required"
         )
+    if status == STATUS_INSUFFICIENT_HELDOUT:
+        return (
+            "insufficient held-out evidence: no predictor was paired over "
+            f"{config.minimum_scored_events} rows in two or more blocks of "
+            f"{config.block_size}"
+        )
     improving = [
         name
         for name, interval in against_base.items()
-        if interval is not None
-        and interval.rows >= config.minimum_scored_events
-        and interval.high < 0
+        if interval is not None and _is_evidence(interval, config) and interval.high < 0
     ]
     if not improving:
         return "nothing beats the base rate on the held-out period"

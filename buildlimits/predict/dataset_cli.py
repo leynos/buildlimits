@@ -83,7 +83,19 @@ def main(
     except (TypeError, ValueError, OSError) as error:
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 2
-    decoded = _read(options.store)
+    try:
+        store = _store_path(options.store)
+    except (OSError, ValueError) as error:
+        print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
+        return 1
+    if _same_file(store, options.output):
+        print(
+            "build-limits-predict-dataset: --output must not be the store being "
+            f"read ({store}); choose another path",
+            file=sys.stderr,
+        )
+        return 2
+    decoded = _read(store)
     if isinstance(decoded, int):
         return decoded
     note = (
@@ -102,7 +114,37 @@ def main(
     return 0
 
 
-def _read(store: Path | None) -> DecodedStore | int:
+def _store_path(store: Path | None) -> Path:
+    """Return the store path this run will read.
+
+    Returns
+    -------
+    Path
+        The explicit path, or this host's configured store.
+    """
+    return store_path(os.environ) if store is None else store
+
+
+def _same_file(first: Path, second: Path) -> bool:
+    """Return whether two paths name the same file.
+
+    Resolving both paths means a relative spelling, a symlink or an existing
+    hard link cannot disguise the store as a separate output. A path that
+    does not exist yet has no inode to compare, so its resolved form is
+    compared instead.
+
+    Returns
+    -------
+    bool
+        Whether writing ``second`` would overwrite ``first``.
+    """
+    try:
+        return Path(first).samefile(second)
+    except OSError:
+        return first.resolve() == second.resolve()
+
+
+def _read(store: Path) -> DecodedStore | int:
     """Read the store, reporting the reason a refusal is fatal.
 
     Returns
@@ -111,8 +153,7 @@ def _read(store: Path | None) -> DecodedStore | int:
         An exit status on failure, otherwise the decoded store.
     """
     try:
-        path = store_path(os.environ) if store is None else store
-        decoded = outcome_store_io.read_store(path)
+        decoded = outcome_store_io.read_store(store)
     except (OSError, ValueError) as error:
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 1

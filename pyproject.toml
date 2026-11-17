@@ -550,17 +550,27 @@ full_name = [
     "buildlimits.predict.predictors.RollingRate.update",
     "buildlimits.predict.predictors.ExponentialRate.predict",
     "buildlimits.predict.predictors.ExponentialRate.update",
-    "buildlimits.predict.predictors.LogisticModel.predict",
-    "buildlimits.predict.predictors.LogisticModel.update",
 ]
 path = ["buildlimits/predict/predictors.py"]
 reason = "single_predictors returns the singles as Predictor tuples, and harness.walk_forward calls predict and update only through that protocol; ensemble_runs repeats the same dispatch through the component matrix. No static edge reaches the concrete classes. test_predict_predictors.py exercises each predictor directly, and the stationary, persistent and drift streams exercise them through the walk."
 
 [[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = [
+    "buildlimits.predict.probability.LogisticModel.predict",
+    "buildlimits.predict.probability.LogisticModel.update",
+]
+path = ["buildlimits/predict/probability.py"]
+reason = "single_predictors places the learner in the Predictor tuple, and harness.walk_forward calls predict and update only through that protocol, so no static edge reaches the concrete class. test_predict_probability.py exercises both methods directly, and the walk exercises them on every stream."
+
+[[tool.skylos.dead_code.entrypoints]]
 type = "function"
-full_name = ["buildlimits.predict.predictors._value"]
-path = ["buildlimits/predict/predictors.py"]
-reason = "The online learners reach _value only from the protocol-dispatched update methods declared above, so its callers are unresolved too. test_predict_predictors.py exercises the outcomes it maps to 1.0 and 0.0."
+full_name = [
+    "buildlimits.predict.probability._sigmoid",
+    "buildlimits.predict.probability.outcome_value",
+]
+path = ["buildlimits/predict/probability.py"]
+reason = "_sigmoid is reached only from the protocol-dispatched predict above, and the online learners reach outcome_value only from their protocol-dispatched update methods, so neither caller is resolved. The sigmoid's doctest and test_predict_probability.py exercise the values either side of zero, and test_predict_predictors.py exercises the outcomes outcome_value maps to 1.0 and 0.0."
 
 # These serializers are called on values reached through a dict lookup, a
 # comprehension variable or a function return, so Skylos records no typed call
@@ -1263,7 +1273,7 @@ reason = "Single-purpose test doubles: each closure raises, records or answers t
 members = [
     "tests/test_pressure_metrics.py::emit",
     "tests/test_metrics.py::emit",
-    "tests/test_predict_cli.py::__call__",
+    "tests/test_predict_dataset_cli.py::__call__",
 ]
 reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
 
@@ -1841,10 +1851,10 @@ members = [
 ]
 reason = "Matching import lists: the pair properties and the variable-set property name the same Hypothesis and case-helper symbols, and the module split exists to keep each file under the module length limit. Sharing them through a re-export module would add one more test support module without hiding a real dependency."
 [[tool.duplication_gate.allow]]
-members = ["buildlimits/predict/render.py::_num", "buildlimits/predict/render.py::_n"]
-reason = "Two table-cell formatters share only the dash they print for an absent value; each is the one place a distinct format specification lives (four decimals for scores, thousands separators for counts), so a shared formatter would push a format argument into every cell."
+members = ["buildlimits/predict/formatting.py::as_score", "buildlimits/predict/formatting.py::as_count"]
+reason = "Table-cell formatters share only the dash they print for an absent value; each is the one place a distinct format specification lives (four decimals for scores, thousands separators for counts, a percentage for rates), so a shared formatter would push a format argument into every cell."
 [[tool.duplication_gate.allow]]
-members = ["tests/modelcheck_cases.py", "tests/modelcheck_service_cases.py", "buildlimits/predict/report.py", "buildlimits/supervisor_wiring.py", "tests/test_group_drain_metrics.py", "tests/outcome_store_helpers.py", "buildlimits/predict/harness.py", "modelcheck/cli_outputs.py", "modelcheck/expectations.py", "modelcheck/records.py", "modelcheck/report.py", "tests/test_cache_recovery_telemetry.py", "tests/test_recovery_roots_deadline.py", "buildlimits/group_recovery.py", "tests/differential_trace_test_helpers.py", "modelcheck/cli.py"]
+members = ["tests/modelcheck_cases.py", "tests/modelcheck_service_cases.py", "buildlimits/predict/report.py", "buildlimits/supervisor_wiring.py", "tests/test_group_drain_metrics.py", "tests/outcome_store_helpers.py", "buildlimits/predict/harness.py", "modelcheck/cli_outputs.py", "modelcheck/expectations.py", "modelcheck/records.py", "modelcheck/report.py", "tests/test_cache_recovery_telemetry.py", "tests/test_recovery_roots_deadline.py", "buildlimits/group_recovery.py", "tests/differential_trace_test_helpers.py", "tests/predict_test_helpers.py", "modelcheck/cli.py"]
 reason = "Matching import lists: each module names the ports, records and helpers it uses, and sharing them through a re-export module would hide each module's real dependencies."
 [[tool.duplication_gate.allow]]
 members = ["buildlimits/outcome_recorder_types.py", "buildlimits/outcome_recorder_outputs.py", "tests/outcome_shell_test_support.py", "buildlimits/server_watch.py", "buildlimits/cache_recovery.py", "tests/outcome_store_helpers.py", "buildlimits/outcome_store.py"]

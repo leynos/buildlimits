@@ -5,7 +5,13 @@ import typing as typ
 
 import pytest
 
-from buildlimits.predict.events import EPOCH, Event, event_from_dict, ordered
+from buildlimits.predict.events import (
+    EPOCH,
+    Event,
+    event_from_dict,
+    features,
+    ordered,
+)
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
@@ -102,6 +108,33 @@ def test_a_missing_label_time_is_refused() -> None:
     """Every event has a label time; null is not a placeholder for one."""
     with pytest.raises(ValueError, match="observed_at must be a UTC timestamp"):
         event_from_dict(_line(observed_at=None))
+
+
+def _stamped(seconds: int) -> Event:
+    """Return one event at a fixed offset from the epoch."""
+    return Event(
+        "a" * 64, ORIGIN, None, EPOCH + dt.timedelta(seconds=seconds), "hit", 1.0
+    )
+
+
+def test_load_counts_only_events_strictly_before_the_label_time() -> None:
+    """The trailing window is half-open, so a tied time is not load."""
+    rows = features(
+        (_stamped(0), _stamped(30), _stamped(60), _stamped(60)),
+        load_window_seconds=60.0,
+    )
+
+    assert [row.load for row in rows] == [0, 1, 2, 2], "the tie is excluded"
+
+
+def test_a_zero_second_window_counts_no_load() -> None:
+    """Nothing can occur strictly before a label time in no time at all."""
+    rows = features(
+        (_stamped(0), _stamped(0), _stamped(0)),
+        load_window_seconds=0.0,
+    )
+
+    assert [row.load for row in rows] == [0, 0, 0], "no window, no load"
 
 
 def test_ordering_keeps_stream_order_for_equal_times() -> None:

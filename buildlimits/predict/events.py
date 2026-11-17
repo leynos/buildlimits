@@ -164,7 +164,7 @@ def features(
     times = [event.observed_at for event in events]
     previous: dict[str, dt.datetime] = {}
     rows: list[Features] = []
-    for index, event in enumerate(events):
+    for event in events:
         last = previous.get(event.identity)
         rows.append(
             Features(
@@ -174,7 +174,7 @@ def features(
                 age_seconds=(
                     None if last is None else (event.observed_at - last).total_seconds()
                 ),
-                load=_load_before(times, index, load_window_seconds),
+                load=_load_before(times, event.observed_at, load_window_seconds),
             )
         )
         previous[event.identity] = event.observed_at
@@ -247,17 +247,23 @@ def event_from_dict(value: object) -> Event:
 
 
 def _load_before(
-    times: cabc.Sequence[dt.datetime], index: int, window_seconds: float
+    times: cabc.Sequence[dt.datetime], observed_at: dt.datetime, window_seconds: float
 ) -> int:
     """Count earlier events inside the trailing load window.
+
+    The window ends strictly before ``observed_at``, so an event that shares
+    this label time is not load, and a zero-second window counts nothing.
+    ``times`` must be sorted, as :func:`ordered` leaves it.
 
     Returns
     -------
     int
-        Events with a label time in ``[t - window, t)``.
+        Events with a label time in ``[observed_at - window, observed_at)``.
     """
     window = dt.timedelta(seconds=window_seconds)
-    return index - bisect.bisect_left(times, times[index] - window)
+    return bisect.bisect_left(times, observed_at) - bisect.bisect_left(
+        times, observed_at - window
+    )
 
 
 def _stamp(value: dt.datetime | None) -> str | None:

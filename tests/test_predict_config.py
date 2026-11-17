@@ -94,6 +94,20 @@ def test_a_value_outside_its_range_is_rejected(
         load_config(_changed(tmp_path, **{name: value}))
 
 
+def test_a_clip_too_small_to_change_one_is_rejected(tmp_path: Path) -> None:
+    """A clip whose complement rounds back to one leaves the loss undefined.
+
+    ``1.0 - 2**-54`` is exactly ``1.0``, so a certain miss would take the
+    logarithm of zero; ``2**-53`` still changes the value and is accepted.
+    """
+    with pytest.raises(ValueError, match="above"):
+        load_config(_changed(tmp_path, log_loss_clip=2.0**-54))
+
+    accepted = load_config(_changed(tmp_path, log_loss_clip=2.0**-53))
+
+    assert 1.0 - accepted.log_loss_clip < 1.0, "the upper tail is clipped"
+
+
 def test_a_whole_number_fills_a_fractional_field(tmp_path: Path) -> None:
     """JSON has one number type, so ``0`` is a valid rate and becomes a float."""
     config = load_config(_changed(tmp_path, cold_start=0))

@@ -9,6 +9,7 @@ from predict_test_helpers import predict_config
 
 from buildlimits.predict.bootstrap import (
     block_bootstrap,
+    circular_block,
     paired_differences,
 )
 from buildlimits.predict.events import EPOCH
@@ -46,6 +47,26 @@ def test_a_constant_difference_has_a_degenerate_interval() -> None:
     assert interval.high == pytest.approx(0.05), "upper percentile"
     assert interval.rows == 37, "the row count is reported"
     assert interval.block_size == 10, "the stride is reported"
+
+
+def test_every_drawn_block_has_the_same_length() -> None:
+    """A block near the end wraps around instead of coming up short.
+
+    Sampling a shorter final block at the same rate as a full one would shift
+    the resampled mean, so the block that starts at the last row continues at
+    the first.
+    """
+    assert circular_block([0.0, 0.0, 1.0], 2, 2) == [1.0, 0.0], "wraps around"
+    assert circular_block([1.0, 2.0, 3.0], 0, 3) == [1.0, 2.0, 3.0], "whole series"
+
+
+def test_a_single_block_is_reported_as_such() -> None:
+    """A series shorter than one block cannot show sampling variability."""
+    interval = block_bootstrap([0.04] * 30, config=predict_config(block_size=200))
+
+    assert interval is not None, "30 rows still give an interval"
+    assert interval.blocks == 1, "one block, so no width to report"
+    assert interval.low == interval.high == pytest.approx(0.04), "degenerate"
 
 
 def test_a_seeded_bootstrap_repeats_itself() -> None:
@@ -102,6 +123,7 @@ def test_the_interval_shape_is_stable() -> None:
         "high",
         "resamples",
         "block_size",
+        "blocks",
         "rows",
     }, "stable keys"
 
