@@ -121,10 +121,12 @@ batches back. The report counts the labels withheld that way as
 `embargoed_rows`, and the final batch's labels, which no prediction follows, as
 `unapplied_rows`. A row's age and load are measured at the request's admission
 when the source recorded that time, and at the label time otherwise; only
-eligible hit/miss labels known at that moment contribute, so a completion
-labelled after the admission is not counted as load the decision could have
-seen, and an unknown outcome never becomes history. The tuning/held-out split
-is made at a label time, so every row sharing a timestamp stays in one phase.
+eligible hit/miss labels that arrived strictly before that moment contribute,
+so a completion labelled after the admission is not counted as load the
+decision could have seen, a label landing at the very instant of measurement is
+excluded, and an unknown outcome never becomes history. The tuning/held-out
+split is made at a label time, so every row sharing a timestamp stays in one
+phase.
 The commit named in the report is read from the repository that holds the
 benchmark module, and only when that repository tracks the module's own path;
 an installed copy therefore reports `unknown` rather than borrowing its host

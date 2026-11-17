@@ -3,10 +3,12 @@
 The benchmark orders events by the moment their label became known. Features
 are measured at the moment a request was admitted, when the source recorded
 that time, and at the label time otherwise; only eligible hit/miss labels that
-were already known at that moment can contribute. An unknown outcome is a
-record with no usable label, so it neither counts as load nor sets an age. The
-feature set therefore describes what an admission decision could have seen,
-and never a label that had not yet arrived.
+had already arrived before that moment can contribute, so a label landing at
+the very instant of measurement is no more visible here than it is to the
+embargoed replay. An unknown outcome is a record with no usable label, so it
+neither counts as load nor sets an age. The feature set therefore describes
+what an admission decision could have seen, and never a label that had not yet
+arrived.
 """
 
 import bisect
@@ -99,8 +101,8 @@ class Features:
     observed_at : datetime
         The prediction time, equal to the label-availability time.
     age_seconds : float | None
-        Seconds since this identity's previous eligible label, counted from the
-        moment the row is measured, or None when no earlier label was known
+        Seconds since this identity's previous eligible label strictly before
+        the moment the row is measured, or None when no earlier label was known
         then.
     load : int
         Previously labelled events inside the trailing load window, excluding
@@ -234,14 +236,19 @@ def _measurement_moment(event: Event) -> dt.datetime:
 def _last_label_before(
     times: cabc.Sequence[dt.datetime], moment: dt.datetime
 ) -> dt.datetime | None:
-    """Return the latest label time at or before ``moment``, if any.
+    """Return the latest label time strictly before ``moment``, if any.
+
+    A label whose time equals the measurement moment is not an earlier label:
+    it may belong to a row of the same batch, whose labels are still embargoed
+    when the row is predicted. Load is counted over the same half-open range,
+    so an age and a load never disagree about a tied instant.
 
     Returns
     -------
     datetime | None
         The latest known label time, or None when none is early enough.
     """
-    index = bisect.bisect_right(times, moment) - 1
+    index = bisect.bisect_left(times, moment) - 1
     return None if index < 0 else times[index]
 
 

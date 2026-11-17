@@ -185,6 +185,17 @@ def test_age_ignores_a_previous_build_still_running_at_admission() -> None:
     assert rows[2].load == 1, "only the first label is in the window"
 
 
+def test_a_label_arriving_at_the_measurement_moment_sets_no_age() -> None:
+    """A tied label belongs to the row's own batch, so it is still embargoed."""
+    rows = features(
+        (_labelled(10, "hit"), _labelled(10, "miss")),
+        load_window_seconds=60.0,
+    )
+
+    assert [row.age_seconds for row in rows] == [None, None], "no earlier label"
+    assert [row.load for row in rows] == [0, 0], "age and load agree on the tie"
+
+
 def test_load_counts_only_events_strictly_before_the_label_time() -> None:
     """The trailing window is half-open, so a tied time is not load."""
     rows = features(
