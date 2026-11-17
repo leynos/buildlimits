@@ -11,7 +11,7 @@ import sys
 import typing as typ
 from pathlib import Path
 
-from buildlimits.predict.config import load_config
+from buildlimits.predict.config import CONFIG_PATH, load_config
 from buildlimits.predict.evaluation import evaluate
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.latency import render_timings
@@ -81,10 +81,10 @@ def main(
         return 2
     for label, source in (
         ("snapshot", options.snapshot),
-        ("config", options.config),
+        # The packaged parameters are an input even when the option is absent,
+        # so they are protected exactly as an explicit file would be.
+        ("config", CONFIG_PATH if options.config is None else options.config),
     ):
-        if source is None:
-            continue
         collision = _input_collision(source, options.output)
         if collision is not None:
             print(

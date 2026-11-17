@@ -13,6 +13,7 @@ from predict_test_helpers import (
 )
 
 from buildlimits.predict import benchmark_cli
+from buildlimits.predict.config import CONFIG_PATH
 
 
 def _run_admitted_benchmark(tmp_path: Path, output: Path, count: int) -> int:
@@ -136,6 +137,35 @@ def test_benchmark_refuses_an_output_that_would_replace_the_snapshot(
         "the refusal names the reason"
     )
     assert snapshot.read_bytes() == before, "the snapshot is untouched"
+
+
+def test_benchmark_refuses_an_output_that_would_replace_the_packaged_config(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The default parameters are an input even when no option names them.
+
+    A report file linked to the packaged ``config.json`` would otherwise
+    replace it, and every later run that takes the defaults would fail to
+    load its parameters.
+    """
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "results.md").symlink_to(CONFIG_PATH)
+    before = CONFIG_PATH.read_bytes()
+    snapshot = write_snapshot(tmp_path, 20)
+
+    status = benchmark_cli.main([
+        "--snapshot",
+        str(snapshot),
+        "--output",
+        str(output),
+    ])
+
+    assert status == 2, "a destructive output path is a usage failure"
+    assert "must not overwrite the config being read" in capsys.readouterr().err, (
+        "the refusal names the defaulted input"
+    )
+    assert CONFIG_PATH.read_bytes() == before, "the packaged parameters are intact"
 
 
 def test_benchmark_refuses_report_files_that_alias_each_other(
