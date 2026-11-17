@@ -362,3 +362,19 @@ def test_ablation_restarts_each_ensemble_from_its_starting_weights() -> None:
             assert ablations[mode][component].initial_weights == pytest.approx(
                 expected
             ), f"{mode} without {component} restarted from its starting weights"
+
+
+def test_an_ablation_answers_differently_when_the_component_matters() -> None:
+    """Dropping a component changes the consensus, not just its bookkeeping."""
+    config = predict_config()
+    walk = walk_forward(
+        drift(count=600, first_rate=0.9, second_rate=0.1, seed=5), config
+    )
+    ensembles = run_ensembles(walk, config)
+    ablations = run_ablations(walk, config, ensembles)
+
+    full = ensembles["ensemble-equal"].probabilities
+    without = ablations["equal"][walk.components()[0]].probabilities
+
+    assert len(without) == len(full), "the same events are answered"
+    assert without != full, "the dropped component moved at least one answer"

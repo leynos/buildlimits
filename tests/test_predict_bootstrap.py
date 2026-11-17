@@ -28,6 +28,12 @@ def _row(probability: float | None, outcome: int) -> ScoredRow:
     )
 
 
+def test_pairing_refuses_sequences_of_different_lengths() -> None:
+    """A difference is only meaningful when both sides answered the same events."""
+    with pytest.raises(ValueError, match="shorter"):
+        paired_differences([_row(0.5, 1)], [])
+
+
 def test_no_rows_give_no_interval() -> None:
     """A comparison with nothing to pair reports no interval at all."""
     assert block_bootstrap([], config=predict_config()) is None, "no rows, no interval"
