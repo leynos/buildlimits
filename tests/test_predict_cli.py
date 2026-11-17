@@ -1,5 +1,7 @@
 """End-to-end contracts for the benchmark command."""
 
+import dataclasses as dc
+import datetime as dt
 import json
 import typing as typ
 from pathlib import Path
@@ -9,10 +11,15 @@ from predict_test_helpers import (
     benchmark_argv,
     write_admitted_snapshot,
     write_fast_config,
+    write_json,
     write_snapshot,
 )
 
 from buildlimits.predict import benchmark_cli
+from buildlimits.predict.config import load_config
+from buildlimits.predict.dataset import Snapshot, Source
+from buildlimits.predict.events import EPOCH, Event
+from buildlimits.predict.snapshot_store import save_snapshot
 
 
 def _results(output: Path) -> tuple[dict[str, typ.Any], str]:
@@ -266,3 +273,160 @@ def test_the_rendered_row_repeats_the_published_base_rate(
     assert f"| {heldout['brier']:.4f} " in row, "the Brier is the published value"
     assert f"| {heldout['coverage']:.1%} " in row, "the coverage is the published share"
     assert f"| {heldout['scored']} " in row, "the answered-row count matches"
+
+
+IDENTITY_A = "a" * 64
+IDENTITY_B = "b" * 64
+
+
+def _hand_events() -> tuple[Event, ...]:
+    """Return four events whose released history is small enough to compute.
+
+    Each event is admitted ten seconds before its own label, so a label is
+    released strictly before the next admission. Identity A repeats, giving the
+    last-outcome predictor a previous label to repeat, while identity B is seen
+    once and makes it abstain.
+
+    Returns
+    -------
+    tuple[Event, ...]
+        The four events, in admission order.
+    """
+
+    def stamp(seconds: int) -> dt.datetime:
+        """Return the epoch plus ``seconds``."""
+        return EPOCH + dt.timedelta(seconds=seconds)
+
+    return (
+        Event(IDENTITY_A, "git", stamp(0), stamp(10), "hit", 1.0),
+        Event(IDENTITY_A, "git", stamp(20), stamp(30), "miss", 1.0),
+        Event(IDENTITY_B, "git", stamp(40), stamp(50), "hit", 1.0),
+        Event(IDENTITY_A, "git", stamp(60), stamp(70), "miss", 1.0),
+    )
+
+
+def _write_hand_snapshot(root: Path) -> Path:
+    """Write the four-event history as a snapshot the command can read.
+
+    Returns
+    -------
+    Path
+        The snapshot's path.
+    """
+    path = root / "hand.jsonl"
+    save_snapshot(
+        path,
+        Snapshot(
+            created_at=EPOCH + dt.timedelta(days=7),
+            source=Source("hand", EPOCH + dt.timedelta(days=7), 4, 4, 0),
+            journal={"available": False, "reason": "journal query skipped"},
+            events=_hand_events(),
+            gaps=(),
+        ),
+    )
+    return path
+
+
+def _write_hand_config(root: Path) -> Path:
+    """Write parameters that make every row a held-out prediction.
+
+    Returns
+    -------
+    Path
+        The parameter file's path.
+    """
+    config = dc.replace(
+        load_config(),
+        train_fraction=0.0,
+        cold_start=0.5,
+        calibration_bins=10,
+        block_size=2,
+        bootstrap_resamples=200,
+        minimum_labelled_events=1,
+        minimum_scored_events=1,
+    )
+    return write_json(root / "hand-config.json", config.as_dict())
+
+
+@pytest.fixture(scope="module")
+def hand_computed_run(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[dict[str, typ.Any], str]:
+    """Run the benchmark over the four-event history once.
+
+    A train fraction of zero puts every row in the held-out period, so the
+    released history at each admission, and therefore every expected value,
+    stays small enough to work out without the harness.
+
+    Returns
+    -------
+    tuple[dict[str, object], str]
+        The parsed results document and the rendered Markdown.
+    """
+    root = tmp_path_factory.mktemp("hand")
+    output = root / "out"
+    status = benchmark_cli.main(
+        benchmark_argv(_write_hand_snapshot(root), output, _write_hand_config(root))
+    )
+    assert status == 0, "the hand-built run completes"
+    return _results(output)
+
+
+def test_a_held_out_brier_matches_the_hand_computed_value(
+    hand_computed_run: tuple[dict[str, typ.Any], str],
+) -> None:
+    """The base rate's held-out Brier is the mean of four known squared errors.
+
+    Its answer is 0.5 before any label, then 1.0, 0.5 and two thirds as the
+    released labels accumulate; the outcomes are hit, miss, hit, miss.
+    """
+    document, _ = hand_computed_run
+    heldout = document["predictors"]["base-rate"]["held-out"]
+
+    expected = ((0.5 - 1) ** 2 + (1.0 - 0) ** 2 + (0.5 - 1) ** 2 + (2 / 3 - 0) ** 2) / 4
+    assert heldout["scored"] == 4, "all four rows were answered"
+    assert heldout["brier"] == pytest.approx(expected), "the hand-computed mean"
+
+
+def test_a_calibration_bin_matches_the_hand_computed_counts(
+    hand_computed_run: tuple[dict[str, typ.Any], str],
+) -> None:
+    """Ten bins hold the four answers exactly where their probabilities fall."""
+    document, _ = hand_computed_run
+    heldout = document["predictors"]["base-rate"]["held-out"]
+    bins = heldout["calibration"]
+
+    assert len(bins) == 10, "the configured bin count is reported"
+    assert bins[5]["count"] == 2, "both answers at 0.5 share the bin"
+    assert bins[5]["observed_rate"] == pytest.approx(1.0), "and both were hits"
+    assert bins[6]["count"] == 1, "two thirds lands in the next bin"
+    assert bins[6]["observed_rate"] == pytest.approx(0.0), "and was a miss"
+    assert bins[9]["count"] == 1, "a certain answer lands in the last bin"
+    assert bins[9]["observed_rate"] == pytest.approx(0.0), "and was wrong"
+    assert sum(bin_["count"] for bin_ in bins) == heldout["scored"], (
+        "the bins partition every answered row"
+    )
+
+
+def test_a_comparison_interval_matches_the_hand_computed_pairing(
+    hand_computed_run: tuple[dict[str, typ.Any], str],
+) -> None:
+    """Last-outcome abstains on first sightings, leaving two paired rows.
+
+    It answers one at the first paired row, matching the base rate, and zero
+    at the second, where the base rate answered two thirds. The mean
+    difference is therefore -2/9 over two answered positions in two blocks of
+    two, across four stream positions.
+    """
+    document, _ = hand_computed_run
+    interval = document["predictors"]["last-outcome"]["against_base_rate"]
+
+    assert interval is not None, "the abstentions still leave paired rows"
+    assert interval["difference"] == pytest.approx(-2 / 9), "the hand-computed mean"
+    assert interval["rows"] == 2, "two positions were paired"
+    assert interval["positions"] == 4, "the span keeps every stream position"
+    assert interval["block_size"] == 2, "the configured block size"
+    assert interval["blocks"] == 2, "each block holds one answered position"
+    assert interval["low"] <= interval["difference"] <= interval["high"], (
+        "the interval brackets the observed difference"
+    )

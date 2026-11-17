@@ -130,6 +130,34 @@ def test_summary_averages_the_answered_rows_only() -> None:
     assert metrics.accuracy == pytest.approx(0.5), "one of the two decisions matched"
 
 
+def test_summary_reports_the_mean_clipped_log_loss() -> None:
+    """The mean log loss is the average of the per-row clipped losses.
+
+    Each probability is the predicted chance of a hit, so a hit scores
+    ``-log(p)`` and a miss scores ``-log(1 - p)``. The mean over the three
+    answered rows is computed here from those values rather than restating the
+    implementation.
+    """
+    rows = [_row(0.75, 1), _row(0.25, 0), _row(0.5, 1)]
+
+    metrics = summarize(rows, clip=1e-6, threshold=0.5, bins=5)
+
+    expected = (-math.log(0.75) - math.log(0.75) - math.log(0.5)) / 3
+    assert metrics.log_loss == pytest.approx(expected), "mean of the row losses"
+
+
+def test_the_clip_changes_a_certain_wrong_answer() -> None:
+    """A zero probability for the observed outcome is clipped, not infinite.
+
+    The row predicts a certain hit and the event missed, so an unclipped
+    logarithm would be infinite. The clip sets the loss to ``-log(clip)``, and
+    the mean over one answered row is that same value.
+    """
+    metrics = summarize([_row(0.0, 1)], clip=0.01, threshold=0.5, bins=5)
+
+    assert metrics.log_loss == pytest.approx(-math.log(0.01)), "the clip bounds it"
+
+
 @given(
     st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
     st.integers(min_value=1, max_value=20),
