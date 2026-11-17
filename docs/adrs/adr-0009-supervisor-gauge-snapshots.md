@@ -131,9 +131,17 @@ about 840 `gauges` records per hour.
 ### D3: peak sampling points
 
 Update `queued_peak` and `held_peak` at every point where the supervisor
-already samples behaviour: each wrapped metric emission, the observation that
-replaces `request_queued`, and every tick. This samples at the same points the
-old report used, so the maxima match current behaviour without adding records.
+already samples behaviour: each wrapped metric emission, the observation taken
+before an admission effect runs, and every tick. This samples at the same
+points the old report used, so the maxima match current behaviour without
+adding records.
+
+The admission effect boundary is the important one. A token removes a request
+from the queue and the effect it produces then places the group, which blocks
+on the systemd scope call. Folding the depth at the boundary, before any
+handler runs, keeps the open interval from integrating a depth that has already
+changed for as long as placement takes. Folding afterwards biases the queue
+mean upwards by the placement latency.
 
 ### D4: producer-side integration
 
@@ -144,9 +152,11 @@ to the current values. A failed emission leaves them in place so the next
 interval merges both. The reader computes
 `sum(queued_seconds) / sum(interval_seconds)` over `gauges` records that carry
 both fields and a positive interval, rounded to three decimals. It computes
-`gauge_coverage_seconds` as the sum of every present `interval_seconds`. A
-record whose interval starts before the lookback counts wholly, because the
-reader has no absolute window edges.
+`gauge_coverage_seconds` as the sum of every present `interval_seconds`. That
+sum includes intervals with no integral, which contribute nothing to the mean,
+so it is not by itself the coverage of the mean and the report documentation
+says so. A record whose interval starts before the lookback counts wholly,
+because the reader has no absolute window edges.
 
 ### D5: explicit gauges on rare events
 
@@ -171,6 +181,12 @@ workload and adds at most 840 `gauges` records. Against supervisor-unit
 structured records at the same workload, measured after #55, the reduction is
 about 33%. Against the 277,233 total records measured for the ticket, the
 removal is 12.7% and `gauges` adds back at most 0.3 percentage points.
+
+The measured test compares the two producers over one workload: the per-request
+record count of the legacy producer, including the enqueue records it wrote,
+against the new count, which excludes them and adds the snapshots. That is the
+same subtraction as the busy-hour figures above, and the busy-hour replay keeps
+the 13% floor a lower bound rather than a fitted result.
 
 ### D8: reader-before-writer ordering
 
@@ -198,10 +214,15 @@ read by an old reader shows only the gauge samples on transition events.
 ## Migration plan
 
 1. Release the reader change: schema registration, report aggregation and
-   documentation. It is independently shippable and changes no producer.
-2. Upgrade every journal reader on the host.
-3. Release and restart the supervisor that emits `gauges` and stops writing
-   `request_queued`.
+   documentation. It changes no producer, but buildlimits ships as one
+   distribution, so there is no separate installable reader-only artefact.
+2. Upgrade every journal reader on the host before the supervisor restarts.
+   Stage the release into its own `UV_TOOL_DIR` and `UV_TOOL_BIN_DIR` so the new
+   `build-limits-metrics` can be verified against the live legacy journal
+   while the running supervisor and the active installation keep the old build.
+   The migration guide carries the commands and the expected legacy-only report.
+3. Install the release into the active installation and restart the supervisor
+   that emits `gauges` and stops writing `request_queued`.
 4. Confirm the report's `queue_time_weighted_mean` and
    `gauge_coverage_seconds` appear for new windows, and that maxima still match
    the previous behaviour.

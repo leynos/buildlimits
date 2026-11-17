@@ -609,6 +609,14 @@ can assert it. A failed emission keeps its peaks and integral and defers the
 next attempt by the minimum spacing, so a lost record costs one interval rather
 than the measurements in it.
 
+`Supervisor._apply` folds a sample before it runs any effect handler. Admission
+has already applied the transition an effect describes, and a `Launch` handler
+blocks in the systemd scope call, so a later fold would integrate the old queue
+depth for the length of that call. A new effect handler that can block on
+external work therefore inherits the correct ordering rather than needing to
+sample for itself. `tests/test_supervisor_gauge_timing.py` pins the behaviour
+with a placement that advances a fixed clock.
+
 Gauge readers must be deployed before gauge writers. `metrics_query` accepts
 `gauges` and the fields it carries in this release, while an older reader
 treats the event as unknown and drops it.

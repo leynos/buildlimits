@@ -35,24 +35,41 @@ no new release writes it.
 
 ## Upgrade steps
 
-1. Install the release that contains the reader change. It registers `gauges`,
-   reads both old and new records, and still writes the old format. Upgrade
-   every journal reader on the host before the supervisor that emits the new
-   event.
+1. Install the release that contains the reader change. It registers `gauges`
+   and reads both old and new records. Upgrade every journal reader on the host
+   before the supervisor that emits the new event.
 
-2. Verify the reader release against the existing journal:
+   buildlimits ships one distribution, so there is no separate reader-only
+   package: installing the new release on the host also places the new
+   supervisor executable. Stage it into its own tool directory first. That
+   leaves both the active installation and the running supervisor untouched,
+   while a new reader becomes available to check the live journal:
 
    ```bash
-   build-limits-metrics --since 1h
+   UV_TOOL_DIR="$HOME/.local/share/buildlimits-staging/tool" \
+   UV_TOOL_BIN_DIR="$HOME/.local/share/buildlimits-staging/bin" \
+   uv tool install --python 3.14 git+https://github.com/leynos/buildlimits
+   ```
+
+   The tool-directory variables are read only for that command, so the install
+   under `~/.local/share/buildlimits-staging` does not become the active
+   `build-limits-supervisor` or `build-limits-metrics`. Remove the directory
+   once the upgrade is complete.
+
+2. Verify the staged reader against the existing journal:
+
+   ```bash
+   "$HOME/.local/share/buildlimits-staging/bin/build-limits-metrics" --since 1h
    ```
 
    Existing windows keep their maxima. `queue_time_weighted_mean` and
    `gauge_coverage_seconds` are `null` for a legacy-only window, because no
    record carries a producer-side interval yet. That is the expected result,
-   not a failure.
+   not a failure, and proves the new reader accepted the old format before the
+   supervisor writes anything new.
 
-3. Install the release that emits `gauges` and restart the supervisor
-   gracefully:
+3. Install the release that emits `gauges` into the active installation and
+   restart the supervisor gracefully:
 
    ```bash
    build-limits-status
@@ -80,9 +97,13 @@ A window that spans the upgrade contains legacy enriched records and new
 - `queue_time_weighted_mean` uses only `gauges` records that carry both integral
   fields and a positive interval. Journal timestamps are never used for
   weighting.
-- `gauge_coverage_seconds` sums the intervals the snapshots actually cover. A
-  low coverage next to a long window means records were lost or the supervisor
-  restarted, not that the queue was empty.
+- `gauge_coverage_seconds` sums the intervals the snapshots actually cover,
+  including intervals that carry no queue integral because a depth read failed.
+  Those intervals do not contribute to the mean, so the figure describes what
+  the snapshots span rather than what the mean measured. Do not use it alone as
+  the measured coverage of `queue_time_weighted_mean`. A low coverage next to a
+  long window means records were lost or the supervisor restarted, not that the
+  queue was empty.
 - `queue_sample_mean` is deprecated. It keeps the old arithmetic formula over
   non-`gauges` records for one release, so an existing reader keeps its named
   value while it migrates.

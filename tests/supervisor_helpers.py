@@ -7,17 +7,25 @@ ends. The substitution is identical in every case, so it lives here rather
 than being copied between the modules.
 """
 
+import contextlib
+import dataclasses as dc
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - tests script the manager's argv, never a shell.
 import typing as typ
 
 import pytest
+from cache_unit_fake import FakeClock
+from conftest import RecordingSink
+from pool_helpers import attach_pool
 
 from buildlimits.config import SupervisorConfig
-from buildlimits.supervisor import Supervisor
+from buildlimits.metrics import Metrics
+from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 from buildlimits.systemd import UserManager
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+
+    from pool_helpers import FakePool
 
 
 def _empty_runner(argv: cabc.Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -34,6 +42,53 @@ def _empty_runner(argv: cabc.Sequence[str]) -> subprocess.CompletedProcess[str]:
         A successful run with empty standard output and error.
     """
     return subprocess.CompletedProcess(argv, 0, "", "")
+
+
+@dc.dataclass(slots=True)
+class OneSlotScenario:
+    """A one-slot supervisor with a hand-held clock, a pool and a sink.
+
+    Attributes
+    ----------
+    supervisor : Supervisor
+        Supervisor whose effects the test drives directly.
+    sink : RecordingSink
+        Records the supervisor has published so far.
+    clock : FakeClock
+        The instant the scenario has reached; write ``clock.time`` to move it.
+    pool : FakePool
+        Scripted token pool the supervisor reads.
+    """
+
+    supervisor: Supervisor
+    sink: RecordingSink
+    clock: FakeClock
+    pool: FakePool
+
+
+@contextlib.contextmanager
+def one_slot_supervisor() -> cabc.Generator[OneSlotScenario]:
+    """Yield a fixed-clock one-slot supervisor and its collaborators.
+
+    The supervisor is configured for the detached cache path, so no managed
+    server is touched, and its selector is closed when the block ends.
+
+    Yields
+    ------
+    OneSlotScenario
+        The scenario a volume or pressure test drives.
+    """
+    clock = FakeClock()
+    sink = RecordingSink()
+    instance = Supervisor(
+        SupervisorConfig(cache_mode="direct", slots=1),
+        clock=lambda: clock.time,
+        telemetry=SupervisorTelemetry(metrics=Metrics(sink)),
+    )
+    pool = attach_pool(instance)
+    with contextlib.ExitStack() as owned:
+        owned.callback(instance.selector.close)
+        yield OneSlotScenario(instance, sink, clock, pool)
 
 
 @pytest.fixture

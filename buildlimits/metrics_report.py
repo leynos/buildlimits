@@ -268,7 +268,9 @@ def _time_weighted_queue(
     tuple[float | None, float | None]
         The rounded time-weighted mean, or ``None`` when no snapshot qualifies,
         and the summed coverage of every snapshot interval, or ``None`` when no
-        snapshot carries an interval at all.
+        snapshot carries an interval at all. Coverage includes intervals with
+        no integral, which the mean skips, so it does not measure how much of
+        the window the mean covers.
     """
     intervals = present_samples(snapshots, "interval_seconds")
     coverage = round(sum(intervals), 3) if intervals else None

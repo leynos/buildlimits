@@ -272,10 +272,6 @@ class Supervisor:
             effects = self.admission.submit(
                 entry.request_id, cacheable=entry.request.cacheable
             )
-            if entry.request_id in self.admission.queue:
-                # The queue depth a ``request_queued`` record used to carry is
-                # folded into the periodic snapshot instead of a record.
-                supervisor_observability.observe(self, self.clock())
             self._apply(effects)
 
     def _failed_replies(self) -> None:
@@ -365,6 +361,10 @@ class Supervisor:
 
     def _apply(self, effects: list[Effect]) -> None:
         """Carry out admission effects in order."""
+        if effects:
+            # Admission already applied the transition, and ``Launch`` blocks
+            # in the scope call, so fold the new depth before the handlers run.
+            supervisor_observability.observe(self, self.clock())
         for effect in effects:
             self._effect_handlers[type(effect)](effect)
 

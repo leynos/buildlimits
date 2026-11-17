@@ -54,11 +54,15 @@ class FakeGroups:
         The reading the guard keeps, so a test can assert what a launch saw.
     running : dict[str, object]
         The groups whose scopes admission holds, as the guard's coverage.
+    on_place : Callable[[], None]
+        Run at the point the real registry blocks on the systemd scope call,
+        so a test can model time passing while placement is in progress.
     """
 
     order: list[str]
     placed: object | None
     terminate: cabc.Callable[[str], None] = dc.field(default=lambda _group_id: None)
+    on_place: cabc.Callable[[], None] = dc.field(default=lambda: None)
     settings: SupervisorConfig = dc.field(default_factory=SupervisorConfig)
     backend: CacheBackend = dc.field(
         default_factory=lambda: ManagedSccache("x.service", Path("/x.sock"))
@@ -87,6 +91,8 @@ class FakeGroups:
             The scripted placement result.
         """
         del cached
+        # The real registry blocks here while systemd creates the scope.
+        self.on_place()
         if self.placed is not None:
             entry.group_id = group_id
         return self.placed

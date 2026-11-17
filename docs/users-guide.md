@@ -1062,18 +1062,25 @@ interval began before the window counts in full and the reported coverage can
 exceed the window's length. A snapshot whose queue depth could not be read
 throughout its interval carries no integral: it still counts towards the
 coverage but not towards the mean, so an unread gap cannot pull the average
-down. The maximum queue and held depths take the largest value seen in either
-shape, so a window that spans the upgrade keeps describing what an operator saw
-before it. `queue_sample_mean` remains for compatibility and is computed only
-from records that still carry a per-record sample, such as the rare transition
+down. The coverage figure therefore measures the intervals the snapshots
+describe, not the share of them that fed the mean: do not read
+`gauge_coverage_seconds` alone as the measured coverage of
+`queue_time_weighted_mean`, because intervals without an integral inflate it.
+The maximum queue and held depths take the largest value seen in either shape,
+so a window that spans the upgrade keeps describing what an operator saw before
+it. `queue_sample_mean` remains for compatibility and is computed only from
+records that still carry a per-record sample, such as the rare transition
 records that keep explicit gauges. An ordinary new-format window therefore
 reports `null` there, and the time-weighted mean is the figure to read.
 
 Deploy the new reader before the new supervisor: an older reader treats
-`gauges` as an unknown event and drops it. `request_queued` is still accepted
-when reading, so old history remains readable, but the supervisor no longer
-writes it. [Migrating to gauge snapshots](migrating-to-gauge-snapshots.md)
-gives the upgrade order and the measured volume change, and
+`gauges` as an unknown event and drops it. The migration guide stages the new
+release in its own tool directory, so its reader can be checked against the
+live journal without restarting or replacing the running supervisor.
+`request_queued` is still accepted when reading, so old history remains
+readable, but the supervisor no longer writes it.
+[Migrating to gauge snapshots](migrating-to-gauge-snapshots.md) gives the
+upgrade order and the measured volume change, and
 [ADR 009](adrs/adr-0009-supervisor-gauge-snapshots.md) records the decision.
 
 ### Routine journal lines
