@@ -188,6 +188,38 @@ def test_an_interval_carries_its_provenance() -> None:
     assert interval.difference == pytest.approx(0.02), "observed difference"
 
 
+def test_only_windows_holding_an_answer_count_as_evidence() -> None:
+    """Empty windows keep their positions but cannot supply a second block.
+
+    A hundred answered positions followed by nine hundred unanswered ones span
+    ten windows of one hundred. Only the first holds a paired difference, so a
+    guard that counted every window would read one block of evidence as ten.
+    """
+    differences: list[float | None] = [-0.1] * 100 + [None] * 900
+
+    interval = block_bootstrap(
+        differences, config=predict_config(block_size=100, bootstrap_resamples=50)
+    )
+
+    assert interval is not None, "the answered positions give an interval"
+    assert interval.rows == 100, "a hundred positions were answered"
+    assert interval.positions == 1000, "over a thousand stream positions"
+    assert interval.blocks == 1, "only one window holds paired evidence"
+
+
+def test_two_windows_of_evidence_still_count_as_two_blocks() -> None:
+    """A gap between two answered windows leaves two blocks to draw from."""
+    differences: list[float | None] = [-0.1] * 100 + [None] * 100 + [-0.1] * 100
+
+    interval = block_bootstrap(
+        differences, config=predict_config(block_size=100, bootstrap_resamples=50)
+    )
+
+    assert interval is not None, "the answered positions give an interval"
+    assert interval.rows == 200, "two hundred positions were answered"
+    assert interval.blocks == 2, "the empty window in between is not counted"
+
+
 def test_the_percentile_brackets_the_observed_mean() -> None:
     """A varying series keeps its observed mean inside the reported interval."""
     differences = [0.1, -0.05, 0.2, -0.1, 0.0, 0.15, -0.2, 0.05] * 4

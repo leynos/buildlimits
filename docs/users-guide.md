@@ -279,11 +279,16 @@ A snapshot with fewer than 2,000 labelled events produces the status
 `insufficient data`, with the counts that were seen. A snapshot that holds no
 usable admission time produces `insufficient admission times` instead: its
 records cannot show what was knowable before each decision, so no prediction is
-reported. The report never pads the history with synthetic rows to reach a
-threshold, and a negative comparison is printed as found rather than explained
-away. Both commands exit with status 0 on success, 1 when the snapshot or store
-cannot be read or the output cannot be written, and 2 on invalid usage or an
-unreadable configuration.
+reported. A snapshot that carries admission times is also refused when its
+recorded observation times run backwards, because the store stamps each record
+when it appends it: a later position with an earlier stamp means the clock
+stepped back, and the recorded times can no longer order real moments. The
+history is then reported as unreadable rather than scored. The report never
+pads the history with synthetic rows to reach a threshold, and a negative
+comparison is printed as found rather than explained away. Both commands exit
+with status 0 on success, 1 when the snapshot or store cannot be read or the
+output cannot be written, and 2 on invalid usage or an unreadable
+configuration.
 
 ### Adapter environment
 

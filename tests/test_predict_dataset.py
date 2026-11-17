@@ -221,26 +221,61 @@ def test_journal_counts_name_their_join_limitation() -> None:
     ), "the join limit is stated, not guessed around"
 
 
+def _restarts(*records: Record) -> dict[str, object]:
+    """Return the restart block a journal window of these records reports.
+
+    Returns
+    -------
+    dict[str, object]
+        The restart block the note carries.
+    """
+    window = Window(records=records, seconds=86400, truncated=False)
+    note = count_journal(query=lambda **_options: window)
+    return typ.cast("dict[str, object]", note["restarts"])
+
+
 def test_journal_supervisor_starts_are_reported_as_restarts() -> None:
     """A restart the journal witnessed is reported by its first and last time."""
     first = OBSERVED_AT
     last = OBSERVED_AT + dt.timedelta(hours=6)
-    window = Window(
-        records=(
-            Record("supervisor", "supervisor_started", {}, first),
-            Record("adapter", "adapter_finished", {}, first),
-            Record("supervisor", "supervisor_started", {}, last),
-        ),
-        seconds=86400,
-        truncated=False,
+    restarts = _restarts(
+        Record("supervisor", "supervisor_started", {}, first),
+        Record("adapter", "adapter_finished", {}, first),
+        Record("supervisor", "supervisor_started", {}, last),
     )
 
-    note = count_journal(query=lambda **_options: window)
-
-    restarts = typ.cast("dict[str, object]", note["restarts"])
     assert restarts["count"] == 2, "both starts are counted"
     assert restarts["first"] == utc_text(first), "the earliest start is named"
     assert restarts["last"] == utc_text(last), "and the latest"
+
+
+def test_an_undated_supervisor_start_still_counts_as_a_restart() -> None:
+    """A start the journal saw without a time is counted but cannot bound a range.
+
+    The count says how often the supervisor restarted; naming the dated start
+    as both bounds would claim the undated one happened at that moment.
+    """
+    dated = OBSERVED_AT + dt.timedelta(hours=1)
+    restarts = _restarts(
+        Record("supervisor", "supervisor_started", {}, None),
+        Record("supervisor", "supervisor_started", {}, dated),
+    )
+
+    assert restarts["count"] == 2, "both starts are counted"
+    assert restarts["first"] == utc_text(dated), "the dated start is the earliest"
+    assert restarts["last"] == utc_text(dated), "and the latest"
+
+
+def test_undated_supervisor_starts_leave_the_bounds_unavailable() -> None:
+    """Starts that carry no time are counted without invented bounds."""
+    restarts = _restarts(
+        Record("supervisor", "supervisor_started", {}, None),
+        Record("supervisor", "supervisor_started", {}, None),
+    )
+
+    assert restarts["count"] == 2, "both starts are counted"
+    assert restarts["first"] is None, "no start time is claimed"
+    assert restarts["last"] is None, "for either bound"
 
 
 def test_a_truncated_journal_query_says_the_cap_was_reached() -> None:

@@ -53,20 +53,44 @@ def test_the_routine_line_drop_in_sets_the_switch_the_supervisor_reads() -> None
     assert value == "1", "the example requests the routine lines"
 
 
+def _example_commands(body: str) -> dict[str, tuple[str, ...]]:
+    """Return each command's arguments, keyed by the program that runs them.
+
+    A trailing backslash continues a command on the next line, so the lines are
+    joined before they are split. Reading one command's arguments as a whole is
+    what stops a longer path from satisfying a shorter one's assertion.
+
+    Returns
+    -------
+    dict[str, tuple[str, ...]]
+        The arguments of each command in the example, in the order written.
+    """
+    joined = body.replace("\\\n", " ")
+    commands: dict[str, tuple[str, ...]] = {}
+    for line in joined.splitlines():
+        arguments = tuple(line.split())
+        if arguments:
+            commands[arguments[0]] = arguments[1:]
+    return commands
+
+
 def test_the_predict_example_names_the_default_paths_the_commands_use() -> None:
     """The guide's explicit paths are the defaults the commands would apply.
 
     A change to either default would silently make the published run write
     somewhere other than the paths a reader copies, so the example pins them.
+    Each command is compared as a whole, so the dataset command's longer output
+    path cannot stand in for the benchmark command's shorter one.
     """
-    body = _marked_example(PREDICT_EXAMPLE, "bash")
+    commands = _example_commands(_marked_example(PREDICT_EXAMPLE, "bash"))
 
-    assert f"--output {dataset_cli.DEFAULT_OUTPUT}" in body, (
-        "the dataset example writes the snapshot default"
-    )
-    assert f"--snapshot {benchmark_cli.DEFAULT_SNAPSHOT}" in body, (
-        "the benchmark example reads the snapshot default"
-    )
-    assert f"--output {benchmark_cli.DEFAULT_OUTPUT_DIR}" in body, (
-        "the benchmark example writes the report directory default"
-    )
+    assert commands["build-limits-predict-dataset"] == (
+        "--output",
+        str(dataset_cli.DEFAULT_OUTPUT),
+    ), "the dataset example writes the snapshot default"
+    assert commands["build-limits-predict-benchmark"] == (
+        "--snapshot",
+        str(benchmark_cli.DEFAULT_SNAPSHOT),
+        "--output",
+        str(benchmark_cli.DEFAULT_OUTPUT_DIR),
+    ), "the benchmark example reads the snapshot and writes the report defaults"

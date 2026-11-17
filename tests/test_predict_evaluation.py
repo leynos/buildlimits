@@ -7,10 +7,12 @@ import typing as typ
 import pytest
 from predict_test_helpers import hand_event, predict_config
 
+from buildlimits.predict.bootstrap import block_bootstrap
 from buildlimits.predict.ensemble_runs import tuning_indices
 from buildlimits.predict.evaluation import (
     STATUS_INSUFFICIENT_HELDOUT,
     STATUS_OK,
+    _is_evidence,
     evaluate,
 )
 from buildlimits.predict.events import EPOCH, Event
@@ -139,6 +141,33 @@ def test_the_verdict_needs_more_than_one_block() -> None:
 
     assert result.status == STATUS_INSUFFICIENT_HELDOUT, "one block is not evidence"
     assert result.verdict.startswith("insufficient held-out evidence"), result.verdict
+
+
+def test_a_lone_block_of_evidence_cannot_meet_the_minimum() -> None:
+    """Empty positions keep their place but cannot spread evidence over blocks.
+
+    A hundred answered positions followed by nine hundred unanswered ones form
+    ten windows, yet only the first holds a difference. The row minimum is met,
+    so the block guard is the only thing that can see the difference came from
+    a single stretch of the stream.
+    """
+    config = predict_config(block_size=100, minimum_scored_events=100)
+    interval = block_bootstrap([-0.1] * 100 + [None] * 900, config=config)
+
+    assert interval is not None, "the answered positions give an interval"
+    assert interval.rows >= config.minimum_scored_events, "the row minimum is met"
+    assert not _is_evidence(interval, config), "one evidenced block is not two"
+
+
+def test_evidence_in_two_windows_meets_the_minimum() -> None:
+    """Two answered windows with an empty one between them are two blocks."""
+    config = predict_config(block_size=100, minimum_scored_events=100)
+    interval = block_bootstrap(
+        [-0.1] * 100 + [None] * 100 + [-0.1] * 100, config=config
+    )
+
+    assert interval is not None, "the answered positions give an interval"
+    assert _is_evidence(interval, config), "two blocks carry evidence"
 
 
 def test_one_block_withholds_a_claim_of_improvement() -> None:

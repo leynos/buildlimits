@@ -6,6 +6,7 @@ with the field that is wrong rather than surfacing as a confusing report.
 """
 
 import datetime as dt
+import itertools
 import json
 import math
 import os
@@ -14,7 +15,9 @@ import typing as typ
 from pathlib import Path
 
 from buildlimits.predict.dataset import SNAPSHOT_VERSION, Gap, Snapshot, Source
+from buildlimits.predict.events import Event
 from buildlimits.predict.events import event_from_dict as _event_from_dict
+from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -93,6 +96,7 @@ def load_snapshot(path: Path) -> Snapshot:
         msg = f"{path} must hold a created_at timestamp"
         raise TypeError(msg)
     decoded_events = tuple(_event_from_dict(row) for row in events)
+    _require_ordered_clock(path, decoded_events)
     return Snapshot(
         created_at=_parse_stamp(created),
         source=_source_from(path, typ.cast("dict[str, object]", source)),
@@ -100,6 +104,38 @@ def load_snapshot(path: Path) -> Snapshot:
         events=decoded_events,
         gaps=_gaps_from(path, document.get("stats")),
     )
+
+
+def _require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:
+    """Refuse a history whose recorded clock ran backwards under admissions.
+
+    The store stamps ``observed_at`` when it appends a record, so a later
+    position carrying an earlier stamp means the clock stepped backwards
+    between the two writes. Across such a step the recorded times no longer
+    order real moments: an event admitted later in reality could sort before a
+    label observed earlier in reality, and the schedule would then predict with
+    a label that had not been observed yet. No monotonic sequence is stored
+    beside the times, so the two sides of the step cannot be separated; a
+    history that carries admission times and crosses one is refused rather than
+    scored. A history with no admission times is unaffected, because it is
+    already reported as unpredicted.
+
+    Raises
+    ------
+    ValueError
+        If an admission-bearing history records an earlier observation after a
+        later one.
+    """
+    if not any(event.admitted_at is not None for event in events):
+        return
+    for earlier, later in itertools.pairwise(events):
+        if later.observed_at < earlier.observed_at:
+            msg = (
+                f"{path} records {utc_text(later.observed_at)} after "
+                f"{utc_text(earlier.observed_at)}; admission times cannot order "
+                "a history whose clock ran backwards"
+            )
+            raise ValueError(msg)
 
 
 def _source_from(path: Path, value: cabc.Mapping[str, object]) -> Source:

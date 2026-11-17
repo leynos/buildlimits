@@ -250,11 +250,12 @@ def count_journal(
     stamps = sorted(
         record.timestamp for record in window.records if record.timestamp is not None
     )
-    restarts = sorted(
+    starts = [
         record.timestamp
         for record in window.records
-        if record.event == "supervisor_started" and record.timestamp is not None
-    )
+        if record.event == "supervisor_started"
+    ]
+    dated_starts = sorted(stamp for stamp in starts if stamp is not None)
     return {
         "available": bool(window.records),
         "span": since,
@@ -265,9 +266,9 @@ def count_journal(
         "by_source": dict(sorted(by_source.items())),
         "by_event": dict(sorted(by_event.items())),
         "restarts": {
-            "count": len(restarts),
-            "first": utc_text(restarts[0]) if restarts else None,
-            "last": utc_text(restarts[-1]) if restarts else None,
+            "count": len(starts),
+            "first": utc_text(dated_starts[0]) if dated_starts else None,
+            "last": utc_text(dated_starts[-1]) if dated_starts else None,
         },
         "retention": _retention_note(since, truncated=window.truncated),
         "correlation": _CORRELATION_LIMIT,

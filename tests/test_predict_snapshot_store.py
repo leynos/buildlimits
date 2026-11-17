@@ -16,6 +16,7 @@ from predict_test_helpers import write_json
 
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.dataset import build_snapshot
+from buildlimits.predict.events import EPOCH, Event
 from buildlimits.predict.snapshot_store import load_snapshot
 
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
@@ -180,6 +181,69 @@ def test_an_available_journal_note_survives_loading(tmp_path: Path) -> None:
 
     assert loaded.journal["available"] is True, "availability is read"
     assert loaded.journal["records"] == 12, "the count is read"
+
+
+def _event(identity_byte: str, minutes: int, *, admitted: bool) -> dict[str, object]:
+    """Return one snapshot event at a fixed offset from the epoch.
+
+    Returns
+    -------
+    dict[str, object]
+        The event's encoded shape.
+    """
+    return Event(
+        identity_byte * 64,
+        "git",
+        EPOCH if admitted else None,
+        EPOCH + dt.timedelta(minutes=minutes),
+        "hit",
+        1.0,
+    ).to_dict()
+
+
+def _backward_history(*, admitted: bool) -> dict[str, object]:
+    """Return a snapshot whose second event was observed before the first.
+
+    Returns
+    -------
+    dict[str, object]
+        A two-event document, with admission times when ``admitted`` is set.
+    """
+    document = _document()
+    document["events"] = [
+        _event("b", 10, admitted=admitted),
+        _event("c", 5, admitted=admitted),
+    ]
+    return document
+
+
+def test_an_admission_bearing_history_with_a_backward_clock_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A clock that ran backwards cannot order predictions by recorded time.
+
+    The later store position carries the earlier stamp, so across the step a
+    label observed after a prediction could sort before it. No monotonic
+    sequence is stored to separate the two sides, so the history is refused.
+    """
+    document = _backward_history(admitted=True)
+
+    with pytest.raises(ValueError, match="ran backwards"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_a_history_without_admission_times_may_report_a_backward_clock(
+    tmp_path: Path,
+) -> None:
+    """The step only matters where admission times would order predictions."""
+    document = _backward_history(admitted=False)
+
+    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+    assert len(loaded.events) == 2, "the history is still readable"
+    assert all(event.admitted_at is None for event in loaded.events), (
+        "no admission time can be ordered by the broken clock"
+    )
 
 
 def test_a_document_that_is_not_an_object_is_refused(tmp_path: Path) -> None:

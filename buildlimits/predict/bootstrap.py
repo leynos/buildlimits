@@ -39,8 +39,10 @@ class Interval:
     block_size : int
         Consecutive stream positions per resampled block.
     blocks : int
-        Non-overlapping blocks the series holds; fewer than two means the
-        resampling cannot show any sampling variability.
+        Non-overlapping blocks that hold at least one answered position; fewer
+        than two means the resampling cannot show any sampling variability.
+        Empty blocks keep their positions in the resampling but do not count as
+        independent evidence.
     rows : int
         Positions where both predictors answered and a difference was scored.
     positions : int
@@ -188,9 +190,30 @@ def block_bootstrap(
         high=_percentile(means, 1 - config.bootstrap_alpha / 2),
         resamples=config.bootstrap_resamples,
         block_size=stride,
-        blocks=math.ceil(size / stride),
+        blocks=_evidence_blocks(differences, stride),
         rows=len(observed),
         positions=size,
+    )
+
+
+def _evidence_blocks(differences: cabc.Sequence[float | None], stride: int) -> int:
+    """Return the non-overlapping windows that hold an answered position.
+
+    Every stream position is kept so a resampled block still spans the same
+    moments. The count reported here is narrower: a window of positions with no
+    answered difference carries no evidence to judge, so it must not help an
+    interval reach the minimum-block guard.
+
+    Returns
+    -------
+    int
+        Windows of ``stride`` positions, counted in stream order, that contain
+        at least one answered position.
+    """
+    return sum(
+        1
+        for start in range(0, len(differences), stride)
+        if any(value is not None for value in differences[start : start + stride])
     )
 
 
