@@ -1,32 +1,26 @@
 """Build and redact the versioned cache-outcome history snapshot.
 
 The live store rotates and the journal is capped, so the benchmark never reads
-either directly. :func:`build_snapshot` turns the store's attributed records
-into a stable event stream with the provenance needed to judge how much history
-it really represents; :mod:`buildlimits.predict.snapshot_store` writes and
-reloads that document.
+either directly. :func:`build_snapshot` turns an already-redacted event stream
+into a stable document with the provenance needed to judge how much history it
+really represents. Decoding the store into that stream belongs to
+:mod:`buildlimits.predict.records`, and
+:mod:`buildlimits.predict.snapshot_store` writes and reloads the document, so
+this module holds values and counting rather than readers.
 """
 
 import dataclasses as dc
 import itertools
 import typing as typ
 
-from buildlimits import metrics_query
-from buildlimits.metrics_query import MAX_RECORDS as _MAX_JOURNAL_RECORDS
-from buildlimits.outcome_record_format import OutcomeRecord
 from buildlimits.predict.events import admission_moment
-from buildlimits.predict.records import build_events
-from buildlimits.predict.snapshot_codec import gap_to_dict
-from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
 
-    from buildlimits.outcome_record_format import DecodedStore
     from buildlimits.predict.events import Event
-
-DEFAULT_JOURNAL_SPAN = "4w"
+    from buildlimits.predict.journal_provenance import JournalProvenance
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -74,6 +68,65 @@ class Source:
 
 
 @dc.dataclass(frozen=True, slots=True)
+class StoreHistory:
+    """The event stream a decoded store holds, with its store provenance.
+
+    Attributes
+    ----------
+    events : tuple[Event, ...]
+        Every attributed record, in the order the store appended it.
+    source : Source
+        The header and counts the events were read from.
+    """
+
+    events: tuple[Event, ...]
+    source: Source
+
+
+@dc.dataclass(frozen=True, slots=True)
+class SnapshotStats:
+    """What the snapshot's event stream really represents.
+
+    Attributes
+    ----------
+    events : int
+        Every event in the history.
+    labelled : int
+        Events carrying a hit or miss label.
+    labelled_fraction : float
+        The labelled share of the history, or zero for an empty one.
+    identities : int
+        Distinct compilation identities seen.
+    span_start : datetime | None
+        The earliest observation, or None for an empty history.
+    span_end : datetime | None
+        The latest observation, or None for an empty history.
+    admission_recorded : int
+        Events carrying an admission time.
+    admission_usable : int
+        Events whose admission time is at or before their own label.
+    admission_missing : int
+        Events carrying no admission time at all.
+    admission_unusable : int
+        Events whose recorded admission time is after their label.
+    gaps : tuple[Gap, ...]
+        Silences longer than the configured threshold.
+    """
+
+    events: int
+    labelled: int
+    labelled_fraction: float
+    identities: int
+    span_start: dt.datetime | None
+    span_end: dt.datetime | None
+    admission_recorded: int
+    admission_usable: int
+    admission_missing: int
+    admission_unusable: int
+    gaps: tuple[Gap, ...]
+
+
+@dc.dataclass(frozen=True, slots=True)
 class Snapshot:
     """A redacted event stream in store order, plus its provenance.
 
@@ -83,8 +136,9 @@ class Snapshot:
         When the snapshot was written.
     source : Source
         The store provenance read at the same moment.
-    journal : dict[str, object]
-        What the user journal could offer, or why it offered nothing.
+    journal : JournalProvenance | None
+        What the user journal could offer, why it offered nothing, or None
+        when the snapshot queried no journal.
     events : tuple[Event, ...]
         Every recorded compilation, in the order the store appended it.
     gaps : tuple[Gap, ...]
@@ -93,16 +147,16 @@ class Snapshot:
 
     created_at: dt.datetime
     source: Source
-    journal: dict[str, object]
+    journal: JournalProvenance | None
     events: tuple[Event, ...]
     gaps: tuple[Gap, ...]
 
-    def stats(self) -> dict[str, object]:
+    def stats(self) -> SnapshotStats:
         """Summarize the history the snapshot really holds.
 
         Returns
         -------
-        dict[str, object]
+        SnapshotStats
             Counts, labelled share, time span, identities seen and how many
             events carry an admission time a prediction could use.
         """
@@ -111,19 +165,19 @@ class Snapshot:
         observed = [event.observed_at for event in self.events]
         recorded = [event for event in self.events if event.admitted_at is not None]
         usable = sum(1 for event in self.events if admission_moment(event) is not None)
-        return {
-            "events": total,
-            "labelled": labelled,
-            "labelled_fraction": 0.0 if total == 0 else labelled / total,
-            "identities": len({event.identity for event in self.events}),
-            "span_start": utc_text(min(observed)) if observed else None,
-            "span_end": utc_text(max(observed)) if observed else None,
-            "admission_recorded": len(recorded),
-            "admission_usable": usable,
-            "admission_missing": total - len(recorded),
-            "admission_unusable": len(recorded) - usable,
-            "gaps": [gap_to_dict(gap) for gap in self.gaps],
-        }
+        return SnapshotStats(
+            events=total,
+            labelled=labelled,
+            labelled_fraction=0.0 if total == 0 else labelled / total,
+            identities=len({event.identity for event in self.events}),
+            span_start=min(observed) if observed else None,
+            span_end=max(observed) if observed else None,
+            admission_recorded=len(recorded),
+            admission_usable=usable,
+            admission_missing=total - len(recorded),
+            admission_unusable=len(recorded) - usable,
+            gaps=self.gaps,
+        )
 
 
 def find_gaps(
@@ -153,125 +207,24 @@ def find_gaps(
     return tuple(gaps)
 
 
-def count_journal(
-    since: str = DEFAULT_JOURNAL_SPAN,
-    *,
-    query: cabc.Callable[..., metrics_query.Window] = metrics_query.query,
-) -> dict[str, object]:
-    """Describe what the user journal currently offers the benchmark.
-
-    The journal is the only source that could bound retention, but neither
-    source it names carries a joinable compilation key: adapter records hold
-    per-compilation metrics without an identity, and supervisor records hold
-    admission and queue events without a compilation identity. The join is
-    therefore reported as unavailable, with the record counts and the
-    retention span that *are* available, rather than guessed at.
-
-    The result is deliberately an ordinary mapping rather than a typed record.
-    It is the provenance block the snapshot stores and the report renders, and
-    an unavailable journal becomes a shorter mapping that names its reason at
-    the command boundary: every key below is optional by contract, and the
-    renderer reports only what is present. A record here would have to be
-    flattened back to this mapping at the same boundary, so it would add a
-    second definition of the block without constraining either consumer.
-
-    Parameters
-    ----------
-    since : str
-        The journal span to ask for, such as ``"24h"``.
-    query : Callable[..., Window]
-        The journal reader, injectable so a test or an offline run can answer
-        without the journal.
-
-    Returns
-    -------
-    dict[str, object]
-        Availability, counts by source and event, the supervisor starts the
-        window saw, the retention the query covers and the correlation it
-        cannot support.
-
-    A journal that cannot be read raises ``metrics_query.MetricsQueryError``.
-    Deciding that provenance may continue without it belongs to the command
-    boundary, which knows the snapshot is written from the store and must not
-    be lost to a side query.
-    """
-    window = query(since=since, max_records=_MAX_JOURNAL_RECORDS, source="all")
-    by_source: dict[str, int] = {}
-    by_event: dict[str, int] = {}
-    for record in window.records:
-        by_source[record.source] = by_source.get(record.source, 0) + 1
-        by_event[record.event] = by_event.get(record.event, 0) + 1
-    stamps = sorted(
-        record.timestamp for record in window.records if record.timestamp is not None
-    )
-    starts = [
-        record.timestamp
-        for record in window.records
-        if record.event == "supervisor_started"
-    ]
-    dated_starts = sorted(stamp for stamp in starts if stamp is not None)
-    return {
-        "available": bool(window.records),
-        "span": since,
-        "truncated": window.truncated,
-        "records": len(window.records),
-        "span_start": utc_text(stamps[0]) if stamps else None,
-        "span_end": utc_text(stamps[-1]) if stamps else None,
-        "by_source": dict(sorted(by_source.items())),
-        "by_event": dict(sorted(by_event.items())),
-        "restarts": {
-            "count": len(starts),
-            "first": utc_text(dated_starts[0]) if dated_starts else None,
-            "last": utc_text(dated_starts[-1]) if dated_starts else None,
-        },
-        "retention": _retention_note(since, truncated=window.truncated),
-        "correlation": _CORRELATION_LIMIT,
-    }
-
-
-_CORRELATION_LIMIT = (
-    "no joinable per-compilation admission record: adapter rows carry metrics "
-    "without an identity and supervisor rows carry queue events without a "
-    "compilation identity, so the journal bounds retention and adds no "
-    "admission time to a store row"
-)
-
-
-def _retention_note(since: str, *, truncated: bool) -> str:
-    """Describe how far back the journal query is reliable.
-
-    Returns
-    -------
-    str
-        The requested lookback, the record cap and whether the cap was hit.
-    """
-    note = (
-        f"at most {_MAX_JOURNAL_RECORDS} records over the requested {since} "
-        "lookback; older records are outside what this query can see"
-    )
-    if truncated:
-        note += ", and the cap was reached so the newest records won"
-    return note
-
-
 def build_snapshot(
-    decoded: DecodedStore,
+    history: StoreHistory,
     *,
     now: dt.datetime,
-    journal: dict[str, object] | None = None,
+    journal: JournalProvenance | None = None,
     gap_threshold_seconds: float = 3600.0,
 ) -> Snapshot:
-    """Assemble the snapshot document from a decoded store.
+    """Assemble the snapshot document from a decoded history.
 
     Parameters
     ----------
-    decoded : DecodedStore
-        The store header and every record read from it.
+    history : StoreHistory
+        The redacted events and the store provenance they came from.
     now : datetime
         The creation time recorded in the snapshot, supplied so a run is
         reproducible.
-    journal : dict[str, object] | None
-        The journal counts to keep as provenance, or None to query nothing.
+    journal : JournalProvenance | None
+        The journal provenance to keep, or None when no journal was queried.
     gap_threshold_seconds : float
         The shortest silence that the snapshot reports as a gap.
 
@@ -280,20 +233,10 @@ def build_snapshot(
     Snapshot
         The redacted history with provenance, counts and gaps.
     """
-    records = decoded.records
-    outcomes = sum(1 for record in records if isinstance(record, OutcomeRecord))
-    events = build_events(records)
-    source = Source(
-        salt_id=decoded.header.salt_id,
-        written_at=decoded.header.written_at,
-        records_total=len(records),
-        outcome_records=outcomes,
-        summary_records=len(records) - outcomes,
-    )
     return Snapshot(
         created_at=now,
-        source=source,
-        journal={} if journal is None else journal,
-        events=events,
-        gaps=find_gaps(events, threshold_seconds=gap_threshold_seconds),
+        source=history.source,
+        journal=journal,
+        events=history.events,
+        gaps=find_gaps(history.events, threshold_seconds=gap_threshold_seconds),
     )

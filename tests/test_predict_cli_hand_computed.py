@@ -16,6 +16,7 @@ from buildlimits.predict import benchmark_cli
 from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.dataset import Snapshot, Source
 from buildlimits.predict.events import EPOCH, Event
+from buildlimits.predict.journal_provenance import JournalUnavailable
 from buildlimits.predict.report_codec import config_to_dict
 from buildlimits.predict.snapshot_store import save_snapshot
 
@@ -63,7 +64,7 @@ def _write_hand_snapshot(root: Path) -> Path:
         Snapshot(
             created_at=EPOCH + dt.timedelta(days=7),
             source=Source("hand", EPOCH + dt.timedelta(days=7), 4, 4, 0),
-            journal={"available": False, "reason": "journal query skipped"},
+            journal=JournalUnavailable("journal query skipped"),
             events=_hand_events(),
             gaps=(),
         ),

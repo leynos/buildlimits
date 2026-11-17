@@ -14,6 +14,7 @@ import typing as typ
 from pathlib import Path
 
 from buildlimits.predict.dataset import Gap, Snapshot, Source
+from buildlimits.predict.journal_codec import journal_from_dict
 from buildlimits.predict.snapshot_codec import (
     SNAPSHOT_VERSION,
     event_from_dict,
@@ -105,7 +106,7 @@ def load_snapshot(path: Path) -> Snapshot:
     return Snapshot(
         created_at=_parse_stamp(created),
         source=_source_from(path, typ.cast("dict[str, object]", source)),
-        journal=_journal_from(path, typ.cast("dict[str, object]", journal)),
+        journal=journal_from_dict(journal, label=str(path)),
         events=decoded_events,
         gaps=_gaps_from(path, document.get("stats")),
     )
@@ -173,111 +174,6 @@ def _source_from(path: Path, value: cabc.Mapping[str, object]) -> Source:
         outcome_records=outcome_records,
         summary_records=summary_records,
     )
-
-
-def _journal_from(path: Path, value: cabc.Mapping[str, object]) -> dict[str, object]:
-    """Validate the journal note the report renders.
-
-    The report reads availability, the printed record count, the reason when
-    unavailable, and the supervisor-start block. Checking those at load time
-    keeps a hand-edited document from failing inside the Markdown formatter,
-    where a text count reaches an integer format. An empty note is accepted:
-    it means the snapshot target queried no journal.
-
-    Returns
-    -------
-    dict[str, object]
-        The journal note, unchanged.
-
-    Raises
-    ------
-    TypeError
-        If a field the report reads has the wrong type, or an available note
-        omits the count it would print.
-    ValueError
-        If the record count is negative.
-    """
-    journal = dict(value)
-    available = journal.get("available")
-    if available is not None and not isinstance(available, bool):
-        msg = f"{path} journal must hold a boolean available"
-        raise TypeError(msg)
-    reason = journal.get("reason")
-    if reason is not None and not isinstance(reason, str):
-        msg = f"{path} journal reason must be text"
-        raise TypeError(msg)
-    records = journal.get("records")
-    if available and records is None:
-        msg = f"{path} available journal must hold a records count"
-        raise TypeError(msg)
-    if records is not None:
-        count = _count(path, "records", records)
-        if count < 0:
-            msg = f"{path} journal records must not be negative"
-            raise ValueError(msg)
-    restarts = journal.get("restarts")
-    if restarts is not None:
-        if not isinstance(restarts, dict):
-            msg = f"{path} journal restarts must be an object"
-            raise TypeError(msg)
-        _validate_restarts(path, typ.cast("dict[str, object]", restarts))
-    return journal
-
-
-def _count(path: Path, name: str, value: object) -> int:
-    """Return a count the report would print as a number.
-
-    Returns
-    -------
-    int
-        The count, which the caller checks for a negative value.
-
-    Raises
-    ------
-    TypeError
-        If the value is not an integer.
-    """
-    if isinstance(value, bool) or not isinstance(value, int):
-        msg = f"{path} journal {name} must be an integer"
-        raise TypeError(msg)
-    return value
-
-
-def _validate_restarts(path: Path, value: cabc.Mapping[str, object]) -> None:
-    """Validate the supervisor-start block the report renders.
-
-    The report prints the count as a number and the two bounds as text, so a
-    hand-edited snapshot naming either in another type is rejected here rather
-    than inside the Markdown renderer. A non-null count with a ``first`` bound
-    also selects the bounded-range wording, which reads ``last``; without it
-    the renderer would fail with a missing key instead of naming the field.
-
-    Raises
-    ------
-    TypeError
-        If a field has the wrong type, or a bounded range omits its last
-        bound.
-    ValueError
-        If the count is negative.
-    """
-    count = value.get("count")
-    starts: int | None = None
-    if count is not None:
-        starts = _count(path, "restarts count", count)
-        if starts < 0:
-            msg = f"{path} journal restarts count must not be negative"
-            raise ValueError(msg)
-    bounds: dict[str, str | None] = {}
-    for key in ("first", "last"):
-        stamp = value.get(key)
-        if stamp is not None and not isinstance(stamp, str):
-            msg = f"{path} journal restarts {key} must be text"
-            raise TypeError(msg)
-        bounds[key] = stamp
-    claims_range = starts is not None and bounds["first"] is not None
-    if claims_range and bounds["last"] is None:
-        msg = f"{path} journal restarts must hold a last bound with first"
-        raise TypeError(msg)
 
 
 def _gaps_from(path: Path, stats: object) -> tuple[Gap, ...]:

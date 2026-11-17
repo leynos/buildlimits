@@ -5,13 +5,19 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from outcome_test_helpers import cache_key
+from outcome_test_helpers import OBSERVED_AT, cache_key
 from predict_test_helpers import STORE_HEADER, outcome_record, write_store
 
 from buildlimits import outcome_store_io
-from buildlimits.metrics_query import MetricsQueryError
+from buildlimits.metrics_query import MetricsQueryError, Window
+from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict import dataset_cli
+from buildlimits.predict.journal_provenance import (
+    JournalCounts,
+    JournalProvenance,
+    JournalUnavailable,
+)
 from buildlimits.predict.snapshot_store import load_snapshot
 
 if typ.TYPE_CHECKING:
@@ -29,7 +35,7 @@ class _RaisingJournal:
         """Fail with ``error``, defaulting to an unexpected failure."""
         self._error = error
 
-    def __call__(self, **_options: object) -> dict[str, object]:
+    def __call__(self, _since: str) -> Window:
         """Report the journal as unreachable."""
         raise self._error("journal unavailable")
 
@@ -216,8 +222,8 @@ def test_dataset_command_reports_a_rejected_store(
 
 
 def _journal_snapshot(
-    tmp_path: Path, journal: cabc.Callable[..., cabc.Mapping[str, object]]
-) -> tuple[int, dict[str, object]]:
+    tmp_path: Path, journal: cabc.Callable[[str], Window]
+) -> tuple[int, JournalProvenance | None]:
     """Snapshot eight rows using ``journal`` and return its status and note."""
     store = tmp_path / "cache-outcomes.jsonl"
     output = tmp_path / "history.jsonl"
@@ -238,7 +244,7 @@ def _journal_snapshot(
     ],
 )
 def test_dataset_command_survives_a_journal_that_fails(
-    tmp_path: Path, journal: cabc.Callable[..., cabc.Mapping[str, object]]
+    tmp_path: Path, journal: cabc.Callable[[str], Window]
 ) -> None:
     """Journal provenance is context, so a journal failure cannot lose history.
 
@@ -249,19 +255,25 @@ def test_dataset_command_survives_a_journal_that_fails(
     status, note = _journal_snapshot(tmp_path, journal)
 
     assert status == 0, "the snapshot is still written"
-    assert note == {"available": False, "reason": "journal query failed"}, (
-        "the failure is recorded as provenance"
-    )
+    assert isinstance(note, JournalUnavailable), "the failure is recorded"
+    assert note.reason == "journal query failed", "and named as provenance"
 
 
 def test_dataset_command_records_journal_counts(tmp_path: Path) -> None:
     """A journal that answers is recorded as provenance beside the snapshot."""
-    status, note = _journal_snapshot(
-        tmp_path, lambda **_options: {"available": True, "records": 12}
+    window = Window(
+        records=tuple(
+            Record("adapter", "adapter_finished", {}, OBSERVED_AT) for _ in range(12)
+        ),
+        seconds=86400,
+        truncated=False,
     )
+    status, note = _journal_snapshot(tmp_path, lambda _since: window)
 
     assert status == 0, "the snapshot is written"
-    assert note == {"available": True, "records": 12}, "counts kept"
+    assert isinstance(note, JournalCounts), "counts are recorded"
+    assert note.records == 12, "every record is kept"
+    assert note.by_source == {"adapter": 12}, "and attributed to its source"
 
 
 def test_dataset_command_warns_when_nothing_is_labelled(

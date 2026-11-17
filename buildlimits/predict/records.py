@@ -3,6 +3,11 @@
 A recorded row becomes an event only when it carries a compilation identity.
 The mapping hashes that identity, so neither a crate name nor a path survives
 into the snapshot. Only an attributed ``hit`` or ``miss`` becomes a label.
+
+This is the adapter between the decoded store and the history the domain
+assembles: :func:`decode_history` reads the store's header counts and hands
+back a :class:`~buildlimits.predict.dataset.StoreHistory`, so the dataset
+module never imports the store format.
 """
 
 import dataclasses as dc
@@ -11,12 +16,14 @@ import json
 import typing as typ
 
 from buildlimits.outcome_record_format import OutcomeRecord
+from buildlimits.predict.dataset import Source, StoreHistory
 from buildlimits.predict.events import Event, Label
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.outcome_key import CacheKey
+    from buildlimits.outcome_record_format import DecodedStore
     from buildlimits.outcome_vocabulary import CacheResult
 
 _LABEL_BY_OUTCOME: dict[str, Label] = {"hit": "hit", "miss": "miss"}
@@ -95,4 +102,32 @@ def build_events(records: cabc.Iterable[object]) -> tuple[Event, ...]:
     """
     return tuple(
         event_of(record) for record in records if isinstance(record, OutcomeRecord)
+    )
+
+
+def decode_history(decoded: DecodedStore) -> StoreHistory:
+    """Read one decoded store into the domain's history value.
+
+    Parameters
+    ----------
+    decoded : DecodedStore
+        The store header and every record read from it.
+
+    Returns
+    -------
+    StoreHistory
+        The attributed events, in append order, and the store provenance they
+        were read with.
+    """
+    records = decoded.records
+    outcomes = sum(1 for record in records if isinstance(record, OutcomeRecord))
+    return StoreHistory(
+        events=build_events(records),
+        source=Source(
+            salt_id=decoded.header.salt_id,
+            written_at=decoded.header.written_at,
+            records_total=len(records),
+            outcome_records=outcomes,
+            summary_records=len(records) - outcomes,
+        ),
     )

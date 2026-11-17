@@ -4,7 +4,9 @@ An event is a domain value: an identity, an origin, a label and the times those
 became known. The JSON shapes are storage concerns, so the codec that reads and
 writes them lives beside the snapshot store rather than on the values
 themselves. This also keeps :mod:`buildlimits.predict.events` free of a JSON
-dependency and keeps a domain value from carrying a serialization method.
+dependency and keeps a domain value from carrying a serialization method. The
+journal provenance block has its own rules and codec in
+:mod:`buildlimits.predict.journal_codec`.
 """
 
 import hashlib
@@ -13,6 +15,7 @@ import math
 import typing as typ
 
 from buildlimits.predict.events import LABELS, ORIGINS, Event
+from buildlimits.predict.journal_codec import journal_to_dict
 from buildlimits.utc_text import utc_moment, utc_text
 
 if typ.TYPE_CHECKING:
@@ -20,7 +23,7 @@ if typ.TYPE_CHECKING:
     import datetime as dt
 
     from buildlimits.outcome_record_format import Origin
-    from buildlimits.predict.dataset import Gap, Snapshot, Source
+    from buildlimits.predict.dataset import Gap, Snapshot, SnapshotStats, Source
     from buildlimits.predict.events import Label
 
 SNAPSHOT_VERSION = 1
@@ -86,6 +89,29 @@ def source_to_dict(source: Source) -> dict[str, object]:
     }
 
 
+def stats_to_dict(stats: SnapshotStats) -> dict[str, object]:
+    """Return the snapshot shape for the history's summary counts.
+
+    Returns
+    -------
+    dict[str, object]
+        Every count and span under stable keys.
+    """
+    return {
+        "events": stats.events,
+        "labelled": stats.labelled,
+        "labelled_fraction": stats.labelled_fraction,
+        "identities": stats.identities,
+        "span_start": _stamp(stats.span_start),
+        "span_end": _stamp(stats.span_end),
+        "admission_recorded": stats.admission_recorded,
+        "admission_usable": stats.admission_usable,
+        "admission_missing": stats.admission_missing,
+        "admission_unusable": stats.admission_unusable,
+        "gaps": [gap_to_dict(gap) for gap in stats.gaps],
+    }
+
+
 def snapshot_to_dict(snapshot: Snapshot) -> dict[str, object]:
     """Return the complete versioned snapshot document.
 
@@ -98,8 +124,8 @@ def snapshot_to_dict(snapshot: Snapshot) -> dict[str, object]:
         "snapshot_version": SNAPSHOT_VERSION,
         "created_at": utc_text(snapshot.created_at),
         "source": source_to_dict(snapshot.source),
-        "journal": snapshot.journal,
-        "stats": snapshot.stats(),
+        "journal": journal_to_dict(snapshot.journal),
+        "stats": stats_to_dict(snapshot.stats()),
         "events": [event_to_dict(event) for event in snapshot.events],
     }
 

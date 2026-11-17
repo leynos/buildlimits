@@ -13,18 +13,21 @@ import typing as typ
 from pathlib import Path
 
 from buildlimits import outcome_store_io
-from buildlimits.metrics_query import window_seconds
+from buildlimits.metrics_query import MAX_RECORDS, Window, window_seconds
+from buildlimits.metrics_query import query as read_journal
 from buildlimits.outcome_record_format import RecordFailure
 from buildlimits.outcome_store_salt import store_path
 from buildlimits.predict.config_loader import load_config as _read_config
-from buildlimits.predict.dataset import (
-    DEFAULT_JOURNAL_SPAN,
-    Snapshot,
-    build_snapshot,
+from buildlimits.predict.dataset import Snapshot, build_snapshot
+from buildlimits.predict.journal_provenance import (
+    JournalProvenance,
+    JournalUnavailable,
     count_journal,
 )
 from buildlimits.predict.paths import same_file
+from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_store import save_snapshot
+from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -33,6 +36,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.config import Config
 
 DEFAULT_OUTPUT = Path("build/predict/history.jsonl")
+DEFAULT_JOURNAL_SPAN = "4w"
 
 
 def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
@@ -102,13 +106,13 @@ def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
     decoded = chosen.read_store(store)
     if isinstance(decoded, int):
         return decoded
-    note = (
-        {"available": False, "reason": "journal query skipped"}
+    note: JournalProvenance = (
+        JournalUnavailable("journal query skipped")
         if options.skip_journal
         else _journal_note(chosen.journal, options.journal_span)
     )
     snapshot = build_snapshot(
-        decoded,
+        decode_history(decoded),
         now=chosen.now(),
         journal=note,
         gap_threshold_seconds=config.gap_threshold_seconds,
@@ -198,9 +202,20 @@ def _read(store: Path) -> DecodedStore | int:
     return decoded
 
 
+def _journal_window(since: str) -> Window:
+    """Ask the user journal for its most recent records.
+
+    Returns
+    -------
+    Window
+        The records the journal served within the cap, and whether it hit it.
+    """
+    return read_journal(since=since, max_records=MAX_RECORDS, source="all")
+
+
 def _journal_note(
-    journal: cabc.Callable[..., cabc.Mapping[str, object]], span: str
-) -> dict[str, object]:
+    journal: cabc.Callable[[str], Window], span: str
+) -> JournalProvenance:
     """Ask the journal what it can offer, tolerating any failure.
 
     The reader reports its own failure rather than returning a placeholder, so
@@ -209,14 +224,16 @@ def _journal_note(
 
     Returns
     -------
-    dict[str, object]
+    JournalProvenance
         The journal summary, or an explicit unavailable note.
     """
     try:
-        result = journal(since=span)
+        window = journal(span)
     except Exception:  # ruff: ignore[blind-except] - provenance must never fail the snapshot.
-        return {"available": False, "reason": "journal query failed"}
-    return dict(result)
+        return JournalUnavailable("journal query failed")
+    return count_journal(
+        window.records, since=span, cap=MAX_RECORDS, truncated=window.truncated
+    )
 
 
 def _report(snapshot: Snapshot, output: Path) -> None:
@@ -224,22 +241,25 @@ def _report(snapshot: Snapshot, output: Path) -> None:
     stats = snapshot.stats()
     print(f"wrote {output}")
     print(
-        f"events={stats['events']} labelled={stats['labelled']} "
-        f"identities={stats['identities']} gaps={len(snapshot.gaps)}"
+        f"events={stats.events} labelled={stats.labelled} "
+        f"identities={stats.identities} gaps={len(snapshot.gaps)}"
     )
-    print(f"window {stats['span_start']} to {stats['span_end']}")
+    if stats.span_start is None or stats.span_end is None:
+        print("window: no events recorded")
+    else:
+        print(f"window {utc_text(stats.span_start)} to {utc_text(stats.span_end)}")
     print(
-        f"admission times: recorded={stats['admission_recorded']} "
-        f"usable={stats['admission_usable']} missing={stats['admission_missing']} "
-        f"after their own label={stats['admission_unusable']}"
+        f"admission times: recorded={stats.admission_recorded} "
+        f"usable={stats.admission_usable} missing={stats.admission_missing} "
+        f"after their own label={stats.admission_unusable}"
     )
-    if stats["labelled"] == 0:
+    if stats.labelled == 0:
         print(
             "no attributed hit or miss was recorded, so the benchmark will "
             "report insufficient data rather than invent any",
             file=sys.stderr,
         )
-    if stats["admission_usable"] == 0:
+    if stats.admission_usable == 0:
         print(
             "no store row carries an admission time at or before its own label, "
             "so the benchmark cannot predict any event and will report "
@@ -270,8 +290,8 @@ class Edges:
 
     Attributes
     ----------
-    journal : Callable[..., Mapping[str, object]]
-        Describes the user journal, or reports why it cannot.
+    journal : Callable[[str], Window]
+        Reads the user journal for one lookback, or raises when it cannot.
     now : Callable[[], datetime]
         The clock the snapshot records.
     read_store : Callable[[Path], DecodedStore | int]
@@ -287,7 +307,7 @@ class Edges:
         can refuse an unreadable file without patching the module.
     """
 
-    journal: cabc.Callable[..., cabc.Mapping[str, object]] = count_journal
+    journal: cabc.Callable[[str], Window] = _journal_window
     now: cabc.Callable[[], dt.datetime] = _utc_now
     read_store: cabc.Callable[[Path], DecodedStore | int] = _read
     write_snapshot: cabc.Callable[[Snapshot, Path], int] = _write

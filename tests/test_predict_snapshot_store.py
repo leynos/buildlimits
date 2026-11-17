@@ -14,20 +14,60 @@ import pytest
 from outcome_test_helpers import attributed_record
 from predict_test_helpers import write_json
 
+from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
-from buildlimits.predict.dataset import build_snapshot
+from buildlimits.predict.dataset import StoreHistory, build_snapshot
 from buildlimits.predict.events import EPOCH, Event
+from buildlimits.predict.journal_provenance import (
+    JournalCounts,
+    JournalProvenance,
+    JournalUnavailable,
+    count_journal,
+)
+from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_codec import event_to_dict, snapshot_to_dict
 from buildlimits.predict.snapshot_store import load_snapshot
 
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
 
 
-def _document() -> dict[str, object]:
-    """Return the encoded snapshot of one attributed hit."""
-    records = (attributed_record(outcome="hit"),)
+def _history(*records: object) -> StoreHistory:
+    """Decode records into the history value a snapshot is built from."""
     decoded = DecodedStore(StoreHeader("fixed-salt", NOW), typ.cast("typ.Any", records))
-    return snapshot_to_dict(build_snapshot(decoded, now=NOW))
+    return decode_history(decoded)
+
+
+def _counts_note() -> JournalCounts:
+    """Return a journal note with one witnessed supervisor start."""
+    return count_journal(
+        (Record("supervisor", "supervisor_started", {}, NOW),),
+        since="4w",
+        cap=1000,
+        truncated=False,
+    )
+
+
+def _document(journal: JournalProvenance | None = None) -> dict[str, object]:
+    """Return the encoded snapshot of one attributed hit.
+
+    The default document carries a journal note so its decoding is exercised;
+    a caller that means "no journal was queried" passes an empty note.
+    """
+    note = _counts_note() if journal is None else journal
+    snapshot = build_snapshot(
+        _history(attributed_record(outcome="hit")), now=NOW, journal=note
+    )
+    return snapshot_to_dict(snapshot)
+
+
+def _journal(document: dict[str, object]) -> dict[str, object]:
+    """Return the document's mutable journal block."""
+    return typ.cast("dict[str, object]", document["journal"])
+
+
+def _restarts(document: dict[str, object]) -> dict[str, object]:
+    """Return the document's mutable restart block."""
+    return typ.cast("dict[str, object]", _journal(document)["restarts"])
 
 
 def _refuses_creation_time(tmp_path: Path, stamp: str, match: str) -> None:
@@ -91,15 +131,15 @@ def _refuses_creation_time(tmp_path: Path, stamp: str, match: str) -> None:
             id="gap-seconds-not-numeric",
         ),
         pytest.param(
-            lambda doc: doc.update(journal={"available": "yes"}),
+            lambda doc: _journal(doc).update(available="yes"),
             id="journal-availability-not-a-bool",
         ),
         pytest.param(
-            lambda doc: doc.update(journal={"available": True, "records": "2"}),
+            lambda doc: _journal(doc).update(records="2"),
             id="journal-count-not-an-integer",
         ),
         pytest.param(
-            lambda doc: doc.update(journal={"available": True}),
+            lambda doc: _journal(doc).pop("records"),
             id="journal-count-missing",
         ),
         pytest.param(
@@ -107,46 +147,36 @@ def _refuses_creation_time(tmp_path: Path, stamp: str, match: str) -> None:
             id="journal-reason-not-text",
         ),
         pytest.param(
-            lambda doc: doc.update(journal={"available": True, "records": -1}),
+            lambda doc: _journal(doc).update(records=-1),
             id="journal-count-negative",
         ),
         pytest.param(
-            lambda doc: doc.update(
-                journal={"available": True, "records": 2, "restarts": "2"}
-            ),
+            lambda doc: _journal(doc).update(restarts="2"),
             id="journal-restarts-not-an-object",
         ),
         pytest.param(
-            lambda doc: doc.update(
-                journal={"available": True, "records": 2, "restarts": {"count": "2"}}
-            ),
+            lambda doc: _restarts(doc).update(count="2"),
             id="journal-restarts-count-not-an-integer",
         ),
         pytest.param(
-            lambda doc: doc.update(
-                journal={"available": True, "records": 2, "restarts": {"count": -1}}
-            ),
+            lambda doc: _restarts(doc).update(count=-1),
             id="journal-restarts-count-negative",
         ),
         pytest.param(
-            lambda doc: doc.update(
-                journal={
-                    "available": True,
-                    "records": 2,
-                    "restarts": {"count": 1, "first": 7},
-                }
-            ),
+            lambda doc: _restarts(doc).update(first=7),
             id="journal-restarts-bound-not-text",
         ),
         pytest.param(
-            lambda doc: doc.update(
-                journal={
-                    "available": True,
-                    "records": 2,
-                    "restarts": {"count": 1, "first": "2026-01-01T00:00:00Z"},
-                }
-            ),
+            lambda doc: _restarts(doc).pop("last"),
             id="journal-restarts-range-without-last",
+        ),
+        pytest.param(
+            lambda doc: _journal(doc).update(span_start="2026-01-01T00:00:00"),
+            id="journal-span-start-without-an-offset",
+        ),
+        pytest.param(
+            lambda doc: _journal(doc).update(by_source={"adapter": True}),
+            id="journal-tally-count-is-a-bool",
         ),
     ],
 )
@@ -187,14 +217,47 @@ def test_a_non_finite_gap_length_is_refused_by_field(
 
 
 def test_an_available_journal_note_survives_loading(tmp_path: Path) -> None:
-    """The note the report renders is decoded unchanged."""
-    document = _document()
-    document["journal"] = {"available": True, "span": "4w", "records": 12}
+    """The note the report renders is decoded back into its values."""
+    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", _document()))
+
+    assert isinstance(loaded.journal, JournalCounts), "counts are decoded"
+    assert loaded.journal.available is True, "availability is read"
+    assert loaded.journal.records == 1, "the count is read"
+    assert loaded.journal.span == "4w", "the requested lookback is read"
+    assert loaded.journal.restarts.count == 1, "the restart is read"
+    assert loaded.journal.restarts.first == NOW, "and its time"
+
+
+def test_an_unavailable_journal_note_survives_loading(tmp_path: Path) -> None:
+    """A note that names its reason decodes without invented counts."""
+    document = _document(JournalUnavailable("journal query skipped"))
 
     loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
-    assert loaded.journal["available"] is True, "availability is read"
-    assert loaded.journal["records"] == 12, "the count is read"
+    assert isinstance(loaded.journal, JournalUnavailable), "the reason is kept"
+    assert loaded.journal.reason == "journal query skipped", "and read verbatim"
+
+
+def test_an_empty_journal_window_decodes_as_counts(tmp_path: Path) -> None:
+    """An empty window is counts with no span, not an unavailable journal."""
+    empty = count_journal((), since="4w", cap=1000, truncated=False)
+    document = _document(empty)
+
+    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+    assert isinstance(loaded.journal, JournalCounts), "counts are decoded"
+    assert loaded.journal.available is False, "the window held nothing"
+    assert loaded.journal.span_start is None, "and claims no span"
+
+
+def test_a_snapshot_that_queried_no_journal_decodes_no_note(tmp_path: Path) -> None:
+    """An empty block means the snapshot target queried no journal."""
+    document = _document(JournalUnavailable("unused"))
+    document["journal"] = {}
+
+    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+    assert loaded.journal is None, "no note is invented"
 
 
 def _event(identity_byte: str, minutes: int, *, admitted: bool) -> dict[str, object]:

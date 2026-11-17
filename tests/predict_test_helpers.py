@@ -13,6 +13,7 @@ from buildlimits.predict import dataset_cli
 from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.dataset import Snapshot, Source
 from buildlimits.predict.events import Event
+from buildlimits.predict.journal_provenance import JournalUnavailable
 from buildlimits.predict.snapshot_store import save_snapshot
 from buildlimits.predict.synthetic import identity, stationary
 
@@ -176,7 +177,7 @@ def write_admitted_snapshot(tmp_path: Path, count: int) -> Path:
             outcome_records=count,
             summary_records=0,
         ),
-        journal={"available": False, "reason": "journal query skipped"},
+        journal=JournalUnavailable("journal query skipped"),
         events=stationary(count=count, rate=0.7, seed=5),
         gaps=(),
     )

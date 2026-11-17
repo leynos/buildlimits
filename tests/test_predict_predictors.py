@@ -48,7 +48,7 @@ def _document(events: tuple[Event, ...], config: Config) -> dict[str, object]:
     snapshot = Snapshot(
         created,
         Source("fixed-salt", created, 1, 1, 0),
-        {},
+        None,
         events,
         (),
     )

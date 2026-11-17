@@ -11,6 +11,7 @@ belongs to the output adapter in
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.predict.journal_codec import journal_to_dict
 from buildlimits.predict.render import render_markdown
 from buildlimits.predict.report_codec import (
     config_to_dict,
@@ -18,7 +19,7 @@ from buildlimits.predict.report_codec import (
     metrics_to_dict,
     split_to_dict,
 )
-from buildlimits.predict.snapshot_codec import source_to_dict
+from buildlimits.predict.snapshot_codec import source_to_dict, stats_to_dict
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -109,9 +110,9 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
         "verdict_alpha": evaluation.verdict_alpha,
         "data": {
             "fingerprint": provenance.fingerprint,
-            "stats": provenance.snapshot.stats(),
+            "stats": stats_to_dict(provenance.snapshot.stats()),
             "source": source_to_dict(provenance.snapshot.source),
-            "journal": provenance.snapshot.journal,
+            "journal": journal_to_dict(provenance.snapshot.journal),
         },
         "split": split_to_dict(evaluation.walk.split),
         "replay": {
