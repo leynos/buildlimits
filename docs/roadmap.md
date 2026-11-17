@@ -382,6 +382,10 @@ extension are recorded in the ExecPlan; none is a gate decision.
 - [x] 3.2.5. Provide the offline comparison harness: `make predict-dataset` and
   `make predict-benchmark` read a redacted snapshot and write the tables; they
   change no admission behaviour and decide no gate.
+  - The comparison includes rolling-rate and exponentially weighted predictors
+    and an adaptive Hedge ensemble, which 3.2.3 describes as EP-L components.
+    They appear here because this comparison calls for them; the EP-L approval
+    and freeze decisions under 3.2.3 remain open.
 
 ### 3.3. Extract the shared observation boundary for sccache
 
