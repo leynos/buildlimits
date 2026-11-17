@@ -87,6 +87,19 @@ def write_json(path: Path, document: object) -> Path:
     return path
 
 
+def read_results(output: Path) -> tuple[dict[str, typ.Any], str]:
+    """Read the two deterministic result files one run wrote.
+
+    Returns
+    -------
+    tuple[dict[str, object], str]
+        The parsed results document and the rendered Markdown.
+    """
+    document = json.loads((output / "results.json").read_text(encoding="utf-8"))
+    markdown = (output / "results.md").read_text(encoding="utf-8")
+    return document, markdown
+
+
 def outcome_record(index: int, outcome: CacheResult, key: object) -> OutcomeRecord:
     """Return one attributed record at a distinct label time.
 
