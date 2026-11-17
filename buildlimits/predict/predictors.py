@@ -250,7 +250,7 @@ class ExponentialRate:
 
     Each outcome is weighted by a factor that decays by ``1 - alpha`` per
     later label, and the rate is the weighted hits divided by the total
-    weight. Dividing by that total normalises the early stream, where only
+    weight. Dividing by that total normalizes the early stream, where only
     a few outcomes carry weight, so the rate starts as a plain average of
     what has been seen rather than at the first outcome and decaying from
     there.
