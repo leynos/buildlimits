@@ -129,11 +129,10 @@ moment contribute, so a completion labelled after the admission is not counted
 as load the decision could have seen, a label landing at the very instant of
 measurement is excluded, and an unknown outcome never becomes history. The
 tuning/held-out split is made at a label time, so every row sharing a timestamp
-stays in one phase.
-The commit named in the report is read from the repository that holds the
-benchmark module, and only when that repository tracks the module's own path;
-an installed copy therefore reports `unknown` rather than borrowing its host
-project's commit.
+stays in one phase. The commit named in the report is read from the repository
+that holds the benchmark module, and only when that repository tracks the
+module's own path; an installed copy therefore reports `unknown` rather than
+borrowing its host project's commit.
 
 `make predict-dataset` refuses any `--output` path that resolves to the store
 it is reading, including through a symbolic link, so it cannot replace the
