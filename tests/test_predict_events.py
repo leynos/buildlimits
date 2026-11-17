@@ -10,7 +10,7 @@ from buildlimits.predict.history import features, label_batches
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
-    from buildlimits.predict.events import Label
+    from buildlimits.predict.events import Features, Label
 
 ORIGIN = typ.cast("Origin", "registry")
 
@@ -67,10 +67,24 @@ def test_the_origin_and_label_vocabulary_is_closed(origin: str, label: str) -> N
         event_from_dict(_line(origin=origin, label=label))
 
 
-@pytest.mark.parametrize("runtime", ["0.25", True, None])
-def test_runtime_must_be_numeric(runtime: object) -> None:
-    """A boolean or a string is not a duration."""
-    with pytest.raises(TypeError, match="runtime_seconds"):
+@pytest.mark.parametrize(
+    ("runtime", "error", "match"),
+    [
+        pytest.param("0.25", TypeError, "runtime_seconds", id="text"),
+        pytest.param(True, TypeError, "runtime_seconds", id="is-a-bool"),
+        pytest.param(None, TypeError, "runtime_seconds", id="null"),
+        pytest.param(float("nan"), ValueError, "must be finite", id="nan"),
+        pytest.param(float("inf"), ValueError, "must be finite", id="infinity"),
+        pytest.param(
+            float("-inf"), ValueError, "must be finite", id="negative-infinity"
+        ),
+    ],
+)
+def test_runtime_must_be_a_finite_number(
+    runtime: object, error: type[Exception], match: str
+) -> None:
+    """A non-number is a type error; a non-finite number is a value error."""
+    with pytest.raises(error, match=match):
         event_from_dict(_line(runtime_seconds=runtime))
 
 
@@ -148,43 +162,64 @@ def test_an_unknown_outcome_is_not_labelled_history() -> None:
     assert rows[2].age_seconds == pytest.approx(20.0), "the age spans the missing label"
 
 
-def test_features_exclude_a_label_that_arrived_after_the_admission() -> None:
-    """A build completed after this admission was not load the decision saw."""
-    slow = _admitted("a" * 64, admitted=0, observed=30)
-    filler = _admitted("b" * 64, admitted=1, observed=5)
-    third = _admitted("c" * 64, admitted=10, observed=40)
-
-    rows = features((slow, filler, third), load_window_seconds=60.0)
-
-    assert rows[2].load == 0, "the released label arrived after the admission"
+def _third_row(events: tuple[Event, ...]) -> Features:
+    """Return the third event's feature row from a three-event stream."""
+    return features(events, load_window_seconds=60.0)[2]
 
 
-def test_age_is_measured_from_the_admission_moment() -> None:
-    """The age is the gap between this admission and the last known label.
+@pytest.mark.parametrize(
+    ("events", "age", "load"),
+    [
+        pytest.param(
+            (
+                _admitted("a" * 64, admitted=0, observed=30),
+                _admitted("b" * 64, admitted=1, observed=5),
+                _admitted("c" * 64, admitted=10, observed=40),
+            ),
+            None,
+            0,
+            id="a-label-after-the-admission-is-not-load",
+        ),
+        pytest.param(
+            (
+                _admitted("a" * 64, admitted=0, observed=5),
+                _admitted("b" * 64, admitted=6, observed=7),
+                _admitted("a" * 64, admitted=10, observed=40),
+            ),
+            5.0,
+            1,
+            id="age-is-measured-from-the-admission-moment",
+        ),
+        pytest.param(
+            (
+                _admitted("a" * 64, admitted=0, observed=5),
+                _admitted("a" * 64, admitted=8, observed=40),
+                _admitted("a" * 64, admitted=12, observed=50),
+            ),
+            7.0,
+            1,
+            id="a-running-build-sets-no-age",
+        ),
+    ],
+)
+def test_features_read_only_the_released_history_before_the_admission(
+    events: tuple[Event, ...], age: float | None, load: int
+) -> None:
+    """The third row sees the first batch but never the withheld second one.
 
-    The middle event fills the batch whose labels the embargo withholds, so
-    the first label is released to the third row and its age is measured from
-    the third row's admission.
+    The middle event fills the batch the embargo withholds, so the first
+    label is released to the third row. Age is measured from the third row's
+    admission, and load counts only released labels strictly before it: a
+    build that finished after that admission is not load, and a label that
+    arrived after a later admission sets no age for it.
     """
-    first = _admitted("a" * 64, admitted=0, observed=5)
-    middle = _admitted("b" * 64, admitted=6, observed=7)
-    second = _admitted("a" * 64, admitted=10, observed=40)
+    row = _third_row(events)
 
-    rows = features((first, middle, second), load_window_seconds=60.0)
-
-    assert rows[2].age_seconds == pytest.approx(5.0), "five seconds before admission"
-
-
-def test_age_ignores_a_previous_build_still_running_at_admission() -> None:
-    """A label that had not arrived yet cannot set the age of a later row."""
-    first = _admitted("a" * 64, admitted=0, observed=5)
-    running = _admitted("a" * 64, admitted=8, observed=40)
-    third = _admitted("a" * 64, admitted=12, observed=50)
-
-    rows = features((first, running, third), load_window_seconds=60.0)
-
-    assert rows[2].age_seconds == pytest.approx(7.0), "counted from the first label"
-    assert rows[2].load == 1, "only the first label is in the window"
+    if age is None:
+        assert row.age_seconds is None, "no released label sets an age"
+    else:
+        assert row.age_seconds == pytest.approx(age), "age from the admission"
+    assert row.load == load, "only released labels before the moment are load"
 
 
 def test_a_label_arriving_at_the_measurement_moment_sets_no_age() -> None:
@@ -237,10 +272,3 @@ def test_batches_follow_store_order_when_a_timestamp_steps_back() -> None:
     rows = features((first, stepped, third), load_window_seconds=60.0)
     assert rows[1].load == 0, "the batch before is embargoed"
     assert rows[2].load == 1, "only the first record is released history"
-
-
-@pytest.mark.parametrize("runtime", [float("nan"), float("inf"), float("-inf")])
-def test_a_non_finite_runtime_is_refused(runtime: float) -> None:
-    """A non-finite runtime is not a JSON number, so it is refused by field."""
-    with pytest.raises(ValueError, match="runtime_seconds must be finite"):
-        event_from_dict(_line(runtime_seconds=runtime))
