@@ -131,11 +131,12 @@ closer than the minimum spacing, heartbeat included, so an hour holds at most
 
 ### D3: peak sampling points
 
-Update `queued_peak` and `held_peak` at every point where the supervisor
-already samples behaviour: each wrapped metric emission, the observation taken
-before an admission effect runs, and every tick. This samples at the same
-points the old report used, so the maxima match current behaviour without
-adding records.
+Update `queued_peak` and `held_peak` at the points where the supervisor already
+reads its own state: every tick, and the observation taken before an admission
+effect runs. Event forwarding is not one of them. The forwarder is a port
+adapter that writes the event it is handed, so sampling inside it would tie the
+sampling points to whichever events happen to be emitted and would run after
+the effect that changed the state.
 
 The admission effect boundary is the important one. A token removes a request
 from the queue and the effect it produces then places the group, which blocks
@@ -185,17 +186,29 @@ replacement.
 
 The change removes 35,094 `request_queued` records per hour at the measured
 workload and adds at most 721 `gauges` records, the cap the minimum spacing
-sets. Against supervisor-unit structured records at the same workload, measured
-after #55, the reduction is about 33%. Against the 277,233 total records
-measured for the ticket, the removal is 12.7% and `gauges` adds back at most
-0.3 percentage points.
+sets.
 
-The measured test compares the two producers over one workload: the per-request
-record count of the legacy producer, including the enqueue records it wrote,
-against the new count, which excludes them and adds the snapshots. The
-busy-hour check uses the spacing cap rather than a heartbeat estimate, so it
-can only overstate the snapshots the new producer writes and the 13% floor
-stays a lower bound rather than a fitted result.
+The 13% floor is a statement about records the supervisor writes, because that
+is the population the change alters. Of the 277,233 entries measured for the
+ticket, 34,604 are `adapter_finished` records the adapter writes, which leaves
+242,629 supervisor entries. Removing the enqueues and adding the snapshots back
+takes 34,373 records out of that population, which is 14.2%.
+
+Two other denominators are worth naming, because a reader comparing them with
+the floor will otherwise read a contradiction. Against the whole 277,233-entry
+journal, including the adapter's records, the same change is 12.4%. Against the
+104,457 supervisor structured records measured after #55, it is about 33%.
+
+The two volume tests measure both producers over the same run rather than
+subtracting constants. Each record the run wrote is replayed through the real
+validating emitter, and one `request_queued` record is added for each request
+the run measured as waiting, which is what the legacy producer wrote. The
+one-slot run covers complete request lifecycles; the busy-hour run puts one
+request per second through the real listener, admission, accumulator, query and
+report, so it checks the saving and the time-weighted mean together. At that
+load the supervisor writes about 32% fewer records than the legacy producer, so
+the 13% floor is a lower bound on the supervisor-written population rather than
+a fitted result.
 
 ### D8: reader-before-writer ordering
 

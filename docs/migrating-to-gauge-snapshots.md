@@ -82,10 +82,18 @@ no new release writes it.
    build-limits-metrics --since 10m
    ```
 
-   A window that contains `gauges` records shows a numeric
-   `queue_time_weighted_mean` and a positive `gauge_coverage_seconds`. The
-   maxima continue to match the peaks the supervisor observed, including peaks
-   that rose and fell between two snapshots.
+   A window that contains `gauges` records shows the snapshot values and
+   `gauge_coverage_seconds`. The maxima continue to match the peaks the
+   supervisor observed, including peaks that rose and fell between two
+   snapshots.
+
+   Wait for a snapshot with a positive `interval_seconds` before expecting a
+   numeric `queue_time_weighted_mean`. Immediately after the restart the only
+   snapshot is the baseline, which claims a zero interval and therefore has no
+   coverage and no mean. That window is a successful upgrade, not a failure.
+   The mean also needs a queue integral: a snapshot whose interval contained an
+   unread depth publishes none, so the mean appears with the next interval that
+   was measured throughout.
 
 ## Reading a mixed window
 
