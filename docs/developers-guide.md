@@ -617,6 +617,11 @@ external work therefore inherits the correct ordering rather than needing to
 sample for itself. `tests/test_supervisor_gauge_timing.py` pins the behaviour
 with a placement that advances a fixed clock.
 
+`tests/test_metrics_gauge_replay.py` pins the maxima contract. It renders
+recorded workloads through both producers and compares what the report
+publishes, including one run whose queue and held peaks fall between two
+snapshots, so a fold that keeps only boundary samples fails the comparison.
+
 Gauge readers must be deployed before gauge writers. `metrics_query` accepts
 `gauges` and the fields it carries in this release, while an older reader
 treats the event as unknown and drops it.

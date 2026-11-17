@@ -133,10 +133,11 @@ def test_removing_the_queue_record_cuts_the_journal_by_at_least_13_percent(
 
 def test_the_documented_floor_holds_for_a_representative_busy_hour() -> None:
     """The recorded busy hour saves more than the one-slot scenario promises."""
-    # The new producer pays for the snapshots it adds: even at the heartbeat's
-    # rate an hour holds a hundred-odd of them, next to the tens of thousands
-    # of enqueue records the same hour used to carry.
-    snapshots = int(BUSY_HOUR_SECONDS // GAUGE_INTERVAL_SECONDS) + 1
+    # The new producer pays for the snapshots it adds. The minimum spacing
+    # caps every trigger, heartbeat or step, so this is the most it can write
+    # in the hour rather than an estimate: seven hundred-odd records against
+    # the tens of thousands of enqueue records the same hour used to carry.
+    snapshots = int(BUSY_HOUR_SECONDS // GAUGE_MIN_SPACING_SECONDS) + 1
     after = BUSY_HOUR_RECORDS - BUSY_HOUR_QUEUED_RECORDS + snapshots
     reduction = (BUSY_HOUR_RECORDS - after) / BUSY_HOUR_RECORDS
     assert reduction >= MINIMUM_REDUCTION, (

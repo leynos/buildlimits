@@ -1,17 +1,16 @@
-"""Replay one recorded workload through both metrics producers.
+"""Replay recorded workloads through both metrics producers.
 
 The acceptance criterion for #56 is that the supervisor's reported maxima do
 not get worse when per-record samples are replaced by periodic snapshots. The
 fixture tests pin each window shape separately, which cannot show that. This
-module records one workload of queue and held depths, renders it the way the
+module records workloads of queue and held depths, renders each one the way the
 legacy producer did and the way the gauge accumulator does now, and compares
 the maxima the report publishes for each window.
 
-The workload is rendered with a forced snapshot at each recorded instant. That
-is deliberately stronger than the production cadence: every peak the workload
-contains reaches the journal, so a fold that dropped or delayed a peak would
-show up as a smaller maximum rather than staying hidden inside a later
-interval.
+Two snapshot renderings matter. The first forces a snapshot at every recorded
+instant, which shows the fold preserves every sample. The second leaves the
+cadence to the accumulator, so a peak that rises and falls between two
+published snapshots has to survive inside the interval peak instead.
 """
 
 import json
@@ -31,10 +30,13 @@ if typ.TYPE_CHECKING:
 BASE_TIMESTAMP_US = 1_767_225_600_000_000
 SERVICE_UNIT = "buildlimits-supervisor.service"
 
+type Maxima = tuple[float, float]
+type Workload = tuple[tuple[float, int, int], ...]
+
 # One recorded workload: monotonic seconds, queue depth, held tokens. The
 # depths peak at different moments so a producer that folded only the final
 # sample, or only one of the two counts, cannot pass.
-WORKLOAD: tuple[tuple[float, int, int], ...] = (
+WORKLOAD: Workload = (
     (0.0, 0, 0),
     (4.0, 3, 0),
     (9.0, 6, 1),
@@ -45,7 +47,18 @@ WORKLOAD: tuple[tuple[float, int, int], ...] = (
     (41.0, 0, 1),
 )
 
-type Maxima = tuple[float, float]
+# The same shape with both peaks landing between published snapshots. The queue
+# peak arrives two seconds after a step-triggered record, inside the minimum
+# spacing, and the held peak follows a second later. The heartbeat at forty
+# seconds is the first record that may carry them, so only the interval peak
+# keeps either one.
+PEAK_BETWEEN_SNAPSHOTS: Workload = (
+    (0.0, 0, 0),
+    (6.0, 5, 1),
+    (8.0, 9, 2),
+    (9.0, 1, 6),
+    (40.0, 0, 0),
+)
 
 
 def _journal_lines(
@@ -75,7 +88,7 @@ def _journal_lines(
     return "\n".join(lines)
 
 
-def _instants() -> cabc.Iterator[float]:
+def _instants(workload: Workload) -> cabc.Iterator[float]:
     """Yield the workload's monotonic instants in the order they were recorded.
 
     Returns
@@ -83,10 +96,10 @@ def _instants() -> cabc.Iterator[float]:
     Iterator[float]
         One instant per workload sample.
     """
-    return (at for at, _, _ in WORKLOAD)
+    return (at for at, _, _ in workload)
 
 
-def _aligned_lines(sink: RecordingSink) -> str:
+def _aligned_lines(sink: RecordingSink, workload: Workload) -> str:
     """Pair each accepted record with the workload instant it was read at.
 
     Returns
@@ -94,10 +107,10 @@ def _aligned_lines(sink: RecordingSink) -> str:
     str
         The journal lines for the records the sink accepted.
     """
-    return _journal_lines(zip(sink.records, _instants(), strict=True))
+    return _journal_lines(zip(sink.records, _instants(workload), strict=True))
 
 
-def _legacy_window() -> str:
+def _legacy_window(workload: Workload) -> str:
     """Render the workload as the per-record samples the old producer wrote.
 
     Returns
@@ -108,34 +121,59 @@ def _legacy_window() -> str:
     """
     sink = RecordingSink()
     emitter = Metrics(sink)
-    for _at, queued, held in WORKLOAD:
+    for _at, queued, held in workload:
         assert emitter.emit("request_admitted", queued=queued, held=held), (
             "the legacy producer wrote a sample on every record"
         )
-    return _aligned_lines(sink)
+    return _aligned_lines(sink, workload)
 
 
-def _snapshot_window() -> str:
-    """Render the workload through the periodic gauge producer.
+def _snapshot_window(
+    workload: Workload, *, force: bool
+) -> tuple[str, tuple[float, ...]]:
+    """Render the workload through the accumulator.
+
+    Parameters
+    ----------
+    workload : Workload
+        The recorded instants and depths to replay.
+    force : bool
+        Whether every sample is published, or the accumulator's cadence
+        decides, so a test can show which peaks fell between two records.
 
     Returns
     -------
-    str
-        The ``gauges`` records the accumulator publishes for the workload.
+    tuple[str, tuple[float, ...]]
+        The ``gauges`` records and the instants they were published at.
     """
     sink = RecordingSink()
     state: dict[str, object] = {}
-    now = [0.0]
-    observer = PressureMetrics(Metrics(sink), lambda: state, clock=lambda: now[0])
-    for at, queued, held in WORKLOAD:
+    observer = PressureMetrics(Metrics(sink), lambda: state, clock=lambda: 0.0)
+    published: list[float] = []
+    for at, queued, held in workload:
         state.update(queued=queued, held=held)
-        now[0] = at
         observer.observe(at)
-        assert observer.flush(at, force=True), "each recorded instant is published"
+        if observer.flush(at, force=force):
+            published.append(at)
+    assert len(published) == len(sink.records), "one record per published instant"
     assert all(record["BUILD_LIMITS_EVENT"] == "gauges" for record in sink.records), (
         "the snapshot window carries no per-record counter samples"
     )
-    return _aligned_lines(sink)
+    return _journal_lines(zip(sink.records, published, strict=True)), tuple(published)
+
+
+def _expected_maxima(workload: Workload) -> Maxima:
+    """Read the workload's true maxima from its own samples.
+
+    Returns
+    -------
+    Maxima
+        The largest queue depth and the largest held-token count recorded.
+    """
+    return (
+        float(max(queued for _, queued, _ in workload)),
+        float(max(held for _, _, held in workload)),
+    )
 
 
 def _maxima(window: str) -> Maxima:
@@ -155,12 +193,28 @@ def _maxima(window: str) -> Maxima:
 
 def test_the_same_workload_reports_the_same_maxima_in_both_formats() -> None:
     """Periodic peaks preserve the maxima the per-record samples reported."""
-    expected: Maxima = (
-        float(max(queued for _, queued, _ in WORKLOAD)),
-        float(max(held for _, _, held in WORKLOAD)),
+    expected = _expected_maxima(WORKLOAD)
+    legacy = _maxima(_legacy_window(WORKLOAD))
+    window, published = _snapshot_window(WORKLOAD, force=True)
+    assert published == tuple(_instants(WORKLOAD)), (
+        "the forced window publishes every recorded instant"
     )
-    legacy = _maxima(_legacy_window())
-    snapshots = _maxima(_snapshot_window())
+    snapshots = _maxima(window)
     assert legacy == expected, "the legacy window reports the workload's maxima"
     assert snapshots == expected, "the snapshot window reports the same maxima"
     assert snapshots == legacy, "the change must not lower or raise either maximum"
+
+
+def test_a_peak_between_snapshots_still_raises_the_reported_maximum() -> None:
+    """A depth that rose and fell inside an interval is not lost."""
+    expected = _expected_maxima(PEAK_BETWEEN_SNAPSHOTS)
+    window, published = _snapshot_window(PEAK_BETWEEN_SNAPSHOTS, force=False)
+    assert published, "the run must publish at least a baseline"
+    assert 8.0 not in published, "the queue peak falls inside an interval"
+    assert 9.0 not in published, "the held peak falls inside an interval"
+    assert _maxima(window) == expected, (
+        "the interval peak carries both depths the boundaries did not see"
+    )
+    assert _maxima(window) == _maxima(_legacy_window(PEAK_BETWEEN_SNAPSHOTS)), (
+        "the formats agree even when no boundary lands on the peak"
+    )

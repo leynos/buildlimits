@@ -125,8 +125,9 @@ Use module constants rather than configuration:
 
 The first flush writes a baseline record with a zero interval. Later flushes
 write when the interval has elapsed, when a step change is due and the minimum
-spacing has passed, or when shutdown forces a final record. The worst case is
-about 840 `gauges` records per hour.
+spacing has passed, or when shutdown forces a final record. No two records are
+closer than the minimum spacing, heartbeat included, so an hour holds at most
+721 records once the baseline is counted.
 
 ### D3: peak sampling points
 
@@ -142,6 +143,12 @@ on the systemd scope call. Folding the depth at the boundary, before any
 handler runs, keeps the open interval from integrating a depth that has already
 changed for as long as placement takes. Folding afterwards biases the queue
 mean upwards by the placement latency.
+
+The sampled maxima are replayed rather than argued. One recorded workload is
+rendered by the legacy producer and by the accumulator, and the published
+maxima are compared. A second rendering leaves the cadence to the accumulator,
+with both peaks falling between two published snapshots, so the comparison
+fails if interval peaks are dropped.
 
 ### D4: producer-side integration
 
@@ -177,16 +184,18 @@ replacement.
 ### D7: volume
 
 The change removes 35,094 `request_queued` records per hour at the measured
-workload and adds at most 840 `gauges` records. Against supervisor-unit
-structured records at the same workload, measured after #55, the reduction is
-about 33%. Against the 277,233 total records measured for the ticket, the
-removal is 12.7% and `gauges` adds back at most 0.3 percentage points.
+workload and adds at most 721 `gauges` records, the cap the minimum spacing
+sets. Against supervisor-unit structured records at the same workload, measured
+after #55, the reduction is about 33%. Against the 277,233 total records
+measured for the ticket, the removal is 12.7% and `gauges` adds back at most
+0.3 percentage points.
 
 The measured test compares the two producers over one workload: the per-request
 record count of the legacy producer, including the enqueue records it wrote,
-against the new count, which excludes them and adds the snapshots. That is the
-same subtraction as the busy-hour figures above, and the busy-hour replay keeps
-the 13% floor a lower bound rather than a fitted result.
+against the new count, which excludes them and adds the snapshots. The
+busy-hour check uses the spacing cap rather than a heartbeat estimate, so it
+can only overstate the snapshots the new producer writes and the 13% floor
+stays a lower bound rather than a fitted result.
 
 ### D8: reader-before-writer ordering
 
