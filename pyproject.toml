@@ -548,7 +548,7 @@ full_name = [
     "buildlimits.metrics_gauges.GaugeAccumulator._crossed_a_step",
 ]
 path = ["buildlimits/metrics_gauges.py"]
-reason = "PressureMetrics calls the accumulator through the collaborator attribute it holds, and observe folds samples through the two private helpers; Skylos does not resolve either edge. The supervisor tick, admission and shutdown paths all drive the accumulator, and tests/test_metrics_gauges.py asserts the cadence, the interval integral and the failed-emission merge."
+reason = "GaugePublisher calls the accumulator through the collaborator attribute it holds, and observe folds samples through the two private helpers; Skylos does not resolve either edge. The supervisor tick, admission and shutdown paths all drive the accumulator through the publisher, and tests/test_metrics_gauges.py with tests/test_metrics_gauges_properties.py assert the cadence, the interval integral, the peaks and the failed-emission merge."
 
 [tool.nose]
 version = "0.20.0"
@@ -1801,3 +1801,10 @@ members = [
     "tests/test_modelcheck_service_run_sets_properties.py",
 ]
 reason = "Matching import lists: the pair properties and the variable-set property name the same Hypothesis and case-helper symbols, and the module split exists to keep each file under the module length limit. Sharing them through a re-export module would add one more test support module without hiding a real dependency."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_metrics_gauges.py",
+    "tests/test_metrics_gauges_properties.py",
+]
+reason = "Matching import lists: the example module and the property module name the same accumulator and cadence constants, and they stay separate because the properties state their own reference definitions rather than reusing the examples' helpers. Sharing the list through a re-export module would add a test support module without hiding a real dependency."
