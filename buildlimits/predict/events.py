@@ -17,6 +17,7 @@ import dataclasses as dc
 import datetime as dt
 import hashlib
 import json
+import math
 import typing as typ
 
 from buildlimits.utc_text import utc_text
@@ -336,6 +337,10 @@ def event_from_dict(value: object) -> Event:
     if not isinstance(runtime, (int, float)) or isinstance(runtime, bool):
         msg = "runtime_seconds must be numeric"
         raise TypeError(msg)
+    runtime_seconds = float(runtime)
+    if not math.isfinite(runtime_seconds):
+        msg = "runtime_seconds must be finite"
+        raise ValueError(msg)
     observed = _parse_stamp(row["observed_at"])
     if observed is None:
         msg = "observed_at must be a UTC timestamp"
@@ -346,7 +351,7 @@ def event_from_dict(value: object) -> Event:
         admitted_at=_parse_stamp(row["admitted_at"]),
         observed_at=observed,
         label=typ.cast("Label", label),
-        runtime_seconds=float(runtime),
+        runtime_seconds=runtime_seconds,
     )
 
 

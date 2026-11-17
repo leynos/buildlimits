@@ -242,3 +242,10 @@ def test_batches_follow_store_order_when_a_timestamp_steps_back() -> None:
     rows = features((first, stepped, third), load_window_seconds=60.0)
     assert rows[1].load == 0, "the batch before is embargoed"
     assert rows[2].load == 1, "only the first record is released history"
+
+
+@pytest.mark.parametrize("runtime", [float("nan"), float("inf"), float("-inf")])
+def test_a_non_finite_runtime_is_refused(runtime: float) -> None:
+    """A non-finite runtime is not a JSON number, so it is refused by field."""
+    with pytest.raises(ValueError, match="runtime_seconds must be finite"):
+        event_from_dict(_line(runtime_seconds=runtime))
