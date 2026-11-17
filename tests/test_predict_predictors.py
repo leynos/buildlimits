@@ -1,5 +1,6 @@
 """Known-answer contracts for the single predictors and the consensus family."""
 
+import copy
 import dataclasses as dc
 import datetime as dt
 import json
@@ -19,6 +20,7 @@ from buildlimits.predict.predictors import (
     ExponentialRate,
     LastOutcome,
     RollingRate,
+    single_predictors,
 )
 from buildlimits.predict.report import Provenance, build_report
 from buildlimits.predict.synthetic import drift, identity, persistent, stationary
@@ -127,6 +129,26 @@ def test_recency_models_abstain_until_they_have_a_label() -> None:
         ExponentialRate("exponential-rate", 0.2),
     ):
         assert predictor.predict(row) is None, f"{predictor.name} abstains"
+
+
+def test_predicting_twice_repeats_the_answer_and_changes_no_state() -> None:
+    """A prediction is a query, so asking twice never teaches the predictor.
+
+    The harness asks once and scores once, but a caller that retries must not
+    find the model has moved, and a test double that predicts while inspecting
+    must not perturb the run it observes.
+    """
+    row = _row(7)
+    for predictor in single_predictors(predict_config()):
+        predictor.update(row, "hit")
+        predictor.update(row, "miss")
+        before = copy.deepcopy(predictor)
+
+        first = predictor.predict(row)
+        second = predictor.predict(row)
+
+        assert first == second, f"{predictor.name} answers the same twice"
+        assert predictor == before, f"{predictor.name} is unchanged by predicting"
 
 
 def test_base_rate_sequence_is_causal() -> None:
