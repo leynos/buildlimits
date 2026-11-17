@@ -112,16 +112,23 @@ comparison was paired over `minimum_scored_events` rows, or every paired row
 fell in a single bootstrap block, in which case the resampling has no width to
 judge.
 
-The replay is prequential: a row is predicted when its label arrives, and the
-label is applied afterwards. Rows whose labels arrived at the same moment are
-predicted as a batch before any of them is applied, so two simultaneous
-outcomes cannot inform each other. A row's age and load are measured at the
-request's admission when the source recorded that time, and at the label time
-otherwise, so a completion labelled after the admission is not counted as load
-the decision could have seen. The commit named in the report is read from the
-repository that holds the benchmark module, and only when that repository
-tracks the module's own path; an installed copy therefore reports `unknown`
-rather than borrowing its host project's commit.
+The replay is prequential and embargoed by one batch: rows whose labels arrived
+at the same moment are predicted as a batch before any of them is applied, so
+two simultaneous outcomes cannot inform each other, and the batch immediately
+before it has not been applied either, because its labels may have been written
+after this batch's builds started. A prediction's history therefore ends two
+batches back. The report counts the labels withheld that way as
+`embargoed_rows`, and the final batch's labels, which no prediction follows, as
+`unapplied_rows`. A row's age and load are measured at the request's admission
+when the source recorded that time, and at the label time otherwise; only
+eligible hit/miss labels known at that moment contribute, so a completion
+labelled after the admission is not counted as load the decision could have
+seen, and an unknown outcome never becomes history. The tuning/held-out split
+is made at a label time, so every row sharing a timestamp stays in one phase.
+The commit named in the report is read from the repository that holds the
+benchmark module, and only when that repository tracks the module's own path;
+an installed copy therefore reports `unknown` rather than borrowing its host
+project's commit.
 
 `make predict-dataset` refuses any `--output` path that resolves to the store
 it is reading, including through a symbolic link, so it cannot replace the

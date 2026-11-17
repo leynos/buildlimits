@@ -15,6 +15,7 @@ def _empty_document() -> dict[str, object]:
         "ranking": [],
         "ablation": {},
         "split": {"train_labelled": 0, "heldout_labelled": 0},
+        "replay": {"batches": 0, "embargoed_rows": 0, "unapplied_rows": 0},
         "data": {
             "stats": {
                 "events": 0,
@@ -89,6 +90,19 @@ def test_the_timings_report_keeps_combination_time_apart() -> None:
     assert "`ensemble-equal`" not in before, "combination is not prediction"
     assert "Combining only" in after, "the second table says what it measures"
     assert "`ensemble-equal`" in after, "the ensemble is reported apart"
+
+
+def test_the_replay_accounting_is_rendered() -> None:
+    """Withheld and unapplied labels are stated, not left implicit."""
+    document = _empty_document()
+    document["replay"] = {"batches": 4, "embargoed_rows": 3, "unapplied_rows": 2}
+
+    markdown = render_markdown(document)
+
+    assert (
+        "- Replay: 4 batches, 3 labels withheld one batch, "
+        "2 labels after the last prediction"
+    ) in markdown, "the embargo accounting is visible"
 
 
 def test_an_empty_history_has_a_missing_window() -> None:

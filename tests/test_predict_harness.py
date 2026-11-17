@@ -54,21 +54,45 @@ def test_order_is_label_time_not_admission_time() -> None:
 
 
 def test_labels_that_arrive_together_cannot_inform_each_other() -> None:
-    """A batch of outcomes is answered in full before any of it is learned."""
+    """A batch is answered in full before any of it is learned."""
     stamp = EPOCH + dt.timedelta(minutes=5)
     first = _event(0, admitted_at=None, observed_at=stamp, label="hit")
-    second = _event(1, admitted_at=None, observed_at=stamp, label="miss")
+    second = _event(0, admitted_at=None, observed_at=stamp, label="hit")
     later = _event(
-        2, admitted_at=None, observed_at=stamp + dt.timedelta(minutes=1), label="hit"
+        2, admitted_at=None, observed_at=stamp + dt.timedelta(minutes=1), label="miss"
+    )
+    latest = _event(
+        3, admitted_at=None, observed_at=stamp + dt.timedelta(minutes=2), label="miss"
     )
 
-    walk = walk_forward((first, second, later), load_config())
+    walk = walk_forward((first, second, later, latest), load_config())
+    probabilities = walk.series["base-rate"].probabilities
 
-    assert walk.series["base-rate"].probabilities[:2] == (0.5, 0.5), (
-        "the second row is predicted before the first row's hit is learned"
+    assert probabilities[:3] == (0.5, 0.5, 0.5), (
+        "the tied pair is answered together and the next batch is embargoed"
     )
-    assert walk.series["base-rate"].probabilities[2] == pytest.approx(0.5), (
-        "the next batch sees both delivered labels"
+    assert probabilities[3] == pytest.approx(1.0), (
+        "the tied hits are available two batches later"
+    )
+
+
+def test_the_replay_withholds_one_batch_and_counts_it() -> None:
+    """Each batch is applied only after the next, and the last never is."""
+    first = _event(0, admitted_at=None, observed_at=EPOCH, label="hit")
+    second = _event(
+        1, admitted_at=None, observed_at=EPOCH + dt.timedelta(minutes=1), label="miss"
+    )
+    third = _event(
+        2, admitted_at=None, observed_at=EPOCH + dt.timedelta(minutes=2), label="hit"
+    )
+
+    walk = walk_forward((first, second, third), load_config())
+
+    assert walk.batches == ((0,), (1,), (2,)), "one batch per label time"
+    assert walk.embargoed_rows == 2, "the first two labels are each withheld once"
+    assert walk.unapplied_rows == 1, "the final label informs no prediction"
+    assert walk.series["base-rate"].probabilities == (0.5, 0.5, 1.0), (
+        "only the first batch's label has reached the final prediction"
     )
 
 
@@ -86,14 +110,22 @@ def test_a_delayed_label_is_unavailable_to_an_intervening_prediction() -> None:
         observed_at=EPOCH + dt.timedelta(minutes=10),
         label="miss",
     )
-
-    walk = walk_forward((slow, middle), load_config())
-
-    assert walk.series["last-outcome"].probabilities[0] is None, (
-        "the intervening event has no earlier outcome for this identity"
+    later = _event(
+        7,
+        admitted_at=EPOCH + dt.timedelta(minutes=2),
+        observed_at=EPOCH + dt.timedelta(minutes=50),
+        label="hit",
     )
-    assert walk.series["last-outcome"].probabilities[1] == pytest.approx(0.0), (
-        "the middle event's miss is available once it has finished"
+
+    walk = walk_forward((slow, middle, later), load_config())
+    probabilities = walk.series["last-outcome"].probabilities
+
+    assert probabilities[0] is None, "the middle event has no earlier outcome"
+    assert probabilities[1] is None, (
+        "the slow event is withheld from the batch after it"
+    )
+    assert probabilities[2] == pytest.approx(0.0), (
+        "the middle event's miss is the only label applied so far"
     )
 
 
@@ -144,6 +176,29 @@ def test_split_is_the_configured_share_of_labelled_events() -> None:
     assert walk.split.train_labelled == 100, "half the labels tune"
     assert walk.split.heldout_labelled == 100, "half the labels are held out"
     assert walk.split.boundary == events[100].observed_at, "boundary timestamp"
+
+
+def test_a_shared_timestamp_stays_inside_one_phase() -> None:
+    """The tuning/held-out boundary never splits one label time."""
+    config = dc.replace(load_config(), train_fraction=0.5)
+    first = _event(0, admitted_at=None, observed_at=EPOCH, label="hit")
+    second = _event(
+        1, admitted_at=None, observed_at=EPOCH + dt.timedelta(minutes=1), label="miss"
+    )
+    tied = _event(
+        2, admitted_at=None, observed_at=EPOCH + dt.timedelta(minutes=1), label="hit"
+    )
+    last = _event(
+        3, admitted_at=None, observed_at=EPOCH + dt.timedelta(minutes=2), label="miss"
+    )
+
+    walk = walk_forward((first, second, tied, last), config)
+
+    assert walk.phases == ("train", "held-out", "held-out", "held-out"), (
+        "the tied rows went to the same side"
+    )
+    assert walk.split.train_labelled == 1, "one row predates the boundary"
+    assert walk.split.heldout_labelled == 3, "the shared moment is held out whole"
 
 
 def test_unknown_events_are_predicted_but_never_phase_labelled() -> None:

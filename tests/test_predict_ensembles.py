@@ -1,5 +1,7 @@
 """Consensus edge cases and the ablation restart contract."""
 
+import dataclasses as dc
+
 import pytest
 from predict_test_helpers import predict_config
 
@@ -10,6 +12,7 @@ from buildlimits.predict.ensembles import (
     _log_loss_gradient,
     fit_weights,
 )
+from buildlimits.predict.events import EPOCH
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.metrics import log_loss_of
 from buildlimits.predict.synthetic import drift
@@ -156,6 +159,23 @@ def test_the_gradient_matches_a_finite_difference_under_abstention(index: int) -
     gradient = _log_loss_gradient(rows, outcomes, weights, clip)
 
     assert gradient[index] == pytest.approx(numeric, abs=1e-4), "true derivative"
+
+
+def test_a_single_label_time_leaves_no_tuning_rows() -> None:
+    """With every label at one moment nothing tunes, so fixed weights stay even."""
+    config = predict_config()
+    events = tuple(
+        dc.replace(event, observed_at=EPOCH)
+        for event in drift(count=40, first_rate=0.9, second_rate=0.1, seed=5)
+    )
+
+    walk = walk_forward(events, config)
+    fixed = run_ensembles(walk, config)["ensemble-fixed"]
+
+    assert walk.split.train_labelled == 0, "no row predates the boundary"
+    assert fixed.weights == pytest.approx(fixed.initial_weights), (
+        "with no tuning labels the fitted weights stay uniform"
+    )
 
 
 def test_ablation_restarts_each_ensemble_from_its_starting_weights() -> None:

@@ -1,10 +1,13 @@
 """Fit the consensus ensembles and walk each one across the event stream.
 
 The fixed ensemble's weights are fitted on the tuning period alone, so the
-held-out period cannot influence them. Ablation restarts each ensemble from the
-weights it began with and simply drops one component's column from the matrix.
-Starting from the final weights instead would carry what the stream taught the
-adaptive ensemble about held-out labels into the ablated comparison.
+held-out period cannot influence them. Every ensemble is then replayed under
+the same one-batch embargo as the single predictors: a batch's labels are
+applied only after the next batch has been answered. Ablation restarts each
+ensemble from the weights it began with and simply drops one component's column
+from the matrix. Starting from the final weights instead would carry what the
+stream taught the adaptive ensemble about held-out labels into the ablated
+comparison.
 """
 
 import dataclasses as dc
@@ -169,7 +172,7 @@ def _run_ensemble(
     matrix: cabc.Sequence[cabc.Sequence[float | None]],
     walk: Walk,
 ) -> EnsembleRun:
-    """Answer and update one ensemble across the whole stream.
+    """Answer one ensemble across the stream under the one-batch embargo.
 
     Returns
     -------
@@ -179,14 +182,16 @@ def _run_ensemble(
     initial_weights = tuple(ensemble.weights)
     probabilities: list[float | None] = []
     elapsed: list[float] = []
-    for row, event in zip(matrix, walk.events, strict=True):
-        started = time.perf_counter()
-        answer = ensemble.predict(row)
-        elapsed.append(time.perf_counter() - started)
-        probabilities.append(answer)
-        label = scored_label(event)
-        if label is not None:
-            ensemble.update(row, is_hit=label == "hit")
+    pending: tuple[int, ...] | None = None
+    for batch in walk.batches:
+        for index in batch:
+            started = time.perf_counter()
+            answer = ensemble.predict(matrix[index])
+            elapsed.append(time.perf_counter() - started)
+            probabilities.append(answer)
+        if pending is not None:
+            _apply_labels(ensemble, matrix, walk.events, pending)
+        pending = batch
     return EnsembleRun(
         name=ensemble.name,
         probabilities=tuple(probabilities),
@@ -194,6 +199,19 @@ def _run_ensemble(
         initial_weights=initial_weights,
         elapsed=tuple(elapsed),
     )
+
+
+def _apply_labels(
+    ensemble: Ensemble,
+    matrix: cabc.Sequence[cabc.Sequence[float | None]],
+    events: cabc.Sequence[Event],
+    batch: cabc.Sequence[int],
+) -> None:
+    """Deliver one batch's eligible labels to the ensemble."""
+    for index in batch:
+        label = scored_label(events[index])
+        if label is not None:
+            ensemble.update(matrix[index], is_hit=label == "hit")
 
 
 def _outcome(event: Event) -> float:

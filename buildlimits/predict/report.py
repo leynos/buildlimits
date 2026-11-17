@@ -107,6 +107,11 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
             "journal": provenance.snapshot.journal,
         },
         "split": evaluation.walk.split.to_dict(),
+        "replay": {
+            "batches": len(evaluation.walk.batches),
+            "embargoed_rows": evaluation.walk.embargoed_rows,
+            "unapplied_rows": evaluation.walk.unapplied_rows,
+        },
         "predictors": {
             name: _predictor_entry(name, block, evaluation, weights)
             for name, block in evaluation.metrics.items()

@@ -76,6 +76,7 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
     source = typ.cast("dict[str, object]", data["source"])
     journal = typ.cast("dict[str, object]", data["journal"])
     split = typ.cast("dict[str, object]", document["split"])
+    replay = typ.cast("dict[str, object]", document["replay"])
     status = document["status"]
     lines = [
         "# Cache-hit prediction benchmark",
@@ -94,6 +95,11 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
         (
             f"- Split: {as_count(split['train_labelled'])} tuning, "
             f"{as_count(split['heldout_labelled'])} held-out"
+        ),
+        (
+            f"- Replay: {as_count(replay['batches'])} batches, "
+            f"{as_count(replay['embargoed_rows'])} labels withheld one batch, "
+            f"{as_count(replay['unapplied_rows'])} labels after the last prediction"
         ),
         (
             f"- Store: {as_count(source['records_total'])} rows from salt "
