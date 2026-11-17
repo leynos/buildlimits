@@ -21,6 +21,7 @@ from buildlimits.predict.report import (
     Report,
     build_report,
 )
+from buildlimits.predict.report_writer import write_report
 from buildlimits.predict.snapshot_codec import fingerprint
 from buildlimits.predict.snapshot_store import load_snapshot
 
@@ -127,7 +128,7 @@ def _write_report(report: Report, output: Path) -> int:
         other, and one when the directory cannot be written.
     """
     try:
-        report.write(output)
+        write_report(report, output)
     except ValueError as error:
         print(f"build-limits-predict-benchmark: {error}", file=sys.stderr)
         return 2
