@@ -249,6 +249,26 @@ def _document() -> dict[str, object]:
             ),
             id="gap-seconds-not-numeric",
         ),
+        pytest.param(
+            lambda doc: doc.update(journal={"available": "yes"}),
+            id="journal-availability-not-a-bool",
+        ),
+        pytest.param(
+            lambda doc: doc.update(journal={"available": True, "records": "2"}),
+            id="journal-count-not-an-integer",
+        ),
+        pytest.param(
+            lambda doc: doc.update(journal={"available": True}),
+            id="journal-count-missing",
+        ),
+        pytest.param(
+            lambda doc: doc.update(journal={"available": False, "reason": 7}),
+            id="journal-reason-not-text",
+        ),
+        pytest.param(
+            lambda doc: doc.update(journal={"available": True, "records": -1}),
+            id="journal-count-negative",
+        ),
     ],
 )
 def test_a_malformed_snapshot_is_refused(
@@ -281,6 +301,17 @@ def test_a_non_finite_gap_length_is_refused_by_field(
 
     with pytest.raises(ValueError, match="gap must hold finite seconds"):
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_an_available_journal_note_survives_loading(tmp_path: Path) -> None:
+    """The note the report renders is decoded unchanged."""
+    document = _document()
+    document["journal"] = {"available": True, "span": "4w", "records": 12}
+
+    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+    assert loaded.journal["available"] is True, "availability is read"
+    assert loaded.journal["records"] == 12, "the count is read"
 
 
 def test_a_document_that_is_not_an_object_is_refused(tmp_path: Path) -> None:

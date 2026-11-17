@@ -70,7 +70,7 @@ def load_snapshot(path: Path) -> Snapshot:
     return Snapshot(
         created_at=_parse_stamp(created),
         source=_source_from(path, typ.cast("dict[str, object]", source)),
-        journal=typ.cast("dict[str, object]", journal),
+        journal=_journal_from(path, typ.cast("dict[str, object]", journal)),
         events=decoded_events,
         gaps=_gaps_from(path, document.get("stats")),
     )
@@ -108,6 +108,51 @@ def _source_from(path: Path, value: cabc.Mapping[str, object]) -> Source:
         outcome_records=outcome_records,
         summary_records=summary_records,
     )
+
+
+def _journal_from(path: Path, value: cabc.Mapping[str, object]) -> dict[str, object]:
+    """Validate the journal note the report renders.
+
+    The report reads whether the journal was available, the record count it
+    printed, and the reason it printed when it was not. Checking those three
+    at load time keeps a hand-edited document from failing inside the Markdown
+    formatter, where a count written as text reaches an integer format. An
+    empty note is accepted: it means the snapshot target queried no journal.
+
+    Returns
+    -------
+    dict[str, object]
+        The journal note, unchanged.
+
+    Raises
+    ------
+    TypeError
+        If a field the report reads has the wrong type, or an available note
+        omits the count it would print.
+    ValueError
+        If an available note reports a negative count.
+    """
+    journal = dict(value)
+    available = journal.get("available")
+    if available is not None and not isinstance(available, bool):
+        msg = f"{path} journal must hold a boolean available"
+        raise TypeError(msg)
+    reason = journal.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        msg = f"{path} journal reason must be text"
+        raise TypeError(msg)
+    records = journal.get("records")
+    if available and records is None:
+        msg = f"{path} available journal must hold a records count"
+        raise TypeError(msg)
+    if records is not None:
+        if isinstance(records, bool) or not isinstance(records, int):
+            msg = f"{path} journal records must be an integer"
+            raise TypeError(msg)
+        if records < 0:
+            msg = f"{path} journal records must not be negative"
+            raise ValueError(msg)
+    return journal
 
 
 def _gaps_from(path: Path, stats: object) -> tuple[Gap, ...]:
