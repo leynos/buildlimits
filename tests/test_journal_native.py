@@ -16,15 +16,15 @@ def test_native_datagram_has_fixed_text_fields(tmp_path: Path) -> None:
     with journal_receiver(path) as receiver:
         sink = JournalSink(path, identifier="build-limits-supervisor")
         try:
-            Metrics(sink).emit("request_queued", queued=2)
+            Metrics(sink).emit("gauges", queued=2)
             payload = receiver.recv(MAX_DATAGRAM_BYTES)
             assert payload.decode("ascii").splitlines() == [
-                "MESSAGE=build-limits metric request_queued",
+                "MESSAGE=build-limits metric gauges",
                 "PRIORITY=6",
                 "SYSLOG_IDENTIFIER=build-limits-supervisor",
                 "BUILD_LIMITS_SCHEMA=1",
                 "BUILD_LIMITS_SOURCE=supervisor",
-                "BUILD_LIMITS_EVENT=request_queued",
+                "BUILD_LIMITS_EVENT=gauges",
                 "BUILD_LIMITS_QUEUED=2",
             ], "native field contract"
             assert sink._socket is not None and not sink._socket.getblocking(), (
@@ -70,14 +70,14 @@ def test_socket_error_reopens_on_next_attempt(tmp_path: Path) -> None:
         receiver.recv(MAX_DATAGRAM_BYTES)
         receiver.close()
         path.unlink()
-        emitter.emit("request_queued")
+        emitter.emit("gauges")
         assert emitter.dropped_records == 1, "failed send counted"
         assert sink._socket is None, "failed descriptor released"
         with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as replacement:
             replacement.bind(str(path))
             replacement.settimeout(1)
-            emitter.emit("request_queued")
-            assert b"BUILD_LIMITS_EVENT=request_queued" in replacement.recv(
+            emitter.emit("gauges")
+            assert b"BUILD_LIMITS_EVENT=gauges" in replacement.recv(
                 MAX_DATAGRAM_BYTES
             ), "reopened"
     finally:
@@ -167,13 +167,13 @@ def test_datagram_without_identifier_preserves_wire_order(tmp_path: Path) -> Non
         sink = JournalSink(path)
         try:
             sink.emit({
-                "BUILD_LIMITS_EVENT": "request_queued",
+                "BUILD_LIMITS_EVENT": "gauges",
                 "BUILD_LIMITS_QUEUED": "2",
             })
             assert receiver.recv(MAX_DATAGRAM_BYTES) == (
-                b"MESSAGE=build-limits metric request_queued\n"
+                b"MESSAGE=build-limits metric gauges\n"
                 b"PRIORITY=6\n"
-                b"BUILD_LIMITS_EVENT=request_queued\n"
+                b"BUILD_LIMITS_EVENT=gauges\n"
                 b"BUILD_LIMITS_QUEUED=2\n"
             ), "exact ordered wire bytes"
         finally:

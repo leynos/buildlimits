@@ -226,18 +226,101 @@ def _requests(records: cabc.Sequence[Record], seconds: int) -> dict[str, object]
     }
 
 
+def _gauge_records(
+    records: cabc.Sequence[Record],
+) -> tuple[tuple[Record, ...], tuple[Record, ...]]:
+    """Separate periodic snapshots from records that carry their own sample.
+
+    Returns
+    -------
+    tuple[tuple[Record, ...], tuple[Record, ...]]
+        The ``gauges`` snapshots, then every other supervisor record.
+    """
+    snapshots = tuple(record for record in records if record.event == "gauges")
+    legacy = tuple(record for record in records if record.event != "gauges")
+    return snapshots, legacy
+
+
+def _interval(record: Record) -> float:
+    """Read a snapshot's covered interval, treating an absent field as zero.
+
+    Returns
+    -------
+    float
+        The validated non-negative interval in seconds.
+    """
+    return float(record.fields.get("interval_seconds", "0"))
+
+
+def _time_weighted_queue(
+    snapshots: cabc.Sequence[Record],
+) -> tuple[float | None, float | None]:
+    """Integrate queue depth over snapshot intervals without journal timestamps.
+
+    A snapshot carries the producer-side integral of the queue depth over the
+    interval it covers. Dividing the summed integral by the summed interval
+    gives the mean depth an operator actually experienced, even when the
+    intervals are unequal. Records without both fields, or with a zero
+    interval, cannot contribute to that ratio and are skipped.
+
+    Returns
+    -------
+    tuple[float | None, float | None]
+        The rounded time-weighted mean, or ``None`` when no snapshot qualifies,
+        and the summed coverage of every snapshot interval, or ``None`` when no
+        snapshot carries an interval at all. Coverage includes intervals with
+        no integral, which the mean skips, so it does not measure how much of
+        the window the mean covers.
+    """
+    intervals = present_samples(snapshots, "interval_seconds")
+    coverage = round(sum(intervals), 3) if intervals else None
+    weighted = tuple(
+        record
+        for record in snapshots
+        if _interval(record) > 0 and "queued_seconds" in record.fields
+    )
+    denominator = sum(_interval(record) for record in weighted)
+    if not denominator:
+        return None, coverage
+    integrated = sum(float(record.fields["queued_seconds"]) for record in weighted)
+    return round(integrated / denominator, 3), coverage
+
+
 def _gauges(records: cabc.Sequence[Record]) -> dict[str, object]:
-    """Aggregate gauge samples without implying a time-weighted queue mean.
+    """Aggregate queue and held depth from legacy samples and periodic snapshots.
+
+    A legacy record carries its own gauge sample, while a ``gauges`` record
+    carries the current sample and the peaks observed since the previous
+    snapshot. Taking the maximum across both preserves the sampled maximum an
+    operator saw before the periodic event existed. The queue mean is
+    time-weighted because snapshots need not cover equal intervals.
 
     Returns
     -------
     dict[str, object]
-        Queue maximum, arithmetic sample mean and held maximum.
+        Combined maxima, the time-weighted queue mean, snapshot coverage and
+        the deprecated arithmetic sample mean over legacy records.
     """
-    queued, held = present_samples(records, "queued"), present_samples(records, "held")
+    snapshots, legacy = _gauge_records(records)
+    queued = (
+        present_samples(legacy, "queued")
+        + present_samples(snapshots, "queued")
+        + present_samples(snapshots, "queued_peak")
+    )
+    held = (
+        present_samples(legacy, "held")
+        + present_samples(snapshots, "held")
+        + present_samples(snapshots, "held_peak")
+    )
+    samples = present_samples(legacy, "queued")
+    weighted_mean, coverage = _time_weighted_queue(snapshots)
     return {
         "queue_maximum": max(queued) if queued else None,
-        "queue_sample_mean": round(statistics.mean(queued), 3) if queued else None,
+        "queue_time_weighted_mean": weighted_mean,
+        "gauge_coverage_seconds": coverage,
+        # Deprecated: legacy-only arithmetic mean, kept for one release so an
+        # older reader keeps its named contract. New windows are time-weighted.
+        "queue_sample_mean": round(statistics.mean(samples), 3) if samples else None,
         "held_maximum": max(held) if held else None,
     }
 

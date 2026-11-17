@@ -311,7 +311,9 @@ def test_metrics_admission_and_failure_boundaries(
         "one terminal record"
     )
     assert records[0]["BUILD_LIMITS_REASON"] == "launch_failed", "bounded reason"
-    assert records[0]["BUILD_LIMITS_HELD"] == "0", "post-transition gauge"
+    assert "BUILD_LIMITS_HELD" not in records[0], (
+        "supervisor-wide counters stay off per-request records"
+    )
 
 
 def test_health_transition_and_stop_metrics_are_once(

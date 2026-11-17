@@ -18,7 +18,7 @@ still takes effect on the tick that follows.
 import contextlib
 import typing as typ
 
-from buildlimits import supervisor_signals
+from buildlimits import supervisor_observability, supervisor_signals
 from buildlimits.admission_state import GroupState
 from buildlimits.effects import Exit
 from buildlimits.journal import log
@@ -217,6 +217,14 @@ def shutdown(supervisor: Supervisor) -> None:
     orderly = supervisor._stopping and supervisor.health_reason is None
     supervisor.exit_status = 0 if orderly and not supervisor.loop.failures else 1
 
+    # Publish the last interval before the terminal record. The attempt is
+    # best-effort: a failing transport must not change how the process exits,
+    # so its outcome is reported here rather than raised or retried. The
+    # diagnostic write is contained for the same reason: a broken stderr must
+    # not keep the terminal record out of the journal.
+    published = supervisor_observability.publish_final(supervisor)
+    with contextlib.suppress(OSError):
+        log(f"stopping: final gauge record {published.value}")
     supervisor._metric(
         "supervisor_stopped", outcome=exit_outcome(Exit(code=supervisor.exit_status))
     )

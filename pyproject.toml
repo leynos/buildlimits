@@ -537,6 +537,19 @@ full_name = ["buildlimits.metrics.NullSink.emit"]
 path = ["buildlimits/metrics.py"]
 reason = "Metrics.__init__ defaults its transport to NullSink when no sink is configured, and Metrics.emit calls self.sink.emit through the MetricsSink protocol, which Skylos does not resolve to the concrete default. test_metrics.py asserts that the default transport reports a record as handled without counting a drop."
 
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = [
+    "buildlimits.metrics_gauges.GaugeAccumulator.observe",
+    "buildlimits.metrics_gauges.GaugeAccumulator.is_due",
+    "buildlimits.metrics_gauges.GaugeAccumulator.record",
+    "buildlimits.metrics_gauges.GaugeAccumulator.settle",
+    "buildlimits.metrics_gauges.GaugeAccumulator._integrate",
+    "buildlimits.metrics_gauges.GaugeAccumulator._crossed_a_step",
+]
+path = ["buildlimits/metrics_gauges.py"]
+reason = "GaugePublisher calls the accumulator through the collaborator attribute it holds, and observe folds samples through the two private helpers; Skylos does not resolve either edge. The supervisor tick, admission and shutdown paths all drive the accumulator through the publisher, and tests/test_metrics_gauges.py with tests/test_metrics_gauges_properties.py assert the cadence, the interval integral, the peaks and the failed-emission merge."
+
 [tool.nose]
 version = "0.20.0"
 roots = ["."]
@@ -1788,3 +1801,10 @@ members = [
     "tests/test_modelcheck_service_run_sets_properties.py",
 ]
 reason = "Matching import lists: the pair properties and the variable-set property name the same Hypothesis and case-helper symbols, and the module split exists to keep each file under the module length limit. Sharing them through a re-export module would add one more test support module without hiding a real dependency."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_metrics_gauges.py",
+    "tests/test_metrics_gauges_properties.py",
+]
+reason = "Matching import lists: the example module and the property module name the same accumulator and cadence constants, and they stay separate because the properties state their own reference definitions rather than reusing the examples' helpers. Sharing the list through a re-export module would add a test support module without hiding a real dependency."

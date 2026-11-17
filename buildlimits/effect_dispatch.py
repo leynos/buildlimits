@@ -79,7 +79,9 @@ def record_admitted(supervisor: Supervisor, entry: Pending, *, cached: bool) -> 
             else "direct"
         )
     )
-    supervisor._metric(
+    # Per-request records carry only request-specific fields; supervisor-wide
+    # counters reach the journal through the periodic ``gauges`` snapshot.
+    supervisor.metrics.emit(
         "request_admitted",
         cache_path=entry.cache_path,
         cache_backend=supervisor.backend.name,

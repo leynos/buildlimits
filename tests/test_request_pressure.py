@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from conftest import RecordingSink
 from descriptor_helpers import fill_table, isolated, open_fds, still_open
-from request_helpers import compile_request
+from request_helpers import compile_request, connect_requester
 
 from buildlimits.config import SupervisorConfig
 from buildlimits.descriptors import close_all
@@ -32,17 +32,6 @@ from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 
 if typ.TYPE_CHECKING:
     from buildlimits.pending_request import Pending
-
-
-def _connect(listener: socket.socket, rights: list[int]) -> socket.socket:
-    """Send one full compile frame with caller-owned descriptor copies."""
-    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.connect(listener.getsockname())
-    client.settimeout(1)
-    send_frame(
-        client, encode_request(compile_request(tuple(range(len(rights))))), rights
-    )
-    return client
 
 
 def _accept_exhaustion(report: int, path: str) -> object:
@@ -65,9 +54,9 @@ def _accept_exhaustion(report: int, path: str) -> object:
         baseline = open_fds()
         try:
             for _ in range(2):
-                clients.append(_connect(listener, []))
+                clients.append(connect_requester(listener))
                 supervisor._accept()
-            clients.append(_connect(listener, []))
+            clients.append(connect_requester(listener))
             filler = fill_table()
             caught = None
             try:
@@ -91,7 +80,15 @@ def _accept_exhaustion(report: int, path: str) -> object:
                 for record in sink.records
                 if record["BUILD_LIMITS_EVENT"] == "accept_pressure"
             ]
-            recovered_metrics = sink.records[-1]
+            # The heartbeat owns the supervisor-wide snapshot, so advance to the
+            # next interval and let the periodic record describe the recovery.
+            now[0] = 30.0
+            supervisor._tick()
+            recovered_metrics = [
+                record
+                for record in sink.records
+                if record["BUILD_LIMITS_EVENT"] == "gauges"
+            ][-1]
         finally:
             close_all(filler)
             for request_id in list(supervisor.requests.pending):

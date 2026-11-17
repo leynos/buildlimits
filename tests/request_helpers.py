@@ -6,6 +6,7 @@ import selectors
 import socket
 import typing as typ
 
+from buildlimits import protocol
 from buildlimits.attributes import AttributePlan, ProcessAttributes
 from buildlimits.pending_request import Pending
 from buildlimits.protocol import CompileRequest, Refused, decode_reply, recv_frame
@@ -37,6 +38,43 @@ def compile_request(targets: tuple[int, ...] = ()) -> CompileRequest:
         "pressure",
         cacheable=False,
     )
+
+
+def connect_requester(
+    listener: socket.socket, rights: tuple[int, ...] = ()
+) -> socket.socket:
+    """Connect one requester to ``listener`` and send its compile frame.
+
+    Parameters
+    ----------
+    listener : socket.socket
+        The listening Unix socket the requester connects to.
+    rights : tuple[int, ...]
+        Descriptor numbers to pass alongside the frame, recreated in the
+        launch child.
+
+    Returns
+    -------
+    socket.socket
+        The connected requester, with a one-second timeout for its reply.
+
+    Examples
+    --------
+    ``connect_requester(listener)`` returns a client whose frame is already
+    sent, so the next supervisor accept reads a complete request.
+    """
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    with contextlib.ExitStack() as setup:
+        # The caller only learns the descriptor once the frame is sent, so a
+        # failed connect or send must close it here or the setup path leaks it.
+        setup.callback(client.close)
+        client.connect(listener.getsockname())
+        client.settimeout(1)
+        protocol.send_frame(
+            client, protocol.encode_request(compile_request(rights)), rights
+        )
+        setup.pop_all()  # Hand the live descriptor to the caller.
+    return client
 
 
 def launch_pending(

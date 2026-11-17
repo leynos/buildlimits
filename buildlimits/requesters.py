@@ -46,11 +46,7 @@ from buildlimits.request_validation import (
     DescriptorHeadroom,
     prepare_compile,
 )
-from buildlimits.requester_metrics import (
-    admission_fields,
-    finished_fields,
-    rejected_fields,
-)
+from buildlimits.requester_metrics import finished_fields, rejected_fields
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -84,7 +80,6 @@ class Requests:
         """Start with no requests."""
         seen = observation if observation is not None else RequestObservation()
         self.metrics = seen.metrics if seen.metrics is not None else Metrics()
-        self.counts = seen.counts
         self.selector = selector
         self.clock = clock
         self.lines = seen.lines if seen.lines is not None else RoutineLineWriter()
@@ -229,9 +224,7 @@ class Requests:
 
     def _rejected(self, reason: str) -> None:
         """Count a validated request refused before registration."""
-        fields = admission_fields(None if self.counts is None else self.counts())
-        fields.update(rejected_fields(reason))
-        self._emit(**fields)
+        self._emit(**rejected_fields(reason))
 
     def _record(self, entry: Pending) -> None:
         """Commit request-connection ownership, rolling back failed registration."""
@@ -360,11 +353,9 @@ class Requests:
     def _finished(self, entry: Pending, *, outcome: str, reason: str = "none") -> None:
         """Emit a terminal record, reclaiming ownership even if measurement fails."""
         try:
-            fields = admission_fields(None if self.counts is None else self.counts())
-            fields.update(
-                finished_fields(entry, self.clock(), outcome=outcome, reason=reason)
+            self._emit(
+                **finished_fields(entry, self.clock(), outcome=outcome, reason=reason)
             )
-            self._emit(**fields)
         finally:
             self.forget(entry.request_id)
 

@@ -123,9 +123,7 @@ class Supervisor:
             self.selector,
             self.clock,
             observation=RequestObservation(
-                metrics=self.metrics,
-                counts=self.admission.counts,
-                lines=self.routine_lines,
+                metrics=self.metrics, lines=self.routine_lines
             ),
         )
         self.groups = Groups(
@@ -166,7 +164,9 @@ class Supervisor:
         self._next_server_poll = 0.0
         self._next_health_poll = 0.0
         self._next_cache_poll = 0.0
-        self.pressure = supervisor_observability.configure(self)
+        observers = supervisor_observability.configure(self)
+        self.pressure = observers.pressure
+        self.gauges = observers.gauges
         self._effect_handlers = effect_dispatch.effect_handlers(self)
 
     def start(self, own_cgroup: PurePosixPath) -> None:
@@ -272,8 +272,6 @@ class Supervisor:
             effects = self.admission.submit(
                 entry.request_id, cacheable=entry.request.cacheable
             )
-            if entry.request_id in self.admission.queue:
-                self._metric("request_queued")
             self._apply(effects)
 
     def _failed_replies(self) -> None:
@@ -322,10 +320,8 @@ class Supervisor:
         """Delegate scope placement to its focused workflow module."""
         supervisor_placement.launch(self, request_id, group_id, cached=cached)
 
-    # The public stop API and the loop's shutdown seam are bound here rather
-    # than defined, so the policy they share lives in ``supervisor_shutdown``
-    # beside its sibling ``supervisor_polling``. A bound method keeps the
-    # name, the signature and the ``self`` binding every caller already uses.
+    # The stop API is bound rather than defined, so the policy it shares lives
+    # in ``supervisor_shutdown`` beside its sibling ``supervisor_polling``.
     request_stop = supervisor_shutdown.request_stop
     request_graceful_stop = supervisor_shutdown.request_graceful_stop
     stop = supervisor_shutdown.stop
@@ -343,7 +339,10 @@ class Supervisor:
         self.requests.prune_completed(self.admission.groups)
         group_recovery.retry_termination(self.groups, self.admission)
         group_recovery.empty_groups(self)
-        supervisor_polling.poll_services(self, self.clock())
+        now = self.clock()
+        supervisor_polling.poll_services(self, now)
+        supervisor_observability.sample(self, now)
+        supervisor_observability.publish_due(self, now)
         if not self.admission.healthy and not self.admission.groups:
             self._shutdown()
 
@@ -361,6 +360,12 @@ class Supervisor:
 
     def _apply(self, effects: list[Effect]) -> None:
         """Carry out admission effects in order."""
+        if effects:
+            # Admission already applied the transition and ``Launch`` blocks
+            # in the scope call, so fold the new depth before the handlers run.
+            now = self.clock()
+            supervisor_observability.sample(self, now)
+            supervisor_observability.publish_due(self, now)
         for effect in effects:
             self._effect_handlers[type(effect)](effect)
 

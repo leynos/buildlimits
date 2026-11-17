@@ -15,9 +15,12 @@ MAX_COUNTER = 10**12
 EVENTS = frozenset({
     "supervisor_started",
     "supervisor_stopped",
+    # No release writes this event now; it stays accepted so an old window
+    # still reads. The queue is described by ``gauges`` instead (ADR 009).
     "request_queued",
     "request_admitted",
     "request_finished",
+    "gauges",
     "server_drain_released",
     "pool_failure",
     "health_changed",
@@ -163,6 +166,8 @@ DURATIONS = frozenset({
     "runtime_seconds",
     "accept_pause_seconds",
     "quiesce_seconds",
+    "interval_seconds",
+    "queued_seconds",
 })
 COUNTERS = frozenset({
     "queued",
@@ -178,6 +183,8 @@ COUNTERS = frozenset({
     "fd_budget",
     "fd_high_water",
     "queued_high_water",
+    "queued_peak",
+    "held_peak",
     "busy_retries",
     "restart_retries",
     "drain_attempts",
@@ -200,6 +207,23 @@ COUNTERS = frozenset({
     "child_sample_failures",
 })
 BOOLEANS = frozenset({"reachable", "load_unknown", "fd_budget_known", "accept_paused"})
+# The counters that describe the whole supervisor rather than one request. They
+# belong on periodic ``gauges`` snapshots and rare transition events, not on
+# every per-request record, so producers and tests can assert the split.
+SUPERVISOR_WIDE_FIELDS = frozenset({
+    "queued",
+    "held",
+    "running",
+    "draining",
+    "server_drain",
+    "capacity",
+    "fd_retained",
+    "fd_budget",
+    "fd_high_water",
+    "fd_budget_known",
+    "accept_paused",
+    "queued_high_water",
+})
 FIELD_KINDS = {
     **dict.fromkeys(VOCABULARIES, "token"),
     **dict.fromkeys(COUNTERS | DURATIONS, "counter"),
