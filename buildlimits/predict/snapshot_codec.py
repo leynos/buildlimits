@@ -7,17 +7,17 @@ themselves. This also keeps :mod:`buildlimits.predict.events` free of a JSON
 dependency and keeps a domain value from carrying a serialization method.
 """
 
-import datetime as dt
 import hashlib
 import json
 import math
 import typing as typ
 
 from buildlimits.predict.events import LABELS, ORIGINS, Event
-from buildlimits.utc_text import utc_text
+from buildlimits.utc_text import utc_moment, utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
     from buildlimits.outcome_record_format import Origin
     from buildlimits.predict.dataset import Gap, Snapshot, Source
@@ -223,6 +223,10 @@ def _stamp(value: dt.datetime | None) -> str | None:
 def _parse_stamp(value: object) -> dt.datetime | None:
     """Parse a canonical UTC timestamp or an explicit null.
 
+    Text that is not an offset timestamp, or whose offset leaves the range a
+    UTC datetime can hold, is refused as a ``ValueError`` by
+    :func:`buildlimits.utc_text.utc_moment`.
+
     Returns
     -------
     datetime | None
@@ -232,27 +236,10 @@ def _parse_stamp(value: object) -> dt.datetime | None:
     ------
     TypeError
         If the value is neither text nor null.
-    ValueError
-        If the text is not a valid timestamp with an offset, or its offset
-        moves it outside the range a UTC datetime can hold.
     """
     if value is None:
         return None
     if not isinstance(value, str):
         msg = "a timestamp must be text or null"
         raise TypeError(msg)
-    try:
-        parsed = dt.datetime.fromisoformat(value)
-    except ValueError as error:
-        msg = "a timestamp must be ISO 8601"
-        raise ValueError(msg) from error
-    if parsed.tzinfo is None:
-        msg = "a timestamp must carry an offset"
-        raise ValueError(msg)
-    try:
-        return parsed.astimezone(dt.UTC)
-    except OverflowError as error:
-        # The earliest date plus a positive offset has no UTC equivalent:
-        # 0001-01-01T00:00:00+01:00 would need year zero, a bad field value.
-        msg = "a timestamp must convert to UTC"
-        raise ValueError(msg) from error
+    return utc_moment(value, label="a timestamp")

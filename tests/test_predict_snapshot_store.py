@@ -30,6 +30,15 @@ def _document() -> dict[str, object]:
     return snapshot_to_dict(build_snapshot(decoded, now=NOW))
 
 
+def _refuses_creation_time(tmp_path: Path, stamp: str, match: str) -> None:
+    """Assert the loader refuses ``stamp`` as the snapshot's creation time."""
+    document = _document()
+    document["created_at"] = stamp
+
+    with pytest.raises(ValueError, match=match):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -276,27 +285,24 @@ def test_a_hand_edited_gap_survives_loading(tmp_path: Path) -> None:
     assert loaded.gaps[0].seconds == pytest.approx(9000.0), "length preserved"
 
 
-def test_a_timestamp_without_an_offset_is_refused(tmp_path: Path) -> None:
-    """A local time would be ambiguous, so the snapshot must carry an offset."""
-    document = _document()
-    document["created_at"] = "2026-11-17T12:00:00"
+@pytest.mark.parametrize(
+    ("stamp", "match"),
+    [
+        pytest.param("2026-11-17T12:00:00", "offset", id="without-an-offset"),
+        # The earliest date plus a positive offset has no UTC equivalent:
+        # converting it needs year zero, which a datetime cannot hold.
+        pytest.param("0001-01-01T00:00:00+01:00", "convert to UTC", id="beyond-utc"),
+    ],
+)
+def test_a_creation_time_utc_cannot_read_is_refused(
+    tmp_path: Path, stamp: str, match: str
+) -> None:
+    """A local time is ambiguous, and a positive offset can leave the range.
 
-    with pytest.raises(ValueError, match="offset"):
-        load_snapshot(write_json(tmp_path / "history.jsonl", document))
-
-
-def test_a_timestamp_that_utc_cannot_represent_is_refused(tmp_path: Path) -> None:
-    """The earliest date plus a positive offset has no UTC equivalent.
-
-    ``0001-01-01T00:00:00+01:00`` parses, but converting it to UTC needs year
-    zero, which a datetime cannot hold. The loader names the field instead of
-    letting ``OverflowError`` escape as a traceback.
+    The loader names the field in both cases instead of letting the ambiguity
+    or an ``OverflowError`` escape as a traceback.
     """
-    document = _document()
-    document["created_at"] = "0001-01-01T00:00:00+01:00"
-
-    with pytest.raises(ValueError, match="convert to UTC"):
-        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+    _refuses_creation_time(tmp_path, stamp, match)
 
 
 def test_a_representable_offset_timestamp_is_read(tmp_path: Path) -> None:

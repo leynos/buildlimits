@@ -25,9 +25,13 @@ if typ.TYPE_CHECKING:
 class _RaisingJournal:
     """A journal query that fails the way an unavailable journal does."""
 
+    def __init__(self, error: type[Exception] = RuntimeError) -> None:
+        """Fail with ``error``, defaulting to an unexpected failure."""
+        self._error = error
+
     def __call__(self, **_options: object) -> dict[str, object]:
         """Report the journal as unreachable."""
-        raise RuntimeError("journal unavailable")
+        raise self._error("journal unavailable")
 
 
 def test_dataset_command_writes_a_redacted_snapshot(
@@ -226,34 +230,27 @@ def _journal_snapshot(
     return status, load_snapshot(output).journal
 
 
-def test_dataset_command_survives_a_journal_that_raises(tmp_path: Path) -> None:
-    """Journal provenance is context, so a journal failure cannot lose history."""
-    status, note = _journal_snapshot(tmp_path, _RaisingJournal())
+@pytest.mark.parametrize(
+    "journal",
+    [
+        pytest.param(_RaisingJournal(), id="unexpected-error"),
+        pytest.param(_RaisingJournal(MetricsQueryError), id="reader-error"),
+    ],
+)
+def test_dataset_command_survives_a_journal_that_fails(
+    tmp_path: Path, journal: cabc.Callable[..., cabc.Mapping[str, object]]
+) -> None:
+    """Journal provenance is context, so a journal failure cannot lose history.
+
+    The reader reports an unreadable journal with its own error type rather
+    than returning a note, so the command boundary must turn that into the
+    provenance note as well as an unexpected failure.
+    """
+    status, note = _journal_snapshot(tmp_path, journal)
 
     assert status == 0, "the snapshot is still written"
     assert note == {"available": False, "reason": "journal query failed"}, (
         "the failure is recorded as provenance"
-    )
-
-
-def test_dataset_command_converts_an_unreadable_journal_into_a_note(
-    tmp_path: Path,
-) -> None:
-    """The reader's own error type is handled at the command boundary.
-
-    The journal reader reports an unreadable journal rather than returning a
-    note, so this check covers the boundary that makes provenance optional.
-    """
-
-    def unreadable(**_options: object) -> dict[str, object]:
-        """Stand in for a journal the host cannot read."""
-        raise MetricsQueryError("journal unavailable")
-
-    status, note = _journal_snapshot(tmp_path, unreadable)
-
-    assert status == 0, "the store's history is still written"
-    assert note == {"available": False, "reason": "journal query failed"}, (
-        "the reader's failure becomes the provenance note"
     )
 
 

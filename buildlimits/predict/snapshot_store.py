@@ -5,7 +5,6 @@ every field the report later reads. A hand-edited or truncated file is refused
 with the field that is wrong rather than surfacing as a confusing report.
 """
 
-import datetime as dt
 import itertools
 import json
 import math
@@ -20,10 +19,11 @@ from buildlimits.predict.snapshot_codec import (
     event_from_dict,
     snapshot_to_dict,
 )
-from buildlimits.utc_text import utc_text
+from buildlimits.utc_text import utc_moment, utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
     from buildlimits.predict.events import Event
 
@@ -371,6 +371,10 @@ def _seconds_from(path: Path, value: object) -> float:
 def _parse_stamp(value: object) -> dt.datetime:
     """Parse a required UTC timestamp.
 
+    Text that is not an offset timestamp, or whose offset leaves the range a
+    UTC datetime can hold, is refused as a ``ValueError`` by
+    :func:`buildlimits.utc_text.utc_moment`.
+
     Returns
     -------
     datetime
@@ -380,21 +384,8 @@ def _parse_stamp(value: object) -> dt.datetime:
     ------
     TypeError
         If the value is not text.
-    ValueError
-        If the text is not an offset timestamp, or its offset leaves the UTC
-        range.
     """
     if not isinstance(value, str):
         msg = "a snapshot timestamp must be text"
         raise TypeError(msg)
-    parsed = dt.datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        msg = "a snapshot timestamp must carry an offset"
-        raise ValueError(msg)
-    try:
-        return parsed.astimezone(dt.UTC)
-    except OverflowError as error:
-        # The earliest date plus a positive offset has no UTC equivalent:
-        # 0001-01-01T00:00:00+01:00 would need year zero, a bad field value.
-        msg = "a snapshot timestamp must convert to UTC"
-        raise ValueError(msg) from error
+    return utc_moment(value, label="a snapshot timestamp")

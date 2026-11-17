@@ -712,6 +712,13 @@ packages = ["buildlimits"]
 
 [[tool.duplication_gate.allow]]
 members = [
+    "buildlimits/predict/snapshot_codec.py",
+    "buildlimits/predict/snapshot_store.py",
+]
+reason = "Matching type-checking preludes: both readers annotate optional timestamps, so each names collections.abc and datetime for the checker only, and sharing the prelude through a re-export module would hide that dependency."
+
+[[tool.duplication_gate.allow]]
+members = [
     "buildlimits/requesters.py",
     "tests/test_request_validation.py",
 ]
