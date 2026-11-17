@@ -32,21 +32,24 @@ def _row(probability: float | None, outcome: int) -> ScoredRow:
 
 def test_brier_is_the_squared_error_of_one_answer() -> None:
     """The Brier score charges a confident wrong answer more than a mild one."""
-    assert brier_of(0.7, 1) == pytest.approx(0.09), "one answered hit"
-    assert brier_of(0.7, 0) == pytest.approx(0.49), "the same answer, missed"
+    scores = {outcome: brier_of(0.7, outcome) for outcome in (1, 0)}
+
+    assert scores == pytest.approx({1: 0.09, 0: 0.49}), "one hit, one miss"
 
 
 def test_a_certain_answer_stays_finite_under_the_clip() -> None:
     """A probability of 0 or 1 is clipped, so its loss is large but finite."""
-    assert log_loss_of(1.0, 1, clip=1e-6) == pytest.approx(1e-6), (
-        "a certain hit is nearly free"
-    )
-    assert log_loss_of(0.0, 0, clip=1e-6) == pytest.approx(1e-6), (
-        "and so is a certain miss"
-    )
-    assert log_loss_of(0.0, 1, clip=1e-6) == pytest.approx(-math.log(1e-6)), (
-        "a confident wrong answer is clipped, not infinite"
-    )
+    losses = {
+        "certain hit": log_loss_of(1.0, 1, clip=1e-6),
+        "certain miss": log_loss_of(0.0, 0, clip=1e-6),
+        "confident error": log_loss_of(0.0, 1, clip=1e-6),
+    }
+
+    assert losses == pytest.approx({
+        "certain hit": 1e-6,
+        "certain miss": 1e-6,
+        "confident error": -math.log(1e-6),
+    }), "the clip keeps every answer finite"
 
 
 @pytest.mark.parametrize(

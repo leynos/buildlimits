@@ -10,6 +10,7 @@ from predict_test_helpers import predict_config
 
 from buildlimits.predict.config import load_config
 from buildlimits.predict.ensemble_runs import (
+    EnsembleRun,
     component_matrix,
     run_ablations,
     run_ensembles,
@@ -341,14 +342,21 @@ def test_the_weight_fit_ignores_the_batch_before_the_held_out_split() -> None:
     )
 
 
-def test_ablation_restarts_each_ensemble_from_its_starting_weights() -> None:
-    """An ablated run begins where the full run began, not where it ended."""
+def _drift_run() -> tuple[
+    Walk, dict[str, EnsembleRun], dict[str, dict[str, EnsembleRun]]
+]:
+    """Return a drifting stream, its fitted ensembles and their ablations."""
     config = predict_config()
     walk = walk_forward(
         drift(count=600, first_rate=0.9, second_rate=0.1, seed=5), config
     )
     ensembles = run_ensembles(walk, config)
-    ablations = run_ablations(walk, config, ensembles)
+    return walk, ensembles, run_ablations(walk, config, ensembles)
+
+
+def test_ablation_restarts_each_ensemble_from_its_starting_weights() -> None:
+    """An ablated run begins where the full run began, not where it ended."""
+    walk, ensembles, ablations = _drift_run()
 
     adaptive = ensembles["ensemble-adaptive"]
     assert adaptive.weights != pytest.approx(adaptive.initial_weights), (
@@ -366,15 +374,25 @@ def test_ablation_restarts_each_ensemble_from_its_starting_weights() -> None:
 
 def test_an_ablation_answers_differently_when_the_component_matters() -> None:
     """Dropping a component changes the consensus, not just its bookkeeping."""
-    config = predict_config()
-    walk = walk_forward(
-        drift(count=600, first_rate=0.9, second_rate=0.1, seed=5), config
-    )
-    ensembles = run_ensembles(walk, config)
-    ablations = run_ablations(walk, config, ensembles)
+    walk, ensembles, ablations = _drift_run()
 
     full = ensembles["ensemble-equal"].probabilities
     without = ablations["equal"][walk.components()[0]].probabilities
 
     assert len(without) == len(full), "the same events are answered"
     assert without != full, "the dropped component moved at least one answer"
+
+
+def test_the_component_matrix_aligns_events_with_components() -> None:
+    """Every event has one row, and every row has one answer per component."""
+    config = predict_config()
+    walk = walk_forward(
+        drift(count=40, first_rate=0.9, second_rate=0.1, seed=5), config
+    )
+
+    matrix = component_matrix(walk)
+
+    assert len(matrix) == len(walk.events), "one row per event"
+    assert {len(row) for row in matrix} == {len(walk.components())}, (
+        "one column per component"
+    )

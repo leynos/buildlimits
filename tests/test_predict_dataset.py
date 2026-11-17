@@ -21,6 +21,7 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.outcome_vocabulary import CacheResult
+    from buildlimits.predict.dataset import Snapshot
 
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
 
@@ -28,6 +29,11 @@ NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
 def _decoded(records: tuple[object, ...]) -> DecodedStore:
     """Wrap records in a store header."""
     return DecodedStore(StoreHeader("fixed-salt", NOW), typ.cast("typ.Any", records))
+
+
+def _one_hit_snapshot() -> Snapshot:
+    """Return a snapshot holding one attributed hit."""
+    return build_snapshot(_decoded((attributed_record(outcome="hit"),)), now=NOW)
 
 
 @pytest.mark.parametrize(
@@ -72,7 +78,7 @@ def test_snapshot_redacts_identity_and_keeps_store_order() -> None:
 
 def test_saved_snapshot_contains_no_clear_text_crate_name(tmp_path: Path) -> None:
     """The written file holds neither the crate name nor the argument digest."""
-    snapshot = build_snapshot(_decoded((attributed_record(outcome="hit"),)), now=NOW)
+    snapshot = _one_hit_snapshot()
     path = tmp_path / "history.jsonl"
 
     save_snapshot(path, snapshot)
@@ -88,7 +94,7 @@ def test_a_failed_snapshot_write_leaves_the_earlier_file_intact(
     """A write that fails must not truncate the snapshot it would replace."""
     path = tmp_path / "history.jsonl"
     path.write_text("earlier history\n", encoding="utf-8")
-    snapshot = build_snapshot(_decoded((attributed_record(outcome="hit"),)), now=NOW)
+    snapshot = _one_hit_snapshot()
 
     def refuse(_temporary: Path, _target: Path) -> None:
         """Stand in for a replace that fails once the temporary file is written."""

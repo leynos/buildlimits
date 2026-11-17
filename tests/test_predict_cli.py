@@ -208,6 +208,11 @@ def _repo_root() -> Path:
     return Path(benchmark_cli.__file__).resolve().parents[2]
 
 
+def _assert_unknown_provenance() -> None:
+    """Assert the benchmark refuses to name a commit it cannot vouch for."""
+    assert benchmark_cli._git_sha() == "unknown", "provenance is refused"
+
+
 def _answering_git(calls: list[list[str]], root: Path) -> cabc.Callable[..., object]:
     """Return a fake git that reports one commit and the supplied root."""
 
@@ -256,7 +261,8 @@ def test_git_sha_ignores_an_untracked_copy_at_the_canonical_path(
     monkeypatch.setattr(benchmark_cli, "__file__", str(module))
     _git(monkeypatch, lambda _name: "/usr/bin/git", answer)
 
-    assert benchmark_cli._git_sha() == "unknown", "provenance is refused"
+    _assert_unknown_provenance()
+    assert module.is_file(), "the module exists; only its tracking is missing"
 
 
 def test_git_sha_ignores_a_repository_that_does_not_own_the_module(
@@ -274,4 +280,7 @@ def test_git_sha_ignores_a_repository_that_does_not_own_the_module(
         _answering_git(calls, tmp_path),
     )
 
-    assert benchmark_cli._git_sha() == "unknown", "provenance is refused"
+    _assert_unknown_provenance()
+    assert not _repo_root().is_relative_to(tmp_path), (
+        "the module lives outside the repository git reported"
+    )
