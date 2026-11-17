@@ -5,6 +5,7 @@ owns the row, so coverage is visible; it simply contributes no Brier, log-loss
 or accuracy term. An ``unknown`` outcome never becomes a row at all.
 """
 
+import bisect
 import dataclasses as dc
 import functools
 import itertools
@@ -279,7 +280,11 @@ def calibrate(
     for row in rows:
         if row.probability is None:
             continue
-        index = min(int(row.probability * bins), bins - 1)
+        # A probability exactly on an edge belongs to the bin above it. Finding
+        # the edge by search rather than truncating ``probability * bins`` keeps
+        # that true: 0.6 * 5 lands just below 3 in binary floating point, which
+        # would put an edge value in the bin below the one it names.
+        index = min(max(bisect.bisect_right(edges, row.probability) - 1, 0), bins - 1)
         grouped[index].append(row)
     return tuple(
         CalibrationBin(
