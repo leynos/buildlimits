@@ -40,10 +40,16 @@ def test_the_objective_rejects_a_proposal_that_answers_nothing() -> None:
 
 
 def test_the_gradient_averages_only_the_rows_that_answered() -> None:
-    """An unanswered row adds no slope, and does not dilute the slope there is."""
+    """An unanswered row adds no slope, and does not dilute the slope there is.
+
+    With half the weight on each answer, 0.8 and 0.6 give a consensus of 0.7
+    against a hit, so the two slopes are -1/7 and 1/7. The padded call must
+    return those same values, not merely the same values as the answered one.
+    """
     answered = _log_loss_gradient([(0.8, 0.6)], [1.0], WEIGHTS, CLIP)
     padded = _log_loss_gradient([(0.8, 0.6), (None, None)], [1.0, 0.0], WEIGHTS, CLIP)
 
+    assert answered == pytest.approx([-1 / 7, 1 / 7]), "the slope at this answer"
     assert padded == pytest.approx(answered), "the divisor counts answered rows"
 
 
