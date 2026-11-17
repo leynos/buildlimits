@@ -115,15 +115,13 @@ def _require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:
     """Refuse a history whose recorded clock ran backwards under admissions.
 
     The store stamps ``observed_at`` when it appends a record, so a later
-    position carrying an earlier stamp means the clock stepped backwards
-    between the two writes. Across such a step the recorded times no longer
-    order real moments: an event admitted later in reality could sort before a
-    label observed earlier in reality, and the schedule would then predict with
-    a label that had not been observed yet. No monotonic sequence is stored
-    beside the times, so the two sides of the step cannot be separated; a
-    history that carries admission times and crosses one is refused rather than
-    scored. A history with no admission times is unaffected, because it is
-    already reported as unpredicted.
+    position carrying an earlier stamp means the clock stepped backwards. No
+    monotonic sequence is stored beside the times, so the two sides of a step
+    cannot be separated: an event admitted later could sort before a label
+    observed earlier, and the schedule would predict with a label not yet
+    observed. A history carrying admission times that crosses a step is
+    refused rather than scored; one with no admission times is unaffected,
+    because it is already reported as unpredicted.
 
     Raises
     ------
@@ -180,12 +178,11 @@ def _source_from(path: Path, value: cabc.Mapping[str, object]) -> Source:
 def _journal_from(path: Path, value: cabc.Mapping[str, object]) -> dict[str, object]:
     """Validate the journal note the report renders.
 
-    The report reads whether the journal was available, the record count it
-    printed, the reason it printed when it was not, and the supervisor-start
-    block it describes. Checking those at load time keeps a hand-edited
-    document from failing inside the Markdown formatter, where a count written
-    as text reaches an integer format. An empty note is accepted: it means the
-    snapshot target queried no journal.
+    The report reads availability, the printed record count, the reason when
+    unavailable, and the supervisor-start block. Checking those at load time
+    keeps a hand-edited document from failing inside the Markdown formatter,
+    where a text count reaches an integer format. An empty note is accepted:
+    it means the snapshot target queried no journal.
 
     Returns
     -------
@@ -384,8 +381,8 @@ def _parse_stamp(value: object) -> dt.datetime:
     TypeError
         If the value is not text.
     ValueError
-        If the text is not a timestamp with an offset, or its offset moves it
-        outside the range a UTC datetime can hold.
+        If the text is not an offset timestamp, or its offset leaves the UTC
+        range.
     """
     if not isinstance(value, str):
         msg = "a snapshot timestamp must be text"
@@ -397,8 +394,7 @@ def _parse_stamp(value: object) -> dt.datetime:
     try:
         return parsed.astimezone(dt.UTC)
     except OverflowError as error:
-        # The earliest representable date plus a positive offset has no UTC
-        # equivalent: 0001-01-01T00:00:00+01:00 would need year zero. That is
-        # a bad field value like any other, not a crash in the loader.
+        # The earliest date plus a positive offset has no UTC equivalent:
+        # 0001-01-01T00:00:00+01:00 would need year zero, a bad field value.
         msg = "a snapshot timestamp must convert to UTC"
         raise ValueError(msg) from error

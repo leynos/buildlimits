@@ -190,12 +190,10 @@ def count_journal(
         window saw, the retention the query covers and the correlation it
         cannot support.
 
-    Raises
-    ------
-    metrics_query.MetricsQueryError
-        If the journal cannot be read. Deciding that provenance may continue
-        without it belongs to the command boundary, which knows the snapshot
-        is written from the store and must not be lost to a side query.
+    A journal that cannot be read raises ``metrics_query.MetricsQueryError``.
+    Deciding that provenance may continue without it belongs to the command
+    boundary, which knows the snapshot is written from the store and must not
+    be lost to a side query.
     """
     window = query(since=since, max_records=_MAX_JOURNAL_RECORDS, source="all")
     by_source: dict[str, int] = {}
