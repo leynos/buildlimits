@@ -235,6 +235,47 @@ evidence; treat what it observes as unconfirmed.
 applies only if a trailing counter is demonstrated, and this release does not
 demonstrate one.
 
+### Compare offline hit predictors
+
+Two targets compare candidate hit predictors against the outcomes this host has
+already recorded. They are offline: neither changes admission, cache
+composition nor compiler execution.
+
+| Target                   | Writes                                             |
+| ------------------------ | -------------------------------------------------- |
+| `make predict-dataset`   | `build/predict/history.jsonl`: a redacted snapshot |
+| `make predict-benchmark` | `results.json`, `results.md` and `timings.json`    |
+
+`make predict-benchmark` creates the snapshot when it is missing, but only
+refreshes an existing one through `make predict-dataset`. The snapshot holds
+hashed compile identities and the observed result of each request; it never
+holds crate names, arguments or paths. The benchmark walks the snapshot forward
+in time, scores every predictor on each label as the label arrives, and writes
+its tables to `build/predict`.
+
+The commands behind those targets take explicit paths:
+
+```bash
+build-limits-predict-dataset --output build/predict/history.jsonl
+build-limits-predict-benchmark --snapshot build/predict/history.jsonl \
+  --output build/predict
+```
+
+`build-limits-predict-dataset` reads this host's store unless `--store` names
+another one, and `--journal-span` or `--skip-journal` control the journal note
+recorded with the snapshot. `build-limits-predict-benchmark` accepts
+`--snapshot`, `--output` and `--config`; without `--config` it uses the pinned
+parameters in `buildlimits/predict/config.json`. The report directory must not
+hold the snapshot, because writing `results.json` over the history it was read
+from would make the run impossible to repeat.
+
+A snapshot with fewer than 2,000 labelled events produces the status
+`insufficient data`, with the counts that were seen. The report never pads the
+history with synthetic rows to reach the threshold, and a negative comparison
+is printed as found rather than explained away. Both commands exit with status
+0 on success, 1 when the snapshot or store cannot be read, and 2 on invalid
+usage or an unreadable configuration.
+
 ### Adapter environment
 
 The adapters read only their environment, so the same settings work for Cargo,

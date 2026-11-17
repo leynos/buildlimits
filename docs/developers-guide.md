@@ -259,6 +259,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_replay`, `outcome_replay_cli`                                             | Read-only H2 and H3 evaluation over the local outcome store                                            |
 | `predict`                                                                          | Snapshot, predictors, walk-forward harness and the cache-hit comparison report                         |
 | `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                 |
+| `utc_text`                                                                         | The canonical UTC ISO 8601 text with a trailing `Z`, used by replay evidence and `predict`             |
 | `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper              |
 | `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar       |
 | `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                        |
