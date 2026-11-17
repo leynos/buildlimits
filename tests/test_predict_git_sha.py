@@ -11,7 +11,7 @@ from unittest import mock
 
 import pytest
 
-from buildlimits.predict import benchmark_cli
+from buildlimits.predict import provenance
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -23,9 +23,9 @@ def _git(
     run: object = None,
 ) -> None:
     """Make ``git`` discovery and, when supplied, its invocation answer predictably."""
-    monkeypatch.setattr(benchmark_cli.shutil, "which", which)
+    monkeypatch.setattr(provenance.shutil, "which", which)
     if run is not None:
-        monkeypatch.setattr(benchmark_cli.subprocess, "run", run)
+        monkeypatch.setattr(provenance.subprocess, "run", run)
 
 
 @pytest.mark.parametrize(
@@ -47,19 +47,19 @@ def test_git_sha_is_unknown_when_git_cannot_answer(
     """A host without a working git still produces a report."""
     _git(monkeypatch, which, run)
 
-    marker = benchmark_cli._git_sha()
+    marker = provenance.git_revision()
 
     assert marker == "unknown", "explicit marker"
 
 
 def _repo_root() -> Path:
     """Return the repository root that holds the installed benchmark module."""
-    return Path(benchmark_cli.__file__).resolve().parents[2]
+    return Path(provenance.__file__).resolve().parents[2]
 
 
 def _assert_unknown_provenance() -> None:
     """Assert the benchmark refuses to name a commit it cannot vouch for."""
-    assert benchmark_cli._git_sha() == "unknown", "provenance is refused"
+    assert provenance.git_revision() == "unknown", "provenance is refused"
 
 
 def _answering_git(calls: list[list[str]], root: Path) -> cabc.Callable[..., object]:
@@ -86,13 +86,13 @@ def test_git_sha_names_the_benchmark_checkout(monkeypatch: pytest.MonkeyPatch) -
         _answering_git(calls, _repo_root()),
     )
 
-    commit = benchmark_cli._git_sha()
+    commit = provenance.git_revision()
 
     assert commit == "abc123", "the commit is reported"
     assert calls[0][1] == "-C", "git is pointed at an explicit directory"
-    assert (
-        Path(calls[0][2]).resolve() == Path(benchmark_cli.__file__).resolve().parent
-    ), "the benchmark's own source directory"
+    assert Path(calls[0][2]).resolve() == Path(provenance.__file__).resolve().parent, (
+        "the benchmark's own source directory"
+    )
 
 
 def test_git_sha_ignores_an_untracked_copy_at_the_canonical_path(
@@ -100,7 +100,7 @@ def test_git_sha_ignores_an_untracked_copy_at_the_canonical_path(
 ) -> None:
     """A file at the canonical path is not a module unless Git tracks it."""
     root = tmp_path / "host"
-    module = root / "buildlimits" / "predict" / Path(benchmark_cli.__file__).name
+    module = root / "buildlimits" / "predict" / Path(provenance.__file__).name
     module.parent.mkdir(parents=True)
     module.write_text("", encoding="utf-8")
 
@@ -109,7 +109,7 @@ def test_git_sha_ignores_an_untracked_copy_at_the_canonical_path(
         tracked = "ls-files" in command
         return mock.Mock(stdout=f"abc123\n{root}\n", returncode=1 if tracked else 0)
 
-    monkeypatch.setattr(benchmark_cli, "__file__", str(module))
+    monkeypatch.setattr(provenance, "__file__", str(module))
     _git(monkeypatch, lambda _name: "/usr/bin/git", answer)
 
     _assert_unknown_provenance()
