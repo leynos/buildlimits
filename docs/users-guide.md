@@ -265,9 +265,12 @@ build-limits-predict-benchmark --snapshot build/predict/history.jsonl \
 another one, and `--journal-span` or `--skip-journal` control the journal note
 recorded with the snapshot. `build-limits-predict-benchmark` accepts
 `--snapshot`, `--output` and `--config`; without `--config` it uses the pinned
-parameters in `buildlimits/predict/config.json`. The report directory must not
-hold the snapshot, because writing `results.json` over the history it was read
-from would make the run impossible to repeat.
+parameters in `buildlimits/predict/config.json`. No file the benchmark writes
+may name the snapshot, so a destination that reaches it under another spelling
+— a relative path, a symbolic link or a hard link — is refused before the run
+starts: writing over the history it was read from would make the run impossible
+to repeat. The report directory may otherwise hold the snapshot, as the example
+above does.
 
 A snapshot with fewer than 2,000 labelled events produces the status
 `insufficient data`, with the counts that were seen. The report never pads the
