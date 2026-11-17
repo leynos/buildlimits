@@ -275,18 +275,6 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
 ## Progress
 
-- [x] (2026-11-15) Recorded the EP-M9 preregistration, the proposed reporting
-  amendment and the proposed EP-L extension for issue
-  [#60](https://github.com/leynos/buildlimits/issues/60). Documentation only;
-  no runtime code, no threshold change and no G1 or G2 decision. EP-M9 remains
-  gated and unstarted.
-- [x] (2026-11-15) Review of the preregistration settled H5's population: pairs
-  that an exclusion leaves unevaluable bound the reported flip rate rather than
-  covering it, a boundary across a known toolchain change is outside the
-  population, and boundaries beside a mixed-identity batch stay unevaluable
-  unless the two identity sets are disjoint. The 5% and 10% thresholds and the
-  2,000-outcome minimum are unchanged, and `make fmt`, `make check-fmt`,
-  `make markdownlint` and `make nixie` pass after each edit.
 - [x] (2026-11-03) Reviewed merged PR #24 and draft PR #43; documented the
   proposed ADR 007 observation boundary without changing runtime code.
 - [x] (2026-11-05) Corrected the ADR-numbering record after PR #43 renumbered to
@@ -1563,12 +1551,6 @@ These are hard invariants. Violating one requires escalation, not a workaround.
 
 ## Decision log
 
-- D-PRE (2026-11-15, proposed): fix the EP-M9 preregistration and propose the
-  EP-M9 reporting amendment and the EP-L longitudinal-predictor extension for
-  issue [#60](https://github.com/leynos/buildlimits/issues/60). Documentation
-  only. This records no RFC 0002 G1 or G2 decision, does not start EP-M9, and
-  does not approve the amendment or EP-L. The owner records those decisions
-  separately.
 - D-OBS (2026-11-03, proposed): introduce an observation port around the
   merged W1 recorder, preserve the deployed v1 store and output projections,
   and defer the kache observer and richer persistence to adoption trials.
@@ -2212,10 +2194,7 @@ compiles on a shared host. The terms below are used throughout this plan.
 
 The proposed EP-O and EP-K extensions additionally trace to ADR 007 and the
 2026-11-03 backend-neutral section of RFC 0002. These augment, rather than
-replace, the historical conformance basis and obligations below. The EP-M9
-preregistration and the proposed EP-L extension trace to RFC 0002 W2, H4 and H5
-and to issue [#60](https://github.com/leynos/buildlimits/issues/60); they add
-no obligation and release no gate.
+replace, the historical conformance basis and obligations below.
 
 - Terms of Reference: none exists for this repository. RFC 0002 supplies the
   upstream intent.
@@ -2268,10 +2247,7 @@ RFC-W1 host check -> EP-M1 -> tests/test_sccache_real_binary.py (opt-in)
 RFC-H1, RFC-H3 -> EP-M7 -> build-limits-metrics cache_outcomes, build-limits-cache-replay h3 -> G1
 RFC-H2 -> Q1 (b), D24, D25 -> EP-M8 -> tests/test_outcome_sightings.py, tests/test_outcome_sightings_properties.py,
   tests/test_outcome_replay_h2.py, build-limits-cache-replay h2 -> G1
-RFC-W2, RFC-H4, RFC-H5 -> EP-M9 preregistration -> EP-M9 (gated; not yet run)
-  -> planned tests/test_outcome_replay_h4.py, tests/test_outcome_replay_h5.py,
-  tests/__snapshots__/test_outcome_replay.ambr
-RFC-W2, issue #60 -> proposed EP-L -> EP-L0 owner approval -> G2 (roadmap 3.2.4)
+RFC-W2, RFC-H4, RFC-H5 -> EP-M9 -> tests/test_outcome_replay.py, tests/__snapshots__/test_outcome_replay.ambr
 RFC-COMPAT -> C-DEFAULT, C-SCHEMA, D18 -> EP-M6 -> tests/test_outcome_config.py,
   tests/test_metrics_records_compatibility.py (extended)
 ```
@@ -2851,10 +2827,7 @@ W2:
 
   The thresholds are constants pinned to ADR 005. The verdict tokens are
   `supported`, `refuted`, `inconclusive` (between the support and falsification
-  thresholds), `insufficient` and `not_collected`. The eligible-row filter,
-  batch chronology, predictor parameters and retained-row semantics are fixed
-  by the EP-M9 preregistration above. The reporting amendment adds items only
-  after owner approval and changes no threshold.
+  thresholds), `insufficient` and `not_collected`.
 - `outcome_replay_cli.py` provides
   `build-limits-cache-replay [h2|h3|h4|h5|all] [--store PATH] [--json]`. The
   JSON output carries a `schema` key. Exit status is 0 for a report (a missing
@@ -3267,41 +3240,25 @@ milestone that adds each module.
    dev-env-rocky role, upgrading every journal reader first. Do not enable
    recording on a release that lacks EP-M8.
 2. Set `cache_outcomes = "record"` and restart the supervisor gracefully.
-3. Before any replay runs, record in `Decision log` the owner's approval of the
-   EP-M9 preregistration and the reporting-amendment decision, so the H2/H3
-   verdicts cannot steer them. The amendment decision may be a rejection. An
-   EP-L freeze under roadmap 3.2.3 may also be recorded now; if a verdict is
-   read first, EP-L uses its fresh-row fallback instead.
-4. After 24 hours, check the status line and run
+3. After 24 hours, check the status line and run
    `build-limits-cache-replay h3` and `build-limits-cache-replay h2`. If
    nothing has been attributed, look at the last reading reason and fix it
    before going on. If `child_sighting` is `unavailable` for nearly every
    record, look at `child_sample_failures` in the `cache_outcomes` report.
-5. Track progress by the attributed count on the status line, not by journal
+4. Track progress by the attributed count on the status line, not by journal
    windows.
-6. When 2,000 attributed outcomes exist, or after 14 days, whichever comes
+5. When 2,000 attributed outcomes exist, or after 14 days, whichever comes
    first, record the evidence:
    - the commit, the sccache version and the date range;
-   - the sample facts the existing read-only commands expose: the store path
-     and the `format`, `version`, `salt_id` and `written_at` values in its
-     header line; the outcome, attribution, child-sighting and store-operation
-     counts from `build-limits-metrics --since 14d --max-records 100000`; the
-     attributed totals, first and last `observed_at` and covered span from `h2`
-     and `h3`; and whether the 10,000-record cap is reached at inspection time.
-     The store records no cap flag, so once compaction removes older rows an
-     earlier cap state cannot be reconstructed. Distinct-identity counts and
-     the remaining aggregate manifest fields are produced by the EP-M9 replay,
-     which cannot run until G1 permits it, so they are recorded with EP-M9's
-     report rather than here;
    - the totals;
-   - the coverage by origin, counted from the `cache_outcome` records in that
-     report's JSON output;
+   - the coverage by origin, from
+     `build-limits-metrics --since 14d --max-records 100000`;
    - the H1 verdict, with label agreement taken from EP-M1's fixture
      replay;
    - the H2 verdict, with its agreement, evaluable count, the share of
      misses that were `seen`, and its stated limits;
    - the H3 verdict.
-7. Record the decision in `Decision log`:
+6. Record the decision in `Decision log`:
    - `proceed` moves the plan to `IN PROGRESS` and starts EP-M9;
    - `narrow` starts EP-M9 with the limits recorded;
    - `stop` means: set the key to `off`, delete `~/.local/state/buildlimits/`,
@@ -3318,11 +3275,6 @@ milestone that adds each module.
 
 ### EP-M9: W2 offline replay (after G1 says proceed or narrow)
 
-- Preconditions: the owner approves the preregistration below and records the
-  reporting-amendment decision before the first G1 replay's H2/H3 verdicts are
-  read, so neither can be steered by G1 evidence, and then records RFC 0002 G1
-  `proceed` or `narrow` before the replay runs or its outcome report is
-  reviewed.
 - Outcome: `h4`, `h5` and `all` in the replay CLI. They report verdicts,
   sample sizes, the time span the store covers (R8), and the quiet-window
   caveat. Below 2,000 attributed records, the verdict is `insufficient`.
@@ -3330,499 +3282,11 @@ milestone that adds each module.
   - `tests/test_outcome_replay.py`: synthetic sets at, above and below each
     threshold.
   - A Hypothesis property that verdicts do not depend on record order within
-    a batch.
-  - Future-label leakage: a predictor's training history never contains a row
-    from the predicted batch or a later batch, including when a later batch
-    shares the same `observed_at` by clock step.
-  - Post-compilation features: no predictor reads runtime, counters, cache keys
-    produced after compilation or any field the preregistration excludes.
-  - Delayed labels: the one-batch embargo withholds the immediately preceding
-    batch, and the withheld rows are counted as `embargoed_rows`.
-  - Cold starts and missing outcomes: empty history uses the preregistered
-    fallbacks, and no ineligible `CacheResult` value is converted into a miss.
-  - Identity and epoch changes: identity-changed pairs are excluded from H5,
-    and a store with a different salt or schema is never pooled.
-  - Deterministic replay: the replay reads no clock, randomness, network or
-    external command, writes no file, and two runs over one store produce
-    byte-identical reports.
+    a key.
   - Snapshots of the text and JSON output, each paired with a semantic
     assertion.
   - End-to-end runs of the console script.
 - Compatibility decision: none.
-
-#### EP-M9 preregistration (fixed before outcome data is read)
-
-This preregistration is fixed before any outcome data is read. The owner
-approves it, and records a decision on the reporting amendment, before the
-first G1 replay's H2/H3 verdicts are read, so G1 evidence cannot steer either.
-It adds no threshold and releases no gate. EP-M9 still requires an explicit RFC
-0002 G1 `proceed` or `narrow`. Issue
-[#60](https://github.com/leynos/buildlimits/issues/60) tracks the comparison,
-and the reporting amendment below requires separate owner approval.
-
-**Eligible labels and identities.** Only `OutcomeRecord` rows whose `outcome` is
-`hit` or `miss` are eligible predictor labels and H5 pair members. Every other
-`CacheResult` value is ineligible for prediction and pairing: `not_cacheable`,
-`not_cached`, `failed`, `error`, `declined`, `not_compile`, `unsupported` and
-`unattributed` are never converted into a miss, and `WindowSummary` rows are
-not individual outcomes. H4 is different: as the RFC states, its share runs
-over every attributed outcome after the key's first attributed observation, so
-a non-hit attributed outcome counts in H4's denominator even though it is not a
-predictor label. The report keeps all counts separate. A cancelled or lost
-request has no eligible label. An `ambiguous` or `unavailable` child sighting
-describes a clue, not an outcome, and never supplies a label.
-`attributed_outcomes` follows ADR 005 D11 and counts every row whose `outcome`
-is not `unattributed`; the 2,000-record minimum uses that count, while
-`eligible_outcomes` counts only `hit`/`miss` rows. Both are reported.
-
-The full identity is the stored `CacheKey`: crate name, crate origin, target,
-argument digest and toolchain identity. The digest identity omits the toolchain
-identity and is used only for H5's within-key pairs. A missing or malformed key
-never reaches the replay because the store reader rejects it; an `unknown`
-origin remains eligible for the comparison but not for H4.
-
-**Chronology, batching and label availability.** `observed_at` is the end time
-of the last launch in the quiet window that produced a record, not the time its
-label became available, and a backward clock step can order timestamps against
-recording order. Batches are therefore defined by the store itself. Scanning
-records in append order, a batch is a maximal contiguous run of records sharing
-one `observed_at`, and batches are ordered by their first position in the
-store. Every record from one attributed window shares one `observed_at`, so a
-batch normally is one window; append order is the order in which labels were
-written and never a wall-clock comparison.
-
-The quiet-point statistics query that writes the labels runs after the window
-closes, and the recorder serializes queries: while one is in flight no second
-one starts. A launch can nevertheless begin during that query, so the
-immediately following batch may have started before the previous batch's labels
-were written. The replay therefore applies a one-batch embargo: a prediction
-for a batch uses eligible outcomes from all earlier batches except the
-immediately preceding one. Labels from batch `i-2` and earlier are available
-before batch `i` starts, because batch `i-2`'s query finishes before batch
-`i-1`'s query begins, and batch `i`'s launches begin only after that query
-begins. This follows from the recorder's serialized queries and append order,
-and the report states it wherever it describes the training history.
-
-Nothing from a batch trains its own predictions or, for the predictors, the
-next batch. No prediction therefore depends on row order within a batch or on
-set iteration. Replaying a permutation of rows inside a batch yields identical
-aggregate predictions and verdicts; permuting batches themselves is not a valid
-replay because it changes write order. H4 and H5 are retrospective measurements
-rather than predictions, so the embargo does not apply to them. Where a report
-lists values, it sorts them lexicographically and never relies on hash or set
-iteration order.
-
-**H4 retained-row semantics.** H4 uses rows whose `origin` is `registry`. It
-groups by the full identity and finds the key's earliest retained batch over
-**all attributed outcomes**, so a first `failed` or other non-hit attribution
-still counts as the RFC's first attributed observation. The RFC says "first
-attributed observation", singular, but rows in a batch share `observed_at` and
-their internal order is never used; the whole earliest batch is therefore
-treated as the first observation. The report labels this as
-`first_batch_rule: earliest_batch` and states that it is a preregistered
-deviation from a literal single-row reading, chosen so the verdict cannot
-depend on within-batch order. The owner approves that deviation as part of the
-preregistration.
-
-H4 then evaluates every attributed outcome in the later batches: the numerator
-is the number of `hit` outcomes and the denominator is every attributed
-outcome, so a non-hit attribution counts against the 95% share exactly as the
-RFC's wording implies. The report also gives `eligible_hit_share`, computed over
-`hit`/`miss` rows only, as a diagnostic; it does not decide the verdict.
-`first_batch_rows_excluded` and `keys_evaluated` are reported. The
-10,000-record, 30-day and 12-16 MiB bounds can remove a key's true first
-observation. The report therefore states the retained-tail caveat: the excluded
-batch may be later than the RFC's first attributed observation, so a truncated
-history can bias H4. `record_cap_reached` says whether the 10,000-record bound
-is reached at inspection time. The store keeps no cap flag, so a cap reached
-and then undone by compaction is not observable; the report states that limit
-rather than claiming the cap was never reached. H4 is `insufficient` below
-2,000 attributed outcomes or with no evaluated rows, `supported` at a 95% hit
-share or more, `refuted` below 90%, and `inconclusive` between. The thresholds
-are unchanged.
-
-**H5 retained-row semantics.** H5 groups every stored row that carries a key by
-digest identity, including `unattributed` rows and non-hit/miss outcomes, and
-partitions each group into batches ordered by write position. Keeping those
-rows in the sequence preserves consecutive-outcome adjacency: a `failed`,
-`unattributed` or other outcome between two hit/miss rows is a boundary, never
-something the filter deletes so that the hits become neighbours. A batch that
-contains more than one full toolchain identity is excluded as
-`mixed_identity_batches_excluded` and contributes no evaluated pair. A batch
-containing an `unattributed` row is excluded as
-`unattributed_batches_excluded`; a batch containing another non-hit/miss
-outcome is excluded as `ineligible_batches_excluded`. A batch that contains
-both a `hit` and a `miss` is excluded as `mixed_batches_excluded`, because its
-internal outcome order is not recorded and no consecutive pair inside it can be
-reconstructed without relying on append position. An excluded batch blocks
-pairing across it. A boundary is outside the H5 population, and reported as
-`identity_changed_pairs_excluded`, only when neither adjoining side shares a
-full toolchain identity with the other, because RFC 0002 compares toolchain
-identity before a pair is counted. A batch excluded for more than one identity
-may hold the neighbour's identity, so a boundary beside it is incomparable only
-when the two identity sets are disjoint.
-
-Each unanimous `hit`/`miss` batch of `n` rows contributes its `n - 1` internal
-consecutive pairs, whose two rows carry the same label and therefore never
-flip. Each pair of adjacent unanimous hit/miss batches with the same full
-identity, with no excluded batch between them, contributes one boundary pair
-between the labels of the two batches; it counts as a flip when those labels
-differ. Consecutive pairs separated by an excluded batch are not evaluated.
-Every consecutive pair inside the H5 population is counted in one of two
-buckets: `evaluated_pairs`, from the internal and boundary pairs above, and
-`unevaluable_pairs`, made of the `n - 1` internal pairs of each excluded batch
-plus one pair for every boundary between two batches where at least one side is
-excluded and the two sides share at least one full toolchain identity. Each
-boundary joins two batches and is counted once, including a boundary between
-two adjacent excluded batches. Identity-changed boundaries are in neither
-bucket, so a known toolchain change neither adds a possible flip nor dilutes
-the rate. Because a mixed-identity batch may order its identities either way,
-every boundary it has with a neighbour whose identity it contains stays
-unevaluable; only a boundary whose two identity sets are disjoint is dropped.
-The observed flip rate is flips divided by evaluated pairs, so a long unanimous
-batch contributes its real share of non-flipping pairs rather than one
-batch-level decision. The result is invariant to row order within a batch.
-
-Exclusions must not silently delete transitions that could change the verdict.
-Each unevaluable pair may or may not have flipped, so with `E` evaluated pairs,
-`F` evaluated flips and `U` unevaluable pairs, the population's flip rate lies
-in the closed interval `[F / (E + U), (F + U) / (E + U)]`. H5 compares that
-interval with the fixed thresholds:
-
-- `supported` when its maximum, `(F + U) / (E + U)`, is 5% or less;
-- `refuted` when its minimum, `F / (E + U)`, is above 10%;
-- `inconclusive` when it lies entirely between the thresholds, meaning its
-  minimum is above 5% and its maximum is 10% or less;
-- `insufficient` otherwise, because the unobserved pairs could move the rate
-  across a threshold in either direction.
-
-With no excluded pairs the interval collapses to the observed rate and the
-verdicts reduce exactly to the RFC's thresholds. The rule is a data-adequacy
-rule, not a new flip threshold: it withholds a verdict only when unobserved
-pairs leave it undetermined, and the owner approves it with this
-preregistration exactly as the `first_batch_rule` deviation is approved. RFC
-0002's W2 cross-reference records it beside the fixed thresholds. The report
-gives `E`, `F`, `U`, the interval, and the observed rate `F / E` when `E` is
-non-zero. A salt change is a new store epoch and is never pooled; the reader
-supplies one header per store. H5 is `insufficient` below 2,000 attributed
-outcomes or with no evaluated pairs. The 5% and 10% flip thresholds and the
-2,000-outcome minimum are unchanged, and the retained-tail caveat applies to
-pairs lost at a compaction boundary. `not_collected` is reserved for a store
-that lacks a field a hypothesis needs; a v1 store accepted by the reader has
-them, so H4/H5 normally report one of the other four tokens.
-
-**Predictors and parameters.** When predicting a row in batch `i`, the training
-history is every eligible row in batches `0` to `i-2`: the one-batch embargo
-withholds batch `i-1`, and the report counts the withheld rows as
-`embargoed_rows`. With an empty history, the cold-start rules below apply.
-
-- Base rate: `p_base = hits / (hits + misses)` over the training history, or
-  0.5 when none exists.
-- Origin rate: `p_origin` is the same ratio restricted to the row's origin
-  class (`registry`, `git`, `path` or `unknown`), falling back to `p_base`,
-  then to 0.5. It is the prior mean for the Beta component and for the proposed
-  EP-L components.
-- Last outcome: consider the most recent batch for the full identity in the
-  training history that contains at least one eligible outcome. `p_last` is 1.0
-  when that batch contains only hits, 0.0 when it contains only misses, and
-  undecided (abstain) when it contains both or no such batch exists. A later
-  batch with no eligible outcome carries no label and is skipped rather than
-  ending the search. Ambiguous last batches are counted as
-  `ambiguous_last_batches` and their rows are excluded from that predictor's
-  shared cohort.
-- Beta over eight: take whole batches for the full identity from the training
-  history, newest-first, until at least eight eligible outcomes are included,
-  including the batch that crosses the threshold. With `h` hits and `n`
-  outcomes, `p_beta = (h + a0) / (n + a0 + b0)`, where `a0 = 2 * p_origin` and
-  `b0 = 2 * (1 - p_origin)`. With no key history, `p_beta = p_origin`, and
-  those rows are reported as `beta_prior_rows`. `beta_window_rows` reports the
-  actual `n` when the final batch exceeds eight.
-- Majority-class decision baseline (reporting amendment): `p_majority` is the
-  predicted probability of a hit, so it is 1.0 when `p_base >= 0.5` (including
-  ties) and 0.0 otherwise. Accuracy is reported beside its Brier score.
-
-**Scores, calibration and uncertainty.** The primary score is the Brier score,
-`mean((p - y)**2)`, where `y` is 1 for a hit and 0 for a miss. Log loss uses
-`p` clipped to `[1e-6, 1 - 1e-6]` and is `-mean(y ln p + (1 - y) ln(1 - p))`.
-Calibration uses ten fixed bins `[0.0, 0.1)`, …, `[0.9, 1.0]`, each reporting
-its row count, mean predicted probability and observed hit rate; an empty bin
-reports `n/a`. Discrimination is the Mann-Whitney area under the curve (AUC)
-only when the evaluated cohort holds at least 10 hits and 10 misses; otherwise
-it is `n/a` with `support_limited: true`. Every score reports its row count and
-both class counts. Paired comparisons use only rows where both predictors
-produce a probability, and report that shared cohort and each predictor's
-coverage separately. Intervals are 95% percentile intervals from 1,000 seeded
-bootstrap resamples that resample whole keys with replacement and preserve each
-key's chronology; a second interval resamples whole UTC-day blocks. The
-key-clustered interval needs at least 30 distinct keys, and the day-block
-interval needs at least 14 distinct UTC days; below either minimum the interval
-is `n/a` with `support_limited: true`, because resampling one or two clusters
-would report a zero-width interval as if it were precise. The seed is the fixed
-integer `20261115`.
-
-**Paired tests and the Holm family.** A paired comparison is `insufficient`
-unless its shared cohort holds at least 30 distinct keys; below that, no
-p-value or interval is computed and the report sets `support_limited: true`,
-because a key-clustered resample over fewer clusters cannot vary enough to
-justify inference. Above the minimum, each raw p-value comes from the same
-1,000 key-clustered resamples used for the intervals. For resample `b`, let
-`d_b` be the mean Brier score difference (candidate minus reference) over that
-resample's shared cohort, and report
-`p = min(1, 2 * min(1 + #(d_b <= 0), 1 + #(d_b >= 0)) / 1001)`. The family has
-one comparison per candidate against the base-rate baseline: origin rate, last
-outcome and Beta over eight, plus the majority-class baseline when the
-reporting amendment is approved. No other pair enters the family, and the
-family is fixed before outcome review. Holm's step-down sorts the raw p-values
-ascending and compares the `k`-th with `0.05 / (m - k + 1)`; the adjusted
-p-value is the running maximum of `(m - k + 1) * p_(k)`, clipped to 1. The same
-resamples and seed produce every interval and p-value, so a replay reproduces
-them exactly.
-
-**Deterministic replay and manifest.** The replay reads only the bounded store,
-uses no clock, randomness, network or external command, and writes no file. The
-JSON report sorts keys and includes a versioned, aggregate-only dataset
-manifest. The manifest contains `manifest_version`, `replay_schema`,
-`store_format`, `store_version`, `salt_id`, `header_written_at`, record and
-eligible counts, outcome/origin/parser-class/child-sighting counts, window
-count, distinct full and digest identities, distinct toolchain identities,
-sorted server and `CACHE_VERSION` values, first and last `observed_at`,
-`span_days`, the retention bounds, `record_cap_reached`, the eligible label
-vocabulary, a fixed identity-normalization description, the `observed_at` batch
-chronology, the one-batch embargo and `preregistration_version`. It contains no
-key values, argument digests, paths, per-request rows or free text. Undefined
-rates render as `n/a`.
-
-#### EP-M9 reporting amendment (owner approval required)
-
-The amendment adds reporting only. It changes no H4/H5 threshold, no H2/H3
-threshold and no 2,000-record minimum. Issue
-[#60](https://github.com/leynos/buildlimits/issues/60) lists the majority-class
-decision baseline within the first offline deliverable, so approving this
-amendment is the expected path; recording it as an amendment keeps the approval
-explicit instead of silently widening RFC 0002's comparison. The owner approves
-or rejects it in the Decision log before the first G1 replay produces H2/H3
-verdicts, and therefore before any outcome-derived verdict is read, so neither
-the G1 evidence nor an EP-M9 outcome report can steer it. A later G1 `stop`
-makes the approval moot without changing any gate. A rejected amendment leaves
-EP-M9 with the original base-rate, origin-rate, last-outcome and
-Beta-over-eight comparison, the Brier score, coverage, Holm-adjusted paired
-comparisons, the key-clustered and UTC-day intervals and the dataset manifest.
-Those items are fixed before the amendment and do not depend on it; the
-manifest stays mandatory because it records the input rather than an evaluation
-choice.
-
-The amendment adds:
-
-- the majority-class decision baseline and its accuracy, and adds it to the
-  fixed Holm family;
-- log loss with the clipping rule above;
-- calibration bins with counts;
-- per-origin, per-UTC-day and per-load-stratum results, with a load stratum
-  reported as `not_collected` unless a separately approved v2 source records
-  workload state before admission;
-- shared-cohort and coverage/risk reporting for every paired comparison.
-
-## Proposed longitudinal-predictor extension (EP-L; not approved)
-
-This section proposes a bounded extension to EP-M9 for issue
-[#60](https://github.com/leynos/buildlimits/issues/60). It releases no gate,
-authorizes no implementation and claims no result. No EP-L milestone starts
-before these conditions hold:
-
-1. the owner approves the EP-M9 preregistration and reporting amendment;
-2. the owner approves this extension and freezes its parameters in the Decision
-   log (EP-L0), before the first G1 replay's H2/H3 verdicts are read or under
-   the fresh-row fallback below;
-3. for EP-L1 and every later milestone, the owner records RFC 0002 G1
-   `proceed` or `narrow`.
-
-The freeze may therefore precede G1 and EP-M9, but no EP-L implementation
-starts before EP-M9 has finished. If the owner reviews G1's H2/H3 verdicts or
-any EP-M9 outcome report before a freeze exists, every EP-L candidate is
-instead scored on newly collected rows the owner has not seen.
-
-EP-L reuses EP-M9's eligible rows, `observed_at` batch chronology, one-batch
-embargo, manifest, walk-forward layer and scoring rules. It never reconstructs
-the backend's full cache key, never runs a compiler or dep-info pass as a
-feature extractor, and never reads a post-compilation field as a predictor. The
-existing H4/H5 thresholds and the 2,000-record minimum remain unchanged; EP-L
-adds no replacement threshold for them.
-
-### EP-L0: approve and freeze the extension
-
-- Outcome: a recorded, bounded plan. No production code.
-- Record the candidates, features, window and decay values, priors, ensemble
-  rules, primary score, minimum practically useful improvement, uncertainty
-  method, abstention rules, the Holm family below and stop rules. Freeze them
-  before any EP-L outcome is read. Freeze them before the owner reads G1's
-  H2/H3 verdicts or any EP-M9 outcome report, or apply the fresh-row fallback
-  below. Record the v1/v2 evidence boundaries.
-- Fresh-row fallback: if the owner reads G1's H2/H3 verdicts or any EP-M9
-  outcome report first, EP-L evaluation uses only rows collected after that
-  review and not inspected while choosing the candidates.
-- The owner records approval, narrowing or refusal. A refusal leaves EP-M9 as
-  the only comparison.
-- Success: the Decision log names the approved candidates, parameters and Holm
-  family; either the freeze precedes any G1 verdict or EP-M9 outcome review or
-  the fresh-row fallback applies; and no unapproved candidate is implemented.
-
-### EP-L1: v1 rolling-window and exponentially weighted predictors
-
-- Requires EP-L0 approval.
-- Add pure v1 components that use only the embargoed training history and the
-  pre-admission identity:
-  - rolling hit rates over the last 4, 16 and 64 eligible outcomes for the full
-    identity, using whole-batch inclusion and the Beta prior mean as smoothing;
-  - a batch-aggregated exponentially weighted rate with half-life 8 outcomes.
-- Pinned formulas:
-  - rolling: `p_W = (h_W + a0) / (n_W + a0 + b0)`, with `a0 = 2 * p_origin`,
-    `b0 = 2 * (1 - p_origin)`, and `n_W`/`h_W` taken newest-first in whole
-    batches until at least `W` outcomes are included;
-  - exponentially weighted: process prior batches newest-first; for a batch
-    with `r` eligible rows, `h` hits and `R` rows in more recent batches, the
-    batch weight is `w = alpha**R * (1 - alpha**r) / (1 - alpha)` and
-    `p_ewma = (a0 + sum(w * h / r)) / (a0 + b0 + sum(w))`, with
-    `alpha = 0.5**(1/8)`. This aggregation keeps the estimate independent of
-    within-batch order.
-- Cold start and backoff: with no key history, return `p_origin`; with a single
-  earlier batch, return the smoothed rate; never abstain for insufficient key
-  history, but report `prior_only_rows`.
-- Success: each component reports its probability, row count, coverage, Brier
-  score, log loss, calibration bins and interval, and a property test proves
-  within-batch permutation invariance.
-
-### EP-L2: v1 ensembles
-
-- Requires EP-L1.
-- Candidates:
-  - equal-weight probability averaging of the approved v1 components;
-  - fixed non-negative weights summing to one, learned only on chronological
-    training and validation periods.
-- Fixed-weight learning uses a deterministic simplex grid with step 0.1 over
-  the approved components, chooses the lowest validation Brier score, and
-  breaks ties lexicographically by the weight vector. No test-period row may
-  influence the chosen weights. Retain each component probability and the
-  weight vector used at prediction time.
-- Compare every ensemble with the base-rate baseline, equal-weight averaging
-  and the strongest individual predictor selected without inspecting the final
-  test period. Include a component-removal ablation for every component and a
-  Pearson correlation matrix of per-row errors.
-- Success: paired, Holm-adjusted held-out comparisons with dependence-aware
-  intervals, shared-cohort and coverage reporting, and a verdict of `supported`,
-  `refuted`, `inconclusive` or `insufficient` under the frozen criteria.
-
-**EP-L Holm family.** EP-L never reuses EP-M9's family, whose members are fixed
-to the base-rate comparisons. EP-L0 freezes a separate family before any EP-L
-outcome is read. For each approved ensemble it contains one comparison against
-each of: the base-rate predictor; equal-weight averaging, omitted when the
-ensemble is itself equal-weight averaging; the strongest individual predictor
-selected on the validation period; and, for each component-removal ablation,
-the ensemble's full form. Every member uses EP-M9's shared-cohort rule, 1,000
-key-clustered resamples, raw p-value formula, seed `20261115` and Holm
-step-down at `alpha = 0.05`. A member with fewer than 30 distinct keys or an
-empty shared cohort is reported as `insufficient` with `support_limited: true`
-and supplies no p-value; the report states the family size and the number of
-members that produced one. No other pair enters the family, and the family is
-fixed before outcome review, so adding a component or an ensemble after the
-freeze requires a new, separately approved plan and fresh rows.
-
-### EP-L3: v2 per-request and load-stratified evidence (separately approved)
-
-- Requires EP-L0 and a separately approved, bounded observation source that
-  records a per-request label and the workload state available before admission.
-- v2 adds only features whose observation is demonstrated, bounded and
-  privacy-preserving. Candidate additions are input-change and cache-age
-  features, but only with that source; they are not assumed to exist.
-- No v2 source means strict per-request and load-stratified claims are reported
-  as `insufficient`, without approximation from aggregate v1 rows.
-- Success: the owner records the v2 source's eligibility, its coverage and
-  missingness, and the claims it permits. Kache requires its own eligible
-  observer and decision; its calibration is never pooled with sccache.
-
-### EP-L4: adaptive weights (only if separately approved)
-
-- Requires EP-L2 and an approved bounded plan.
-- Adaptive weights initialize from the EP-L2 fixed weights, minimize log loss
-  with L2 regularization toward those fixed weights, and update only after
-  earlier predictions acquire eligible labels. Record the update cadence,
-  cold-start behaviour, missing-component handling and drift/epoch resets.
-  Retain each component probability and the weights used at prediction time.
-- Success: the adaptive ensemble is compared with its fixed-weight parent on
-  the same held-out rows, with a reported cost and no claim beyond the approved
-  v1 or v2 boundary.
-
-### EP-L5: final report and G2 input
-
-- Requires every approved EP-L milestone and the frozen validation parameters.
-- Freeze all tuning and model selection before viewing the final chronological
-  test period. Report per-candidate verdicts, calibration, coverage bias,
-  ablations, error correlation, resource costs and uncertainty. Report both
-  shared-cohort and coverage/risk results; excluding hard requests must not
-  create an apparent winner. Report temporal blocks and workload strata,
-  including cold starts, toolchain or cache changes and sustained concurrency.
-- No predetermined winner is required. Better probability scores do not
-  establish scheduling benefit.
-- Success: the report establishes whether any combination beats the strongest
-  training-selected individual predictor, states the population and limits of
-  each claim, and feeds the separate RFC 0002 G2 decision. G2 is recorded under
-  roadmap 3.2.4; a live advisory or shadow trial needs its own gate and plan.
-
-### EP-L evaluation and resource rules
-
-Evaluation is walk-forward (prequential): predict with information observed at
-that instant, score when a valid label arrives, then update. The one-batch
-embargo enforces label availability, so earlier-started work whose outcome is
-attributed after a later compilation started is not training data for that
-compilation's prediction. Chronological validation and a final test period are
-reserved; no random row split is permitted. Toolchain, backend and salt epochs
-are respected, and post-compilation cache keys, runtime, counters and future
-outcomes are forbidden features. Deterministic tie handling follows EP-M9's
-batch rule. A repeated look at the same holdout is not fresh validation: once a
-reported verdict has been informed by the final test period, any later
-candidate is scored on newly collected rows or the earlier result is reported
-unchanged.
-
-Resource measurements cover CPU, memory, storage and prediction/update latency,
-including tail latency. An offline cost-weighted score may use subsequently
-observed compile costs, with coverage and confounding stated. It is not
-measured time saved by a scheduler; real scheduling benefit requires a separate
-policy experiment.
-
-### EP-L v1 and v2 evidence boundaries
-
-- v1 uses the retained sccache store. Its labels come from solo and unanimous
-  quiet windows, so it supports aggregate-level claims about that labelled
-  population only. It cannot establish strict per-request truth or
-  load-stratified calibration, and its sample may not represent busy, mixed
-  traffic.
-- v2 requires the separately approved observation source above. Strict
-  per-request and load-stratified claims are `insufficient` without it.
-- Cross-host or cross-backend generalization is claimed only with separately
-  qualified data. Kache evidence never inherits sccache thresholds or pooled
-  calibration.
-
-### Live advisory and shadow work remain separate
-
-Nothing in EP-M9 or EP-L authorizes live prediction. Advisory output is W3 and
-needs its own gate and plan; a shadow trial that predicts before admission
-without displaying the result needs one too. Any such trial records, before the
-compilation starts:
-
-- the model version and the probability it produced;
-- the timestamp at which that probability became available;
-- a privacy-safe correlation identity for the request, derived the same way as
-  the store's salted digests and never a raw key;
-- the abstention reason when the model declined to predict.
-
-The label is joined to that record afterwards and never rewrites it, so the
-prediction is preserved exactly as an uninformed observer would have seen it.
-The trial extends the existing `tests/test_outcome_noninterference.py` and
-`tests/test_outcome_differential.py` suites to prove that prediction, recording
-and advisory display leave admission, ordering and cache outcomes unchanged,
-including under prediction failure and abstention. H6 is evaluated separately
-from EP-M9's offline scores, on the live record. No advisory or scheduling
-policy ships from EP-L; scheduling benefit remains H7 and needs its own policy
-experiment.
 
 ## Proposed observation-port workstream
 

@@ -14,6 +14,7 @@ import typing as typ
 from buildlimits import metrics_query
 from buildlimits.metrics_query import MAX_RECORDS as _MAX_JOURNAL_RECORDS
 from buildlimits.outcome_record_format import OutcomeRecord
+from buildlimits.predict.events import admission_moment
 from buildlimits.predict.records import build_events
 from buildlimits.utc_text import utc_text
 
@@ -133,11 +134,14 @@ class Snapshot:
         Returns
         -------
         dict[str, object]
-            Counts, labelled share, time span and identities seen.
+            Counts, labelled share, time span, identities seen and how many
+            events carry an admission time a prediction could use.
         """
         labelled = sum(1 for event in self.events if event.label != "unknown")
         total = len(self.events)
         observed = [event.observed_at for event in self.events]
+        recorded = [event for event in self.events if event.admitted_at is not None]
+        usable = sum(1 for event in self.events if admission_moment(event) is not None)
         return {
             "events": total,
             "labelled": labelled,
@@ -145,6 +149,10 @@ class Snapshot:
             "identities": len({event.identity for event in self.events}),
             "span_start": utc_text(min(observed)) if observed else None,
             "span_end": utc_text(max(observed)) if observed else None,
+            "admission_recorded": len(recorded),
+            "admission_usable": usable,
+            "admission_missing": total - len(recorded),
+            "admission_unusable": len(recorded) - usable,
             "gaps": [gap.to_dict() for gap in self.gaps],
         }
 
@@ -200,8 +208,12 @@ def count_journal(
 ) -> dict[str, object]:
     """Describe what the user journal currently offers the benchmark.
 
-    Adapter records carry no compilation identity, so they cannot be joined to
-    store rows. The counts are reported as context, not used as events.
+    The journal is the only source that could bound retention, but neither
+    source it names carries a joinable compilation key: adapter records hold
+    per-compilation metrics without an identity, and supervisor records hold
+    admission and queue events without a compilation identity. The join is
+    therefore reported as unavailable, with the record counts and the
+    retention span that *are* available, rather than guessed at.
 
     Parameters
     ----------
@@ -214,7 +226,9 @@ def count_journal(
     Returns
     -------
     dict[str, object]
-        Availability, counts by source and event, and the join limitation.
+        Availability, counts by source and event, the supervisor starts the
+        window saw, the retention the query covers and the correlation it
+        cannot support.
     """
     try:
         window = query(since=since, max_records=_MAX_JOURNAL_RECORDS, source="all")
@@ -225,16 +239,56 @@ def count_journal(
     for record in window.records:
         by_source[record.source] = by_source.get(record.source, 0) + 1
         by_event[record.event] = by_event.get(record.event, 0) + 1
+    stamps = sorted(
+        record.timestamp for record in window.records if record.timestamp is not None
+    )
+    restarts = sorted(
+        record.timestamp
+        for record in window.records
+        if record.event == "supervisor_started" and record.timestamp is not None
+    )
     return {
         "available": bool(window.records),
         "span": since,
         "truncated": window.truncated,
         "records": len(window.records),
+        "span_start": utc_text(stamps[0]) if stamps else None,
+        "span_end": utc_text(stamps[-1]) if stamps else None,
         "by_source": dict(sorted(by_source.items())),
         "by_event": dict(sorted(by_event.items())),
-        "join": "adapter records carry no compilation identity, so journal "
-        "counts are reported as context and are not joined to store rows",
+        "restarts": {
+            "count": len(restarts),
+            "first": utc_text(restarts[0]) if restarts else None,
+            "last": utc_text(restarts[-1]) if restarts else None,
+        },
+        "retention": _retention_note(since, truncated=window.truncated),
+        "correlation": _CORRELATION_LIMIT,
     }
+
+
+_CORRELATION_LIMIT = (
+    "no joinable per-compilation admission record: adapter rows carry metrics "
+    "without an identity and supervisor rows carry queue events without a "
+    "compilation identity, so the journal bounds retention and adds no "
+    "admission time to a store row"
+)
+
+
+def _retention_note(since: str, *, truncated: bool) -> str:
+    """Describe how far back the journal query is reliable.
+
+    Returns
+    -------
+    str
+        The requested lookback, the record cap and whether the cap was hit.
+    """
+    note = (
+        f"at most {_MAX_JOURNAL_RECORDS} records over the requested {since} "
+        "lookback; older records are outside what this query can see"
+    )
+    if truncated:
+        note += ", and the cap was reached so the newest records won"
+    return note
 
 
 def build_snapshot(

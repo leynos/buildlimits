@@ -1,6 +1,5 @@
 """Consensus edge cases and the ablation restart contract."""
 
-import dataclasses as dc
 import typing as typ
 
 import pytest
@@ -16,7 +15,6 @@ from buildlimits.predict.ensemble_runs import (
     run_ensembles,
 )
 from buildlimits.predict.ensembles import Ensemble
-from buildlimits.predict.events import EPOCH
 from buildlimits.predict.fitting import _log_loss_gradient, _project, fit_weights
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.metrics import log_loss_of
@@ -25,8 +23,6 @@ from buildlimits.predict.synthetic import drift
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-    from buildlimits.predict.config import Config
-    from buildlimits.predict.events import Label
     from buildlimits.predict.harness import Walk
 
 
@@ -264,82 +260,6 @@ def test_the_gradient_keeps_the_interior_slope_at_the_clip_boundary() -> None:
 
     assert gradient[0] == pytest.approx(1.0), "the slope survives the boundary"
     assert gradient[1] == pytest.approx(-1.0), "and mirrors across the mean"
-
-
-def test_a_single_batch_cannot_tune_the_weight_fit() -> None:
-    """The only batch is tuning, and the fit withholds it, so weights stay even."""
-    config = predict_config()
-    events = tuple(
-        dc.replace(event, observed_at=EPOCH)
-        for event in drift(count=40, first_rate=0.9, second_rate=0.1, seed=5)
-    )
-
-    walk = walk_forward(events, config)
-    fixed = run_ensembles(walk, config)["ensemble-fixed"]
-    uniform = [1.0 / len(walk.components())] * len(walk.components())
-
-    assert walk.split.train_labelled == 40, "the single batch tunes whole"
-    assert walk.split.heldout_labelled == 0, "no batch is held out"
-    assert fixed.initial_weights == pytest.approx(uniform), (
-        "the withheld batch leaves the uniform prior standing"
-    )
-
-
-def _flipped(label: str) -> str:
-    """Return the opposite scorable label for one tuning outcome."""
-    return "miss" if label == "hit" else "hit"
-
-
-def _last_train_batch(walk: Walk) -> frozenset[int]:
-    """Return the indices of the last batch holding a tuning row."""
-    train = [
-        batch
-        for batch in walk.batches
-        if any(walk.phases[index] == "train" for index in batch)
-    ]
-    return frozenset(train[-1])
-
-
-def _fit_every_tuning_row(walk: Walk, config: Config) -> list[float]:
-    """Return the weights a fit over every tuning row would give."""
-    matrix = component_matrix(walk)
-    indices = [index for index, phase in enumerate(walk.phases) if phase == "train"]
-    return fit_weights(
-        [matrix[index] for index in indices],
-        [1.0 if walk.events[index].label == "hit" else 0.0 for index in indices],
-        config=config,
-    )
-
-
-def test_the_weight_fit_ignores_the_batch_before_the_held_out_split() -> None:
-    """The fitted weights stop two batches back from the first held-out answer.
-
-    Flipping the labels of the last tuning batch changes nothing about the
-    weights the fixed ensemble starts from, while a fit over every tuning row
-    would have moved. The fitted weights are a history of their own, so they
-    must end where an embargoed prediction's history ends.
-    """
-    config = predict_config()
-    events = drift(count=60, first_rate=0.9, second_rate=0.1, seed=5)
-    walk = walk_forward(events, config)
-    withheld = _last_train_batch(walk)
-    flipped = tuple(
-        dc.replace(event, label=typ.cast("Label", _flipped(event.label)))
-        if index in withheld
-        else event
-        for index, event in enumerate(events)
-    )
-
-    before = run_ensembles(walk, config)["ensemble-fixed"].initial_weights
-    after = run_ensembles(walk_forward(flipped, config), config)[
-        "ensemble-fixed"
-    ].initial_weights
-
-    assert withheld, "the stream has a tuning batch to withhold"
-    assert after == pytest.approx(before), "the embargoed batch cannot move them"
-    assert _fit_every_tuning_row(walk, config) != pytest.approx(before), (
-        "a fit over every tuning row would have moved"
-    )
 
 
 def _drift_run() -> tuple[

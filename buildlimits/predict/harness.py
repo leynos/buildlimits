@@ -1,14 +1,17 @@
-"""The embargoed prequential walk over one event stream.
+"""The prequential walk over one event stream, ordered by admission time.
 
-Every event is predicted from what earlier events already revealed, and only
-then may its label update anyone. Outcomes that arrive together are predicted
-together: a batch of rows is answered in full before any of its labels is
-applied, so two outcomes that became known at the same moment cannot inform
-each other. The batch immediately before the predicted one is withheld as well:
-its labels may have been written after this batch's builds started, so each
-prediction uses a history ending two batches back. The order is the store's
-append order, which is the order labels were written; nothing is sorted or
-shuffled, so a backward clock step cannot move a record into another window.
+Every prediction is made at its event's admission moment. Before a moment is
+answered, exactly the eligible labels whose observation time is strictly
+earlier are delivered; a label observed at the same instant waits for a later
+moment. Events sharing an admission moment are answered in full before any
+label from that moment can count, so simultaneous outcomes cannot inform each
+other.
+
+An event without a usable admission time is never predicted, and its label
+never trains a predictor: a missing timestamp is not evidence that the label
+arrived before the decision. Nothing is sorted into a different window behind
+the store's back; admission times order the predictions, and store order breaks
+ties.
 """
 
 import dataclasses as dc
@@ -16,7 +19,13 @@ import time
 import typing as typ
 
 from buildlimits.predict.events import Features, scored_label
-from buildlimits.predict.history import features, label_batches
+from buildlimits.predict.history import (
+    admission_schedule,
+    features,
+    label_batches,
+    prediction_moments,
+    released_labels,
+)
 from buildlimits.predict.predictors import single_predictors, update_all
 
 if typ.TYPE_CHECKING:
@@ -71,7 +80,8 @@ class Series:
     name : str
         The predictor's stable name.
     probabilities : tuple[float | None, ...]
-        One answer per event, in stream order.
+        One answer per event, in store order; None where no prediction was
+        possible or the predictor abstained.
     elapsed : tuple[float, ...]
         Seconds spent predicting each event.
     """
@@ -89,31 +99,34 @@ class Walk:
     ----------
     events : tuple[Event, ...]
         The stream, in the store's append order.
-    rows : tuple[Features, ...]
-        Causal features, aligned with ``events``.
+    rows : tuple[Features | None, ...]
+        Causal features, aligned with ``events``; None where no admission time
+        makes a prediction possible.
     phases : tuple[Phase | None, ...]
         The phase of each labelled event, or None for an unscored one.
     series : dict[str, Series]
         Answers per single predictor, in creation order.
     split : Split
         The tuning/held-out boundary.
-    batches : tuple[tuple[int, ...], ...]
-        Event indices grouped by equal label time, in stream order.
-    embargoed_rows : int
-        Eligible labels each withheld from one batch's predictions by the
-        one-batch embargo.
-    unapplied_rows : int
-        Eligible labels in the final batch, which no prediction follows.
+    moments : tuple[tuple[int, ...], ...]
+        Event indices grouped by equal admission time, in time order.
+    unavailable_admission : int
+        Events that carry no usable admission time and were never predicted.
+    applied_labels : int
+        Eligible labels delivered before at least one prediction.
+    unapplied_labels : int
+        Eligible labels that arrived too late to inform any prediction.
     """
 
     events: tuple[Event, ...]
-    rows: tuple[Features, ...]
+    rows: tuple[Features | None, ...]
     phases: tuple[Phase | None, ...]
     series: dict[str, Series]
     split: Split
-    batches: tuple[tuple[int, ...], ...]
-    embargoed_rows: int
-    unapplied_rows: int
+    moments: tuple[tuple[int, ...], ...]
+    unavailable_admission: int
+    applied_labels: int
+    unapplied_labels: int
 
     def components(self) -> tuple[str, ...]:
         """Return the single predictor names in their fixed order.
@@ -127,12 +140,14 @@ class Walk:
 
 
 def walk_forward(events: cabc.Iterable[Event], config: Config) -> Walk:
-    """Predict every event in order, updating from embargoed labels.
+    """Predict every event at its admission, updating from released labels.
 
-    Each batch is predicted in full before any label is applied, and the batch
-    before it is applied only afterwards, so a prediction's history ends two
-    batches back. The final batch's labels inform nothing and are left
-    unapplied rather than reported as if some prediction had learned them.
+    Parameters
+    ----------
+    events : Iterable[Event]
+        The recorded stream, in store append order.
+    config : Config
+        The pinned parameters, including the load window and split fraction.
 
     Returns
     -------
@@ -140,10 +155,10 @@ def walk_forward(events: cabc.Iterable[Event], config: Config) -> Walk:
         The stream, its features, phases and each single predictor's answers.
     """
     stream = tuple(events)
+    moments = prediction_moments(stream)
     rows = features(stream, load_window_seconds=config.load_window_seconds)
-    batches = label_batches(stream)
-    phases = _phases(stream, batches, train_fraction=config.train_fraction)
-    replay = _replay(single_predictors(config), rows, stream, batches)
+    phases = _phases(stream, train_fraction=config.train_fraction)
+    replay = _replay(single_predictors(config), rows, stream, moments)
     series = {
         name: Series(
             name, tuple(replay.probabilities[name]), tuple(replay.elapsed[name])
@@ -156,112 +171,122 @@ def walk_forward(events: cabc.Iterable[Event], config: Config) -> Walk:
         phases=phases,
         series=series,
         split=_split(stream, phases),
-        batches=batches,
-        embargoed_rows=replay.embargoed_rows,
-        unapplied_rows=replay.unapplied_rows,
+        moments=moments,
+        unavailable_admission=len(stream) - sum(len(group) for group in moments),
+        applied_labels=replay.applied_labels,
+        unapplied_labels=replay.unapplied_labels,
     )
 
 
 @dc.dataclass(frozen=True, slots=True)
 class _Replay:
-    """One batch-scheduled pass over the stream.
+    """One admission-scheduled pass over the stream.
 
     Attributes
     ----------
     probabilities : dict[str, list[float | None]]
-        Answers per predictor, in stream order.
+        Answers per predictor, in store order.
     elapsed : dict[str, list[float]]
         Seconds spent predicting each event, per predictor.
-    embargoed_rows : int
-        Eligible labels withheld one batch by the embargo.
-    unapplied_rows : int
-        Eligible labels in the final batch, which no prediction follows.
+    applied_labels : int
+        Eligible labels delivered before at least one prediction.
+    unapplied_labels : int
+        Eligible labels that no prediction followed.
     """
 
     probabilities: dict[str, list[float | None]]
     elapsed: dict[str, list[float]]
-    embargoed_rows: int
-    unapplied_rows: int
+    applied_labels: int
+    unapplied_labels: int
+
+
+@dc.dataclass(slots=True)
+class _Answers:
+    """The per-predictor columns a replay is filling in.
+
+    Attributes
+    ----------
+    probabilities : dict[str, list[float | None]]
+        Answers per predictor, in store order.
+    elapsed : dict[str, list[float]]
+        Seconds spent predicting each event, per predictor.
+    """
+
+    probabilities: dict[str, list[float | None]]
+    elapsed: dict[str, list[float]]
 
 
 def _replay(
     predictors: cabc.Sequence[Predictor],
-    rows: cabc.Sequence[Features],
+    rows: cabc.Sequence[Features | None],
     events: cabc.Sequence[Event],
-    batches: cabc.Sequence[tuple[int, ...]],
+    moments: cabc.Sequence[tuple[int, ...]],
 ) -> _Replay:
-    """Answer every batch, applying each pending batch only afterwards.
+    """Answer every admission moment, releasing only earlier labels first.
 
     Returns
     -------
     _Replay
-        The answers, timings and the embargo accounting.
+        The answers, timings and the label accounting.
     """
-    probabilities: dict[str, list[float | None]] = {
-        predictor.name: [] for predictor in predictors
-    }
-    elapsed: dict[str, list[float]] = {predictor.name: [] for predictor in predictors}
-    pending: tuple[int, ...] | None = None
-    embargoed = 0
-    for batch in batches:
-        for index in batch:
-            _predict_row(predictors, rows[index], probabilities, elapsed)
-        if pending is not None:
-            _apply_batch(predictors, rows, events, pending)
-            embargoed += _eligible_count(events, pending)
-        pending = batch
-    unapplied = 0 if pending is None else _eligible_count(events, pending)
-    return _Replay(probabilities, elapsed, embargoed, unapplied)
+    answers = _Answers(
+        probabilities={
+            predictor.name: [None] * len(events) for predictor in predictors
+        },
+        elapsed={predictor.name: [0.0] * len(events) for predictor in predictors},
+    )
+    released = released_labels(events)
+    applied = 0
+    for due, group in admission_schedule(events, moments, released):
+        for index in due:
+            _learn(predictors, rows, events, index)
+        applied += len(due)
+        for index in group:
+            _predict_row(predictors, rows[index], index, answers)
+    return _Replay(
+        answers.probabilities,
+        answers.elapsed,
+        applied,
+        len(released) - applied,
+    )
+
+
+def _learn(
+    predictors: cabc.Sequence[Predictor],
+    rows: cabc.Sequence[Features | None],
+    events: cabc.Sequence[Event],
+    index: int,
+) -> None:
+    """Deliver one released label to every predictor."""
+    label = scored_label(events[index])
+    if label is not None:
+        update_all(predictors, typ.cast("Features", rows[index]), label)
 
 
 def _predict_row(
     predictors: cabc.Sequence[Predictor],
-    row: Features,
-    probabilities: dict[str, list[float | None]],
-    elapsed: dict[str, list[float]],
+    row: Features | None,
+    index: int,
+    answers: _Answers,
 ) -> None:
-    """Ask every predictor about one row and record its answer and time."""
+    """Ask every predictor about one predictable row and record the answer."""
+    known = typ.cast("Features", row)
     for predictor in predictors:
         started = time.perf_counter()
-        answer = predictor.predict(row)
-        elapsed[predictor.name].append(time.perf_counter() - started)
-        probabilities[predictor.name].append(answer)
-
-
-def _apply_batch(
-    predictors: cabc.Sequence[Predictor],
-    rows: cabc.Sequence[Features],
-    events: cabc.Sequence[Event],
-    batch: cabc.Sequence[int],
-) -> None:
-    """Deliver one batch's eligible labels to every predictor."""
-    for index in batch:
-        label = scored_label(events[index])
-        if label is not None:
-            update_all(predictors, rows[index], label)
-
-
-def _eligible_count(events: cabc.Sequence[Event], batch: cabc.Sequence[int]) -> int:
-    """Return how many labels in one batch can train a predictor.
-
-    Returns
-    -------
-    int
-        The number of hit/miss labels in the batch.
-    """
-    return sum(1 for index in batch if scored_label(events[index]) is not None)
+        answer = predictor.predict(known)
+        answers.elapsed[predictor.name][index] = time.perf_counter() - started
+        answers.probabilities[predictor.name][index] = answer
 
 
 def _phases(
     events: cabc.Sequence[Event],
-    batches: cabc.Sequence[cabc.Sequence[int]],
     *,
     train_fraction: float,
 ) -> tuple[Phase | None, ...]:
-    """Label each event with the phase its batch belongs to.
+    """Label each event with the phase its label time belongs to.
 
-    The boundary falls between batches, never inside one, so every row the
-    store wrote together stays on one side of it. A batch that reaches the
+    The boundary falls between label batches, never inside one, so every row
+    the store wrote together stays on one side of it. A batch that reaches the
     target lands wholly in the tuning period, which can leave the tuning share
     slightly above the configured fraction. With too few labels to reach the
     boundary every batch is tuning; at a fraction of zero every batch is held
@@ -276,7 +301,7 @@ def _phases(
     target = int(total * train_fraction)
     phases: list[Phase | None] = []
     kept = 0
-    for batch in batches:
+    for batch in label_batches(events):
         phase: Phase = "train" if kept < target else "held-out"
         for index in batch:
             if scored_label(events[index]) is None:

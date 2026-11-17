@@ -1,4 +1,4 @@
-"""Causality contracts: ordering, delayed labels and future-label leakage."""
+"""Causality contracts: admission order, delayed labels and future-label leakage."""
 
 import dataclasses as dc
 import datetime as dt
@@ -7,6 +7,7 @@ import typing as typ
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from predict_test_helpers import hand_event
 
 from buildlimits.predict.config import load_config
 from buildlimits.predict.events import EPOCH, Event
@@ -15,7 +16,6 @@ from buildlimits.predict.scoring import rows_for
 from buildlimits.predict.synthetic import (
     STEP,
     delayed,
-    identity,
     stationary,
     with_unknowns,
 )
@@ -23,124 +23,177 @@ from buildlimits.predict.synthetic import (
 if typ.TYPE_CHECKING:
     from buildlimits.predict.events import Label
 
+MINUTE = dt.timedelta(minutes=1)
 
-def _event(
-    index: int,
-    *,
-    observed_at: dt.datetime,
-    admitted_at: dt.datetime | None,
-    label: Label,
+
+def _causal(
+    index: int, *, observed_at: dt.datetime, label: Label, early: dt.timedelta = MINUTE
 ) -> Event:
-    """Return one event for a hand-built ordering scenario."""
-    return Event(
-        identity=identity(index),
-        origin="git",
-        admitted_at=admitted_at,
-        observed_at=observed_at,
-        label=label,
-        runtime_seconds=1.0,
+    """Return one event admitted ``early`` before its own label."""
+    return hand_event(
+        index, observed_at=observed_at, admitted_at=observed_at - early, label=label
     )
 
 
 def test_the_replay_keeps_store_order_when_timestamps_step_back() -> None:
-    """A backward clock step never reorders records the store already wrote."""
-    first = _event(
-        0,
-        admitted_at=EPOCH,
-        observed_at=EPOCH + dt.timedelta(minutes=10),
-        label="hit",
+    """A backward clock step never reorders the records the store wrote."""
+    first = hand_event(
+        0, admitted_at=EPOCH, observed_at=EPOCH + 10 * MINUTE, label="hit"
     )
-    stepped = _event(
-        1,
-        admitted_at=EPOCH + dt.timedelta(minutes=1),
-        observed_at=EPOCH + dt.timedelta(minutes=5),
-        label="miss",
+    stepped = hand_event(
+        1, admitted_at=EPOCH + MINUTE, observed_at=EPOCH + 5 * MINUTE, label="miss"
     )
 
     walk = walk_forward((first, stepped), load_config())
 
     assert walk.events == (first, stepped), "append order is kept"
-    assert walk.batches == ((0,), (1,)), "each record is its own batch"
+    assert walk.moments == ((0,), (1,)), "admissions ascend even as labels step back"
 
 
-def test_labels_that_arrive_together_cannot_inform_each_other() -> None:
-    """A batch is answered in full before any of it is learned."""
-    stamp = EPOCH + dt.timedelta(minutes=5)
-    first = _event(0, admitted_at=None, observed_at=stamp, label="hit")
-    second = _event(0, admitted_at=None, observed_at=stamp, label="hit")
-    later = _event(
-        2, admitted_at=None, observed_at=stamp + dt.timedelta(minutes=1), label="miss"
+def test_predictions_follow_admission_order_not_store_order() -> None:
+    """The event admitted first is answered first, whatever the store order."""
+    later = hand_event(
+        5, admitted_at=EPOCH + 10 * MINUTE, observed_at=EPOCH + 20 * MINUTE, label="hit"
     )
-    latest = _event(
-        3, admitted_at=None, observed_at=stamp + dt.timedelta(minutes=2), label="miss"
+    earlier = hand_event(
+        6, admitted_at=EPOCH, observed_at=EPOCH + 2 * MINUTE, label="miss"
     )
 
-    walk = walk_forward((first, second, later, latest), load_config())
+    walk = walk_forward((later, earlier), load_config())
     probabilities = walk.series["base-rate"].probabilities
 
-    assert probabilities[:3] == (0.5, 0.5, 0.5), (
-        "the tied pair is answered together and the next batch is embargoed"
-    )
-    assert probabilities[3] == pytest.approx(1.0), (
-        "the tied hits are available two batches later"
+    assert probabilities[1] == pytest.approx(0.5), "the first admission has no history"
+    assert probabilities[0] == pytest.approx(0.0), (
+        "the later admission sees the earlier event's miss"
     )
 
 
-def test_the_replay_withholds_one_batch_and_counts_it() -> None:
-    """Each batch is applied only after the next, and the last never is."""
-    first = _event(0, admitted_at=None, observed_at=EPOCH, label="hit")
-    second = _event(
-        1, admitted_at=None, observed_at=EPOCH + dt.timedelta(minutes=1), label="miss"
+def test_labels_observed_with_an_admission_cannot_inform_it() -> None:
+    """A row is answered before any label from its own moment is released."""
+    stamp = EPOCH + 5 * MINUTE
+    first = hand_event(0, admitted_at=stamp, observed_at=stamp, label="hit")
+    second = hand_event(0, admitted_at=stamp, observed_at=stamp, label="hit")
+    later = _causal(2, observed_at=stamp + 10 * MINUTE, label="miss", early=MINUTE)
+
+    walk = walk_forward((first, second, later), load_config())
+    probabilities = walk.series["base-rate"].probabilities
+
+    assert walk.moments == ((0, 1), (2,)), "the tied pair shares one moment"
+    assert probabilities[:2] == (0.5, 0.5), "neither tied row sees the other's label"
+    assert probabilities[2] == pytest.approx(1.0), (
+        "both hits are released before the later admission"
     )
-    third = _event(
-        2, admitted_at=None, observed_at=EPOCH + dt.timedelta(minutes=2), label="hit"
-    )
+
+
+def test_the_replay_counts_the_labels_it_delivers_and_the_ones_it_cannot() -> None:
+    """A label informs a prediction only when it arrives strictly earlier."""
+    first = _causal(0, observed_at=EPOCH, label="hit")
+    second = hand_event(1, admitted_at=EPOCH, observed_at=EPOCH, label="hit")
+    third = _causal(2, observed_at=EPOCH + 5 * MINUTE, label="miss", early=MINUTE)
 
     walk = walk_forward((first, second, third), load_config())
 
-    assert walk.batches == ((0,), (1,), (2,)), "one batch per label time"
-    assert walk.embargoed_rows == 2, "the first two labels are each withheld once"
-    assert walk.unapplied_rows == 1, "the final label informs no prediction"
+    assert walk.moments == ((0,), (1,), (2,)), "one moment per admission"
+    assert walk.applied_labels == 2, "both tied hits inform the later prediction"
+    assert walk.unapplied_labels == 1, "the final label informs no prediction"
     assert walk.series["base-rate"].probabilities == (0.5, 0.5, 1.0), (
-        "only the first batch's label has reached the final prediction"
+        "the tied hit is not released before its own moment"
     )
 
 
 def test_a_delayed_label_is_unavailable_to_an_intervening_prediction() -> None:
-    """Work started earlier but finished later cannot inform the middle event."""
-    slow = _event(
-        7,
-        admitted_at=EPOCH,
-        observed_at=EPOCH + dt.timedelta(minutes=30),
-        label="hit",
+    """The reviewer's case: a label observed at minute 10 is not had at minute 2."""
+    slow = hand_event(
+        7, admitted_at=EPOCH, observed_at=EPOCH + 30 * MINUTE, label="hit"
     )
-    middle = _event(
-        7,
-        admitted_at=EPOCH + dt.timedelta(minutes=1),
-        observed_at=EPOCH + dt.timedelta(minutes=10),
-        label="miss",
+    middle = hand_event(
+        7, admitted_at=EPOCH + MINUTE, observed_at=EPOCH + 10 * MINUTE, label="miss"
     )
-    later = _event(
-        7,
-        admitted_at=EPOCH + dt.timedelta(minutes=2),
-        observed_at=EPOCH + dt.timedelta(minutes=50),
-        label="hit",
+    at_two = hand_event(
+        7, admitted_at=EPOCH + 2 * MINUTE, observed_at=EPOCH + 50 * MINUTE, label="hit"
+    )
+    after = hand_event(
+        7, admitted_at=EPOCH + 31 * MINUTE, observed_at=EPOCH + 60 * MINUTE, label="hit"
     )
 
-    walk = walk_forward((middle, slow, later), load_config())
+    walk = walk_forward((middle, slow, at_two, after), load_config())
     probabilities = walk.series["last-outcome"].probabilities
 
-    assert probabilities[0] is None, "the middle event has no earlier outcome"
-    assert probabilities[1] is None, (
-        "the slow event is withheld from the batch after it"
+    assert probabilities[0] is None, "the minute-1 admission has no earlier outcome"
+    assert probabilities[1] is None, "the minute-0 admission has no earlier outcome"
+    assert probabilities[2] is None, (
+        "the minute-2 admission must not use the miss observed at minute 10"
     )
-    assert probabilities[2] == pytest.approx(0.0), (
-        "the middle event's miss is the only label applied so far"
+    assert probabilities[3] == pytest.approx(1.0), (
+        "both delayed labels are released before minute 31, newest first"
+    )
+
+
+def test_an_event_without_an_admission_time_is_never_predicted() -> None:
+    """A missing timestamp is not evidence that the label arrived early."""
+    known = _causal(0, observed_at=EPOCH, label="hit")
+    missing = hand_event(1, admitted_at=None, observed_at=EPOCH + MINUTE, label="miss")
+
+    walk = walk_forward((known, missing), load_config())
+
+    assert walk.rows[1] is None, "no feature row exists without an admission time"
+    assert walk.series["base-rate"].probabilities[1] is None, "nothing is predicted"
+    assert walk.unavailable_admission == 1, "the event is reported as unavailable"
+    assert walk.phases[1] is not None, (
+        "it still owns a label for the split, though nothing was scored"
+    )
+
+
+def test_an_admission_recorded_after_its_label_is_unusable() -> None:
+    """A decision taken once the outcome was known cannot be predicted."""
+    event = hand_event(
+        0, admitted_at=EPOCH + 5 * MINUTE, observed_at=EPOCH, label="hit"
+    )
+
+    walk = walk_forward((event,), load_config())
+
+    assert walk.rows[0] is None, "the admission cannot support a prediction"
+    assert walk.unavailable_admission == 1, "the retroactive time is counted as missing"
+    assert walk.unapplied_labels == 0, "its label never trains anything either"
+
+
+def test_a_label_from_an_unpredicted_event_never_trains_a_predictor() -> None:
+    """Removing the timestamp of a labelled event drops it from the history."""
+    events = tuple(
+        _causal(
+            index,
+            observed_at=EPOCH + index * MINUTE,
+            label="hit" if index % 2 else "miss",
+        )
+        for index in range(6)
+    )
+    hidden = tuple(
+        dc.replace(event, admitted_at=None) if index == 1 else event
+        for index, event in enumerate(events)
+    )
+
+    original = walk_forward(events, load_config())
+    without = walk_forward(hidden, load_config())
+
+    assert without.applied_labels == original.applied_labels - 1, (
+        "the hidden event's label is dropped from the training history"
+    )
+    assert without.rows[3] is not None and original.rows[3] is not None, (
+        "the fourth event is predicted on both walks"
+    )
+    assert without.rows[3].load == original.rows[3].load - 1, (
+        "the hidden label is not counted as earlier load"
+    )
+    assert without.series["base-rate"].probabilities[3] == pytest.approx(0.0), (
+        "only the hidden event's hit could have raised the rate"
+    )
+    assert original.series["base-rate"].probabilities[3] == pytest.approx(0.5), (
+        "the unhidden history holds one hit and one miss"
     )
 
 
 def test_flipping_a_future_label_cannot_change_an_earlier_prediction() -> None:
-    """Every prediction at or before a label is unchanged when that label flips."""
+    """Every prediction before a label is unchanged when that label flips."""
     config = load_config()
     events = stationary(count=300, rate=0.6, seed=21)
     cut = 150
@@ -191,16 +244,10 @@ def test_split_is_the_configured_share_of_labelled_events() -> None:
 def test_a_batch_stays_inside_one_phase() -> None:
     """The tuning/held-out boundary never splits a batch."""
     config = dc.replace(load_config(), train_fraction=0.5)
-    first = _event(0, admitted_at=None, observed_at=EPOCH, label="hit")
-    second = _event(
-        1, admitted_at=None, observed_at=EPOCH + dt.timedelta(minutes=1), label="miss"
-    )
-    tied = _event(
-        2, admitted_at=None, observed_at=EPOCH + dt.timedelta(minutes=1), label="hit"
-    )
-    last = _event(
-        3, admitted_at=None, observed_at=EPOCH + dt.timedelta(minutes=2), label="miss"
-    )
+    first = _causal(0, observed_at=EPOCH, label="hit")
+    second = _causal(1, observed_at=EPOCH + MINUTE, label="miss")
+    tied = _causal(2, observed_at=EPOCH + MINUTE, label="hit")
+    last = _causal(3, observed_at=EPOCH + 2 * MINUTE, label="miss")
 
     walk = walk_forward((first, second, tied, last), config)
 
@@ -239,6 +286,8 @@ def test_the_replay_keeps_store_order_not_admission_time() -> None:
         events, key=lambda event: typ.cast("dt.datetime", event.admitted_at)
     )
     assert admitted != list(events), "admission order is not write order"
+    order = [index for group in walk.moments for index in group]
+    assert order != list(range(12)), "the moments follow admission, not store order"
 
 
 _OPPOSITE: dict[str, Label] = {"hit": "miss", "miss": "hit", "unknown": "unknown"}
@@ -256,9 +305,8 @@ def test_flipping_a_later_label_never_changes_an_earlier_answer(
 ) -> None:
     """A label that arrives after a prediction cannot be part of its answer.
 
-    Every event in a ``stationary`` stream has its own label time, so each is
-    its own batch. Flipping the labels from the cut onwards must leave every
-    answer before the cut byte-identical, whichever predictor gave it.
+    Flipping the labels from the cut onwards must leave every answer for an
+    event admitted before that cut byte-identical, whichever predictor gave it.
     """
     events = stationary(count=count, rate=rate, seed=seed)
     cut = max(1, int(count * cut_share))
@@ -269,12 +317,19 @@ def test_flipping_a_later_label_never_changes_an_earlier_answer(
 
     before = walk_forward(events, load_config())
     after = walk_forward(flipped, load_config())
+    # The earliest flipped label arrives at events[cut].observed_at, so a
+    # prediction made at or before that instant cannot have read it.
+    protected = [
+        index
+        for index, event in enumerate(events)
+        if typ.cast("dt.datetime", event.admitted_at) <= events[cut].observed_at
+    ]
 
     assert flipped != events, "the perturbation changed at least one label"
     for name, series in before.series.items():
-        assert series.probabilities[:cut] == after.series[name].probabilities[:cut], (
-            f"{name} read a label that had not arrived"
-        )
+        assert [series.probabilities[index] for index in protected] == [
+            after.series[name].probabilities[index] for index in protected
+        ], f"{name} read a label that had not arrived"
 
 
 @given(st.lists(st.sampled_from(("hit", "miss", "unknown")), min_size=3, max_size=30))
@@ -282,12 +337,7 @@ def test_flipping_a_later_label_never_changes_an_earlier_answer(
 def test_an_unknown_outcome_never_becomes_a_scored_miss(labels: list[Label]) -> None:
     """An unattributable outcome is predicted but contributes no scored row."""
     events = tuple(
-        _event(
-            index,
-            admitted_at=None,
-            observed_at=EPOCH + index * STEP,
-            label=label,
-        )
+        _causal(index, observed_at=EPOCH + index * STEP, label=label)
         for index, label in enumerate(labels)
     )
 

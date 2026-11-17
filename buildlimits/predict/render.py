@@ -2,13 +2,20 @@
 
 The durable report is ASCII only and holds no measured value, so the same
 document always renders the same bytes. Latency is rendered separately and
-written to ``timings.json`` instead.
+written to ``timings.json`` instead, which the header points at.
+
+Everything the issue asks a reader to compare sits in one place: the held-out
+comparison table carries each predictor's scores, its difference from the base
+rate, that difference's block-bootstrap interval and whether the predictor
+scored enough held-out rows for its position to mean anything. Calibration is
+reported for every predictor that scored a held-out row, not only the leader.
 """
 
 import typing as typ
 
 from buildlimits.predict.evaluation import (
     STATUS_INSUFFICIENT,
+    STATUS_INSUFFICIENT_ADMISSION,
     STATUS_INSUFFICIENT_HELDOUT,
 )
 from buildlimits.predict.formatting import MISSING, as_count, as_percent, as_score
@@ -16,12 +23,19 @@ from buildlimits.predict.formatting import MISSING, as_count, as_percent, as_sco
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+UNDERPOWERED = "under-powered"
 # A status that needs explaining is looked up rather than compared in a chain:
 # a new status may be added without editing this module.
 _STATUS_NOTES = {
     STATUS_INSUFFICIENT: (
         "> **Insufficient data.** These numbers describe the history "
         "that is available; no synthetic result is substituted."
+    ),
+    STATUS_INSUFFICIENT_ADMISSION: (
+        "> **Insufficient admission times.** The history is large enough "
+        "to run, but its records carry no admission time, so no event "
+        "could have been predicted before its label was known. No "
+        "prediction is reported; the counts describe what is missing."
     ),
     STATUS_INSUFFICIENT_HELDOUT: (
         "> **Insufficient held-out evidence.** The history is large "
@@ -32,7 +46,7 @@ _STATUS_NOTES = {
 
 
 def render_markdown(document: cabc.Mapping[str, object]) -> str:
-    """Render the comparison, calibration, ablation and timing tables.
+    """Render the comparison, calibration, ablation and origin tables.
 
     Returns
     -------
@@ -42,11 +56,11 @@ def render_markdown(document: cabc.Mapping[str, object]) -> str:
     predictors = _predictors(document)
     ranking = typ.cast("list[str]", document["ranking"])
     lines = _header(document, len(predictors))
-    lines += _comparison_table(predictors, ranking)
-    lines += _calibration_table(predictors, ranking)
-    lines += _difference_table(predictors, ranking, document)
+    lines += _comparison_table(predictors, ranking, document)
+    lines += _calibration_table(predictors)
     lines += _ablation_table(document)
     lines += _origin_table(predictors, ranking)
+    lines += _limitations(predictors)
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -77,6 +91,7 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
     journal = typ.cast("dict[str, object]", data["journal"])
     split = typ.cast("dict[str, object]", document["split"])
     replay = typ.cast("dict[str, object]", document["replay"])
+    latency = typ.cast("dict[str, object]", document["latency"])
     status = document["status"]
     lines = [
         "# Cache-hit prediction benchmark",
@@ -97,15 +112,24 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
             f"{as_count(split['heldout_labelled'])} held-out"
         ),
         (
-            f"- Replay: {as_count(replay['batches'])} batches, "
-            f"{as_count(replay['embargoed_rows'])} labels withheld one batch, "
-            f"{as_count(replay['unapplied_rows'])} labels after the last prediction"
+            f"- Replay: {as_count(replay['moments'])} admission moments, "
+            f"{as_count(replay['unavailable_admission'])} events without a usable "
+            f"admission time, {as_count(replay['applied_labels'])} labels "
+            f"delivered before a prediction, {as_count(replay['unapplied_labels'])} "
+            "labels too late to inform one"
+        ),
+        (
+            f"- Admission times: {as_count(stats['admission_recorded'])} recorded, "
+            f"{as_count(stats['admission_usable'])} usable for a prediction, "
+            f"{as_count(stats['admission_missing'])} missing, "
+            f"{as_count(stats['admission_unusable'])} recorded after their own label"
         ),
         (
             f"- Store: {as_count(source['records_total'])} rows from salt "
             f"`{source['salt_id']}` written {source['written_at']}"
         ),
         f"- Journal: {_journal_note(journal)}",
+        f"- Latency: measured separately in `{latency['file']}`",
         f"- Snapshot fingerprint: `{data['fingerprint']}`",
         f"- Commit: `{document['git_sha']}`",
         "",
@@ -122,16 +146,32 @@ def _journal_note(journal: cabc.Mapping[str, object]) -> str:
     Returns
     -------
     str
-        Either the record count or the reason no records were usable.
+        The record count, its span, the supervisor starts it witnessed, and
+        what it could not correlate.
     """
     if not journal.get("available"):
         return f"unavailable ({journal.get('reason', 'no records')})"
-    return f"{as_count(journal.get('records'))} records, context only"
+    restarts = typ.cast("dict[str, object]", journal.get("restarts") or {})
+    note = (
+        f"{as_count(journal.get('records'))} records from "
+        f"{journal.get('span_start') or MISSING} to "
+        f"{journal.get('span_end') or MISSING}"
+    )
+    count = restarts.get("count")
+    if count is not None:
+        note += (
+            f", {as_count(count)} supervisor starts"
+            if restarts.get("first") is None
+            else f", {as_count(count)} supervisor starts between "
+            f"{restarts['first']} and {restarts['last']}"
+        )
+    return f"{note}; {journal.get('correlation', 'no correlation available')}"
 
 
 def _comparison_table(
     predictors: cabc.Mapping[str, dict[str, object]],
     ranking: cabc.Sequence[str],
+    document: cabc.Mapping[str, object],
 ) -> list[str]:
     """Return the held-out comparison table, best Brier first.
 
@@ -140,22 +180,58 @@ def _comparison_table(
     list[str]
         Markdown lines.
     """
+    alpha = typ.cast("float", document["verdict_alpha"])
+    interval_name = f"{as_percent(1.0 - alpha)} interval"
     lines = [
         "## Held-out comparison",
         "",
-        ("| Predictor | Brier | Log loss | Accuracy | Coverage | Calibration error |"),
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        (
+            "Sorted by held-out Brier. `n` is the number of held-out rows the "
+            "predictor answered; a predictor marked *under-powered* scored "
+            f"fewer than the config's minimum, and its position says little. "
+            f"A negative difference means fewer Brier points than the base "
+            f"rate; the {interval_name} is a block bootstrap over contiguous "
+            "held-out events, widened across the family of comparisons with "
+            "the base rate (Bonferroni)."
+        ),
+        "",
+        (
+            "| Predictor | Brier | Log loss | Accuracy | Coverage | n "
+            f"| Calibration error | Difference vs base rate | {interval_name} "
+            "| Notes |"
+        ),
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
-    for name in ranking:
-        heldout = typ.cast("dict[str, object]", predictors[name]["held-out"])
-        lines.append(
-            f"| `{name}` | {as_score(heldout['brier'])} "
-            f"| {as_score(heldout['log_loss'])} "
-            f"| {as_score(heldout['accuracy'])} | {as_percent(heldout['coverage'])} "
-            f"| {as_score(_calibration_error(heldout))} |"
-        )
+    lines.extend(_comparison_row(name, predictors[name]) for name in ranking)
     lines.append("")
     return lines
+
+
+def _comparison_row(name: str, entry: cabc.Mapping[str, object]) -> str:
+    """Return one row of the held-out comparison table.
+
+    Returns
+    -------
+    str
+        The Markdown row.
+    """
+    heldout = typ.cast("dict[str, object]", entry["held-out"])
+    interval = entry["against_base_rate"]
+    difference = MISSING
+    bounds = MISSING
+    if interval is not None:
+        value = typ.cast("dict[str, object]", interval)
+        difference = as_score(value["difference"])
+        bounds = f"[{as_score(value['low'])}, {as_score(value['high'])}]"
+    notes = MISSING if entry["meets_minimum"] else UNDERPOWERED
+    return (
+        f"| `{name}` | {as_score(heldout['brier'])} "
+        f"| {as_score(heldout['log_loss'])} "
+        f"| {as_score(heldout['accuracy'])} | {as_percent(heldout['coverage'])} "
+        f"| {as_count(heldout['scored'])} "
+        f"| {as_score(_calibration_error(heldout))} "
+        f"| {difference} | {bounds} | {notes} |"
+    )
 
 
 def _calibration_error(heldout: cabc.Mapping[str, object]) -> float | None:
@@ -184,73 +260,35 @@ def _calibration_error(heldout: cabc.Mapping[str, object]) -> float | None:
 
 def _calibration_table(
     predictors: cabc.Mapping[str, dict[str, object]],
-    ranking: cabc.Sequence[str],
 ) -> list[str]:
-    """Return per-bin calibration for the best-ranked predictor.
+    """Return per-bin calibration for every predictor with a held-out score.
 
     Returns
     -------
     list[str]
         Markdown lines.
     """
-    if not ranking:
+    scored = [
+        name
+        for name, entry in predictors.items()
+        if typ.cast("dict[str, object]", entry["held-out"])["scored"]
+    ]
+    if not scored:
         return []
-    name = ranking[0]
-    heldout = typ.cast("dict[str, object]", predictors[name]["held-out"])
-    bins = typ.cast("list[dict[str, object]]", heldout["calibration"])
     lines = [
-        f"## Calibration on the held-out period: `{name}`",
+        "## Calibration on the held-out period",
         "",
-        "| Bin | Count | Mean predicted | Observed |",
-        "| --- | ---: | ---: | ---: |",
+        "| Predictor | Bin | Count | Mean predicted | Observed |",
+        "| --- | --- | ---: | ---: | ---: |",
     ]
-    lines.extend(
-        f"| {as_score(bin_['lower'])}-{as_score(bin_['upper'])} "
-        f"| {bin_['count']} | {as_score(bin_['mean_probability'])} "
-        f"| {as_score(bin_['observed_rate'])} |"
-        for bin_ in bins
-    )
-    lines.append("")
-    return lines
-
-
-def _difference_table(
-    predictors: cabc.Mapping[str, dict[str, object]],
-    ranking: cabc.Sequence[str],
-    document: cabc.Mapping[str, object],
-) -> list[str]:
-    """Return block-bootstrap differences from the base rate.
-
-    Returns
-    -------
-    list[str]
-        Markdown lines.
-    """
-    alpha = typ.cast("float", document["verdict_alpha"])
-    interval_name = f"{as_percent(1.0 - alpha)} interval"
-    lines = [
-        "## Difference from the base rate",
-        "",
-        (
-            "Negative means fewer Brier points than the base rate. The "
-            "interval is a block bootstrap over contiguous held-out events, "
-            "widened across the family of comparisons with the base rate "
-            "(Bonferroni), so the verdict as a whole holds at the level the "
-            "config pins."
-        ),
-        "",
-        f"| Predictor | Difference | {interval_name} | Paired rows |",
-        "| --- | ---: | ---: | ---: |",
-    ]
-    for name in ranking:
-        interval = predictors[name]["against_base_rate"]
-        if interval is None:
-            continue
-        value = typ.cast("dict[str, object]", interval)
-        lines.append(
-            f"| `{name}` | {as_score(value['difference'])} "
-            f"| [{as_score(value['low'])}, {as_score(value['high'])}] "
-            f"| {as_count(value['rows'])} |"
+    for name in scored:
+        heldout = typ.cast("dict[str, object]", predictors[name]["held-out"])
+        bins = typ.cast("list[dict[str, object]]", heldout["calibration"])
+        lines.extend(
+            f"| `{name}` | {as_score(bin_['lower'])}-{as_score(bin_['upper'])} "
+            f"| {bin_['count']} | {as_score(bin_['mean_probability'])} "
+            f"| {as_score(bin_['observed_rate'])} |"
+            for bin_ in bins
         )
     lines.append("")
     return lines
@@ -288,7 +326,7 @@ def _origin_table(
     predictors: cabc.Mapping[str, dict[str, object]],
     ranking: cabc.Sequence[str],
 ) -> list[str]:
-    """Return Brier per origin class over every labelled event.
+    """Return Brier per origin class over every scored event.
 
     The split here is by origin, not by phase: the numbers cover the tuning and
     held-out periods together, so they do not match the held-out table above.
@@ -307,7 +345,7 @@ def _origin_table(
         return []
     header = "| Predictor | " + " | ".join(origins) + " |"
     rule = "| --- | " + " | ".join("---:" for _ in origins) + " |"
-    lines = ["## Brier by origin (all labelled events)", "", header, rule]
+    lines = ["## Brier by origin (all scored events)", "", header, rule]
     for name in ranking:
         by_origin = typ.cast(
             "dict[str, dict[str, object]]", predictors[name]["by_origin"]
@@ -323,4 +361,38 @@ def _origin_table(
             + " |"
         )
     lines.append("")
+    return lines
+
+
+def _limitations(predictors: cabc.Mapping[str, dict[str, object]]) -> list[str]:
+    """State what the scores do not claim.
+
+    Returns
+    -------
+    list[str]
+        Markdown lines.
+    """
+    retrospective = sorted(
+        name for name, entry in predictors.items() if entry["train"] is None
+    )
+    lines = ["## Limitations", ""]
+    if retrospective:
+        lines.append(
+            "- The fixed ensemble's weights were fitted on the tuning labels, so "
+            "its tuning rows are excluded rather than reported as retrospective "
+            "predictions: " + ", ".join(f"`{name}`" for name in retrospective) + "."
+        )
+    lines.extend([
+        (
+            "- An event with no admission time at or before its own label is "
+            "not predicted or scored; it is counted above, not repaired by "
+            "assumption."
+        ),
+        (
+            "- The journal supplies counts and a retention span, not a "
+            "joinable per-compilation admission record, so admission times "
+            "come only from the outcome store."
+        ),
+        "",
+    ])
     return lines

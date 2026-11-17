@@ -223,9 +223,21 @@ def _report(snapshot: Snapshot, output: Path) -> None:
         f"identities={stats['identities']} gaps={len(snapshot.gaps)}"
     )
     print(f"window {stats['span_start']} to {stats['span_end']}")
+    print(
+        f"admission times: recorded={stats['admission_recorded']} "
+        f"usable={stats['admission_usable']} missing={stats['admission_missing']} "
+        f"after their own label={stats['admission_unusable']}"
+    )
     if stats["labelled"] == 0:
         print(
             "no attributed hit or miss was recorded, so the benchmark will "
             "report insufficient data rather than invent any",
+            file=sys.stderr,
+        )
+    if stats["admission_usable"] == 0:
+        print(
+            "no store row carries an admission time at or before its own label, "
+            "so the benchmark cannot predict any event and will report "
+            "insufficient admission times rather than use the label time",
             file=sys.stderr,
         )

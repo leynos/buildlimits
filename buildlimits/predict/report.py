@@ -115,9 +115,14 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
         },
         "split": evaluation.walk.split.to_dict(),
         "replay": {
-            "batches": len(evaluation.walk.batches),
-            "embargoed_rows": evaluation.walk.embargoed_rows,
-            "unapplied_rows": evaluation.walk.unapplied_rows,
+            "moments": len(evaluation.walk.moments),
+            "unavailable_admission": evaluation.walk.unavailable_admission,
+            "applied_labels": evaluation.walk.applied_labels,
+            "unapplied_labels": evaluation.walk.unapplied_labels,
+        },
+        "latency": {
+            "file": TIMINGS,
+            "note": "measured latency; not reproducible byte for byte",
         },
         "predictors": {
             name: _predictor_entry(name, block, evaluation, weights)
@@ -146,6 +151,10 @@ def _predictor_entry(
 ) -> dict[str, object]:
     """Return one predictor's report entry.
 
+    A fixed ensemble does not report a tuning score, because its weights were
+    fitted on those labels; ``train`` is null for it rather than a
+    retrospective fit presented as a prediction.
+
     Returns
     -------
     dict[str, object]
@@ -157,13 +166,15 @@ def _predictor_entry(
         for key, value in block.items()
         if key.startswith("origin:")
     }
+    train = block.get("train")
     return {
         "overall": block["overall"].to_dict(),
-        "train": block["train"].to_dict(),
+        "train": None if train is None else train.to_dict(),
         "held-out": block["held-out"].to_dict(),
         "by_origin": origins,
         "against_base_rate": None if interval is None else interval.to_dict(),
         "weights": weights.get(name),
+        "meets_minimum": evaluation.meets_minimum(name),
     }
 
 
@@ -180,15 +191,22 @@ def build_timings(evaluation: Evaluation) -> dict[str, object]:
         Total and per-event seconds overall, per phase and per origin, split
         into ``predictors`` and ``ensembles``.
     """
-    phases = evaluation.walk.phases
-    origins = [event.origin for event in evaluation.walk.events]
+    predicted = [
+        index for index, row in enumerate(evaluation.walk.rows) if row is not None
+    ]
+    phases = [evaluation.walk.phases[index] for index in predicted]
+    origins = [evaluation.walk.events[index].origin for index in predicted]
     return {
         "predictors": {
-            name: _timing_entry(series.elapsed, phases, origins)
+            name: _timing_entry(
+                [series.elapsed[index] for index in predicted], phases, origins
+            )
             for name, series in evaluation.walk.series.items()
         },
         "ensembles": {
-            name: _timing_entry(run.elapsed, phases, origins)
+            name: _timing_entry(
+                [run.elapsed[index] for index in predicted], phases, origins
+            )
             for name, run in evaluation.ensembles.items()
         },
     }

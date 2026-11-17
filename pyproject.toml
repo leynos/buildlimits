@@ -1914,3 +1914,32 @@ members = [
     "tests/test_predict_probability.py",
 ]
 reason = "Matching import lists: the four property suites each name the same Hypothesis entry points (given, settings and the strategies module) beside their own module's imports. Those names come from an installed package rather than from project code, so a re-export module would add a test-support module without hiding a real dependency."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/modelcheck_cases.py",
+    "tests/modelcheck_service_cases.py",
+    "buildlimits/predict/ensemble_runs.py",
+    "buildlimits/predict/evaluation.py",
+    "buildlimits/predict/harness.py",
+    "buildlimits/predict/report.py",
+    "buildlimits/supervisor_wiring.py",
+    "tests/outcome_store_helpers.py",
+    "tests/test_group_drain_metrics.py",
+    "buildlimits/predict/scoring.py",
+    "modelcheck/cli_outputs.py",
+    "modelcheck/expectations.py",
+    "modelcheck/records.py",
+    "modelcheck/report.py",
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "buildlimits/outcome_record_codec.py",
+    "buildlimits/outcome_store.py",
+    "tests/differential_trace_test_helpers.py",
+    "tests/predict_test_helpers.py",
+    "modelcheck/cli.py",
+    "tests/test_kache_detached_events.py",
+    "tests/test_predict_evaluation.py",
+]
+reason = "Matching type-checking preambles: each module guards the same standard-library aliases (collections.abc, datetime) and its own typed imports behind if typ.TYPE_CHECKING. The names come from the standard library and each module's real dependencies, so a shared module would hide what each file actually imports."

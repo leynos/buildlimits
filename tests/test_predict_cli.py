@@ -6,7 +6,11 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-from predict_test_helpers import write_fast_config, write_snapshot
+from predict_test_helpers import (
+    write_admitted_snapshot,
+    write_fast_config,
+    write_snapshot,
+)
 
 from buildlimits.predict import benchmark_cli
 
@@ -43,7 +47,7 @@ def test_benchmark_command_writes_both_result_files(
 ) -> None:
     """One run writes results.json, results.md and the timing appendix."""
     output = tmp_path / "out"
-    snapshot = write_snapshot(tmp_path, 400)
+    snapshot = write_admitted_snapshot(tmp_path, 400)
     capsys.readouterr()
 
     status = benchmark_cli.main([
@@ -63,6 +67,41 @@ def test_benchmark_command_writes_both_result_files(
     assert "Held-out comparison" in markdown, "the comparison table is printed"
     assert "Held-out comparison" in printed, "the command prints the table"
     assert (output / "timings.json").exists(), "latency is reported separately"
+    assert document["latency"]["file"] == "timings.json", "the pointer is explicit"
+
+
+def test_a_store_snapshot_without_admission_times_predicts_nothing(
+    tmp_path: Path,
+) -> None:
+    """The live store records no admission time, so no event is predicted.
+
+    The honest answer is the count of what is missing, not a prediction made
+    from a label that had already arrived.
+    """
+    output = tmp_path / "out"
+    snapshot = write_snapshot(tmp_path, 400)
+
+    status = benchmark_cli.main([
+        "--snapshot",
+        str(snapshot),
+        "--output",
+        str(output),
+        "--config",
+        str(write_fast_config(tmp_path)),
+    ])
+
+    document, markdown = _results(output)
+    assert status == 0, "the run still produces both files"
+    assert document["status"] == "insufficient admission times", (
+        "the missing admission times set the status"
+    )
+    assert document["data"]["stats"]["admission_usable"] == 0, (
+        "no row offers a decision time"
+    )
+    assert document["replay"]["unavailable_admission"] == 400, (
+        "every event is counted as unpredictable"
+    )
+    assert "Insufficient admission times" in markdown, "the report explains why"
 
 
 def test_benchmark_defaults_report_insufficient_data_honestly(
@@ -90,7 +129,7 @@ def test_benchmark_defaults_report_insufficient_data_honestly(
 def test_two_runs_produce_identical_result_files(tmp_path: Path) -> None:
     """The same snapshot and config give byte-identical results.json."""
     config = write_fast_config(tmp_path)
-    snapshot = write_snapshot(tmp_path, 400)
+    snapshot = write_admitted_snapshot(tmp_path, 400)
 
     first = tmp_path / "first"
     second = tmp_path / "second"

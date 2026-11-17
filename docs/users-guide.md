@@ -249,9 +249,11 @@ composition nor compiler execution.
 `make predict-benchmark` creates the snapshot when it is missing, but only
 refreshes an existing one through `make predict-dataset`. The snapshot holds
 hashed compile identities and the observed result of each request; it never
-holds crate names, arguments or paths. The benchmark walks the snapshot forward
-in time, scores every predictor on each label as the label arrives, and writes
-its tables to `build/predict`.
+holds crate names, arguments or paths. The benchmark replays the snapshot at
+each event's admission time, so a predictor is scored only for events whose
+admission time was recorded no later than their own outcome; a prediction never
+reads a label observed after the moment it was made. Its tables are written to
+`build/predict`.
 
 The commands behind those targets take explicit paths:
 
@@ -273,11 +275,13 @@ to repeat. The report directory may otherwise hold the snapshot, as the example
 above does.
 
 A snapshot with fewer than 2,000 labelled events produces the status
-`insufficient data`, with the counts that were seen. The report never pads the
-history with synthetic rows to reach the threshold, and a negative comparison
-is printed as found rather than explained away. Both commands exit with status
-0 on success, 1 when the snapshot or store cannot be read, and 2 on invalid
-usage or an unreadable configuration.
+`insufficient data`, with the counts that were seen. A snapshot that holds no
+usable admission time produces `insufficient admission times` instead: its
+records cannot show what was knowable before each decision, so no prediction is
+reported. The report never pads the history with synthetic rows to reach a
+threshold, and a negative comparison is printed as found rather than explained
+away. Both commands exit with status 0 on success, 1 when the snapshot or store
+cannot be read, and 2 on invalid usage or an unreadable configuration.
 
 ### Adapter environment
 

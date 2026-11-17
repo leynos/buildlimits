@@ -1,18 +1,22 @@
 """Fit the consensus ensembles and walk each one across the event stream.
 
-The fixed ensemble's weights are fitted on the tuning period alone, and stop
-one tuning batch short of the first held-out batch: the fitted weights are the
-history every later answer starts from, so they must end where an embargoed
-prediction's history ends. Every ensemble is then replayed under the same
-one-batch embargo as the single predictors: a batch's labels are applied only
-after the next batch has been answered. That schedule advances on label
-arrival, not on admission: an answer is combined when the replay reaches the
-row's batch, so every label released before that batch is fair input, while the
-row's age and load stay pinned to its admission. Ablation restarts each
-ensemble from the weights it began with and simply drops one component's
-column from the matrix. Starting from the final weights instead would carry
-what the stream taught the adaptive ensemble about held-out labels into the
-ablated comparison.
+The fixed ensemble's weights are fitted on tuning labels that had already
+arrived at the first held-out prediction, so every held-out answer is combined
+with weights that could have existed then. Every ensemble then follows the same
+admission schedule as the single predictors: at each admission moment the
+labels observed strictly earlier are delivered, and only then is the moment's
+row answered.
+
+A fixed ensemble cannot score its own tuning rows: its weights were fitted on
+those very labels, so a tuning score would be a retrospective fit rather than a
+prediction. Those rows are excluded and the report states the limitation. The
+equal and adaptive ensembles learn only from labels already delivered, so their
+tuning rows are honest prequential scores.
+
+Ablation restarts each ensemble from the weights it began with and simply drops
+one component's column from the matrix. Starting from the final weights instead
+would carry what the stream taught the adaptive ensemble about held-out labels
+into the ablated comparison.
 """
 
 import dataclasses as dc
@@ -22,13 +26,19 @@ import typing as typ
 from buildlimits.predict.ensembles import Ensemble, build_ensembles
 from buildlimits.predict.events import scored_label
 from buildlimits.predict.fitting import fit_weights
+from buildlimits.predict.history import admission_schedule, released_labels
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
     from buildlimits.predict.config import Config
     from buildlimits.predict.events import Event
     from buildlimits.predict.harness import Walk
+    from buildlimits.predict.metrics import Phase
+
+BOTH_PHASES: tuple[Phase, ...] = ("train", "held-out")
+HELDOUT_ONLY: tuple[Phase, ...] = ("held-out",)
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -40,7 +50,8 @@ class EnsembleRun:
     name : str
         Stable identifier used in results.
     probabilities : tuple[float | None, ...]
-        One answer per event, in stream order.
+        One answer per event, in store order; None where no prediction was
+        possible or the ensemble abstained.
     weights : tuple[float, ...]
         The weights in force after the last event.
     initial_weights : tuple[float, ...]
@@ -48,6 +59,8 @@ class EnsembleRun:
         from.
     elapsed : tuple[float, ...]
         Seconds spent combining each event.
+    scored_phases : tuple[Phase, ...]
+        The phases whose rows are honest scores for this ensemble.
     """
 
     name: str
@@ -55,6 +68,7 @@ class EnsembleRun:
     weights: tuple[float, ...]
     initial_weights: tuple[float, ...]
     elapsed: tuple[float, ...]
+    scored_phases: tuple[Phase, ...]
 
 
 def run_ensembles(walk: Walk, config: Config) -> dict[str, EnsembleRun]:
@@ -81,7 +95,15 @@ def run_ensembles(walk: Walk, config: Config) -> dict[str, EnsembleRun]:
         config=config,
     )
     fitted = build_ensembles(components, config=config, weights=weights)
-    return {ensemble.name: _run_ensemble(ensemble, matrix, walk) for ensemble in fitted}
+    return {
+        ensemble.name: _run_ensemble(
+            ensemble,
+            matrix,
+            walk,
+            scored_phases=(HELDOUT_ONLY if ensemble.mode == "fixed" else BOTH_PHASES),
+        )
+        for ensemble in fitted
+    }
 
 
 def run_ablations(
@@ -116,6 +138,7 @@ def run_ablations(
                 base.without(index),
                 [row[:index] + row[index + 1 :] for row in matrix],
                 walk,
+                scored_phases=run.scored_phases,
             )
             for index, component in enumerate(components)
         }
@@ -135,7 +158,8 @@ def component_matrix(
     Returns
     -------
     list[tuple[float | None, ...]]
-        One tuple per event.
+        One tuple per event; every column is None where no prediction was
+        possible.
     """
     components = walk.components()
     return [
@@ -149,61 +173,58 @@ def _tuning(
 ) -> list[tuple[tuple[float | None, ...], float]]:
     """Return the rows and outcomes a fixed weight fit may read.
 
-    The last tuning batch is withheld for the same reason the replay withholds
-    it: its labels may have been written after the first held-out builds
-    started, so the weights every prediction starts from must not depend on
-    them.
-
     Returns
     -------
     list[tuple[tuple[float | None, ...], float]]
-        One component-answer row and outcome per remaining tuning event.
+        One component-answer row and outcome per usable tuning event.
     """
     return [
         (matrix[index], _outcome(walk.events[index])) for index in tuning_indices(walk)
     ]
 
 
+def fit_cutoff(walk: Walk) -> dt.datetime | None:
+    """Return the first held-out prediction moment, or None without one.
+
+    The fitted weights are the history every held-out answer starts from, so
+    they may read only tuning labels that had arrived by the earliest held-out
+    admission. A stream with no held-out prediction has nothing to protect and
+    lets the fit read every usable tuning row.
+
+    Returns
+    -------
+    datetime | None
+        The earliest held-out admission moment, or None.
+    """
+    moments = [
+        row.predicted_at
+        for index, row in enumerate(walk.rows)
+        if row is not None
+        and row.predicted_at is not None
+        and walk.phases[index] == "held-out"
+    ]
+    return min(moments, default=None)
+
+
 def tuning_indices(walk: Walk) -> tuple[int, ...]:
     """Return the tuning events a fixed weight fit may read.
 
-    Every tuning row is eligible except those in the last tuning batch, which
-    is withheld for the same reason the replay withholds it: its labels may
-    have been written after the first held-out builds started.
+    An event qualifies when it carries a tuning label, can itself be predicted,
+    and its label had arrived by :func:`fit_cutoff`.
 
     Returns
     -------
     tuple[int, ...]
         Eligible tuning event indices, in stream order.
     """
-    withheld = _embargoed_tuning(walk)
+    cutoff = fit_cutoff(walk)
     return tuple(
         index
         for index, phase in enumerate(walk.phases)
-        if phase == "train" and index not in withheld
+        if phase == "train"
+        and walk.rows[index] is not None
+        and (cutoff is None or walk.events[index].observed_at < cutoff)
     )
-
-
-def _embargoed_tuning(walk: Walk) -> frozenset[int]:
-    """Return the tuning indices the weight fit must leave out.
-
-    The tuning period ends at a label time, so the last batch holding a tuning
-    row is the batch immediately before the first held-out one.
-
-    Returns
-    -------
-    frozenset[int]
-        Event indices in the last tuning batch, or empty without one.
-    """
-    last = max(
-        (
-            position
-            for position, batch in enumerate(walk.batches)
-            if any(walk.phases[index] == "train" for index in batch)
-        ),
-        default=None,
-    )
-    return frozenset() if last is None else frozenset(walk.batches[last])
 
 
 def _rebuild(run: EnsembleRun, components: tuple[str, ...], config: Config) -> Ensemble:
@@ -230,8 +251,10 @@ def _run_ensemble(
     ensemble: Ensemble,
     matrix: cabc.Sequence[cabc.Sequence[float | None]],
     walk: Walk,
+    *,
+    scored_phases: tuple[Phase, ...],
 ) -> EnsembleRun:
-    """Answer one ensemble across the stream under the one-batch embargo.
+    """Answer one ensemble across the stream in admission order.
 
     Returns
     -------
@@ -239,38 +262,35 @@ def _run_ensemble(
         Its answers, final weights and per-event timing.
     """
     initial_weights = tuple(ensemble.weights)
-    probabilities: list[float | None] = []
-    elapsed: list[float] = []
-    pending: tuple[int, ...] | None = None
-    for batch in walk.batches:
-        for index in batch:
+    probabilities: list[float | None] = [None] * len(walk.events)
+    elapsed: list[float] = [0.0] * len(walk.events)
+    released = released_labels(walk.events)
+    for due, group in admission_schedule(walk.events, walk.moments, released):
+        for index in due:
+            _apply_label(ensemble, matrix[index], walk.events[index])
+        for index in group:
             started = time.perf_counter()
-            answer = ensemble.predict(matrix[index])
-            elapsed.append(time.perf_counter() - started)
-            probabilities.append(answer)
-        if pending is not None:
-            _apply_labels(ensemble, matrix, walk.events, pending)
-        pending = batch
+            probabilities[index] = ensemble.predict(matrix[index])
+            elapsed[index] = time.perf_counter() - started
     return EnsembleRun(
         name=ensemble.name,
         probabilities=tuple(probabilities),
         weights=tuple(ensemble.weights),
         initial_weights=initial_weights,
         elapsed=tuple(elapsed),
+        scored_phases=scored_phases,
     )
 
 
-def _apply_labels(
+def _apply_label(
     ensemble: Ensemble,
-    matrix: cabc.Sequence[cabc.Sequence[float | None]],
-    events: cabc.Sequence[Event],
-    batch: cabc.Sequence[int],
+    row: cabc.Sequence[float | None],
+    event: Event,
 ) -> None:
-    """Deliver one batch's eligible labels to the ensemble."""
-    for index in batch:
-        label = scored_label(events[index])
-        if label is not None:
-            ensemble.update(matrix[index], is_hit=label == "hit")
+    """Deliver one released label to the ensemble."""
+    label = scored_label(event)
+    if label is not None:
+        ensemble.update(row, is_hit=label == "hit")
 
 
 def _outcome(event: Event) -> float:

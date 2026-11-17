@@ -1,19 +1,22 @@
-"""The released history: label batches and the causal features they yield.
+"""The causal history: prediction moments and the features they may read.
 
-A batch is a maximal run of consecutive store records sharing one label time.
-The replay withholds the batch immediately before the one it predicts, so a
-row's history ends two batches back. Feature rows are measured on that same
-history: a batch is released only after the following batch has been answered,
-and only eligible hit/miss labels that arrived strictly before the measurement
-moment contribute. An unknown outcome carries no usable label, so it neither
-counts as load nor sets an age.
+Every prediction is made at the event's admission moment, never when its batch
+happens to be processed. A label is released only once its own observation time
+has passed: at a prediction moment the history holds exactly the eligible
+labels recorded strictly earlier. Events sharing an admission moment are
+predicted together, so a label observed at that same moment cannot inform any
+of them. An event without a usable admission time is not predicted at all; a
+missing timestamp is never read as if its label had arrived before it.
+
+An unknown outcome carries no usable label, so it neither counts as load nor
+sets an age.
 """
 
 import bisect
 import datetime as dt
 import typing as typ
 
-from buildlimits.predict.events import Features, scored_label
+from buildlimits.predict.events import Features, admission_moment, scored_label
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -23,6 +26,9 @@ if typ.TYPE_CHECKING:
 
 def label_batches(events: cabc.Sequence[Event]) -> tuple[tuple[int, ...], ...]:
     """Group consecutive events whose labels were written together.
+
+    The tuning/held-out split is placed between batches rather than inside one,
+    so every row a store wrote at one label time lands in the same phase.
 
     Parameters
     ----------
@@ -45,17 +51,97 @@ def label_batches(events: cabc.Sequence[Event]) -> tuple[tuple[int, ...], ...]:
     return tuple(batches)
 
 
+def prediction_moments(events: cabc.Sequence[Event]) -> tuple[tuple[int, ...], ...]:
+    """Group the predictable events by admission moment, earliest first.
+
+    Events sharing a moment are kept in store order, so a tie is answered in a
+    fixed sequence. Events without a usable admission time are absent: they
+    cannot be predicted.
+
+    Parameters
+    ----------
+    events : Sequence[Event]
+        The events in store append order.
+
+    Returns
+    -------
+    tuple[tuple[int, ...], ...]
+        One index tuple per distinct admission moment, in ascending time order.
+
+    Examples
+    --------
+    >>> from buildlimits.predict.events import EPOCH, Event
+    >>> label = EPOCH + dt.timedelta(seconds=5)
+    >>> outcome = Event("a" * 64, "git", EPOCH, label, "hit", 0.1)
+    >>> prediction_moments((outcome,))
+    ((0,),)
+    >>> known_first = Event("a" * 64, "git", label, EPOCH, "hit", 0.1)
+    >>> prediction_moments((known_first,))
+    ()
+    """
+    grouped: dict[dt.datetime, list[int]] = {}
+    for index, event in enumerate(events):
+        moment = admission_moment(event)
+        if moment is not None:
+            grouped.setdefault(moment, []).append(index)
+    return tuple(tuple(indices) for _, indices in sorted(grouped.items()))
+
+
+def admission_schedule(
+    events: cabc.Sequence[Event],
+    moments: cabc.Sequence[tuple[int, ...]],
+    released: cabc.Sequence[tuple[dt.datetime, int]],
+) -> cabc.Iterator[tuple[tuple[int, ...], tuple[int, ...]]]:
+    """Yield each admission moment with the labels released before it.
+
+    The labels are those observed strictly earlier than the moment, in release
+    order, so a label observed at the moment itself waits for a later one. Both
+    the single-predictor walk and the ensemble walk answer through this
+    schedule, so neither can drift into reading a label it should not.
+
+    Parameters
+    ----------
+    events : Sequence[Event]
+        The events in store append order.
+    moments : Sequence[tuple[int, ...]]
+        The admission moments to answer, from :func:`prediction_moments`.
+    released : Sequence[tuple[datetime, int]]
+        Every eligible label in release order, from :func:`released_labels`.
+
+    Yields
+    ------
+    tuple[tuple[int, ...], tuple[int, ...]]
+        The stream indices whose labels are now due, then the moment's own.
+
+    Examples
+    --------
+    >>> from buildlimits.predict.events import EPOCH, Event
+    >>> first = Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1)
+    >>> stream = (first,)
+    >>> tuple(admission_schedule(stream, prediction_moments(stream),
+    ...                          released_labels(stream)))
+    (((), (0,)),)
+    """
+    pointer = 0
+    for group in moments:
+        moment = typ.cast("dt.datetime", admission_moment(events[group[0]]))
+        start = pointer
+        while pointer < len(released) and released[pointer][0] < moment:
+            pointer += 1
+        yield (tuple(index for _, index in released[start:pointer]), group)
+
+
 def features(
     events: cabc.Sequence[Event], *, load_window_seconds: float
-) -> tuple[Features, ...]:
-    """Derive each event's causal features from the history it may use.
+) -> tuple[Features | None, ...]:
+    """Derive each predictable event's row from the history it may use.
 
-    A row in one batch reads every eligible label from the batches before the
-    one immediately preceding it, because the one-batch embargo withholds the
-    previous batch from every prediction. Rows are measured within that
-    history, so a label that arrived at or after the measurement moment still
-    cannot contribute. Unknown outcomes still receive a row, so row alignment
-    never changes, but they carry no label to learn from.
+    A row is measured at its own admission moment and reads only eligible
+    labels observed strictly earlier. Age is measured back to this identity's
+    previous such label, and load counts every eligible label in the trailing
+    window ending at the moment. An event without a usable admission time gets
+    no row: inventing a measurement moment for it would be the leak this
+    function exists to prevent.
 
     Parameters
     ----------
@@ -66,93 +152,80 @@ def features(
 
     Returns
     -------
-    tuple[Features, ...]
-        One feature row per event, in the same order.
+    tuple[Features | None, ...]
+        One row per event in the same order, or None where none is possible.
 
     Examples
     --------
     The first event of an identity has no age and no load:
 
     >>> from buildlimits.predict.events import EPOCH, Event
-    >>> first = features((Event("a" * 64, "git", None, EPOCH, "hit", 0.1),),
-    ...                  load_window_seconds=60.0)[0]
-    >>> first.age_seconds is None and first.load == 0
+    >>> first = features(
+    ...     (Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1),),
+    ...     load_window_seconds=60.0,
+    ... )[0]
+    >>> first is not None and first.age_seconds is None and first.load == 0
     True
     """
+    stream = tuple(events)
+    rows: list[Features | None] = [None] * len(stream)
+    released = released_labels(stream)
     history: list[dt.datetime] = []
     per_identity: dict[str, list[dt.datetime]] = {}
-    rows: list[Features | None] = [None] * len(events)
-    pending: tuple[int, ...] | None = None
-    for batch in label_batches(events):
-        for index in batch:
-            event = events[index]
-            moment = _measurement_moment(event)
+    pointer = 0
+    for group in prediction_moments(stream):
+        moment = typ.cast("dt.datetime", admission_moment(stream[group[0]]))
+        while pointer < len(released) and released[pointer][0] < moment:
+            observed, index = released[pointer]
+            bisect.insort(history, observed)
+            bisect.insort(per_identity.setdefault(stream[index].identity, []), observed)
+            pointer += 1
+        for index in group:
+            event = stream[index]
             previous = per_identity.get(event.identity, [])
-            last = _last_label_before(previous, moment)
             rows[index] = Features(
                 identity=event.identity,
                 origin=event.origin,
                 observed_at=event.observed_at,
-                age_seconds=None if last is None else (moment - last).total_seconds(),
+                age_seconds=(
+                    None if not previous else (moment - previous[-1]).total_seconds()
+                ),
                 load=_load_before(history, moment, load_window_seconds),
+                predicted_at=moment,
             )
-        if pending is not None:
-            _remember(history, per_identity, events, pending)
-        pending = batch
-    return tuple(typ.cast("Features", row) for row in rows)
+    return tuple(rows)
 
 
-def _remember(
-    history: list[dt.datetime],
-    per_identity: dict[str, list[dt.datetime]],
-    events: cabc.Sequence[Event],
-    batch: cabc.Sequence[int],
-) -> None:
-    """Add one batch's eligible labels to the feature history."""
-    for index in batch:
-        event = events[index]
-        if scored_label(event) is None:
-            continue
-        bisect.insort(history, event.observed_at)
-        bisect.insort(per_identity.setdefault(event.identity, []), event.observed_at)
+def released_labels(events: cabc.Sequence[Event]) -> list[tuple[dt.datetime, int]]:
+    """Return every label a predictor may ever learn, in release order.
 
+    Only an event that could itself be predicted supplies a training row: a
+    label from an event with no admission time has no pre-admission feature row
+    to learn from, and manufacturing one would put a fabricated measurement
+    into the model. Labels are ordered by observation time and then by store
+    position, so an update order is always reproducible.
 
-def _measurement_moment(event: Event) -> dt.datetime:
-    """Return the moment an event's features are measured at.
-
-    A decision is made when the request is admitted, so that is the moment the
-    row describes. A source that records no admission time falls back to the
-    label time, and an admission recorded after its own label is treated the
-    same way: the label cannot still be unknown after it arrived.
+    Parameters
+    ----------
+    events : Sequence[Event]
+        The events in store append order.
 
     Returns
     -------
-    datetime
-        The admission time, or the label time when admission is unknown.
+    list[tuple[datetime, int]]
+        Observed time and stream index of each eligible label.
+
+    Examples
+    --------
+    >>> from buildlimits.predict.events import EPOCH, Event
+    >>> released_labels((Event("a" * 64, "git", None, EPOCH, "hit", 0.1),))
+    []
     """
-    admitted = event.admitted_at
-    if admitted is None or admitted > event.observed_at:
-        return event.observed_at
-    return admitted
-
-
-def _last_label_before(
-    times: cabc.Sequence[dt.datetime], moment: dt.datetime
-) -> dt.datetime | None:
-    """Return the latest label time strictly before ``moment``, if any.
-
-    A label whose time equals the measurement moment is not an earlier label:
-    it may belong to a row of the same batch, whose labels are still embargoed
-    when the row is predicted. Load is counted over the same half-open range,
-    so an age and a load never disagree about a tied instant.
-
-    Returns
-    -------
-    datetime | None
-        The latest known label time, or None when none is early enough.
-    """
-    index = bisect.bisect_left(times, moment) - 1
-    return None if index < 0 else times[index]
+    return sorted(
+        (event.observed_at, index)
+        for index, event in enumerate(events)
+        if admission_moment(event) is not None and scored_label(event) is not None
+    )
 
 
 def _load_before(
@@ -162,8 +235,8 @@ def _load_before(
 
     The window ends strictly before ``moment``, so an event labelled at the
     same moment is not load, and a zero-second window counts nothing.
-    ``times`` must be sorted and hold eligible labels from the released
-    history only, as :func:`features` leaves it.
+    ``times`` must be sorted and hold the labels released before ``moment``, as
+    :func:`features` leaves it.
 
     Returns
     -------

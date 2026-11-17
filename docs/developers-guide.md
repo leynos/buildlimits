@@ -94,13 +94,14 @@ result can be reproduced from a file.
 
 `make predict-benchmark` depends on the snapshot target and extracts one when
 the file is absent. The command prints `results.md` and the latency table;
-`results.md` holds the comparison, calibration, difference, and ablation tables.
-`results.json` is byte-identical for the same snapshot, config and seed, so it
-can be diffed between runs. The measured latency is host-specific and therefore
-lives in `timings.json` and the printed table only, never in `results.json` or
-`results.md`. Single-predictor latency and ensemble combination latency are
-reported in separate tables: an ensemble only combines answers its components
-had already produced, so its elapsed time is not a prediction time.
+`results.md` holds one comparison table, the calibration and ablation tables,
+and the Brier-by-origin breakdown. `results.json` is byte-identical for the
+same snapshot, config and seed, so it can be diffed between runs. The measured
+latency is host-specific and therefore lives in `timings.json` and the printed
+table only, never in `results.json` or `results.md`. Single-predictor latency
+and ensemble combination latency are reported in separate tables: an ensemble
+only combines answers its components had already produced, so its elapsed time
+is not a prediction time.
 
 `buildlimits/predict/config.json` pins every parameter, including the training
 fraction, the bootstrap seed, and `minimum_labelled_events`. A run with fewer
@@ -112,47 +113,72 @@ comparison was paired over `minimum_scored_events` rows, or every paired row
 fell in a single bootstrap block, in which case the resampling has no width to
 judge.
 
-The replay is prequential and embargoed by one batch. A batch is a maximal run
-of consecutive store records sharing one label time, taken in the order the
-store appended them, so a backward clock step cannot merge records from
-separate windows. Rows in one batch are predicted together before any of their
-labels is applied, so two simultaneous outcomes cannot inform each other, and
-the batch immediately before has not been applied either, because its labels
-may have been written after this batch's builds started. A prediction's history
-therefore ends two batches back, and that history feeds a row's age and load as
-well as the predictors: an outcome the replay has not released cannot reach a
-prediction through a feature. The report counts the labels withheld that way as
-`embargoed_rows`, and the final batch's labels, which no prediction follows, as
-`unapplied_rows`. The fixed ensemble's weights are fitted on the tuning period
-but stop one tuning batch short of the held-out split, for the same reason: the
-weights every later answer starts from must not depend on labels a held-out
-prediction could not yet have seen. A row's age and load are measured at the
-request's admission when the source recorded that time, and at the label time
-otherwise; within the released history only eligible hit/miss labels that
-arrived strictly before that moment contribute, so a completion labelled after
-the admission is not counted as load the decision could have seen, a label
-landing at the very instant of measurement is excluded, and an unknown outcome
-never becomes history.
+The replay predicts at admission, never at batch application. An event is
+predictable only when the source recorded an admission time that is not later
+than the event's own label time; an event with a missing or retroactive
+admission time is not predicted, not scored, and never trains a predictor,
+because reading a missing timestamp as pre-admission availability is exactly
+the leak this ordering exists to prevent. At a prediction moment the history
+holds the eligible hit/miss labels observed strictly earlier and nothing else,
+so a label observed at that same moment cannot inform any event admitted then.
+Events sharing an admission moment are answered together, in store order, so a
+tie is resolved reproducibly. Age and load are measured at that moment from the
+same released labels, so a build still running at its own admission sets no age
+and adds no load, and an unknown outcome never becomes history. The report
+counts the admission moments, the events without a usable admission time, the
+labels delivered before a prediction and the labels too late to inform one as
+`moments`, `unavailable_admission`, `applied_labels` and `unapplied_labels`.
 
-The replay advances on label arrival, not on admission. A row is answered when
-the replay reaches its batch, so every label released before that batch is fair
-input to the answer, while the row's age and load stay pinned to its admission.
-That models a decision taken when the batch is processed, not the answer an
-operator would have received at submission; reconstructing that answer would
-require gating every update on the admission time as well. The best single that
-each ensemble is compared against is chosen on the same rows the weight fit may
-read, so the withheld tuning batch cannot decide the comparator either. The
-tuning/held-out split falls between batches, so every row a store wrote
-together stays in one phase. Each predictor's difference from the base rate is
-tested at the configured `bootstrap_alpha` divided across every predictor the
-verdict could name (Bonferroni), so the verdict as a whole holds at the level
-the config pins rather than giving several predictors independent chances to
-clear zero on noise. `results.json` records that per-comparison level as
-`verdict_alpha`, and the difference table labels its interval column with it.
-The commit named in the report is read from the repository that holds the
-benchmark module, and only when that repository tracks the module's own path;
-an installed copy therefore reports `unknown` rather than borrowing its host
-project's commit.
+The tuning/held-out phase is still assigned from label time, because a store
+writes its labels in batches; the boundary never falls inside a batch, so every
+row a store wrote together stays in one phase. The phase decides which rows a
+predictor is scored on, not when it is answered. The fixed ensemble's weights
+are fitted only on tuning labels observed before the earliest held-out
+prediction moment, so a tuning label that arrived after the first held-out
+decision cannot shape them. Because those weights are fitted retrospectively,
+applying them back over the tuning rows would not produce walk-forward scores,
+so the fixed ensemble is scored on held-out rows only and its tuning scores are
+reported as missing with that limitation stated. The equal and adaptive
+ensembles learn only from labels already delivered, so they are scored on both
+phases. The best single each ensemble is compared against is chosen on the same
+tuning rows the weight fit could read, so a late label cannot decide the
+comparator either.
+
+The bootstrap resamples blocks of consecutive stream positions rather than of
+answered rows alone. An abstention keeps its position as an empty slot, so a
+block can never splice together two answered rows that many original events
+apart; each replication averages only the values it actually drew. The interval
+reports the answered pairs it used and the stream positions its blocks span,
+which differ whenever a predictor abstains. Each predictor's difference from
+the base rate is tested at the configured `bootstrap_alpha` divided across
+every predictor the verdict could name (Bonferroni), so the verdict as a whole
+holds at the level the config pins rather than giving several predictors
+independent chances to clear zero on noise. `results.json` records that
+per-comparison level as `verdict_alpha`, and the comparison table labels its
+interval column with it. The commit named in the report is read from the
+repository that holds the benchmark module, and only when that repository
+tracks the module's own path; an installed copy therefore reports `unknown`
+rather than borrowing its host project's commit.
+
+Admission times are the one input the existing records cannot always supply. An
+outcome-store record carries a label time but no admission time; an adapter
+journal row carries metrics without a compilation identity; a supervisor
+journal row carries queue events without a compilation identity. None of those
+sources can be joined into a per-compilation admission history, so the
+benchmark reports the correlation it could not establish rather than inventing
+one: the journal note records the records it saw, the retention span they
+cover, the supervisor restarts it witnessed and whether the query reached its
+cap, and it is context only. On a host whose store holds no admission times
+every event is unpredictable, and the run reports
+`insufficient admission times` with those counts instead of substituting a
+synthetic stream.
+
+`results.md` ranks every predictor that scored held-out rows by Brier score and
+places the under-powered ones after the qualified, so a predictor with a
+handful of rows cannot head the list. Calibration bins are reported for every
+predictor with a scored held-out row, not only the leader, and the comparison
+table carries each predictor's coverage, scored row count, calibration error
+and difference from the base rate with its interval.
 
 `make predict-dataset` refuses any `--output` path that resolves to the store
 it is reading, including through a symbolic link, so it cannot replace the

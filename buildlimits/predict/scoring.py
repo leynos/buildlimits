@@ -1,10 +1,14 @@
 """Turn predictor answers into scored rows and metric blocks.
 
-A row exists only where a label has arrived, so an abstention is kept as an
-unscored row rather than dropped: the metrics then report coverage beside the
-score, and an unknown outcome never becomes a miss. Nothing here reads a label
-that had not arrived at the row's place in the stream, because the walk already
-holds one answer per event.
+A row exists only where a label has arrived and the event could itself be
+predicted. An event without a usable admission time has no answer to score, so
+it is left out of the population entirely rather than counted as an
+abstention: the predictor never had a chance to speak. Among the rows that
+remain, an abstention is kept as an unscored row so the metrics report coverage
+beside the score, and an unknown outcome never becomes a miss.
+
+Nothing here reads a label that had not arrived at the row's place in the
+stream, because the walk already holds one answer per event.
 """
 
 import typing as typ
@@ -18,8 +22,9 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.config import Config
     from buildlimits.predict.ensemble_runs import EnsembleRun
     from buildlimits.predict.harness import Walk
+    from buildlimits.predict.metrics import Phase
 
-PHASES = ("train", "held-out")
+PHASES: tuple[Phase, ...] = ("train", "held-out")
 
 
 def series_map(
@@ -44,17 +49,29 @@ def all_metrics(
     ensembles: cabc.Mapping[str, EnsembleRun],
     config: Config,
 ) -> dict[str, dict[str, Metrics]]:
-    """Score every full predictor on every row set.
+    """Score every full predictor on every row set it may honestly claim.
+
+    A fixed ensemble's weights were fitted on the tuning labels, so it scores
+    the held-out period only; every other predictor scores both phases.
 
     Returns
     -------
     dict[str, dict[str, Metrics]]
         Metrics per predictor.
     """
-    return {
-        name: metric_block(rows_for(walk, name, probabilities), config)
-        for name, probabilities in series_map(walk, ensembles).items()
+    blocks = {
+        name: metric_block(rows_for(walk, name, series.probabilities), config)
+        for name, series in walk.series.items()
     }
+    blocks.update({
+        name: metric_block(
+            rows_for(walk, name, run.probabilities),
+            config,
+            phases=run.scored_phases,
+        )
+        for name, run in ensembles.items()
+    })
+    return blocks
 
 
 def ablation_metrics(
@@ -72,7 +89,9 @@ def ablation_metrics(
     return {
         mode: {
             component: metric_block(
-                rows_for(walk, run.name, run.probabilities), config
+                rows_for(walk, run.name, run.probabilities),
+                config,
+                phases=("held-out",),
             )["held-out"]
             for component, run in runs.items()
         }
@@ -80,36 +99,40 @@ def ablation_metrics(
     }
 
 
-def metric_block(rows: cabc.Sequence[ScoredRow], config: Config) -> dict[str, Metrics]:
+def metric_block(
+    rows: cabc.Sequence[ScoredRow],
+    config: Config,
+    *,
+    phases: cabc.Sequence[Phase] = PHASES,
+) -> dict[str, Metrics]:
     """Score one row set overall, per phase and per origin.
 
     Returns
     -------
     dict[str, Metrics]
-        The overall score, both phases and every origin.
+        The overall score, each requested phase and every origin.
     """
-    block = {
-        "overall": summarize(
+
+    def scored(rows: cabc.Sequence[ScoredRow]) -> Metrics:
+        """Summarize one row set with the pinned scoring parameters.
+
+        Returns
+        -------
+        Metrics
+            The counts and scores for exactly these rows.
+        """
+        return summarize(
             rows,
             clip=config.log_loss_clip,
             threshold=config.decision_threshold,
             bins=config.calibration_bins,
         )
-    }
-    for phase in PHASES:
-        block[phase] = summarize(
-            [row for row in rows if row.phase == phase],
-            clip=config.log_loss_clip,
-            threshold=config.decision_threshold,
-            bins=config.calibration_bins,
-        )
+
+    block = {"overall": scored(rows)}
+    for phase in phases:
+        block[phase] = scored([row for row in rows if row.phase == phase])
     for origin, group in per_origin(rows).items():
-        block[f"origin:{origin}"] = summarize(
-            group,
-            clip=config.log_loss_clip,
-            threshold=config.decision_threshold,
-            bins=config.calibration_bins,
-        )
+        block[f"origin:{origin}"] = scored(group)
     return block
 
 
@@ -120,7 +143,7 @@ def rows_for(
     *,
     indices: cabc.Container[int] | None = None,
 ) -> tuple[ScoredRow, ...]:
-    """Build one labelled row per event for the given answers.
+    """Build one labelled row per predictable event for the given answers.
 
     Parameters
     ----------
@@ -132,7 +155,7 @@ def rows_for(
         Its answer per event, in stream order.
     indices : Container[int] | None
         Restrict the rows to these stream positions, or None for every
-        labelled event.
+        predictable labelled event.
 
     Returns
     -------
@@ -140,10 +163,10 @@ def rows_for(
         Rows in stream order, abstentions included.
     """
     rows: list[ScoredRow] = []
-    for index, (event, phase, probability) in enumerate(
-        zip(walk.events, walk.phases, probabilities, strict=True)
+    for index, (event, phase, known, probability) in enumerate(
+        zip(walk.events, walk.phases, walk.rows, probabilities, strict=True)
     ):
-        if phase is None:
+        if phase is None or known is None:
             continue
         if indices is not None and index not in indices:
             continue

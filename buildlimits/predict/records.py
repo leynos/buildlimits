@@ -57,11 +57,18 @@ def label_of(outcome: CacheResult) -> Label:
 def event_of(record: OutcomeRecord) -> Event:
     """Convert one attributed store record into a benchmark event.
 
+    The admission time is absent because the store does not record one.
+    ``observed_at - runtime_seconds`` is not a substitute: ``observed_at`` is
+    when the row was written, which can be later than the compilation
+    finished, so the subtraction only bounds the admission from above. Using
+    that bound as the decision time would count labels that arrived after the
+    real admission, which is the leak the walk-forward order exists to stop.
+    The absence is reported, not repaired.
+
     Returns
     -------
     Event
-        The redacted event; admission time is absent because the store does
-        not record it.
+        The redacted event, without an admission time.
     """
     return Event(
         identity=identity_of(record.key),

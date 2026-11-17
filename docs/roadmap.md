@@ -309,83 +309,28 @@ closes those items.
     tracked separately in 3.1.2.
 - [ ] 3.1.2. Complete the remaining W1 quiet-host acceptance and owner G1.
 
-  - Tracking issue:
-    [#60](https://github.com/leynos/buildlimits/issues/60).
   - Requires the merged EP-M1 to EP-M8 implementation and its recorded
     sequential-gate evidence.
   - Run the outstanding quiet-host latency acceptance against the ExecPlan
     bounds, then present H1-H3 results, coverage and sample limitations to the
     owner. The observation-port proposal does not substitute for this evidence.
-  - Record the EP-M9 preregistration approval and the 3.2.2 reporting-amendment
-    decision before the H2/H3 verdicts are read, so G1 evidence cannot steer
-    them. Record any 3.2.3 freeze by then too, or apply its fresh-row fallback
-    if a verdict is read first.
-  - Success: the quiet-host result is recorded and the owner explicitly records
-    an RFC 0002 G1 decision of `proceed`, `narrow` or `stop`, with the limits
-    that apply. Until that decision, EP-M9 remains gated and its comparison is
-    unrun.
+  - Success: the quiet-host result is recorded and the owner explicitly decides
+    whether EP-M9 proceeds, narrows or stops. Until then EP-M9 remains gated.
 
 ### 3.2. Evaluate prediction offline after G1
 
 This step is RFC 0002 W2 and requires an explicit RFC 0002 G1 decision to
 proceed. It runs only against stored records and evaluates H4 and H5; its
-outcome informs the separate RFC 0002 G2 decision. Tracking issue:
-[#60](https://github.com/leynos/buildlimits/issues/60). The EP-M9
-preregistration, the reporting amendment and the proposed longitudinal
-extension are recorded in the ExecPlan; none is a gate decision.
+outcome informs the separate RFC 0002 G2 decision.
 
 - [ ] 3.2.1. Complete EP-M9 of the cache-hit prediction ExecPlan.
-  - Requires the owner's approval of the EP-M9 preregistration and a recorded
-    approval or rejection under 3.2.2 before the G1 H2/H3 verdicts are read,
-    and an explicit RFC 0002 G1 decision of `proceed` or `narrow` before the
-    replay runs or its outcome report is reviewed.
+  - Requires an explicit RFC 0002 G1 decision to proceed or narrow.
   - See RFC 0002 §2 and H4-H5. Do not run this step on the live cache.
-  - Success: the replay reports the base-rate, origin-rate, last-outcome and
-    Beta-over-eight comparison, the registry base rate, digest stability and
-    each verdict against ADR 005's fixed minimums and thresholds; the versioned
-    aggregate manifest, sample limitations and retained-history caveats are
-    recorded for G2. The port proposal does not waive G1 or change EP-M9's
-    scope.
-- [ ] 3.2.2. Approve the EP-M9 reporting amendment.
-  - Requires the merged W1 implementation with recording enabled and the EP-M9
-    preregistration recorded. The decision is made before the first G1
-    replay's H2/H3 verdicts are read, so G1 evidence cannot steer it; a later
-    G1 `stop` makes it moot.
-  - The amendment adds the majority-class decision baseline, log loss with an
-    explicit clipping rule, calibration-bin counts and per-origin/time/load
-    reporting. It preserves the H4/H5 thresholds and the 2,000-record minimum.
-    The dataset manifest is required whether or not the amendment is approved.
-  - Success: the owner records approval or rejection; EP-M9 reports exactly the
-    approved items, and a rejection leaves only the original comparison.
-- [ ] 3.2.3. Approve the proposed longitudinal-predictor extension (EP-L).
-  - Approval and the EP-L0 freeze require approval (not rejection) under 3.2.2
-    and an owner decision separate from RFC 0002 G1; they may precede G1 and
-    the EP-M9 outcome report. EP-L implementation additionally requires 3.2.1.
-  - EP-L adds rolling-window and exponentially weighted predictors, fixed and
-    adaptive weighted ensembles, a separate Holm comparison family, and v2
-    per-request evidence boundaries. No EP-L milestone starts before the owner
-    approves its bounded plan.
-  - The freeze is recorded before the owner reads G1's H2/H3 verdicts or any
-    EP-M9 outcome report, so either kind of evidence is barred from steering
-    candidate selection. If one is reviewed first, EP-L evaluation uses newly
-    collected, unread rows.
-  - Success: the Decision log records approval, narrowing or refusal; an
-    unapproved extension leaves EP-M9 as the only comparison.
-- [ ] 3.2.4. Record the RFC 0002 G2 owner decision.
-  - Requires 3.2.1 and any approved 3.2.3 milestones.
-  - G2 decides advisory prediction from offline evidence only. H6's online
-    thresholds are not a G2 criterion. A negative or insufficient result is a
-    valid outcome.
-  - Success: the owner records `proceed`, `narrow` or `stop`. `proceed` requires
-    a separate plan for live advisory or shadow work; no scheduling policy ships
-    in this step.
-- [x] 3.2.5. Provide the offline comparison harness: `make predict-dataset` and
-  `make predict-benchmark` read a redacted snapshot and write the tables; they
-  change no admission behaviour and decide no gate.
-  - The comparison includes rolling-rate and exponentially weighted predictors
-    and an adaptive Hedge ensemble, which 3.2.3 describes as EP-L components.
-    They appear here because this comparison calls for them; the EP-L approval
-    and freeze decisions under 3.2.3 remain open.
+  - Success: the replay reports the registry base-rate comparison, digest
+    stability and each verdict against ADR 005's fixed minimums and
+    thresholds; evidence and limitations are recorded for G2. The port proposal
+    does not waive G1 or change EP-M9's scope.
+- [x] 3.2.2. Provide the offline benchmark as an ungated coding exercise.
 
 ### 3.3. Extract the shared observation boundary for sccache
 

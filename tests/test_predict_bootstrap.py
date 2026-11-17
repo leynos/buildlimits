@@ -28,6 +28,22 @@ def _row(probability: float | None, outcome: int) -> ScoredRow:
     )
 
 
+def _paired_stream(
+    answered: dict[int, tuple[float, float]], *, side: int
+) -> tuple[ScoredRow, ...]:
+    """Return one side of a twelve-position stream, abstaining elsewhere.
+
+    Returns
+    -------
+    tuple[ScoredRow, ...]
+        A row per stream position; only answered positions carry a probability.
+    """
+    return tuple(
+        _row(answered[index][side], 1) if index in answered else _row(None, 1)
+        for index in range(12)
+    )
+
+
 def test_pairing_refuses_sequences_of_different_lengths() -> None:
     """A difference is only meaningful when both sides answered the same events."""
     with pytest.raises(ValueError, match="shorter"):
@@ -85,17 +101,55 @@ def test_a_seeded_bootstrap_repeats_itself() -> None:
     assert first == second, "reproducible draws"
 
 
-def test_paired_differences_skip_rows_where_either_side_abstained() -> None:
-    """Only rows both predictors answered can be paired."""
+def test_paired_differences_keep_an_abstention_as_an_empty_position() -> None:
+    """A row either side abstained on stays in the stream as a gap."""
     ours = (_row(0.9, 1), _row(None, 1), _row(0.2, 0), _row(0.5, 1))
     theirs = (_row(0.6, 1), _row(0.6, 1), _row(None, 0), _row(0.5, 1))
 
     differences = paired_differences(ours, theirs)
 
-    assert differences == pytest.approx([
-        (0.9 - 1) ** 2 - (0.6 - 1) ** 2,
-        (0.5 - 1) ** 2 - (0.5 - 1) ** 2,
-    ]), "abstentions are dropped from both sides"
+    assert [None if value is None else round(value, 6) for value in differences] == [
+        -0.15,
+        None,
+        None,
+        0.0,
+    ], "abstentions leave the position empty instead of closing the gap"
+
+
+def test_a_block_keeps_the_positions_it_spans_across_abstentions() -> None:
+    """Blocks are drawn over stream positions, not over the answered rows.
+
+    Only positions 0, 5 and 10 are answered, and a block of five positions can
+    hold at most one of them. Dropping the abstentions first would put the three
+    answers next to each other, and a block could then average two of them into
+    a value the stream never had.
+    """
+    answered = {0: (0.0, 1.0), 5: (1.0, 0.0), 10: (0.0, 1.0)}
+    ours = _paired_stream(answered, side=0)
+    theirs = _paired_stream(answered, side=1)
+
+    differences = paired_differences(ours, theirs)
+    interval = block_bootstrap(
+        differences, config=predict_config(block_size=5, bootstrap_resamples=200)
+    )
+
+    answered_positions = [
+        index for index, value in enumerate(differences) if value is not None
+    ]
+    assert answered_positions == [0, 5, 10], (
+        "the answers stay where the stream put them"
+    )
+    assert differences[0] == pytest.approx(1.0), "the first pair differs"
+    assert differences[5] == pytest.approx(-1.0), (
+        "the middle pair differs the other way"
+    )
+    assert differences[10] == pytest.approx(1.0), "the last pair differs again"
+    assert interval is not None, "the answered positions give an interval"
+    assert interval.rows == 3, "three rows were answered"
+    assert interval.positions == 12, "over twelve stream positions"
+    assert interval.difference == pytest.approx(1 / 3), "the mean of the answers"
+    assert interval.low == pytest.approx(-1.0), "a block never averages across the gap"
+    assert interval.high == pytest.approx(1.0), "only values the stream contains"
 
 
 def test_an_interval_carries_its_provenance() -> None:
@@ -123,7 +177,8 @@ def test_the_interval_shape_is_stable() -> None:
     interval = block_bootstrap([0.03] * 12, config=predict_config())
 
     assert interval is not None, "12 rows are enough"
-    assert set(interval.to_dict()) == {
+    document = interval.to_dict()
+    for key in (
         "difference",
         "low",
         "high",
@@ -131,7 +186,10 @@ def test_the_interval_shape_is_stable() -> None:
         "block_size",
         "blocks",
         "rows",
-    }, "stable keys"
+        "positions",
+    ):
+        assert key in document, f"{key} is part of the stable shape"
+    assert len(document) == 8, "no other key enters the shape"
 
 
 def test_pairing_ignores_the_observed_time() -> None:

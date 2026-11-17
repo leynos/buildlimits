@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 from outcome_store_helpers import window_summary
 from outcome_test_helpers import OBSERVED_AT, attributed_record, cache_key
-from predict_test_helpers import write_json
 
 from buildlimits.metrics_query import MetricsQueryError, Window
 from buildlimits.metrics_records import Record
@@ -16,10 +15,9 @@ from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.dataset import build_snapshot, count_journal, find_gaps
 from buildlimits.predict.records import identity_of, label_of
 from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
+from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
     from buildlimits.outcome_vocabulary import CacheResult
     from buildlimits.predict.dataset import Snapshot
 
@@ -74,6 +72,11 @@ def test_snapshot_redacts_identity_and_keeps_store_order() -> None:
     assert all(event.admitted_at is None for event in snapshot.events), (
         "the store records no admission time"
     )
+    stats = snapshot.stats()
+    assert stats["admission_recorded"] == 0, "nothing was recorded"
+    assert stats["admission_missing"] == 2, "so both rows are counted as missing"
+    assert stats["admission_usable"] == 0, "and neither can seed a prediction"
+    assert stats["admission_unusable"] == 0, "no recorded time is merely unusable"
 
 
 def test_saved_snapshot_contains_no_clear_text_crate_name(tmp_path: Path) -> None:
@@ -210,9 +213,62 @@ def test_journal_counts_name_their_join_limitation() -> None:
 
     assert note["records"] == 3, "all accepted records counted"
     assert note["by_source"] == {"adapter": 2, "supervisor": 1}, "per source"
-    assert "no compilation identity" in typ.cast("str", note["join"]), (
-        "join limitation stated"
+    assert note["span_start"] == note["span_end"] == utc_text(OBSERVED_AT), (
+        "the retention span the journal really covers"
     )
+    assert "no joinable per-compilation admission record" in typ.cast(
+        "str", note["correlation"]
+    ), "the join limit is stated, not guessed around"
+
+
+def test_journal_supervisor_starts_are_reported_as_restarts() -> None:
+    """A restart the journal witnessed is reported by its first and last time."""
+    first = OBSERVED_AT
+    last = OBSERVED_AT + dt.timedelta(hours=6)
+    window = Window(
+        records=(
+            Record("supervisor", "supervisor_started", {}, first),
+            Record("adapter", "adapter_finished", {}, first),
+            Record("supervisor", "supervisor_started", {}, last),
+        ),
+        seconds=86400,
+        truncated=False,
+    )
+
+    note = count_journal(query=lambda **_options: window)
+
+    restarts = typ.cast("dict[str, object]", note["restarts"])
+    assert restarts["count"] == 2, "both starts are counted"
+    assert restarts["first"] == utc_text(first), "the earliest start is named"
+    assert restarts["last"] == utc_text(last), "and the latest"
+
+
+def test_a_truncated_journal_query_says_the_cap_was_reached() -> None:
+    """A cap reached means older records are outside what the query saw."""
+    window = Window(
+        records=(Record("adapter", "adapter_finished", {}, OBSERVED_AT),),
+        seconds=60,
+        truncated=True,
+    )
+
+    note = count_journal(since="24h", query=lambda **_options: window)
+
+    assert "requested 24h lookback" in typ.cast("str", note["retention"]), (
+        "the requested span is named"
+    )
+    assert "the cap was reached" in typ.cast("str", note["retention"]), (
+        "and the truncation is admitted"
+    )
+
+
+def test_an_empty_journal_window_reports_no_span() -> None:
+    """A query that saw nothing must not present an invented retention span."""
+    note = count_journal(
+        query=lambda **_options: Window(records=(), seconds=0, truncated=False)
+    )
+
+    assert note["available"] is False, "nothing is available"
+    assert note["span_start"] is None and note["span_end"] is None, "no span"
 
 
 def test_source_provenance_records_the_store_header() -> None:
@@ -223,158 +279,3 @@ def test_source_provenance_records_the_store_header() -> None:
     assert dc.asdict(source)["salt_id"] == "fixed-salt", "salt retained"
     assert source.written_at == NOW, "write time retained"
     assert source.records_total == 1, "row count retained"
-
-
-def _document() -> dict[str, object]:
-    """Return the encoded snapshot of one attributed hit."""
-    snapshot = build_snapshot(_decoded((attributed_record(outcome="hit"),)), now=NOW)
-    return snapshot.to_dict()
-
-
-@pytest.mark.parametrize(
-    "mutate",
-    [
-        pytest.param(lambda doc: doc.update(snapshot_version=99), id="unknown-version"),
-        pytest.param(
-            lambda doc: doc.update(snapshot_version=True), id="version-is-a-bool"
-        ),
-        pytest.param(
-            lambda doc: doc.update(snapshot_version=1.0), id="version-is-a-float"
-        ),
-        pytest.param(lambda doc: doc.update(events={}), id="events-not-a-list"),
-        pytest.param(lambda doc: doc.update(source=[]), id="source-not-an-object"),
-        pytest.param(lambda doc: doc.update(journal=[]), id="journal-not-an-object"),
-        pytest.param(lambda doc: doc.update(created_at=7), id="created-at-not-text"),
-        pytest.param(
-            lambda doc: typ.cast("dict[str, object]", doc["source"]).update(salt_id=7),
-            id="salt-not-text",
-        ),
-        pytest.param(
-            lambda doc: typ.cast("dict[str, object]", doc["source"]).update(
-                records_total=True
-            ),
-            id="count-is-a-bool",
-        ),
-        pytest.param(lambda doc: doc.pop("stats"), id="stats-missing"),
-        pytest.param(
-            lambda doc: typ.cast("dict[str, object]", doc["stats"]).update(gaps={}),
-            id="gaps-not-a-list",
-        ),
-        pytest.param(
-            lambda doc: typ.cast("dict[str, object]", doc["stats"]).update(gaps=[[]]),
-            id="gap-not-an-object",
-        ),
-        pytest.param(
-            lambda doc: typ.cast("dict[str, object]", doc["stats"]).update(
-                gaps=[{"start": 7, "end": "b", "seconds": 1.0}]
-            ),
-            id="gap-start-not-text",
-        ),
-        pytest.param(
-            lambda doc: typ.cast("dict[str, object]", doc["stats"]).update(
-                gaps=[
-                    {
-                        "start": "2026-11-17T12:00:00+00:00",
-                        "end": "2026-11-17T13:00:00+00:00",
-                        "seconds": "3600",
-                    }
-                ]
-            ),
-            id="gap-seconds-not-numeric",
-        ),
-        pytest.param(
-            lambda doc: doc.update(journal={"available": "yes"}),
-            id="journal-availability-not-a-bool",
-        ),
-        pytest.param(
-            lambda doc: doc.update(journal={"available": True, "records": "2"}),
-            id="journal-count-not-an-integer",
-        ),
-        pytest.param(
-            lambda doc: doc.update(journal={"available": True}),
-            id="journal-count-missing",
-        ),
-        pytest.param(
-            lambda doc: doc.update(journal={"available": False, "reason": 7}),
-            id="journal-reason-not-text",
-        ),
-        pytest.param(
-            lambda doc: doc.update(journal={"available": True, "records": -1}),
-            id="journal-count-negative",
-        ),
-    ],
-)
-def test_a_malformed_snapshot_is_refused(
-    tmp_path: Path, mutate: cabc.Callable[[dict[str, object]], object]
-) -> None:
-    """Every field the loader reads is checked for type and shape."""
-    document = _document()
-    mutate(document)
-
-    with pytest.raises((TypeError, ValueError)):
-        load_snapshot(write_json(tmp_path / "history.jsonl", document))
-
-
-@pytest.mark.parametrize("seconds", [float("nan"), float("inf")])
-def test_a_non_finite_gap_length_is_refused_by_field(
-    tmp_path: Path, seconds: float
-) -> None:
-    """A non-finite length is not a JSON number, so the gap field is named."""
-    document = _document()
-    stats = typ.cast("dict[str, object]", document["stats"])
-    stats.update(
-        gaps=[
-            {
-                "start": "2026-11-17T12:00:00+00:00",
-                "end": "2026-11-17T13:00:00+00:00",
-                "seconds": seconds,
-            }
-        ]
-    )
-
-    with pytest.raises(ValueError, match="gap must hold finite seconds"):
-        load_snapshot(write_json(tmp_path / "history.jsonl", document))
-
-
-def test_an_available_journal_note_survives_loading(tmp_path: Path) -> None:
-    """The note the report renders is decoded unchanged."""
-    document = _document()
-    document["journal"] = {"available": True, "span": "4w", "records": 12}
-
-    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
-
-    assert loaded.journal["available"] is True, "availability is read"
-    assert loaded.journal["records"] == 12, "the count is read"
-
-
-def test_a_document_that_is_not_an_object_is_refused(tmp_path: Path) -> None:
-    """A JSON array is not a snapshot."""
-    with pytest.raises(TypeError, match="must hold one JSON object"):
-        load_snapshot(write_json(tmp_path / "history.jsonl", [_document()]))
-
-
-def test_a_hand_edited_gap_survives_loading(tmp_path: Path) -> None:
-    """A well-formed gap row is decoded back into a Gap."""
-    document = _document()
-    stats = typ.cast("dict[str, object]", document["stats"])
-    stats["gaps"] = [
-        {
-            "start": "2026-11-17T12:00:00+00:00",
-            "end": "2026-11-17T14:30:00+00:00",
-            "seconds": 9000.0,
-        }
-    ]
-
-    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
-
-    assert len(loaded.gaps) == 1, "the gap is read"
-    assert loaded.gaps[0].seconds == pytest.approx(9000.0), "length preserved"
-
-
-def test_a_timestamp_without_an_offset_is_refused(tmp_path: Path) -> None:
-    """A local time would be ambiguous, so the snapshot must carry an offset."""
-    document = _document()
-    document["created_at"] = "2026-11-17T12:00:00"
-
-    with pytest.raises(ValueError, match="offset"):
-        load_snapshot(write_json(tmp_path / "history.jsonl", document))

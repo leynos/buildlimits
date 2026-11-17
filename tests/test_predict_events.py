@@ -5,7 +5,7 @@ import typing as typ
 
 import pytest
 
-from buildlimits.predict.events import EPOCH, Event, event_from_dict
+from buildlimits.predict.events import EPOCH, Event, admission_moment, event_from_dict
 from buildlimits.predict.history import features, label_batches
 
 if typ.TYPE_CHECKING:
@@ -120,10 +120,15 @@ def test_a_missing_label_time_is_refused() -> None:
         event_from_dict(_line(observed_at=None))
 
 
-def _stamped(seconds: int) -> Event:
-    """Return one event at a fixed offset from the epoch."""
+def _causal(seconds: int, label: str) -> Event:
+    """Return one event for identity ``a`` admitted five seconds before its label."""
     return Event(
-        "a" * 64, ORIGIN, None, EPOCH + dt.timedelta(seconds=seconds), "hit", 1.0
+        "a" * 64,
+        ORIGIN,
+        EPOCH + dt.timedelta(seconds=seconds - 5),
+        EPOCH + dt.timedelta(seconds=seconds),
+        typ.cast("Label", label),
+        1.0,
     )
 
 
@@ -139,43 +144,32 @@ def _admitted(identity: str, *, admitted: int, observed: int) -> Event:
     )
 
 
-def _labelled(seconds: int, label: str) -> Event:
-    """Return one event for identity ``a`` with the given label."""
-    return Event(
-        "a" * 64,
-        ORIGIN,
-        None,
-        EPOCH + dt.timedelta(seconds=seconds),
-        typ.cast("Label", label),
-        1.0,
-    )
-
-
 def test_an_unknown_outcome_is_not_labelled_history() -> None:
     """An unknown outcome carries no usable label, so it is not history."""
     rows = features(
         (
-            _labelled(0, "hit"),
-            _labelled(10, "unknown"),
-            _labelled(20, "hit"),
-            _labelled(30, "hit"),
+            _causal(0, "hit"),
+            _causal(10, "unknown"),
+            _causal(20, "hit"),
+            _causal(30, "hit"),
         ),
         load_window_seconds=60.0,
     )
 
-    assert rows[2].load == 1, "only the eligible hit is load"
-    assert rows[2].age_seconds == pytest.approx(20.0), "the age spans the missing label"
-    # The fourth row's history holds the unknown outcome as well, so it is
-    # released rather than embargoed here; it still carries no label.
-    assert rows[3].load == 1, "a released unknown is not load"
-    assert rows[3].age_seconds == pytest.approx(30.0), (
-        "the age spans the released unknown too"
+    assert [typ.cast("Features", row).load for row in rows] == [0, 1, 1, 2], (
+        "only the eligible hits are load"
+    )
+    assert typ.cast("Features", rows[2]).age_seconds == pytest.approx(15.0), (
+        "the age skips the unknown outcome"
+    )
+    assert typ.cast("Features", rows[3]).age_seconds == pytest.approx(5.0), (
+        "and measures to the last hit"
     )
 
 
 def _third_row(events: tuple[Event, ...]) -> Features:
     """Return the third event's feature row from a three-event stream."""
-    return features(events, load_window_seconds=60.0)[2]
+    return typ.cast("Features", features(events, load_window_seconds=60.0)[2])
 
 
 @pytest.mark.parametrize(
@@ -188,8 +182,8 @@ def _third_row(events: tuple[Event, ...]) -> Features:
                 _admitted("c" * 64, admitted=10, observed=40),
             ),
             None,
-            0,
-            id="a-label-after-the-admission-is-not-load",
+            1,
+            id="a-label-after-the-admission-is-not-load-for-it",
         ),
         pytest.param(
             (
@@ -198,7 +192,7 @@ def _third_row(events: tuple[Event, ...]) -> Features:
                 _admitted("a" * 64, admitted=10, observed=40),
             ),
             5.0,
-            1,
+            2,
             id="age-is-measured-from-the-admission-moment",
         ),
         pytest.param(
@@ -216,13 +210,12 @@ def _third_row(events: tuple[Event, ...]) -> Features:
 def test_features_read_only_the_released_history_before_the_admission(
     events: tuple[Event, ...], age: float | None, load: int
 ) -> None:
-    """The third row sees the first batch but never the withheld second one.
+    """The third row sees exactly the labels released before its admission.
 
-    The middle event fills the batch the embargo withholds, so the first
-    label is released to the third row. Age is measured from the third row's
-    admission, and load counts only released labels strictly before it: a
-    build that finished after that admission is not load, and a label that
-    arrived after a later admission sets no age for it.
+    Age is measured from the third row's admission to this identity's most
+    recent released label, and load counts released labels strictly before
+    that admission. A build still running when the row is measured has released
+    nothing, so it sets neither an age for a later row nor load for this one.
     """
     row = _third_row(events)
 
@@ -234,61 +227,108 @@ def test_features_read_only_the_released_history_before_the_admission(
 
 
 def test_a_label_arriving_at_the_measurement_moment_sets_no_age() -> None:
-    """A released label tied with the moment is still not an earlier label.
+    """A label observed at the moment itself is not an earlier label.
 
-    The middle event releases the first batch before the third row is
-    measured, and that row is admitted at exactly the first label's time, so
-    the lookup meets a released label and must exclude it.
+    The third row is admitted at exactly the first label's time. The first
+    label is not released until that time has passed, so the row measures an
+    empty history.
     """
     rows = features(
         (
-            _labelled(10, "hit"),
-            _labelled(20, "miss"),
+            _causal(10, "hit"),
+            _causal(20, "miss"),
             _admitted("a" * 64, admitted=10, observed=50),
         ),
         load_window_seconds=60.0,
     )
 
-    assert rows[2].age_seconds is None, "a tie at the moment is not earlier"
-    assert rows[2].load == 0, "age and load agree on the tie"
+    assert typ.cast("Features", rows[2]).age_seconds is None, (
+        "a tie at the moment is not earlier"
+    )
+    assert typ.cast("Features", rows[2]).load == 0, "age and load agree on the tie"
 
 
-def test_load_counts_only_released_events_strictly_before_the_label_time() -> None:
-    """A tied time is not load, and neither is the embargoed previous batch."""
+def test_load_counts_only_released_events_strictly_before_the_admission() -> None:
+    """A tied label time is not load for an event admitted at the same instant."""
     rows = features(
-        (_stamped(0), _stamped(30), _stamped(60), _stamped(60)),
+        (
+            _causal(0, "hit"),
+            _causal(30, "hit"),
+            _causal(60, "miss"),
+            _causal(60, "miss"),
+        ),
         load_window_seconds=60.0,
     )
 
-    assert [row.load for row in rows] == [0, 0, 1, 1], "the tie and the batch are out"
+    assert [typ.cast("Features", row).load for row in rows] == [0, 1, 2, 2], (
+        "the tied pair cannot count each other"
+    )
 
 
 def test_a_zero_second_window_counts_no_load() -> None:
-    """Nothing can occur strictly before a label time in no time at all."""
-    rows = features(
-        (_stamped(0), _stamped(0), _stamped(0)),
-        load_window_seconds=0.0,
+    """Nothing can occur strictly before a moment in no time at all."""
+    events = (
+        _causal(0, "hit"),
+        _causal(1, "miss"),
+        _admitted("a" * 64, admitted=60, observed=70),
     )
 
-    assert [row.load for row in rows] == [0, 0, 0], "no window, no load"
+    narrow = features(events, load_window_seconds=0.0)
+    wide = features(events, load_window_seconds=60.0)
+
+    assert [typ.cast("Features", row).load for row in narrow] == [0, 0, 0], (
+        "no window, no load"
+    )
+    assert typ.cast("Features", wide[2]).load == 2, (
+        "the same labels are two minutes back"
+    )
 
 
 def test_batches_follow_store_order_when_a_timestamp_steps_back() -> None:
     """A backward clock step never merges records from separate windows."""
-    first = _labelled(10, "hit")
+    first = _causal(10, "hit")
     stepped = Event(
         "b" * 64,
         ORIGIN,
-        None,
+        EPOCH,
         EPOCH + dt.timedelta(seconds=5),
         "hit",
         1.0,
     )
-    third = _labelled(20, "miss")
+    third = _causal(20, "miss")
 
     batches = label_batches((first, stepped, third))
 
     assert batches == ((0,), (1,), (2,)), "contiguity beats timestamp equality"
     rows = features((first, stepped, third), load_window_seconds=60.0)
-    assert rows[1].load == 0, "the batch before is embargoed"
-    assert rows[2].load == 1, "only the first record is released history"
+    assert typ.cast("Features", rows[1]).load == 0, "the tied label is not earlier"
+    assert typ.cast("Features", rows[2]).load == 2, "both earlier labels are history"
+
+
+@pytest.mark.parametrize(
+    ("admitted", "observed", "expected"),
+    [
+        pytest.param(5, 10, EPOCH + dt.timedelta(seconds=5), id="before-its-label"),
+        pytest.param(
+            10, 10, EPOCH + dt.timedelta(seconds=10), id="tied-with-its-label"
+        ),
+        pytest.param(15, 10, None, id="after-its-label"),
+        pytest.param(None, 10, None, id="missing"),
+    ],
+)
+def test_only_an_admission_at_or_before_its_label_is_a_decision_time(
+    admitted: int | None, observed: int, expected: dt.datetime | None
+) -> None:
+    """A missing or retroactive admission time never becomes a decision moment."""
+    event = Event(
+        "a" * 64,
+        ORIGIN,
+        None if admitted is None else EPOCH + dt.timedelta(seconds=admitted),
+        EPOCH + dt.timedelta(seconds=observed),
+        "hit",
+        1.0,
+    )
+
+    assert admission_moment(event) == expected, (
+        "only a recorded time at or before the label"
+    )

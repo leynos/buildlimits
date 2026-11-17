@@ -3,6 +3,11 @@
 Adjacent compilations are correlated, so resampling single rows would
 understate the uncertainty. Whole blocks of consecutive events are resampled
 instead, which keeps each block's internal correlation intact.
+
+A block is a span of the original stream, not a run of answered rows. Removing
+an abstention first would let one block join rows that were many events apart,
+quietly treating unrelated moments as neighbours. Positions are therefore kept,
+and a block averages only the answered rows that fall inside it.
 """
 
 import dataclasses as dc
@@ -32,12 +37,14 @@ class Interval:
     resamples : int
         Bootstrap replications drawn.
     block_size : int
-        Consecutive rows per resampled block.
+        Consecutive stream positions per resampled block.
     blocks : int
         Non-overlapping blocks the series holds; fewer than two means the
         resampling cannot show any sampling variability.
     rows : int
-        Paired rows the difference was computed over.
+        Positions where both predictors answered and a difference was scored.
+    positions : int
+        Stream positions the series spans, answered or not.
     """
 
     difference: float
@@ -47,6 +54,7 @@ class Interval:
     block_size: int
     blocks: int
     rows: int
+    positions: int
 
     def to_dict(self) -> dict[str, object]:
         """Return the report shape for one interval.
@@ -64,39 +72,64 @@ class Interval:
             "block_size": self.block_size,
             "blocks": self.blocks,
             "rows": self.rows,
+            "positions": self.positions,
         }
 
 
 def paired_differences(
     first: cabc.Sequence[ScoredRow], second: cabc.Sequence[ScoredRow]
-) -> list[float]:
-    """Return per-event Brier differences where both predictors answered.
+) -> list[float | None]:
+    """Return one Brier difference per stream position, abstentions included.
+
+    A position where either predictor abstained keeps its place as None, so a
+    later block still measures the gap between its neighbours. Dropping it
+    would splice the rows on either side into adjacent positions.
+
+    Parameters
+    ----------
+    first : Sequence[ScoredRow]
+        Rows for the predictor being compared, in stream order.
+    second : Sequence[ScoredRow]
+        Rows for the predictor it is compared against, in the same order.
 
     Returns
     -------
-    list[float]
-        First minus second, in event order.
+    list[float | None]
+        First minus second at each position, or None where either abstained.
+
+    Examples
+    --------
+    >>> from buildlimits.predict.events import EPOCH
+    >>> from buildlimits.predict.metrics import ScoredRow
+    >>> def row(p): return ScoredRow("p", "a" * 64, "git", EPOCH, p, 1, "train")
+    >>> first = [row(0.9), row(None), row(0.1)]
+    >>> second = [row(0.5), row(0.5), row(0.5)]
+    >>> [None if d is None else round(d, 2) for d in paired_differences(first, second)]
+    [-0.24, None, 0.56]
     """
-    differences: list[float] = []
-    for left, right in zip(first, second, strict=True):
-        if left.probability is None or right.probability is None:
-            continue
-        differences.append(
-            (left.probability - left.outcome) ** 2
-            - (right.probability - right.outcome) ** 2
-        )
-    return differences
+    return [
+        None
+        if left.probability is None or right.probability is None
+        else (left.probability - left.outcome) ** 2
+        - (right.probability - right.outcome) ** 2
+        for left, right in zip(first, second, strict=True)
+    ]
 
 
 def block_bootstrap(
-    differences: cabc.Sequence[float], *, config: Config
+    differences: cabc.Sequence[float | None], *, config: Config
 ) -> Interval | None:
     """Resample contiguous blocks and report a percentile interval.
+
+    Each replication draws whole blocks from the original positions and
+    averages the differences it found, so an unanswered position contributes
+    no value but also does not shorten the block it sits in.
 
     Returns
     -------
     Interval | None
-        The observed difference and its interval, or None without rows.
+        The observed difference and its interval, or None without an answered
+        position.
 
     Examples
     --------
@@ -107,74 +140,83 @@ def block_bootstrap(
     >>> round(interval.difference, 2), round(interval.low, 2)
     (0.05, 0.05)
     """
-    if not differences:
+    observed = [value for value in differences if value is not None]
+    if not observed:
         return None
     stride = max(1, config.block_size)
     size = len(differences)
     # ruff: ignore[suspicious-non-cryptographic-random-usage] - a seeded bootstrap
     # needs reproducible, not secret, draws.
     generator = random.Random(config.bootstrap_seed)
-    means = [
-        _resampled_mean(generator, differences, stride, size)
-        for _ in range(config.bootstrap_resamples)
-    ]
+    means: list[float] = []
+    for _ in range(config.bootstrap_resamples):
+        mean = _resampled_mean(generator, differences, stride, size)
+        if mean is not None:
+            means.append(mean)
+    if not means:
+        return None
     means.sort()
     return Interval(
-        difference=sum(differences) / size,
+        difference=sum(observed) / len(observed),
         low=_percentile(means, config.bootstrap_alpha / 2),
         high=_percentile(means, 1 - config.bootstrap_alpha / 2),
         resamples=config.bootstrap_resamples,
         block_size=stride,
         blocks=math.ceil(size / stride),
-        rows=size,
+        rows=len(observed),
+        positions=size,
     )
 
 
 def _resampled_mean(
     generator: random.Random,
-    differences: cabc.Sequence[float],
+    differences: cabc.Sequence[float | None],
     stride: int,
     length: int,
-) -> float:
-    """Draw circular blocks with replacement and average ``length`` values.
+) -> float | None:
+    """Draw circular blocks with replacement and average their answers.
 
-    Each block starts at a uniformly chosen row and wraps around the end of
-    the series, so every block is the same length and every row is equally
+    Each block starts at a uniformly chosen position and wraps around the end of
+    the series, so every block is the same length and every position is equally
     likely to be drawn. Forming a shorter final block from the leftover rows
     would sample it at the same rate as a full one and shift the resampled
-    mean.
+    mean. A replication that lands entirely on unanswered positions has no mean
+    to contribute and is reported as None.
 
     Returns
     -------
-    float
-        The mean of the resampled series.
+    float | None
+        The mean of the answered differences drawn, or None when none was.
     """
     total = 0.0
     seen = 0
+    used = 0
     size = len(differences)
     while seen < length:
         block = circular_block(differences, generator.randrange(size), stride)
         for value in block:
             if seen == length:
                 break
-            total += value
+            if value is not None:
+                total += value
+                used += 1
             seen += 1
-    return total / length
+    return None if used == 0 else total / used
 
 
 def circular_block(
-    differences: cabc.Sequence[float], start: int, stride: int
-) -> list[float]:
+    differences: cabc.Sequence[float | None], start: int, stride: int
+) -> list[float | None]:
     """Return one full-length block, wrapping around the end of the series.
 
-    Every block holds exactly ``stride`` values, so no block is drawn at a
-    shorter length than another. Wrapping also means each row appears in the
-    same number of blocks, which is what keeps the resampled mean unbiased.
+    Every block holds exactly ``stride`` positions, so no block is drawn at a
+    shorter length than another. Wrapping also means each position appears in
+    the same number of blocks, which is what keeps the resampled mean unbiased.
 
     Returns
     -------
-    list[float]
-        The block's values, beginning at ``start``.
+    list[float | None]
+        The block's values, beginning at ``start``; None where unanswered.
 
     Examples
     --------
