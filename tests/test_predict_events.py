@@ -223,14 +223,23 @@ def test_features_read_only_the_released_history_before_the_admission(
 
 
 def test_a_label_arriving_at_the_measurement_moment_sets_no_age() -> None:
-    """A tied label belongs to the row's own batch, so it is still embargoed."""
+    """A released label tied with the moment is still not an earlier label.
+
+    The middle event releases the first batch before the third row is
+    measured, and that row is admitted at exactly the first label's time, so
+    the lookup meets a released label and must exclude it.
+    """
     rows = features(
-        (_labelled(10, "hit"), _labelled(10, "miss")),
+        (
+            _labelled(10, "hit"),
+            _labelled(20, "miss"),
+            _admitted("a" * 64, admitted=10, observed=50),
+        ),
         load_window_seconds=60.0,
     )
 
-    assert [row.age_seconds for row in rows] == [None, None], "no earlier label"
-    assert [row.load for row in rows] == [0, 0], "age and load agree on the tie"
+    assert rows[2].age_seconds is None, "a tie at the moment is not earlier"
+    assert rows[2].load == 0, "age and load agree on the tie"
 
 
 def test_load_counts_only_released_events_strictly_before_the_label_time() -> None:

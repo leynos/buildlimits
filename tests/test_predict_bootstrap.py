@@ -129,14 +129,22 @@ def test_the_interval_shape_is_stable() -> None:
 
 
 def test_pairing_ignores_the_observed_time() -> None:
-    """Pairing is positional, so rows are compared in stream order."""
-    rows = (_row(0.5, 1), _row(0.5, 0))
+    """Pairing is positional, so rows are compared in stream order.
+
+    The two streams answer differently, so a mismatch would show up in the
+    differences; both calls carry the same answers and differ only in their
+    timestamps.
+    """
+    first = (_row(0.2, 1), _row(0.8, 0))
+    second = (_row(0.6, 1), _row(0.9, 0))
     shifted = tuple(
         dc.replace(row, observed_at=EPOCH + dt.timedelta(days=index))
-        for index, row in enumerate(rows)
+        for index, row in enumerate(second)
     )
 
-    assert paired_differences(rows, rows) == pytest.approx([0.0, 0.0]), "no drift"
-    assert paired_differences(shifted, shifted) == pytest.approx([0.0, 0.0]), (
+    differences = paired_differences(first, second)
+
+    assert differences == pytest.approx([0.48, -0.17]), "first minus second"
+    assert paired_differences(first, shifted) == pytest.approx(differences), (
         "timestamps do not enter the difference"
     )
