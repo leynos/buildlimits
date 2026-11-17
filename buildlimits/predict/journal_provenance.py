@@ -31,12 +31,25 @@ class JournalRecord(typ.Protocol):
     """The journal fields the provenance note counts.
 
     A journal query's record type satisfies this shape, so the counter needs
-    no import from the journal reader.
+    no import from the journal reader. The fields are read-only properties so
+    a frozen record satisfies the protocol: a plain attribute would promise
+    the counter a write it never makes, which a frozen dataclass cannot keep.
     """
 
-    source: str
-    event: str
-    timestamp: dt.datetime | None
+    @property
+    def source(self) -> str:
+        """The journal source that wrote the record."""
+        ...
+
+    @property
+    def event(self) -> str:
+        """The event name the record states."""
+        ...
+
+    @property
+    def timestamp(self) -> dt.datetime | None:
+        """When the record was written, or None when it carries no time."""
+        ...
 
 
 @dc.dataclass(frozen=True, slots=True)

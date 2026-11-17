@@ -28,6 +28,67 @@ def utc_text(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
 
 
+def optional_utc_text(value: dt.datetime | None) -> str | None:
+    """Serialize one optional timestamp, keeping an unknown time as null.
+
+    The snapshot records admission times and journal spans that may be
+    unknown, so an absent time is written as an explicit null rather than an
+    empty string or an invented moment.
+
+    Returns
+    -------
+    str | None
+        Canonical ISO text, or None when no time is known.
+
+    Examples
+    --------
+    >>> optional_utc_text(None) is None
+    True
+    >>> optional_utc_text(dt.datetime(2026, 11, 17, 12, 30, tzinfo=dt.UTC))
+    '2026-11-17T12:30:00Z'
+    """
+    return None if value is None else utc_text(value)
+
+
+def optional_utc_moment(
+    value: object, *, label: str, message: str
+) -> dt.datetime | None:
+    """Read one optional timestamp, refusing a present value that is not text.
+
+    Parameters
+    ----------
+    value : object
+        The decoded field value, of any shape.
+    label : str
+        What the caller calls the field, used to name it in a parse error.
+    message : str
+        The error message for a present value that is not text.
+
+    Returns
+    -------
+    datetime | None
+        The moment in UTC, or None for an explicit null.
+
+    Raises
+    ------
+    TypeError
+        If the value is neither text nor null.
+
+    Examples
+    --------
+    >>> optional_utc_moment(None, label="a time", message="a time must be text")
+    >>> optional_utc_moment(
+    ...     "2026-11-17T12:30:00Z", label="a time", message="a time must be text"
+    ... ).isoformat()
+    '2026-11-17T12:30:00+00:00'
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(message)
+    return utc_moment(value, label=label)
+
+
 def utc_moment(text: str, *, label: str) -> dt.datetime:
     """Read one moment from offset-bearing ISO 8601 text.
 

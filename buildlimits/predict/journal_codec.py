@@ -14,7 +14,7 @@ from buildlimits.predict.journal_provenance import (
     JournalRestarts,
     JournalUnavailable,
 )
-from buildlimits.utc_text import utc_moment, utc_text
+from buildlimits.utc_text import optional_utc_moment, optional_utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -41,14 +41,14 @@ def journal_to_dict(provenance: JournalProvenance | None) -> dict[str, object]:
         "span": provenance.span,
         "truncated": provenance.truncated,
         "records": provenance.records,
-        "span_start": _stamp(provenance.span_start),
-        "span_end": _stamp(provenance.span_end),
+        "span_start": optional_utc_text(provenance.span_start),
+        "span_end": optional_utc_text(provenance.span_end),
         "by_source": dict(provenance.by_source),
         "by_event": dict(provenance.by_event),
         "restarts": {
             "count": provenance.restarts.count,
-            "first": _stamp(provenance.restarts.first),
-            "last": _stamp(provenance.restarts.last),
+            "first": optional_utc_text(provenance.restarts.first),
+            "last": optional_utc_text(provenance.restarts.last),
         },
         "retention": provenance.retention,
         "correlation": provenance.correlation,
@@ -230,26 +230,20 @@ def _restarts_from(value: object, label: str) -> JournalRestarts:
 def _optional_stamp(value: object, label: str, name: str) -> dt.datetime | None:
     """Decode one optional timestamp the journal block carries.
 
-    Text that is not an offset timestamp, or whose offset leaves the range a
-    UTC datetime can hold, is refused as a ``ValueError`` by
+    A present value that is not text is refused as a ``TypeError``, and text
+    that is not an offset timestamp, or whose offset leaves the range a UTC
+    datetime can hold, is refused as a ``ValueError`` by
     :func:`buildlimits.utc_text.utc_moment`.
 
     Returns
     -------
     datetime | None
         The moment, or None for an absent bound.
-
-    Raises
-    ------
-    TypeError
-        If the value is neither text nor null.
     """
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        msg = f"{label} journal {name} must be text"
-        raise TypeError(msg)
-    return utc_moment(value, label=f"{label} journal {name}")
+    described = f"{label} journal {name}"
+    return optional_utc_moment(
+        value, label=described, message=f"{described} must be text"
+    )
 
 
 def _tally_from(value: object, label: str, name: str) -> dict[str, int]:
@@ -280,14 +274,3 @@ def _tally_from(value: object, label: str, name: str) -> dict[str, int]:
             raise ValueError(msg)
         tally[key] = count
     return tally
-
-
-def _stamp(value: dt.datetime | None) -> str | None:
-    """Serialize an optional UTC timestamp.
-
-    Returns
-    -------
-    str | None
-        Canonical ISO text, or None for an absent time.
-    """
-    return None if value is None else utc_text(value)

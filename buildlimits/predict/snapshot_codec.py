@@ -16,7 +16,11 @@ import typing as typ
 
 from buildlimits.predict.events import LABELS, ORIGINS, Event
 from buildlimits.predict.journal_codec import journal_to_dict
-from buildlimits.utc_text import utc_moment, utc_text
+from buildlimits.utc_text import (
+    optional_utc_moment,
+    optional_utc_text,
+    utc_text,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -49,8 +53,8 @@ def event_to_dict(event: Event) -> dict[str, object]:
     return {
         "identity": event.identity,
         "origin": event.origin,
-        "admitted_at": _stamp(event.admitted_at),
-        "observed_at": _stamp(event.observed_at),
+        "admitted_at": optional_utc_text(event.admitted_at),
+        "observed_at": optional_utc_text(event.observed_at),
         "label": event.label,
         "runtime_seconds": round(event.runtime_seconds, 6),
     }
@@ -102,8 +106,8 @@ def stats_to_dict(stats: SnapshotStats) -> dict[str, object]:
         "labelled": stats.labelled,
         "labelled_fraction": stats.labelled_fraction,
         "identities": stats.identities,
-        "span_start": _stamp(stats.span_start),
-        "span_end": _stamp(stats.span_end),
+        "span_start": optional_utc_text(stats.span_start),
+        "span_end": optional_utc_text(stats.span_end),
         "admission_recorded": stats.admission_recorded,
         "admission_usable": stats.admission_usable,
         "admission_missing": stats.admission_missing,
@@ -235,37 +239,21 @@ def _runtime_seconds(value: object) -> float:
     return seconds
 
 
-def _stamp(value: dt.datetime | None) -> str | None:
-    """Serialize an optional UTC timestamp.
-
-    Returns
-    -------
-    str | None
-        Canonical ISO text, or None for an absent time.
-    """
-    return None if value is None else utc_text(value)
-
-
 def _parse_stamp(value: object) -> dt.datetime | None:
     """Parse a canonical UTC timestamp or an explicit null.
 
-    Text that is not an offset timestamp, or whose offset leaves the range a
-    UTC datetime can hold, is refused as a ``ValueError`` by
+    A present value that is not text is refused as a ``TypeError``, and text
+    that is not an offset timestamp, or whose offset leaves the range a UTC
+    datetime can hold, is refused as a ``ValueError`` by
     :func:`buildlimits.utc_text.utc_moment`.
 
     Returns
     -------
     datetime | None
         The parsed time, or None for null.
-
-    Raises
-    ------
-    TypeError
-        If the value is neither text nor null.
     """
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        msg = "a timestamp must be text or null"
-        raise TypeError(msg)
-    return utc_moment(value, label="a timestamp")
+    return optional_utc_moment(
+        value,
+        label="a timestamp",
+        message="a timestamp must be text or null",
+    )

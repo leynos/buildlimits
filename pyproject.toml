@@ -1878,8 +1878,8 @@ members = [
     "tests/outcome_shell_test_support.py",
     "buildlimits/server_watch.py",
     "buildlimits/cache_recovery.py",
-    "tests/test_predict_evaluation.py",
-    "tests/test_outcome_totality.py",
+    "tests/predict_test_helpers.py",
+    "buildlimits/outcome_store.py",
 ]
 reason = "Matching import lists: each module names the store records, ports and helpers it uses, and sharing them through a re-export module would hide each module's real dependencies."
 
@@ -1904,7 +1904,7 @@ members = ["buildlimits/predict/snapshot_store.py", "tests/rustc_query_support.p
 reason = "A single standard mkdir(parents=True, exist_ok=True) before writing a file. The line is the Python idiom for creating a parent directory, not shared project logic."
 
 [[tool.duplication_gate.allow]]
-members = ["buildlimits/predict/report.py", "tests/cache_recovery_helpers.py"]
+members = ["buildlimits/predict/report_writer.py", "tests/cache_recovery_helpers.py"]
 reason = "A single standard mkdir(parents=True, exist_ok=True) before writing files. The line is the Python idiom for creating a parent directory, not shared project logic."
 [[tool.duplication_gate.allow]]
 members = ["tests/outcome_test_helpers.py::attributed_record", "tests/outcome_test_helpers.py::cache_key"]
@@ -1922,12 +1922,8 @@ members = [
 reason = "Recurring short test steps: the two parameter tables differ only in the exception each names, and the value under test is the whole of each case; a shared body would have to take the expected error as an argument and hide which contract each row proves."
 
 [[tool.duplication_gate.allow]]
-members = ["modelcheck/fixpoint_bounds.py::_is_int", "buildlimits/predict/config.py::_is_int"]
+members = ["modelcheck/fixpoint_bounds.py::_is_int", "buildlimits/predict/config_loader.py::_is_int"]
 reason = "Two private one-line predicates answering the same Python fact (a bool is an int) for unrelated decoders: one guards a TOML bound before doubling it, the other a JSON parameter before use. Sharing one would couple the model checker to the prediction package for a single isinstance test, and each carries the docstring its own reader needs."
-
-[[tool.duplication_gate.allow]]
-members = ["buildlimits/metrics_cli.py", "buildlimits/predict/dataset_cli.py"]
-reason = "The shared fragment is the command idiom of printing a caught error to standard error and returning a status. Each command names its own prefix and its own error types, so a helper would have to take both as arguments."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -1943,13 +1939,14 @@ members = [
     "tests/modelcheck_cases.py",
     "tests/modelcheck_service_cases.py",
     "buildlimits/predict/ensemble_runs.py",
-    "buildlimits/predict/evaluation.py",
     "buildlimits/predict/harness.py",
-    "buildlimits/predict/report.py",
     "buildlimits/supervisor_wiring.py",
     "tests/outcome_store_helpers.py",
     "tests/test_group_drain_metrics.py",
+    "buildlimits/predict/evaluation.py",
+    "buildlimits/predict/report.py",
     "buildlimits/predict/scoring.py",
+    "buildlimits/predict/snapshot_codec.py",
     "modelcheck/cli_outputs.py",
     "modelcheck/expectations.py",
     "modelcheck/records.py",
@@ -1957,15 +1954,18 @@ members = [
     "tests/test_cache_recovery_telemetry.py",
     "tests/test_recovery_roots_deadline.py",
     "buildlimits/group_recovery.py",
-    "buildlimits/outcome_record_codec.py",
-    "buildlimits/outcome_store.py",
     "tests/differential_trace_test_helpers.py",
-    "tests/predict_test_helpers.py",
+    "buildlimits/predict/report_codec.py",
     "modelcheck/cli.py",
-    "tests/test_kache_detached_events.py",
-    "tests/test_predict_evaluation.py",
 ]
 reason = "Matching type-checking preambles: each module guards the same standard-library aliases (collections.abc, datetime) and its own typed imports behind if typ.TYPE_CHECKING. The names come from the standard library and each module's real dependencies, so a shared module would hide what each file actually imports."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/render.py::_predictors",
+    "tests/test_predict_snapshot_store.py::_journal",
+]
+reason = "Each reads a mapping the codec produced to describe one block of a report: the renderer lists predictor names, the test helper pulls the journal note out of a snapshot document. The detector matches their shared lookups, not shared logic, and a helper would have to know which document shape it was handed."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -1987,3 +1987,10 @@ members = [
     "tests/test_metrics_gauges_properties.py",
 ]
 reason = "Matching import lists: the example module and the property module name the same accumulator and cadence constants, and they stay separate because the properties state their own reference definitions rather than reusing the examples' helpers. Sharing the list through a re-export module would add a test support module without hiding a real dependency."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_totality.py",
+    "tests/test_predict_evaluation.py",
+]
+reason = "Matching type-checking preludes: each test guards, behind if typ.TYPE_CHECKING, the domain types its own fixtures annotate. The guard is the shared idiom, not shared logic, and a re-export module would hide what each test actually depends on."

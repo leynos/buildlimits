@@ -25,7 +25,6 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
     from buildlimits.predict.config import Config
     from buildlimits.predict.evaluation import Evaluation
-    from buildlimits.predict.events import Label
     from buildlimits.predict.harness import Walk
     from buildlimits.predict.metrics import Metrics
 
@@ -186,17 +185,7 @@ def _late_held_out_admission() -> Walk:
     the last twelve tuning labels are observed too late for a weight fit to
     read.
     """
-    events = tuple(
-        Event(
-            identity(index),
-            ORIGIN,
-            EPOCH + index * STEP - dt.timedelta(seconds=5),
-            EPOCH + index * STEP,
-            typ.cast("Label", "hit" if index % 2 else "miss"),
-            1.0,
-        )
-        for index in range(30)
-    )
+    events = _all_first_sightings(30)
     early = dc.replace(events[20], admitted_at=EPOCH + 7 * STEP + STEP / 2)
     config = predict_config(train_fraction=20 / 30)
     return walk_forward((*events[:20], early, *events[21:]), config)
@@ -224,6 +213,20 @@ def _answered(walk: Walk, answers: dict[int, tuple[float | None, ...]]) -> Walk:
     return dc.replace(walk, series=series)
 
 
+def _late_outcomes() -> tuple[Walk, tuple[str, ...], tuple[int, ...]]:
+    """Return the late walk, its single names and each event's outcome.
+
+    Returns
+    -------
+    tuple[Walk, tuple[str, ...], tuple[int, ...]]
+        The walk, the names of its singles in their fixed order, and 1 for a
+        hit or 0 for a miss at each position.
+    """
+    walk = _late_held_out_admission()
+    outcomes = tuple(1 if event.label == "hit" else 0 for event in walk.events)
+    return walk, walk.components(), outcomes
+
+
 def test_the_best_single_ignores_a_tuning_label_that_arrived_too_late() -> None:
     """A tuning label observed after the first held-out decision cannot decide it.
 
@@ -231,9 +234,7 @@ def test_the_best_single_ignores_a_tuning_label_that_arrived_too_late() -> None:
     on the twelve late ones. Scored over every tuning row the second wins;
     scored over the rows the weight fit may read, the first does.
     """
-    walk = _late_held_out_admission()
-    names = walk.components()
-    outcomes = [1 if event.label == "hit" else 0 for event in walk.events]
+    walk, names, outcomes = _late_outcomes()
     early_right = tuple(
         _answer(outcomes[index], is_correct=index < 8) for index in range(30)
     )
@@ -283,9 +284,7 @@ def test_the_best_single_is_ranked_on_the_rows_every_single_answered() -> None:
     different population rather than from a better answer, and leaves
     ``honest`` the winner.
     """
-    walk = _late_held_out_admission()
-    names = walk.components()
-    outcomes = [1 if event.label == "hit" else 0 for event in walk.events]
+    walk, names, outcomes = _late_outcomes()
     honest = tuple(
         _answer(outcomes[index], is_correct=index >= 2) for index in range(30)
     )

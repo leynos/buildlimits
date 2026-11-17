@@ -22,6 +22,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.dataset import Snapshot
 
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
+DATED = OBSERVED_AT + dt.timedelta(hours=1)
 
 
 def _decoded(records: tuple[object, ...]) -> DecodedStore:
@@ -247,33 +248,37 @@ def test_journal_supervisor_starts_are_reported_as_restarts() -> None:
     assert restarts.last == last, "and the latest"
 
 
-def test_an_undated_supervisor_start_still_counts_as_a_restart() -> None:
-    """A start the journal saw without a time is counted but cannot bound a range.
+def _restart_bounds(*moments: dt.datetime | None) -> JournalRestarts:
+    """Return the restart block for starts at the given moments.
 
-    The count says how often the supervisor restarted; naming the dated start
-    as both bounds would claim the undated one happened at that moment.
+    Returns
+    -------
+    JournalRestarts
+        The block the note carries.
     """
-    dated = OBSERVED_AT + dt.timedelta(hours=1)
-    restarts = _restarts(
-        Record("supervisor", "supervisor_started", {}, None),
-        Record("supervisor", "supervisor_started", {}, dated),
+    return _restarts(
+        *(Record("supervisor", "supervisor_started", {}, moment) for moment in moments)
     )
 
-    assert restarts.count == 2, "both starts are counted"
-    assert restarts.first == dated, "the dated start is the earliest"
-    assert restarts.last == dated, "and the latest"
 
+@pytest.mark.parametrize(
+    ("moments", "expected"),
+    [
+        ((None, DATED), (DATED, DATED)),
+        ((None, None), (None, None)),
+    ],
+)
+def test_undated_restarts_are_counted_without_inventing_their_bounds(
+    moments: tuple[dt.datetime | None, ...],
+    expected: tuple[dt.datetime | None, dt.datetime | None],
+) -> None:
+    """Every start counts; the bounds name only the starts that carry a time."""
+    restarts = _restart_bounds(*moments)
+    first, last = expected
 
-def test_undated_supervisor_starts_leave_the_bounds_unavailable() -> None:
-    """Starts that carry no time are counted without invented bounds."""
-    restarts = _restarts(
-        Record("supervisor", "supervisor_started", {}, None),
-        Record("supervisor", "supervisor_started", {}, None),
-    )
-
-    assert restarts.count == 2, "both starts are counted"
-    assert restarts.first is None, "no start time is claimed"
-    assert restarts.last is None, "for either bound"
+    assert restarts.count == len(moments), "every start is counted"
+    assert restarts.first == first, "the earliest dated start, or nothing"
+    assert restarts.last == last, "the latest dated start, or nothing"
 
 
 def test_a_truncated_journal_query_says_the_cap_was_reached() -> None:
