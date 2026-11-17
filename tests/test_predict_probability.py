@@ -9,7 +9,6 @@ from buildlimits.predict.probability import LogisticModel, clip_probability
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
-    from buildlimits.predict.events import ScoredLabel
 
 ORIGIN = typ.cast("Origin", "git")
 FEATURES = Features("a" * 64, ORIGIN, EPOCH, 60.0, 2)
@@ -28,7 +27,7 @@ def test_a_hit_raises_the_learned_probability() -> None:
     """
     model = _model()
     before = model.predict(FEATURES)
-    model.update(FEATURES, typ.cast("ScoredLabel", "hit"))
+    model.update(FEATURES, "hit")
 
     assert before == pytest.approx(0.5), "an unfitted model answers a half"
     after = model.predict(FEATURES)
@@ -40,7 +39,7 @@ def test_a_miss_lowers_the_learned_probability() -> None:
     """Repeated misses drive the same row below a half."""
     model = _model()
     for _ in range(5):
-        model.update(FEATURES, typ.cast("ScoredLabel", "miss"))
+        model.update(FEATURES, "miss")
 
     answer = model.predict(FEATURES)
     assert answer is not None, "the bias term always answers"
