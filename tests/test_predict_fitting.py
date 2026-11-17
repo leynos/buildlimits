@@ -25,6 +25,13 @@ def test_the_objective_averages_only_the_rows_that_answered() -> None:
     )
 
 
+def test_the_objective_applies_the_clip_to_a_certainly_wrong_answer() -> None:
+    """A consensus of zero that is a hit costs the clip, not an infinite score."""
+    loss = _mean_log_loss([(0.0, 0.0)], [1.0], WEIGHTS, CLIP)
+
+    assert loss == pytest.approx(-math.log(CLIP)), "the clip bounds the loss"
+
+
 def test_the_objective_rejects_a_proposal_that_answers_nothing() -> None:
     """No answered row leaves no loss to compare, which must not read as zero."""
     loss = _mean_log_loss([(None, None)], [1.0], WEIGHTS, CLIP)
