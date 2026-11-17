@@ -51,6 +51,12 @@ class Ensemble:
     def predict(self, probabilities: cabc.Sequence[float | None]) -> float | None:
         """Average the components that answered at this event.
 
+        Parameters
+        ----------
+        probabilities : Sequence[float | None]
+            One answer per component, in component order; None means that
+            component abstained and is left out of the mean and the mass.
+
         Returns
         -------
         float | None
@@ -76,6 +82,14 @@ class Ensemble:
         components that answered. Leaving its weight untouched would let it
         gain share purely by sitting out the events the others lost, and the
         renormalization below turns that into a larger weight when it returns.
+
+        Parameters
+        ----------
+        probabilities : Sequence[float | None]
+            One answer per component, in component order; None marks a
+            component that abstained at this event.
+        is_hit : bool
+            The label that has just become known.
         """
         if self.mode != "adaptive":
             return
@@ -99,6 +113,11 @@ class Ensemble:
 
     def without(self, index: int) -> Ensemble:
         """Return a copy with one component removed, for ablation.
+
+        Parameters
+        ----------
+        index : int
+            The position of the component to drop, in component order.
 
         Returns
         -------
@@ -156,6 +175,16 @@ def fit_weights(
     The fit is a projected gradient descent on the log loss, so it is exactly
     reproducible and needs no library. Callers must pass training rows; the
     function has no way to reach any other label.
+
+    Parameters
+    ----------
+    rows : Sequence[Sequence[float | None]]
+        The component answers for each training row, in component order. A
+        None entry marks a component that abstained at that row.
+    outcomes : Sequence[float]
+        The label for each training row, as 1.0 for a hit and 0.0 for a miss.
+    config : Config
+        The pinned parameters that set the step count, learning rate and clip.
 
     Returns
     -------
@@ -259,6 +288,17 @@ def build_ensembles(
     weights: cabc.Sequence[float] | None = None,
 ) -> tuple[Ensemble, ...]:
     """Build the three consensus ensembles over the given components.
+
+    Parameters
+    ----------
+    components : Sequence[str]
+        The predictor names the ensembles combine, in component order.
+    config : Config
+        The pinned parameters, including the Hedge rate and the loss clip.
+    weights : Sequence[float] | None
+        The fitted fixed weights for the components. None, or a sequence of
+        the wrong length, falls back to equal weights, so a stream with no
+        training labels still yields a usable ensemble.
 
     Returns
     -------

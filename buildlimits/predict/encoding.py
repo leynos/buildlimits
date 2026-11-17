@@ -20,6 +20,12 @@ LOGISTIC_WEIGHT_COUNT = 1 + len(ORIGIN_ORDER) + IDENTITY_BUCKETS + 3
 def logistic_features(row: Features) -> tuple[float, ...]:
     """Encode one row as the feature model's causal input vector.
 
+    Parameters
+    ----------
+    row : Features
+        One event's pre-admission row. Only ``origin``, ``identity``,
+        ``age_seconds`` and ``load`` are read; ``observed_at`` is not.
+
     Returns
     -------
     tuple[float, ...]

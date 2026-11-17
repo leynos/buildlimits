@@ -110,6 +110,11 @@ class Features:
 def scored_label(event: Event) -> ScoredLabel | None:
     """Return the scorable label, or None when the outcome is unknown.
 
+    Parameters
+    ----------
+    event : Event
+        The event whose outcome is inspected.
+
     Returns
     -------
     ScoredLabel | None
@@ -129,6 +134,11 @@ def scored_label(event: Event) -> ScoredLabel | None:
 def ordered(events: cabc.Iterable[Event]) -> tuple[Event, ...]:
     """Sort events by label time, keeping append order for equal times.
 
+    Parameters
+    ----------
+    events : Iterable[Event]
+        The events in whatever order they were appended.
+
     Returns
     -------
     tuple[Event, ...]
@@ -146,6 +156,15 @@ def features(
     events: cabc.Sequence[Event], *, load_window_seconds: float
 ) -> tuple[Features, ...]:
     """Derive each event's causal features from earlier events only.
+
+    Parameters
+    ----------
+    events : Sequence[Event]
+        The events sorted by label time, as :func:`ordered` leaves them.
+        ``_load_before`` bisects on that order, so an unsorted sequence would
+        count the wrong neighbours.
+    load_window_seconds : float
+        The trailing window, in seconds, over which load is counted.
 
     Returns
     -------
@@ -184,6 +203,11 @@ def features(
 def fingerprint(events: cabc.Iterable[Event]) -> str:
     """Hash the canonical encoding of the event stream.
 
+    Parameters
+    ----------
+    events : Iterable[Event]
+        The events to hash, in the order they should contribute to the digest.
+
     Returns
     -------
     str
@@ -199,6 +223,11 @@ def fingerprint(events: cabc.Iterable[Event]) -> str:
 
 def event_from_dict(value: object) -> Event:
     """Validate one snapshot line as an event.
+
+    Parameters
+    ----------
+    value : object
+        One decoded JSON line, of any shape.
 
     Returns
     -------

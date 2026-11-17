@@ -170,6 +170,14 @@ def find_gaps(
 ) -> tuple[Gap, ...]:
     """Report silences longer than the configured threshold.
 
+    Parameters
+    ----------
+    events : Sequence[Event]
+        The history in chronological order; gaps are measured between
+        neighbours.
+    threshold_seconds : float
+        The shortest silence, in seconds, that counts as a gap.
+
     Returns
     -------
     tuple[Gap, ...]
@@ -192,6 +200,14 @@ def count_journal(
 
     Adapter records carry no compilation identity, so they cannot be joined to
     store rows. The counts are reported as context, not used as events.
+
+    Parameters
+    ----------
+    since : str
+        The journal span to ask for, such as ``"24h"``.
+    query : Callable[..., Window]
+        The journal reader, injectable so a test or an offline run can answer
+        without the journal.
 
     Returns
     -------
@@ -227,6 +243,18 @@ def build_snapshot(
     gap_threshold_seconds: float = 3600.0,
 ) -> Snapshot:
     """Assemble the snapshot document from a decoded store.
+
+    Parameters
+    ----------
+    decoded : DecodedStore
+        The store header and every record read from it.
+    now : datetime
+        The creation time recorded in the snapshot, supplied so a run is
+        reproducible.
+    journal : dict[str, object] | None
+        The journal counts to keep as provenance, or None to query nothing.
+    gap_threshold_seconds : float
+        The shortest silence that the snapshot reports as a gap.
 
     Returns
     -------

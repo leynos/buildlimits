@@ -116,6 +116,14 @@ class Evaluation:
 def evaluate(walk: Walk, config: Config) -> Evaluation:
     """Score the singles, run the ensembles and assemble the verdict.
 
+    Parameters
+    ----------
+    walk : Walk
+        The replayed stream: every predictor's answers, the feature rows, the
+        phases and the train/held-out split.
+    config : Config
+        The pinned parameters that decide thresholds, blocks and resamples.
+
     Returns
     -------
     Evaluation

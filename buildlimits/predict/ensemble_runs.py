@@ -51,6 +51,13 @@ class EnsembleRun:
 def run_ensembles(walk: Walk, config: Config) -> dict[str, EnsembleRun]:
     """Fit each ensemble and answer every event with it.
 
+    Parameters
+    ----------
+    walk : Walk
+        The replayed stream whose component answers and phases are combined.
+    config : Config
+        The pinned parameters, including the weight-fitting schedule.
+
     Returns
     -------
     dict[str, EnsembleRun]
@@ -82,6 +89,17 @@ def run_ablations(
 ) -> dict[str, dict[str, EnsembleRun]]:
     """Repeat each ensemble with each component removed.
 
+    Parameters
+    ----------
+    walk : Walk
+        The replayed stream whose component answers are combined.
+    config : Config
+        The pinned parameters, including the weight-fitting schedule.
+    ensembles : Mapping[str, EnsembleRun]
+        The fitted runs; each ablation restarts from that run's
+        ``initial_weights``, so removing a component removes its contribution
+        rather than its already-adapted share.
+
     Returns
     -------
     dict[str, dict[str, EnsembleRun]]
@@ -108,6 +126,11 @@ def component_matrix(
     walk: Walk,
 ) -> list[tuple[float | None, ...]]:
     """Return each event's component answers, in component order.
+
+    Parameters
+    ----------
+    walk : Walk
+        The replayed stream whose series are read.
 
     Returns
     -------
