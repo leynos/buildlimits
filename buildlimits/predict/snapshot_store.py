@@ -384,7 +384,8 @@ def _parse_stamp(value: object) -> dt.datetime:
     TypeError
         If the value is not text.
     ValueError
-        If the text is not a timestamp with an offset.
+        If the text is not a timestamp with an offset, or its offset moves it
+        outside the range a UTC datetime can hold.
     """
     if not isinstance(value, str):
         msg = "a snapshot timestamp must be text"
@@ -393,4 +394,11 @@ def _parse_stamp(value: object) -> dt.datetime:
     if parsed.tzinfo is None:
         msg = "a snapshot timestamp must carry an offset"
         raise ValueError(msg)
-    return parsed.astimezone(dt.UTC)
+    try:
+        return parsed.astimezone(dt.UTC)
+    except OverflowError as error:
+        # The earliest representable date plus a positive offset has no UTC
+        # equivalent: 0001-01-01T00:00:00+01:00 would need year zero. That is
+        # a bad field value like any other, not a crash in the loader.
+        msg = "a snapshot timestamp must convert to UTC"
+        raise ValueError(msg) from error

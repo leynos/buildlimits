@@ -283,3 +283,29 @@ def test_a_timestamp_without_an_offset_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="offset"):
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_a_timestamp_that_utc_cannot_represent_is_refused(tmp_path: Path) -> None:
+    """The earliest date plus a positive offset has no UTC equivalent.
+
+    ``0001-01-01T00:00:00+01:00`` parses, but converting it to UTC needs year
+    zero, which a datetime cannot hold. The loader names the field instead of
+    letting ``OverflowError`` escape as a traceback.
+    """
+    document = _document()
+    document["created_at"] = "0001-01-01T00:00:00+01:00"
+
+    with pytest.raises(ValueError, match="convert to UTC"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_a_representable_offset_timestamp_is_read(tmp_path: Path) -> None:
+    """An offset that stays inside the range is converted, not refused."""
+    document = _document()
+    document["created_at"] = "0001-01-01T01:00:00+01:00"
+
+    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+    assert loaded.created_at == dt.datetime(1, 1, 1, tzinfo=dt.UTC), (
+        "the same instant in UTC"
+    )
