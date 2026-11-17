@@ -16,7 +16,7 @@ from buildlimits import outcome_store_io
 from buildlimits.metrics_query import window_seconds
 from buildlimits.outcome_record_format import RecordFailure
 from buildlimits.outcome_store_salt import store_path
-from buildlimits.predict.config import load_config
+from buildlimits.predict.config import load_config as _read_config
 from buildlimits.predict.dataset import (
     DEFAULT_JOURNAL_SPAN,
     Snapshot,
@@ -30,6 +30,7 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.outcome_record_format import DecodedStore
+    from buildlimits.predict.config import Config
 
 DEFAULT_OUTPUT = Path("build/predict/history.jsonl")
 
@@ -42,8 +43,9 @@ def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
     argv : list[str] | None
         Command-line arguments, or process arguments when absent.
     edges : Edges | None
-        The journal, clock, store reader and snapshot writer. None uses this
-        host's, which is what the installed command does.
+        The journal, clock, store resolver and reader, parameter loader and
+        snapshot writer. None uses this host's, which is what the installed
+        command does.
 
     Returns
     -------
@@ -81,12 +83,12 @@ def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
     except SystemExit as error:
         return int(error.code) if isinstance(error.code, int) else 2
     try:
-        config = load_config()
+        config = chosen.load_config()
     except (TypeError, ValueError, OSError) as error:
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 2
     try:
-        store = _store_path(options.store)
+        store = chosen.resolve_store(options.store)
     except (OSError, ValueError) as error:
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 1
@@ -201,6 +203,10 @@ def _journal_note(
 ) -> dict[str, object]:
     """Ask the journal what it can offer, tolerating any failure.
 
+    The reader reports its own failure rather than returning a placeholder, so
+    the conversion to an unavailable note happens here: the snapshot comes
+    from the store and must not be lost to a side query.
+
     Returns
     -------
     dict[str, object]
@@ -272,9 +278,18 @@ class Edges:
         Reads the outcome store, or returns an exit status on failure.
     write_snapshot : Callable[[Snapshot, Path], int]
         Writes the snapshot and reports what it holds.
+    resolve_store : Callable[[Path | None], Path]
+        Names the store to read, defaulting to this host's when no path is
+        given. Reading the environment is a host concern, so it travels with
+        the other edges rather than happening beside them.
+    load_config : Callable[[], Config]
+        Reads the pinned parameters the gap threshold comes from, so a test
+        can refuse an unreadable file without patching the module.
     """
 
     journal: cabc.Callable[..., cabc.Mapping[str, object]] = count_journal
     now: cabc.Callable[[], dt.datetime] = _utc_now
     read_store: cabc.Callable[[Path], DecodedStore | int] = _read
     write_snapshot: cabc.Callable[[Snapshot, Path], int] = _write
+    resolve_store: cabc.Callable[[Path | None], Path] = _store_path
+    load_config: cabc.Callable[[], Config] = _read_config

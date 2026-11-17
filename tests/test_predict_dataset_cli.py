@@ -9,6 +9,7 @@ from outcome_test_helpers import cache_key
 from predict_test_helpers import STORE_HEADER, outcome_record, write_store
 
 from buildlimits import outcome_store_io
+from buildlimits.metrics_query import MetricsQueryError
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict import dataset_cli
 from buildlimits.predict.snapshot_store import load_snapshot
@@ -122,9 +123,7 @@ def test_dataset_command_rejects_an_unknown_option() -> None:
     assert dataset_cli.main(["--no-such-option"]) == 2, "usage failure"
 
 
-def test_dataset_command_reports_an_unreadable_config(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_dataset_command_reports_an_unreadable_config(tmp_path: Path) -> None:
     """A corrupt packaged parameter file stops the command before it reads."""
     store = tmp_path / "cache-outcomes.jsonl"
     write_store(store, 4)
@@ -133,17 +132,40 @@ def test_dataset_command_reports_an_unreadable_config(
         """Stand in for a parameter file this build cannot read."""
         raise ValueError("config.json is corrupt")
 
-    monkeypatch.setattr(dataset_cli, "load_config", refuse)
-
-    status = dataset_cli.main([
-        "--store",
-        str(store),
-        "--output",
-        str(tmp_path / "history.jsonl"),
-        "--skip-journal",
-    ])
+    status = dataset_cli.main(
+        [
+            "--store",
+            str(store),
+            "--output",
+            str(tmp_path / "history.jsonl"),
+            "--skip-journal",
+        ],
+        edges=dataset_cli.Edges(load_config=refuse),
+    )
 
     assert status == 2, "an unusable config is a usage failure"
+
+
+def test_the_default_store_comes_from_the_injected_resolver(tmp_path: Path) -> None:
+    """A run without --store asks the edges, never the host environment.
+
+    The resolver is the only place the environment is read, so a test that
+    replaces it never touches this host's store.
+    """
+    requested: list[Path | None] = []
+
+    def resolve(store: Path | None) -> Path:
+        """Record the missing option and answer with an absent store."""
+        requested.append(store)
+        return tmp_path / "absent.jsonl"
+
+    status = dataset_cli.main(
+        ["--output", str(tmp_path / "history.jsonl"), "--skip-journal"],
+        edges=dataset_cli.Edges(resolve_store=resolve),
+    )
+
+    assert requested == [None], "the resolver saw the absent option"
+    assert status == 1, "the absent store is a command failure"
 
 
 def test_dataset_command_reports_an_unwritable_output(
@@ -211,6 +233,27 @@ def test_dataset_command_survives_a_journal_that_raises(tmp_path: Path) -> None:
     assert status == 0, "the snapshot is still written"
     assert note == {"available": False, "reason": "journal query failed"}, (
         "the failure is recorded as provenance"
+    )
+
+
+def test_dataset_command_converts_an_unreadable_journal_into_a_note(
+    tmp_path: Path,
+) -> None:
+    """The reader's own error type is handled at the command boundary.
+
+    The journal reader reports an unreadable journal rather than returning a
+    note, so this check covers the boundary that makes provenance optional.
+    """
+
+    def unreadable(**_options: object) -> dict[str, object]:
+        """Stand in for a journal the host cannot read."""
+        raise MetricsQueryError("journal unavailable")
+
+    status, note = _journal_snapshot(tmp_path, unreadable)
+
+    assert status == 0, "the store's history is still written"
+    assert note == {"available": False, "reason": "journal query failed"}, (
+        "the reader's failure becomes the provenance note"
     )
 
 
