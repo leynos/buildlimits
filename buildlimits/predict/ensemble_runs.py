@@ -1,8 +1,10 @@
 """Fit the consensus ensembles and walk each one across the event stream.
 
 The fixed ensemble's weights are fitted on the tuning period alone, so the
-held-out period cannot influence them. Ablation reuses the weights an ensemble
-finished with and simply drops one component's column from the matrix.
+held-out period cannot influence them. Ablation restarts each ensemble from the
+weights it began with and simply drops one component's column from the matrix.
+Starting from the final weights instead would carry what the stream taught the
+adaptive ensemble about held-out labels into the ablated comparison.
 """
 
 import dataclasses as dc
@@ -32,6 +34,9 @@ class EnsembleRun:
         One answer per event, in stream order.
     weights : tuple[float, ...]
         The weights in force after the last event.
+    initial_weights : tuple[float, ...]
+        The weights in force before the first event, which ablation restarts
+        from.
     elapsed : tuple[float, ...]
         Seconds spent combining each event.
     """
@@ -39,6 +44,7 @@ class EnsembleRun:
     name: str
     probabilities: tuple[float | None, ...]
     weights: tuple[float, ...]
+    initial_weights: tuple[float, ...]
     elapsed: tuple[float, ...]
 
 
@@ -116,18 +122,18 @@ def component_matrix(
 
 
 def _rebuild(run: EnsembleRun, components: tuple[str, ...], config: Config) -> Ensemble:
-    """Recreate an ensemble from its recorded final weights.
+    """Recreate an ensemble from the weights it started the stream with.
 
     Returns
     -------
     Ensemble
-        The ensemble in the state it finished the stream in.
+        The ensemble in the state it was in before the first event.
     """
     mode = run.name.removeprefix("ensemble-")
     return Ensemble(
         name=run.name,
         components=components,
-        weights=list(run.weights),
+        weights=list(run.initial_weights),
         mode=mode,
         eta=config.hedge_eta,
         clip=config.log_loss_clip,
@@ -146,6 +152,7 @@ def _run_ensemble(
     EnsembleRun
         Its answers, final weights and per-event timing.
     """
+    initial_weights = tuple(ensemble.weights)
     probabilities: list[float | None] = []
     elapsed: list[float] = []
     for row, event in zip(matrix, walk.events, strict=True):
@@ -160,6 +167,7 @@ def _run_ensemble(
         name=ensemble.name,
         probabilities=tuple(probabilities),
         weights=tuple(ensemble.weights),
+        initial_weights=initial_weights,
         elapsed=tuple(elapsed),
     )
 

@@ -113,7 +113,7 @@ def block_bootstrap(
     # needs reproducible, not secret, draws.
     generator = random.Random(config.bootstrap_seed)
     means = [
-        _resampled_mean(generator, blocks, len(differences), len(blocks))
+        _resampled_mean(generator, blocks, len(differences))
         for _ in range(config.bootstrap_resamples)
     ]
     means.sort()
@@ -131,9 +131,13 @@ def _resampled_mean(
     generator: random.Random,
     blocks: cabc.Sequence[cabc.Sequence[float]],
     length: int,
-    draws: int,
 ) -> float:
-    """Draw ``draws`` blocks with replacement and average the first rows.
+    """Draw blocks with replacement until ``length`` rows are collected.
+
+    The final block is truncated, so every replication averages exactly
+    ``length`` rows. Drawing a fixed count of blocks would average fewer rows
+    whenever the blocks do not divide the series evenly, which biases the
+    interval.
 
     Returns
     -------
@@ -142,7 +146,7 @@ def _resampled_mean(
     """
     total = 0.0
     seen = 0
-    for _ in range(draws):
+    while seen < length:
         block = blocks[generator.randrange(len(blocks))]
         for value in block:
             if seen == length:

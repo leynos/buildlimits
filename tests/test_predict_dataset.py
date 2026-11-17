@@ -8,20 +8,18 @@ from pathlib import Path
 import pytest
 from outcome_store_helpers import window_summary
 from outcome_test_helpers import OBSERVED_AT, attributed_record, cache_key
+from predict_test_helpers import write_json
 
 from buildlimits.metrics_query import MetricsQueryError, Window
 from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
-from buildlimits.predict.dataset import (
-    build_snapshot,
-    count_journal,
-    find_gaps,
-    load_snapshot,
-    save_snapshot,
-)
+from buildlimits.predict.dataset import build_snapshot, count_journal, find_gaps
 from buildlimits.predict.records import identity_of, label_of
+from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from buildlimits.outcome_vocabulary import CacheResult
 
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
@@ -198,3 +196,100 @@ def test_source_provenance_records_the_store_header() -> None:
     assert dc.asdict(source)["salt_id"] == "fixed-salt", "salt retained"
     assert source.written_at == NOW, "write time retained"
     assert source.records_total == 1, "row count retained"
+
+
+def _document() -> dict[str, object]:
+    """Return the encoded snapshot of one attributed hit."""
+    snapshot = build_snapshot(_decoded((attributed_record(outcome="hit"),)), now=NOW)
+    return snapshot.to_dict()
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda doc: doc.update(snapshot_version=99), id="unknown-version"),
+        pytest.param(lambda doc: doc.update(events={}), id="events-not-a-list"),
+        pytest.param(lambda doc: doc.update(source=[]), id="source-not-an-object"),
+        pytest.param(lambda doc: doc.update(journal=[]), id="journal-not-an-object"),
+        pytest.param(lambda doc: doc.update(created_at=7), id="created-at-not-text"),
+        pytest.param(
+            lambda doc: typ.cast("dict[str, object]", doc["source"]).update(salt_id=7),
+            id="salt-not-text",
+        ),
+        pytest.param(
+            lambda doc: typ.cast("dict[str, object]", doc["source"]).update(
+                records_total=True
+            ),
+            id="count-is-a-bool",
+        ),
+        pytest.param(lambda doc: doc.pop("stats"), id="stats-missing"),
+        pytest.param(
+            lambda doc: typ.cast("dict[str, object]", doc["stats"]).update(gaps={}),
+            id="gaps-not-a-list",
+        ),
+        pytest.param(
+            lambda doc: typ.cast("dict[str, object]", doc["stats"]).update(gaps=[[]]),
+            id="gap-not-an-object",
+        ),
+        pytest.param(
+            lambda doc: typ.cast("dict[str, object]", doc["stats"]).update(
+                gaps=[{"start": 7, "end": "b", "seconds": 1.0}]
+            ),
+            id="gap-start-not-text",
+        ),
+        pytest.param(
+            lambda doc: typ.cast("dict[str, object]", doc["stats"]).update(
+                gaps=[
+                    {
+                        "start": "2026-11-17T12:00:00+00:00",
+                        "end": "2026-11-17T13:00:00+00:00",
+                        "seconds": "3600",
+                    }
+                ]
+            ),
+            id="gap-seconds-not-numeric",
+        ),
+    ],
+)
+def test_a_malformed_snapshot_is_refused(
+    tmp_path: Path, mutate: cabc.Callable[[dict[str, object]], object]
+) -> None:
+    """Every field the loader reads is checked for type and shape."""
+    document = _document()
+    mutate(document)
+
+    with pytest.raises((TypeError, ValueError)):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_a_document_that_is_not_an_object_is_refused(tmp_path: Path) -> None:
+    """A JSON array is not a snapshot."""
+    with pytest.raises(TypeError, match="must hold one JSON object"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", [_document()]))
+
+
+def test_a_hand_edited_gap_survives_loading(tmp_path: Path) -> None:
+    """A well-formed gap row is decoded back into a Gap."""
+    document = _document()
+    stats = typ.cast("dict[str, object]", document["stats"])
+    stats["gaps"] = [
+        {
+            "start": "2026-11-17T12:00:00+00:00",
+            "end": "2026-11-17T14:30:00+00:00",
+            "seconds": 9000.0,
+        }
+    ]
+
+    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+    assert len(loaded.gaps) == 1, "the gap is read"
+    assert loaded.gaps[0].seconds == pytest.approx(9000.0), "length preserved"
+
+
+def test_a_timestamp_without_an_offset_is_refused(tmp_path: Path) -> None:
+    """A local time would be ambiguous, so the snapshot must carry an offset."""
+    document = _document()
+    document["created_at"] = "2026-11-17T12:00:00"
+
+    with pytest.raises(ValueError, match="offset"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))

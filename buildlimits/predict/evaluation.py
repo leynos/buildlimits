@@ -15,18 +15,22 @@ from buildlimits.predict.ensemble_runs import (
     run_ablations,
     run_ensembles,
 )
-from buildlimits.predict.events import scored_label
-from buildlimits.predict.metrics import Metrics, ScoredRow, per_origin, summarize
+from buildlimits.predict.scoring import (
+    ablation_metrics,
+    all_metrics,
+    heldout_rows,
+    series_map,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.predict.config import Config
     from buildlimits.predict.harness import Walk
+    from buildlimits.predict.metrics import Metrics
 
 STATUS_OK = "ok"
 STATUS_INSUFFICIENT = "insufficient data"
-_PHASES = ("train", "held-out")
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -55,6 +59,8 @@ class Evaluation:
         Held-out Brier difference between each ensemble and that predictor.
     verdict : str
         The plain-language outcome, including an honest negative one.
+    minimum_scored_events : int
+        Held-out rows a predictor must score before it can be ranked.
     """
 
     status: str
@@ -67,9 +73,15 @@ class Evaluation:
     best_single: str | None
     against_best_single: dict[str, Interval | None]
     verdict: str
+    minimum_scored_events: int
 
     def ranking(self) -> tuple[str, ...]:
         """Order every predictor by held-out Brier.
+
+        Only a predictor that scored at least ``minimum_scored_events``
+        held-out rows is ranked: a Brier score over a handful of rows says
+        nothing about which predictor is better. The remaining names follow
+        the ranked ones, so every predictor still appears in the report.
 
         Returns
         -------
@@ -80,6 +92,7 @@ class Evaluation:
             (name, value)
             for name, value in self._heldout_brier().items()
             if value is not None
+            and self.metrics[name]["held-out"].scored >= self.minimum_scored_events
         ]
         ordered = [name for name, _ in sorted(scored, key=operator.itemgetter(1))]
         return tuple(ordered) + tuple(
@@ -107,8 +120,8 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
     """
     ensembles = run_ensembles(walk, config)
     ablations = run_ablations(walk, config, ensembles)
-    metrics = _all_metrics(walk, ensembles, config)
-    ablation_metrics = _ablation_metrics(walk, ablations, config)
+    metrics = all_metrics(walk, ensembles, config)
+    ablated = ablation_metrics(walk, ablations, config)
     compared = _compare(walk, ensembles, metrics, config)
     labelled = sum(1 for phase in walk.phases if phase is not None)
     status = (
@@ -120,11 +133,12 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
         ensembles=ensembles,
         ablations=ablations,
         metrics=metrics,
-        ablation_metrics=ablation_metrics,
+        ablation_metrics=ablated,
         against_base_rate=compared.against_base_rate,
         best_single=compared.best_single,
         against_best_single=compared.against_best_single,
         verdict=_verdict(status, labelled, compared.against_base_rate, config),
+        minimum_scored_events=config.minimum_scored_events,
     )
 
 
@@ -141,7 +155,7 @@ def _compare(
     _Comparisons
         The held-out intervals and the tuning-period winner.
     """
-    series = _series_map(walk, ensembles)
+    series = series_map(walk, ensembles)
     comparisons = _Comparison(walk, series)
     best_single = _best_on_training(metrics, walk.components(), config)
     return _Comparisons(
@@ -181,128 +195,6 @@ class _Comparisons:
     against_best_single: dict[str, Interval | None]
 
 
-def _series_map(
-    walk: Walk, ensembles: cabc.Mapping[str, EnsembleRun]
-) -> dict[str, cabc.Sequence[float | None]]:
-    """Return every predictor's answers under its name.
-
-    Returns
-    -------
-    dict[str, Sequence[float | None]]
-        Singles first, then ensembles.
-    """
-    combined: dict[str, cabc.Sequence[float | None]] = {
-        name: series.probabilities for name, series in walk.series.items()
-    }
-    combined.update({name: run.probabilities for name, run in ensembles.items()})
-    return combined
-
-
-def _all_metrics(
-    walk: Walk,
-    ensembles: cabc.Mapping[str, EnsembleRun],
-    config: Config,
-) -> dict[str, dict[str, Metrics]]:
-    """Score every full predictor on every row set.
-
-    Returns
-    -------
-    dict[str, dict[str, Metrics]]
-        Metrics per predictor.
-    """
-    return {
-        name: _metric_block(_rows_for(walk, name, probabilities), config)
-        for name, probabilities in _series_map(walk, ensembles).items()
-    }
-
-
-def _ablation_metrics(
-    walk: Walk,
-    ablations: cabc.Mapping[str, cabc.Mapping[str, EnsembleRun]],
-    config: Config,
-) -> dict[str, dict[str, Metrics]]:
-    """Score each ablated ensemble on the held-out period.
-
-    Returns
-    -------
-    dict[str, dict[str, Metrics]]
-        Held-out metrics per mode and removed component.
-    """
-    return {
-        mode: {
-            component: _metric_block(
-                _rows_for(walk, run.name, run.probabilities), config
-            )["held-out"]
-            for component, run in runs.items()
-        }
-        for mode, runs in ablations.items()
-    }
-
-
-def _metric_block(rows: cabc.Sequence[ScoredRow], config: Config) -> dict[str, Metrics]:
-    """Score one row set overall, per phase and per origin.
-
-    Returns
-    -------
-    dict[str, Metrics]
-        The overall score, both phases and every origin.
-    """
-    block = {
-        "overall": summarize(
-            rows,
-            clip=config.log_loss_clip,
-            threshold=config.decision_threshold,
-            bins=config.calibration_bins,
-        )
-    }
-    for phase in _PHASES:
-        block[phase] = summarize(
-            [row for row in rows if row.phase == phase],
-            clip=config.log_loss_clip,
-            threshold=config.decision_threshold,
-            bins=config.calibration_bins,
-        )
-    for origin, group in per_origin(rows).items():
-        block[f"origin:{origin}"] = summarize(
-            group,
-            clip=config.log_loss_clip,
-            threshold=config.decision_threshold,
-            bins=config.calibration_bins,
-        )
-    return block
-
-
-def _rows_for(
-    walk: Walk, name: str, probabilities: cabc.Sequence[float | None]
-) -> tuple[ScoredRow, ...]:
-    """Build one labelled row per event for the given answers.
-
-    Returns
-    -------
-    tuple[ScoredRow, ...]
-        Rows in stream order, abstentions included.
-    """
-    rows: list[ScoredRow] = []
-    for event, phase, probability in zip(
-        walk.events, walk.phases, probabilities, strict=True
-    ):
-        if phase is None:
-            continue
-        label = scored_label(event)
-        rows.append(
-            ScoredRow(
-                predictor=name,
-                identity=event.identity,
-                origin=event.origin,
-                observed_at=event.observed_at,
-                probability=probability,
-                outcome=1 if label == "hit" else 0,
-                phase=phase,
-            )
-        )
-    return tuple(rows)
-
-
 @dc.dataclass(frozen=True, slots=True)
 class _Comparison:
     """The stream and every predictor's answers, ready for pairing.
@@ -326,24 +218,9 @@ class _Comparison:
         Interval | None
             The Brier difference and its block-bootstrap interval.
         """
-        ours = _heldout_rows(self.walk, name, self.series[name])
-        theirs = _heldout_rows(self.walk, other, self.series[other])
+        ours = heldout_rows(self.walk, name, self.series[name])
+        theirs = heldout_rows(self.walk, other, self.series[other])
         return block_bootstrap(paired_differences(ours, theirs), config=config)
-
-
-def _heldout_rows(
-    walk: Walk, name: str, probabilities: cabc.Sequence[float | None]
-) -> tuple[ScoredRow, ...]:
-    """Return only the held-out rows for one predictor.
-
-    Returns
-    -------
-    tuple[ScoredRow, ...]
-        Held-out rows in stream order.
-    """
-    return tuple(
-        row for row in _rows_for(walk, name, probabilities) if row.phase == "held-out"
-    )
 
 
 def _best_on_training(
@@ -375,6 +252,10 @@ def _verdict(
 ) -> str:
     """State the outcome in one sentence, negative results included.
 
+    A predictor may only be said to beat the base rate when its interval lies
+    wholly below zero *and* it was paired over enough held-out rows for that
+    interval to mean anything.
+
     Returns
     -------
     str
@@ -388,7 +269,9 @@ def _verdict(
     improving = [
         name
         for name, interval in against_base.items()
-        if interval is not None and interval.high < 0
+        if interval is not None
+        and interval.rows >= config.minimum_scored_events
+        and interval.high < 0
     ]
     if not improving:
         return "nothing beats the base rate on the held-out period"

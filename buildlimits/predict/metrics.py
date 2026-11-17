@@ -11,7 +11,7 @@ import itertools
 import math
 import typing as typ
 
-from buildlimits.predict.predictors import clip_probability
+from buildlimits.predict.probability import clip_probability
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

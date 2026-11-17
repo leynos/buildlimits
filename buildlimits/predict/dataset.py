@@ -1,30 +1,28 @@
-"""Build, redact and reload the versioned cache-outcome history snapshot.
+"""Build and redact the versioned cache-outcome history snapshot.
 
 The live store rotates and the journal is capped, so the benchmark never reads
 either directly. :func:`build_snapshot` turns the store's attributed records
-into a stable event stream and :func:`save_snapshot` writes it beside the
-provenance needed to judge how much history it really represents.
+into a stable event stream with the provenance needed to judge how much history
+it really represents; :mod:`buildlimits.predict.snapshot_store` writes and
+reloads that document.
 """
 
 import dataclasses as dc
-import datetime as dt
 import itertools
-import json
 import typing as typ
 
 from buildlimits import metrics_query
 from buildlimits.metrics_query import MAX_RECORDS as _MAX_JOURNAL_RECORDS
 from buildlimits.outcome_record_format import OutcomeRecord
-from buildlimits.predict.events import Event, ordered
-from buildlimits.predict.events import event_from_dict as _event_from_dict
 from buildlimits.predict.records import build_events
 from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
-    from pathlib import Path
+    import datetime as dt
 
     from buildlimits.outcome_record_format import DecodedStore
+    from buildlimits.predict.events import Event
 
 SNAPSHOT_VERSION = 1
 DEFAULT_JOURNAL_SPAN = "4w"
@@ -252,123 +250,3 @@ def build_snapshot(
         events=events,
         gaps=find_gaps(events, threshold_seconds=gap_threshold_seconds),
     )
-
-
-def save_snapshot(path: Path, snapshot: Snapshot) -> None:
-    """Write the snapshot as UTF-8 JSON, replacing any earlier file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    document = json.dumps(snapshot.to_dict(), indent=2, sort_keys=True)
-    path.write_text(document + "\n", encoding="utf-8")
-
-
-def load_snapshot(path: Path) -> Snapshot:
-    """Read and validate a snapshot document.
-
-    Returns
-    -------
-    Snapshot
-        The decoded history.
-
-    Raises
-    ------
-    TypeError
-        If the document or one of its values has the wrong Python type.
-    ValueError
-        If the version is unknown or a field is missing or invalid.
-    """
-    raw = typ.cast("object", json.loads(path.read_text(encoding="utf-8")))
-    if not isinstance(raw, dict):
-        msg = f"{path} must hold one JSON object"
-        raise TypeError(msg)
-    document = typ.cast("dict[str, object]", raw)
-    if document.get("snapshot_version") != SNAPSHOT_VERSION:
-        msg = f"{path} has an unsupported snapshot version"
-        raise ValueError(msg)
-    events = document.get("events")
-    if not isinstance(events, list):
-        msg = f"{path} must hold an events array"
-        raise TypeError(msg)
-    source = document.get("source")
-    journal = document.get("journal")
-    created = document.get("created_at")
-    if not isinstance(source, dict) or not isinstance(journal, dict):
-        msg = f"{path} must hold source and journal objects"
-        raise TypeError(msg)
-    if not isinstance(created, str):
-        msg = f"{path} must hold a created_at timestamp"
-        raise TypeError(msg)
-    decoded_events = tuple(_event_from_dict(row) for row in events)
-    return Snapshot(
-        created_at=_parse_stamp(created),
-        source=Source(
-            salt_id=typ.cast("str", typ.cast("dict[str, object]", source)["salt_id"]),
-            written_at=_parse_stamp(
-                typ.cast("dict[str, object]", source)["written_at"]
-            ),
-            records_total=typ.cast(
-                "int", typ.cast("dict[str, object]", source)["records_total"]
-            ),
-            outcome_records=typ.cast(
-                "int", typ.cast("dict[str, object]", source)["outcome_records"]
-            ),
-            summary_records=typ.cast(
-                "int", typ.cast("dict[str, object]", source)["summary_records"]
-            ),
-        ),
-        journal=typ.cast("dict[str, object]", journal),
-        events=ordered(decoded_events),
-        gaps=_gaps_from(document.get("stats")),
-    )
-
-
-def _gaps_from(stats: object) -> tuple[Gap, ...]:
-    """Rebuild the reported gaps from a snapshot's stats block.
-
-    Returns
-    -------
-    tuple[Gap, ...]
-        The gaps recorded when the snapshot was taken.
-    """
-    if not isinstance(stats, dict):
-        return ()
-    reported = typ.cast("dict[str, object]", stats).get("gaps")
-    if not isinstance(reported, list):
-        return ()
-    gaps: list[Gap] = []
-    for row in reported:
-        if not isinstance(row, dict):
-            continue
-        value = typ.cast("dict[str, object]", row)
-        gaps.append(
-            Gap(
-                start=_parse_stamp(value["start"]),
-                end=_parse_stamp(value["end"]),
-                seconds=float(typ.cast("float", value["seconds"])),
-            )
-        )
-    return tuple(gaps)
-
-
-def _parse_stamp(value: object) -> dt.datetime:
-    """Parse a required UTC timestamp.
-
-    Returns
-    -------
-    datetime
-        The parsed time in UTC.
-
-    Raises
-    ------
-    TypeError
-        If the value is not text.
-    ValueError
-        If the text is not a timestamp with an offset.
-    """
-    if not isinstance(value, str):
-        msg = "a snapshot timestamp must be text"
-        raise TypeError(msg)
-    parsed = dt.datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        msg = "a snapshot timestamp must carry an offset"
-        raise ValueError(msg)
-    return parsed.astimezone(dt.UTC)

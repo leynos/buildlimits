@@ -20,8 +20,8 @@ from buildlimits.predict.dataset import (
     Snapshot,
     build_snapshot,
     count_journal,
-    save_snapshot,
 )
+from buildlimits.predict.snapshot_store import save_snapshot
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -48,7 +48,8 @@ def main(
     Returns
     -------
     int
-        0 on success, 1 when the store cannot be read, 2 on invalid usage.
+        0 on success, 1 when the store cannot be read, 2 on invalid usage or an
+        unreadable parameter file.
     """
     parser = argparse.ArgumentParser(prog="build-limits-predict-dataset")
     parser.add_argument(
@@ -77,6 +78,11 @@ def main(
         options = parser.parse_args(argv)
     except SystemExit as error:
         return int(error.code) if isinstance(error.code, int) else 2
+    try:
+        config = load_config()
+    except (TypeError, ValueError, OSError) as error:
+        print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
+        return 2
     decoded = _read(options.store)
     if isinstance(decoded, int):
         return decoded
@@ -89,7 +95,7 @@ def main(
         decoded,
         now=dt.datetime.now(dt.UTC),
         journal=note,
-        gap_threshold_seconds=load_config().gap_threshold_seconds,
+        gap_threshold_seconds=config.gap_threshold_seconds,
     )
     save_snapshot(options.output, snapshot)
     _report(snapshot, options.output)
@@ -104,10 +110,10 @@ def _read(store: Path | None) -> DecodedStore | int:
     DecodedStore | int
         An exit status on failure, otherwise the decoded store.
     """
-    path = store_path(os.environ) if store is None else store
     try:
+        path = store_path(os.environ) if store is None else store
         decoded = outcome_store_io.read_store(path)
-    except OSError as error:
+    except (OSError, ValueError) as error:
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 1
     if isinstance(decoded, RecordFailure):

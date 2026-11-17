@@ -28,7 +28,7 @@ def render_markdown(document: cabc.Mapping[str, object]) -> str:
     lines = _header(document, len(predictors))
     lines += _comparison_table(predictors, ranking)
     lines += _calibration_table(predictors, ranking)
-    lines += _difference_table(predictors, ranking)
+    lines += _difference_table(predictors, ranking, document)
     lines += _ablation_table(document)
     lines += _origin_table(predictors, ranking)
     return "\n".join(lines).rstrip() + "\n"
@@ -200,6 +200,7 @@ def _calibration_table(
 def _difference_table(
     predictors: cabc.Mapping[str, dict[str, object]],
     ranking: cabc.Sequence[str],
+    document: cabc.Mapping[str, object],
 ) -> list[str]:
     """Return block-bootstrap differences from the base rate.
 
@@ -208,6 +209,10 @@ def _difference_table(
     list[str]
         Markdown lines.
     """
+    config = typ.cast("dict[str, object]", document["config"])
+    interval_name = (
+        f"{_pct(1.0 - typ.cast('float', config['bootstrap_alpha']))} interval"
+    )
     lines = [
         "## Difference from the base rate",
         "",
@@ -216,7 +221,7 @@ def _difference_table(
             "interval is a block bootstrap over contiguous held-out events."
         ),
         "",
-        "| Predictor | Difference | 95% interval | Paired rows |",
+        f"| Predictor | Difference | {interval_name} | Paired rows |",
         "| --- | ---: | ---: | ---: |",
     ]
     for name in ranking:

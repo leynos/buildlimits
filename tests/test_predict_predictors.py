@@ -6,8 +6,8 @@ import json
 import typing as typ
 
 import pytest
+from predict_test_helpers import predict_config
 
-from buildlimits.predict.config import Config, load_config
 from buildlimits.predict.dataset import Snapshot, Source
 from buildlimits.predict.ensembles import Ensemble
 from buildlimits.predict.evaluation import evaluate
@@ -25,14 +25,7 @@ from buildlimits.predict.synthetic import drift, identity, persistent, stationar
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
-
-
-def _config(**changes: object) -> Config:
-    """Return the pinned config with test-speed overrides."""
-    base = dc.replace(
-        load_config(), minimum_labelled_events=100, bootstrap_resamples=100
-    )
-    return dc.replace(base, **changes)
+    from buildlimits.predict.config import Config
 
 
 def _row(index: int, *, origin: str = "registry") -> Features:
@@ -65,7 +58,7 @@ def _document(events: tuple[Event, ...], config: Config) -> dict[str, object]:
 
 def test_stationary_stream_puts_the_base_rate_near_its_true_brier() -> None:
     """A stable 70% hit rate scores the base rate at about 0.21 Brier."""
-    config = _config()
+    config = predict_config()
     walk = walk_forward(stationary(count=1200, rate=0.7, seed=11), config)
 
     result = evaluate(walk, config)
@@ -77,7 +70,7 @@ def test_stationary_stream_puts_the_base_rate_near_its_true_brier() -> None:
 
 def test_last_outcome_wins_on_a_persistent_stream() -> None:
     """When every identity repeats itself, the last outcome beats the base rate."""
-    config = _config()
+    config = predict_config()
     walk = walk_forward(persistent(count=800, seed=3), config)
 
     result = evaluate(walk, config)
@@ -93,7 +86,7 @@ def test_last_outcome_wins_on_a_persistent_stream() -> None:
 
 def test_unknown_outcomes_are_never_scored_as_misses() -> None:
     """An all-unknown stream leaves nothing to score at all."""
-    config = _config()
+    config = predict_config()
     unknown = tuple(
         dc.replace(event, label="unknown")
         for event in stationary(count=120, rate=0.7, seed=2)
@@ -167,7 +160,7 @@ def test_adaptive_ensemble_shifts_weight_towards_the_better_component() -> None:
 
 def test_a_drifting_stream_moves_the_adaptive_ensemble_off_equal_weights() -> None:
     """When the hit rate changes halfway, Hedge no longer tracks the equal mix."""
-    config = _config()
+    config = predict_config()
     stream = drift(count=600, first_rate=0.9, second_rate=0.1, seed=5)
 
     result = evaluate(walk_forward(stream, config), config)
@@ -183,7 +176,7 @@ def test_a_drifting_stream_moves_the_adaptive_ensemble_off_equal_weights() -> No
 
 def test_fixed_weights_ignore_held_out_labels() -> None:
     """Mutating only held-out labels leaves the fitted weights unchanged."""
-    config = _config()
+    config = predict_config()
     events = stationary(count=1200, rate=0.7, seed=8)
     walk = walk_forward(events, config)
     original = evaluate(walk, config)
@@ -203,7 +196,7 @@ def test_fixed_weights_ignore_held_out_labels() -> None:
 
 def test_two_runs_produce_identical_results() -> None:
     """The same snapshot and config give a byte-identical result document."""
-    config = _config()
+    config = predict_config()
     events = stationary(count=400, rate=0.6, seed=4)
 
     first = _document(events, config)

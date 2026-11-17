@@ -11,12 +11,12 @@ import sys
 from pathlib import Path
 
 from buildlimits.predict.config import load_config
-from buildlimits.predict.dataset import load_snapshot
 from buildlimits.predict.evaluation import evaluate
 from buildlimits.predict.events import fingerprint
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.render import render_timings
 from buildlimits.predict.report import Provenance, build_report
+from buildlimits.predict.snapshot_store import load_snapshot
 
 DEFAULT_SNAPSHOT = Path("build/predict/history.jsonl")
 DEFAULT_OUTPUT = Path("build/predict")

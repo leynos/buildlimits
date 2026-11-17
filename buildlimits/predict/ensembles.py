@@ -10,7 +10,7 @@ import dataclasses as dc
 import math
 import typing as typ
 
-from buildlimits.predict.predictors import clip_probability
+from buildlimits.predict.probability import clip_probability
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -18,6 +18,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.config import Config
 
 MODES = ("equal", "fixed", "adaptive")
+_MIN_CURVATURE = 1e-12
 
 
 @dc.dataclass(slots=True)
@@ -69,14 +70,29 @@ class Ensemble:
     def update(
         self, probabilities: cabc.Sequence[float | None], *, is_hit: bool
     ) -> None:
-        """Move adaptive weights after a label; leave constant weights alone."""
+        """Move adaptive weights after a label; leave constant weights alone.
+
+        A component that abstained is charged the average loss of the
+        components that answered. Leaving its weight untouched would let it
+        gain share purely by sitting out the events the others lost, and the
+        renormalization below turns that into a larger weight when it returns.
+        """
         if self.mode != "adaptive":
             return
-        for index, probability in enumerate(probabilities):
-            if probability is None:
-                continue
-            loss = _normalized_log_loss(probability, is_hit=is_hit, clip=self.clip)
-            self.weights[index] *= math.exp(-self.eta * loss)
+        losses = [
+            None
+            if probability is None
+            else _normalized_log_loss(probability, is_hit=is_hit, clip=self.clip)
+            for probability in probabilities
+        ]
+        answered = [loss for loss in losses if loss is not None]
+        if not answered:
+            return
+        shared = sum(answered) / len(answered)
+        self.weights = [
+            weight * math.exp(-self.eta * (shared if loss is None else loss))
+            for weight, loss in zip(self.weights, losses, strict=True)
+        ]
         total = sum(self.weights)
         if total > 0:
             self.weights = [weight / total for weight in self.weights]
@@ -177,6 +193,11 @@ def _log_loss_gradient(
 ) -> list[float]:
     """Return the mean gradient of the log loss over the rows.
 
+    With ``m`` the clipped consensus probability, ``y`` the outcome and
+    ``M`` the total weight of the components that answered, the derivative
+    of the log loss with respect to a component's weight is
+    ``(m - y) * p / (M * m * (1 - m))``.
+
     Returns
     -------
     list[float]
@@ -196,9 +217,13 @@ def _log_loss_gradient(
             )
             / mass
         )
-        error = clip_probability(mean, clip) - outcome
+        probability = clip_probability(mean, clip)
+        # The curvature vanishes at the extremes, where the clip has already
+        # flattened the loss; the floor keeps the step finite there.
+        curvature = max(probability * (1.0 - probability), _MIN_CURVATURE)
+        error = probability - outcome
         for index, value in zip(available, values, strict=True):
-            gradient[index] += error * value / mass
+            gradient[index] += error * value / (mass * curvature)
     return [value / len(outcomes) for value in gradient]
 
 
