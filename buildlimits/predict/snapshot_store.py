@@ -14,8 +14,12 @@ import tempfile
 import typing as typ
 from pathlib import Path
 
-from buildlimits.predict.dataset import SNAPSHOT_VERSION, Gap, Snapshot, Source
-from buildlimits.predict.snapshot_codec import event_from_dict
+from buildlimits.predict.dataset import Gap, Snapshot, Source
+from buildlimits.predict.snapshot_codec import (
+    SNAPSHOT_VERSION,
+    event_from_dict,
+    snapshot_to_dict,
+)
 from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
@@ -36,7 +40,7 @@ def save_snapshot(path: Path, snapshot: Snapshot) -> None:
     file is the only way to keep it reproducible.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    document = json.dumps(snapshot.to_dict(), indent=2, sort_keys=True)
+    document = json.dumps(snapshot_to_dict(snapshot), indent=2, sort_keys=True)
     descriptor, name = tempfile.mkstemp(
         dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
     )

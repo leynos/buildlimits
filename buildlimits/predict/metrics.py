@@ -78,22 +78,6 @@ class CalibrationBin:
     mean_probability: float | None
     observed_rate: float | None
 
-    def to_dict(self) -> dict[str, object]:
-        """Return the report shape for one bin.
-
-        Returns
-        -------
-        dict[str, object]
-            The bin under stable keys.
-        """
-        return {
-            "lower": self.lower,
-            "upper": self.upper,
-            "count": self.count,
-            "mean_probability": self.mean_probability,
-            "observed_rate": self.observed_rate,
-        }
-
 
 @dc.dataclass(frozen=True, slots=True)
 class Metrics:
@@ -135,25 +119,6 @@ class Metrics:
             ``scored / labelled``, or zero when nothing was labelled.
         """
         return 0.0 if self.labelled == 0 else self.scored / self.labelled
-
-    def to_dict(self) -> dict[str, object]:
-        """Return the deterministic report shape.
-
-        Returns
-        -------
-        dict[str, object]
-            Every metric under stable keys.
-        """
-        return {
-            "labelled": self.labelled,
-            "scored": self.scored,
-            "abstentions": self.abstentions,
-            "coverage": self.coverage,
-            "brier": self.brier,
-            "log_loss": self.log_loss,
-            "accuracy": self.accuracy,
-            "calibration": [bin_.to_dict() for bin_ in self.calibration],
-        }
 
 
 def brier_of(probability: float, outcome: int) -> float:

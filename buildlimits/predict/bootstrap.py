@@ -60,25 +60,6 @@ class Interval:
     rows: int
     positions: int
 
-    def to_dict(self) -> dict[str, object]:
-        """Return the report shape for one interval.
-
-        Returns
-        -------
-        dict[str, object]
-            The interval under stable keys.
-        """
-        return {
-            "difference": self.difference,
-            "low": self.low,
-            "high": self.high,
-            "resamples": self.resamples,
-            "block_size": self.block_size,
-            "blocks": self.blocks,
-            "rows": self.rows,
-            "positions": self.positions,
-        }
-
 
 def paired_differences(
     first: cabc.Sequence[ScoredRow | None],

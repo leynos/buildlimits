@@ -1,9 +1,10 @@
-"""Encode and decode the snapshot's event rows.
+"""Encode and decode the snapshot document and its event rows.
 
 An event is a domain value: an identity, an origin, a label and the times those
-became known. The JSON shape is a storage concern, so the codec that reads and
-writes it lives beside the snapshot store rather than on the event itself. This
-also keeps :mod:`buildlimits.predict.events` free of a JSON dependency.
+became known. The JSON shapes are storage concerns, so the codec that reads and
+writes them lives beside the snapshot store rather than on the values
+themselves. This also keeps :mod:`buildlimits.predict.events` free of a JSON
+dependency and keeps a domain value from carrying a serialization method.
 """
 
 import datetime as dt
@@ -19,8 +20,10 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.outcome_record_format import Origin
+    from buildlimits.predict.dataset import Gap, Snapshot, Source
     from buildlimits.predict.events import Label
 
+SNAPSHOT_VERSION = 1
 _EVENT_FIELDS = frozenset({
     "identity",
     "origin",
@@ -47,6 +50,57 @@ def event_to_dict(event: Event) -> dict[str, object]:
         "observed_at": _stamp(event.observed_at),
         "label": event.label,
         "runtime_seconds": round(event.runtime_seconds, 6),
+    }
+
+
+def gap_to_dict(gap: Gap) -> dict[str, object]:
+    """Return the snapshot shape for one reported silence.
+
+    Returns
+    -------
+    dict[str, object]
+        The gap under stable keys.
+    """
+    return {
+        "start": utc_text(gap.start),
+        "end": utc_text(gap.end),
+        "seconds": round(gap.seconds, 3),
+    }
+
+
+def source_to_dict(source: Source) -> dict[str, object]:
+    """Return the snapshot shape for the store provenance.
+
+    Returns
+    -------
+    dict[str, object]
+        The provenance under stable keys.
+    """
+    return {
+        "kind": "cache-outcomes",
+        "salt_id": source.salt_id,
+        "written_at": utc_text(source.written_at),
+        "records_total": source.records_total,
+        "outcome_records": source.outcome_records,
+        "summary_records": source.summary_records,
+    }
+
+
+def snapshot_to_dict(snapshot: Snapshot) -> dict[str, object]:
+    """Return the complete versioned snapshot document.
+
+    Returns
+    -------
+    dict[str, object]
+        The document written to disk.
+    """
+    return {
+        "snapshot_version": SNAPSHOT_VERSION,
+        "created_at": utc_text(snapshot.created_at),
+        "source": source_to_dict(snapshot.source),
+        "journal": snapshot.journal,
+        "stats": snapshot.stats(),
+        "events": [event_to_dict(event) for event in snapshot.events],
     }
 
 

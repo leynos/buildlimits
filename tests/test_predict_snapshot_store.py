@@ -17,7 +17,7 @@ from predict_test_helpers import write_json
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.dataset import build_snapshot
 from buildlimits.predict.events import EPOCH, Event
-from buildlimits.predict.snapshot_codec import event_to_dict
+from buildlimits.predict.snapshot_codec import event_to_dict, snapshot_to_dict
 from buildlimits.predict.snapshot_store import load_snapshot
 
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
@@ -27,7 +27,7 @@ def _document() -> dict[str, object]:
     """Return the encoded snapshot of one attributed hit."""
     records = (attributed_record(outcome="hit"),)
     decoded = DecodedStore(StoreHeader("fixed-salt", NOW), typ.cast("typ.Any", records))
-    return build_snapshot(decoded, now=NOW).to_dict()
+    return snapshot_to_dict(build_snapshot(decoded, now=NOW))
 
 
 @pytest.mark.parametrize(

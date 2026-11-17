@@ -27,7 +27,6 @@ from buildlimits.predict.history import (
     released_labels,
 )
 from buildlimits.predict.predictors import single_predictors, update_all
-from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -56,20 +55,6 @@ class Split:
     train_labelled: int
     heldout_labelled: int
     boundary: dt.datetime | None
-
-    def to_dict(self) -> dict[str, object]:
-        """Return the report shape for the split.
-
-        Returns
-        -------
-        dict[str, object]
-            Counts and the boundary timestamp.
-        """
-        return {
-            "train_labelled": self.train_labelled,
-            "heldout_labelled": self.heldout_labelled,
-            "boundary": (None if self.boundary is None else utc_text(self.boundary)),
-        }
 
 
 @dc.dataclass(frozen=True, slots=True)

@@ -15,6 +15,7 @@ from buildlimits.predict.bootstrap import (
 )
 from buildlimits.predict.events import EPOCH
 from buildlimits.predict.metrics import ScoredRow
+from buildlimits.predict.report_codec import interval_to_dict
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
@@ -235,7 +236,7 @@ def test_the_interval_shape_is_stable() -> None:
     interval = block_bootstrap([0.03] * 12, config=predict_config())
 
     assert interval is not None, "12 rows are enough"
-    document = interval.to_dict()
+    document = interval_to_dict(interval)
     for key in (
         "difference",
         "low",

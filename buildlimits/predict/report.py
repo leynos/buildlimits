@@ -11,6 +11,12 @@ import json
 import typing as typ
 
 from buildlimits.predict.render import render_markdown
+from buildlimits.predict.report_codec import (
+    interval_to_dict,
+    metrics_to_dict,
+    split_to_dict,
+)
+from buildlimits.predict.snapshot_codec import source_to_dict
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -110,10 +116,10 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
         "data": {
             "fingerprint": provenance.fingerprint,
             "stats": provenance.snapshot.stats(),
-            "source": provenance.snapshot.source.to_dict(),
+            "source": source_to_dict(provenance.snapshot.source),
             "journal": provenance.snapshot.journal,
         },
-        "split": evaluation.walk.split.to_dict(),
+        "split": split_to_dict(evaluation.walk.split),
         "replay": {
             "moments": len(evaluation.walk.moments),
             "unavailable_admission": evaluation.walk.unavailable_admission,
@@ -130,12 +136,13 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
         },
         "best_single_on_training": evaluation.best_single,
         "ensembles_against_best_single": {
-            name: None if interval is None else interval.to_dict()
+            name: None if interval is None else interval_to_dict(interval)
             for name, interval in evaluation.against_best_single.items()
         },
         "ablation": {
             mode: {
-                component: metrics.to_dict() for component, metrics in removed.items()
+                component: metrics_to_dict(metrics)
+                for component, metrics in removed.items()
             }
             for mode, removed in evaluation.ablation_metrics.items()
         },
@@ -162,17 +169,17 @@ def _predictor_entry(
     """
     interval = evaluation.against_base_rate.get(name)
     origins = {
-        key.removeprefix("origin:"): value.to_dict()
+        key.removeprefix("origin:"): metrics_to_dict(value)
         for key, value in block.items()
         if key.startswith("origin:")
     }
     train = block.get("train")
     return {
-        "overall": block["overall"].to_dict(),
-        "train": None if train is None else train.to_dict(),
-        "held-out": block["held-out"].to_dict(),
+        "overall": metrics_to_dict(block["overall"]),
+        "train": None if train is None else metrics_to_dict(train),
+        "held-out": metrics_to_dict(block["held-out"]),
         "by_origin": origins,
-        "against_base_rate": None if interval is None else interval.to_dict(),
+        "against_base_rate": None if interval is None else interval_to_dict(interval),
         "weights": weights.get(name),
         "meets_minimum": evaluation.meets_minimum(name),
     }

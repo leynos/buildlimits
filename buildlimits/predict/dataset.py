@@ -16,7 +16,7 @@ from buildlimits.metrics_query import MAX_RECORDS as _MAX_JOURNAL_RECORDS
 from buildlimits.outcome_record_format import OutcomeRecord
 from buildlimits.predict.events import admission_moment
 from buildlimits.predict.records import build_events
-from buildlimits.predict.snapshot_codec import event_to_dict
+from buildlimits.predict.snapshot_codec import gap_to_dict
 from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
@@ -26,7 +26,6 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import DecodedStore
     from buildlimits.predict.events import Event
 
-SNAPSHOT_VERSION = 1
 DEFAULT_JOURNAL_SPAN = "4w"
 
 
@@ -47,20 +46,6 @@ class Gap:
     start: dt.datetime
     end: dt.datetime
     seconds: float
-
-    def to_dict(self) -> dict[str, object]:
-        """Return the snapshot shape for one gap.
-
-        Returns
-        -------
-        dict[str, object]
-            The gap under stable keys.
-        """
-        return {
-            "start": utc_text(self.start),
-            "end": utc_text(self.end),
-            "seconds": round(self.seconds, 3),
-        }
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -86,23 +71,6 @@ class Source:
     records_total: int
     outcome_records: int
     summary_records: int
-
-    def to_dict(self) -> dict[str, object]:
-        """Return the snapshot shape for the store provenance.
-
-        Returns
-        -------
-        dict[str, object]
-            The provenance under stable keys.
-        """
-        return {
-            "kind": "cache-outcomes",
-            "salt_id": self.salt_id,
-            "written_at": utc_text(self.written_at),
-            "records_total": self.records_total,
-            "outcome_records": self.outcome_records,
-            "summary_records": self.summary_records,
-        }
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -154,24 +122,7 @@ class Snapshot:
             "admission_usable": usable,
             "admission_missing": total - len(recorded),
             "admission_unusable": len(recorded) - usable,
-            "gaps": [gap.to_dict() for gap in self.gaps],
-        }
-
-    def to_dict(self) -> dict[str, object]:
-        """Return the complete snapshot document.
-
-        Returns
-        -------
-        dict[str, object]
-            The versioned document written to disk.
-        """
-        return {
-            "snapshot_version": SNAPSHOT_VERSION,
-            "created_at": utc_text(self.created_at),
-            "source": self.source.to_dict(),
-            "journal": self.journal,
-            "stats": self.stats(),
-            "events": [event_to_dict(event) for event in self.events],
+            "gaps": [gap_to_dict(gap) for gap in self.gaps],
         }
 
 
