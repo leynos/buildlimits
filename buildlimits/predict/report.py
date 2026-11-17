@@ -205,7 +205,9 @@ def _timing_entry(
     Returns
     -------
     dict[str, object]
-        Seconds per scope, with the call count that produced them.
+        Seconds per scope, with the call count that produced them. The
+        per-call mean of a scope with no calls is None rather than a measured
+        zero.
     """
     scopes: dict[str, list[float]] = {"overall": list(elapsed)}
     for phase in ("train", "held-out"):
@@ -218,7 +220,7 @@ def _timing_entry(
         "predictions": len(elapsed),
         "seconds": {scope: sum(values) for scope, values in scopes.items()},
         "microseconds_each": {
-            scope: (0.0 if not values else 1e6 * sum(values) / len(values))
+            scope: (None if not values else 1e6 * sum(values) / len(values))
             for scope, values in scopes.items()
         },
         "seconds_by_origin": by_origin,

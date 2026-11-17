@@ -194,9 +194,6 @@ nixie: ## Validate Mermaid diagrams
 	$(call ensure_tool,$(NIXIE))
 	$(NIXIE) --no-sandbox
 
-# The model-check opt-in is cleared here so an opt-in left in the calling
-# shell cannot make `make test` depend on the pinned checker being installed.
-# Tests that need the checker are run by an explicitly opted-in pytest.
 # The benchmark reads the recorded-history snapshot rather than the live store,
 # so a run stays reproducible after the journal rotates. The snapshot is built
 # only when it is missing; refresh it explicitly with `make predict-dataset`.
@@ -213,6 +210,9 @@ predict-benchmark: build $(PREDICT_SNAPSHOT) ## Compare cache-hit predictors on 
 	$(UV_ENV) $(UV) run build-limits-predict-benchmark \
 	  --snapshot $(PREDICT_SNAPSHOT) --output $(PREDICT_OUTPUT)
 
+# The model-check opt-in is cleared here so an opt-in left in the calling
+# shell cannot make `make test` depend on the pinned checker being installed.
+# Tests that need the checker are run by an explicitly opted-in pytest.
 test: build $(VENV_TOOLS) ## Run tests
 	env -u BUILD_LIMITS_MODEL_CHECK $(UV_ENV) $(ACT_TEST_ENV) $(UV) run pytest -v -n $(PYTEST_XDIST_WORKERS)
 

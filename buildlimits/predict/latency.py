@@ -7,7 +7,7 @@ latency; the two are never added together or read as the same measurement.
 
 import typing as typ
 
-from buildlimits.predict.formatting import as_count
+from buildlimits.predict.formatting import MISSING, as_count
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -60,10 +60,21 @@ def _timing_rows(entries: cabc.Mapping[str, dict[str, object]]) -> list[str]:
     for name in sorted(entries):
         value = entries[name]
         seconds = typ.cast("dict[str, float]", value["seconds"])
-        each = typ.cast("dict[str, float]", value["microseconds_each"])
+        each = typ.cast("dict[str, float | None]", value["microseconds_each"])
         lines.append(
             f"| `{name}` | {as_count(value['predictions'])} "
-            f"| {1e3 * seconds['overall']:.3f} | {each['overall']:.3f} "
-            f"| {each['held-out']:.3f} |"
+            f"| {1e3 * seconds['overall']:.3f} | {_microseconds(each['overall'])} "
+            f"| {_microseconds(each['held-out'])} |"
         )
     return lines
+
+
+def _microseconds(value: float | None) -> str:
+    """Render one per-call mean, or the missing marker for an empty scope.
+
+    Returns
+    -------
+    str
+        Three decimal places, or ``-`` when nothing was measured.
+    """
+    return MISSING if value is None else f"{value:.3f}"

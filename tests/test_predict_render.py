@@ -91,6 +91,29 @@ def test_the_timings_report_keeps_combination_time_apart() -> None:
     assert "`ensemble-equal`" in after, "the ensemble is reported apart"
 
 
+def test_an_empty_history_has_a_missing_window() -> None:
+    """No first or last label is shown as missing, not as the text None."""
+    markdown = render_markdown(_empty_document())
+
+    assert "- Window: - to -" in markdown, "both ends are marked missing"
+
+
+def test_a_scope_with_no_calls_is_missing_not_zero() -> None:
+    """A predictor that measured nothing does not report a measured mean."""
+    entry = {
+        "predictions": 0,
+        "seconds": {"overall": 0.0, "train": 0.0, "held-out": 0.0},
+        "microseconds_each": {"overall": None, "train": None, "held-out": None},
+        "seconds_by_origin": {},
+    }
+    markdown = render_timings({
+        "predictors": {"base-rate": entry},
+        "ensembles": {},
+    })
+
+    assert "| `base-rate` | 0 | 0.000 | - | - |" in markdown, "empty scope is marked"
+
+
 def test_an_unavailable_journal_states_its_reason() -> None:
     """Provenance names why the journal contributed nothing."""
     markdown = render_markdown(_empty_document())

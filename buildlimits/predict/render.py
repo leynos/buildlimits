@@ -89,7 +89,7 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
             f"({as_percent(stats['labelled_fraction'])}), "
             f"{as_count(stats['identities'])} identities"
         ),
-        f"- Window: {stats['span_start']} to {stats['span_end']}",
+        f"- Window: {stats['span_start'] or MISSING} to {stats['span_end'] or MISSING}",
         (f"- Gaps over threshold: {len(typ.cast('list[object]', stats['gaps']))}"),
         (
             f"- Split: {as_count(split['train_labelled'])} tuning, "

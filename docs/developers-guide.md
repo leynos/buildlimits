@@ -94,7 +94,7 @@ result can be reproduced from a file.
 
 `make predict-benchmark` depends on the snapshot target and extracts one when
 the file is absent. The command prints `results.md` and the latency table;
-`results.md` holds the comparison, calibration, difference and ablation tables.
+`results.md` holds the comparison, calibration, difference, and ablation tables.
 `results.json` is byte-identical for the same snapshot, config and seed, so it
 can be diffed between runs. The measured latency is host-specific and therefore
 lives in `timings.json` and the printed table only, never in `results.json` or
@@ -103,7 +103,7 @@ reported in separate tables: an ensemble only combines answers its components
 had already produced, so its elapsed time is not a prediction time.
 
 `buildlimits/predict/config.json` pins every parameter, including the training
-fraction, the bootstrap seed and `minimum_labelled_events`. A run with fewer
+fraction, the bootstrap seed, and `minimum_labelled_events`. A run with fewer
 labelled events than that minimum reports `insufficient data` with the counts
 it did see; it never substitutes a synthetic stream for real history. A run
 that clears that minimum but holds too little of it in the held-out period
@@ -115,16 +115,19 @@ judge.
 The replay is prequential: a row is predicted when its label arrives, and the
 label is applied afterwards. Rows whose labels arrived at the same moment are
 predicted as a batch before any of them is applied, so two simultaneous
-outcomes cannot inform each other. The commit named in the report is read from
-the repository that holds the benchmark module, and only when that repository
+outcomes cannot inform each other. A row's age and load are measured at the
+request's admission when the source recorded that time, and at the label time
+otherwise, so a completion labelled after the admission is not counted as load
+the decision could have seen. The commit named in the report is read from the
+repository that holds the benchmark module, and only when that repository
 tracks the module's own path; an installed copy therefore reports `unknown`
 rather than borrowing its host project's commit.
 
-`make predict-dataset` refuses an `--output` that resolves to the store it is
-reading, including through a symbolic link, so it cannot replace the outcome
-store with a snapshot document. An output path that cannot be written, such as
-a directory or a read-only location, is reported as a command failure with
-status 1 rather than a traceback.
+`make predict-dataset` refuses any `--output` path that resolves to the store
+it is reading, including through a symbolic link, so it cannot replace the
+outcome store with a snapshot document. An output path that cannot be written,
+such as a directory or a read-only location, is reported as a command failure
+with status 1 rather than a traceback.
 
 ## 3. Architecture overview
 

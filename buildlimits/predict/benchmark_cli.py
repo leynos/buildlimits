@@ -28,8 +28,8 @@ def main(argv: list[str] | None = None) -> int:
     Returns
     -------
     int
-        0 when a report was produced, 2 on invalid usage, 1 when the
-        snapshot or config cannot be read.
+        0 when a report was produced, 1 when the snapshot cannot be read,
+        and 2 on invalid usage or an unreadable config.
     """
     parser = argparse.ArgumentParser(prog="build-limits-predict-benchmark")
     parser.add_argument(
