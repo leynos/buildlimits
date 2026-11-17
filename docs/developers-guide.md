@@ -1547,11 +1547,11 @@ reason when the code it names changes.
   If the publisher is ever inlined into its caller, re-run `make lint` before
   trusting these entries.
 - **Prediction benchmark.** Every predictor is called through the `Predictor`
-  protocol and every serializer through a comprehension or a dict lookup, so no
-  static edge reaches the concrete classes. Its Skylos entry points name the
-  protocol-dispatched methods of `LastOutcome`, `RollingRate`,
-  `ExponentialRate` and `LogisticModel`, the private `_sigmoid` and
-  `outcome_value`, and the `to_dict` and `Report.write` serializers. Its
+  protocol, so no static edge reaches the concrete classes. Its Skylos entry
+  points name the protocol-dispatched methods of `LastOutcome`, `RollingRate`,
+  `ExponentialRate` and `LogisticModel`, and the private `_sigmoid` and
+  `outcome_value`. Serialization needs no entry: after the codec split the
+  encoders are module-level functions that their callers name directly. Its
   duplication allowances cover matching import lists, the parallel dataset and
   benchmark CLI wiring, and the assertion idioms each prediction test suite
   repeats. Every entry and its reason is recorded in `pyproject.toml`.

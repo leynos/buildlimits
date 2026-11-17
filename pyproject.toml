@@ -572,32 +572,6 @@ full_name = [
 path = ["buildlimits/predict/probability.py"]
 reason = "_sigmoid is reached only from the protocol-dispatched predict above, and the online learners reach outcome_value only from their protocol-dispatched update methods, so neither caller is resolved. The sigmoid's doctest and test_predict_probability.py exercise the values either side of zero, and test_predict_predictors.py exercises the outcomes outcome_value maps to 1.0 and 0.0."
 
-# These serializers are called on values reached through a dict lookup, a
-# comprehension variable or a function return, so Skylos records no typed call
-# edge. The benchmark CLI tests read back results.json and results.md, and the
-# dataset round-trip test re-reads every field they write.
-[[tool.skylos.dead_code.entrypoints]]
-type = "method"
-full_name = [
-    "buildlimits.predict.bootstrap.Interval.to_dict",
-    "buildlimits.predict.dataset.Gap.to_dict",
-    "buildlimits.predict.dataset.Source.to_dict",
-    "buildlimits.predict.events.Event.to_dict",
-    "buildlimits.predict.harness.Split.to_dict",
-    "buildlimits.predict.metrics.CalibrationBin.to_dict",
-    "buildlimits.predict.metrics.Metrics.to_dict",
-    "buildlimits.predict.report.Report.write",
-]
-path = [
-    "buildlimits/predict/bootstrap.py",
-    "buildlimits/predict/dataset.py",
-    "buildlimits/predict/events.py",
-    "buildlimits/predict/harness.py",
-    "buildlimits/predict/metrics.py",
-    "buildlimits/predict/report.py",
-]
-reason = "Snapshot.to_dict serializes each Event through a comprehension, the stats block serializes gaps the same way, and the report builds its predictor and interval entries from dict lookups; Skylos follows none of those edges. The dataset round-trip test re-reads the fields the snapshot serializers write, and the benchmark CLI tests write and reload results.json, timings.json and results.md through Report.write."
-
 [[tool.skylos.dead_code.entrypoints]]
 type = "method"
 full_name = [
