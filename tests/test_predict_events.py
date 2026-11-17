@@ -15,6 +15,7 @@ from buildlimits.predict.events import (
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
+    from buildlimits.predict.events import Label
 
 ORIGIN = typ.cast("Origin", "registry")
 
@@ -127,6 +128,29 @@ def _admitted(identity: str, *, admitted: int, observed: int) -> Event:
         "hit",
         1.0,
     )
+
+
+def _labelled(seconds: int, label: str) -> Event:
+    """Return one event for identity ``a`` with the given label."""
+    return Event(
+        "a" * 64,
+        ORIGIN,
+        None,
+        EPOCH + dt.timedelta(seconds=seconds),
+        typ.cast("Label", label),
+        1.0,
+    )
+
+
+def test_an_unknown_outcome_is_not_labelled_history() -> None:
+    """An unknown outcome carries no usable label, so it is not history."""
+    rows = features(
+        (_labelled(0, "hit"), _labelled(10, "unknown"), _labelled(20, "hit")),
+        load_window_seconds=60.0,
+    )
+
+    assert rows[2].load == 1, "only the eligible hit is load"
+    assert rows[2].age_seconds == pytest.approx(20.0), "the age spans the missing label"
 
 
 def test_features_exclude_a_label_that_arrived_after_the_admission() -> None:

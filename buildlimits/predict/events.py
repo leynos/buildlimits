@@ -2,10 +2,11 @@
 
 The benchmark orders events by the moment their label became known. Features
 are measured at the moment a request was admitted, when the source recorded
-that time, and at the label time otherwise; only events whose labels were
-already known at that moment can contribute. The feature set therefore
-describes what an admission decision could have seen, and never a label that
-had not yet arrived.
+that time, and at the label time otherwise; only eligible hit/miss labels that
+were already known at that moment can contribute. An unknown outcome is a
+record with no usable label, so it neither counts as load nor sets an age. The
+feature set therefore describes what an admission decision could have seen,
+and never a label that had not yet arrived.
 """
 
 import bisect
@@ -98,11 +99,13 @@ class Features:
     observed_at : datetime
         The prediction time, equal to the label-availability time.
     age_seconds : float | None
-        Seconds since this identity's previous label, counted from the moment
-        the row is measured, or None when no earlier label was known then.
+        Seconds since this identity's previous eligible label, counted from the
+        moment the row is measured, or None when no earlier label was known
+        then.
     load : int
         Previously labelled events inside the trailing load window, excluding
-        this one and anything labelled after the row's measurement moment.
+        this one, unknown outcomes, and anything labelled after the row's
+        measurement moment.
     """
 
     identity: str
@@ -160,14 +163,17 @@ def ordered(events: cabc.Iterable[Event]) -> tuple[Event, ...]:
 def features(
     events: cabc.Sequence[Event], *, load_window_seconds: float
 ) -> tuple[Features, ...]:
-    """Derive each event's causal features from earlier events only.
+    """Derive each event's causal features from earlier eligible labels.
+
+    Unknown outcomes still receive a row, so row alignment never changes, but
+    they carry no label to learn from and are left out of the history.
 
     Parameters
     ----------
     events : Sequence[Event]
         The events sorted by label time, as :func:`ordered` leaves them.
-        Bisecting on that order is what limits each row to labels that had
-        already arrived when it is measured.
+        Bisecting on that order is what limits each row to eligible labels
+        that had already arrived when it is measured.
     load_window_seconds : float
         The trailing window, in seconds, over which load is counted.
 
@@ -185,7 +191,7 @@ def features(
     >>> first.age_seconds is None and first.load == 0
     True
     """
-    times = [event.observed_at for event in events]
+    times = [event.observed_at for event in events if scored_label(event) is not None]
     seen: dict[str, list[dt.datetime]] = {}
     rows: list[Features] = []
     for event in events:
@@ -201,7 +207,8 @@ def features(
                 load=_load_before(times, moment, load_window_seconds),
             )
         )
-        previous.append(event.observed_at)
+        if scored_label(event) is not None:
+            previous.append(event.observed_at)
     return tuple(rows)
 
 
@@ -316,11 +323,12 @@ def event_from_dict(value: object) -> Event:
 def _load_before(
     times: cabc.Sequence[dt.datetime], moment: dt.datetime, window_seconds: float
 ) -> int:
-    """Count earlier labels inside the trailing load window.
+    """Count earlier eligible labels inside the trailing load window.
 
     The window ends strictly before ``moment``, so an event labelled at the
     same moment is not load, and a zero-second window counts nothing.
-    ``times`` must be sorted, as :func:`ordered` leaves it.
+    ``times`` must be sorted and hold eligible labels only, as :func:`ordered`
+    and :func:`features` leave it.
 
     Returns
     -------
