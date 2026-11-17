@@ -16,6 +16,7 @@ from buildlimits.metrics_query import MAX_RECORDS as _MAX_JOURNAL_RECORDS
 from buildlimits.outcome_record_format import OutcomeRecord
 from buildlimits.predict.events import admission_moment
 from buildlimits.predict.records import build_events
+from buildlimits.predict.snapshot_codec import event_to_dict
 from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
@@ -170,7 +171,7 @@ class Snapshot:
             "source": self.source.to_dict(),
             "journal": self.journal,
             "stats": self.stats(),
-            "events": [event.to_dict() for event in self.events],
+            "events": [event_to_dict(event) for event in self.events],
         }
 
 

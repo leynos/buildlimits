@@ -17,6 +17,7 @@ from predict_test_helpers import write_json
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.dataset import build_snapshot
 from buildlimits.predict.events import EPOCH, Event
+from buildlimits.predict.snapshot_codec import event_to_dict
 from buildlimits.predict.snapshot_store import load_snapshot
 
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
@@ -191,14 +192,15 @@ def _event(identity_byte: str, minutes: int, *, admitted: bool) -> dict[str, obj
     dict[str, object]
         The event's encoded shape.
     """
-    return Event(
+    event = Event(
         identity_byte * 64,
         "git",
         EPOCH if admitted else None,
         EPOCH + dt.timedelta(minutes=minutes),
         "hit",
         1.0,
-    ).to_dict()
+    )
+    return event_to_dict(event)
 
 
 def _backward_history(*, admitted: bool) -> dict[str, object]:
