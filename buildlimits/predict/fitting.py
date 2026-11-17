@@ -142,27 +142,32 @@ def _mean_log_loss(
     weights: cabc.Sequence[float],
     clip: float,
 ) -> float:
-    """Return the mean clipped log loss over the rows.
+    """Return the mean clipped log loss over the rows that answered.
 
     This is the loss the report scores, so the fit optimizes the same
     quantity. A row whose raw mean the clip has flattened contributes the same
-    loss whatever its weights are.
+    loss whatever its weights are, while a row no component answered is left
+    out of the mean: dividing by every row would let a proposal that answered
+    less score better than one that answered at all.
 
     Returns
     -------
     float
-        The mean loss in nats.
+        The mean loss in nats, or infinity when no row answered.
     """
     total = 0.0
-    for row, outcome in zip(rows, outcomes, strict=True):
-        consensus = _consensus(row, weights)
-        if consensus is None:
-            continue
+    scored = 0
+    for consensus, outcome in _answered(rows, outcomes, weights):
+        scored += 1
         probability = clip_probability(consensus.mean, clip)
         total -= outcome * math.log(probability) + (1.0 - outcome) * math.log(
             1.0 - probability
         )
-    return total / len(outcomes)
+    if scored == 0:
+        # A proposal that answers nothing has no loss to compare. Zero would
+        # read as a perfect fit and win the step the gradient just proposed.
+        return math.inf
+    return total / scored
 
 
 def _log_loss_gradient(
@@ -172,6 +177,9 @@ def _log_loss_gradient(
     clip: float,
 ) -> list[float]:
     """Return the mean gradient of the clipped log loss over the rows.
+
+    The divisor is the number of rows that answered, matching the objective
+    the step is measured against.
 
     With ``m`` the clipped consensus probability, ``y`` the outcome, ``M`` the
     total weight of the components that answered and ``p`` the component's
@@ -194,9 +202,10 @@ def _log_loss_gradient(
         One partial derivative per component.
     """
     gradient = [0.0] * len(weights)
-    for row, outcome in zip(rows, outcomes, strict=True):
-        consensus = _consensus(row, weights)
-        if consensus is None or not clip <= consensus.mean <= 1.0 - clip:
+    scored = 0
+    for consensus, outcome in _answered(rows, outcomes, weights):
+        scored += 1
+        if not clip <= consensus.mean <= 1.0 - clip:
             continue
         probability = clip_probability(consensus.mean, clip)
         # The curvature vanishes at the extremes; the floor keeps the step
@@ -207,7 +216,9 @@ def _log_loss_gradient(
             gradient[index] += (
                 error * (value - consensus.mean) / (consensus.mass * curvature)
             )
-    return [value / len(outcomes) for value in gradient]
+    if scored == 0:
+        return gradient
+    return [value / scored for value in gradient]
 
 
 def _consensus(row: _Column, weights: cabc.Sequence[float]) -> _Consensus | None:
@@ -227,6 +238,27 @@ def _consensus(row: _Column, weights: cabc.Sequence[float]) -> _Consensus | None
         return None
     mean = sum(weights[index] * value for index, value in answered) / mass
     return _Consensus(mean=mean, mass=mass, answered=answered)
+
+
+def _answered(
+    rows: cabc.Sequence[_Column],
+    outcomes: cabc.Sequence[float],
+    weights: cabc.Sequence[float],
+) -> cabc.Iterator[tuple[_Consensus, float]]:
+    """Yield each row that produced a consensus, with its outcome.
+
+    Both the objective and its gradient average over the rows that answered, so
+    they share this filter rather than each restating it.
+
+    Yields
+    ------
+    tuple[_Consensus, float]
+        One consensus and outcome per answered row, in row order.
+    """
+    for row, outcome in zip(rows, outcomes, strict=True):
+        consensus = _consensus(row, weights)
+        if consensus is not None:
+            yield consensus, outcome
 
 
 def _project(weights: cabc.Sequence[float]) -> list[float]:
