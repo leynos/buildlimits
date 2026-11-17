@@ -11,12 +11,14 @@ from buildlimits.predict.evaluation import (
     evaluate,
 )
 from buildlimits.predict.events import EPOCH, Event
-from buildlimits.predict.harness import walk_forward
+from buildlimits.predict.harness import Series, walk_forward
 from buildlimits.predict.synthetic import STEP, identity, persistent
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
     from buildlimits.predict.evaluation import Evaluation
+    from buildlimits.predict.events import Label
+    from buildlimits.predict.harness import Walk
 
 ORIGIN = typ.cast("Origin", "registry")
 
@@ -104,3 +106,75 @@ def test_one_block_withholds_a_claim_of_improvement() -> None:
 
     assert result.status == STATUS_OK, "two blocks carry evidence"
     assert result.verdict.startswith("beats the base rate"), result.verdict
+
+
+def _two_tuning_batches() -> Walk:
+    """Return a walk with one early tuning row and a large final tuning batch.
+
+    Twenty tuning rows fill two batches: the first holds a single row, the
+    second the 19 rows written together after it. Only the first is readable by
+    a weight fit, because the second is the embargoed last tuning batch. Ten
+    held-out rows follow so the comparison still has both sides.
+    """
+    first = Event(identity(0), ORIGIN, None, EPOCH, "hit", 1.0)
+    together = tuple(
+        Event(
+            identity(1),
+            ORIGIN,
+            None,
+            EPOCH + STEP,
+            typ.cast("Label", "hit" if index % 2 else "miss"),
+            1.0,
+        )
+        for index in range(19)
+    )
+    after = tuple(
+        Event(identity(2 + index), ORIGIN, None, EPOCH + (2 + index) * STEP, "hit", 1.0)
+        for index in range(10)
+    )
+    config = predict_config(train_fraction=20 / 30)
+    return walk_forward((first, *together, *after), config)
+
+
+def _answered(walk: Walk, answers: dict[int, tuple[float | None, ...]]) -> Walk:
+    """Return ``walk`` with the named singles' answers replaced.
+
+    Every other single abstains, so it cannot compete for the comparator.
+    """
+    abstained = tuple(None for _ in walk.events)
+    series = {
+        name: Series(
+            name,
+            tuple(answers.get(position, abstained)),
+            tuple(0.0 for _ in walk.events),
+        )
+        for position, name in enumerate(walk.components())
+    }
+    return dc.replace(walk, series=series)
+
+
+def test_the_best_single_ignores_the_embargoed_tuning_batch() -> None:
+    """A batch no weight fit may read cannot decide the comparator.
+
+    The first tuning row favours the first single and the 19 rows written
+    together favour the second. Scored over every tuning row the second wins;
+    scored over the rows the weight fit may read, the first does.
+    """
+    walk = _two_tuning_batches()
+    names = walk.components()
+    outcomes = [1 if event.label == "hit" else 0 for event in walk.events]
+    favoured = (1.0, *(1.0 - outcome for outcome in outcomes[1:20]), *([0.5] * 10))
+    disfavoured = (0.0, *(float(outcome) for outcome in outcomes[1:20]), *([0.5] * 10))
+    answered = _answered(walk, {0: favoured, 1: disfavoured})
+
+    result = evaluate(answered, predict_config(train_fraction=20 / 30))
+
+    favoured_brier = result.metrics[names[0]]["train"].brier
+    disfavoured_brier = result.metrics[names[1]]["train"].brier
+    assert favoured_brier is not None, "the first single was scored"
+    assert disfavoured_brier is not None, "the second single was scored"
+
+    assert result.best_single == names[0], "the readable tuning row decides"
+    assert disfavoured_brier < favoured_brier, (
+        "scoring every tuning row would have picked the other single"
+    )

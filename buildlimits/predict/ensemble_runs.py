@@ -5,10 +5,14 @@ one tuning batch short of the first held-out batch: the fitted weights are the
 history every later answer starts from, so they must end where an embargoed
 prediction's history ends. Every ensemble is then replayed under the same
 one-batch embargo as the single predictors: a batch's labels are applied only
-after the next batch has been answered. Ablation restarts each ensemble from
-the weights it began with and simply drops one component's column from the
-matrix. Starting from the final weights instead would carry what the stream
-taught the adaptive ensemble about held-out labels into the ablated comparison.
+after the next batch has been answered. That schedule advances on label
+arrival, not on admission: an answer is combined when the replay reaches the
+row's batch, so every label released before that batch is fair input, while the
+row's age and load stay pinned to its admission. Ablation restarts each
+ensemble from the weights it began with and simply drops one component's
+column from the matrix. Starting from the final weights instead would carry
+what the stream taught the adaptive ensemble about held-out labels into the
+ablated comparison.
 """
 
 import dataclasses as dc
@@ -154,12 +158,29 @@ def _tuning(
     list[tuple[tuple[float | None, ...], float]]
         One component-answer row and outcome per remaining tuning event.
     """
-    withheld = _embargoed_tuning(walk)
     return [
-        (matrix[index], _outcome(walk.events[index]))
+        (matrix[index], _outcome(walk.events[index])) for index in tuning_indices(walk)
+    ]
+
+
+def tuning_indices(walk: Walk) -> tuple[int, ...]:
+    """Return the tuning events a fixed weight fit may read.
+
+    Every tuning row is eligible except those in the last tuning batch, which
+    is withheld for the same reason the replay withholds it: its labels may
+    have been written after the first held-out builds started.
+
+    Returns
+    -------
+    tuple[int, ...]
+        Eligible tuning event indices, in stream order.
+    """
+    withheld = _embargoed_tuning(walk)
+    return tuple(
+        index
         for index, phase in enumerate(walk.phases)
         if phase == "train" and index not in withheld
-    ]
+    )
 
 
 def _embargoed_tuning(walk: Walk) -> frozenset[int]:

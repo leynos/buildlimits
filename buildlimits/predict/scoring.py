@@ -114,9 +114,25 @@ def metric_block(rows: cabc.Sequence[ScoredRow], config: Config) -> dict[str, Me
 
 
 def rows_for(
-    walk: Walk, name: str, probabilities: cabc.Sequence[float | None]
+    walk: Walk,
+    name: str,
+    probabilities: cabc.Sequence[float | None],
+    *,
+    indices: cabc.Container[int] | None = None,
 ) -> tuple[ScoredRow, ...]:
     """Build one labelled row per event for the given answers.
+
+    Parameters
+    ----------
+    walk : Walk
+        The scored stream.
+    name : str
+        The predictor the rows belong to.
+    probabilities : Sequence[float | None]
+        Its answer per event, in stream order.
+    indices : Container[int] | None
+        Restrict the rows to these stream positions, or None for every
+        labelled event.
 
     Returns
     -------
@@ -124,10 +140,12 @@ def rows_for(
         Rows in stream order, abstentions included.
     """
     rows: list[ScoredRow] = []
-    for event, phase, probability in zip(
-        walk.events, walk.phases, probabilities, strict=True
+    for index, (event, phase, probability) in enumerate(
+        zip(walk.events, walk.phases, probabilities, strict=True)
     ):
         if phase is None:
+            continue
+        if indices is not None and index not in indices:
             continue
         label = scored_label(event)
         rows.append(

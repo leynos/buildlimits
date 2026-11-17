@@ -14,12 +14,15 @@ from buildlimits.predict.ensemble_runs import (
     EnsembleRun,
     run_ablations,
     run_ensembles,
+    tuning_indices,
 )
 from buildlimits.predict.scoring import (
     ablation_metrics,
     all_metrics,
     heldout_rows,
+    rows_for,
     series_map,
+    summarize,
 )
 
 if typ.TYPE_CHECKING:
@@ -57,7 +60,8 @@ class Evaluation:
     against_base_rate : dict[str, Interval | None]
         Held-out Brier difference from the base rate, with its interval.
     best_single : str | None
-        The single predictor with the best tuning-period Brier.
+        The single predictor with the best Brier on the tuning rows the
+        weight fit may read.
     against_best_single : dict[str, Interval | None]
         Held-out Brier difference between each ensemble and that predictor.
     verdict : str
@@ -133,7 +137,7 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
     ablations = run_ablations(walk, config, ensembles)
     metrics = all_metrics(walk, ensembles, config)
     ablated = ablation_metrics(walk, ablations, config)
-    compared = _compare(walk, ensembles, metrics, config)
+    compared = _compare(walk, ensembles, config)
     labelled = sum(1 for phase in walk.phases if phase is not None)
     status = _status(labelled, compared.against_base_rate, config)
     return Evaluation(
@@ -154,7 +158,6 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
 def _compare(
     walk: Walk,
     ensembles: cabc.Mapping[str, EnsembleRun],
-    metrics: cabc.Mapping[str, cabc.Mapping[str, Metrics]],
     config: Config,
 ) -> _Comparisons:
     """Compare every predictor with the base rate and the best single.
@@ -166,7 +169,7 @@ def _compare(
     """
     series = series_map(walk, ensembles)
     comparisons = _Comparison(walk, series)
-    best_single = _best_on_training(metrics, walk.components(), config)
+    best_single = _best_on_training(walk, series, walk.components(), config)
     return _Comparisons(
         against_base_rate={
             name: comparisons.versus(name, "base-rate", config)
@@ -233,24 +236,38 @@ class _Comparison:
 
 
 def _best_on_training(
-    metrics: cabc.Mapping[str, cabc.Mapping[str, Metrics]],
+    walk: Walk,
+    series: cabc.Mapping[str, cabc.Sequence[float | None]],
     singles: cabc.Sequence[str],
     config: Config,
 ) -> str | None:
-    """Pick the single predictor with the lowest tuning-period Brier.
+    """Pick the single predictor with the lowest tuning-row Brier.
+
+    The rows are the ones the fixed ensemble's weight fit may read: the last
+    tuning batch is withheld from both, so the predictor every ensemble is
+    compared against was chosen on the same history those weights may use.
+    Choosing it from every tuning row would let a batch no ensemble could
+    learn from decide the comparator.
 
     Returns
     -------
     str | None
         The winner, or None when no single predictor scored enough rows.
     """
-    scored = [
-        (name, metrics[name]["train"].brier)
-        for name in singles
-        if metrics[name]["train"].scored >= config.minimum_scored_events
-        and metrics[name]["train"].brier is not None
-    ]
-    return None if not scored else min(scored, key=operator.itemgetter(1))[0]
+    tuning = frozenset(tuning_indices(walk))
+    best: tuple[str, float] | None = None
+    for name in singles:
+        block = summarize(
+            rows_for(walk, name, series[name], indices=tuning),
+            clip=config.log_loss_clip,
+            threshold=config.decision_threshold,
+            bins=config.calibration_bins,
+        )
+        if block.scored < config.minimum_scored_events or block.brier is None:
+            continue
+        if best is None or block.brier < best[1]:
+            best = (name, block.brier)
+    return None if best is None else best[0]
 
 
 def _status(
