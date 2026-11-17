@@ -4,6 +4,8 @@ import dataclasses as dc
 import typing as typ
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from predict_test_helpers import predict_config
 
 from buildlimits.predict.config import load_config
@@ -14,7 +16,7 @@ from buildlimits.predict.ensemble_runs import (
 )
 from buildlimits.predict.ensembles import Ensemble
 from buildlimits.predict.events import EPOCH
-from buildlimits.predict.fitting import _log_loss_gradient, fit_weights
+from buildlimits.predict.fitting import _log_loss_gradient, _project, fit_weights
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.metrics import log_loss_of
 from buildlimits.predict.synthetic import drift
@@ -124,6 +126,33 @@ def test_fit_weights_without_outcomes_keeps_even_weights() -> None:
 def test_fit_weights_without_rows_returns_no_weights() -> None:
     """No rows and no components give an empty weight vector."""
     assert fit_weights([], [], config=load_config()) == [], "nothing to fit"
+
+
+def test_the_fit_gives_more_weight_to_the_accurate_component() -> None:
+    """A component that keeps being right gains the weight it earned."""
+    rows = [(0.9, 0.2)] * 40
+    outcomes = [1.0] * 40
+
+    weights = fit_weights(rows, outcomes, config=load_config())
+
+    assert weights[0] > 0.5, "the accurate component gains on the uniform share"
+    assert weights[1] < 0.5, "and the inaccurate one loses"
+
+
+@given(
+    st.lists(
+        st.floats(min_value=-1e6, max_value=1e6, allow_nan=False),
+        min_size=1,
+        max_size=8,
+    )
+)
+@settings(max_examples=50, derandomize=True, deadline=None)
+def test_projected_weights_are_always_a_distribution(weights: list[float]) -> None:
+    """The projection lands on the simplex whatever the gradient did."""
+    projected = _project(weights)
+
+    assert all(value >= 0.0 for value in projected), "no negative weight"
+    assert sum(projected) == pytest.approx(1.0), "the mass stays at one"
 
 
 def test_the_weight_fit_stops_short_of_a_step_that_raises_the_loss() -> None:

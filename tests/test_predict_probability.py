@@ -3,6 +3,8 @@
 import typing as typ
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from buildlimits.predict.events import EPOCH, Features
 from buildlimits.predict.probability import LogisticModel, clip_probability
@@ -63,3 +65,17 @@ def test_the_clip_is_applied_to_a_probability_outside_the_unit_interval() -> Non
     assert clip_probability(1.5, 1e-6) == pytest.approx(1.0 - 1e-6), "above one"
     assert clip_probability(-0.5, 1e-6) == pytest.approx(1e-6), "below zero"
     assert clip_probability(0.25, 1e-6) == pytest.approx(0.25), "inside the range"
+
+
+@given(
+    st.floats(allow_nan=False, allow_infinity=False),
+    st.floats(min_value=1e-12, max_value=0.5, allow_nan=False),
+)
+@settings(max_examples=50, derandomize=True, deadline=None)
+def test_clipping_keeps_every_answer_inside_the_interval(
+    probability: float, clip: float
+) -> None:
+    """Any finite answer, however extreme, is clamped into the loss's domain."""
+    value = clip_probability(probability, clip)
+
+    assert clip <= value <= 1.0 - clip, "the clipped answer stays in range"
