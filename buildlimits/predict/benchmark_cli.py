@@ -15,7 +15,8 @@ from buildlimits.predict.evaluation import evaluate
 from buildlimits.predict.events import fingerprint
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.latency import render_timings
-from buildlimits.predict.report import Provenance, build_report
+from buildlimits.predict.paths import same_file
+from buildlimits.predict.report import RESULT_FILES, Provenance, build_report
 from buildlimits.predict.snapshot_store import load_snapshot
 
 DEFAULT_SNAPSHOT = Path("build/predict/history.jsonl")
@@ -56,6 +57,14 @@ def main(argv: list[str] | None = None) -> int:
     except (TypeError, ValueError, OSError) as error:
         print(f"build-limits-predict-benchmark: {error}", file=sys.stderr)
         return 2
+    collision = _snapshot_collision(options.snapshot, options.output)
+    if collision is not None:
+        print(
+            "build-limits-predict-benchmark: --output must not overwrite the "
+            f"snapshot being read ({collision}); choose another directory",
+            file=sys.stderr,
+        )
+        return 2
     try:
         snapshot = load_snapshot(options.snapshot)
     except (TypeError, ValueError, OSError) as error:
@@ -74,12 +83,32 @@ def main(argv: list[str] | None = None) -> int:
     report.write(options.output)
     print(report.markdown)
     print(render_timings(report.timings))
-    written = ", ".join(
-        str(options.output / name)
-        for name in ("results.json", "results.md", "timings.json")
-    )
+    written = ", ".join(str(options.output / name) for name in RESULT_FILES)
     print(f"wrote {written}", file=sys.stderr)
     return 0
+
+
+def _snapshot_collision(snapshot: Path, output: Path) -> Path | None:
+    """Return the report file that would replace the snapshot, if any.
+
+    Every file the report writes is checked before the first one is created,
+    because a report directory that holds the snapshot would destroy the
+    history the next run has to read.
+
+    Returns
+    -------
+    Path | None
+        The colliding destination, or None when all three are distinct files.
+    """
+    destinations = (output / name for name in RESULT_FILES)
+    return next(
+        (
+            destination
+            for destination in destinations
+            if same_file(snapshot, destination)
+        ),
+        None,
+    )
 
 
 def _git_sha() -> str:
@@ -90,7 +119,8 @@ def _git_sha() -> str:
     checkout still names the code that produced it. A copy installed inside
     another project's virtual environment sits in that project's repository,
     whose commit is not this benchmark's provenance, so the module's own path
-    inside the repository is verified before the commit is accepted.
+    inside the repository is verified, and Git is asked whether it tracks that
+    path, before the commit is accepted.
 
     Returns
     -------
@@ -121,16 +151,56 @@ def _git_sha() -> str:
     if result.returncode != 0:
         return "unknown"
     commit, _, root = result.stdout.partition("\n")
-    return commit.strip() if _owns(root.strip(), source) else "unknown"
+    return commit.strip() if _owns(executable, root.strip(), source) else "unknown"
 
 
-def _owns(root: str, source: Path) -> bool:
-    """Return whether the repository at ``root`` tracks ``source``.
+def _owns(executable: str, root: str, source: Path) -> bool:
+    """Return whether the repository at ``root`` holds ``source`` as its module.
+
+    The path comparison rules out a copy that sits anywhere else in a host
+    project, and Git is then asked whether it tracks the file: a copy dropped
+    at the canonical path inside an unrelated repository would otherwise
+    borrow that repository's commit.
 
     Returns
     -------
     bool
-        Whether the module sits at its canonical path inside that repository.
+        Whether the module is tracked at its canonical path in that repository.
     """
     canonical = Path(root) / "buildlimits" / "predict" / source.name
-    return bool(root) and canonical.resolve() == source
+    if not root or canonical.resolve() != source:
+        return False
+    return _tracked(executable, root, source)
+
+
+def _tracked(executable: str, root: str, source: Path) -> bool:
+    """Return whether ``git ls-files`` lists ``source`` in that repository.
+
+    Returns
+    -------
+    bool
+        Whether Git reports the file as tracked.
+    """
+    try:
+        relative = source.relative_to(Path(root).resolve())
+    except ValueError:
+        return False
+    try:
+        result = subprocess.run(  # ruff: ignore[subprocess-without-shell-equals-true] - fixed git argument vector.
+            [
+                executable,
+                "-C",
+                root,
+                "ls-files",
+                "--error-unmatch",
+                "--",
+                str(relative),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except OSError, subprocess.SubprocessError:
+        return False
+    return result.returncode == 0

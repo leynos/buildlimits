@@ -112,6 +112,37 @@ def test_two_runs_produce_identical_result_files(tmp_path: Path) -> None:
     ).read_bytes(), "deterministic report"
 
 
+@pytest.mark.parametrize("alias", [False, True], ids=["same-path", "symlink"])
+def test_benchmark_refuses_an_output_that_would_replace_the_snapshot(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], *, alias: bool
+) -> None:
+    """A report directory must not destroy the history it was read from."""
+    output = tmp_path / "out"
+    output.mkdir()
+    snapshot = output / "results.json"
+    snapshot.write_bytes(write_snapshot(tmp_path, 20).read_bytes())
+    if alias:
+        link = tmp_path / "alias.jsonl"
+        link.symlink_to(snapshot)
+        snapshot = link
+    before = snapshot.read_bytes()
+
+    status = benchmark_cli.main([
+        "--snapshot",
+        str(snapshot),
+        "--output",
+        str(output),
+        "--config",
+        str(write_fast_config(tmp_path)),
+    ])
+
+    assert status == 2, "a destructive output path is a usage failure"
+    assert "must not overwrite the snapshot" in capsys.readouterr().err, (
+        "the refusal names the reason"
+    )
+    assert snapshot.read_bytes() == before, "the snapshot is untouched"
+
+
 def test_benchmark_reports_a_missing_snapshot(tmp_path: Path) -> None:
     """A run without a snapshot fails clearly instead of inventing history."""
     status = benchmark_cli.main([
@@ -206,6 +237,26 @@ def test_git_sha_names_the_benchmark_checkout(monkeypatch: pytest.MonkeyPatch) -
     assert commit == "abc123", "the commit is reported"
     assert calls[0][1] == "-C", "git is pointed at an explicit directory"
     assert calls[0][2].endswith("buildlimits/predict"), "the benchmark's own source"
+
+
+def test_git_sha_ignores_an_untracked_copy_at_the_canonical_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A file at the canonical path is not a module unless Git tracks it."""
+    root = tmp_path / "host"
+    module = root / "buildlimits" / "predict" / Path(benchmark_cli.__file__).name
+    module.parent.mkdir(parents=True)
+    module.write_text("", encoding="utf-8")
+
+    def answer(command: list[str], **_options: object) -> object:
+        """Report a commit and a root that does not track the module."""
+        tracked = "ls-files" in command
+        return mock.Mock(stdout=f"abc123\n{root}\n", returncode=1 if tracked else 0)
+
+    monkeypatch.setattr(benchmark_cli, "__file__", str(module))
+    _git(monkeypatch, lambda _name: "/usr/bin/git", answer)
+
+    assert benchmark_cli._git_sha() == "unknown", "provenance is refused"
 
 
 def test_git_sha_ignores_a_repository_that_does_not_own_the_module(

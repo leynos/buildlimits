@@ -22,6 +22,7 @@ from buildlimits.predict.dataset import (
     build_snapshot,
     count_journal,
 )
+from buildlimits.predict.paths import same_file
 from buildlimits.predict.snapshot_store import save_snapshot
 
 if typ.TYPE_CHECKING:
@@ -90,7 +91,7 @@ def main(
     except (OSError, ValueError) as error:
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 1
-    if _same_file(store, options.output):
+    if same_file(store, options.output):
         print(
             "build-limits-predict-dataset: --output must not be the store being "
             f"read ({store}); choose another path",
@@ -172,25 +173,6 @@ def _store_path(store: Path | None) -> Path:
         The explicit path, or this host's configured store.
     """
     return store_path(os.environ) if store is None else store
-
-
-def _same_file(first: Path, second: Path) -> bool:
-    """Return whether two paths name the same file.
-
-    Resolving both paths means a relative spelling, a symlink or an existing
-    hard link cannot disguise the store as a separate output. A path that
-    does not exist yet has no inode to compare, so its resolved form is
-    compared instead.
-
-    Returns
-    -------
-    bool
-        Whether writing ``second`` would overwrite ``first``.
-    """
-    try:
-        return Path(first).samefile(second)
-    except OSError:
-        return first.resolve() == second.resolve()
 
 
 def _read(store: Path) -> DecodedStore | int:

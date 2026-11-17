@@ -22,6 +22,12 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.metrics import Metrics
 
 BENCHMARK_VERSION = 1
+# The files one report writes. Kept together so a command can check every
+# destination before the first write replaces anything.
+RESULTS = "results.json"
+MARKDOWN = "results.md"
+TIMINGS = "timings.json"
+RESULT_FILES = (RESULTS, MARKDOWN, TIMINGS)
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -67,9 +73,9 @@ class Report:
     def write(self, directory: Path) -> None:
         """Write both result files and the timings beside them."""
         directory.mkdir(parents=True, exist_ok=True)
-        _write_json(directory / "results.json", self.document)
-        _write_json(directory / "timings.json", self.timings)
-        (directory / "results.md").write_text(self.markdown, encoding="utf-8")
+        _write_json(directory / RESULTS, self.document)
+        _write_json(directory / TIMINGS, self.timings)
+        (directory / MARKDOWN).write_text(self.markdown, encoding="utf-8")
 
 
 def build_report(evaluation: Evaluation, provenance: Provenance) -> Report:
