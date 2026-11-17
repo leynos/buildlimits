@@ -79,8 +79,6 @@ def test_a_value_of_the_wrong_type_is_a_type_error(
 @pytest.mark.parametrize(
     ("name", "value"),
     [
-        ("ewma_alpha", 1.5),
-        ("ewma_alpha", -0.1),
         ("block_size", 0),
         ("bootstrap_alpha", 2.0),
         ("cold_start", 2.0),
@@ -112,6 +110,20 @@ def test_a_prior_with_no_strength_is_rejected(tmp_path: Path) -> None:
     """A zero prior strength would divide the first unseen posterior by zero."""
     with pytest.raises(ValueError, match="above"):
         load_config(_changed(tmp_path, beta_prior_strength=0))
+
+
+@pytest.mark.parametrize("value", [0.0, -0.1, 1.5])
+def test_a_rate_outside_its_open_lower_range_is_rejected(
+    tmp_path: Path, value: float
+) -> None:
+    """The rate must be above zero and at most one.
+
+    Zero is the degenerate case: the exponential predictor would add no mass
+    to its decayed weight, abstain for the whole stream and never move its
+    ensemble weight.
+    """
+    with pytest.raises(ValueError, match="above"):
+        load_config(_changed(tmp_path, ewma_alpha=value))
 
 
 def test_a_number_too_large_to_compare_is_a_configuration_error(

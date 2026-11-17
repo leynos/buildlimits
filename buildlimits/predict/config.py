@@ -68,6 +68,10 @@ _EXCLUSIVE_LOW: dict[str, float] = {
     # count, so a zero prior strength would divide by zero the first time an
     # unseen identity is predicted.
     "beta_prior_strength": 0.0,
+    # A zero rate adds no mass to the decayed weight, so the exponential rate
+    # would abstain for the whole stream and its ensemble weight would never
+    # move. The newest outcome must be able to count for something.
+    "ewma_alpha": 0.0,
 }
 
 
