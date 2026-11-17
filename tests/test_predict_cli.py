@@ -138,6 +138,25 @@ def test_benchmark_refuses_an_output_that_would_replace_the_snapshot(
     assert snapshot.read_bytes() == before, "the snapshot is untouched"
 
 
+def test_benchmark_refuses_report_files_that_alias_each_other(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One artefact must not be reached through two names in the report directory.
+
+    A symbolic link between two of the three destinations would let the second
+    write replace the first, so the run stops before it writes anything.
+    """
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "results.json").symlink_to(output / "timings.json")
+
+    status = _run_admitted_benchmark(tmp_path, output, 40)
+
+    assert status == 2, "aliased destinations are a usage failure"
+    assert "same file" in capsys.readouterr().err, "the refusal names the reason"
+    assert not (output / "timings.json").exists(), "nothing was written"
+
+
 def test_benchmark_reports_an_unwritable_output(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

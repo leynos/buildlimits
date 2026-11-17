@@ -16,7 +16,12 @@ from buildlimits.predict.evaluation import evaluate
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.latency import render_timings
 from buildlimits.predict.paths import same_file
-from buildlimits.predict.report import RESULT_FILES, Provenance, build_report
+from buildlimits.predict.report import (
+    RESULT_FILES,
+    Provenance,
+    Report,
+    build_report,
+)
 from buildlimits.predict.snapshot_codec import fingerprint
 from buildlimits.predict.snapshot_store import load_snapshot
 
@@ -103,15 +108,33 @@ def main(
             fingerprint=fingerprint(snapshot.events),
         ),
     )
-    try:
-        report.write(options.output)
-    except OSError as error:
-        print(f"build-limits-predict-benchmark: {error}", file=sys.stderr)
-        return 1
+    status = _write_report(report, options.output)
+    if status:
+        return status
     print(report.markdown)
     print(render_timings(report.timings))
     written = ", ".join(str(options.output / name) for name in RESULT_FILES)
     print(f"wrote {written}", file=sys.stderr)
+    return 0
+
+
+def _write_report(report: Report, output: Path) -> int:
+    """Write the report and translate a refusal into a status.
+
+    Returns
+    -------
+    int
+        Zero when the files were written, two when the destinations alias each
+        other, and one when the directory cannot be written.
+    """
+    try:
+        report.write(output)
+    except ValueError as error:
+        print(f"build-limits-predict-benchmark: {error}", file=sys.stderr)
+        return 2
+    except OSError as error:
+        print(f"build-limits-predict-benchmark: {error}", file=sys.stderr)
+        return 1
     return 0
 
 
