@@ -132,8 +132,18 @@ otherwise; within the released history only eligible hit/miss labels that
 arrived strictly before that moment contribute, so a completion labelled after
 the admission is not counted as load the decision could have seen, a label
 landing at the very instant of measurement is excluded, and an unknown outcome
-never becomes history. The tuning/held-out split falls between batches, so
-every row a store wrote together stays in one phase. The commit named in the
+never becomes history.
+
+The replay advances on label arrival, not on admission. A row is answered when
+the replay reaches its batch, so every label released before that batch is fair
+input to the answer, while the row's age and load stay pinned to its admission.
+That models a decision taken when the batch is processed, not the answer an
+operator would have received at submission; reconstructing that answer would
+require gating every update on the admission time as well. The best single that
+each ensemble is compared against is chosen on the same rows the weight fit may
+read, so the withheld tuning batch cannot decide the comparator either. The
+tuning/held-out split falls between batches, so every row a store wrote
+together stays in one phase. The commit named in the
 report is read from the repository that holds the benchmark module, and only
 when that repository tracks the module's own path; an installed copy therefore
 reports `unknown` rather than borrowing its host project's commit.
