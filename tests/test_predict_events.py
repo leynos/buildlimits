@@ -154,12 +154,23 @@ def _labelled(seconds: int, label: str) -> Event:
 def test_an_unknown_outcome_is_not_labelled_history() -> None:
     """An unknown outcome carries no usable label, so it is not history."""
     rows = features(
-        (_labelled(0, "hit"), _labelled(10, "unknown"), _labelled(20, "hit")),
+        (
+            _labelled(0, "hit"),
+            _labelled(10, "unknown"),
+            _labelled(20, "hit"),
+            _labelled(30, "hit"),
+        ),
         load_window_seconds=60.0,
     )
 
     assert rows[2].load == 1, "only the eligible hit is load"
     assert rows[2].age_seconds == pytest.approx(20.0), "the age spans the missing label"
+    # The fourth row's history holds the unknown outcome as well, so it is
+    # released rather than embargoed here; it still carries no label.
+    assert rows[3].load == 1, "a released unknown is not load"
+    assert rows[3].age_seconds == pytest.approx(30.0), (
+        "the age spans the released unknown too"
+    )
 
 
 def _third_row(events: tuple[Event, ...]) -> Features:
