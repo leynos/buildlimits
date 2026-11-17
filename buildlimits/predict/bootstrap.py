@@ -15,6 +15,8 @@ import math
 import random
 import typing as typ
 
+from buildlimits.predict.metrics import brier_of
+
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -124,8 +126,8 @@ def paired_differences(
         or right is None
         or left.probability is None
         or right.probability is None
-        else (left.probability - left.outcome) ** 2
-        - (right.probability - right.outcome) ** 2
+        else brier_of(left.probability, left.outcome)
+        - brier_of(right.probability, right.outcome)
         for left, right in zip(first, second, strict=True)
     ]
 
