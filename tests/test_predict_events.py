@@ -76,7 +76,7 @@ def test_runtime_must_be_numeric(runtime: object) -> None:
     "stamp",
     [
         pytest.param("2026-01-01T00:00:00", id="missing-offset"),
-        pytest.param("not-a-time", id="unparseable"),
+        pytest.param("not-a-time", id="unparsable"),
     ],
 )
 def test_the_label_time_must_be_an_offset_timestamp(stamp: str) -> None:
