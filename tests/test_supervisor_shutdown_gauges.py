@@ -148,3 +148,24 @@ def test_a_refused_final_record_is_reported_without_changing_the_exit_status(
     assert [record["BUILD_LIMITS_EVENT"] for record in outcome.records] == [
         "supervisor_stopped"
     ], "the terminal record is still written and no gauge record pretends otherwise"
+
+
+def test_a_failing_diagnostic_write_still_writes_the_terminal_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken stderr cannot keep the terminal record out of the journal."""
+
+    def _refuse(_line: str) -> None:
+        """Fail every diagnostic write the way a closed stderr does."""
+        raise BrokenPipeError
+
+    monkeypatch.setattr(supervisor_shutdown, "log", _refuse)
+    with one_slot_supervisor() as scenario:
+        supervisor = scenario.supervisor
+        supervisor._stopping = True
+        supervisor._shutdown()
+
+    events = [record["BUILD_LIMITS_EVENT"] for record in scenario.sink.records]
+    assert events[-1] == "supervisor_stopped", (
+        "the terminal record follows the diagnostic even when stderr fails"
+    )

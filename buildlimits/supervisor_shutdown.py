@@ -219,9 +219,12 @@ def shutdown(supervisor: Supervisor) -> None:
 
     # Publish the last interval before the terminal record. The attempt is
     # best-effort: a failing transport must not change how the process exits,
-    # so its outcome is reported here rather than raised or retried.
+    # so its outcome is reported here rather than raised or retried. The
+    # diagnostic write is contained for the same reason: a broken stderr must
+    # not keep the terminal record out of the journal.
     published = supervisor_observability.publish_final(supervisor)
-    log(f"stopping: final gauge record {published.value}")
+    with contextlib.suppress(OSError):
+        log(f"stopping: final gauge record {published.value}")
     supervisor._metric(
         "supervisor_stopped", outcome=exit_outcome(Exit(code=supervisor.exit_status))
     )

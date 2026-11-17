@@ -619,8 +619,11 @@ a port adapter: `emit` forwards the event it is given and holds no snapshot or
 interval state, so no event is a publication point. `GaugePublisher` owns the
 accumulator and the cached snapshot reader: `sample(now)` folds a reading, and
 `publish(now, force=...)` returns a `Publication` saying whether the record was
-written, not due, unread at its endpoint, refused, or suppressed because the
-attempt raised.
+written, not due, unread at its endpoint, or refused by the transport. It
+contains a raising `emit` and reports that as a refusal, so `SUPPRESSED` is
+never its result: that outcome belongs to the `supervisor_observability`
+boundary described next, which returns it when any other exception escapes a
+publication attempt.
 
 `supervisor_observability.configure` builds the publisher over the supervisor's
 port before wrapping that port in the forwarder, and returns
