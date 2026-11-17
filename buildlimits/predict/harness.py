@@ -15,12 +15,8 @@ import dataclasses as dc
 import time
 import typing as typ
 
-from buildlimits.predict.events import (
-    Features,
-    features,
-    label_batches,
-    scored_label,
-)
+from buildlimits.predict.events import Features, scored_label
+from buildlimits.predict.history import features, label_batches
 from buildlimits.predict.predictors import single_predictors, update_all
 
 if typ.TYPE_CHECKING:

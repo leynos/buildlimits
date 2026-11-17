@@ -5,13 +5,8 @@ import typing as typ
 
 import pytest
 
-from buildlimits.predict.events import (
-    EPOCH,
-    Event,
-    event_from_dict,
-    features,
-    label_batches,
-)
+from buildlimits.predict.events import EPOCH, Event, event_from_dict
+from buildlimits.predict.history import features, label_batches
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import Origin
