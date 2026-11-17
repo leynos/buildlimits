@@ -1443,6 +1443,15 @@ reason when the code it names changes.
   shutdown cancellation; the exact `NonBlockingChild.poll` and
   `_read_available` entries remain because Skylos does not resolve its child
   list dispatch. The stale cancellation entry was removed after integration.
+- **Prediction benchmark.** Every predictor is called through the `Predictor`
+  protocol and every serializer through a comprehension or a dict lookup, so no
+  static edge reaches the concrete classes. Its Skylos entry points name the
+  protocol-dispatched methods of `LastOutcome`, `RollingRate`,
+  `ExponentialRate` and `LogisticModel`, the private `_sigmoid` and
+  `outcome_value`, and the `to_dict` and `Report.write` serializers. Its
+  duplication allowances cover matching import lists, the parallel dataset and
+  benchmark CLI wiring, and the assertion idioms each prediction test suite
+  repeats. Every entry and its reason is recorded in `pyproject.toml`.
 - **Vulture.** Only `tests/` is scanned, so attributes that tests set and
   production code reads, mock configuration, runner doubles' `__call__` and the
   CrossHair contracts are listed in `ignore_names`; pytest-bdd steps and
