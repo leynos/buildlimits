@@ -12,17 +12,16 @@ from buildlimits.predict.ensemble_runs import (
     run_ablations,
     run_ensembles,
 )
-from buildlimits.predict.ensembles import (
-    Ensemble,
-    _log_loss_gradient,
-    fit_weights,
-)
+from buildlimits.predict.ensembles import Ensemble
 from buildlimits.predict.events import EPOCH
+from buildlimits.predict.fitting import _log_loss_gradient, fit_weights
 from buildlimits.predict.harness import walk_forward
 from buildlimits.predict.metrics import log_loss_of
 from buildlimits.predict.synthetic import drift
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from buildlimits.predict.config import Config
     from buildlimits.predict.events import Label
     from buildlimits.predict.harness import Walk
@@ -127,8 +126,28 @@ def test_fit_weights_without_rows_returns_no_weights() -> None:
     assert fit_weights([], [], config=load_config()) == [], "nothing to fit"
 
 
+def test_the_weight_fit_stops_short_of_a_step_that_raises_the_loss() -> None:
+    """A fixed step beside the clip must not jump past the minimum.
+
+    With 999 hits and one miss behind a pair of components, the loss is
+    minimized where the correct component carries 0.999 of the weight. The
+    pinned 0.5 step lands there from the uniform start; the step after it
+    reaches the corner, where the clip leaves a loss nearly twice as large and
+    the fit can no longer move away.
+    """
+    rows = [(1.0, 0.0)] * 1000
+    outcomes = [1.0] * 999 + [0.0]
+    config = load_config()
+
+    weights = fit_weights(rows, outcomes, config=config)
+
+    loss = _mean_loss(rows, outcomes, weights, clip=config.log_loss_clip)
+    assert loss == pytest.approx(0.0079073, abs=1e-4), "near the optimum"
+    assert weights[0] == pytest.approx(0.999, abs=5e-4), "not pinned to the corner"
+
+
 def _mean_loss(
-    rows: list[tuple[float | None, float | None]],
+    rows: cabc.Sequence[tuple[float | None, float | None]],
     outcomes: list[float],
     weights: list[float],
     *,
@@ -169,6 +188,52 @@ def test_the_gradient_matches_a_finite_difference_under_abstention(index: int) -
     gradient = _log_loss_gradient(rows, outcomes, weights, clip)
 
     assert gradient[index] == pytest.approx(numeric, abs=1e-4), "true derivative"
+
+
+@pytest.mark.parametrize(
+    ("row", "outcome"),
+    [
+        pytest.param((0.01, 0.02), 1.0, id="below-the-clip"),
+        pytest.param((0.99, 0.98), 0.0, id="above-the-clip"),
+    ],
+)
+def test_the_gradient_is_zero_where_the_clip_flattens_the_loss(
+    row: tuple[float, float], outcome: float
+) -> None:
+    """Outside the clip interval the scored loss is flat, so it has no slope.
+
+    The interior formula evaluated at a clamped probability reports a slope the
+    loss does not have, and a fit that trusted it would step away from the
+    corner it is standing on.
+    """
+    weights = [0.5, 0.5]
+    clip = 0.1
+    step = 1e-7
+    up = [weights[0] + step, weights[1] - step]
+    down = [weights[0] - step, weights[1] + step]
+
+    numeric = (
+        _mean_loss([row], [outcome], up, clip=clip)
+        - _mean_loss([row], [outcome], down, clip=clip)
+    ) / (2 * step)
+
+    assert _log_loss_gradient([row], [outcome], weights, clip) == pytest.approx([
+        0.0,
+        0.0,
+    ]), "a flat loss has no slope"
+    assert numeric == pytest.approx(0.0, abs=1e-6), "the scored loss agrees"
+
+
+def test_the_gradient_keeps_the_interior_slope_at_the_clip_boundary() -> None:
+    """A mean exactly on the clip keeps the slope the interior has.
+
+    The flat rule applies strictly outside the interval; a boundary row is
+    still moving the scored loss, so its derivative must not be dropped.
+    """
+    gradient = _log_loss_gradient([(0.0, 0.5)], [1.0], [0.5, 0.5], 0.25)
+
+    assert gradient[0] == pytest.approx(1.0), "the slope survives the boundary"
+    assert gradient[1] == pytest.approx(-1.0), "and mirrors across the mean"
 
 
 def test_a_single_batch_cannot_tune_the_weight_fit() -> None:

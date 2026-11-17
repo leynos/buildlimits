@@ -19,8 +19,9 @@ import dataclasses as dc
 import time
 import typing as typ
 
-from buildlimits.predict.ensembles import Ensemble, build_ensembles, fit_weights
+from buildlimits.predict.ensembles import Ensemble, build_ensembles
 from buildlimits.predict.events import scored_label
+from buildlimits.predict.fitting import fit_weights
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

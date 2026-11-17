@@ -18,7 +18,6 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.config import Config
 
 MODES = ("equal", "fixed", "adaptive")
-_MIN_CURVATURE = 1e-12
 
 
 @dc.dataclass(slots=True)
@@ -193,123 +192,6 @@ def _normalized_log_loss(probability: float, *, is_hit: bool, clip: float) -> fl
     value = clip_probability(probability, clip)
     loss = -math.log(value if is_hit else 1.0 - value)
     return loss / math.log(1.0 / clip)
-
-
-def fit_weights(
-    rows: cabc.Sequence[cabc.Sequence[float | None]],
-    outcomes: cabc.Sequence[float],
-    *,
-    config: Config,
-) -> list[float]:
-    """Fit non-negative weights summing to one on labelled rows only.
-
-    The fit is a projected gradient descent on the log loss, so it is exactly
-    reproducible and needs no library. Callers must pass training rows; the
-    function has no way to reach any other label.
-
-    Parameters
-    ----------
-    rows : Sequence[Sequence[float | None]]
-        The component answers for each training row, in component order. A
-        None entry marks a component that abstained at that row.
-    outcomes : Sequence[float]
-        The label for each training row, as 1.0 for a hit and 0.0 for a miss.
-    config : Config
-        The pinned parameters that set the step count, learning rate and clip.
-
-    Returns
-    -------
-    list[float]
-        The fitted weights, in component order.
-
-    Examples
-    --------
-    A component that always matches the outcome takes all the weight:
-
-    >>> from buildlimits.predict.config import load_config
-    >>> fit_weights([(1.0, 0.0)] * 8, [1.0] * 8, config=load_config())[0] > 0.9
-    True
-    """
-    count = len(rows[0]) if rows else 0
-    if count == 0:
-        return []
-    weights = [1.0 / count] * count
-    if not outcomes:
-        return weights
-    for _ in range(config.weight_fit_steps):
-        gradient = _log_loss_gradient(rows, outcomes, weights, config.log_loss_clip)
-        weights = _project([
-            weight - config.weight_fit_learning_rate * value
-            for weight, value in zip(weights, gradient, strict=True)
-        ])
-    return weights
-
-
-def _log_loss_gradient(
-    rows: cabc.Sequence[cabc.Sequence[float | None]],
-    outcomes: cabc.Sequence[float],
-    weights: cabc.Sequence[float],
-    clip: float,
-) -> list[float]:
-    """Return the mean gradient of the log loss over the rows.
-
-    With ``m`` the clipped consensus probability, ``y`` the outcome, ``M`` the
-    total weight of the components that answered and ``p`` the component's
-    own answer, the consensus mean is a ratio whose denominator ``M`` also
-    depends on the fitted weights. Its derivative with respect to a weight is
-    therefore ``(p - m) / M`` rather than ``p / M``, and the derivative of the
-    log loss follows as ``(m - y) * (p - m) / (M * m * (1 - m))``. Dropping
-    the ``m`` term would step against the normalization whenever a component
-    abstains.
-
-    Returns
-    -------
-    list[float]
-        One partial derivative per component.
-    """
-    gradient = [0.0] * len(weights)
-    for row, outcome in zip(rows, outcomes, strict=True):
-        available = [index for index, value in enumerate(row) if value is not None]
-        mass = sum(weights[index] for index in available)
-        if not available or mass <= 0:
-            continue
-        values = typ.cast("list[float]", [row[index] for index in available])
-        mean = (
-            sum(
-                weights[index] * value
-                for index, value in zip(available, values, strict=True)
-            )
-            / mass
-        )
-        probability = clip_probability(mean, clip)
-        # The curvature vanishes at the extremes, where the clip has already
-        # flattened the loss; the floor keeps the step finite there.
-        curvature = max(probability * (1.0 - probability), _MIN_CURVATURE)
-        error = probability - outcome
-        for index, value in zip(available, values, strict=True):
-            gradient[index] += error * (value - mean) / (mass * curvature)
-    return [value / len(outcomes) for value in gradient]
-
-
-def _project(weights: cabc.Sequence[float]) -> list[float]:
-    """Project weights onto the probability simplex.
-
-    Returns
-    -------
-    list[float]
-        The nearest non-negative weights summing to one.
-    """
-    ordered = sorted(weights, reverse=True)
-    remainder = 0.0
-    rho = 0
-    for index, value in enumerate(ordered, start=1):
-        remainder += value
-        if value - (remainder - 1.0) / index > 0:
-            rho = index
-    if rho == 0:
-        return [1.0 / len(weights) for _ in weights]
-    threshold = (sum(ordered[:rho]) - 1.0) / rho
-    return [max(value - threshold, 0.0) for value in weights]
 
 
 def build_ensembles(
