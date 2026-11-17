@@ -6,6 +6,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from buildlimits.predict.ensembles import _normalized_log_loss
 from buildlimits.predict.events import EPOCH, Features
 from buildlimits.predict.probability import LogisticModel, clip_probability
 
@@ -79,3 +80,18 @@ def test_clipping_keeps_every_answer_inside_the_interval(
     value = clip_probability(probability, clip)
 
     assert clip <= value <= 1.0 - clip, "the clipped answer stays in range"
+
+
+@given(
+    st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
+    st.floats(min_value=1e-12, max_value=0.5, allow_nan=False),
+    st.booleans(),
+)
+@settings(max_examples=50, derandomize=True, deadline=None)
+def test_the_normalized_loss_never_leaves_the_unit_interval(
+    probability: float, clip: float, is_hit: bool
+) -> None:
+    """Hedge assumes a bounded loss, so the scaling must hold at both tails."""
+    loss = _normalized_log_loss(probability, is_hit=is_hit, clip=clip)
+
+    assert -1e-12 <= loss <= 1.0 + 1e-12, "the loss is scaled into [0, 1]"

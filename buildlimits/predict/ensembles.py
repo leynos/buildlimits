@@ -191,7 +191,11 @@ def _normalized_log_loss(probability: float, *, is_hit: bool, clip: float) -> fl
     """
     value = clip_probability(probability, clip)
     loss = -math.log(value if is_hit else 1.0 - value)
-    return loss / math.log(1.0 / clip)
+    scaled = loss / math.log(1.0 / clip)
+    # ``1 - clip`` cannot be held exactly, so the far tail can divide out a
+    # few parts per million above one. Hedge needs a bound rather than the
+    # exact quotient, and the result is documented as lying in [0, 1].
+    return min(scaled, 1.0)
 
 
 def build_ensembles(
