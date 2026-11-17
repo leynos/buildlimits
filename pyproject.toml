@@ -1863,9 +1863,8 @@ members = [
     "tests/outcome_shell_test_support.py",
     "buildlimits/server_watch.py",
     "buildlimits/cache_recovery.py",
-    "tests/predict_test_helpers.py",
     "tests/test_predict_evaluation.py",
-    "buildlimits/outcome_store.py",
+    "tests/test_outcome_totality.py",
 ]
 reason = "Matching import lists: each module names the store records, ports and helpers it uses, and sharing them through a re-export module would hide each module's real dependencies."
 

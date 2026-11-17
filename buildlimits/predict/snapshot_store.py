@@ -210,26 +210,36 @@ def _validate_restarts(path: Path, value: cabc.Mapping[str, object]) -> None:
 
     The report prints the count as a number and the two bounds as text, so a
     hand-edited snapshot naming either in another type is rejected here rather
-    than inside the Markdown renderer.
+    than inside the Markdown renderer. A non-null count with a ``first`` bound
+    also selects the bounded-range wording, which reads ``last``; without it
+    the renderer would fail with a missing key instead of naming the field.
 
     Raises
     ------
     TypeError
-        If a field has the wrong type.
+        If a field has the wrong type, or a bounded range omits its last
+        bound.
     ValueError
         If the count is negative.
     """
     count = value.get("count")
+    starts: int | None = None
     if count is not None:
         starts = _count(path, "restarts count", count)
         if starts < 0:
             msg = f"{path} journal restarts count must not be negative"
             raise ValueError(msg)
+    bounds: dict[str, str | None] = {}
     for key in ("first", "last"):
         stamp = value.get(key)
         if stamp is not None and not isinstance(stamp, str):
             msg = f"{path} journal restarts {key} must be text"
             raise TypeError(msg)
+        bounds[key] = stamp
+    claims_range = starts is not None and bounds["first"] is not None
+    if claims_range and bounds["last"] is None:
+        msg = f"{path} journal restarts must hold a last bound with first"
+        raise TypeError(msg)
 
 
 def _gaps_from(path: Path, stats: object) -> tuple[Gap, ...]:

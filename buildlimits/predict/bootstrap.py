@@ -77,25 +77,30 @@ class Interval:
 
 
 def paired_differences(
-    first: cabc.Sequence[ScoredRow], second: cabc.Sequence[ScoredRow]
+    first: cabc.Sequence[ScoredRow | None],
+    second: cabc.Sequence[ScoredRow | None],
 ) -> list[float | None]:
-    """Return one Brier difference per stream position, abstentions included.
+    """Return one Brier difference per stream position, gaps included.
 
-    A position where either predictor abstained keeps its place as None, so a
-    later block still measures the gap between its neighbours. Dropping it
-    would splice the rows on either side into adjacent positions.
+    A position where either predictor abstained keeps its place as None, and so
+    does a position where no row exists at all because the event could not be
+    predicted or was never labelled. Dropping either would splice the rows on
+    their sides into adjacent positions and let one block treat unrelated
+    moments as neighbours.
 
     Parameters
     ----------
-    first : Sequence[ScoredRow]
-        Rows for the predictor being compared, in stream order.
-    second : Sequence[ScoredRow]
+    first : Sequence[ScoredRow | None]
+        Rows for the predictor being compared, in stream order, with None
+        where it has no row.
+    second : Sequence[ScoredRow | None]
         Rows for the predictor it is compared against, in the same order.
 
     Returns
     -------
     list[float | None]
-        First minus second at each position, or None where either abstained.
+        First minus second at each position, or None where either side has no
+        answered row.
 
     Examples
     --------
@@ -106,10 +111,17 @@ def paired_differences(
     >>> second = [row(0.5), row(0.5), row(0.5)]
     >>> [None if d is None else round(d, 2) for d in paired_differences(first, second)]
     [-0.24, None, 0.56]
+    >>> [None if d is None else round(d, 2) for d in paired_differences(
+    ...     [row(0.9), None, row(0.1)], second
+    ... )]
+    [-0.24, None, 0.56]
     """
     return [
         None
-        if left.probability is None or right.probability is None
+        if left is None
+        or right is None
+        or left.probability is None
+        or right.probability is None
         else (left.probability - left.outcome) ** 2
         - (right.probability - right.outcome) ** 2
         for left, right in zip(first, second, strict=True)

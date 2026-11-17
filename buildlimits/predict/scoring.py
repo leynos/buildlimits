@@ -146,6 +146,38 @@ def metric_block(
     return block
 
 
+def _scored_rows(
+    walk: Walk, name: str, probabilities: cabc.Sequence[float | None]
+) -> tuple[tuple[int, ScoredRow], ...]:
+    """Return each predictable, labelled event's position and scored row.
+
+    Returns
+    -------
+    tuple[tuple[int, ScoredRow], ...]
+        Stream positions and rows, in stream order.
+    """
+    scored: list[tuple[int, ScoredRow]] = []
+    for index, (event, phase, known, probability) in enumerate(
+        zip(walk.events, walk.phases, walk.rows, probabilities, strict=True)
+    ):
+        if phase is None or known is None:
+            continue
+        label = scored_label(event)
+        scored.append((
+            index,
+            ScoredRow(
+                predictor=name,
+                identity=event.identity,
+                origin=event.origin,
+                observed_at=event.observed_at,
+                probability=probability,
+                outcome=1 if label == "hit" else 0,
+                phase=phase,
+            ),
+        ))
+    return tuple(scored)
+
+
 def rows_for(
     walk: Walk,
     name: str,
@@ -172,27 +204,11 @@ def rows_for(
     tuple[ScoredRow, ...]
         Rows in stream order, abstentions included.
     """
-    rows: list[ScoredRow] = []
-    for index, (event, phase, known, probability) in enumerate(
-        zip(walk.events, walk.phases, walk.rows, probabilities, strict=True)
-    ):
-        if phase is None or known is None:
-            continue
-        if indices is not None and index not in indices:
-            continue
-        label = scored_label(event)
-        rows.append(
-            ScoredRow(
-                predictor=name,
-                identity=event.identity,
-                origin=event.origin,
-                observed_at=event.observed_at,
-                probability=probability,
-                outcome=1 if label == "hit" else 0,
-                phase=phase,
-            )
-        )
-    return tuple(rows)
+    return tuple(
+        row
+        for index, row in _scored_rows(walk, name, probabilities)
+        if indices is None or index in indices
+    )
 
 
 def heldout_rows(
@@ -208,3 +224,31 @@ def heldout_rows(
     return tuple(
         row for row in rows_for(walk, name, probabilities) if row.phase == "held-out"
     )
+
+
+def heldout_positions(
+    walk: Walk, name: str, probabilities: cabc.Sequence[float | None]
+) -> tuple[ScoredRow | None, ...]:
+    """Return the held-out rows placed at the stream positions they occupy.
+
+    Every position from the first to the last held-out row is represented. A
+    position that was never predictable or never labelled stays empty, so a
+    block formed over the result still spans the same moments of the stream;
+    compacting those positions away would put rows that were many events apart
+    into one block.
+
+    Returns
+    -------
+    tuple[ScoredRow | None, ...]
+        One entry per stream position in the held-out span, empty where no row
+        exists.
+    """
+    held = {
+        index: row
+        for index, row in _scored_rows(walk, name, probabilities)
+        if row.phase == "held-out"
+    }
+    if not held:
+        return ()
+    first, last = min(held), max(held)
+    return tuple(held.get(index) for index in range(first, last + 1))

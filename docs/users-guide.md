@@ -257,6 +257,7 @@ reads a label observed after the moment it was made. Its tables are written to
 
 The commands behind those targets take explicit paths:
 
+<!-- tested-example: buildlimits-predict-commands -->
 ```bash
 build-limits-predict-dataset --output build/predict/history.jsonl
 build-limits-predict-benchmark --snapshot build/predict/history.jsonl \

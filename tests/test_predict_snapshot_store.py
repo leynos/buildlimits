@@ -127,6 +127,16 @@ def _document() -> dict[str, object]:
             ),
             id="journal-restarts-bound-not-text",
         ),
+        pytest.param(
+            lambda doc: doc.update(
+                journal={
+                    "available": True,
+                    "records": 2,
+                    "restarts": {"count": 1, "first": "2026-01-01T00:00:00Z"},
+                }
+            ),
+            id="journal-restarts-range-without-last",
+        ),
     ],
 )
 def test_a_malformed_snapshot_is_refused(

@@ -5,7 +5,7 @@ import datetime as dt
 import typing as typ
 
 import pytest
-from predict_test_helpers import predict_config
+from predict_test_helpers import hand_event, predict_config
 
 from buildlimits.predict.ensemble_runs import tuning_indices
 from buildlimits.predict.evaluation import (
@@ -16,7 +16,7 @@ from buildlimits.predict.evaluation import (
 from buildlimits.predict.events import EPOCH, Event
 from buildlimits.predict.harness import Series, walk_forward
 from buildlimits.predict.metrics import summarize
-from buildlimits.predict.scoring import rows_for
+from buildlimits.predict.scoring import heldout_positions, rows_for
 from buildlimits.predict.synthetic import STEP, identity, persistent
 
 if typ.TYPE_CHECKING:
@@ -277,3 +277,43 @@ def test_the_best_single_is_ranked_on_the_rows_every_single_answered() -> None:
         "on its own answered rows the abstaining single looks better"
     )
     assert result.best_single == names[0], "one shared population decides"
+
+
+def test_an_unpredictable_event_keeps_its_place_in_the_held_out_span() -> None:
+    """A position no predictor could answer still separates its neighbours.
+
+    The middle event carries no admission time, so no row exists for it. Its
+    position stays empty in the series rather than being compacted away,
+    because a block of consecutive positions must not treat the events on its
+    sides as neighbours.
+    """
+    events = (
+        hand_event(
+            0,
+            admitted_at=EPOCH,
+            observed_at=EPOCH + dt.timedelta(seconds=5),
+            label="hit",
+        ),
+        hand_event(
+            1,
+            admitted_at=None,
+            observed_at=EPOCH + dt.timedelta(seconds=10),
+            label="miss",
+        ),
+        hand_event(
+            2,
+            admitted_at=EPOCH + dt.timedelta(seconds=15),
+            observed_at=EPOCH + dt.timedelta(seconds=20),
+            label="hit",
+        ),
+    )
+    config = predict_config(train_fraction=0.0)
+    walk = walk_forward(events, config)
+    name = walk.components()[0]
+
+    positions = heldout_positions(walk, name, walk.series[name].probabilities)
+
+    assert len(positions) == 3, "the whole held-out span is represented"
+    assert positions[1] is None, "the unpredictable event keeps its position"
+    assert positions[0] is not None, "the first event was scored"
+    assert positions[2] is not None, "the last event was scored"

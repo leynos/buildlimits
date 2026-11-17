@@ -11,7 +11,12 @@ import typing as typ
 
 from buildlimits.predict.bootstrap import Interval, block_bootstrap, paired_differences
 from buildlimits.predict.ensemble_runs import EnsembleRun, tuning_indices
-from buildlimits.predict.scoring import heldout_rows, rows_for, series_map, summarize
+from buildlimits.predict.scoring import (
+    heldout_positions,
+    rows_for,
+    series_map,
+    summarize,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -114,15 +119,19 @@ class _Comparison:
     series: cabc.Mapping[str, cabc.Sequence[float | None]]
 
     def versus(self, name: str, other: str, config: Config) -> Interval | None:
-        """Compare two predictors over their common held-out rows.
+        """Compare two predictors over the held-out span of the stream.
+
+        The series keep an empty entry for every position that carries no row,
+        so a block still spans the same moments. Both sides are built from the
+        same walk, so their empty positions coincide and the pairing is exact.
 
         Returns
         -------
         Interval | None
             The Brier difference and its block-bootstrap interval.
         """
-        ours = heldout_rows(self.walk, name, self.series[name])
-        theirs = heldout_rows(self.walk, other, self.series[other])
+        ours = heldout_positions(self.walk, name, self.series[name])
+        theirs = heldout_positions(self.walk, other, self.series[other])
         return block_bootstrap(paired_differences(ours, theirs), config=config)
 
 

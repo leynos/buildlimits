@@ -45,6 +45,22 @@ def _paired_stream(
     )
 
 
+def _rounded_pairs(
+    ours: tuple[ScoredRow | None, ...], theirs: tuple[ScoredRow | None, ...]
+) -> list[float | None]:
+    """Return each paired difference rounded for an exact comparison.
+
+    Returns
+    -------
+    list[float | None]
+        One rounded value per stream position, with a gap left as ``None``.
+    """
+    return [
+        None if value is None else round(value, 6)
+        for value in paired_differences(ours, theirs)
+    ]
+
+
 def test_pairing_refuses_sequences_of_different_lengths() -> None:
     """A difference is only meaningful when both sides answered the same events."""
     with pytest.raises(ValueError, match="shorter"):
@@ -107,14 +123,23 @@ def test_paired_differences_keep_an_abstention_as_an_empty_position() -> None:
     ours = (_row(0.9, 1), _row(None, 1), _row(0.2, 0), _row(0.5, 1))
     theirs = (_row(0.6, 1), _row(0.6, 1), _row(None, 0), _row(0.5, 1))
 
-    differences = paired_differences(ours, theirs)
+    differences = _rounded_pairs(ours, theirs)
 
-    assert [None if value is None else round(value, 6) for value in differences] == [
-        -0.15,
-        None,
-        None,
-        0.0,
-    ], "abstentions leave the position empty instead of closing the gap"
+    assert differences == [-0.15, None, None, 0.0], (
+        "abstentions leave the position empty instead of closing the gap"
+    )
+
+
+def test_paired_differences_keep_a_position_with_no_row_as_a_gap() -> None:
+    """A position neither predictor could answer still separates its neighbours."""
+    ours: tuple[ScoredRow | None, ...] = (_row(0.9, 1), None, _row(0.2, 0))
+    theirs: tuple[ScoredRow | None, ...] = (_row(0.6, 1), None, _row(0.6, 0))
+
+    differences = _rounded_pairs(ours, theirs)
+
+    assert differences == [-0.15, None, -0.32], (
+        "the missing row leaves its position empty"
+    )
 
 
 def test_a_block_keeps_the_positions_it_spans_across_abstentions() -> None:

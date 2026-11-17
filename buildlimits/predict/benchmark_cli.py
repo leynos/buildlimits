@@ -74,14 +74,20 @@ def main(
     except (TypeError, ValueError, OSError) as error:
         print(f"build-limits-predict-benchmark: {error}", file=sys.stderr)
         return 2
-    collision = _snapshot_collision(options.snapshot, options.output)
-    if collision is not None:
-        print(
-            "build-limits-predict-benchmark: --output must not overwrite the "
-            f"snapshot being read ({collision}); choose another directory",
-            file=sys.stderr,
-        )
-        return 2
+    for label, source in (
+        ("snapshot", options.snapshot),
+        ("config", options.config),
+    ):
+        if source is None:
+            continue
+        collision = _input_collision(source, options.output)
+        if collision is not None:
+            print(
+                "build-limits-predict-benchmark: --output must not overwrite the "
+                f"{label} being read ({collision}); choose another directory",
+                file=sys.stderr,
+            )
+            return 2
     try:
         snapshot = load_snapshot(options.snapshot)
     except (TypeError, ValueError, OSError) as error:
@@ -109,12 +115,13 @@ def main(
     return 0
 
 
-def _snapshot_collision(snapshot: Path, output: Path) -> Path | None:
-    """Return the report file that would replace the snapshot, if any.
+def _input_collision(source: Path, output: Path) -> Path | None:
+    """Return the report file that would replace one of the inputs, if any.
 
-    Every file the report writes is checked before the first one is created,
-    because a report directory that holds the snapshot would destroy the
-    history the next run has to read.
+    Every file the report writes is checked before the first one is created.
+    A report directory that holds the snapshot would destroy the history the
+    next run has to read, and one that holds the config would destroy the
+    parameters this run was told to use.
 
     Returns
     -------
@@ -123,11 +130,7 @@ def _snapshot_collision(snapshot: Path, output: Path) -> Path | None:
     """
     destinations = (output / name for name in RESULT_FILES)
     return next(
-        (
-            destination
-            for destination in destinations
-            if same_file(snapshot, destination)
-        ),
+        (destination for destination in destinations if same_file(source, destination)),
         None,
     )
 

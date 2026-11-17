@@ -348,9 +348,9 @@ def test_calibration_is_rendered_for_every_scored_predictor() -> None:
 
     markdown = render_markdown(document)
 
-    section = markdown.split("## Calibration on the held-out period")[1]
-    assert "`base-rate`" in section, "the leader is shown"
-    assert "`last-outcome`" in section, "and so is every other scored predictor"
+    section = markdown.split("## Calibration on the held-out period")[1].split("## ")[0]
+    assert "| `base-rate` |" in section, "the leader is shown"
+    assert "| `last-outcome` |" in section, "and so is every other scored predictor"
 
 
 def test_the_limitations_state_the_retrospective_exclusion() -> None:
