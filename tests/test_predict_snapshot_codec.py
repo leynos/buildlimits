@@ -100,6 +100,17 @@ def test_the_label_time_must_be_an_offset_timestamp(stamp: str) -> None:
         event_from_dict(_line(observed_at=stamp))
 
 
+def test_a_timestamp_that_utc_cannot_represent_is_refused() -> None:
+    """The earliest date plus a positive offset has no UTC equivalent.
+
+    ``0001-01-01T00:00:00+01:00`` parses, but converting it to UTC needs year
+    zero, which a datetime cannot hold. The decoder names the field instead of
+    letting ``OverflowError`` escape the validation contract.
+    """
+    with pytest.raises(ValueError, match="convert to UTC"):
+        event_from_dict(_line(observed_at="0001-01-01T00:00:00+01:00"))
+
+
 def test_an_admission_time_must_be_text_or_null() -> None:
     """A numeric admission time is not a timestamp."""
     with pytest.raises(TypeError, match="text or null"):

@@ -233,7 +233,8 @@ def _parse_stamp(value: object) -> dt.datetime | None:
     TypeError
         If the value is neither text nor null.
     ValueError
-        If the text is not a valid timestamp with an offset.
+        If the text is not a valid timestamp with an offset, or its offset
+        moves it outside the range a UTC datetime can hold.
     """
     if value is None:
         return None
@@ -248,4 +249,10 @@ def _parse_stamp(value: object) -> dt.datetime | None:
     if parsed.tzinfo is None:
         msg = "a timestamp must carry an offset"
         raise ValueError(msg)
-    return parsed.astimezone(dt.UTC)
+    try:
+        return parsed.astimezone(dt.UTC)
+    except OverflowError as error:
+        # The earliest date plus a positive offset has no UTC equivalent:
+        # 0001-01-01T00:00:00+01:00 would need year zero, a bad field value.
+        msg = "a timestamp must convert to UTC"
+        raise ValueError(msg) from error
