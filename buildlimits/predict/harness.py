@@ -1,4 +1,4 @@
-"""The embargoed prequential walk over one chronological event stream.
+"""The embargoed prequential walk over one event stream.
 
 Every event is predicted from what earlier events already revealed, and only
 then may its label update anyone. Outcomes that arrive together are predicted
@@ -6,16 +6,21 @@ together: a batch of rows is answered in full before any of its labels is
 applied, so two outcomes that became known at the same moment cannot inform
 each other. The batch immediately before the predicted one is withheld as well:
 its labels may have been written after this batch's builds started, so each
-prediction uses a history ending two batches back. The order is the data's own
-order; nothing is shuffled, so a predictor cannot meet a label before its
-event.
+prediction uses a history ending two batches back. The order is the store's
+append order, which is the order labels were written; nothing is sorted or
+shuffled, so a backward clock step cannot move a record into another window.
 """
 
 import dataclasses as dc
 import time
 import typing as typ
 
-from buildlimits.predict.events import Features, features, ordered, scored_label
+from buildlimits.predict.events import (
+    Features,
+    features,
+    label_batches,
+    scored_label,
+)
 from buildlimits.predict.predictors import single_predictors, update_all
 
 if typ.TYPE_CHECKING:
@@ -87,7 +92,7 @@ class Walk:
     Attributes
     ----------
     events : tuple[Event, ...]
-        The stream, oldest label first.
+        The stream, in the store's append order.
     rows : tuple[Features, ...]
         Causal features, aligned with ``events``.
     phases : tuple[Phase | None, ...]
@@ -138,10 +143,10 @@ def walk_forward(events: cabc.Iterable[Event], config: Config) -> Walk:
     Walk
         The stream, its features, phases and each single predictor's answers.
     """
-    stream = ordered(events)
+    stream = tuple(events)
     rows = features(stream, load_window_seconds=config.load_window_seconds)
     batches = label_batches(stream)
-    phases = _phases(stream, train_fraction=config.train_fraction)
+    phases = _phases(stream, batches, train_fraction=config.train_fraction)
     replay = _replay(single_predictors(config), rows, stream, batches)
     series = {
         name: Series(
@@ -213,30 +218,6 @@ def _replay(
     return _Replay(probabilities, elapsed, embargoed, unapplied)
 
 
-def label_batches(events: cabc.Sequence[Event]) -> tuple[tuple[int, ...], ...]:
-    """Group consecutive event indices whose labels arrived together.
-
-    Parameters
-    ----------
-    events : Sequence[Event]
-        The events in stream order, as :func:`ordered` leaves them.
-
-    Returns
-    -------
-    tuple[tuple[int, ...], ...]
-        One index tuple per distinct label time, in stream order.
-    """
-    batches: list[tuple[int, ...]] = []
-    start = 0
-    for index in range(1, len(events) + 1):
-        if index == len(events) or (
-            events[index].observed_at != events[start].observed_at
-        ):
-            batches.append(tuple(range(start, index)))
-            start = index
-    return tuple(batches)
-
-
 def _predict_row(
     predictors: cabc.Sequence[Predictor],
     row: Features,
@@ -276,36 +257,38 @@ def _eligible_count(events: cabc.Sequence[Event], batch: cabc.Sequence[int]) -> 
 
 
 def _phases(
-    events: cabc.Sequence[Event], *, train_fraction: float
+    events: cabc.Sequence[Event],
+    batches: cabc.Sequence[cabc.Sequence[int]],
+    *,
+    train_fraction: float,
 ) -> tuple[Phase | None, ...]:
-    """Label each event with the phase its label belongs to.
+    """Label each event with the phase its batch belongs to.
 
-    The boundary is a label time rather than a row count: every row sharing
-    the boundary timestamp is held out, so a tuning row can never share a
-    moment with a held-out row. With too few labels to reach the boundary
-    every labelled row is tuning; at a fraction of zero every labelled row is
-    held out.
+    The boundary falls between batches, never inside one, so every row the
+    store wrote together stays on one side of it. A batch that reaches the
+    target lands wholly in the tuning period, which can leave the tuning share
+    slightly above the configured fraction. With too few labels to reach the
+    boundary every batch is tuning; at a fraction of zero every batch is held
+    out.
 
     Returns
     -------
     tuple[Phase | None, ...]
         One phase per event, or None where no eligible label arrived.
     """
-    labelled = [
-        event.observed_at for event in events if scored_label(event) is not None
-    ]
-    boundary = int(len(labelled) * train_fraction)
-    boundary_at = labelled[boundary] if boundary < len(labelled) else None
-    return tuple(
-        None
-        if scored_label(event) is None
-        else (
-            "train"
-            if boundary_at is None or event.observed_at < boundary_at
-            else "held-out"
-        )
-        for event in events
-    )
+    total = sum(1 for event in events if scored_label(event) is not None)
+    target = int(total * train_fraction)
+    phases: list[Phase | None] = []
+    kept = 0
+    for batch in batches:
+        phase: Phase = "train" if kept < target else "held-out"
+        for index in batch:
+            if scored_label(events[index]) is None:
+                phases.append(None)
+            else:
+                phases.append(phase)
+                kept += 1
+    return tuple(phases)
 
 
 def _split(events: cabc.Sequence[Event], phases: cabc.Sequence[Phase | None]) -> Split:

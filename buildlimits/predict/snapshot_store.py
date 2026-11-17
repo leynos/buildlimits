@@ -12,7 +12,6 @@ import typing as typ
 
 from buildlimits.predict.dataset import SNAPSHOT_VERSION, Gap, Snapshot, Source
 from buildlimits.predict.events import event_from_dict as _event_from_dict
-from buildlimits.predict.events import ordered
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -30,6 +29,9 @@ def save_snapshot(path: Path, snapshot: Snapshot) -> None:
 
 def load_snapshot(path: Path) -> Snapshot:
     """Read and validate a snapshot document.
+
+    The events keep the order the document records, which is the store's
+    append order; the loader never re-sorts them by timestamp.
 
     Returns
     -------
@@ -69,7 +71,7 @@ def load_snapshot(path: Path) -> Snapshot:
         created_at=_parse_stamp(created),
         source=_source_from(path, typ.cast("dict[str, object]", source)),
         journal=typ.cast("dict[str, object]", journal),
-        events=ordered(decoded_events),
+        events=decoded_events,
         gaps=_gaps_from(path, document.get("stats")),
     )
 

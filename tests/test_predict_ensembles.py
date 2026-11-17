@@ -171,8 +171,8 @@ def test_the_gradient_matches_a_finite_difference_under_abstention(index: int) -
     assert gradient[index] == pytest.approx(numeric, abs=1e-4), "true derivative"
 
 
-def test_a_single_label_time_leaves_no_tuning_rows() -> None:
-    """With every label at one moment nothing tunes, so fixed weights stay even."""
+def test_a_single_batch_cannot_tune_the_weight_fit() -> None:
+    """The only batch is tuning, and the fit withholds it, so weights stay even."""
     config = predict_config()
     events = tuple(
         dc.replace(event, observed_at=EPOCH)
@@ -181,10 +181,12 @@ def test_a_single_label_time_leaves_no_tuning_rows() -> None:
 
     walk = walk_forward(events, config)
     fixed = run_ensembles(walk, config)["ensemble-fixed"]
+    uniform = [1.0 / len(walk.components())] * len(walk.components())
 
-    assert walk.split.train_labelled == 0, "no row predates the boundary"
-    assert fixed.weights == pytest.approx(fixed.initial_weights), (
-        "with no tuning labels the fitted weights stay uniform"
+    assert walk.split.train_labelled == 40, "the single batch tunes whole"
+    assert walk.split.heldout_labelled == 0, "no batch is held out"
+    assert fixed.initial_weights == pytest.approx(uniform), (
+        "the withheld batch leaves the uniform prior standing"
     )
 
 

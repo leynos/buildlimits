@@ -112,27 +112,31 @@ comparison was paired over `minimum_scored_events` rows, or every paired row
 fell in a single bootstrap block, in which case the resampling has no width to
 judge.
 
-The replay is prequential and embargoed by one batch: rows whose labels arrived
-at the same moment are predicted as a batch before any of them is applied, so
-two simultaneous outcomes cannot inform each other, and the batch immediately
-before it has not been applied either, because its labels may have been written
-after this batch's builds started. A prediction's history therefore ends two
-batches back. The report counts the labels withheld that way as
+The replay is prequential and embargoed by one batch. A batch is a maximal run
+of consecutive store records sharing one label time, taken in the order the
+store appended them, so a backward clock step cannot merge records from
+separate windows. Rows in one batch are predicted together before any of their
+labels is applied, so two simultaneous outcomes cannot inform each other, and
+the batch immediately before has not been applied either, because its labels
+may have been written after this batch's builds started. A prediction's history
+therefore ends two batches back, and that history feeds a row's age and load as
+well as the predictors: an outcome the replay has not released cannot reach a
+prediction through a feature. The report counts the labels withheld that way as
 `embargoed_rows`, and the final batch's labels, which no prediction follows, as
 `unapplied_rows`. The fixed ensemble's weights are fitted on the tuning period
 but stop one tuning batch short of the held-out split, for the same reason: the
 weights every later answer starts from must not depend on labels a held-out
 prediction could not yet have seen. A row's age and load are measured at the
 request's admission when the source recorded that time, and at the label time
-otherwise; only eligible hit/miss labels that arrived strictly before that
-moment contribute, so a completion labelled after the admission is not counted
-as load the decision could have seen, a label landing at the very instant of
-measurement is excluded, and an unknown outcome never becomes history. The
-tuning/held-out split is made at a label time, so every row sharing a timestamp
-stays in one phase. The commit named in the report is read from the repository
-that holds the benchmark module, and only when that repository tracks the
-module's own path; an installed copy therefore reports `unknown` rather than
-borrowing its host project's commit.
+otherwise; within the released history only eligible hit/miss labels that
+arrived strictly before that moment contribute, so a completion labelled after
+the admission is not counted as load the decision could have seen, a label
+landing at the very instant of measurement is excluded, and an unknown outcome
+never becomes history. The tuning/held-out split falls between batches, so
+every row a store wrote together stays in one phase. The commit named in the
+report is read from the repository that holds the benchmark module, and only
+when that repository tracks the module's own path; an installed copy therefore
+reports `unknown` rather than borrowing its host project's commit.
 
 `make predict-dataset` refuses any `--output` path that resolves to the store
 it is reading, including through a symbolic link, so it cannot replace the

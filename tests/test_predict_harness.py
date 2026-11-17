@@ -33,24 +33,25 @@ def _event(
     )
 
 
-def test_order_is_label_time_not_admission_time() -> None:
-    """A slow compilation is predicted after earlier, quicker ones finish."""
-    slow = _event(
+def test_the_replay_keeps_store_order_when_timestamps_step_back() -> None:
+    """A backward clock step never reorders records the store already wrote."""
+    first = _event(
         0,
         admitted_at=EPOCH,
         observed_at=EPOCH + dt.timedelta(minutes=10),
         label="hit",
     )
-    quick = _event(
+    stepped = _event(
         1,
         admitted_at=EPOCH + dt.timedelta(minutes=1),
         observed_at=EPOCH + dt.timedelta(minutes=5),
         label="miss",
     )
 
-    walk = walk_forward((slow, quick), load_config())
+    walk = walk_forward((first, stepped), load_config())
 
-    assert walk.events == (quick, slow), "ordered by when the label arrived"
+    assert walk.events == (first, stepped), "append order is kept"
+    assert walk.batches == ((0,), (1,)), "each record is its own batch"
 
 
 def test_labels_that_arrive_together_cannot_inform_each_other() -> None:
@@ -117,7 +118,7 @@ def test_a_delayed_label_is_unavailable_to_an_intervening_prediction() -> None:
         label="hit",
     )
 
-    walk = walk_forward((slow, middle, later), load_config())
+    walk = walk_forward((middle, slow, later), load_config())
     probabilities = walk.series["last-outcome"].probabilities
 
     assert probabilities[0] is None, "the middle event has no earlier outcome"
@@ -178,8 +179,8 @@ def test_split_is_the_configured_share_of_labelled_events() -> None:
     assert walk.split.boundary == events[100].observed_at, "boundary timestamp"
 
 
-def test_a_shared_timestamp_stays_inside_one_phase() -> None:
-    """The tuning/held-out boundary never splits one label time."""
+def test_a_batch_stays_inside_one_phase() -> None:
+    """The tuning/held-out boundary never splits a batch."""
     config = dc.replace(load_config(), train_fraction=0.5)
     first = _event(0, admitted_at=None, observed_at=EPOCH, label="hit")
     second = _event(
@@ -194,11 +195,11 @@ def test_a_shared_timestamp_stays_inside_one_phase() -> None:
 
     walk = walk_forward((first, second, tied, last), config)
 
-    assert walk.phases == ("train", "held-out", "held-out", "held-out"), (
-        "the tied rows went to the same side"
+    assert walk.phases == ("train", "train", "train", "held-out"), (
+        "the tie-reached batch tunes whole"
     )
-    assert walk.split.train_labelled == 1, "one row predates the boundary"
-    assert walk.split.heldout_labelled == 3, "the shared moment is held out whole"
+    assert walk.split.train_labelled == 3, "the batch that reaches the target tunes"
+    assert walk.split.heldout_labelled == 1, "the last batch is held out"
 
 
 def test_unknown_events_are_predicted_but_never_phase_labelled() -> None:
@@ -218,16 +219,14 @@ def test_unknown_events_are_predicted_but_never_phase_labelled() -> None:
     ), "the base rate still answers unknown rows"
 
 
-def test_label_order_differs_from_admission_order() -> None:
-    """A stream ordered by label time is not ordered by admission time."""
+def test_the_replay_keeps_store_order_not_admission_time() -> None:
+    """Staggered admissions do not reorder the records the store wrote."""
     events = delayed(count=12, delay_steps=2)
 
     walk = walk_forward(events, load_config())
 
-    assert [event.observed_at for event in walk.events] == sorted(
-        event.observed_at for event in events
-    ), "every event is predicted when its label arrives"
+    assert walk.events == events, "records are never re-sorted"
     admitted = sorted(
         events, key=lambda event: typ.cast("dt.datetime", event.admitted_at)
     )
-    assert admitted != list(events), "admission order is not label order"
+    assert admitted != list(events), "admission order is not write order"

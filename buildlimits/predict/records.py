@@ -11,7 +11,7 @@ import json
 import typing as typ
 
 from buildlimits.outcome_record_format import OutcomeRecord
-from buildlimits.predict.events import Event, Label, ordered
+from buildlimits.predict.events import Event, Label
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -74,14 +74,18 @@ def event_of(record: OutcomeRecord) -> Event:
 
 
 def build_events(records: cabc.Iterable[object]) -> tuple[Event, ...]:
-    """Select attributed records and order their events by label time.
+    """Select attributed records, keeping the store's append order.
+
+    A batch is a run of consecutive records sharing one label time, so append
+    order is the order labels were written and is never replaced by a
+    timestamp sort: a backward clock step would otherwise move a record into
+    an earlier window.
 
     Returns
     -------
     tuple[Event, ...]
-        The chronological event stream.
+        The event stream in the order the store recorded it.
     """
-    events = (
+    return tuple(
         event_of(record) for record in records if isinstance(record, OutcomeRecord)
     )
-    return ordered(events)

@@ -48,18 +48,18 @@ def test_only_attributed_outcomes_become_hit_or_miss(
     assert label_of(outcome) == expected, "closed label vocabulary"
 
 
-def test_snapshot_redacts_identity_and_orders_by_label_time() -> None:
-    """The snapshot stores a digest, never the crate name or key fields."""
-    later = attributed_record(
+def test_snapshot_redacts_identity_and_keeps_store_order() -> None:
+    """The snapshot stores a digest and keeps the order the store appended."""
+    later_stamp = attributed_record(
         outcome="hit", observed_at=OBSERVED_AT + dt.timedelta(minutes=5)
     )
-    earlier = attributed_record(outcome="miss")
+    earlier_stamp = attributed_record(outcome="miss")
     snapshot = build_snapshot(
-        _decoded((later, earlier)), now=NOW, gap_threshold_seconds=60.0
+        _decoded((later_stamp, earlier_stamp)), now=NOW, gap_threshold_seconds=60.0
     )
 
-    assert [event.label for event in snapshot.events] == ["miss", "hit"], (
-        "events ordered by when the label arrived"
+    assert [event.label for event in snapshot.events] == ["hit", "miss"], (
+        "the store's order is never replaced by a timestamp sort"
     )
     assert snapshot.events[0].identity == identity_of(cache_key()), (
         "identity is the hashed key"

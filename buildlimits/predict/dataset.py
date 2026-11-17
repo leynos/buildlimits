@@ -105,7 +105,7 @@ class Source:
 
 @dc.dataclass(frozen=True, slots=True)
 class Snapshot:
-    """A redacted, chronologically ordered event stream plus its provenance.
+    """A redacted event stream in store order, plus its provenance.
 
     Attributes
     ----------
@@ -116,7 +116,7 @@ class Snapshot:
     journal : dict[str, object]
         What the user journal could offer, or why it offered nothing.
     events : tuple[Event, ...]
-        Every recorded compilation, oldest label first.
+        Every recorded compilation, in the order the store appended it.
     gaps : tuple[Gap, ...]
         Silences longer than the configured threshold.
     """
@@ -137,13 +137,14 @@ class Snapshot:
         """
         labelled = sum(1 for event in self.events if event.label != "unknown")
         total = len(self.events)
+        observed = [event.observed_at for event in self.events]
         return {
             "events": total,
             "labelled": labelled,
             "labelled_fraction": 0.0 if total == 0 else labelled / total,
             "identities": len({event.identity for event in self.events}),
-            "span_start": utc_text(self.events[0].observed_at) if self.events else None,
-            "span_end": utc_text(self.events[-1].observed_at) if self.events else None,
+            "span_start": utc_text(min(observed)) if observed else None,
+            "span_end": utc_text(max(observed)) if observed else None,
             "gaps": [gap.to_dict() for gap in self.gaps],
         }
 
@@ -173,8 +174,9 @@ def find_gaps(
     Parameters
     ----------
     events : Sequence[Event]
-        The history in chronological order; gaps are measured between
-        neighbours.
+        The history in store append order; gaps are measured between
+        neighbours, and a backward clock step shows a negative silence rather
+        than a gap.
     threshold_seconds : float
         The shortest silence, in seconds, that counts as a gap.
 

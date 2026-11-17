@@ -1,14 +1,15 @@
-"""One chronological event per recorded compilation, and its known features.
+"""One event per recorded compilation, in the order the store wrote it.
 
-The benchmark orders events by the moment their label became known. Features
-are measured at the moment a request was admitted, when the source recorded
-that time, and at the label time otherwise; only eligible hit/miss labels that
-had already arrived before that moment can contribute, so a label landing at
-the very instant of measurement is no more visible here than it is to the
-embargoed replay. An unknown outcome is a record with no usable label, so it
-neither counts as load nor sets an age. The feature set therefore describes
-what an admission decision could have seen, and never a label that had not yet
-arrived.
+Events keep the store's append order. A batch is a maximal run of consecutive
+records sharing one label time, so a backward clock step can order timestamps
+against recording order without merging records the store wrote in separate
+windows. Features are measured at the moment a request was admitted, when the
+source recorded that time, and at the label time otherwise. Their history is
+the same embargoed history the replay uses: eligible hit/miss labels from the
+batches before the one immediately preceding the row's batch. An unknown
+outcome carries no usable label, so it neither counts as load nor sets an age.
+The feature set therefore describes what an admission decision could have seen,
+and never an outcome the replay has not yet released.
 """
 
 import bisect
@@ -105,9 +106,9 @@ class Features:
         the moment the row is measured, or None when no earlier label was known
         then.
     load : int
-        Previously labelled events inside the trailing load window, excluding
-        this one, unknown outcomes, and anything labelled after the row's
-        measurement moment.
+        Eligible labels in the released history inside the trailing load
+        window, excluding unknown outcomes, the embargoed batch, and anything
+        labelled at or after the row's measurement moment.
     """
 
     identity: str
@@ -141,41 +142,46 @@ def scored_label(event: Event) -> ScoredLabel | None:
     return None
 
 
-def ordered(events: cabc.Iterable[Event]) -> tuple[Event, ...]:
-    """Sort events by label time, keeping append order for equal times.
+def label_batches(events: cabc.Sequence[Event]) -> tuple[tuple[int, ...], ...]:
+    """Group consecutive events whose labels were written together.
 
     Parameters
     ----------
-    events : Iterable[Event]
-        The events in whatever order they were appended.
+    events : Sequence[Event]
+        The events in store append order.
 
     Returns
     -------
-    tuple[Event, ...]
-        The events in chronological order.
+    tuple[tuple[int, ...], ...]
+        One index tuple per distinct label time, in stream order.
     """
-    return tuple(
-        event
-        for _, event in sorted(
-            enumerate(events), key=lambda pair: (pair[1].observed_at, pair[0])
-        )
-    )
+    batches: list[tuple[int, ...]] = []
+    start = 0
+    for index in range(1, len(events) + 1):
+        if index == len(events) or (
+            events[index].observed_at != events[start].observed_at
+        ):
+            batches.append(tuple(range(start, index)))
+            start = index
+    return tuple(batches)
 
 
 def features(
     events: cabc.Sequence[Event], *, load_window_seconds: float
 ) -> tuple[Features, ...]:
-    """Derive each event's causal features from earlier eligible labels.
+    """Derive each event's causal features from the history it may use.
 
-    Unknown outcomes still receive a row, so row alignment never changes, but
-    they carry no label to learn from and are left out of the history.
+    A row in one batch reads every eligible label from the batches before the
+    one immediately preceding it, because the one-batch embargo withholds the
+    previous batch from every prediction. Rows are measured within that
+    history, so a label that arrived at or after the measurement moment still
+    cannot contribute. Unknown outcomes still receive a row, so row alignment
+    never changes, but they carry no label to learn from.
 
     Parameters
     ----------
     events : Sequence[Event]
-        The events sorted by label time, as :func:`ordered` leaves them.
-        Bisecting on that order is what limits each row to eligible labels
-        that had already arrived when it is measured.
+        The events in store append order.
     load_window_seconds : float
         The trailing window, in seconds, over which load is counted.
 
@@ -193,25 +199,42 @@ def features(
     >>> first.age_seconds is None and first.load == 0
     True
     """
-    times = [event.observed_at for event in events if scored_label(event) is not None]
-    seen: dict[str, list[dt.datetime]] = {}
-    rows: list[Features] = []
-    for event in events:
-        moment = _measurement_moment(event)
-        previous = seen.setdefault(event.identity, [])
-        last = _last_label_before(previous, moment)
-        rows.append(
-            Features(
+    history: list[dt.datetime] = []
+    per_identity: dict[str, list[dt.datetime]] = {}
+    rows: list[Features | None] = [None] * len(events)
+    pending: tuple[int, ...] | None = None
+    for batch in label_batches(events):
+        for index in batch:
+            event = events[index]
+            moment = _measurement_moment(event)
+            previous = per_identity.get(event.identity, [])
+            last = _last_label_before(previous, moment)
+            rows[index] = Features(
                 identity=event.identity,
                 origin=event.origin,
                 observed_at=event.observed_at,
                 age_seconds=None if last is None else (moment - last).total_seconds(),
-                load=_load_before(times, moment, load_window_seconds),
+                load=_load_before(history, moment, load_window_seconds),
             )
-        )
-        if scored_label(event) is not None:
-            previous.append(event.observed_at)
-    return tuple(rows)
+        if pending is not None:
+            _remember(history, per_identity, events, pending)
+        pending = batch
+    return tuple(typ.cast("Features", row) for row in rows)
+
+
+def _remember(
+    history: list[dt.datetime],
+    per_identity: dict[str, list[dt.datetime]],
+    events: cabc.Sequence[Event],
+    batch: cabc.Sequence[int],
+) -> None:
+    """Add one batch's eligible labels to the feature history."""
+    for index in batch:
+        event = events[index]
+        if scored_label(event) is None:
+            continue
+        bisect.insort(history, event.observed_at)
+        bisect.insort(per_identity.setdefault(event.identity, []), event.observed_at)
 
 
 def _measurement_moment(event: Event) -> dt.datetime:
@@ -334,8 +357,8 @@ def _load_before(
 
     The window ends strictly before ``moment``, so an event labelled at the
     same moment is not load, and a zero-second window counts nothing.
-    ``times`` must be sorted and hold eligible labels only, as :func:`ordered`
-    and :func:`features` leave it.
+    ``times`` must be sorted and hold eligible labels from the released
+    history only, as :func:`features` leaves it.
 
     Returns
     -------

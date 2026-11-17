@@ -10,7 +10,7 @@ from buildlimits.predict.events import (
     Event,
     event_from_dict,
     features,
-    ordered,
+    label_batches,
 )
 
 if typ.TYPE_CHECKING:
@@ -155,22 +155,29 @@ def test_an_unknown_outcome_is_not_labelled_history() -> None:
 
 def test_features_exclude_a_label_that_arrived_after_the_admission() -> None:
     """A build completed after this admission was not load the decision saw."""
-    later = _admitted("a" * 64, admitted=10, observed=20)
-    earlier = _admitted("b" * 64, admitted=0, observed=30)
+    slow = _admitted("a" * 64, admitted=0, observed=30)
+    filler = _admitted("b" * 64, admitted=1, observed=5)
+    third = _admitted("c" * 64, admitted=10, observed=40)
 
-    rows = features((later, earlier), load_window_seconds=60.0)
+    rows = features((slow, filler, third), load_window_seconds=60.0)
 
-    assert rows[1].load == 0, "the later admission is not earlier load"
+    assert rows[2].load == 0, "the released label arrived after the admission"
 
 
 def test_age_is_measured_from_the_admission_moment() -> None:
-    """The age is the gap between this admission and the last known label."""
+    """The age is the gap between this admission and the last known label.
+
+    The middle event fills the batch whose labels the embargo withholds, so
+    the first label is released to the third row and its age is measured from
+    the third row's admission.
+    """
     first = _admitted("a" * 64, admitted=0, observed=5)
+    middle = _admitted("b" * 64, admitted=6, observed=7)
     second = _admitted("a" * 64, admitted=10, observed=40)
 
-    rows = features((first, second), load_window_seconds=60.0)
+    rows = features((first, middle, second), load_window_seconds=60.0)
 
-    assert rows[1].age_seconds == pytest.approx(5.0), "five seconds before admission"
+    assert rows[2].age_seconds == pytest.approx(5.0), "five seconds before admission"
 
 
 def test_age_ignores_a_previous_build_still_running_at_admission() -> None:
@@ -196,14 +203,14 @@ def test_a_label_arriving_at_the_measurement_moment_sets_no_age() -> None:
     assert [row.load for row in rows] == [0, 0], "age and load agree on the tie"
 
 
-def test_load_counts_only_events_strictly_before_the_label_time() -> None:
-    """The trailing window is half-open, so a tied time is not load."""
+def test_load_counts_only_released_events_strictly_before_the_label_time() -> None:
+    """A tied time is not load, and neither is the embargoed previous batch."""
     rows = features(
         (_stamped(0), _stamped(30), _stamped(60), _stamped(60)),
         load_window_seconds=60.0,
     )
 
-    assert [row.load for row in rows] == [0, 1, 2, 2], "the tie is excluded"
+    assert [row.load for row in rows] == [0, 0, 1, 1], "the tie and the batch are out"
 
 
 def test_a_zero_second_window_counts_no_load() -> None:
@@ -216,18 +223,22 @@ def test_a_zero_second_window_counts_no_load() -> None:
     assert [row.load for row in rows] == [0, 0, 0], "no window, no load"
 
 
-def test_ordering_keeps_stream_order_for_equal_times() -> None:
-    """Events sharing a label time keep the order they were read in."""
-    first = Event("a" * 64, ORIGIN, None, EPOCH, "hit", 0.1)
-    second = Event("b" * 64, ORIGIN, None, EPOCH, "miss", 0.2)
+def test_batches_follow_store_order_when_a_timestamp_steps_back() -> None:
+    """A backward clock step never merges records from separate windows."""
+    first = _labelled(10, "hit")
+    stepped = Event(
+        "b" * 64,
+        ORIGIN,
+        None,
+        EPOCH + dt.timedelta(seconds=5),
+        "hit",
+        1.0,
+    )
+    third = _labelled(20, "miss")
 
-    assert ordered((first, second)) == (first, second), "stable order"
-    assert ordered((second, first)) == (second, first), "stable order reversed"
+    batches = label_batches((first, stepped, third))
 
-
-def test_ordering_follows_label_time_not_input_order() -> None:
-    """An event whose label arrived earlier comes first."""
-    later = Event("a" * 64, ORIGIN, None, EPOCH + dt.timedelta(minutes=1), "hit", 0.1)
-    earlier = Event("b" * 64, ORIGIN, None, EPOCH, "miss", 0.2)
-
-    assert ordered((later, earlier)) == (earlier, later), "label order wins"
+    assert batches == ((0,), (1,), (2,)), "contiguity beats timestamp equality"
+    rows = features((first, stepped, third), load_window_seconds=60.0)
+    assert rows[1].load == 0, "the batch before is embargoed"
+    assert rows[2].load == 1, "only the first record is released history"
