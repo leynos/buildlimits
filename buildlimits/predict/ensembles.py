@@ -65,7 +65,9 @@ class Ensemble:
         Returns
         -------
         float | None
-            The weighted mean, or None when no component answered.
+            The weighted mean, or None when no component answered or when
+            every component that did answer carries zero weight, which leaves
+            the mean undefined rather than zero.
         """
         available = [
             (weight, probability)
