@@ -7,6 +7,7 @@ with the field that is wrong rather than surfacing as a confusing report.
 
 import datetime as dt
 import json
+import math
 import typing as typ
 
 from buildlimits.predict.dataset import SNAPSHOT_VERSION, Gap, Snapshot, Source
@@ -173,11 +174,19 @@ def _seconds_from(path: Path, value: object) -> float:
     ------
     TypeError
         If the value is not a number.
+    ValueError
+        If the number is not finite. ``NaN`` and the infinities are not valid
+        JSON numbers, so carrying one into a report would produce a document
+        other readers cannot parse.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         msg = f"{path} stats gap must hold a numeric seconds"
         raise TypeError(msg)
-    return float(value)
+    seconds = float(value)
+    if not math.isfinite(seconds):
+        msg = f"{path} stats gap must hold finite seconds"
+        raise ValueError(msg)
+    return seconds
 
 
 def _parse_stamp(value: object) -> dt.datetime:

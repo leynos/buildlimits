@@ -262,6 +262,27 @@ def test_a_malformed_snapshot_is_refused(
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
 
+@pytest.mark.parametrize("seconds", [float("nan"), float("inf")])
+def test_a_non_finite_gap_length_is_refused_by_field(
+    tmp_path: Path, seconds: float
+) -> None:
+    """A non-finite length is not a JSON number, so the gap field is named."""
+    document = _document()
+    stats = typ.cast("dict[str, object]", document["stats"])
+    stats.update(
+        gaps=[
+            {
+                "start": "2026-11-17T12:00:00+00:00",
+                "end": "2026-11-17T13:00:00+00:00",
+                "seconds": seconds,
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="gap must hold finite seconds"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
 def test_a_document_that_is_not_an_object_is_refused(tmp_path: Path) -> None:
     """A JSON array is not a snapshot."""
     with pytest.raises(TypeError, match="must hold one JSON object"):
