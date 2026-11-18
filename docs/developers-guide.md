@@ -202,12 +202,14 @@ the process is an adapter at its edge. The domain modules are `bootstrap`,
 
 None of those modules imports a file-system, JSON, process or command module,
 and none imports an adapter. `journal_codec` and `report_codec` are domain
-modules even though they build documents: each converts a typed value to and
-from plain mappings and never parses or writes JSON itself. The report's `data`
-block, including the snapshot's source and summary counts, is built by
-`report_codec`, so the domain report never reaches the JSON codec.
-`snapshot_codec` is outside the list because it does read and write JSON
-document fragments, and `snapshot_store` owns the file those fragments go to.
+modules even though they build documents: neither parses or writes JSON itself.
+`journal_codec` converts the journal provenance in both directions, while
+`report_codec` only encodes values into plain mappings through its `*_to_dict`
+functions and never decodes one. The report's `data` block, including the
+snapshot's source and summary counts, is built by `report_codec`, so the domain
+report never reaches the JSON codec. `snapshot_codec` is outside the list
+because it does read and write JSON document fragments, and `snapshot_store`
+owns the file those fragments go to.
 
 The adapters are `config_loader` (reads and validates the packaged
 configuration), `snapshot_store` (parses and writes a snapshot document),
@@ -220,8 +222,10 @@ the two commands `dataset_cli` and `benchmark_cli`.
 domain module's imports, resolves relative forms against the module's package
 so both `from .config_loader import load_config` and
 `from . import config_loader` are seen, and fails on an infrastructure module
-or an adapter. A companion test fails when the list names a module that does
-not exist, so a rename cannot quietly skip the check.
+or an adapter. A forbidden module is matched by its exact name or as the head
+of a dotted name, so `import os.path` and a submodule of an adapter are caught
+as well. A companion test fails when the list names a module that does not
+exist, so a rename cannot quietly skip the check.
 
 ## 3. Architecture overview
 

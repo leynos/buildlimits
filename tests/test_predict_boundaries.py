@@ -59,6 +59,7 @@ _ADAPTERS = frozenset({
     "buildlimits.predict.paths",
     "buildlimits.predict.provenance",
     "buildlimits.predict.records",
+    "buildlimits.predict.report_writer",
     "buildlimits.predict.snapshot_codec",
     "buildlimits.predict.snapshot_store",
 })
@@ -124,14 +125,42 @@ def _imported_modules(source: str, module: str) -> set[str]:
     return imported
 
 
+def _forbidden_imports(source: str, module: str) -> set[str]:
+    """Return the imported names that reach infrastructure or an adapter.
+
+    A forbidden module is matched by its exact name or as the head of a dotted
+    name, so ``import os.path`` is caught by ``os`` even though the exact set
+    holds no bare ``os``. The same rule sees a submodule of an adapter, which a
+    domain module must not reach any more than the adapter itself.
+
+    Parameters
+    ----------
+    source : str
+        The module source to read.
+    module : str
+        The dotted name of the module the source defines.
+
+    Returns
+    -------
+    set[str]
+        The imported names that are, or descend from, a forbidden module.
+    """
+    return {
+        name
+        for name in _imported_modules(source, module)
+        if any(
+            name == banned or name.startswith(f"{banned}.")
+            for banned in _INFRASTRUCTURE | _ADAPTERS
+        )
+    }
+
+
 @pytest.mark.parametrize("name", DOMAIN_MODULES)
 def test_a_domain_module_imports_no_infrastructure_or_adapter(name: str) -> None:
     """A domain module depends on values and other domain modules only."""
     path = PACKAGE / f"{name}.py"
     source = path.read_text(encoding="utf-8")
-    forbidden = _imported_modules(source, f"buildlimits.predict.{name}") & (
-        _INFRASTRUCTURE | _ADAPTERS
-    )
+    forbidden = _forbidden_imports(source, f"buildlimits.predict.{name}")
 
     assert not forbidden, (
         f"{path.name} imports {sorted(forbidden)}; decode or write outside the "
@@ -170,3 +199,44 @@ def test_relative_adapter_imports_are_resolved_before_they_are_compared() -> Non
         "buildlimits.predict.config_loader",
         "buildlimits.predict.snapshot_store",
     }, "the adapters are found by their absolute names"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(
+            "import os.path as host_path\n",
+            {"os.path"},
+            id="dotted-infrastructure",
+        ),
+        pytest.param(
+            "from os import path as host_path\n",
+            {"os", "os.path"},
+            id="named-infrastructure",
+        ),
+        pytest.param(
+            "from . import report_writer\n",
+            {"buildlimits.predict.report_writer"},
+            id="relative-adapter",
+        ),
+        pytest.param(
+            "from .report_writer import write_report\n",
+            {
+                "buildlimits.predict.report_writer",
+                "buildlimits.predict.report_writer.write_report",
+            },
+            id="relative-adapter-name",
+        ),
+        pytest.param("from . import metrics\n", set(), id="domain-module"),
+    ],
+)
+def test_a_forbidden_module_is_matched_by_name_or_descendant(
+    source: str, expected: set[str]
+) -> None:
+    """A dotted spelling of a forbidden module still reaches that module."""
+    found = _forbidden_imports(source, "buildlimits.predict.dataset")
+
+    assert found == expected, (
+        "every forbidden module is matched by its name or a dot-prefixed "
+        "descendant, and a sibling domain module is not"
+    )
