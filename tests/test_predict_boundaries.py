@@ -59,32 +59,67 @@ _ADAPTERS = frozenset({
     "buildlimits.predict.paths",
     "buildlimits.predict.provenance",
     "buildlimits.predict.records",
+    "buildlimits.predict.snapshot_codec",
     "buildlimits.predict.snapshot_store",
 })
 
 
-def _imported_modules(path: Path) -> set[str]:
-    """Return every module name one source file imports.
+def _absolute(module: str | None, level: int, package: str) -> str:
+    """Resolve one ``from`` target against the importing module's package.
+
+    ``level`` counts the package parts the import walks back: zero is
+    absolute, one names the module's own package, and each further level
+    removes one leading part. A bare relative import names the package
+    itself, which the caller expands through the imported names.
+
+    Returns
+    -------
+    str
+        The absolute module name, or the empty string for an absolute import
+        that names no module.
+    """
+    if level == 0:
+        return module or ""
+    parts = package.split(".")
+    base = parts[: len(parts) - (level - 1)]
+    if module:
+        base.append(module)
+    return ".".join(base)
+
+
+def _imported_modules(source: str, module: str) -> set[str]:
+    """Return every module name one source text imports.
+
+    Parameters
+    ----------
+    source : str
+        The module source to read.
+    module : str
+        The dotted name of the module the source defines, so a relative
+        import is resolved against its package before it is compared with
+        the forbidden names.
 
     Returns
     -------
     set[str]
         Imported module names, with ``from package import name`` expanded to
-        ``package.name`` so an adapter reached by name is still seen.
+        ``package.name`` so an adapter reached by name is still seen, and
+        relative forms resolved to the absolute name they reach.
     """
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = ast.parse(source, filename=module)
+    package = module.rpartition(".")[0]
     imported: set[str] = set()
     for node in ast.walk(tree):
         match node:
             case ast.Import(names=names):
                 imported.update(alias.name for alias in names)
-            case ast.ImportFrom(module=str() as module, names=names):
-                imported.add(module)
-                parents = module.split(".")
+            case ast.ImportFrom(module=module_name, names=names, level=level):
+                base = _absolute(module_name, level, package)
+                if not base:
+                    continue
+                imported.add(base)
                 imported.update(
-                    ".".join([*parents, alias.name])
-                    for alias in names
-                    if alias.name != "*"
+                    f"{base}.{alias.name}" for alias in names if alias.name != "*"
                 )
     return imported
 
@@ -93,7 +128,10 @@ def _imported_modules(path: Path) -> set[str]:
 def test_a_domain_module_imports_no_infrastructure_or_adapter(name: str) -> None:
     """A domain module depends on values and other domain modules only."""
     path = PACKAGE / f"{name}.py"
-    forbidden = _imported_modules(path) & (_INFRASTRUCTURE | _ADAPTERS)
+    source = path.read_text(encoding="utf-8")
+    forbidden = _imported_modules(source, f"buildlimits.predict.{name}") & (
+        _INFRASTRUCTURE | _ADAPTERS
+    )
 
     assert not forbidden, (
         f"{path.name} imports {sorted(forbidden)}; decode or write outside the "
@@ -108,3 +146,27 @@ def test_every_listed_domain_module_exists() -> None:
     ]
 
     assert not missing, f"the boundary list names missing modules {missing}"
+
+
+def test_relative_adapter_imports_are_resolved_before_they_are_compared() -> None:
+    """Both relative forms reach an adapter, so both must be named absolutely."""
+    source = (
+        "from .config_loader import load_config\n"
+        "from . import snapshot_store\n"
+        "from ..admission import Admission\n"
+    )
+
+    imported = _imported_modules(source, "buildlimits.predict.dataset")
+
+    assert imported == {
+        "buildlimits.admission",
+        "buildlimits.admission.Admission",
+        "buildlimits.predict",
+        "buildlimits.predict.config_loader",
+        "buildlimits.predict.config_loader.load_config",
+        "buildlimits.predict.snapshot_store",
+    }, "every relative form is resolved to the absolute name it reaches"
+    assert imported & _ADAPTERS == {
+        "buildlimits.predict.config_loader",
+        "buildlimits.predict.snapshot_store",
+    }, "the adapters are found by their absolute names"

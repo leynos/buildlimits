@@ -17,9 +17,10 @@ from buildlimits.predict.report_codec import (
     config_to_dict,
     interval_to_dict,
     metrics_to_dict,
+    source_to_dict,
     split_to_dict,
+    stats_to_dict,
 )
-from buildlimits.predict.snapshot_codec import source_to_dict, stats_to_dict
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

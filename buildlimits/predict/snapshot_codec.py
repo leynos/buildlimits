@@ -16,6 +16,7 @@ import typing as typ
 
 from buildlimits.predict.events import LABELS, ORIGINS, Event
 from buildlimits.predict.journal_codec import journal_to_dict
+from buildlimits.predict.report_codec import source_to_dict, stats_to_dict
 from buildlimits.utc_text import (
     optional_utc_moment,
     optional_utc_text,
@@ -27,7 +28,7 @@ if typ.TYPE_CHECKING:
     import datetime as dt
 
     from buildlimits.outcome_record_format import Origin
-    from buildlimits.predict.dataset import Gap, Snapshot, SnapshotStats, Source
+    from buildlimits.predict.dataset import Snapshot
     from buildlimits.predict.events import Label
 
 SNAPSHOT_VERSION = 1
@@ -57,62 +58,6 @@ def event_to_dict(event: Event) -> dict[str, object]:
         "observed_at": optional_utc_text(event.observed_at),
         "label": event.label,
         "runtime_seconds": round(event.runtime_seconds, 6),
-    }
-
-
-def gap_to_dict(gap: Gap) -> dict[str, object]:
-    """Return the snapshot shape for one reported silence.
-
-    Returns
-    -------
-    dict[str, object]
-        The gap under stable keys.
-    """
-    return {
-        "start": utc_text(gap.start),
-        "end": utc_text(gap.end),
-        "seconds": round(gap.seconds, 3),
-    }
-
-
-def source_to_dict(source: Source) -> dict[str, object]:
-    """Return the snapshot shape for the store provenance.
-
-    Returns
-    -------
-    dict[str, object]
-        The provenance under stable keys.
-    """
-    return {
-        "kind": "cache-outcomes",
-        "salt_id": source.salt_id,
-        "written_at": utc_text(source.written_at),
-        "records_total": source.records_total,
-        "outcome_records": source.outcome_records,
-        "summary_records": source.summary_records,
-    }
-
-
-def stats_to_dict(stats: SnapshotStats) -> dict[str, object]:
-    """Return the snapshot shape for the history's summary counts.
-
-    Returns
-    -------
-    dict[str, object]
-        Every count and span under stable keys.
-    """
-    return {
-        "events": stats.events,
-        "labelled": stats.labelled,
-        "labelled_fraction": stats.labelled_fraction,
-        "identities": stats.identities,
-        "span_start": optional_utc_text(stats.span_start),
-        "span_end": optional_utc_text(stats.span_end),
-        "admission_recorded": stats.admission_recorded,
-        "admission_usable": stats.admission_usable,
-        "admission_missing": stats.admission_missing,
-        "admission_unusable": stats.admission_unusable,
-        "gaps": [gap_to_dict(gap) for gap in stats.gaps],
     }
 
 

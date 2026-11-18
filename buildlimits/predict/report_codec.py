@@ -1,19 +1,22 @@
-"""Encode the report's scored values as the deterministic JSON shapes.
+"""Encode the report's values as the deterministic JSON shapes.
 
-The scores, intervals and split are domain values; their report shape is a
-serialization concern, so the encoders live here rather than on the values.
-:mod:`buildlimits.predict.report` calls these functions and keeps the document's
-layout in one place.
+The scores, intervals, split and the snapshot's counts are domain values; their
+report shape is a serialization concern, so the encoders live here rather than
+on the values. :mod:`buildlimits.predict.report` calls these functions and
+keeps the document's layout in one place, and
+:mod:`buildlimits.predict.snapshot_codec` reuses them so a snapshot document
+and a report describe the same data block identically.
 """
 
 import dataclasses as dc
 import typing as typ
 
-from buildlimits.utc_text import utc_text
+from buildlimits.utc_text import optional_utc_text, utc_text
 
 if typ.TYPE_CHECKING:
     from buildlimits.predict.bootstrap import Interval
     from buildlimits.predict.config import Config
+    from buildlimits.predict.dataset import Gap, SnapshotStats, Source
     from buildlimits.predict.harness import Split
     from buildlimits.predict.metrics import CalibrationBin, Metrics
 
@@ -83,6 +86,62 @@ def interval_to_dict(interval: Interval) -> dict[str, object]:
         "blocks": interval.blocks,
         "rows": interval.rows,
         "positions": interval.positions,
+    }
+
+
+def source_to_dict(source: Source) -> dict[str, object]:
+    """Return the snapshot shape for the store provenance.
+
+    Returns
+    -------
+    dict[str, object]
+        The provenance under stable keys.
+    """
+    return {
+        "kind": "cache-outcomes",
+        "salt_id": source.salt_id,
+        "written_at": utc_text(source.written_at),
+        "records_total": source.records_total,
+        "outcome_records": source.outcome_records,
+        "summary_records": source.summary_records,
+    }
+
+
+def stats_to_dict(stats: SnapshotStats) -> dict[str, object]:
+    """Return the snapshot shape for the history's summary counts.
+
+    Returns
+    -------
+    dict[str, object]
+        Every count and span under stable keys.
+    """
+    return {
+        "events": stats.events,
+        "labelled": stats.labelled,
+        "labelled_fraction": stats.labelled_fraction,
+        "identities": stats.identities,
+        "span_start": optional_utc_text(stats.span_start),
+        "span_end": optional_utc_text(stats.span_end),
+        "admission_recorded": stats.admission_recorded,
+        "admission_usable": stats.admission_usable,
+        "admission_missing": stats.admission_missing,
+        "admission_unusable": stats.admission_unusable,
+        "gaps": [gap_to_dict(gap) for gap in stats.gaps],
+    }
+
+
+def gap_to_dict(gap: Gap) -> dict[str, object]:
+    """Return the snapshot shape for one reported silence.
+
+    Returns
+    -------
+    dict[str, object]
+        The gap under stable keys.
+    """
+    return {
+        "start": utc_text(gap.start),
+        "end": utc_text(gap.end),
+        "seconds": round(gap.seconds, 3),
     }
 
 
