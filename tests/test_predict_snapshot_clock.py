@@ -56,6 +56,19 @@ def _backward(*, admitted: bool) -> tuple[Event, Event]:
     )
 
 
+def _forward() -> tuple[Event, Event]:
+    """Return two events the store could have appended in this order."""
+    return (
+        hand_event(0, admitted_at=EPOCH, observed_at=EPOCH, label="hit"),
+        hand_event(
+            1,
+            admitted_at=EPOCH + dt.timedelta(minutes=5),
+            observed_at=EPOCH + dt.timedelta(minutes=10),
+            label="hit",
+        ),
+    )
+
+
 def test_an_admission_bearing_history_with_a_backward_clock_is_refused(
     tmp_path: Path,
 ) -> None:
@@ -87,11 +100,14 @@ def test_a_backward_clock_is_refused_before_the_snapshot_is_written(
 
     The rule belongs to the value, not only to the reader: reporting success
     for a backward history would leave the dataset command's output unreadable
-    and the earlier snapshot already gone.
+    and the earlier snapshot already gone. The refused save must therefore
+    leave the file it would have replaced exactly as it was.
     """
     path = tmp_path / "history.jsonl"
+    save_snapshot(path, _snapshot(*_forward()))
+    earlier = path.read_bytes()
 
     with pytest.raises(ValueError, match="ran backwards"):
         save_snapshot(path, _snapshot(*_backward(admitted=True)))
 
-    assert not path.exists(), "the earlier file is not replaced"
+    assert path.read_bytes() == earlier, "the earlier snapshot is left intact"
