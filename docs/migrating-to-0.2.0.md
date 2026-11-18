@@ -3,8 +3,10 @@
 This guide is for maintainers moving a checkout from buildlimits 0.1.0 to
 0.2.0. The release adds the FizzBee model check: a model of admission and
 recovery, a pinned checker, and a `modelcheck` command that judges the model's
-results. The wheel still contains only `buildlimits`, and no threshold,
-configuration key, status document or metric field moves.
+results. It also adds an opt-in, offline benchmark that compares cache-hit
+predictors against the outcomes this host has already recorded. The wheel still
+contains only `buildlimits`, and no threshold, configuration key, status
+document or metric field moves.
 
 The supervisor's journal does change. A plain line per admission and per clean
 finish is no longer written by default, and repeated drain successes are
@@ -32,6 +34,7 @@ behaviour is described under
 | Journal lines  | One line per admission and per finish         | Routine lines only when requested                      |
 | Drain progress | One `drain_progress` record per drain success | Repeated successes summarized                          |
 | Journal switch | None                                          | Adds `BUILD_LIMITS_ROUTINE_LINES`                      |
+| Prediction     | None                                          | Adds opt-in `predict-dataset` and `predict-benchmark`  |
 
 _Table 1: What 0.2.0 adds._
 
@@ -124,6 +127,28 @@ the first time, unless the pinned version or digest changes.
    unstartable compiles were never suppressed, and a reader that needs only
    those needs no change. See
    [Routine journal lines](users-guide.md#routine-journal-lines).
+
+7. Optionally run the offline hit-predictor benchmark:
+
+   ```bash
+   make predict-dataset
+   make predict-benchmark
+   ```
+
+   The targets wrap `build-limits-predict-dataset` and
+   `build-limits-predict-benchmark`. Both are opt-in and offline: they read the
+   history the outcome recorder has already written and produce
+   `build/predict/history.jsonl`, `results.json`, `results.md` and
+   `timings.json`. They change no admission, cache-composition, scheduling or
+   token-accounting behaviour, and no operator action is required. See
+   [Compare offline hit predictors](users-guide.md#compare-offline-hit-predictors).
+
+## What does not need to change
+
+Admission, FIFO order, token accounting, cache composition, recovery,
+cancellation and the supervisor's configuration are unchanged. The offline
+predictors read recorded outcomes and write report files of their own; a host
+that never runs the prediction targets behaves exactly as it did in 0.1.0.
 
 ## Exit statuses
 
