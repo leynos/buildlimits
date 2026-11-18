@@ -39,7 +39,14 @@ def save_snapshot(path: Path, snapshot: Snapshot) -> None:
     through cannot leave an earlier snapshot truncated. The store rotates, so
     the data behind that earlier snapshot may already be gone; keeping the old
     file is the only way to keep it reproducible.
+
+    The history is checked for a backward clock before the file is replaced,
+    by the same rule :func:`load_snapshot` applies. Otherwise the dataset
+    command would report success for a snapshot its own reader refuses, and
+    the earlier readable file would already be gone. The rule raises the same
+    ``ValueError`` the loader reports.
     """
+    _require_ordered_clock(path, snapshot.events)
     path.parent.mkdir(parents=True, exist_ok=True)
     document = json.dumps(snapshot_to_dict(snapshot), indent=2, sort_keys=True)
     descriptor, name = tempfile.mkstemp(
@@ -154,6 +161,8 @@ def _source_from(path: Path, value: cabc.Mapping[str, object]) -> Source:
     ------
     TypeError
         If a field is missing or has the wrong type.
+    ValueError
+        If a count is negative.
     """
     salt_id = value.get("salt_id")
     written_at = value.get("written_at")
@@ -167,6 +176,9 @@ def _source_from(path: Path, value: cabc.Mapping[str, object]) -> Source:
         msg = f"{path} source must hold integer {', '.join(_SOURCE_COUNT_FIELDS)}"
         raise TypeError(msg)
     records_total, outcome_records, summary_records = typ.cast("list[int]", counts)
+    if any(count < 0 for count in (records_total, outcome_records, summary_records)):
+        msg = f"{path} source counts must not be negative"
+        raise ValueError(msg)
     return Source(
         salt_id=salt_id,
         written_at=_parse_stamp(written_at),
@@ -213,6 +225,8 @@ def _gap_from(path: Path, row: object) -> Gap:
     ------
     TypeError
         If the row or one of its fields has the wrong type.
+    ValueError
+        If the gap ends before it starts or reports a negative length.
     """
     if not isinstance(row, dict):
         msg = f"{path} stats gaps must hold objects"
@@ -223,11 +237,13 @@ def _gap_from(path: Path, row: object) -> Gap:
     if not isinstance(start, str) or not isinstance(end, str):
         msg = f"{path} stats gap must hold start and end text"
         raise TypeError(msg)
-    return Gap(
-        start=_parse_stamp(start),
-        end=_parse_stamp(end),
-        seconds=_seconds_from(path, value.get("seconds")),
-    )
+    start_moment = _parse_stamp(start)
+    end_moment = _parse_stamp(end)
+    seconds = _seconds_from(path, value.get("seconds"))
+    if end_moment < start_moment or seconds < 0:
+        msg = f"{path} stats gap must end at or after its start"
+        raise ValueError(msg)
+    return Gap(start=start_moment, end=end_moment, seconds=seconds)
 
 
 def _seconds_from(path: Path, value: object) -> float:

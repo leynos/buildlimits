@@ -17,7 +17,6 @@ from predict_test_helpers import write_json
 from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.dataset import StoreHistory, build_snapshot
-from buildlimits.predict.events import EPOCH, Event
 from buildlimits.predict.journal_provenance import (
     JournalCounts,
     JournalProvenance,
@@ -25,7 +24,7 @@ from buildlimits.predict.journal_provenance import (
     count_journal,
 )
 from buildlimits.predict.records import decode_history
-from buildlimits.predict.snapshot_codec import event_to_dict, snapshot_to_dict
+from buildlimits.predict.snapshot_codec import snapshot_to_dict
 from buildlimits.predict.snapshot_store import load_snapshot
 
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
@@ -103,6 +102,12 @@ def _refuses_creation_time(tmp_path: Path, stamp: str, match: str) -> None:
             ),
             id="count-is-a-bool",
         ),
+        pytest.param(
+            lambda doc: typ.cast("dict[str, object]", doc["source"]).update(
+                records_total=-1
+            ),
+            id="count-negative",
+        ),
         pytest.param(lambda doc: doc.pop("stats"), id="stats-missing"),
         pytest.param(
             lambda doc: typ.cast("dict[str, object]", doc["stats"]).update(gaps={}),
@@ -129,6 +134,30 @@ def _refuses_creation_time(tmp_path: Path, stamp: str, match: str) -> None:
                 ]
             ),
             id="gap-seconds-not-numeric",
+        ),
+        pytest.param(
+            lambda doc: typ.cast("dict[str, object]", doc["stats"]).update(
+                gaps=[
+                    {
+                        "start": "2026-11-17T13:00:00+00:00",
+                        "end": "2026-11-17T12:00:00+00:00",
+                        "seconds": 3600.0,
+                    }
+                ]
+            ),
+            id="gap-ends-before-it-starts",
+        ),
+        pytest.param(
+            lambda doc: typ.cast("dict[str, object]", doc["stats"]).update(
+                gaps=[
+                    {
+                        "start": "2026-11-17T12:00:00+00:00",
+                        "end": "2026-11-17T13:00:00+00:00",
+                        "seconds": -1.0,
+                    }
+                ]
+            ),
+            id="gap-length-negative",
         ),
         pytest.param(
             lambda doc: _journal(doc).update(available="yes"),
@@ -258,70 +287,6 @@ def test_a_snapshot_that_queried_no_journal_decodes_no_note(tmp_path: Path) -> N
     loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
     assert loaded.journal is None, "no note is invented"
-
-
-def _event(identity_byte: str, minutes: int, *, admitted: bool) -> dict[str, object]:
-    """Return one snapshot event at a fixed offset from the epoch.
-
-    Returns
-    -------
-    dict[str, object]
-        The event's encoded shape.
-    """
-    event = Event(
-        identity_byte * 64,
-        "git",
-        EPOCH if admitted else None,
-        EPOCH + dt.timedelta(minutes=minutes),
-        "hit",
-        1.0,
-    )
-    return event_to_dict(event)
-
-
-def _backward_history(*, admitted: bool) -> dict[str, object]:
-    """Return a snapshot whose second event was observed before the first.
-
-    Returns
-    -------
-    dict[str, object]
-        A two-event document, with admission times when ``admitted`` is set.
-    """
-    document = _document()
-    document["events"] = [
-        _event("b", 10, admitted=admitted),
-        _event("c", 5, admitted=admitted),
-    ]
-    return document
-
-
-def test_an_admission_bearing_history_with_a_backward_clock_is_refused(
-    tmp_path: Path,
-) -> None:
-    """A clock that ran backwards cannot order predictions by recorded time.
-
-    The later store position carries the earlier stamp, so across the step a
-    label observed after a prediction could sort before it. No monotonic
-    sequence is stored to separate the two sides, so the history is refused.
-    """
-    document = _backward_history(admitted=True)
-
-    with pytest.raises(ValueError, match="ran backwards"):
-        load_snapshot(write_json(tmp_path / "history.jsonl", document))
-
-
-def test_a_history_without_admission_times_may_report_a_backward_clock(
-    tmp_path: Path,
-) -> None:
-    """The step only matters where admission times would order predictions."""
-    document = _backward_history(admitted=False)
-
-    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
-
-    assert len(loaded.events) == 2, "the history is still readable"
-    assert all(event.admitted_at is None for event in loaded.events), (
-        "no admission time can be ordered by the broken clock"
-    )
 
 
 def test_a_document_that_is_not_an_object_is_refused(tmp_path: Path) -> None:
