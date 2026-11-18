@@ -726,6 +726,13 @@ reason = "Matching import lists: both average weighted component answers, so eac
 
 [[tool.duplication_gate.allow]]
 members = [
+    "buildlimits/predict/provenance.py::_environment",
+    "tests/modelcheck_e2e_cases.py::ambient",
+]
+reason = "One prefix filter written twice for unrelated settings: the adapter drops Git's repository-selection variables before a fixed git invocation, and the model-check harness drops `MODELCHECK_*` before a stubbed run. Sharing the filter would couple production code to test support for one comprehension, and a generic prefix helper would name neither owner."
+
+[[tool.duplication_gate.allow]]
+members = [
     "buildlimits/requesters.py",
     "tests/test_request_validation.py",
 ]

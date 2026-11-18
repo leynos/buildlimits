@@ -5,9 +5,11 @@ the working directory a report happens to be produced in. A copy installed
 inside another project's virtual environment sits in that project's
 repository, so Git is asked both whether it holds the module at its canonical
 path and whether the reported commit's tree holds the file before that commit
-is accepted.
+is accepted. Both calls run without Git's repository-selection variables, so
+an inherited environment cannot point them at another checkout.
 """
 
+import os
 import shutil
 import subprocess  # ruff: ignore[suspicious-subprocess-import] - fixed git command, never a shell.
 from pathlib import Path
@@ -47,6 +49,7 @@ def git_revision() -> str:
             text=True,
             check=False,
             timeout=10,
+            env=_environment(),
         )
     except OSError, subprocess.SubprocessError:
         return "unknown"
@@ -111,7 +114,30 @@ def _tracked(executable: str, commit: str, root: str, source: Path) -> bool:
             text=True,
             check=False,
             timeout=10,
+            env=_environment(),
         )
     except OSError, subprocess.SubprocessError:
         return False
     return result.returncode == 0
+
+
+def _environment() -> dict[str, str]:
+    """Return the process environment without Git's own variables.
+
+    ``-C`` changes the directory git starts from, but it does not overrule a
+    repository chosen by the environment: with ``GIT_DIR`` and
+    ``GIT_WORK_TREE`` set, both calls would read another checkout while the
+    root they print belongs to the directory passed here. A module path
+    present in both repositories would then let that checkout's commit vouch
+    for code loaded from this one. Dropping every ``GIT_*`` variable leaves
+    the calls reading the directory they are given, and keeps unrelated
+    variables such as ``PATH`` for the executable to run.
+
+    Returns
+    -------
+    dict[str, str]
+        Every variable of the current environment whose name Git does not own.
+    """
+    return {
+        name: value for name, value in os.environ.items() if not name.startswith("GIT_")
+    }
