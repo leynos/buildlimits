@@ -58,3 +58,25 @@ def test_the_gradient_is_flat_when_nothing_answered() -> None:
     gradient = _log_loss_gradient([(None, None)], [1.0], WEIGHTS, CLIP)
 
     assert gradient == pytest.approx([0.0, 0.0]), "no slope, no step"
+
+
+@pytest.mark.parametrize(
+    ("row", "outcome"),
+    [
+        pytest.param((0.0, 0.0), 1.0, id="below-the-clip"),
+        pytest.param((1.0, 1.0), 0.0, id="above-the-clip"),
+    ],
+)
+def test_the_gradient_is_flat_where_the_clip_has_flattened_the_loss(
+    row: tuple[float, float], outcome: float
+) -> None:
+    """Outside the clipped interval the scored loss has no slope to follow.
+
+    A raw mean at zero or one is flattened by the clip, so a small weight change
+    leaves the loss unchanged. Reporting the interior slope evaluated at the
+    clamped probability would claim a gradient the scored loss does not have,
+    and the fit would step off the corner it is standing on.
+    """
+    gradient = _log_loss_gradient([row], [outcome], WEIGHTS, CLIP)
+
+    assert gradient == pytest.approx([0.0, 0.0]), "the clipped tail is flat"

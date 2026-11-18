@@ -10,6 +10,13 @@ missing timestamp is never read as if its label had arrived before it.
 
 An unknown outcome carries no usable label, so it neither counts as load nor
 sets an age.
+
+Grouping by admission moment is only meaningful while the recorded times share
+one clock. A clock that stepped backwards would let a label observed later in
+true time carry an earlier stamp, so the schedule would release it before a
+moment that truly preceded it. The snapshot loader refuses an admission-bearing
+history whose observation times decrease in append order, before any of these
+functions see it; a reset is reported rather than scored.
 """
 
 import bisect
@@ -56,7 +63,9 @@ def prediction_moments(events: cabc.Sequence[Event]) -> tuple[tuple[int, ...], .
 
     Events sharing a moment are kept in store order, so a tie is answered in a
     fixed sequence. Events without a usable admission time are absent: they
-    cannot be predicted.
+    cannot be predicted. Sorting by moment relies on the stream's clock not
+    having run backwards; the snapshot loader refuses such a history before it
+    reaches this function.
 
     Parameters
     ----------
