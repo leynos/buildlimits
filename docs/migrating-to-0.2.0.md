@@ -4,9 +4,11 @@ This guide is for maintainers moving a checkout from buildlimits 0.1.0 to
 0.2.0. The release adds the FizzBee model check: a model of admission and
 recovery, a pinned checker, and a `modelcheck` command that judges the model's
 results. It also adds an opt-in, offline benchmark that compares cache-hit
-predictors against the outcomes this host has already recorded. The wheel still
-contains only `buildlimits`, and no threshold, configuration key, status
-document or metric field moves.
+predictors against the outcomes this host has already recorded; where that
+history holds no admission times, so no predictor can be scored, it reports
+insufficient data rather than a result. The wheel still contains only
+`buildlimits`, and no threshold, configuration key, status document or metric
+field moves.
 
 The supervisor's journal does change. A plain line per admission and per clean
 finish is no longer written by default, and repeated drain successes are
@@ -147,8 +149,9 @@ the first time, unless the pinned version or digest changes.
 
 Admission, FIFO order, token accounting, cache composition, recovery,
 cancellation and the supervisor's configuration are unchanged. The offline
-predictors read recorded outcomes and write report files of their own; a host
-that never runs the prediction targets behaves exactly as it did in 0.1.0.
+predictors read recorded outcomes and write report files of their own, so the
+prediction targets change nothing at all unless they are run. The journal
+change described above is the only change an operator sees without opting in.
 
 ## Exit statuses
 
