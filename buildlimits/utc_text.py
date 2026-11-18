@@ -17,6 +17,15 @@ def utc_text(value: dt.datetime) -> str:
     str
         The time converted to UTC, with ``+00:00`` written as ``Z``.
 
+    Raises
+    ------
+    ValueError
+        If the value carries no offset. ``astimezone`` would read such a value
+        as the host's local time, so the same instant would be written
+        differently on two machines and a stored snapshot would stop being
+        reproducible. An absent offset is a caller's mistake, not a moment to
+        guess at.
+
     Examples
     --------
     >>> from datetime import UTC, datetime, timedelta, timezone
@@ -25,6 +34,9 @@ def utc_text(value: dt.datetime) -> str:
     >>> utc_text(datetime(2026, 11, 17, 13, 30, tzinfo=timezone(timedelta(hours=1))))
     '2026-11-17T12:30:00Z'
     """
+    if value.tzinfo is None:
+        msg = "a timestamp to serialize must carry an offset"
+        raise ValueError(msg)
     return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
 
 
@@ -38,7 +50,8 @@ def optional_utc_text(value: dt.datetime | None) -> str | None:
     Returns
     -------
     str | None
-        Canonical ISO text, or None when no time is known.
+        Canonical ISO text, or None when no time is known. A present value
+        with no offset is refused by :func:`utc_text`.
 
     Examples
     --------
