@@ -132,11 +132,23 @@ class Ensemble:
         -------
         Ensemble
             The same mode over the remaining components.
+
+        Raises
+        ------
+        IndexError
+            If ``index`` names no component.
         """
+        count = len(self.components)
+        # Checking the raw index keeps Python's own bounds rule, which admits
+        # ``-count`` but not ``-count - 1``; resolving it first would silently
+        # turn an out-of-range negative index into a position from the front.
+        if not -count <= index < count:
+            msg = f"no component at index {index} of {count}"
+            raise IndexError(msg)
         # A negative index sliced as written would keep the head twice
         # (``[:-1] + [0:]``), duplicating every component but the last, so it
         # is resolved to a position first.
-        position = index if index >= 0 else index + len(self.components)
+        position = index if index >= 0 else index + count
         return dc.replace(
             self,
             name=f"{self.name}-without-{self.components[position]}",

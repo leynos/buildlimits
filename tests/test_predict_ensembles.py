@@ -102,6 +102,21 @@ def test_a_negative_ablation_index_drops_the_last_component_once() -> None:
     assert ablated.name == "ensemble-equal-without-c", "the name says which"
 
 
+def test_an_ablation_index_past_the_first_component_is_refused() -> None:
+    """Out of range must fail rather than wrap to a component that exists.
+
+    Three components admit ``-3`` and ``2`` but not ``-4``. Adding the count
+    before checking would read ``-4`` as ``-1`` and quietly drop a component
+    the caller never named.
+    """
+    ensemble = Ensemble(
+        "ensemble-equal", ("a", "b", "c"), [0.2, 0.3, 0.5], "equal", 0.5, 1e-6
+    )
+
+    with pytest.raises(IndexError, match="no component at index -4 of 3"):
+        ensemble.without(-4)
+
+
 def test_a_long_losing_spell_cannot_eliminate_a_component() -> None:
     """A component outperformed for long enough must still win weight back.
 
