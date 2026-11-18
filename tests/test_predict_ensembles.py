@@ -84,6 +84,24 @@ def test_an_ablation_without_any_weight_left_spreads_evenly() -> None:
     assert ablated.weights == pytest.approx([0.5, 0.5]), "no weight means even"
 
 
+def test_a_negative_ablation_index_drops_the_last_component_once() -> None:
+    """A position counted from the end removes one component, not a copy.
+
+    Slicing the raw negative index keeps the head twice (``[:-1] + [0:]``), so
+    the components would outnumber the weights and every later lookup would
+    pair the wrong name with the wrong weight.
+    """
+    ensemble = Ensemble(
+        "ensemble-equal", ("a", "b", "c"), [0.2, 0.3, 0.5], "equal", 0.5, 1e-6
+    )
+
+    ablated = ensemble.without(-1)
+
+    assert ablated.components == ("a", "b"), "the last component is gone"
+    assert ablated.weights == pytest.approx([0.4, 0.6]), "its weight is shared out"
+    assert ablated.name == "ensemble-equal-without-c", "the name says which"
+
+
 def test_a_long_losing_spell_cannot_eliminate_a_component() -> None:
     """A component outperformed for long enough must still win weight back.
 

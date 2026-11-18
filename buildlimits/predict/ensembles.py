@@ -125,18 +125,23 @@ class Ensemble:
         Parameters
         ----------
         index : int
-            The position of the component to drop, in component order.
+            The position of the component to drop, in component order. A
+            negative index counts from the end, as a sequence index does.
 
         Returns
         -------
         Ensemble
             The same mode over the remaining components.
         """
+        # A negative index sliced as written would keep the head twice
+        # (``[:-1] + [0:]``), duplicating every component but the last, so it
+        # is resolved to a position first.
+        position = index if index >= 0 else index + len(self.components)
         return dc.replace(
             self,
-            name=f"{self.name}-without-{self.components[index]}",
-            components=self.components[:index] + self.components[index + 1 :],
-            weights=_normalized(self.weights[:index] + self.weights[index + 1 :]),
+            name=f"{self.name}-without-{self.components[position]}",
+            components=self.components[:position] + self.components[position + 1 :],
+            weights=_normalized(self.weights[:position] + self.weights[position + 1 :]),
         )
 
 
