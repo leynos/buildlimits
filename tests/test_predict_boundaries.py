@@ -69,7 +69,7 @@ def _absolute(module: str | None, level: int, package: str) -> str:
 
     ``level`` counts the package parts the import walks back: zero is
     absolute, one names the module's own package, and each further level
-    removes one leading part. A bare relative import names the package
+    removes one rightmost part. A bare relative import names the package
     itself, which the caller expands through the imported names.
 
     Returns
