@@ -9,7 +9,6 @@ module has no way to reach a held-out label.
 import dataclasses as dc
 import math
 import typing as typ
-from functools import partial
 
 from buildlimits.predict.probability import clip_probability
 
@@ -92,30 +91,81 @@ def fit_weights(
     if not outcomes:
         return weights
     clip = config.log_loss_clip
-    loss_at = partial(_mean_log_loss, rows, outcomes, clip=clip)
+    objective = _Objective(rows, outcomes, clip)
     for _ in range(config.weight_fit_steps):
         gradient = _log_loss_gradient(rows, outcomes, weights, clip)
         if not any(gradient):
             break
-        proposal = _descend(loss_at, weights, gradient, config)
+        proposal = _descend(objective, weights, gradient, config)
         if proposal is None:
             break
         weights = proposal
     return weights
 
 
+@dc.dataclass(frozen=True, slots=True)
+class _Objective:
+    """The rows a fit scores and the clip its loss applies.
+
+    The loss and the count of answered rows are asked of the same value, so a
+    step can compare its proposal with the current weights over an identical
+    row set without either side restating how a row is selected.
+
+    Attributes
+    ----------
+    rows : Sequence[Sequence[float | None]]
+        The component answers for each training row, in component order.
+    outcomes : Sequence[float]
+        The label for each training row, as 1.0 for a hit and 0.0 for a miss.
+    clip : float
+        The probability clip the scored loss applies.
+    """
+
+    rows: cabc.Sequence[_Column]
+    outcomes: cabc.Sequence[float]
+    clip: float
+
+    def loss(self, weights: cabc.Sequence[float]) -> float:
+        """Return the mean clipped log loss at ``weights``.
+
+        Returns
+        -------
+        float
+            The mean loss over the rows that answered, or infinity when none
+            did.
+        """
+        return _mean_log_loss(self.rows, self.outcomes, weights, self.clip)
+
+    def scored(self, weights: cabc.Sequence[float]) -> int:
+        """Return how many rows produced a consensus at ``weights``.
+
+        Returns
+        -------
+        int
+            The number of rows that contribute to the mean loss.
+        """
+        return _scored_count(self.rows, self.outcomes, weights)
+
+
 def _descend(
-    loss_at: cabc.Callable[[cabc.Sequence[float]], float],
+    objective: _Objective,
     weights: cabc.Sequence[float],
     gradient: cabc.Sequence[float],
     config: Config,
 ) -> list[float] | None:
-    """Return the largest halved step that does not raise the loss.
+    """Return the largest halved step that improves the loss without losing rows.
 
     A fixed step is fine where the loss is nearly quadratic, but next to a
     clipped probability the same step can carry the weights to the opposite
     corner of the simplex, where the loss is far worse than where it started.
     Halving keeps the direction and finds a size the loss accepts.
+
+    A proposal must also answer at least as many rows as the current weights.
+    The objective is a mean over answered rows, so zeroing the only weight a
+    row's components carry removes that row from the mean; the mean can then
+    fall without the proposal predicting anything better, and the fit would
+    discard the answers it handles worst. Keeping the count makes the
+    comparison cover the same rows on both sides.
 
     Returns
     -------
@@ -123,17 +173,33 @@ def _descend(
         The improved weights, or None when no step size improved the loss,
         which means the fit has reached a point no small move improves.
     """
-    loss = loss_at(weights)
+    loss = objective.loss(weights)
+    scored = objective.scored(weights)
     step = config.weight_fit_learning_rate
     while step >= _MIN_STEP:
         proposal = _project([
             weight - step * value
             for weight, value in zip(weights, gradient, strict=True)
         ])
-        if loss_at(proposal) <= loss:
+        if objective.scored(proposal) >= scored and objective.loss(proposal) <= loss:
             return proposal
         step /= 2.0
     return None
+
+
+def _scored_count(
+    rows: cabc.Sequence[_Column],
+    outcomes: cabc.Sequence[float],
+    weights: cabc.Sequence[float],
+) -> int:
+    """Return how many rows produced a consensus under these weights.
+
+    Returns
+    -------
+    int
+        The number of rows that contribute to the mean loss.
+    """
+    return sum(1 for _ in _answered(rows, outcomes, weights))
 
 
 def _mean_log_loss(

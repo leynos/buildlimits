@@ -719,6 +719,13 @@ reason = "Matching type-checking preludes: both readers annotate optional timest
 
 [[tool.duplication_gate.allow]]
 members = [
+    "buildlimits/predict/ensembles.py",
+    "buildlimits/predict/fitting.py",
+]
+reason = "Matching import lists: both average weighted component answers, so each names the probability clip and the config that supplies its rate or weights; sharing the prelude through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
     "buildlimits/requesters.py",
     "tests/test_request_validation.py",
 ]

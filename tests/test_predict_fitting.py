@@ -1,10 +1,17 @@
 """Denominator contracts for the fixed-weight fit's objective."""
 
+import dataclasses as dc
 import math
 
 import pytest
 
-from buildlimits.predict.fitting import _log_loss_gradient, _mean_log_loss
+from buildlimits.predict.config_loader import load_config
+from buildlimits.predict.fitting import (
+    _descend,
+    _log_loss_gradient,
+    _mean_log_loss,
+    _Objective,
+)
 from buildlimits.predict.metrics import log_loss_of
 
 CLIP = 1e-6
@@ -80,3 +87,20 @@ def test_the_gradient_is_flat_where_the_clip_has_flattened_the_loss(
     gradient = _log_loss_gradient([row], [outcome], WEIGHTS, CLIP)
 
     assert gradient == pytest.approx([0.0, 0.0]), "the clipped tail is flat"
+
+
+def test_a_step_that_drops_an_answered_row_is_refused() -> None:
+    """A smaller mean is not a better fit when the step discarded an answer.
+
+    Row 0 is answered only by the first component, and row 1 by both. A full
+    step zeroes the first weight, so row 0 stops answering and leaves the
+    mean; the remaining row then scores perfectly. That mean is far lower than
+    the current one, but only because an answer was thrown away. The accepted
+    step is the half-sized one that still answers both rows.
+    """
+    config = dc.replace(load_config(), weight_fit_learning_rate=1.0)
+    objective = _Objective([(1.0, None), (0.0, 1.0)], [0.0, 1.0], config.log_loss_clip)
+
+    proposal = _descend(objective, [1.0, 0.0], [1.0, -1.0], config)
+
+    assert proposal == pytest.approx([0.5, 0.5]), "both rows still answer"
