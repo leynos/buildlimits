@@ -179,6 +179,21 @@ def test_a_zero_second_window_counts_no_load() -> None:
     )
 
 
+def test_a_load_window_before_the_earliest_moment_counts_nothing() -> None:
+    """A year-one admission time has no earlier moment for a window to reach.
+
+    Subtracting the window from the earliest representable timestamp would
+    raise rather than count, failing the whole stream on one legal record. The
+    window's start is clamped to that boundary, and nothing precedes it.
+    """
+    earliest = dt.datetime.min.replace(tzinfo=dt.UTC)
+    event = Event("d" * 64, ORIGIN, earliest, earliest, "hit", 1.0)
+
+    rows = features((event,), load_window_seconds=60.0)
+
+    assert [typ.cast("Features", row).load for row in rows] == [0], "no load"
+
+
 def test_batches_follow_store_order_when_a_timestamp_steps_back() -> None:
     """A backward clock step never merges records from separate windows."""
     first = _causal(10, "hit")

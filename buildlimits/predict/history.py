@@ -245,7 +245,9 @@ def _load_before(
     The window ends strictly before ``moment``, so an event labelled at the
     same moment is not load, and a zero-second window counts nothing.
     ``times`` must be sorted and hold the labels released before ``moment``, as
-    :func:`features` leaves it.
+    :func:`features` leaves it. A window that reaches before the earliest
+    representable moment is clamped to that boundary, since nothing can have
+    been observed earlier and subtracting it would raise rather than count.
 
     Returns
     -------
@@ -253,6 +255,11 @@ def _load_before(
         Events with a label time in ``[moment - window, moment)``.
     """
     window = dt.timedelta(seconds=window_seconds)
-    return bisect.bisect_left(times, moment) - bisect.bisect_left(
-        times, moment - window
-    )
+    try:
+        earliest = moment - window
+    except OverflowError:
+        # A year-one admission time has no moment a positive window can reach
+        # back to. Clamping to the minimum keeps the count at zero instead of
+        # failing the whole stream on the earliest representable timestamp.
+        earliest = dt.datetime.min.replace(tzinfo=dt.UTC)
+    return bisect.bisect_left(times, moment) - bisect.bisect_left(times, earliest)
