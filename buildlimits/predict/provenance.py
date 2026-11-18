@@ -4,7 +4,8 @@ The commit is read from the repository holding this package rather than from
 the working directory a report happens to be produced in. A copy installed
 inside another project's virtual environment sits in that project's
 repository, so Git is asked both whether it holds the module at its canonical
-path and whether it tracks the file before its commit is accepted.
+path and whether the reported commit's tree holds the file before that commit
+is accepted.
 """
 
 import shutil
@@ -20,8 +21,8 @@ def git_revision() -> str:
     checkout still names the code that produced it. A copy installed inside
     another project's virtual environment sits in that project's repository,
     whose commit is not this benchmark's provenance, so the module's own path
-    inside the repository is verified, and Git is asked whether it tracks that
-    path, before the commit is accepted.
+    inside the repository is verified, and the commit's tree is asked whether
+    it holds that path, before the commit is accepted.
 
     Returns
     -------
@@ -52,35 +53,45 @@ def git_revision() -> str:
     if result.returncode != 0:
         return "unknown"
     commit, _, root = result.stdout.partition("\n")
-    return commit.strip() if _owns(executable, root.strip(), source) else "unknown"
+    return (
+        commit.strip()
+        if _owns(executable, commit.strip(), root.strip(), source)
+        else "unknown"
+    )
 
 
-def _owns(executable: str, root: str, source: Path) -> bool:
-    """Return whether the repository at ``root`` holds ``source`` as its module.
+def _owns(executable: str, commit: str, root: str, source: Path) -> bool:
+    """Return whether ``commit`` holds ``source`` as the repository's module.
 
     The path comparison rules out a copy that sits anywhere else in a host
-    project, and Git is then asked whether it tracks the file: a copy dropped
+    project, and the commit's tree is then asked for the file: a copy dropped
     at the canonical path inside an unrelated repository would otherwise
     borrow that repository's commit.
 
     Returns
     -------
     bool
-        Whether the module is tracked at its canonical path in that repository.
+        Whether the module sits at its canonical path in that commit.
     """
     canonical = Path(root) / "buildlimits" / "predict" / source.name
     if not root or canonical.resolve() != source:
         return False
-    return _tracked(executable, root, source)
+    return _tracked(executable, commit, root, source)
 
 
-def _tracked(executable: str, root: str, source: Path) -> bool:
-    """Return whether ``git ls-files`` lists ``source`` in that repository.
+def _tracked(executable: str, commit: str, root: str, source: Path) -> bool:
+    """Return whether the named commit's tree holds ``source``.
+
+    The index is not enough. A file can be staged at the canonical path before
+    it is committed, and ``git ls-files`` would list it while the commit the
+    report names has no such entry, so the report would claim provenance for
+    code the commit does not contain. Asking ``git cat-file`` for
+    ``<commit>:<path>`` reads the tree the report actually names.
 
     Returns
     -------
     bool
-        Whether Git reports the file as tracked.
+        Whether the commit holds the file at that path.
     """
     try:
         relative = source.relative_to(Path(root).resolve())
@@ -92,10 +103,9 @@ def _tracked(executable: str, root: str, source: Path) -> bool:
                 executable,
                 "-C",
                 root,
-                "ls-files",
-                "--error-unmatch",
-                "--",
-                str(relative),
+                "cat-file",
+                "-e",
+                f"{commit}:{relative}",
             ],
             capture_output=True,
             text=True,

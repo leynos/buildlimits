@@ -95,25 +95,36 @@ def test_git_sha_names_the_benchmark_checkout(monkeypatch: pytest.MonkeyPatch) -
     )
 
 
-def test_git_sha_ignores_an_untracked_copy_at_the_canonical_path(
+def test_git_sha_ignores_a_copy_the_commit_does_not_hold(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A file at the canonical path is not a module unless Git tracks it."""
+    """A file at the canonical path must appear in the commit the report names.
+
+    Asking the index instead would accept a copy that was staged but never
+    committed: ``git ls-files`` lists it while ``HEAD`` has no such entry, so
+    the report would name a commit that does not contain the code it ran.
+    """
     root = tmp_path / "host"
-    module = root / "buildlimits" / "predict" / Path(provenance.__file__).name
+    relative = Path("buildlimits") / "predict" / Path(provenance.__file__).name
+    module = root / relative
     module.parent.mkdir(parents=True)
     module.write_text("", encoding="utf-8")
+    calls: list[list[str]] = []
 
     def answer(command: list[str], **_options: object) -> object:
-        """Report a commit and a root that does not track the module."""
-        tracked = "ls-files" in command
-        return mock.Mock(stdout=f"abc123\n{root}\n", returncode=1 if tracked else 0)
+        """Report a commit, and a tree that does not hold the module."""
+        calls.append(command)
+        missing = "cat-file" in command
+        return mock.Mock(stdout=f"abc123\n{root}\n", returncode=1 if missing else 0)
 
     monkeypatch.setattr(provenance, "__file__", str(module))
     _git(monkeypatch, lambda _name: "/usr/bin/git", answer)
 
     _assert_unknown_provenance()
-    assert module.is_file(), "the module exists; only its tracking is missing"
+    assert calls[-1][3:6] == ["cat-file", "-e", f"abc123:{relative}"], (
+        "the commit's tree is asked, not the index"
+    )
+    assert module.is_file(), "the module exists; only the commit is missing it"
 
 
 def test_git_sha_ignores_a_repository_that_does_not_own_the_module(
