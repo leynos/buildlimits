@@ -155,7 +155,7 @@ def peak_rows(data: bytes) -> int:
 
     Examples
     --------
-    >>> peak_rows(b"a\\nb\\nc")
+    >>> peak_rows(b"a\nb\nc")
     2
     """
     return data.count(b"\n")

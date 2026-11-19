@@ -7,7 +7,7 @@ import typing as typ
 from buildlimits.outcome_record_codec import (
     decode_lines as decode_lines,
 )
-from buildlimits.outcome_record_codec import (
+from buildlimits.outcome_record_encode import (
     encode_line as encode_line,
 )
 from buildlimits.outcome_record_format import (
