@@ -69,6 +69,56 @@ def encode_line(value: StoreHeader | StoreRecord) -> str:
     return line
 
 
+def decode_header_line(line: bytes) -> StoreHeader | RecordFailure:
+    """Decode one raw header row without a trailing newline.
+
+    Parameters
+    ----------
+    line : bytes
+        One candidate header line, with its newline already removed.
+
+    Returns
+    -------
+    StoreHeader or RecordFailure
+        The typed header, or a closed corruption or version reason.
+
+    Examples
+    --------
+    >>> import datetime as dt
+    >>> raw = encode_line(StoreHeader("s", dt.datetime(2026, 1, 1, tzinfo=dt.UTC)))
+    >>> decode_header_line(raw.encode()).salt_id
+    's'
+    """
+    value = _raw_json_row(line)
+    if isinstance(value, _Unparsable):
+        return RecordFailure("corrupt")
+    return _decode_header(value)
+
+
+def decode_record_line(line: bytes) -> StoreRecord | RecordFailure:
+    """Decode one raw non-header row without a trailing newline.
+
+    Parameters
+    ----------
+    line : bytes
+        One candidate record line, with its newline already removed.
+
+    Returns
+    -------
+    StoreRecord or RecordFailure
+        The typed record, or a corruption reason.
+
+    Examples
+    --------
+    >>> decode_record_line(b'{"kind":"unknown"}').reason
+    'corrupt'
+    """
+    value = _raw_json_row(line)
+    if isinstance(value, _Unparsable):
+        return RecordFailure("corrupt")
+    return _decode_record(value)
+
+
 def decode_lines(document: str) -> DecodedStore | RecordFailure:
     r"""Decode bounded JSON Lines, ignoring only a malformed unterminated tail.
 
@@ -171,6 +221,33 @@ def _parsed_line(line: str) -> object | _Unparsable:
         return _UNPARSABLE
     try:
         return json.loads(line, parse_constant=lambda _value: None)
+    except ValueError, TypeError, RecursionError:
+        return _UNPARSABLE
+
+
+def _raw_json_row(line: bytes) -> object | _Unparsable:
+    """Parse one bounded raw row, or report that it is not a row.
+
+    Returns
+    -------
+    object or _Unparsable
+        The decoded JSON value, or the unparsable sentinel.
+
+    Examples
+    --------
+    >>> _raw_json_row(b'{"a":1}')
+    {'a': 1}
+    >>> _raw_json_row(b"") is _UNPARSABLE
+    True
+    """
+    if not line or len(line) > MAX_RECORD_BYTES:
+        return _UNPARSABLE
+    try:
+        text = line.decode("utf-8")
+    except UnicodeDecodeError:
+        return _UNPARSABLE
+    try:
+        return json.loads(text, parse_constant=lambda _value: None)
     except ValueError, TypeError, RecursionError:
         return _UNPARSABLE
 
