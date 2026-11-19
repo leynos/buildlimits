@@ -119,8 +119,28 @@ verified archive is published, and leaves compile admission untouched.
 - [x] Memory tests: the benchmark reports the per-chunk peak, and a traced
   allocation test holds a multi-megabyte segment under one mebibyte.
 - [x] Benchmark: `make outcome-archive-bench` prints a JSON report.
-- [ ] Fault, boundary and replay-equivalence tests.
-- [ ] Benchmark and documentation (ADR 0010, guides, layout, contents).
+- [x] Fault, boundary and replay-equivalence tests. New modules cover the
+  retention policy, segments and inventory, the line stream and XZ codec, the
+  pure planner, the filesystem adapters, archive execution, the CLI, and
+  writer-owned sealing, including the generated-document property test.
+- [x] Documentation (2026-11-19): ADR 0010, the users' guide section and
+  retention keys, the developers' guide §9.1 and module inventory, the
+  repository layout table, the documentation contents index, the README and the
+  migration guide's console-script list.
+- [x] Gate remediation (2026-11-19): every module and shared test helper is at
+  or below the 400-line limit after splitting the store state and sealing, the
+  archive context, rows, encode, lock, quarantine and run operations, the
+  segment sidecar, state and inventory, the config retention and value rules,
+  the record encoder, and the oversized archive, planner and segment tests.
+  Repeated blocks were extracted where one owner exists; the rest are recorded
+  as reasoned `[[tool.duplication_gate.allow]]` exceptions that name every
+  location in the family.
+- [x] Full gate run (2026-11-19): `make fmt`, `make check-fmt`, `make lint`
+  (including the duplication gate at 246 reasoned exceptions), `make typecheck`,
+  `make audit`, `make markdownlint` and `make nixie` pass, and `make test`
+  reports 4358 passed, 85 skipped and one failure. The failure is
+  `tests/test_harness_ownership.py` on the free-threaded Python 3.15
+  interpreter, which this branch does not touch (see the decision log).
 
 ## Surprises & discoveries
 
@@ -139,6 +159,26 @@ verified archive is published, and leaves compile admission untouched.
 - The first `seal` of an empty store must not claim a sequence, or the store
   would begin with a permanent gap. The writer installs a header-only active
   file instead.
+- A fresh segmented store had no active file at startup, because appends open
+  the file without creating it. The first record of every new store was
+  therefore discarded as `save_failed`, and only the second row, whose retry
+  seals an empty segment, created the file. Startup now installs the header
+  whenever the active file is missing or empty.
+- The source's torn-tail flag cannot be recovered by scanning the finished
+  archive, which is always complete. Publication now carries the writing pass's
+  flag into the sidecar so the repair stays recorded.
+- A whole-archive deletion that exactly met the byte budget was followed by a
+  trim of the next archive to its own size. The planner now stops byte work as
+  soon as the excess reaches zero.
+- The retained-suffix test in a byte trim compared only the rows after the
+  current one, so a trim could keep one row more than its allowance. The
+  current row's bytes are now included before comparing with the allowance.
+- The duplication checker resolves a family member to `path::name` only when
+  the matched span starts at a named definition. A single matched line inside a
+  function, or a fragment that begins mid-function, has no name, so an allow
+  entry has to name that member by path alone. A family entirely inside one
+  file is also rejected by `members` (it requires two or more entries) and
+  needs the separate `[[tool.duplication_gate.unit]]` table.
 
 ## Decision log
 
@@ -162,10 +202,34 @@ verified archive is published, and leaves compile admission untouched.
 - `--salt-id` and `--all-salts` imply history mode, while no flag keeps each
   command reading only the active store, so existing invocations are unchanged.
   Both commands share the option definitions in `outcome_history_args`.
+- A segmented writer installs its header at startup so the first append always
+  has an active file to reach; an empty seal still avoids claiming a sequence.
+- Archive metadata records the torn tail observed while reading the source,
+  not whichever flag a scan of the completed archive could infer.
+- Byte planning stops once the excess reaches zero, so an exact deletion never
+  churns the next archive.
+- A trimmed row survives only when its whole retained suffix, including the
+  row itself, fits the byte allowance.
+- `tests/test_harness_ownership.py` fails on Python 3.15.2 free-threading
+  because `resource.RLIM_INFINITY` is `18446744073709551615` there rather than
+  `-1`. The file is untouched by this branch and needs a separate base fix, so
+  it is reported rather than changed here.
 
 ## Outcomes & retrospective
 
-To be completed when the work lands.
+The timer-facing archive command, its verification and retention execution, the
+writer-owned sealing and the archive-aware replay and dataset paths are
+implemented and covered by ten test modules. The command keeps paths out of its
+successful output, maps every outcome to the documented exit status, and was
+checked against the real system clock only in the redacted CLI snapshot.
+
+The notable lesson is that the writer's startup path, not the archiver, was
+where data could be lost: a fresh segmented store had no active file until its
+second append. The regression test `test_a_fresh_store_keeps_its_first_row`
+pins the fix. The other three defects found while writing fault tests (the
+torn-tail flag, the exact-budget deletion, and the trim retained-suffix
+comparison) each had a narrow blast radius but would have silently loosened the
+retention contract.
 
 ## Verification plan
 

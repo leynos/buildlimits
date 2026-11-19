@@ -30,14 +30,18 @@ normal paths. The
 [query admission RFC](rfcs/rfc-0003-toolchain-query-admission-exemption.md)
 records the exact grammar and its evidence.
 
-| Command                   | Role                                                     |
-| ------------------------- | -------------------------------------------------------- |
-| `build-limits-rustc`      | `RUSTC_WRAPPER`: runs one compiler under admission       |
-| `build-limits-rustdoc`    | `RUSTDOC`: runs the toolchain's rustdoc under admission  |
-| `build-limits-supervisor` | The per-user admission supervisor, run as a user service |
-| `build-limits-status`     | Prints capacity, held tokens, the queue and groups       |
-| `build-limits-recover`    | Runs or inspects a managed-cache recovery transaction    |
-| `build-limits-metrics`    | Summarizes bounded compile-admission journal metrics     |
+| Command                          | Role                                                     |
+| -------------------------------- | -------------------------------------------------------- |
+| `build-limits-rustc`             | `RUSTC_WRAPPER`: runs one compiler under admission       |
+| `build-limits-rustdoc`           | `RUSTDOC`: runs the toolchain's rustdoc under admission  |
+| `build-limits-supervisor`        | The per-user admission supervisor, run as a user service |
+| `build-limits-status`            | Prints capacity, held tokens, the queue and groups       |
+| `build-limits-recover`           | Runs or inspects a managed-cache recovery transaction    |
+| `build-limits-metrics`           | Summarizes bounded compile-admission journal metrics     |
+| `build-limits-cache-replay`      | Reads the local outcome history for H2 and H3 evidence   |
+| `build-limits-outcome-archive`   | Archives closed outcome history and applies retention    |
+| `build-limits-predict-dataset`   | Snapshots recorded outcomes for offline prediction       |
+| `build-limits-predict-benchmark` | Compares cache-hit predictors over a snapshot            |
 
 _Table 1: Installed commands._
 
@@ -55,7 +59,7 @@ _Table 1: Installed commands._
 
 ## Installation
 
-The package installs as an ordinary Python distribution with six console
+The package installs as an ordinary Python distribution with ten console
 scripts. The [uv](https://docs.astral.sh/uv/) tool installer keeps it isolated
 from project environments:
 
@@ -105,27 +109,35 @@ by `build-limits-supervisor --config PATH`. Every key is optional; a missing
 file yields the defaults. Unknown keys and wrongly typed values stop start-up
 with exit status 2, and nothing is half-applied.
 
-| Key                     | Default                                        | Meaning                                                                                                                                                                                                     |
-| ----------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `device`                | `/dev/guild`                                   | The guildmaster token device                                                                                                                                                                                |
-| `slots`                 | `2`                                            | The pool's configured capacity, reported by status                                                                                                                                                          |
-| `socket_path`           | `$XDG_RUNTIME_DIR/buildlimits/supervisor.sock` | Where the supervisor listens                                                                                                                                                                                |
-| `lock_path`             | `$XDG_RUNTIME_DIR/buildlimits/supervisor.lock` | The singleton lock                                                                                                                                                                                          |
-| `compilers_slice`       | `buildlimits-compilers.slice`                  | The slice that holds every compiler scope; must end in `.slice`                                                                                                                                             |
-| `cancel_grace_seconds`  | `10.0`                                         | Seconds between `SIGTERM` and `SIGKILL` for a terminated group                                                                                                                                              |
-| `drain_timeout_seconds` | `120.0`                                        | The longest start-up waits for surviving groups to drain                                                                                                                                                    |
-| `cache_mode`            | `sccache`                                      | `sccache` composes admitted compilers with the managed cache; `kache` composes them with an unowned kache daemon; `direct` runs them without a cache. See [Choose a cache backend](#choose-a-cache-backend) |
-| `cache_outcomes`        | `off`                                          | `record` opts in to observation-only cache outcome recording; it requires `cache_mode = "sccache"`                                                                                                          |
-| `sccache_executable`    | `sccache`                                      | The sccache client used in `sccache` mode                                                                                                                                                                   |
-| `sccache_unit`          | `buildlimits-sccache.service`                  | The managed cache's user unit                                                                                                                                                                               |
-| `sccache_socket`        | `$XDG_RUNTIME_DIR/buildlimits/sccache.sock`    | The managed cache's socket                                                                                                                                                                                  |
-| `cache_recovery`        | `starved`                                      | `starved` or `manual`; see [Recover a retained managed cache](#recover-a-retained-managed-cache)                                                                                                            |
-| `recovery_marker`       | `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`  | The restart barrier the managed cache unit honours                                                                                                                                                          |
-| `kache_executable`      | `kache`                                        | The kache client used in `kache` mode; see [Choose a cache backend](#choose-a-cache-backend)                                                                                                                |
-| `kache_socket`          | **required** in `kache` mode                   | The separately managed kache daemon's socket, exported as `KACHE_SOCKET_PATH`; there is no default                                                                                                          |
-| `kache_cache_dir`       | unset                                          | The kache store, exported as `KACHE_CACHE_DIR` and checked by health                                                                                                                                        |
+| Key                                     | Default                                        | Meaning                                                                                                                                                                                                     |
+| --------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `device`                                | `/dev/guild`                                   | The guildmaster token device                                                                                                                                                                                |
+| `slots`                                 | `2`                                            | The pool's configured capacity, reported by status                                                                                                                                                          |
+| `socket_path`                           | `$XDG_RUNTIME_DIR/buildlimits/supervisor.sock` | Where the supervisor listens                                                                                                                                                                                |
+| `lock_path`                             | `$XDG_RUNTIME_DIR/buildlimits/supervisor.lock` | The singleton lock                                                                                                                                                                                          |
+| `compilers_slice`                       | `buildlimits-compilers.slice`                  | The slice that holds every compiler scope; must end in `.slice`                                                                                                                                             |
+| `cancel_grace_seconds`                  | `10.0`                                         | Seconds between `SIGTERM` and `SIGKILL` for a terminated group                                                                                                                                              |
+| `drain_timeout_seconds`                 | `120.0`                                        | The longest start-up waits for surviving groups to drain                                                                                                                                                    |
+| `cache_mode`                            | `sccache`                                      | `sccache` composes admitted compilers with the managed cache; `kache` composes them with an unowned kache daemon; `direct` runs them without a cache. See [Choose a cache backend](#choose-a-cache-backend) |
+| `cache_outcomes`                        | `off`                                          | `record` opts in to observation-only cache outcome recording; it requires `cache_mode = "sccache"`                                                                                                          |
+| `cache_outcomes_max_age_days`           | `30`                                           | Oldest retained outcome age in days; `0` disables age eviction                                                                                                                                              |
+| `cache_outcomes_max_bytes`              | `12582912` (12 MiB)                            | Logical uncompressed bytes retained across active, sealed and archived history; `0` disables the byte bound and requires segmentation. The default is the legacy 12 MiB bound                               |
+| `cache_outcomes_max_records`            | `0`                                            | Retained-record cap; `0` leaves segmented history uncapped and keeps the legacy 10,000-row cap otherwise                                                                                                    |
+| `cache_outcomes_archive_headroom_bytes` | `25165824` (24 MiB)                            | Temporary disk space an archive run may use; never counted against retained bytes. Must hold at least one 12 MiB segment                                                                                    |
+| `cache_outcomes_archive_preset`         | `6`                                            | XZ preset from 0 (fastest) to 9 (smallest)                                                                                                                                                                  |
+| `sccache_executable`                    | `sccache`                                      | The sccache client used in `sccache` mode                                                                                                                                                                   |
+| `sccache_unit`                          | `buildlimits-sccache.service`                  | The managed cache's user unit                                                                                                                                                                               |
+| `sccache_socket`                        | `$XDG_RUNTIME_DIR/buildlimits/sccache.sock`    | The managed cache's socket                                                                                                                                                                                  |
+| `cache_recovery`                        | `starved`                                      | `starved` or `manual`; see [Recover a retained managed cache](#recover-a-retained-managed-cache)                                                                                                            |
+| `recovery_marker`                       | `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`  | The restart barrier the managed cache unit honours                                                                                                                                                          |
+| `kache_executable`                      | `kache`                                        | The kache client used in `kache` mode; see [Choose a cache backend](#choose-a-cache-backend)                                                                                                                |
+| `kache_socket`                          | **required** in `kache` mode                   | The separately managed kache daemon's socket, exported as `KACHE_SOCKET_PATH`; there is no default                                                                                                          |
+| `kache_cache_dir`                       | unset                                          | The kache store, exported as `KACHE_CACHE_DIR` and checked by health                                                                                                                                        |
 
 _Table 2: Supervisor configuration keys._
+
+Every `cache_outcomes_*` retention key requires `cache_outcomes = "record"`;
+validation rejects one written while recording is off.
 
 Sockets live under `$XDG_RUNTIME_DIR/buildlimits`, falling back to
 `/run/user/UID/buildlimits` when the variable is unset, because Unix socket
@@ -234,6 +246,135 @@ evidence; treat what it observes as unconfirmed.
 [ADR 005's counter confirmation rule](adrs/adr-0005-cache-outcome-recording.md#d12-confirm-provisional-labels-only-if-needed)
 applies only if a trailing counter is demonstrated, and this release does not
 demonstrate one.
+
+### Archive cache-outcome history
+
+The supervisor writes outcomes into the active store; it never compresses
+history. A separate timer-facing command, `build-limits-outcome-archive`, moves
+closed history into verified XZ archives and applies the configured retention
+policy. It runs outside the supervisor, so archiving cannot delay admission or
+token accounting.
+
+Run it from a systemd user timer as the same user that runs the supervisor. A
+oneshot service and a daily timer are enough:
+
+```ini
+# ~/.config/systemd/user/buildlimits-outcome-archive.service
+[Unit]
+Description=Archive closed buildlimits cache-outcome history
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/build-limits-outcome-archive run
+```
+
+```ini
+# ~/.config/systemd/user/buildlimits-outcome-archive.timer
+[Unit]
+Description=Daily buildlimits cache-outcome archive
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable the timer with:
+
+```bash
+systemctl --user enable --now buildlimits-outcome-archive.timer
+```
+
+`Persistent=true` makes the timer run once at the next start after a missed
+firing, so a host that was off still archives its closed history. If
+`uv tool install` placed the command elsewhere, use that absolute path: a user
+unit does not read your shell's `PATH`. A second run that starts while one is
+in progress exits with status 75 rather than waiting or racing.
+
+Use `inspect` to see what a run would do without changing a file, or
+`run --dry-run` to take no lock and write no state. `run` performs the plan
+under its own lock:
+
+```bash
+build-limits-outcome-archive inspect
+build-limits-outcome-archive run --dry-run
+build-limits-outcome-archive run
+```
+
+All three accept `--store PATH`, `--config PATH` and `--json`. `--config`
+defaults to `~/.config/buildlimits/supervisor.toml`, the file the supervisor
+uses, so the command reads the same retention keys. `--store` names the active
+store file; without it, the default is the one described under
+[Record cache outcomes](#record-cache-outcomes). The plain output is a bounded
+set of status lines; `--json` prints the same report as one stable document
+with sorted keys. Neither form prints a filesystem path on a successful run.
+The one exception is an unreadable configuration file, which is reported on
+standard error before any report exists and does name the file.
+
+The writer seals the active file when an append would take it past 12 MiB, so
+the archiver only ever touches closed segments. The archiver compresses each
+sealed segment to XZ, verifies the archive against its source, publishes it,
+and only then removes the plain source. It holds a private lock of its own and
+never opens the active file.
+
+Retention is one policy shared by the writer, the archiver and the read-only
+history view:
+
+- The byte budget counts logical uncompressed bytes across active, sealed and
+  archived history. An archive's contribution is its sidecar's `logical_bytes`,
+  so compression does not move the boundary.
+- Eviction is oldest-first. A record whose observation time equals the age
+  cutoff is retained; one older than the cutoff is not.
+- The record cap bounds the retained record count but never evicts an archive.
+
+The retention keys and their defaults are in [Table 2](#supervisor-settings).
+The 12 MiB default is the legacy bound, so a host that writes none of the keys
+keeps its current store shape. Set `cache_outcomes_max_bytes` to a larger
+logical budget to retain more history. Every retention key requires
+`cache_outcomes = "record"`.
+
+The writer and archiver keep their state beside the store:
+
+- `cache-outcomes.seq` is the writer's next-sequence counter.
+- `cache-outcomes.sealed/` holds closed plain segments,
+  `segment-NNNNNNNNNNNN.jsonl`, with `segment-NNNNNNNNNNNN.jsonl.meta.json`
+  sidecars.
+- `cache-outcomes.archive/` holds `segment-NNNNNNNNNNNN.jsonl.xz` archives
+  with `.jsonl.xz.json` sidecars, plus `retention.json`, `last-run.json`,
+  `archive.lock` and `quarantine/`.
+
+An archive preserves the version-1 record schema and the salt identifier, so
+decompressing one yields the segment's JSON Lines content byte for byte apart
+from a repaired torn tail. Archived records keep the same privacy boundary as
+the active store: they contain the same redacted fields and no raw arguments,
+paths or compiler output.
+
+`build-limits-cache-replay` and `build-limits-predict-dataset` can read the
+whole retained history. `--history` reads archived, sealed and active history
+for the newest salt domain; `--salt-id ID` reads one named domain; and
+`--all-salts` reads every domain in append order. Both `--salt-id` and
+`--all-salts` imply `--history`. With none of these flags, each command reads
+only the active store, so existing invocations are unchanged.
+
+To reset history completely, stop the supervisor before removing the store.
+Deleting only `cache-outcomes.jsonl` no longer clears retained history once
+segments exist: also remove `cache-outcomes.seq`, `cache-outcomes.sealed/` and
+`cache-outcomes.archive/`, together with the salt and `.bad` files described
+above.
+
+The command maps every outcome to a closed exit status a timer can act on:
+
+- `0`: success.
+- `1`: an operational failure, such as an unreadable store or archive
+  directory.
+- `2`: usage or invalid configuration. This is the only case that can print a
+  local path, on standard error.
+- `3`: corruption that needs an operator, such as a segment that cannot be
+  decoded, a damaged archive, or a sidecar that cannot be repaired.
+- `75`: a temporary condition, such as another run holding the lock or
+  insufficient temporary headroom. The next timer firing should retry.
 
 ### Compare offline hit predictors
 

@@ -36,24 +36,25 @@ Run `make markdownlint` and `make nixie` after documentation changes, and
 `make audit` for the dependency vulnerability check. Narrower targets are for
 investigating a specific failure; reconcile with `make all` before committing.
 
-| Target                   | What it runs                                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------------------- |
-| `make check-lock`        | `uv lock --check` before the mutable dependency sync                                              |
-| `make build`             | `uv sync --group dev` into `.venv`                                                                |
-| `make check-fmt`         | Ruff 0.16.8 format check and mdtablefix 0.6.1 table check                                         |
-| `make fmt`               | Applies Ruff formatting, import sorting and Markdown table fixes                                  |
-| `make lint`              | Ruff, Interrogate (100%), Pylint and DF12 lints, Ambrleaks, Skylos, Vulture, duplication, actions |
-| `make typecheck`         | `ty` 0.0.89 against the project interpreter (`--python .venv`)                                    |
-| `make test`              | pytest under xdist over `tests/` and the package's doctests                                       |
-| `make test-systemd-user` | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
-| `make test-sccache-host` | Opt-in real-binary and outcome latency checks; see §11.4                                          |
-| `make test-kache-host`   | Opt-in health and cacheable-compilation checks against a real kache; see §11.4                    |
-| `make fizzbee`           | Installs the pinned FizzBee checker into the shared XDG cache; a second run is a no-op            |
-| `make model-fidelity`    | Both drift reports and `tests/test_model_drift.py`; cheap, and run on every pull request          |
-| `make model-check`       | Both W1 matrices at the plan's bounds, then the `fizzbee`-marked judgement; nightly only          |
-| `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
-| `make predict-dataset`   | Snapshots this host's recorded cache outcomes into `build/predict/history.jsonl`                  |
-| `make predict-benchmark` | Compares the cache-hit predictors over that snapshot; see §2.2                                    |
+| Target                       | What it runs                                                                                      |
+| ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `make check-lock`            | `uv lock --check` before the mutable dependency sync                                              |
+| `make build`                 | `uv sync --group dev` into `.venv`                                                                |
+| `make check-fmt`             | Ruff 0.16.8 format check and mdtablefix 0.6.1 table check                                         |
+| `make fmt`                   | Applies Ruff formatting, import sorting and Markdown table fixes                                  |
+| `make lint`                  | Ruff, Interrogate (100%), Pylint and DF12 lints, Ambrleaks, Skylos, Vulture, duplication, actions |
+| `make typecheck`             | `ty` 0.0.89 against the project interpreter (`--python .venv`)                                    |
+| `make test`                  | pytest under xdist over `tests/` and the package's doctests                                       |
+| `make test-systemd-user`     | The host acceptance scenarios marked `systemd_user`; see §11.4                                    |
+| `make test-sccache-host`     | Opt-in real-binary and outcome latency checks; see §11.4                                          |
+| `make test-kache-host`       | Opt-in health and cacheable-compilation checks against a real kache; see §11.4                    |
+| `make fizzbee`               | Installs the pinned FizzBee checker into the shared XDG cache; a second run is a no-op            |
+| `make model-fidelity`        | Both drift reports and `tests/test_model_drift.py`; cheap, and run on every pull request          |
+| `make model-check`           | Both W1 matrices at the plan's bounds, then the `fizzbee`-marked judgement; nightly only          |
+| `make spelling`              | The shared en-GB-oxendict `typos-config-builder` gate                                             |
+| `make predict-dataset`       | Snapshots this host's recorded cache outcomes into `build/predict/history.jsonl`                  |
+| `make predict-benchmark`     | Compares the cache-hit predictors over that snapshot; see §2.2                                    |
+| `make outcome-archive-bench` | Measures archiving one segment and prints a JSON report; see §9.1                                 |
 
 _Table 1: Make targets and the gates behind them._
 
@@ -333,6 +334,8 @@ Each module owns one decision. This table is the single module inventory.
 | `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper                                                                   |
 | `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar                                                            |
 | `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                                                                             |
+| `config_retention`                                                                 | Retention settings and validation rules shared by the supervisor loader and the archive command                                                             |
+| `config_values`                                                                    | Type coercion from parsed TOML values to supervisor field types                                                                                             |
 | `status`, `status_client`, `status_render`, `status_cli`                           | The status document, its transport, rendering and command                                                                                                   |
 | `admission_readiness`                                                              | Pure admission-progress classification from health, ledger counts and recovery outlook                                                                      |
 | `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                                                                                        |
@@ -349,11 +352,35 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_key_arguments`                                                            | Canonical compiler arguments and selected Cargo environment for key digests                                                                                 |
 | `outcome_parser`                                                                   | In-memory sccache 0.14 Rust-parser prediction used for H3 evidence                                                                                          |
 | `outcome_record_format`                                                            | Typed outcome records and format-specific field validation                                                                                                  |
-| `outcome_record_codec`                                                             | Strict JSON Lines encoding and decoding for outcome records                                                                                                 |
+| `outcome_record_encode`                                                            | Deterministic JSON Lines encoding for cache-outcome store values                                                                                            |
+| `outcome_record_codec`                                                             | Strict JSON Lines decoding for cache-outcome store values                                                                                                   |
 | `outcome_records`                                                                  | Public record API and pure age, count and byte compaction                                                                                                   |
-| `outcome_store`                                                                    | Non-blocking writer port, asynchronous salt handoff and bounded result reporting                                                                            |
-| `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes and atomic compaction replacement                                                                         |
+| `outcome_store`                                                                    | Queue and worker plumbing for the non-blocking writer; bounded result reporting                                                                             |
+| `outcome_store_state`                                                              | The writer's file state machine: loading, compaction and bounded appends                                                                                    |
+| `outcome_store_sealing`                                                            | The writer's sealing transition into a closed segment                                                                                                       |
+| `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes, atomic replacement and the seal rename                                                                   |
 | `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                                                                                |
+| `outcome_retention`                                                                | Validated age, byte, record and headroom policy shared by the writer and archiver                                                                           |
+| `outcome_segments`                                                                 | Segment naming and layout derivation only                                                                                                                   |
+| `outcome_segment_inventory`                                                        | Read-only, content-free inventory of sealed and archived segments                                                                                           |
+| `outcome_segment_sidecar`                                                          | One verified archive or sealed source's sidecar record, with strict validation                                                                              |
+| `outcome_segment_state`                                                            | Reading the advisory sequence counter and retention floor                                                                                                   |
+| `outcome_record_stream`                                                            | Bounded 64 KiB line streaming over plain and XZ sources                                                                                                     |
+| `outcome_history`, `outcome_history_args`                                          | Cross-state history reader and the shared replay and dataset options                                                                                        |
+| `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
+| `outcome_archive_context`                                                          | Shared context and result values for one archive run                                                                                                        |
+| `outcome_archive_plan`                                                             | Pure retention and repair plan from the inventory                                                                                                           |
+| `outcome_archive_run`                                                              | Executing one archive plan operation by operation                                                                                                           |
+| `outcome_archive_verify`                                                           | Streaming XZ write and verification, and the closed segment-fault reasons                                                                                   |
+| `outcome_archive_rows`                                                             | Decodes one segment's rows, tolerating a torn tail                                                                                                          |
+| `outcome_archive_encode`                                                           | Verified temporary archives and the sidecars that describe them                                                                                             |
+| `outcome_archive_quarantine`                                                       | Quarantine moves for files an archive run cannot trust                                                                                                      |
+| `outcome_archive_files`                                                            | Per-segment archive, reconcile, heal, trim, delete and quarantine operations                                                                                |
+| `outcome_archive_lock`                                                             | The archive lock and the disk-headroom guard for one run                                                                                                    |
+| `outcome_archive_fs`                                                               | Private filesystem primitives and atomic state writes                                                                                                       |
+| `outcome_archive_report`                                                           | Bounded run report, status vocabulary and exit statuses                                                                                                     |
+| `outcome_archive_cli`                                                              | The `build-limits-outcome-archive` timer-facing command                                                                                                     |
+| `outcome_archive_bench`                                                            | Bounded-memory archive benchmark behind `make outcome-archive-bench`                                                                                        |
 | `nonblocking_child`                                                                | Non-blocking helper-process pipes and bounded child reaping for supervisor-loop work                                                                        |
 | `outcome_queries`                                                                  | Statistics child execution and non-blocking managed-server generation reads                                                                                 |
 | `outcome_window`                                                                   | Bounded immutable payload ledger for open statistics windows                                                                                                |
@@ -935,6 +962,110 @@ part of the bundle: they reach the journal through the periodic snapshot, and
 one. The supervisor constructs the bundle from its own telemetry and passes it
 at creation; `Requests.finish` and `supervisor_placement.launch` then write
 through `lines` without consulting the environment.
+
+### 9.1. Archived cache-outcome history
+
+Outcome history is written by the supervisor and maintained out of process. The
+writer in `outcome_store` is the only process that appends to, truncates,
+replaces or renames the active file; its file state machine lives in
+`outcome_store_state`. In segmented mode `outcome_store_sealing` seals the file
+at the `segment_bytes` high-water mark (12 MiB by default): it writes the next
+sequence and the segment metadata, renames the active file into
+`cache-outcomes.sealed/`, and installs a fresh header-only active file. An
+empty store installs the header without claiming a sequence, so the sequence
+series has no artificial first gap. `outcome_store_sealing` reports
+`archive_backlog` each time the sealed directory reaches eight entries.
+
+The archiver in `outcome_archive` only reads the active file's size. It never
+opens its content and never takes its queue. `outcome_archive_lock` takes a
+non-blocking exclusive `flock` on `cache-outcomes.archive/archive.lock` for the
+whole run, and its headroom guard refuses a run whose temporary files cannot
+fit; a second invocation reports `busy` and exits 75 rather than waiting. There
+is no shared lock between writer and archiver, so there is no lock ordering to
+get wrong.
+
+Compression and verification stream in `outcome_record_stream`'s 64 KiB chunks
+with at most one row buffered (`CHUNK_BYTES`). Peak memory therefore follows
+the chunk size and the XZ preset, not the segment or the retained history.
+`lzma` from the standard library supplies `FORMAT_XZ`, `CHECK_CRC64` and the
+configured preset; `cache_outcomes_archive_preset` defaults to 6 and is
+validated in the range 0 to 9.
+
+`outcome_archive_verify` writes and verifies a temporary archive before
+publication: the XZ stream must reach its end with only four-byte-multiple NUL
+padding, the record count, logical byte count and SHA-256 must equal the facts
+accumulated while compressing the source, and `outcome_archive_rows` decodes
+every row as a supported header or a valid record within the record byte bound,
+dropping an unterminated final fragment as a torn tail.
+`outcome_archive_encode` produces the verified temporary archives and their
+sidecars. Publication then uses a private `O_EXCL` temporary file, an `fsync`,
+a no-clobber hard link and a sidecar written after the archive; the sealed
+source is removed only after the archive and sidecar are durable.
+`outcome_archive_fs` owns the private filesystem primitives and atomic state
+writes. `outcome_archive_files` owns the per-segment operations: archive,
+reconcile, heal, trim, delete and quarantine. `outcome_archive_quarantine`
+performs the quarantine moves for files a run cannot trust, and
+`outcome_archive_run` executes one plan operation by operation.
+
+The segment contract is defined by `outcome_segments`, which owns naming and
+layout only; `outcome_segment_sidecar` defines the record that describes one
+verified archive or sealed source, together with its strict validation. Names
+are zero padded to twelve digits so a directory listing sorts in append order:
+
+- `cache-outcomes.sealed/segment-NNNNNNNNNNNN.jsonl` with a
+  `segment-NNNNNNNNNNNN.jsonl.meta.json` sidecar written by the writer.
+- `cache-outcomes.archive/segment-NNNNNNNNNNNN.jsonl.xz` with a
+  `segment-NNNNNNNNNNNN.jsonl.xz.json` sidecar. The sidecar records the
+  sequence, `salt_id`, record count, logical and physical bytes, SHA-256,
+  observation times, `archived_at`, `xz_preset` and `had_torn_tail`.
+
+`outcome_segment_inventory.read_inventory` is read-only and content-free; it
+trusts a validated sidecar rather than decompressing an archive.
+`Inventory.effective` prefers a sealed source over an archive with the same
+sequence, because a crash can leave both and the source is authoritative until
+reconciliation removes it. `outcome_segment_state.read_retention_floor` reads
+`retention.json`; the floor is why evicting old history does not look like
+corruption, so the inventory reports a missing sequence only at or above it.
+
+`outcome_history` is the read port over all three states. `read_history` walks
+archived and sealed segments in ascending sequence, then the active file; each
+document is streamed and verified in turn. The default selection is the newest
+salt domain, taken from the last document's header. `HistorySelection` also
+supports a named `salt_id` or `all_salts`, and a corrupt segment raises
+`HistoryFaultError` with a closed reason rather than yielding a short history.
+`outcome_history_args` defines the shared `--history`, `--salt-id` and
+`--all-salts` options for the replay and dataset commands; `--salt-id` and
+`--all-salts` imply history mode, and no flag keeps the active-store-only
+behaviour.
+
+`outcome_archive_report` defines the closed report vocabulary. Statuses are
+`ok`, `failed`, `corrupt`, `busy` and `no_headroom`; exit statuses are 0 for
+success, 1 for an operational failure, 2 for usage or configuration, 3 for
+corruption that needs an operator, and 75 for a temporary condition a timer
+should retry. The report names no path and carries no raw exception text; the
+only path a run prints is an unreadable configuration file, on standard error
+before the report exists.
+
+`outcome_archive_cli` is the timer-facing surface. `inspect` is a dry run by
+definition; `run --dry-run` plans without taking the lock or writing state; and
+`run` executes. All three accept `--store`, `--config` (default
+`~/.config/buildlimits/supervisor.toml`) and `--json`.
+
+The archive tests are `tests/test_outcome_archive.py`,
+`test_outcome_archive_files.py`, `test_outcome_archive_fs.py`,
+`test_outcome_archive_lock.py`, `test_outcome_archive_plan.py`,
+`test_outcome_archive_plan_age.py`, `test_outcome_archive_plan_bytes.py`,
+`test_outcome_archive_reconcile.py`, `test_outcome_archive_retention.py`,
+`test_outcome_archive_verify.py`, `test_outcome_archive_cli.py`,
+`test_outcome_history.py`, `test_outcome_segments.py`,
+`test_outcome_segment_inventory.py`, `test_outcome_segment_state.py`,
+`test_outcome_record_stream.py` and `test_outcome_store_sealing.py`.
+`tests/test_outcome_archive_bench.py` holds the traced-memory test that streams
+a multi-megabyte segment under one mebibyte. `make outcome-archive-bench` runs
+`buildlimits.outcome_archive_bench` and prints a JSON report with the source
+size, record count, archive size, ratio, chunk size and peak buffered rows; it
+generates a representative segment when `SEGMENT=` names none and reads a real
+sealed segment when it does.
 
 ## 10. Adapters
 
