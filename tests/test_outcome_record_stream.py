@@ -9,6 +9,7 @@ the value an archive is verified against.
 import hashlib
 import io
 import lzma
+import tracemalloc
 
 import pytest
 
@@ -139,6 +140,43 @@ def test_xz_stream_padding_is_accepted(padding: bytes) -> None:
 
     assert list(stream) == [b"one", b"two", b"three"], "padding is not history"
     assert stream.is_verified, "padding after a complete stream is legal"
+
+
+def _traced_peak(payload: bytes, chunk_bytes: int = 4096) -> int:
+    """Decompress one archive and return the peak traced allocation.
+
+    Returns
+    -------
+    int
+        Peak bytes traced while the rows were read and discarded.
+    """
+    stream = LineStream(
+        io.BytesIO(_archive(payload)), is_compressed=True, chunk_bytes=chunk_bytes
+    )
+    tracemalloc.start()
+    try:
+        for _row in stream:
+            pass
+        assert stream.is_verified, "the whole archive was read"
+        assert stream.bytes_read == len(payload), "every decoded byte is counted"
+        return tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+
+def test_a_compressible_archive_is_expanded_within_the_chunk_bound() -> None:
+    """Peak memory tracks the chunk, not the size of the history.
+
+    Two history sizes share one XZ dictionary, so any growth between them is
+    the decoder holding decoded content. Without a bound on each decode call,
+    one small source chunk would expand to the whole segment.
+    """
+    small = _traced_peak(b"row\n" * (1 << 18))
+    large = _traced_peak(b"row\n" * (1 << 20))
+
+    assert large - small < 512 * 1024, (
+        "four times the history does not mean four times the memory"
+    )
 
 
 @pytest.mark.parametrize("padding", [b"\x00", b"\x00" * 3], ids=["one", "three"])

@@ -110,6 +110,9 @@ def test_a_corrupt_source_is_quarantined_and_the_archive_kept(
     assert result.reason == "corrupt", "its reason is closed"
     assert not sealed.exists(), "the source is quarantined"
     assert archived.path.exists(), "the verified archive is kept"
+    assert (run.layout.archive_dir / sidecar_name(1)).exists(), (
+        "the kept archive keeps the sidecar that describes it"
+    )
     assert ".corrupt." in quarantined(tmp_path)[0].name, "the fault is recorded"
 
 

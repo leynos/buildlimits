@@ -33,6 +33,7 @@ from buildlimits.outcome_archive_report import (
 from buildlimits.utc_text import optional_utc_text, utc_text
 
 if typ.TYPE_CHECKING:
+    from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_segments import SegmentLayout
 
@@ -101,35 +102,58 @@ def run_archive(
     """
     selected = RunOptions() if options is None else options
     started = dt.datetime.now(dt.UTC) if selected.now is None else selected.now
-    try:
-        floor = outcome_segment_state.read_retention_floor(layout)
-        inventory = outcome_segment_inventory.read_inventory(
-            layout, retention_floor=floor
-        )
-        active = outcome_archive_run.active_bytes(layout.active)
-    except OSError:
-        return _unfinished(started, "failed", "unreadable")
-    plan = plan_run(inventory, policy, now=started, active_bytes=active)
     context = ArchiveContext(
         layout=layout, policy=policy, preset=selected.preset, now=started
     )
-    run = outcome_archive_run.ArchiveRun(
-        context=context,
-        plan=plan,
-        summary=PlanSummary.of(plan),
-        started_at=started,
-    )
-    if selected.dry_run:
-        return _dry_report(run, active)
     try:
+        if selected.dry_run:
+            # A dry run mutates nothing, so it may plan without the lock.
+            plan, active = _plan(layout, policy, started)
+            return _dry_report(_archive_run(context, plan), active)
         with outcome_archive_lock.ArchiveLock(layout.lock_file):
-            return _execute(run, active)
+            # Another archiver may have changed the store while this process
+            # waited for the lock, so the plan is built from what is on disk
+            # now rather than from a pre-lock inventory.
+            plan, active = _plan(layout, policy, started)
+            return _execute(_archive_run(context, plan), active)
     except outcome_archive_lock.ArchiveBusyError:
         return _unfinished(started, "busy", "busy")
     except outcome_archive_lock.NoHeadroomError:
         return _unfinished(started, "no_headroom", "no_headroom")
     except OSError:
         return _unfinished(started, "failed", "unreadable")
+
+
+def _plan(
+    layout: SegmentLayout, policy: RetentionPolicy, now: dt.datetime
+) -> tuple[Plan, int]:
+    """Read the store as it is and plan one run from it.
+
+    Returns
+    -------
+    tuple[Plan, int]
+        The operations to perform and the active file's logical size.
+    """
+    floor = outcome_segment_state.read_retention_floor(layout)
+    inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
+    active = outcome_archive_run.active_bytes(layout.active)
+    return plan_run(inventory, policy, now=now, active_bytes=active), active
+
+
+def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.ArchiveRun:
+    """Bind one plan to the context its execution shares.
+
+    Returns
+    -------
+    ArchiveRun
+        The immutable inputs of one execution pass.
+    """
+    return outcome_archive_run.ArchiveRun(
+        context=context,
+        plan=plan,
+        summary=PlanSummary.of(plan),
+        started_at=context.now,
+    )
 
 
 def _execute(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:

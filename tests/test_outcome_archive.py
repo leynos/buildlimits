@@ -7,11 +7,15 @@ nothing, a lock that reports busy, and damaged files that are quarantined
 rather than silently trusted.
 """
 
+import datetime as dt
 import json
+import typing as typ
 from pathlib import Path
 
 from outcome_archive_helpers import NOW, archives, layout, policy, records, run, write
+from segment_test_helpers import sidecar_document, write_private
 
+from buildlimits import outcome_archive_quarantine
 from buildlimits.outcome_archive import (
     EXIT_CORRUPT,
     EXIT_OK,
@@ -20,6 +24,9 @@ from buildlimits.outcome_archive import (
 )
 from buildlimits.outcome_archive_lock import ArchiveLock
 from buildlimits.outcome_segments import archive_name, sidecar_name
+
+if typ.TYPE_CHECKING:
+    import pytest
 
 
 def test_an_empty_store_records_a_successful_run(tmp_path: Path) -> None:
@@ -84,6 +91,64 @@ def test_a_held_lock_reports_a_retryable_status(tmp_path: Path) -> None:
     assert report.exit_status == EXIT_TEMPFAIL, "a retry may succeed"
     assert report.reason == "busy", "the reason is closed"
     assert not archives(tmp_path), "a busy run publishes nothing"
+
+
+def test_a_run_plans_the_store_it_finds_under_its_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A segment sealed while the run waited for the lock is still archived.
+
+    Planning before the lock would leave that source for the next timer
+    firing, so the run would report work it did not do.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 1), policy())
+    enter = ArchiveLock.__enter__
+
+    def enter_after_sealing(lock: ArchiveLock) -> ArchiveLock:
+        held = enter(lock)
+        write(store, records(NOW, 1), policy())
+        return held
+
+    monkeypatch.setattr(ArchiveLock, "__enter__", enter_after_sealing)
+
+    report = run(tmp_path, policy())
+
+    assert report.plan is not None, "the report carries its plan"
+    assert report.plan.archive == 2, "the plan covers the segment sealed meanwhile"
+    assert len(archives(tmp_path)) == 2, "both sealed sources are archived"
+
+
+def test_a_failed_orphan_quarantine_does_not_stop_eviction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable orphan is reported while the rest of the plan still runs.
+
+    Abandoning the run would leave expired history retained and keep the timer
+    retrying work it had already planned.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW - dt.timedelta(days=40), 2), policy())
+    store_layout = layout(tmp_path)
+    store_layout.archive_dir.mkdir(parents=True)
+    write_private(
+        store_layout.archive_dir / sidecar_name(9),
+        json.dumps(sidecar_document(9)).encode(),
+    )
+
+    def refuse(*_args: object, **_kwargs: object) -> str:
+        raise OSError("the orphan cannot be moved")
+
+    monkeypatch.setattr(outcome_archive_quarantine, "quarantine_file", refuse)
+
+    report = run(tmp_path, policy(max_age_days=30))
+
+    assert (9, "unreadable") in report.failures, "the orphan failure is reported"
+    assert [action.action for action in report.actions].count("deleted") == 2, (
+        "both expired archives are still evicted"
+    )
+    assert not archives(tmp_path), "expired history does not outlive the failure"
+    assert report.status == "corrupt", "the run names the fault it met"
 
 
 def test_insufficient_headroom_reports_a_retryable_status(tmp_path: Path) -> None:

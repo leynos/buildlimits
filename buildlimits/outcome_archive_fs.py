@@ -56,7 +56,12 @@ def ensure_private_directory(path: Path) -> None:
 
 
 def require_private_chain(path: Path) -> None:
-    """Reject a path whose components are symlinks or non-directories.
+    """Reject a path whose components are symlinks or shared with others.
+
+    A symlinked or non-directory component could redirect a write outside the
+    store. So could a directory another user may rename entries in, which is
+    why every component must also be private to this user: after this check an
+    attacker cannot swap a checked component for a link before it is used.
 
     Parameters
     ----------
@@ -66,8 +71,9 @@ def require_private_chain(path: Path) -> None:
     Raises
     ------
     UnsafePathError
-        If a component is not a directory reachable without a symlink, or the
-        final component is not owned by this user.
+        If a component is not a directory reachable without a symlink, is
+        writable by another user, or the final component is not owned by this
+        user.
     """
     if not path.is_absolute():
         msg = "an archive path must be absolute"
@@ -86,9 +92,39 @@ def require_private_chain(path: Path) -> None:
         if not stat.S_ISDIR(metadata.st_mode):
             msg = f"archive path component is not a directory: {part}"
             raise UnsafePathError(msg)
+        _require_private_directory(metadata, part)
     final = path.lstat()
     if final.st_uid != os.getuid():
         msg = "an archive directory must be owned by this user"
+        raise UnsafePathError(msg)
+
+
+def _require_private_directory(metadata: os.stat_result, part: str) -> None:
+    """Reject a directory another user could replace entries in.
+
+    A root-owned directory with the sticky bit set is the one accepted
+    exception. The sticky bit stops another user removing or renaming an entry
+    this account owns, which is what makes a shared system temporary directory
+    safe to place a private store under.
+
+    Parameters
+    ----------
+    metadata : os.stat_result
+        The result of ``lstat`` on one path component.
+    part : str
+        The component name, used in the error message.
+
+    Raises
+    ------
+    UnsafePathError
+        If the directory is writable by its group or by every user and is not
+        a trusted root-owned sticky directory.
+    """
+    if not metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return
+    is_trusted_shared = metadata.st_uid == 0 and metadata.st_mode & stat.S_ISVTX
+    if not is_trusted_shared:
+        msg = f"archive path component is writable by another user: {part}"
         raise UnsafePathError(msg)
 
 

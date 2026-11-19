@@ -26,7 +26,10 @@ from buildlimits.outcome_archive_encode import (
     write_sidecar,
 )
 from buildlimits.outcome_archive_fs import publish_no_clobber
-from buildlimits.outcome_archive_quarantine import quarantine_and_remove_sidecar
+from buildlimits.outcome_archive_quarantine import (
+    quarantine_and_remove_sidecar,
+    quarantine_source,
+)
 from buildlimits.outcome_archive_verify import SegmentFaultError, Trim
 from buildlimits.outcome_store_io import fsync_directory
 
@@ -165,9 +168,10 @@ def reconcile_duplicate(
     try:
         source = read_source_facts(sealed.path)
     except SegmentFaultError as fault:
-        quarantine_and_remove_sidecar(
-            context, sealed.path, sealed.sequence, fault.reason
-        )
+        # The archive is intact; only its source is unreadable. Quarantining
+        # the source must leave the archive's sidecar, which describes that
+        # archive, in place.
+        quarantine_source(context, sealed, fault.reason)
         return ActionResult("quarantined", sealed.sequence, reason=fault.reason)
     try:
         existing = read_archive_facts(archived.path)

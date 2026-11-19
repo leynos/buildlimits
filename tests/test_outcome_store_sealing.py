@@ -13,9 +13,14 @@ import typing as typ
 from pathlib import Path
 from unittest import mock
 
-from outcome_store_helpers import segment_writer, wait_for_results
+from outcome_store_helpers import (
+    salt_path,
+    segment_writer,
+    wait_for_results,
+    wait_for_salt,
+)
 from outcome_test_helpers import attributed_record
-from segment_test_helpers import history_policy
+from segment_test_helpers import document, history_policy, write_private
 
 from buildlimits import outcome_record_encode, outcome_store_sealing
 from buildlimits.outcome_key import Salt
@@ -26,13 +31,16 @@ from buildlimits.outcome_segments import (
     sealed_meta_name,
     segment_name,
 )
+from buildlimits.outcome_store import StoreWriter
 from buildlimits.outcome_store_io import read_store
 from buildlimits.outcome_store_salt import file_salt
 
 if typ.TYPE_CHECKING:
     import pytest
 
+    from buildlimits.outcome_ports import StoreResult
     from buildlimits.outcome_record_format import StoreRecord
+    from buildlimits.outcome_retention import RetentionPolicy
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
@@ -266,6 +274,76 @@ def test_the_backlog_is_reported_at_eight_entries(tmp_path: Path) -> None:
     backlog = [result for result in observed if result.reason == "archive_backlog"]
     assert backlog, "the fourth seal crosses the step"
     assert backlog[0].records == 8, "the report counts directory entries"
+
+
+def _load_previous_domain(
+    store: Path, rows: int, policy: RetentionPolicy
+) -> tuple[Salt, tuple[StoreResult, ...]]:
+    """Write a store under one salt, activate another and load the change.
+
+    Returns
+    -------
+    tuple[Salt, tuple[StoreResult, ...]]
+        The salt the seeded rows were keyed under and the startup outcomes,
+        including the ``salt_changed`` result this helper waits for.
+    """
+    previous = file_salt(salt_path(store))
+    assert isinstance(previous, Salt), "the fixture gets its first salt"
+    records = tuple(_record(minute) for minute in range(rows))
+    write_private(store, document(records, previous.salt_id))
+    salt_path(store).write_bytes(b"n" * 32)
+
+    writer = StoreWriter(store, policy=policy, wall_clock=lambda: NOW)
+    try:
+        wait_for_salt(writer)
+        results = wait_for_results(writer, operation="load", reason="salt_changed")
+    finally:
+        writer.close(2.0)
+    return previous, results
+
+
+def test_a_salt_change_seals_the_previous_domain(tmp_path: Path) -> None:
+    """An active file below the segment bound is still sealed on a salt change.
+
+    Without the seal the old rows would stay in the active file and the new
+    domain's first append would produce a segment mixing two salts.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    previous, results = _load_previous_domain(store, 2, history_policy(1024 * 1024))
+
+    assert any(result.records == 2 for result in results), (
+        "the preserved rows are reported rather than counted as discarded"
+    )
+    assert not any(result.discarded for result in results), (
+        "a segmented store loses no rows to a salt change"
+    )
+    active_salt = file_salt(salt_path(store))
+    assert isinstance(active_salt, Salt), "the replacement salt is readable"
+    assert _sealed_names(store) == [segment_name(1)], "the old rows are sealed"
+    metadata = _metadata(store, 1)
+    assert metadata["salt_id"] == previous.salt_id, (
+        "the segment names the salt that keyed its rows"
+    )
+    assert metadata["record_count"] == 2, "every old row moved into the segment"
+    active = _active(store)
+    assert active.header.salt_id == active_salt.salt_id, "the header is the new salt"
+    assert active.records == (), "no old row remains in the active file"
+
+
+def test_an_oversized_salt_change_segment_keeps_its_own_salt(tmp_path: Path) -> None:
+    """Startup sealing after the change still names the rows' own salt.
+
+    The settle pass would seal this file anyway because it exceeds the segment
+    bound, so only the metadata's domain separates the two paths.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    previous, _results = _load_previous_domain(store, 1, history_policy())
+
+    assert _sealed_names(store) == [segment_name(1)], "one segment holds the rows"
+    assert _metadata(store, 1)["salt_id"] == previous.salt_id, (
+        "the sealed rows keep their own salt, not the newly activated one"
+    )
+    assert _active(store).records == (), "the active file starts the new domain"
 
 
 def test_a_failed_seal_is_reported(

@@ -220,19 +220,21 @@ def _write_temp(
     ArchiveFacts
         The facts describing the bytes written.
     """
-    source_descriptor, _metadata = open_private_regular(
-        source_path, os.O_RDONLY, enforce_mode=False
-    )
-    with (
-        os.fdopen(source_descriptor, "rb") as source,
-        os.fdopen(descriptor, "wb") as sink,
-    ):
-        facts = write_archive(
-            LineStream(source, is_compressed=options.is_compressed),
-            sink,
-            preset=options.preset,
-            trim=options.trim,
+    # The sink is opened first so the caller's descriptor is owned by a context
+    # manager before anything else can fail. Opening the source rejects paths
+    # that are not private regular files, and that rejection must not leak the
+    # temporary's descriptor.
+    with os.fdopen(descriptor, "wb") as sink:
+        source_descriptor, _metadata = open_private_regular(
+            source_path, os.O_RDONLY, enforce_mode=False
         )
-        sink.flush()
-        os.fsync(sink.fileno())
+        with os.fdopen(source_descriptor, "rb") as source:
+            facts = write_archive(
+                LineStream(source, is_compressed=options.is_compressed),
+                sink,
+                preset=options.preset,
+                trim=options.trim,
+            )
+            sink.flush()
+            os.fsync(sink.fileno())
     return facts

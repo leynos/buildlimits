@@ -67,10 +67,8 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
         _archive_one(run, entry, outcome)
     for entry in run.plan.heal:
         _heal_one(run, entry, outcome)
-    outcome.actions.extend(
-        outcome_archive_quarantine.remove_orphan_sidecar(run.context, sequence)
-        for sequence in run.plan.orphans
-    )
+    for sequence in run.plan.orphans:
+        _quarantine_orphan(run, sequence, outcome)
     for entry, trim in run.plan.trims:
         _trim_one(run, entry, trim, outcome)
     for entry in run.plan.deletes:
@@ -137,6 +135,20 @@ def _reconcile_one(
         )
     except OSError:
         outcome.failures.append((sealed.sequence, "unreadable"))
+
+
+def _quarantine_orphan(run: ArchiveRun, sequence: int, outcome: RunOutcome) -> None:
+    """Quarantine one orphaned sidecar, recording a filesystem failure.
+
+    An orphan says nothing about whether the rest of the plan is safe to run,
+    so a failure here is recorded and the run continues to trim and delete.
+    """
+    try:
+        outcome.actions.append(
+            outcome_archive_quarantine.remove_orphan_sidecar(run.context, sequence)
+        )
+    except OSError:
+        outcome.failures.append((sequence, "unreadable"))
 
 
 def _quarantining(

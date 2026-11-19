@@ -35,13 +35,18 @@ _METADATA_SCHEMA = 1
 __all__ = ["ARCHIVE_BACKLOG_SEGMENTS", "seal"]
 
 
-def seal(files: StoreFiles) -> bool:
+def seal(files: StoreFiles, *, salt_id: str | None = None) -> bool:
     """Move the active file into the sealed directory and start a new one.
 
     Parameters
     ----------
     files : StoreFiles
         The writer's file state, updated in place.
+    salt_id : str or None
+        The record domain the sealed rows belong to, defaulting to the active
+        salt. A salt change passes the previous domain's identifier: the
+        segment holds rows written before the change, so its metadata must
+        name the salt those rows were keyed under, not the new one.
 
     Returns
     -------
@@ -61,7 +66,8 @@ def seal(files: StoreFiles) -> bool:
         now = files.observe_clock()
         ensure_directory(files.sealed_dir)
         sequence = next_sequence(files.sequence_file, files.sealed_dir)
-        metadata = sealed_metadata(files.records, sequence, salt.salt_id, now)
+        domain = salt.salt_id if salt_id is None else salt_id
+        metadata = sealed_metadata(files.records, sequence, domain, now)
         destination = files.sealed_dir / outcome_segments.segment_name(sequence)
         write_sealing_state(files, sequence, destination, metadata)
         released = len(files.records)

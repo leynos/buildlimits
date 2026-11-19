@@ -59,6 +59,23 @@ def test_a_missing_component_is_refused(tmp_path: Path) -> None:
         require_private_chain(tmp_path / "absent")
 
 
+@pytest.mark.parametrize("shared_mode", [0o770, 0o777])
+def test_a_component_writable_by_others_is_refused(
+    tmp_path: Path, shared_mode: int
+) -> None:
+    """Another user could rename an entry inside a shared parent directory.
+
+    The directory exists and is not a symlink, so only the ownership of the
+    directory itself distinguishes it from an accepted chain.
+    """
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(shared_mode)
+
+    with pytest.raises(UnsafePathError):
+        require_private_chain(shared)
+
+
 def test_a_relative_path_is_refused() -> None:
     """A relative path cannot be proven to stay inside the store."""
     with pytest.raises(UnsafePathError):

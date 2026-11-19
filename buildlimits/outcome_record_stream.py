@@ -224,17 +224,20 @@ class LineStream:
                     raise StreamFaultError("truncated_xz")
                 self.is_verified = True
                 return
-            data = self._feed(decompressor, chunk)
-            if data:
-                yield data
+            yield from self._feed(decompressor, chunk)
             if decompressor.eof:
                 self._require_trailing_padding(decompressor)
                 self.is_verified = True
                 return
 
-    @staticmethod
-    def _feed(decompressor: lzma.LZMADecompressor, chunk: bytes) -> bytes:
-        """Feed one source chunk and drain any input the decoder retained.
+    def _feed(
+        self, decompressor: lzma.LZMADecompressor, chunk: bytes
+    ) -> cabc.Iterator[bytes]:
+        """Feed one source chunk and yield the output as it is produced.
+
+        ``max_length`` caps each call, so one highly compressible chunk cannot
+        expand an entire segment into memory before the reader sees it. Only
+        the bytes claimed from a call are ever buffered.
 
         Parameters
         ----------
@@ -243,10 +246,10 @@ class LineStream:
         chunk : bytes
             One source chunk.
 
-        Returns
-        -------
+        Yields
+        ------
         bytes
-            Every byte decompressed from the chunk.
+            Each non-empty piece of output in order.
 
         Raises
         ------
@@ -254,18 +257,24 @@ class LineStream:
             If the XZ data is malformed.
         """
         try:
-            output = [decompressor.decompress(chunk)]
+            data = decompressor.decompress(chunk, max_length=self._chunk_bytes)
+            if data:
+                yield data
             while not decompressor.needs_input and not decompressor.eof:
-                more = decompressor.decompress(b"")
+                more = decompressor.decompress(b"", max_length=self._chunk_bytes)
                 if not more:
                     break
-                output.append(more)
+                yield more
         except lzma.LZMAError as error:
             raise StreamFaultError("bad_xz") from error
-        return b"".join(output)
 
     def _require_trailing_padding(self, decompressor: lzma.LZMADecompressor) -> None:
         """Reject trailing data that is not XZ stream padding.
+
+        The check streams what follows the stream end in fixed-size pieces and
+        keeps only a running length, so a long tail cannot be held in memory.
+        The padding unit is four bytes, so the total seen is what must be
+        aligned, not each piece the reader happens to read.
 
         Parameters
         ----------
@@ -275,11 +284,31 @@ class LineStream:
         Raises
         ------
         StreamFaultError
-            If the bytes after the stream end are not NUL padding.
+            If the bytes after the stream end are not XZ stream padding.
         """
-        trailing = decompressor.unused_data + self._source.read()
-        if not trailing:
-            return
-        is_padded = len(trailing) % _XZ_PADDING == 0
-        if not is_padded or trailing.strip(b"\x00"):
+        total = self._padding_bytes(decompressor.unused_data)
+        while True:
+            chunk = self._source.read(self._chunk_bytes)
+            if not chunk:
+                break
+            total += self._padding_bytes(chunk)
+        if total % _XZ_PADDING:
             raise StreamFaultError("trailing_data")
+
+    @staticmethod
+    def _padding_bytes(chunk: bytes) -> int:
+        """Count one piece of trailing data after proving it is all NUL.
+
+        Returns
+        -------
+        int
+            The piece's length in bytes.
+
+        Raises
+        ------
+        StreamFaultError
+            If the piece holds anything other than NUL bytes.
+        """
+        if chunk.strip(b"\x00"):
+            raise StreamFaultError("trailing_data")
+        return len(chunk)

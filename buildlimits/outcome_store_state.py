@@ -214,14 +214,60 @@ class StoreFiles:
             case outcome_records.DecodedStore() as store if (
                 store.header.salt_id != salt.salt_id
             ):
-                self.publish("load", "salt_changed", discarded=len(store.records))
-                self.header = outcome_records.StoreHeader(salt.salt_id, now)
-                self.records = []
+                if self.policy.is_segmented:
+                    if not self._retire_previous_domain(store, salt, now):
+                        return
+                    self.publish("load", "salt_changed", records=len(store.records))
+                else:
+                    # A legacy store has one file and no sealed directory, so
+                    # rows keyed under the old salt cannot be kept apart from
+                    # the new domain and are dropped, as they always were.
+                    self.publish("load", "salt_changed", discarded=len(store.records))
+                    self.header = outcome_records.StoreHeader(salt.salt_id, now)
+                    self.records = []
             case outcome_records.DecodedStore() as store:
                 self.publish("load", "none", records=len(store.records))
                 self.header = store.header
                 self.records = list(store.records)
         self.ready = True
+
+    def _retire_previous_domain(
+        self,
+        store: outcome_records.DecodedStore,
+        salt: Salt,
+        now: dt.datetime,
+    ) -> bool:
+        """Preserve rows keyed under a previous salt as a closed segment.
+
+        Appending the new domain's rows to the file that still holds the old
+        domain's rows would produce a segment mixing two salts. Sealing first
+        keeps the old rows readable under the salt that keyed them.
+
+        Parameters
+        ----------
+        store : DecodedStore
+            The active file's decoded rows and their own header.
+        salt : Salt
+            The newly activated salt.
+        now : datetime
+            The moment used for a replacement header when no rows exist.
+
+        Returns
+        -------
+        bool
+            Whether the old domain is out of the active file. On ``False`` the
+            writer must not become ready: appending would mix the domains.
+        """
+        if not store.records:
+            # Only the old header is on disk, so replacing it is enough.
+            self.header = outcome_records.StoreHeader(salt.salt_id, now)
+            self.records = []
+            return True
+        self.header = store.header
+        self.records = list(store.records)
+        # ``seal`` installs the active salt's header afterwards, so success
+        # leaves the writer holding the new domain and no rows.
+        return seal(self, salt_id=store.header.salt_id)
 
     def move_aside(self) -> bool:
         """Move one rejected store without replacing an earlier backup.
