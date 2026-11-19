@@ -12,6 +12,7 @@ import typing as typ
 
 from buildlimits import (
     outcome_archive_fs,
+    outcome_archive_lock,
     outcome_archive_run,
     outcome_segment_inventory,
 )
@@ -120,11 +121,11 @@ def run_archive(
     if selected.dry_run:
         return _dry_report(run, active)
     try:
-        with outcome_archive_fs.ArchiveLock(layout.lock_file):
+        with outcome_archive_lock.ArchiveLock(layout.lock_file):
             return _execute(run, active)
-    except outcome_archive_fs.ArchiveBusyError:
+    except outcome_archive_lock.ArchiveBusyError:
         return _unfinished(started, "busy", "busy")
-    except outcome_archive_fs.NoHeadroomError:
+    except outcome_archive_lock.NoHeadroomError:
         return _unfinished(started, "no_headroom", "no_headroom")
     except OSError:
         return _unfinished(started, "failed", "unreadable")
@@ -141,7 +142,7 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
     layout = run.context.layout
     outcome_archive_fs.ensure_private_directory(layout.archive_dir)
     outcome_archive_fs.remove_stale_temps(layout.archive_dir)
-    outcome_archive_fs.require_headroom(
+    outcome_archive_lock.require_headroom(
         layout.archive_dir, run.context.policy.headroom_bytes
     )
     outcome = outcome_archive_run.RunOutcome()

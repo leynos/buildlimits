@@ -10,7 +10,6 @@ supervisor writer never takes it and never calls into this module's writers.
 
 import contextlib
 import errno
-import fcntl
 import json
 import os
 import secrets
@@ -28,9 +27,6 @@ _DIRECTORY_MODE = 0o700
 _TEMP_SUFFIX = ".tmp"
 
 __all__ = [
-    "ArchiveBusyError",
-    "ArchiveLock",
-    "NoHeadroomError",
     "UnsafePathError",
     "atomic_write_json",
     "ensure_private_directory",
@@ -39,91 +35,13 @@ __all__ = [
     "open_private_temp",
     "publish_no_clobber",
     "remove_stale_temps",
-    "require_headroom",
     "require_private_chain",
+    "require_private_regular",
 ]
-
-
-class ArchiveBusyError(Exception):
-    """Another archiver holds the non-blocking lock."""
 
 
 class UnsafePathError(OSError):
     """A path is a symlink, a non-directory, or not owned by this user."""
-
-
-class NoHeadroomError(OSError):
-    """The filesystem cannot hold the temporary files a run needs."""
-
-
-class ArchiveLock:
-    """A non-blocking exclusive lock around one archive directory.
-
-    Parameters
-    ----------
-    path : Path
-        The lock file inside the archive directory.
-
-    Examples
-    --------
-    ``with ArchiveLock(path):`` raises ``ArchiveBusyError`` instead of waiting
-    when a second invocation already holds the lock.
-    """
-
-    def __init__(self, path: Path) -> None:
-        """Remember the lock file; nothing is opened until entry."""
-        self._path = path
-        self._descriptor: int | None = None
-
-    def __enter__(self) -> ArchiveLock:
-        """Take the lock or report that another run holds it.
-
-        Returns
-        -------
-        ArchiveLock
-            The held lock.
-
-        Raises
-        ------
-        ArchiveBusyError
-            If another process holds the lock.
-        OSError
-            If the lock file cannot be opened, inspected or locked.
-        """
-        ensure_private_directory(self._path.parent)
-        flags = (
-            os.O_RDWR
-            | os.O_CREAT
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NONBLOCK", 0)
-        )
-        descriptor = os.open(self._path, flags, _FILE_MODE)
-        try:
-            metadata = os.fstat(descriptor)
-            _require_private_regular(metadata)
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
-            os.close(descriptor)
-            raise ArchiveBusyError from error
-        except OSError:
-            os.close(descriptor)
-            raise
-        self._descriptor = descriptor
-        return self
-
-    def __exit__(
-        self,
-        _kind: type[BaseException] | None,
-        _value: BaseException | None,
-        _traceback: object,
-    ) -> None:
-        """Release the lock and close its descriptor."""
-        descriptor, self._descriptor = self._descriptor, None
-        if descriptor is None:
-            return
-        with contextlib.suppress(OSError):
-            fcntl.flock(descriptor, fcntl.LOCK_UN)
-        os.close(descriptor)
 
 
 def ensure_private_directory(path: Path) -> None:
@@ -210,7 +128,7 @@ def open_private_regular(
     descriptor = os.open(path, full_flags)
     try:
         metadata = os.fstat(descriptor)
-        _require_private_regular(metadata)
+        require_private_regular(metadata)
         if enforce_mode:
             os.fchmod(descriptor, mode)
     except OSError:
@@ -251,7 +169,7 @@ def open_private_temp(directory: Path, *, prefix: str) -> tuple[int, Path]:
     )
     descriptor = os.open(path, flags, _FILE_MODE)
     try:
-        _require_private_regular(os.fstat(descriptor))
+        require_private_regular(os.fstat(descriptor))
         os.fchmod(descriptor, _FILE_MODE)
     except OSError:
         with contextlib.suppress(OSError):
@@ -276,28 +194,6 @@ def fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-
-
-def require_headroom(directory: Path, required_bytes: int) -> None:
-    """Refuse a run that cannot hold its temporary files.
-
-    Parameters
-    ----------
-    directory : Path
-        The filesystem whose free space must cover ``required_bytes``.
-    required_bytes : int
-        Temporary bytes the run may need.
-
-    Raises
-    ------
-    NoHeadroomError
-        If the filesystem's available bytes are below the requirement.
-    """
-    statistics = os.statvfs(directory)
-    available = statistics.f_bavail * statistics.f_frsize
-    if available < required_bytes:
-        msg = "insufficient temporary disk headroom"
-        raise NoHeadroomError(msg)
 
 
 def publish_no_clobber(temporary: Path, destination: Path) -> None:
@@ -400,7 +296,7 @@ def remove_stale_temps(directory: Path) -> tuple[str, ...]:
     return tuple(removed)
 
 
-def _require_private_regular(metadata: os.stat_result) -> None:
+def require_private_regular(metadata: os.stat_result) -> None:
     """Reject an object that is not a private regular file.
 
     Parameters
