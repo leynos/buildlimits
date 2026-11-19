@@ -20,7 +20,7 @@ from buildlimits import outcome_record_encode, outcome_store_sealing
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_record_format import DecodedStore
 from buildlimits.outcome_retention import RetentionPolicy
-from buildlimits.outcome_segment_inventory import read_sequence
+from buildlimits.outcome_segment_state import read_sequence
 from buildlimits.outcome_segments import (
     SegmentLayout,
     sealed_meta_name,

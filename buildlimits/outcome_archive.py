@@ -15,6 +15,7 @@ from buildlimits import (
     outcome_archive_lock,
     outcome_archive_run,
     outcome_segment_inventory,
+    outcome_segment_state,
 )
 from buildlimits.outcome_archive_context import ArchiveContext
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
@@ -101,7 +102,7 @@ def run_archive(
     selected = RunOptions() if options is None else options
     started = dt.datetime.now(dt.UTC) if selected.now is None else selected.now
     try:
-        floor = outcome_segment_inventory.read_retention_floor(layout)
+        floor = outcome_segment_state.read_retention_floor(layout)
         inventory = outcome_segment_inventory.read_inventory(
             layout, retention_floor=floor
         )
@@ -209,7 +210,7 @@ def _dry_report(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
         A successful dry-run report carrying the plan.
     """
     layout = run.context.layout
-    floor = outcome_segment_inventory.read_retention_floor(layout)
+    floor = outcome_segment_state.read_retention_floor(layout)
     inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
     return RunReport(
         status="ok",

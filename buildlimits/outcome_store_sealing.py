@@ -10,7 +10,7 @@ segments sharing a name.
 import typing as typ
 
 from buildlimits import outcome_records, outcome_segments
-from buildlimits.outcome_segment_inventory import read_sequence
+from buildlimits.outcome_segment_state import read_sequence
 from buildlimits.outcome_store_io import (
     ensure_directory,
     prepare_store,
