@@ -8,10 +8,10 @@ the happy path.
 """
 
 import os
-import stat
 from pathlib import Path
 
 import pytest
+from segment_test_helpers import mode
 
 from buildlimits.outcome_archive_fs import (
     UnsafePathError,
@@ -25,17 +25,6 @@ from buildlimits.outcome_archive_fs import (
 )
 
 
-def _mode(path: Path) -> int:
-    """Return a path's permission bits.
-
-    Returns
-    -------
-    int
-        The ``st_mode`` permission bits without the file type.
-    """
-    return stat.S_IMODE(path.lstat().st_mode)
-
-
 def test_a_private_directory_is_created_and_enforced(tmp_path: Path) -> None:
     """An existing directory with wider access is narrowed."""
     path = tmp_path / "archive"
@@ -43,7 +32,7 @@ def test_a_private_directory_is_created_and_enforced(tmp_path: Path) -> None:
 
     ensure_private_directory(path)
 
-    assert _mode(path) == 0o700, "the directory is owner-only after the call"
+    assert mode(path) == 0o700, "the directory is owner-only after the call"
 
 
 def test_a_symlinked_component_is_refused(tmp_path: Path) -> None:
@@ -90,8 +79,8 @@ def test_a_temporary_file_is_exclusive_and_private(tmp_path: Path) -> None:
 
     assert first_path != second_path, "each temporary has its own name"
     assert first_path.name.startswith(".segment."), "the prefix is applied"
-    assert first_path.name.endswith(".tmp"), "the temporary is recognisable"
-    assert _mode(first_path) == 0o600, "the temporary is private"
+    assert first_path.name.endswith(".tmp"), "the temporary is recognizable"
+    assert mode(first_path) == 0o600, "the temporary is private"
 
 
 def test_a_regular_file_is_opened_without_a_mode_change(tmp_path: Path) -> None:
@@ -104,7 +93,7 @@ def test_a_regular_file_is_opened_without_a_mode_change(tmp_path: Path) -> None:
     os.close(descriptor)
 
     assert metadata.st_size == 4, "the metadata describes the file"
-    assert _mode(path) == 0o644, "the mode is left alone"
+    assert mode(path) == 0o644, "the mode is left alone"
 
 
 def test_a_regular_file_is_narrowed_by_default(tmp_path: Path) -> None:
@@ -116,7 +105,7 @@ def test_a_regular_file_is_narrowed_by_default(tmp_path: Path) -> None:
     descriptor, _metadata = open_private_regular(path, os.O_RDONLY)
     os.close(descriptor)
 
-    assert _mode(path) == 0o600, "the mode is enforced"
+    assert mode(path) == 0o600, "the mode is enforced"
 
 
 def test_a_symlinked_file_is_refused(tmp_path: Path) -> None:
@@ -171,7 +160,7 @@ def test_json_state_is_written_durably_and_compactly(tmp_path: Path) -> None:
     atomic_write_json(path, {"b": 2, "a": 1})
 
     assert path.read_text() == '{"a":1,"b":2}\n', "the document is canonical"
-    assert _mode(path) == 0o600, "the state is private"
+    assert mode(path) == 0o600, "the state is private"
     assert not list(tmp_path.glob(".*.tmp")), "no temporary is left behind"
 
 
@@ -185,7 +174,7 @@ def test_json_state_replaces_a_previous_document(tmp_path: Path) -> None:
     assert path.read_text() == '{"fresh":true}\n', "the old document is gone"
 
 
-def test_a_non_serialisable_document_leaves_no_temporary(tmp_path: Path) -> None:
+def test_a_non_serializable_document_leaves_no_temporary(tmp_path: Path) -> None:
     """A value that cannot be encoded fails before anything is created."""
     path = tmp_path / "last-run.json"
 

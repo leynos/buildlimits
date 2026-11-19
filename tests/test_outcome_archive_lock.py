@@ -5,10 +5,10 @@ report busy rather than wait or interleave renames. The headroom guard refuses
 a run whose temporary files cannot fit before any segment is rewritten.
 """
 
-import stat
 from pathlib import Path
 
 import pytest
+from segment_test_helpers import mode
 
 from buildlimits.outcome_archive_lock import (
     ArchiveBusyError,
@@ -16,17 +16,6 @@ from buildlimits.outcome_archive_lock import (
     NoHeadroomError,
     require_headroom,
 )
-
-
-def _mode(path: Path) -> int:
-    """Return a path's permission bits.
-
-    Returns
-    -------
-    int
-        The ``st_mode`` permission bits without the file type.
-    """
-    return stat.S_IMODE(path.lstat().st_mode)
 
 
 def test_a_held_lock_refuses_a_second_run(tmp_path: Path) -> None:
@@ -54,8 +43,8 @@ def test_the_lock_directory_is_private(tmp_path: Path) -> None:
     lock = directory / "archive.lock"
 
     with ArchiveLock(lock):
-        assert _mode(directory) == 0o700, "the lock directory is private"
-        assert _mode(lock) == 0o600, "the lock file is private"
+        assert mode(directory) == 0o700, "the lock directory is private"
+        assert mode(lock) == 0o600, "the lock file is private"
 
 
 def test_headroom_within_the_free_space_is_accepted(tmp_path: Path) -> None:

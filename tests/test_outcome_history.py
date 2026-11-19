@@ -12,8 +12,9 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from outcome_store_helpers import wait_for_results, wait_for_salt
+from outcome_archive_helpers import write as write_store
 from outcome_test_helpers import attributed_record
+from segment_test_helpers import history_policy
 
 from buildlimits import outcome_history, outcome_replay_cli
 from buildlimits.outcome_archive import RunOptions, run_archive
@@ -23,50 +24,13 @@ from buildlimits.outcome_record_format import (
     StoreRecord,
     WindowSummary,
 )
-from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segments import SegmentLayout
-from buildlimits.outcome_store import StoreWriter
 from buildlimits.outcome_store_io import read_store
 from buildlimits.predict import dataset_cli
 from buildlimits.predict.snapshot_store import load_snapshot
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 _SALT_NAME = "cache-outcomes.salt"
-
-
-def _policy(segment_bytes: int) -> RetentionPolicy:
-    """Build an unlimited-budget policy that seals at ``segment_bytes``.
-
-    Returns
-    -------
-    RetentionPolicy
-        A policy with no age or byte eviction, so archived history survives.
-    """
-    return RetentionPolicy(
-        max_age=dt.timedelta(days=30),
-        max_bytes=0,
-        max_records=None,
-        headroom_bytes=max(segment_bytes, 1) * 4,
-        segment_bytes=segment_bytes,
-    )
-
-
-def _ready_writer(path: Path, policy: RetentionPolicy) -> StoreWriter:
-    """Start a writer and wait until it accepts appends.
-
-    Returns
-    -------
-    StoreWriter
-        The initialized writer.
-    """
-    writer = StoreWriter(path, policy=policy, wall_clock=lambda: NOW)
-    try:
-        wait_for_salt(writer)
-        wait_for_results(writer, operation="load")
-    except BaseException:
-        writer.close(1.0)
-        raise
-    return writer
 
 
 def _records(first: int, count: int) -> tuple[OutcomeRecord, ...]:
@@ -103,29 +67,10 @@ def _window(first: int, count: int) -> WindowSummary:
     )
 
 
-def _write(
-    path: Path,
-    policy: RetentionPolicy,
-    records: tuple[StoreRecord, ...],
-) -> None:
-    """Append ``records`` in order and close the writer.
-
-    The writer must have settled before the first append, because a record
-    offered during startup is discarded as ``save_failed``. Closing then drains
-    the queue, so every record is on disk before this returns.
-    """
-    writer = _ready_writer(path, policy)
-    try:
-        for record in records:
-            writer.append(record)
-    finally:
-        writer.close(2.0)
-
-
 def _archived_segments(path: Path, count: int) -> None:
     """Seal ``count`` one-record segments and archive them."""
-    policy = _policy(1)
-    _write(path, policy, _records(0, count))
+    policy = history_policy(1)
+    write_store(path, _records(0, count), policy)
     report = run_archive(SegmentLayout.beside(path), policy, RunOptions(now=NOW))
     assert report.status == "ok", "the archiver publishes without fault"
     assert [action.action for action in report.actions] == ["archived"] * count, (
@@ -135,7 +80,7 @@ def _archived_segments(path: Path, count: int) -> None:
 
 def _active_records(path: Path, first: int, count: int) -> None:
     """Append records that stay in the active file."""
-    _write(path, _policy(10**6), _records(first, count))
+    write_store(path, _records(first, count), history_policy(10**6))
 
 
 def _observed(records: tuple[StoreRecord, ...]) -> tuple[dt.datetime, ...]:
@@ -173,8 +118,8 @@ def test_history_reads_a_sealed_source_before_its_archive(
 ) -> None:
     """A sealed source that survived a crash is read instead of its archive."""
     store = tmp_path / "cache-outcomes.jsonl"
-    policy = _policy(1)
-    _write(store, policy, _records(0, 2))
+    policy = history_policy(1)
+    write_store(store, _records(0, 2), policy)
     layout = SegmentLayout.beside(store)
     run_archive(layout, policy, RunOptions(now=NOW))
     archive = next(layout.archive_dir.glob("*.jsonl.xz"))
@@ -192,8 +137,8 @@ def test_history_reads_a_sealed_source_before_its_archive(
 def test_history_defaults_to_the_newest_salt_domain(tmp_path: Path) -> None:
     """A salt change starts a new domain; the default reads that domain."""
     store = tmp_path / "cache-outcomes.jsonl"
-    policy = _policy(1)
-    _write(store, policy, (_window(0, 1), _window(1, 1)))
+    policy = history_policy(1)
+    write_store(store, (_window(0, 1), _window(1, 1)), policy)
     (tmp_path / _SALT_NAME).unlink()
     _active_records(store, first=2, count=2)
     newest_salt = typ.cast("DecodedStore", read_store(store)).header.salt_id

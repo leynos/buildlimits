@@ -9,21 +9,19 @@ import datetime as dt
 import typing as typ
 
 from outcome_test_helpers import attributed_record
+from segment_test_helpers import document
+from segment_test_helpers import store_layout as layout
 
-from buildlimits import outcome_record_encode
 from buildlimits.outcome_archive_context import ArchiveContext
 from buildlimits.outcome_archive_fs import ensure_private_directory
-from buildlimits.outcome_record_format import StoreHeader, StoreRecord
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segment_inventory import SegmentEntry, read_inventory
-from buildlimits.outcome_segments import (
-    SegmentLayout,
-    sealed_meta_name,
-    segment_name,
-)
+from buildlimits.outcome_segments import sealed_meta_name, segment_name
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
+
+    from buildlimits.outcome_record_format import StoreRecord
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
@@ -54,19 +52,6 @@ def records(count: int, *, first: int = 0) -> tuple[StoreRecord, ...]:
     )
 
 
-def document(rows: tuple[StoreRecord, ...], *, salt_id: str = "salt-1") -> bytes:
-    """Encode a header and records as one JSON Lines document.
-
-    Returns
-    -------
-    bytes
-        The complete, newline-terminated document.
-    """
-    lines = [outcome_record_encode.encode_line(StoreHeader(salt_id, NOW))]
-    lines.extend(outcome_record_encode.encode_line(row) for row in rows)
-    return ("\n".join(lines) + "\n").encode()
-
-
 def source(root: Path, sequence: int, data: bytes) -> Path:
     """Write one private sealed source and its writer metadata.
 
@@ -82,17 +67,6 @@ def source(root: Path, sequence: int, data: bytes) -> Path:
     path.chmod(0o600)
     (store_layout.sealed_dir / sealed_meta_name(sequence)).write_text("{}")
     return path
-
-
-def layout(root: Path) -> SegmentLayout:
-    """Return the layout for a store below ``root``.
-
-    Returns
-    -------
-    SegmentLayout
-        The layout shared by the tests.
-    """
-    return SegmentLayout.beside(root / "cache-outcomes.jsonl")
 
 
 def context(

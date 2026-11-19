@@ -72,6 +72,7 @@ class Clocks:
         wall: cabc.Callable[[], dt.datetime] | None = None,
         monotonic: cabc.Callable[[], float] | None = None,
     ) -> None:
+        """Bind the clocks, falling back to the system's own."""
         self.wall = _utc_now if wall is None else wall
         self.monotonic = time.monotonic if monotonic is None else monotonic
 
@@ -105,6 +106,7 @@ class StoreFiles:
         clocks: Clocks,
         policy: RetentionPolicy | None = None,
     ) -> None:
+        """Take the store's paths and policy, leaving the in-memory view empty."""
         self.path = path
         self.publish = publish
         self.clocks = clocks
@@ -149,15 +151,36 @@ class StoreFiles:
         if self.ready:
             self.settle_loaded_store()
 
+    def measure_active(
+        self, operation: StoreOperation, reason: StoreReason
+    ) -> int | None:
+        """Return the active file's size, reporting ``reason`` when it is unreadable.
+
+        Parameters
+        ----------
+        operation : str
+            The reported operation the failure belongs to.
+        reason : str
+            The closed reason published when the file cannot be measured.
+
+        Returns
+        -------
+        int or None
+            The file's size, or ``None`` when it could not be measured.
+        """
+        try:
+            return store_size(self.path)
+        except OSError:
+            self.publish(operation, reason)
+            return None
+
     def settle_loaded_store(self) -> None:
         """Install the header, compact, or seal an oversized segment."""
         if not self.policy.is_segmented:
             self.compact()
             return
-        try:
-            size = store_size(self.path)
-        except OSError:
-            self.publish("load", "unreadable")
+        size = self.measure_active("load", "unreadable")
+        if size is None:
             return
         if size > self.policy.segment_bytes:
             seal(self)
@@ -275,10 +298,8 @@ class StoreFiles:
         if not self.policy.is_segmented:
             self.compact()
             return
-        try:
-            size = store_size(self.path)
-        except OSError:
-            self.publish("compact", "save_failed")
+        size = self.measure_active("compact", "save_failed")
+        if size is None:
             return
         if size <= self.policy.segment_bytes:
             if self.policy.has_age_limit:

@@ -19,6 +19,7 @@ from buildlimits.outcome_archive_plan import PlanSummary, plan_run
 from buildlimits.outcome_archive_verify import SegmentFaultError, Trim
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     import datetime as dt
     from pathlib import Path
 
@@ -138,34 +139,51 @@ def _reconcile_one(
         outcome.failures.append((sealed.sequence, "unreadable"))
 
 
+def _quarantining(
+    outcome: RunOutcome,
+    sequence: int,
+    action: cabc.Callable[[], ActionResult],
+    quarantine: cabc.Callable[[str], ActionResult],
+) -> None:
+    """Run one per-segment action, quarantining whatever a fault names.
+
+    Every operation that can meet a closed fault reports the same way: a
+    success appends its action, a closed fault moves the artefact that owns the
+    file into quarantine, and any other filesystem failure is recorded as
+    ``unreadable``. ``quarantine`` therefore names the artefact rather than the
+    reason, because only the caller knows which file a fault implicates.
+    """
+    try:
+        outcome.actions.append(action())
+    except SegmentFaultError as fault:
+        outcome.actions.append(quarantine(fault.reason))
+        outcome.failures.append((sequence, fault.reason))
+    except OSError:
+        outcome.failures.append((sequence, "unreadable"))
+
+
 def _archive_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
     """Archive one sealed source, quarantining it when it is invalid."""
-    try:
-        outcome.actions.append(outcome_archive_files.archive_source(run.context, entry))
-    except SegmentFaultError as fault:
-        outcome.actions.append(
-            outcome_archive_quarantine.quarantine_source(
-                run.context, entry, fault.reason
-            )
-        )
-        outcome.failures.append((entry.sequence, fault.reason))
-    except OSError:
-        outcome.failures.append((entry.sequence, "unreadable"))
+    _quarantining(
+        outcome,
+        entry.sequence,
+        lambda: outcome_archive_files.archive_source(run.context, entry),
+        lambda reason: outcome_archive_quarantine.quarantine_source(
+            run.context, entry, reason
+        ),
+    )
 
 
 def _heal_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
     """Rebuild one sidecar, quarantining an archive that will not verify."""
-    try:
-        outcome.actions.append(outcome_archive_files.repair_sidecar(run.context, entry))
-    except SegmentFaultError as fault:
-        outcome.actions.append(
-            outcome_archive_quarantine.quarantine_archive(
-                run.context, entry, fault.reason
-            )
-        )
-        outcome.failures.append((entry.sequence, fault.reason))
-    except OSError:
-        outcome.failures.append((entry.sequence, "unreadable"))
+    _quarantining(
+        outcome,
+        entry.sequence,
+        lambda: outcome_archive_files.repair_sidecar(run.context, entry),
+        lambda reason: outcome_archive_quarantine.quarantine_archive(
+            run.context, entry, reason
+        ),
+    )
 
 
 def _trim_one(
@@ -175,19 +193,14 @@ def _trim_one(
     outcome: RunOutcome,
 ) -> None:
     """Apply one planned trim, quarantining an archive that will not verify."""
-    try:
-        outcome.actions.append(
-            outcome_archive_files.recompress_archive(run.context, entry, trim)
-        )
-    except SegmentFaultError as fault:
-        outcome.actions.append(
-            outcome_archive_quarantine.quarantine_archive(
-                run.context, entry, fault.reason
-            )
-        )
-        outcome.failures.append((entry.sequence, fault.reason))
-    except OSError:
-        outcome.failures.append((entry.sequence, "unreadable"))
+    _quarantining(
+        outcome,
+        entry.sequence,
+        lambda: outcome_archive_files.recompress_archive(run.context, entry, trim),
+        lambda reason: outcome_archive_quarantine.quarantine_archive(
+            run.context, entry, reason
+        ),
+    )
 
 
 def _delete_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:

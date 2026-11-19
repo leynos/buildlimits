@@ -4,8 +4,9 @@ Every path the archiver touches is private to its owner. Directories are
 validated one component at a time so a symlinked parent cannot redirect a
 write, files are opened without following links, temporary files are created
 exclusively, and publication uses a no-clobber hard link followed by a
-directory fsync. The archive lock is a non-blocking exclusive ``flock``; the
-supervisor writer never takes it and never calls into this module's writers.
+directory fsync. The run's non-blocking ``flock`` lives in
+`outcome_archive_lock`; the supervisor writer never takes it and never calls
+into this module's writers.
 """
 
 import contextlib
@@ -17,20 +18,18 @@ import stat
 import typing as typ
 from pathlib import Path
 
-from buildlimits.outcome_store_io import write_all
+from buildlimits.outcome_store_io import ensure_directory, fsync_directory, write_all
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 _FILE_MODE = 0o600
-_DIRECTORY_MODE = 0o700
 _TEMP_SUFFIX = ".tmp"
 
 __all__ = [
     "UnsafePathError",
     "atomic_write_json",
     "ensure_private_directory",
-    "fsync_directory",
     "open_private_regular",
     "open_private_temp",
     "publish_no_clobber",
@@ -52,9 +51,8 @@ def ensure_private_directory(path: Path) -> None:
     path : Path
         The directory to create or verify.
     """
-    path.mkdir(mode=_DIRECTORY_MODE, parents=True, exist_ok=True)
+    ensure_directory(path)
     require_private_chain(path)
-    path.chmod(_DIRECTORY_MODE)
 
 
 def require_private_chain(path: Path) -> None:
@@ -178,22 +176,6 @@ def open_private_temp(directory: Path, *, prefix: str) -> tuple[int, Path]:
             path.unlink()
         raise
     return descriptor, path
-
-
-def fsync_directory(path: Path) -> None:
-    """Make a directory's entries durable.
-
-    Parameters
-    ----------
-    path : Path
-        The directory to sync.
-    """
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    descriptor = os.open(path, flags)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
 
 
 def publish_no_clobber(temporary: Path, destination: Path) -> None:

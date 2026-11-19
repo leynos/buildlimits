@@ -14,11 +14,10 @@ from pathlib import Path
 
 import pytest
 from outcome_test_helpers import attributed_record
+from segment_test_helpers import document as encode_document
 
-from buildlimits import outcome_record_encode
 from buildlimits.outcome_archive_cli import main
 from buildlimits.outcome_archive_lock import ArchiveLock
-from buildlimits.outcome_record_format import StoreHeader, StoreRecord
 from buildlimits.outcome_segments import (
     SegmentLayout,
     archive_name,
@@ -28,6 +27,8 @@ from buildlimits.outcome_segments import (
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
+
+    from buildlimits.outcome_record_format import StoreRecord
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
@@ -44,19 +45,6 @@ def _records(count: int) -> tuple[StoreRecord, ...]:
         attributed_record(observed_at=NOW + dt.timedelta(minutes=index))
         for index in range(count)
     )
-
-
-def _document(records: tuple[StoreRecord, ...]) -> bytes:
-    """Encode a header and records as one JSON Lines document.
-
-    Returns
-    -------
-    bytes
-        The complete document.
-    """
-    lines = [outcome_record_encode.encode_line(StoreHeader("salt-1", NOW))]
-    lines.extend(outcome_record_encode.encode_line(record) for record in records)
-    return ("\n".join(lines) + "\n").encode()
 
 
 def _sealed(store: Path, sequence: int, data: bytes) -> Path:
@@ -116,7 +104,7 @@ def test_inspect_reports_the_plan_as_json(
 ) -> None:
     """Inspection is a dry run and its JSON is free of host detail."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, _document(_records(1)))
+    _sealed(store, 1, encode_document(_records(1)))
     config = _config(tmp_path / "supervisor.toml")
 
     status = main(["inspect", *_arguments(store, config), "--json"])
@@ -137,7 +125,7 @@ def test_inspect_prints_bounded_operator_lines(
 ) -> None:
     """The plain report carries the plan and the dry-run marker."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, _document(_records(1)))
+    _sealed(store, 1, encode_document(_records(1)))
     config = _config(tmp_path / "supervisor.toml")
 
     status = main(["inspect", *_arguments(store, config)])
@@ -155,7 +143,7 @@ def test_run_archives_and_reports_the_action(
 ) -> None:
     """A successful run publishes the archive and prints what it did."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, _document(_records(1)))
+    _sealed(store, 1, encode_document(_records(1)))
     config = _config(tmp_path / "supervisor.toml")
 
     status = main(["run", *_arguments(store, config)])
@@ -174,7 +162,7 @@ def test_the_configured_preset_is_used(
 ) -> None:
     """The command reads the archive preset from the supervisor config."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, _document(_records(1)))
+    _sealed(store, 1, encode_document(_records(1)))
     config = _config(tmp_path / "supervisor.toml", preset=1)
 
     main(["run", *_arguments(store, config)])
@@ -188,7 +176,7 @@ def test_run_dry_run_changes_nothing(
 ) -> None:
     """``run --dry-run`` plans without taking the lock or writing state."""
     store = tmp_path / "cache-outcomes.jsonl"
-    source = _sealed(store, 1, _document(_records(1)))
+    source = _sealed(store, 1, encode_document(_records(1)))
     config = _config(tmp_path / "supervisor.toml")
 
     status = main(["run", "--dry-run", *_arguments(store, config)])
@@ -223,7 +211,7 @@ def test_a_held_lock_exits_seventy_five(
 ) -> None:
     """A concurrent run is retryable, never waited on."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, _document(_records(1)))
+    _sealed(store, 1, encode_document(_records(1)))
     config = _config(tmp_path / "supervisor.toml")
     layout = SegmentLayout.beside(store)
 
@@ -239,7 +227,7 @@ def test_a_held_lock_exits_seventy_five(
 def test_a_missing_configuration_uses_defaults(tmp_path: Path) -> None:
     """An absent configuration file is not an error."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, _document(_records(1)))
+    _sealed(store, 1, encode_document(_records(1)))
 
     status = main([
         "inspect",

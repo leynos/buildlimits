@@ -22,6 +22,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_key import Salt
     from buildlimits.outcome_ports import StoreFailure
     from buildlimits.outcome_record_format import StoreRecord
+    from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_vocabulary import StoreReason
 
 _SALT_NAME = "cache-outcomes.salt"
@@ -186,6 +187,30 @@ def ready_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
     return writer
 
 
+def segment_writer(
+    path: Path, policy: RetentionPolicy, now: dt.datetime
+) -> StoreWriter:
+    """Start a segmented writer and wait until it accepts appends.
+
+    A segmented writer publishes its startup salt and reads its retained state
+    before its first append is accepted, so the wait is on ``load`` rather than
+    on the legacy compaction result.
+
+    Returns
+    -------
+    StoreWriter
+        The initialized writer, ready to accept records.
+    """
+    writer = StoreWriter(path, policy=policy, wall_clock=lambda: now)
+    try:
+        wait_for_salt(writer)
+        wait_for_results(writer, operation="load")
+    except BaseException:
+        writer.close(1.0)
+        raise
+    return writer
+
+
 @contextlib.contextmanager
 def running_writer(
     path: Path, *, queue_capacity: int = 4096
@@ -319,47 +344,6 @@ def assert_load_result(
     """
     if StoreResult("load", reason, 0, discarded) not in results:
         pytest.fail(f"load reason {reason!r} reports {discarded} discarded rows")
-
-
-def write_private_file(path: Path, contents: bytes) -> None:
-    """Create one mode-0600 file for store fixtures.
-
-    Parameters
-    ----------
-    path : Path
-        Destination for the fixture.
-    contents : bytes
-        Exact bytes the test needs at that path.
-    """
-    path.write_bytes(contents)
-    path.chmod(0o600)
-
-
-def seed_store(
-    path: Path,
-    salt: Salt,
-    records: tuple[StoreRecord, ...],
-    *,
-    torn_tail: str | None = None,
-) -> outcome_records.StoreHeader:
-    """Write a valid fixture header and rows, with an optional torn tail.
-
-    Returns
-    -------
-    StoreHeader
-        The header used for the fixture.
-    """
-    header = outcome_records.StoreHeader(
-        salt.salt_id, dt.datetime(2026, 10, 25, tzinfo=dt.UTC)
-    )
-    lines = [outcome_records.encode_line(header)]
-    lines.extend(outcome_records.encode_line(record) for record in records)
-    document = "\n".join(lines) + "\n"
-    if torn_tail is not None:
-        document += torn_tail
-    path.write_text(document, encoding="utf-8")
-    path.chmod(0o600)
-    return header
 
 
 @contextlib.contextmanager

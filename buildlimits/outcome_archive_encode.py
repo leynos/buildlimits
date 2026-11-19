@@ -108,6 +108,19 @@ def build_temp(
     return temporary, dc.replace(scanned, had_torn_tail=written.had_torn_tail)
 
 
+def _scan_facts(path: Path, *, is_compressed: bool) -> ArchiveFacts:
+    """Scan one private document to EOF and return what it actually holds.
+
+    Returns
+    -------
+    ArchiveFacts
+        The verified counts, span and digest.
+    """
+    descriptor, _metadata = open_private_regular(path, os.O_RDONLY, enforce_mode=False)
+    with os.fdopen(descriptor, "rb") as source:
+        return scan_archive(LineStream(source, is_compressed=is_compressed))
+
+
 def read_archive_facts(path: Path) -> ArchiveFacts:
     """Decompress one archive to EOF and return what it actually holds.
 
@@ -121,9 +134,7 @@ def read_archive_facts(path: Path) -> ArchiveFacts:
     ArchiveFacts
         The verified counts, span and digest.
     """
-    descriptor, _metadata = open_private_regular(path, os.O_RDONLY, enforce_mode=False)
-    with os.fdopen(descriptor, "rb") as source:
-        return scan_archive(LineStream(source, is_compressed=True))
+    return _scan_facts(path, is_compressed=True)
 
 
 def read_source_facts(path: Path) -> ArchiveFacts:
@@ -139,9 +150,7 @@ def read_source_facts(path: Path) -> ArchiveFacts:
     ArchiveFacts
         The verified counts, span and digest.
     """
-    descriptor, _metadata = open_private_regular(path, os.O_RDONLY, enforce_mode=False)
-    with os.fdopen(descriptor, "rb") as source:
-        return scan_archive(LineStream(source))
+    return _scan_facts(path, is_compressed=False)
 
 
 def write_sidecar(

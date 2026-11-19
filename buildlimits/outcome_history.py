@@ -12,7 +12,7 @@ records are comparable.
 import dataclasses as dc
 import typing as typ
 
-from buildlimits import outcome_segment_inventory, outcome_segments
+from buildlimits import outcome_segment_inventory
 from buildlimits.outcome_archive_verify import (
     DocumentReader,
     HeaderRow,

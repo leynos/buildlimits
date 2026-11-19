@@ -25,9 +25,10 @@ from buildlimits.outcome_archive_encode import (
     read_source_facts,
     write_sidecar,
 )
-from buildlimits.outcome_archive_fs import fsync_directory, publish_no_clobber
+from buildlimits.outcome_archive_fs import publish_no_clobber
 from buildlimits.outcome_archive_quarantine import quarantine_and_remove_sidecar
 from buildlimits.outcome_archive_verify import SegmentFaultError, Trim
+from buildlimits.outcome_store_io import fsync_directory
 
 if typ.TYPE_CHECKING:
     from pathlib import Path

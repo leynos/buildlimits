@@ -12,6 +12,8 @@ from outcome_store_fixture_helpers import (
 from outcome_store_fixture_helpers import (
     seed_one_record_store as _seed_one_record_store,
 )
+from outcome_store_fixture_helpers import seed_store as _seed_store
+from outcome_store_fixture_helpers import write_private_file as _write_private_file
 from outcome_store_helpers import append_and_wait as _append_and_wait
 from outcome_store_helpers import assert_failed_append as _assert_failed_append
 from outcome_store_helpers import assert_load_result as _assert_load_result
@@ -19,13 +21,11 @@ from outcome_store_helpers import decoded_store as _decoded_store
 from outcome_store_helpers import load_and_close as _load_and_close
 from outcome_store_helpers import running_writer as _running_writer
 from outcome_store_helpers import salt_path as _salt_path
-from outcome_store_helpers import seed_store as _seed_store
 from outcome_store_helpers import start_writer as _start_writer
 from outcome_store_helpers import stored_records as _stored_records
 from outcome_store_helpers import wait_for_results as _wait_for_results
 from outcome_store_helpers import wait_for_salt as _wait_for_salt
 from outcome_store_helpers import window_summary as _window_summary
-from outcome_store_helpers import write_private_file as _write_private_file
 
 from buildlimits import (
     outcome_records,

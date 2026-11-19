@@ -14,6 +14,7 @@ import lzma
 
 import pytest
 from outcome_test_helpers import attributed_record
+from segment_test_helpers import document as encode_document
 
 from buildlimits import outcome_record_encode
 from buildlimits.outcome_archive_verify import (
@@ -54,19 +55,6 @@ def _records(count: int) -> tuple[StoreRecord, ...]:
     )
 
 
-def _document(records: tuple[StoreRecord, ...], *, salt_id: str = "salt-1") -> bytes:
-    """Encode a header and its records as newline-terminated JSON Lines.
-
-    Returns
-    -------
-    bytes
-        The complete document.
-    """
-    lines = [outcome_record_encode.encode_line(_header(salt_id))]
-    lines.extend(outcome_record_encode.encode_line(record) for record in records)
-    return ("\n".join(lines) + "\n").encode()
-
-
 def _row(document: bytes, index: int) -> bytes:
     """Return one newline-terminated row of ``document``.
 
@@ -104,7 +92,7 @@ def _write(document: bytes, trim: Trim) -> tuple[ArchiveFacts, bytes]:
 
 def test_facts_describe_the_document_actually_read() -> None:
     """Count, logical size, digest and observation span all come from rows."""
-    document = _document(_records(3))
+    document = encode_document(_records(3))
 
     facts = _scan(document)
 
@@ -121,7 +109,7 @@ def test_facts_describe_the_document_actually_read() -> None:
 
 def test_a_header_only_document_has_no_observation_span() -> None:
     """An empty segment is valid history with no rows to date."""
-    facts = _scan(_document(()))
+    facts = _scan(encode_document(()))
 
     assert facts.record_count == 0, "there are no records"
     assert facts.first_observed_at is None, "there is no first moment"
@@ -172,7 +160,7 @@ def test_a_document_without_a_header_is_corrupt(document: bytes) -> None:
 
 def test_a_terminated_invalid_row_is_corrupt() -> None:
     """A complete row that does not decode cannot be dropped as a torn tail."""
-    document = _document(_records(1)) + b'{"kind": "unknown"}\n'
+    document = encode_document(_records(1)) + b'{"kind": "unknown"}\n'
 
     with pytest.raises(SegmentFaultError) as raised:
         _scan(document)
@@ -182,7 +170,7 @@ def test_a_terminated_invalid_row_is_corrupt() -> None:
 
 def test_an_unterminated_invalid_tail_is_dropped() -> None:
     """A crash-truncated final row is not history and is reported as torn."""
-    document = _document(_records(2)) + b'{"kind": "outc'
+    document = encode_document(_records(2)) + b'{"kind": "outc'
 
     facts = _scan(document)
 
@@ -192,7 +180,7 @@ def test_an_unterminated_invalid_tail_is_dropped() -> None:
 
 def test_a_truncated_archive_is_a_fault() -> None:
     """A compressed source shorter than its declared stream is unusable."""
-    archive = lzma.compress(_document(_records(1)), format=lzma.FORMAT_XZ)
+    archive = lzma.compress(encode_document(_records(1)), format=lzma.FORMAT_XZ)
 
     with pytest.raises(SegmentFaultError) as raised:
         scan_archive(LineStream(io.BytesIO(archive[:-8]), is_compressed=True))
@@ -202,7 +190,7 @@ def test_a_truncated_archive_is_a_fault() -> None:
 
 def test_a_complete_archive_scans_like_its_plain_source() -> None:
     """Compression preserves every fact the source proved."""
-    document = _document(_records(2))
+    document = encode_document(_records(2))
     archive = lzma.compress(document, format=lzma.FORMAT_XZ)
 
     scanned = scan_archive(LineStream(io.BytesIO(archive), is_compressed=True))
@@ -212,7 +200,7 @@ def test_a_complete_archive_scans_like_its_plain_source() -> None:
 
 def test_an_empty_trim_rewrites_the_document_byte_for_byte() -> None:
     """The default trim preserves the source exactly."""
-    document = _document(_records(3))
+    document = encode_document(_records(3))
 
     facts, archived = _write(document, Trim())
 
@@ -227,7 +215,7 @@ def test_an_empty_trim_rewrites_the_document_byte_for_byte() -> None:
 
 def test_a_record_trim_drops_exactly_the_leading_rows() -> None:
     """A count trim removes a prefix and keeps document order."""
-    document = _document(_records(3))
+    document = encode_document(_records(3))
 
     facts, archived = _write(document, Trim(records=1))
 
@@ -240,7 +228,7 @@ def test_a_record_trim_drops_exactly_the_leading_rows() -> None:
 
 def test_a_count_equal_to_every_record_keeps_only_the_header() -> None:
     """A trim that drops all records still writes a valid, empty document."""
-    document = _document(_records(2))
+    document = encode_document(_records(2))
 
     facts, archived = _write(document, Trim(records=2))
 
@@ -250,7 +238,7 @@ def test_a_count_equal_to_every_record_keeps_only_the_header() -> None:
 
 def test_an_age_trim_keeps_the_record_at_the_cutoff() -> None:
     """A row observed exactly at the cutoff is retained; older rows are not."""
-    document = _document(_records(3))
+    document = encode_document(_records(3))
     cutoff = NOW + dt.timedelta(minutes=1)
 
     facts, archived = _write(document, Trim(before=cutoff))
@@ -264,7 +252,7 @@ def test_an_age_trim_keeps_the_record_at_the_cutoff() -> None:
 
 def test_a_byte_trim_keeps_a_suffix_within_its_allowance() -> None:
     """The allowed size is the retained suffix, boundary included."""
-    document = _document(_records(3))
+    document = encode_document(_records(3))
     last_row_bytes = len(_row(document, 3))
 
     facts, archived = _write(
@@ -282,7 +270,7 @@ def test_a_byte_trim_keeps_a_suffix_within_its_allowance() -> None:
 
 def test_one_byte_below_the_row_size_drops_the_whole_suffix() -> None:
     """The boundary is inclusive: an allowance one byte short keeps nothing."""
-    document = _document(_records(2))
+    document = encode_document(_records(2))
     last_row_bytes = len(_row(document, 2))
 
     facts, archived = _write(
@@ -296,17 +284,19 @@ def test_one_byte_below_the_row_size_drops_the_whole_suffix() -> None:
 
 def test_an_unterminated_tail_is_not_written_into_the_archive() -> None:
     """A torn final fragment never becomes a record in a published archive."""
-    document = _document(_records(1)) + b'{"kind": "outc'
+    document = encode_document(_records(1)) + b'{"kind": "outc'
 
     facts, archived = _write(document, Trim())
 
-    assert archived == _document(_records(1)), "the archive holds only complete rows"
+    assert archived == encode_document(_records(1)), (
+        "the archive holds only complete rows"
+    )
     assert facts.had_torn_tail, "the source's tear is reported on the archive"
 
 
 def test_fact_matching_ignores_the_observation_span() -> None:
     """A rewrite that changes only dates still proves the same content."""
-    document = _document(_records(2))
+    document = encode_document(_records(2))
     facts = _scan(document)
     shifted = ArchiveFacts(
         salt_id=facts.salt_id,

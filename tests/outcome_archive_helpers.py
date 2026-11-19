@@ -8,18 +8,18 @@ states only the archive behaviour it observes.
 import datetime as dt
 import typing as typ
 
-from outcome_store_helpers import wait_for_results, wait_for_salt
+from outcome_store_helpers import segment_writer
 from outcome_test_helpers import attributed_record
+from segment_test_helpers import document
+from segment_test_helpers import store_layout as layout
 
-from buildlimits import outcome_record_encode
 from buildlimits.outcome_archive import RunOptions, RunReport, run_archive
-from buildlimits.outcome_record_format import DecodedStore, StoreHeader, StoreRecord
 from buildlimits.outcome_retention import RetentionPolicy
-from buildlimits.outcome_segments import SegmentLayout
-from buildlimits.outcome_store import StoreWriter
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
+
+    from buildlimits.outcome_record_format import DecodedStore, StoreRecord
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
@@ -30,7 +30,6 @@ __all__ = [
     "layout",
     "observed",
     "policy",
-    "ready_writer",
     "records",
     "run",
     "write",
@@ -62,24 +61,6 @@ def policy(
     )
 
 
-def ready_writer(path: Path, retention: RetentionPolicy) -> StoreWriter:
-    """Start a writer and wait until it accepts appends.
-
-    Returns
-    -------
-    StoreWriter
-        The initialized writer.
-    """
-    writer = StoreWriter(path, policy=retention, wall_clock=lambda: NOW)
-    try:
-        wait_for_salt(writer)
-        wait_for_results(writer, operation="load")
-    except BaseException:
-        writer.close(1.0)
-        raise
-    return writer
-
-
 def records(observed: dt.datetime, count: int) -> tuple[StoreRecord, ...]:
     """Build ``count`` records one minute apart from ``observed``.
 
@@ -98,23 +79,12 @@ def write(
     path: Path, rows: tuple[StoreRecord, ...], retention: RetentionPolicy
 ) -> None:
     """Append records and close the writer, draining every append."""
-    writer = ready_writer(path, retention)
+    writer = segment_writer(path, retention, NOW)
     try:
         for row in rows:
             writer.append(row)
     finally:
         writer.close(2.0)
-
-
-def layout(root: Path) -> SegmentLayout:
-    """Return the layout for a store below ``root``.
-
-    Returns
-    -------
-    SegmentLayout
-        The store's segment layout.
-    """
-    return SegmentLayout.beside(root / "cache-outcomes.jsonl")
 
 
 def run(
@@ -143,19 +113,6 @@ def archives(root: Path) -> list[Path]:
     """
     directory = layout(root).archive_dir
     return sorted(directory.glob("*.jsonl.xz")) if directory.exists() else []
-
-
-def document(rows: tuple[StoreRecord, ...], salt_id: str = "salt-1") -> bytes:
-    """Encode a header and records as one JSON Lines document.
-
-    Returns
-    -------
-    bytes
-        The complete document.
-    """
-    lines = [outcome_record_encode.encode_line(StoreHeader(salt_id, NOW))]
-    lines.extend(outcome_record_encode.encode_line(row) for row in rows)
-    return ("\n".join(lines) + "\n").encode()
 
 
 def observed(history: DecodedStore) -> tuple[dt.datetime, ...]:

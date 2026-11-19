@@ -13,20 +13,19 @@ import typing as typ
 from pathlib import Path
 from unittest import mock
 
-from outcome_store_helpers import wait_for_results, wait_for_salt
+from outcome_store_helpers import segment_writer, wait_for_results
 from outcome_test_helpers import attributed_record
+from segment_test_helpers import history_policy
 
 from buildlimits import outcome_record_encode, outcome_store_sealing
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_record_format import DecodedStore
-from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segment_state import read_sequence
 from buildlimits.outcome_segments import (
     SegmentLayout,
     sealed_meta_name,
     segment_name,
 )
-from buildlimits.outcome_store import StoreWriter
 from buildlimits.outcome_store_io import read_store
 from buildlimits.outcome_store_salt import file_salt
 
@@ -38,23 +37,6 @@ if typ.TYPE_CHECKING:
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
 
-def _policy(segment_bytes: int = 1) -> RetentionPolicy:
-    """Build an unlimited history policy that seals at ``segment_bytes``.
-
-    Returns
-    -------
-    RetentionPolicy
-        A policy with no age or byte eviction.
-    """
-    return RetentionPolicy(
-        max_age=dt.timedelta(days=30),
-        max_bytes=0,
-        max_records=None,
-        headroom_bytes=max(segment_bytes, 1) * 4,
-        segment_bytes=segment_bytes,
-    )
-
-
 def _record(minute: int) -> StoreRecord:
     """Build one attributed record observed ``minute`` minutes after the epoch.
 
@@ -64,24 +46,6 @@ def _record(minute: int) -> StoreRecord:
         The record.
     """
     return attributed_record(observed_at=NOW + dt.timedelta(minutes=minute))
-
-
-def _ready_writer(path: Path, policy: RetentionPolicy) -> StoreWriter:
-    """Start a writer and wait until it accepts appends.
-
-    Returns
-    -------
-    StoreWriter
-        The initialized writer.
-    """
-    writer = StoreWriter(path, policy=policy, wall_clock=lambda: NOW)
-    try:
-        wait_for_salt(writer)
-        wait_for_results(writer, operation="load")
-    except BaseException:
-        writer.close(1.0)
-        raise
-    return writer
 
 
 def _layout(store: Path) -> SegmentLayout:
@@ -137,7 +101,7 @@ def _active(store: Path) -> DecodedStore:
 def test_a_seal_publishes_a_source_and_its_metadata(tmp_path: Path) -> None:
     """The source keeps the rows and the sidecar describes them."""
     store = tmp_path / "cache-outcomes.jsonl"
-    writer = _ready_writer(store, _policy())
+    writer = segment_writer(store, history_policy(), NOW)
     try:
         writer.append(_record(0))
         writer.append(_record(1))
@@ -167,7 +131,7 @@ def test_a_seal_publishes_a_source_and_its_metadata(tmp_path: Path) -> None:
 def test_the_active_file_is_reset_to_its_header(tmp_path: Path) -> None:
     """Sealing moves every row out and leaves an appendable header behind."""
     store = tmp_path / "cache-outcomes.jsonl"
-    writer = _ready_writer(store, _policy())
+    writer = segment_writer(store, history_policy(), NOW)
     try:
         writer.append(_record(0))
         writer.append(_record(1))
@@ -183,7 +147,7 @@ def test_the_active_file_is_reset_to_its_header(tmp_path: Path) -> None:
 def test_the_writer_never_creates_an_archive(tmp_path: Path) -> None:
     """Compression is the archiver's job; the writer only seals plain rows."""
     store = tmp_path / "cache-outcomes.jsonl"
-    writer = _ready_writer(store, _policy())
+    writer = segment_writer(store, history_policy(), NOW)
     try:
         writer.append(_record(0))
         writer.append(_record(1))
@@ -197,7 +161,7 @@ def test_the_writer_never_creates_an_archive(tmp_path: Path) -> None:
 def test_an_empty_seal_claims_no_sequence(tmp_path: Path) -> None:
     """Rotating a header-only file must not create a permanent gap."""
     store = tmp_path / "cache-outcomes.jsonl"
-    writer = _ready_writer(store, _policy())
+    writer = segment_writer(store, history_policy(), NOW)
     try:
         writer.append(_record(0))
         wait_for_results(writer, operation="append", reason="none")
@@ -218,7 +182,7 @@ def test_the_counter_follows_the_highest_sealed_name(tmp_path: Path) -> None:
     (layout.sealed_dir / segment_name(5)).write_bytes(b"older source")
     layout.sequence_file.write_text("3\n", encoding="utf-8")
 
-    writer = _ready_writer(store, _policy())
+    writer = segment_writer(store, history_policy(), NOW)
     try:
         writer.append(_record(0))
         writer.append(_record(1))
@@ -237,7 +201,7 @@ def test_the_counter_follows_the_highest_sealed_name(tmp_path: Path) -> None:
 def test_a_fresh_store_keeps_its_first_row(tmp_path: Path) -> None:
     """Startup installs the header so the first append has a file to reach."""
     store = tmp_path / "cache-outcomes.jsonl"
-    writer = _ready_writer(store, _policy(segment_bytes=10**9))
+    writer = segment_writer(store, history_policy(segment_bytes=10**9), NOW)
     try:
         writer.append(_record(0))
         wait_for_results(writer, operation="append", reason="none")
@@ -252,7 +216,7 @@ def test_a_fresh_store_keeps_its_first_row(tmp_path: Path) -> None:
 def test_metadata_covers_every_row_sealed_together(tmp_path: Path) -> None:
     """A seal that closes two rows reports the whole span, not the last row."""
     store = tmp_path / "cache-outcomes.jsonl"
-    writer = _ready_writer(store, _policy(segment_bytes=10**9))
+    writer = segment_writer(store, history_policy(segment_bytes=10**9), NOW)
     try:
         writer.append(_record(0))
     finally:
@@ -260,9 +224,11 @@ def test_metadata_covers_every_row_sealed_together(tmp_path: Path) -> None:
     line_bytes = len(outcome_record_encode.encode_line(_record(0))) + 1
     # Two rows fit the watermark and the third crosses it, so the seal closes
     # exactly two rows and the metadata must describe the whole span.
-    policy = _policy(segment_bytes=store.stat().st_size + line_bytes + line_bytes // 2)
+    policy = history_policy(
+        segment_bytes=store.stat().st_size + line_bytes + line_bytes // 2
+    )
 
-    writer = _ready_writer(store, policy)
+    writer = segment_writer(store, policy, NOW)
     try:
         for minute in (1, 2):
             writer.append(_record(minute))
@@ -283,7 +249,7 @@ def test_metadata_covers_every_row_sealed_together(tmp_path: Path) -> None:
 def test_the_backlog_is_reported_at_eight_entries(tmp_path: Path) -> None:
     """Four sealed sources and their metadata are one eight-entry step."""
     store = tmp_path / "cache-outcomes.jsonl"
-    writer = _ready_writer(store, _policy())
+    writer = segment_writer(store, history_policy(), NOW)
     try:
         for minute in range(4):
             writer.append(_record(minute))
@@ -307,7 +273,7 @@ def test_a_failed_seal_is_reported(
 ) -> None:
     """A seal that cannot write state reports a retryable save failure."""
     store = tmp_path / "cache-outcomes.jsonl"
-    writer = _ready_writer(store, _policy())
+    writer = segment_writer(store, history_policy(), NOW)
     failure = OSError("no space for the sequence counter")
     try:
         with mock.patch.object(

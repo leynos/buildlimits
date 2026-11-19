@@ -1,12 +1,11 @@
 """Pure planning for one cache-outcome archive run.
 
-The planner reads an inventory that was scanned without reading segment
-content, so it never opens a file and never blocks the writer. It decides
-which sources to archive, which sidecars to rebuild, which orphans to
-quarantine, and which archives to trim or delete for the age and byte
-budgets. Retention evicts oldest closed history first, and every estimate is
-conservative: a planned trim is never assumed to free more bytes than its
-sidecar can prove.
+The planner reads an inventory scanned without reading segment content, so it
+never opens a file and never blocks the writer. It decides which sources to
+archive, which sidecars to rebuild, which orphans to quarantine, and which
+archives to trim or delete for the age and byte budgets. Retention evicts
+oldest closed history first, and every estimate is conservative: a planned
+trim never frees more bytes than its sidecar proves.
 """
 
 import dataclasses as dc
@@ -16,6 +15,7 @@ from buildlimits.outcome_archive_verify import Trim
 from buildlimits.utc_text import optional_utc_text
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     import datetime as dt
 
     from buildlimits.outcome_retention import RetentionPolicy
@@ -305,14 +305,12 @@ def _plan_byte_steps(
     excess = retained - budget.policy.max_bytes
     if excess <= 0:
         return
-    for entry in candidates:
+    for entry in _live(candidates, deletes):
         if excess <= 0:
             # A whole-archive deletion may have met the budget exactly. The
             # next archive then needs no rewrite, and trimming it to its own
             # size would churn the file without dropping a row.
             return
-        if entry.sequence in deletes:
-            continue
         size = _planned_size(entry, trims.get(entry.sequence))
         if size <= excess:
             deletes[entry.sequence] = entry
@@ -323,6 +321,22 @@ def _plan_byte_steps(
             existing, allowed_bytes=size - excess, source_bytes=size
         )
         return
+
+
+def _live(
+    candidates: tuple[SegmentEntry, ...], deletes: dict[int, SegmentEntry]
+) -> cabc.Iterator[SegmentEntry]:
+    """Yield the candidates no step has deleted yet.
+
+    The delete set is consulted as each entry is yielded, so a planner that
+    adds to it while walking still sees its own decisions.
+
+    Returns
+    -------
+    Iterator[SegmentEntry]
+        The candidates still planned to survive, in sequence order.
+    """
+    return (entry for entry in candidates if entry.sequence not in deletes)
 
 
 def _retained_from_candidates(
@@ -339,11 +353,10 @@ def _retained_from_candidates(
         Active bytes plus every candidate that is not deleted, with planned
         trims applied.
     """
-    retained = budget.active_bytes
-    for entry in candidates:
-        if entry.sequence not in deletes:
-            retained += _planned_size(entry, trims.get(entry.sequence))
-    return retained
+    return budget.active_bytes + sum(
+        _planned_size(entry, trims.get(entry.sequence))
+        for entry in _live(candidates, deletes)
+    )
 
 
 def _planned_size(entry: SegmentEntry, trim: Trim | None) -> int:

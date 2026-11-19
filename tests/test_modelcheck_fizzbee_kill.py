@@ -229,6 +229,7 @@ def test_an_interrupt_kills_the_group_before_it_propagates(
         *args: object,
         **kwargs: object,
     ) -> tuple[bytes, bytes]:
+        """Wait for the stub's child, then raise the interrupt."""
         del process, args, kwargs
         deadline = time.monotonic() + _EXIT_TIMEOUT_SECONDS
         while not pid_file.exists():

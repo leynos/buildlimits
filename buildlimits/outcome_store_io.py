@@ -108,12 +108,7 @@ def replace_store(
     if len(document) > outcome_records.MAX_COMPACT_BYTES:
         msg = "compacted document exceeds its byte bound"
         raise ValueError(msg)
-    temporary = path.with_name(f".{path.name}{_TEMP_SUFFIX}")
-    temporary.unlink(missing_ok=True)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(temporary, flags, _FILE_MODE)
-    write_private_temp(temporary, descriptor, document)
-    replace_temp(temporary, path)
+    replace_temp(write_private_temporary(path, document), path)
 
 
 def open_private_regular(
@@ -205,12 +200,7 @@ def prepare_store(path: Path, header: outcome_records.StoreHeader) -> Path:
         The synced temporary file the caller may rename into place.
     """
     document = (outcome_records.encode_line(header) + "\n").encode("utf-8")
-    temporary = path.with_name(f".{path.name}.new{_TEMP_SUFFIX}")
-    temporary.unlink(missing_ok=True)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(temporary, flags, _FILE_MODE)
-    write_private_temp(temporary, descriptor, document)
-    return temporary
+    return write_private_temporary(path, document, suffix=".new")
 
 
 def seal_active(active: Path, destination: Path) -> None:
@@ -267,14 +257,35 @@ def write_metadata(path: Path, document: cabc.Mapping[str, object]) -> None:
     _replace_document(path, encoded + b"\n")
 
 
-def _replace_document(path: Path, data: bytes) -> None:
-    """Write bytes through one private temporary file and replace ``path``."""
-    temporary = path.with_name(f".{path.name}{_TEMP_SUFFIX}")
+def write_private_temporary(path: Path, data: bytes, *, suffix: str = "") -> Path:
+    """Write ``data`` into a new private temporary beside ``path``.
+
+    Parameters
+    ----------
+    path : Path
+        The destination the temporary will later replace.
+    data : bytes
+        The complete contents to write.
+    suffix : str
+        An extra infix before the temporary suffix, used when a caller needs a
+        name distinct from the one a replacement uses.
+
+    Returns
+    -------
+    Path
+        The synced temporary file; the caller installs or removes it.
+    """
+    temporary = path.with_name(f".{path.name}{suffix}{_TEMP_SUFFIX}")
     temporary.unlink(missing_ok=True)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     descriptor = os.open(temporary, flags, _FILE_MODE)
     write_private_temp(temporary, descriptor, data)
-    replace_temp(temporary, path)
+    return temporary
+
+
+def _replace_document(path: Path, data: bytes) -> None:
+    """Write bytes through one private temporary file and replace ``path``."""
+    replace_temp(write_private_temporary(path, data), path)
     fsync_directory(path.parent)
 
 

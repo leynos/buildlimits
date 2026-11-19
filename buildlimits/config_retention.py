@@ -31,13 +31,32 @@ RETENTION_KEYS = frozenset({
 
 
 class RetentionSettings(typ.Protocol):
-    """The configuration fields the retention rules read."""
+    """The configuration fields the retention rules read.
 
-    cache_outcomes_max_age_days: int
-    cache_outcomes_max_bytes: int
-    cache_outcomes_max_records: int
-    cache_outcomes_archive_headroom_bytes: int
-    cache_outcomes_archive_preset: int
+    The fields are read-only here because ``SupervisorConfig`` is a frozen
+    dataclass: a protocol that required writable fields would not accept it,
+    and these rules only ever read the settings they are given.
+    """
+
+    @property
+    def cache_outcomes_max_age_days(self) -> int:
+        """Maximum retained age in days."""
+
+    @property
+    def cache_outcomes_max_bytes(self) -> int:
+        """Maximum retained logical bytes."""
+
+    @property
+    def cache_outcomes_max_records(self) -> int:
+        """Explicit record cap, or zero when none was configured."""
+
+    @property
+    def cache_outcomes_archive_headroom_bytes(self) -> int:
+        """Temporary disk headroom reserved for archive work."""
+
+    @property
+    def cache_outcomes_archive_preset(self) -> int:
+        """The XZ preset used when writing an archive."""
 
 
 def reject_written_keys(values: cabc.Mapping[str, object]) -> str | None:

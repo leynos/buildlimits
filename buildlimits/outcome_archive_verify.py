@@ -195,8 +195,10 @@ def write_archive(
     Examples
     --------
     >>> import datetime as dt, io
+    >>> from buildlimits.outcome_record_encode import encode_line
+    >>> from buildlimits.outcome_record_format import StoreHeader
     >>> header = StoreHeader("s", dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
-    >>> text = outcome_record_encode.encode_line(header) + chr(10)
+    >>> text = encode_line(header) + chr(10)
     >>> source = LineStream(io.BytesIO(text.encode()))
     >>> facts = write_archive(source, io.BytesIO(), preset=0, trim=Trim())
     >>> facts.record_count, facts.salt_id

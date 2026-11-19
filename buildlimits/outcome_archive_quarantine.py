@@ -11,7 +11,7 @@ import typing as typ
 
 from buildlimits import outcome_segments
 from buildlimits.outcome_archive_context import ActionResult
-from buildlimits.outcome_archive_fs import fsync_directory
+from buildlimits.outcome_store_io import fsync_directory
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -33,10 +33,13 @@ __all__ = [
 def quarantine_file(
     context: ArchiveContext,
     path: Path,
-    sequence: int,
     reason: str,
 ) -> str:
     """Move one unusable file into the quarantine directory without clobbering.
+
+    The destination is named from the file's own name, the fault reason and a
+    random token, so the sequence is not part of it; a sidecar's sequence is
+    handled by the caller that knows one exists.
 
     Parameters
     ----------
@@ -44,8 +47,6 @@ def quarantine_file(
         The run's layout, policy and moment.
     path : Path
         The file to move.
-    sequence : int
-        The sequence the file belongs to.
     reason : str
         The closed fault reason recorded in the name.
 
@@ -111,7 +112,7 @@ def quarantine_source(
     ActionResult
         The quarantine result, carrying the fault reason.
     """
-    quarantine_file(context, entry.path, entry.sequence, reason)
+    quarantine_file(context, entry.path, reason)
     return ActionResult("quarantined", entry.sequence, reason=reason)
 
 
@@ -131,7 +132,7 @@ def remove_orphan_sidecar(context: ArchiveContext, sequence: int) -> ActionResul
         The quarantine result.
     """
     path = context.layout.archive_dir / outcome_segments.sidecar_name(sequence)
-    quarantine_file(context, path, sequence, "orphan_sidecar")
+    quarantine_file(context, path, "orphan_sidecar")
     return ActionResult("quarantined", sequence, reason="orphan_sidecar")
 
 
@@ -159,7 +160,7 @@ def quarantine_and_remove_sidecar(
     str
         The quarantine file's name.
     """
-    name = quarantine_file(context, path, sequence, reason)
+    name = quarantine_file(context, path, reason)
     quarantine_sidecar(context, sequence)
     return name
 
