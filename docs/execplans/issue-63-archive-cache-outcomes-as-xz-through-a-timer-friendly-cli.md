@@ -141,6 +141,11 @@ verified archive is published, and leaves compile admission untouched.
   reports 4358 passed, 85 skipped and one failure. The failure is
   `tests/test_harness_ownership.py` on the free-threaded Python 3.15
   interpreter, which this branch does not touch (see the decision log).
+- [x] Publication (2026-11-19): the branch is pushed over SSH and tracked, and
+  draft pull request <https://github.com/leynos/buildlimits/pull/65> targets
+  `main`. GitHub reports no checks configured for the branch, so the local
+  gates above are the acceptance evidence. The first CodeRabbit pass returned
+  its review rate-limit response; retries continue under `scrutineer`.
 
 ## Surprises & discoveries
 
