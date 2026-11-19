@@ -105,6 +105,8 @@ STORE_REASONS = frozenset({
     "expired",
     "salt_changed",
     "clock_skew",
+    "seal_failed",
+    "archive_backlog",
 })
 EVALUATION_REASONS = frozenset({
     "none",
@@ -112,7 +114,7 @@ EVALUATION_REASONS = frozenset({
     "store_unavailable",
     "ineligible",
 })
-STORE_OPERATIONS = frozenset({"load", "append", "compact", "salt"})
+STORE_OPERATIONS = frozenset({"load", "append", "compact", "seal", "salt"})
 GATE_REASONS = frozenset({
     "queued",
     "cached_moving",

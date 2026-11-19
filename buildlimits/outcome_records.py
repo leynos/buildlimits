@@ -40,6 +40,7 @@ from buildlimits.outcome_record_format import (
 from buildlimits.outcome_record_format import (
     WindowSummary as WindowSummary,
 )
+from buildlimits.outcome_retention import RetentionPolicy
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_vocabulary import StoreReason
@@ -80,7 +81,11 @@ class Compacted:
 
 
 def compact(
-    decoded: DecodedStore, *, now: dt.datetime, clock_skew: bool = False
+    decoded: DecodedStore,
+    *,
+    now: dt.datetime,
+    clock_skew: bool = False,
+    policy: RetentionPolicy | None = None,
 ) -> Compacted:
     """Apply retention and size limits using the caller's explicit time.
 
@@ -92,6 +97,8 @@ def compact(
         Caller-supplied UTC wall time; this function reads no clock.
     clock_skew : bool, default=False
         Whether the caller detected a wall-clock jump exceeding one day.
+    policy : RetentionPolicy | None, default=None
+        The effective policy; the legacy defaults apply when omitted.
 
     Returns
     -------
@@ -105,20 +112,22 @@ def compact(
     0
     """
     _require_utc(now)
+    active = _legacy_policy() if policy is None else policy
     header = dc.replace(decoded.header, written_at=now)
     records = list(decoded.records)
     if clock_skew:
         reason: StoreReason = "clock_skew"
     else:
-        cutoff = now - dt.timedelta(days=RETENTION_DAYS)
-        records = [record for record in records if record.observed_at >= cutoff]
+        cutoff = active.cutoff(now)
+        if cutoff is not None:
+            records = [record for record in records if record.observed_at >= cutoff]
         reason = "expired" if len(records) < len(decoded.records) else "none"
     discarded = len(decoded.records) - len(records)
     record_sizes = [len(encode_line(record).encode("utf-8")) + 1 for record in records]
     total_size = len(encode_line(header).encode("utf-8")) + 1 + sum(record_sizes)
     first_retained = 0
     while first_retained < len(records) and _exceeds_compaction_limits(
-        first_retained, len(records), total_size
+        first_retained, len(records), total_size, active
     ):
         total_size -= record_sizes[first_retained]
         first_retained += 1
@@ -126,10 +135,48 @@ def compact(
     return Compacted(header, tuple(records[first_retained:]), discarded, reason)
 
 
+def _legacy_policy() -> RetentionPolicy:
+    """Build the pre-segmentation policy from this module's public bounds.
+
+    The module constants remain the documented legacy limits, so a caller
+    that adjusts them still sees the adjustment take effect.
+
+    Returns
+    -------
+    RetentionPolicy
+        The age, byte and record bounds used when no policy is supplied.
+
+    Examples
+    --------
+    >>> policy = _legacy_policy()
+    >>> policy.max_bytes == MAX_COMPACT_BYTES
+    True
+    """
+    return RetentionPolicy(
+        max_age=dt.timedelta(days=RETENTION_DAYS),
+        max_bytes=MAX_COMPACT_BYTES,
+        max_records=MAX_COMPACT_RECORDS,
+    )
+
+
 def _exceeds_compaction_limits(
-    first_retained: int, record_count: int, total_size: int
+    first_retained: int,
+    record_count: int,
+    total_size: int,
+    policy: RetentionPolicy,
 ) -> bool:
     """Check whether a store still exceeds its count or byte budget.
+
+    Parameters
+    ----------
+    first_retained : int
+        Leading records already discarded.
+    record_count : int
+        Records before this compaction pass.
+    total_size : int
+        Encoded bytes of the header and remaining records.
+    policy : RetentionPolicy
+        The bounds to test.
 
     Returns
     -------
@@ -138,11 +185,12 @@ def _exceeds_compaction_limits(
 
     Examples
     --------
-    >>> _exceeds_compaction_limits(0, MAX_COMPACT_RECORDS + 1, 0)
+    >>> _exceeds_compaction_limits(0, MAX_COMPACT_RECORDS + 1, 0, RetentionPolicy())
     True
     """
-    too_many = record_count - first_retained > MAX_COMPACT_RECORDS
-    return too_many or total_size > MAX_COMPACT_BYTES
+    return policy.exceeds(
+        logical_bytes=total_size, records=record_count - first_retained
+    )
 
 
 def _require_utc(value: dt.datetime) -> None:

@@ -42,9 +42,10 @@ verified archive is published, and leaves compile admission untouched.
   boundary). A new ADR, 0010, records the segment, archive and retention
   decisions; ADR 008 is already used by the model-check tooling.
 - Upstream requirement: <https://github.com/leynos/buildlimits/issues/63>.
-  The retention-policy contract is <https://github.com/leynos/buildlimits/issues/64>;
-  this change implements the same policy so configuration can ship with or
-  without compression. Permanent host provisioning belongs to
+  The retention-policy contract is
+  <https://github.com/leynos/buildlimits/issues/64>; this change implements the
+  same policy so configuration can ship with or without compression. Permanent
+  host provisioning belongs to
   <https://github.com/leynos/dev-env-rocky/issues/424>.
 - Downstream consumer: the longitudinal predictor and ensemble benchmark in
   issue #60 (`buildlimits/predict/`).
@@ -90,7 +91,7 @@ verified archive is published, and leaves compile admission untouched.
   archive against the source, then removing the source.
 - A crash after the sequence counter advances but before the active rename
   leaves a sequence gap. Mitigation: inventory reports gaps and the writer
-  initialises the next sequence from the maximum of the counter and every
+  initializes the next sequence from the maximum of the counter and every
   listed sequence.
 - Retention trimming an archived segment requires recompression. Mitigation:
   stream, verify, publish through a private temporary file, and keep the old
@@ -101,9 +102,12 @@ verified archive is published, and leaves compile admission untouched.
 ## Progress
 
 - [x] Orientation: read the store, codec, config, replay and predictor code.
-- [ ] Retention policy and configuration contract.
-- [ ] Streaming codecs, segment layout and inventory.
-- [ ] Writer-owned sealing.
+- [x] Retention policy and configuration contract.
+- [x] Streaming codecs, segment layout and inventory.
+- [x] Writer-owned sealing: `StoreWriter` seals at the segment high-water mark,
+  publishes the sequence counter and sidecar metadata before the rename, emits
+  `seal`/`seal_failed`/`archive_backlog`, and keeps the legacy module bounds
+  live when no policy is configured. Focused store tests pass.
 - [ ] Archiver, verification, publication and retention execution.
 - [ ] Timer-friendly CLI and systemd examples.
 - [ ] Archive-aware history, replay and dataset integration.
@@ -118,6 +122,9 @@ verified archive is published, and leaves compile admission untouched.
   becomes ADR 0010.
 - The users' guide and migration guide still say six console scripts while the
   package already installs nine; with this change the count is ten.
+- The writer's default policy is built on each access from the documented
+  `outcome_records` bounds. Snapshotting it at construction froze the limits
+  and made the existing high-water-mark test unable to shrink the bound.
 
 ## Decision log
 
@@ -128,8 +135,8 @@ verified archive is published, and leaves compile admission untouched.
   temporary headroom are reported separately so the requested 15 GB history
   does not become a 15 GB per-file allowance.
 - A record cap is disabled by default in segmented mode and remains 10,000 in
-  legacy mode, preserving deployed behaviour while removing the silent cap
-  from large policies.
+  legacy mode, preserving deployed behaviour while removing the silent cap from
+  large policies.
 - XZ uses Python's standard-library `lzma` with an explicit preset, CRC64
   integrity check and streamed chunks; no new runtime dependency is added.
 - Segments are verified by decompressing the published temporary archive to

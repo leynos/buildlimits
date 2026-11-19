@@ -5,6 +5,7 @@ store writer and salt adapter, not a standalone public API.
 """
 
 import contextlib
+import json
 import os
 import stat
 import typing as typ
@@ -12,11 +13,13 @@ import typing as typ
 from buildlimits import outcome_records
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
     from buildlimits.outcome_record_format import StoreRecord
 
 _FILE_MODE = 0o600
+_DIRECTORY_MODE = 0o700
 _TEMP_SUFFIX = ".tmp"
 
 
@@ -191,6 +194,88 @@ def replace_temp(temporary: Path, destination: Path) -> None:
     except OSError:
         temporary.unlink(missing_ok=True)
         raise
+
+
+def prepare_store(path: Path, header: outcome_records.StoreHeader) -> Path:
+    """Write a header-only store beside ``path`` without installing it.
+
+    Returns
+    -------
+    Path
+        The synced temporary file the caller may rename into place.
+    """
+    document = (outcome_records.encode_line(header) + "\n").encode("utf-8")
+    temporary = path.with_name(f".{path.name}.new{_TEMP_SUFFIX}")
+    temporary.unlink(missing_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(temporary, flags, _FILE_MODE)
+    write_private_temp(temporary, descriptor, document)
+    return temporary
+
+
+def seal_active(active: Path, destination: Path) -> None:
+    """Rename the active store into the sealed directory and sync both.
+
+    Filesystem failures propagate as ``OSError``; the caller reports them as a
+    failed seal and retries after the next append.
+    """
+    active.replace(destination)
+    fsync_directory(destination.parent)
+    fsync_directory(active.parent)
+
+
+def ensure_directory(path: Path) -> None:
+    """Create a private directory if it does not exist.
+
+    Filesystem failures propagate as ``OSError``.
+    """
+    path.mkdir(mode=_DIRECTORY_MODE, parents=True, exist_ok=True)
+    path.chmod(_DIRECTORY_MODE)
+
+
+def fsync_directory(path: Path) -> None:
+    """Make a directory's entries durable.
+
+    Filesystem failures propagate as ``OSError``.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def write_sequence(path: Path, value: int) -> None:
+    """Atomically store the next sealed sequence number.
+
+    The counter is written before a segment is moved, so a crash leaves a gap
+    the inventory reports rather than a sequence two segments can share.
+    Filesystem failures propagate as ``OSError``.
+    """
+    _replace_document(path, f"{value}\n".encode("ascii"))
+
+
+def write_metadata(path: Path, document: cabc.Mapping[str, object]) -> None:
+    """Atomically store one JSON metadata document beside a sealed source.
+
+    Filesystem failures propagate as ``OSError``.
+    """
+    encoded = json.dumps(
+        document, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    _replace_document(path, encoded + b"\n")
+
+
+def _replace_document(path: Path, data: bytes) -> None:
+    """Write bytes through one private temporary file and replace ``path``."""
+    temporary = path.with_name(f".{path.name}{_TEMP_SUFFIX}")
+    temporary.unlink(missing_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(temporary, flags, _FILE_MODE)
+    write_private_temp(temporary, descriptor, data)
+    replace_temp(temporary, path)
+    fsync_directory(path.parent)
 
 
 def write_all(descriptor: int, data: bytes) -> None:
