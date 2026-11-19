@@ -235,6 +235,60 @@ evidence; treat what it observes as unconfirmed.
 applies only if a trailing counter is demonstrated, and this release does not
 demonstrate one.
 
+### Compare offline hit predictors
+
+Two targets compare candidate hit predictors against the outcomes this host has
+already recorded. They are offline: neither changes admission, cache
+composition nor compiler execution.
+
+| Target                   | Writes                                             |
+| ------------------------ | -------------------------------------------------- |
+| `make predict-dataset`   | `build/predict/history.jsonl`: a redacted snapshot |
+| `make predict-benchmark` | `results.json`, `results.md` and `timings.json`    |
+
+`make predict-benchmark` creates the snapshot when it is missing, but only
+refreshes an existing one through `make predict-dataset`. The snapshot holds
+hashed compile identities and the observed result of each request; it never
+holds crate names, arguments or paths. The benchmark replays the snapshot at
+each event's admission time, so a predictor is scored only for events whose
+admission time was recorded no later than their own outcome; a prediction never
+reads a label observed after the moment it was made. Its tables are written to
+`build/predict`.
+
+The commands behind those targets take explicit paths:
+
+<!-- tested-example: buildlimits-predict-commands -->
+```bash
+build-limits-predict-dataset --output build/predict/history.jsonl
+build-limits-predict-benchmark --snapshot build/predict/history.jsonl \
+  --output build/predict
+```
+
+`build-limits-predict-dataset` reads this host's store unless `--store` names
+another one, and `--journal-span` or `--skip-journal` control the journal note
+recorded with the snapshot. `build-limits-predict-benchmark` accepts
+`--snapshot`, `--output` and `--config`; without `--config` it uses the pinned
+parameters in `buildlimits/predict/config.json`. No file the benchmark writes
+may name the snapshot, so a destination that reaches it under another spelling
+— a relative path, a symbolic link or a hard link — is refused before the run
+starts: writing over the history it was read from would make the run impossible
+to repeat. The report directory may otherwise hold the snapshot, as the example
+above does.
+
+A snapshot with fewer than 2,000 labelled events produces the status
+`insufficient data`, with the counts that were seen. A snapshot that holds no
+usable admission time produces `insufficient admission times` instead: its
+records cannot show what was knowable before each decision, so no prediction is
+reported. A snapshot that carries admission times is also refused when its
+recorded observation times run backwards, because the store stamps each record
+when it appends it: a later position with an earlier stamp means the clock
+stepped back, and the recorded times can no longer order real moments. The
+history is then reported as unreadable rather than scored. The report never
+pads the history with synthetic rows to reach a threshold, and a negative
+comparison is printed as found rather than explained away. Both commands exit
+with status 0 on success, 1 when the snapshot or store cannot be read or the
+output cannot be written, and 2 on invalid usage or an unreadable configuration.
+
 ### Adapter environment
 
 The adapters read only their environment, so the same settings work for Cargo,

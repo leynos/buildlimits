@@ -1,11 +1,13 @@
 """The covered span and sample limits that every replay verdict states."""
 
 import dataclasses as dc
-import datetime as dt
 import typing as typ
+
+from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
 QUIET_WINDOW_CAVEAT = (
     "labels come from solo and unanimous windows, so this sample may not "
@@ -68,8 +70,8 @@ class Coverage:
             The ``from`` and ``until`` bounds, or None when nothing was read.
         """
         return {
-            "from": None if self.first is None else _stamp(self.first),
-            "until": None if self.last is None else _stamp(self.last),
+            "from": None if self.first is None else utc_text(self.first),
+            "until": None if self.last is None else utc_text(self.last),
         }
 
 
@@ -87,20 +89,6 @@ def coverage_of(records: cabc.Iterable[ObservedRecord]) -> Coverage:
         The earliest and latest observation times.
     """
     return Coverage.over(record.observed_at for record in records)
-
-
-def _stamp(value: dt.datetime) -> str:
-    """Serialize one observation time the way the store records it.
-
-    A store value reaches a report only after the reader accepted its UTC
-    offset, so a bare local time cannot arrive here.
-
-    Returns
-    -------
-    str
-        Canonical ISO text with a trailing ``Z`` offset.
-    """
-    return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")
 
 
 __all__ = [

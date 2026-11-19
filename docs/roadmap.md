@@ -330,6 +330,7 @@ outcome informs the separate RFC 0002 G2 decision.
     stability and each verdict against ADR 005's fixed minimums and
     thresholds; evidence and limitations are recorded for G2. The port proposal
     does not waive G1 or change EP-M9's scope.
+- [x] 3.2.2. Provide the offline benchmark as an ungated coding exercise.
 
 ### 3.3. Extract the shared observation boundary for sccache
 

@@ -1,17 +1,42 @@
-"""Private store fixtures shared by cache-outcome reader tests."""
+"""Private store fixtures shared by the cache-outcome tests."""
 
+import datetime as dt
 import typing as typ
 
 import pytest
 from outcome_store_helpers import salt_path, seed_store, window_summary
+from outcome_test_helpers import OBSERVED_AT, attributed_record
 
-from buildlimits import outcome_records, outcome_store
+from buildlimits import outcome_records, outcome_store, outcome_store_io
 from buildlimits.outcome_key import Salt
+from buildlimits.outcome_record_format import StoreHeader
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.outcome_record_format import WindowSummary
+
+
+def seed_replay_store(path: Path) -> None:
+    """Write one private store holding an attributed row and a summary.
+
+    The replay verdicts need both kinds of row: the attributed compilation is
+    one judgeable sample, and the summary is one independently evaluated group.
+
+    Parameters
+    ----------
+    path : Path
+        The store file to create or replace.
+    """
+    records = (
+        attributed_record(observed_at=OBSERVED_AT),
+        window_summary(observed_at=OBSERVED_AT),
+    )
+    outcome_store_io.replace_store(
+        path,
+        StoreHeader("fixed-salt", dt.datetime(2026, 10, 24, tzinfo=dt.UTC)),
+        records,
+    )
 
 
 def append_torn_utf8_tail(path: Path, record: WindowSummary) -> None:

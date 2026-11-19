@@ -2,7 +2,7 @@
 
 import dataclasses as dc
 
-from outcome_test_helpers import OBSERVED_AT, cache_key
+from outcome_test_helpers import OBSERVED_AT, attributed_record
 
 from buildlimits.outcome_record_format import OutcomeRecord, WindowSummary
 from buildlimits.outcome_replay import evaluate_h3
@@ -10,17 +10,7 @@ from buildlimits.outcome_replay import evaluate_h3
 
 def _outcomes(count: int) -> tuple[OutcomeRecord, ...]:
     """Build a fixed attributed sample of cacheable launches."""
-    record = OutcomeRecord(
-        key=cache_key(),
-        outcome="hit",
-        origin="registry",
-        runtime_seconds=0.25,
-        observed_at=OBSERVED_AT,
-        parser_class="cacheable",
-        child_sighting="unavailable",
-        child_samples=0,
-    )
-    return (record,) * count
+    return (attributed_record(observed_at=OBSERVED_AT),) * count
 
 
 def _summary(**changes: int) -> WindowSummary:

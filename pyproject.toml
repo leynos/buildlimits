@@ -18,6 +18,8 @@ build-limits-status = "buildlimits.status_cli:main"
 build-limits-recover = "buildlimits.recover_cli:main"
 build-limits-metrics = "buildlimits.metrics_cli:main"
 build-limits-cache-replay = "buildlimits.outcome_replay_cli:main"
+build-limits-predict-dataset = "buildlimits.predict.dataset_cli:main"
+build-limits-predict-benchmark = "buildlimits.predict.benchmark_cli:main"
 
 [dependency-groups]
 dev = [
@@ -537,6 +539,39 @@ full_name = ["buildlimits.metrics.NullSink.emit"]
 path = ["buildlimits/metrics.py"]
 reason = "Metrics.__init__ defaults its transport to NullSink when no sink is configured, and Metrics.emit calls self.sink.emit through the MetricsSink protocol, which Skylos does not resolve to the concrete default. test_metrics.py asserts that the default transport reports a record as handled without counting a drop."
 
+# The prediction benchmark calls every predictor through the Predictor
+# protocol, which a static call graph does not resolve to concrete classes.
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = [
+    "buildlimits.predict.predictors.LastOutcome.predict",
+    "buildlimits.predict.predictors.LastOutcome.update",
+    "buildlimits.predict.predictors.RollingRate.predict",
+    "buildlimits.predict.predictors.RollingRate.update",
+    "buildlimits.predict.predictors.ExponentialRate.predict",
+    "buildlimits.predict.predictors.ExponentialRate.update",
+]
+path = ["buildlimits/predict/predictors.py"]
+reason = "single_predictors returns the singles as Predictor tuples, and harness.walk_forward calls predict and update only through that protocol; ensemble_runs repeats the same dispatch through the component matrix. No static edge reaches the concrete classes. test_predict_predictors.py exercises each predictor directly, and the stationary, persistent and drift streams exercise them through the walk."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "method"
+full_name = [
+    "buildlimits.predict.probability.LogisticModel.predict",
+    "buildlimits.predict.probability.LogisticModel.update",
+]
+path = ["buildlimits/predict/probability.py"]
+reason = "single_predictors places the learner in the Predictor tuple, and harness.walk_forward calls predict and update only through that protocol, so no static edge reaches the concrete class. test_predict_probability.py exercises both methods directly, and the walk exercises them on every stream."
+
+[[tool.skylos.dead_code.entrypoints]]
+type = "function"
+full_name = [
+    "buildlimits.predict.probability._sigmoid",
+    "buildlimits.predict.probability.outcome_value",
+]
+path = ["buildlimits/predict/probability.py"]
+reason = "_sigmoid is reached only from the protocol-dispatched predict above, and the online learners reach outcome_value only from their protocol-dispatched update methods, so neither caller is resolved. The sigmoid's doctest and test_predict_probability.py exercise the values either side of zero, and test_predict_predictors.py exercises the outcomes outcome_value maps to 1.0 and 0.0."
+
 [[tool.skylos.dead_code.entrypoints]]
 type = "method"
 full_name = [
@@ -674,6 +709,27 @@ packages = ["buildlimits"]
 
 # Reasoned exceptions to the shared duplication gate. Each entry names every
 # location of one family, so a further copy still blocks.
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/snapshot_codec.py",
+    "buildlimits/predict/snapshot_store.py",
+]
+reason = "Matching type-checking preludes: both readers annotate optional timestamps, so each names collections.abc and datetime for the checker only, and sharing the prelude through a re-export module would hide that dependency."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/ensembles.py",
+    "buildlimits/predict/fitting.py",
+]
+reason = "Matching import lists: both average weighted component answers, so each names the probability clip and the config that supplies its rate or weights; sharing the prelude through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/provenance.py::_environment",
+    "tests/modelcheck_e2e_cases.py::ambient",
+]
+reason = "One prefix filter written twice for unrelated settings: the adapter drops Git's repository-selection variables before a fixed git invocation, and the model-check harness drops `MODELCHECK_*` before a stubbed run. Sharing the filter would couple production code to test support for one comprehension, and a generic prefix helper would name neither owner."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -1225,6 +1281,7 @@ reason = "Single-purpose test doubles: each closure raises, records or answers t
 members = [
     "tests/test_pressure_metrics.py::emit",
     "tests/test_metrics.py::emit",
+    "tests/test_predict_dataset_cli.py::__call__",
 ]
 reason = "Single-purpose test doubles: each closure raises, records or answers the one fault or reply its own test injects, so sharing them would couple unrelated scenarios and hide what each test scripts."
 
@@ -1445,11 +1502,11 @@ reason = "Separate pytest-bdd steps assert different result dimensions for diffe
 
 [[tool.duplication_gate.allow]]
 members = [
-    "buildlimits/admission_readiness.py::ReadinessFacts",
+    "buildlimits/predict/bootstrap.py::Interval",
     "buildlimits/outcome_stats.py::StatsReading",
     "buildlimits/recovery_starvation.py::StarvationReading",
 ]
-reason = "These frozen records carry facts and counters from separate domains and lifecycle boundaries: admission readiness, one sccache statistics reading, and one starvation observation. Their similar field documentation does not imply a shared value type or reusable parser."
+reason = "These frozen records carry measurements from separate domains and lifecycle boundaries: a bootstrap interval, one sccache statistics reading, and one starvation observation. Their similar field lists do not imply a shared value type or reusable parser, and each names the fields its own consumers read."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -1801,6 +1858,142 @@ members = [
     "tests/test_modelcheck_service_run_sets_properties.py",
 ]
 reason = "Matching import lists: the pair properties and the variable-set property name the same Hypothesis and case-helper symbols, and the module split exists to keep each file under the module length limit. Sharing them through a re-export module would add one more test support module without hiding a real dependency."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/predict/formatting.py::as_score", "buildlimits/predict/formatting.py::as_count"]
+reason = "Table-cell formatters share only the dash they print for an absent value; each is the one place a distinct format specification lives (four decimals for scores, thousands separators for counts, a percentage for rates), so a shared formatter would push a format argument into every cell."
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/modelcheck_cases.py",
+    "tests/modelcheck_service_cases.py",
+    "buildlimits/predict/ensemble_runs.py",
+    "buildlimits/predict/harness.py",
+    "buildlimits/predict/report.py",
+    "buildlimits/supervisor_wiring.py",
+    "tests/outcome_store_helpers.py",
+    "tests/test_group_drain_metrics.py",
+    "buildlimits/predict/evaluation.py",
+    "buildlimits/predict/scoring.py",
+    "modelcheck/cli_outputs.py",
+    "modelcheck/expectations.py",
+    "modelcheck/records.py",
+    "modelcheck/report.py",
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "buildlimits/predict/snapshot_codec.py",
+    "tests/differential_trace_test_helpers.py",
+    "modelcheck/cli.py",
+]
+reason = "Matching import lists: each module names the ports, records and helpers it uses, and sharing them through a re-export module would hide each module's real dependencies."
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_recorder_types.py",
+    "buildlimits/outcome_recorder_outputs.py",
+    "tests/outcome_shell_test_support.py",
+    "buildlimits/server_watch.py",
+    "buildlimits/cache_recovery.py",
+    "tests/predict_test_helpers.py",
+    "buildlimits/outcome_store.py",
+]
+reason = "Matching import lists: each module names the store records, ports and helpers it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/metrics_pressure_report.py", "buildlimits/predict/bootstrap.py", "buildlimits/predict/metrics.py"]
+reason = "The shared fragment is the two-line guard that answers an empty sequence with None. Each function then computes its own measurement (latest record, bootstrap interval, mean Brier, mean log loss, accuracy), so the guard is the whole of the overlap."
+
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/predict/benchmark_cli.py", "buildlimits/predict/dataset_cli.py", "buildlimits/outcome_replay_cli.py"]
+reason = "Each command builds its own argument parser and translates argparse's SystemExit into its own exit code. The shared lines are argparse boilerplate, and a helper would have to return the parser's exit code beside the namespace."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_predict_harness.py"
+reason = "The two ordering scenarios construct their own slow, middle and quick events. The shared shape is a keyword constructor call whose differing times and labels are the whole point of each scenario."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_predict_predictors.py"
+reason = "The causal-sequence tests assert successive predictions in one idiom. The probability at each step and the claim it supports are the content of each test, not shared logic."
+
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/predict/snapshot_store.py", "tests/rustc_query_support.py"]
+reason = "A single standard mkdir(parents=True, exist_ok=True) before writing a file. The line is the Python idiom for creating a parent directory, not shared project logic."
+
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/predict/report_writer.py", "tests/cache_recovery_helpers.py"]
+reason = "A single standard mkdir(parents=True, exist_ok=True) before writing files. The line is the Python idiom for creating a parent directory, not shared project logic."
+[[tool.duplication_gate.allow]]
+members = ["tests/outcome_test_helpers.py::attributed_record", "tests/outcome_test_helpers.py::cache_key"]
+reason = "Two independent fixture builders: cache_key constructs the fixed CacheKey, and attributed_record wraps one in an OutcomeRecord. Their overlap is the docstring shape and one constructor call, not logic, and a shared builder would have to take the object being built as a parameter."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_predict_render.py"
+reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_predict_config.py::test_a_value_of_the_wrong_type_is_a_type_error",
+    "tests/test_predict_config.py::test_a_value_outside_its_range_is_rejected",
+]
+reason = "Recurring short test steps: the two parameter tables differ only in the exception each names, and the value under test is the whole of each case; a shared body would have to take the expected error as an argument and hide which contract each row proves."
+
+[[tool.duplication_gate.allow]]
+members = ["modelcheck/fixpoint_bounds.py::_is_int", "buildlimits/predict/config_loader.py::_is_int"]
+reason = "Two private one-line predicates answering the same Python fact (a bool is an int) for unrelated decoders: one guards a TOML bound before doubling it, the other a JSON parameter before use. Sharing one would couple the model checker to the prediction package for a single isinstance test, and each carries the docstring its own reader needs."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_predict_ensembles.py",
+    "tests/test_predict_harness.py",
+    "tests/test_predict_metrics.py",
+    "tests/test_predict_probability.py",
+]
+reason = "Matching import lists: the four property suites each name the same Hypothesis entry points (given, settings and the strategies module) beside their own module's imports. Those names come from an installed package rather than from project code, so a re-export module would add a test-support module without hiding a real dependency."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/modelcheck_cases.py",
+    "tests/modelcheck_service_cases.py",
+    "buildlimits/predict/ensemble_runs.py",
+    "buildlimits/predict/harness.py",
+    "buildlimits/supervisor_wiring.py",
+    "tests/outcome_store_helpers.py",
+    "tests/test_group_drain_metrics.py",
+    "buildlimits/predict/evaluation.py",
+    "buildlimits/predict/report.py",
+    "buildlimits/predict/scoring.py",
+    "buildlimits/predict/snapshot_codec.py",
+    "modelcheck/cli_outputs.py",
+    "modelcheck/expectations.py",
+    "modelcheck/records.py",
+    "modelcheck/report.py",
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "tests/differential_trace_test_helpers.py",
+    "buildlimits/predict/report_codec.py",
+    "modelcheck/cli.py",
+]
+reason = "Matching type-checking preambles: each module guards the same standard-library aliases (collections.abc, datetime) and its own typed imports behind if typ.TYPE_CHECKING. The names come from the standard library and each module's real dependencies, so a shared module would hide what each file actually imports."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/render.py::_predictors",
+    "tests/test_predict_snapshot_store.py::_journal",
+]
+reason = "Each reads a mapping the codec produced to describe one block of a report: the renderer lists predictor names, the test helper pulls the journal note out of a snapshot document. The detector matches their shared lookups, not shared logic, and a helper would have to know which document shape it was handed."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_store.py::_utc_now",
+    "buildlimits/predict/dataset_cli.py::_utc_now",
+]
+reason = "Each module owns the default for its own injectable clock edge: the store takes a wall_clock callable and the dataset command takes a now callable. The shared body is one call to the standard-library UTC constructor, so a shared helper would add a module whose only contract is to be replaced in tests."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/synthetic.py::_next",
+    "tests/test_predict_bootstrap.py::_seeded",
+]
+reason = "The synthetic stream seeds its generator so its draws replay, and the bootstrap test seeds one so an injected draw sequence replays. Sharing either copy would make production code depend on a test helper, or force the test to reach into a private production function, so each side keeps its own one-line seeding call."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -1808,3 +2001,10 @@ members = [
     "tests/test_metrics_gauges_properties.py",
 ]
 reason = "Matching import lists: the example module and the property module name the same accumulator and cadence constants, and they stay separate because the properties state their own reference definitions rather than reusing the examples' helpers. Sharing the list through a re-export module would add a test support module without hiding a real dependency."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_totality.py",
+    "tests/test_predict_evaluation.py",
+]
+reason = "Matching type-checking preludes: each test guards, behind if typ.TYPE_CHECKING, the domain types its own fixtures annotate. The guard is the shared idiom, not shared logic, and a re-export module would hide what each test actually depends on."

@@ -52,6 +52,8 @@ investigating a specific failure; reconcile with `make all` before committing.
 | `make model-fidelity`    | Both drift reports and `tests/test_model_drift.py`; cheap, and run on every pull request          |
 | `make model-check`       | Both W1 matrices at the plan's bounds, then the `fizzbee`-marked judgement; nightly only          |
 | `make spelling`          | The shared en-GB-oxendict `typos-config-builder` gate                                             |
+| `make predict-dataset`   | Snapshots this host's recorded cache outcomes into `build/predict/history.jsonl`                  |
+| `make predict-benchmark` | Compares the cache-hit predictors over that snapshot; see §2.2                                    |
 
 _Table 1: Make targets and the gates behind them._
 
@@ -78,6 +80,152 @@ The package requires Python 3.14. Annotations are therefore evaluated lazily
   under `typ.TYPE_CHECKING` raises `NameError` when something introspects a
   signature. `mock.Mock(spec=SomeClass)` does exactly that; spec a mock by
   attribute names (`spec=dir(SomeClass)`) instead.
+
+### 2.2. Running the prediction benchmark
+
+Two targets compare longitudinal cache-hit predictors against the outcomes this
+host has already recorded. The input is a snapshot, never the live store, so a
+result can be reproduced from a file.
+
+| Target                   | What it writes                                                           |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `make predict-dataset`   | `build/predict/history.jsonl`: the store's events with identities hashed |
+| `make predict-benchmark` | `results.json`, `results.md` and `timings.json` under `build/predict/`   |
+
+`make predict-benchmark` depends on the snapshot target and extracts one when
+the file is absent. The command prints `results.md` and the latency table;
+`results.md` holds one comparison table, the calibration and ablation tables,
+and the Brier-by-origin breakdown. `results.json` is byte-identical for the
+same snapshot, config and seed, so it can be diffed between runs. The measured
+latency is host-specific and therefore lives in `timings.json` and the printed
+table only, never in `results.json` or `results.md`. Single-predictor latency
+and ensemble combination latency are reported in separate tables: an ensemble
+only combines answers its components had already produced, so its elapsed time
+is not a prediction time.
+
+`buildlimits/predict/config.json` pins every parameter, including the training
+fraction, the bootstrap seed, and `minimum_labelled_events`. A run with fewer
+labelled events than that minimum reports `insufficient data` with the counts
+it did see; it never substitutes a synthetic stream for real history. A run
+that clears that minimum but holds too little of it in the held-out period
+reports `insufficient held-out evidence` instead of a negative result: no
+comparison was paired over `minimum_scored_events` rows, or every paired row
+fell in a single bootstrap block, in which case the resampling has no width to
+judge.
+
+The replay predicts at admission, never at batch application. An event is
+predictable only when the source recorded an admission time that is not later
+than the event's own label time; an event with a missing or retroactive
+admission time is not predicted, not scored, and never trains a predictor,
+because reading a missing timestamp as pre-admission availability is exactly
+the leak this ordering exists to prevent. At a prediction moment the history
+holds the eligible hit/miss labels observed strictly earlier and nothing else,
+so a label observed at that same moment cannot inform any event admitted then.
+Events sharing an admission moment are answered together, in store order, so a
+tie is resolved reproducibly. Age and load are measured at that moment from the
+same released labels, so a build still running at its own admission sets no age
+and adds no load, and an unknown outcome never becomes history. The report
+counts the admission moments, the events without a usable admission time, the
+labels delivered before a prediction and the labels too late to inform one as
+`moments`, `unavailable_admission`, `applied_labels` and `unapplied_labels`.
+
+The tuning/held-out phase is still assigned from label time, because a store
+writes its labels in batches; the boundary never falls inside a batch, so every
+row a store wrote together stays in one phase. The phase decides which rows a
+predictor is scored on, not when it is answered. The fixed ensemble's weights
+are fitted only on tuning labels observed before the earliest held-out
+prediction moment, so a tuning label that arrived after the first held-out
+decision cannot shape them. Because those weights are fitted retrospectively,
+applying them back over the tuning rows would not produce walk-forward scores,
+so the fixed ensemble is scored on held-out rows only and its tuning scores are
+reported as missing with that limitation stated. The equal and adaptive
+ensembles learn only from labels already delivered, so they are scored on both
+phases. The best single each ensemble is compared against is chosen on the same
+tuning rows the weight fit could read, so a late label cannot decide the
+comparator either. Those candidates are ranked on one population: the tuning
+rows every contender answered. A single that abstains on the hard rows would
+otherwise be scored on a smaller, easier set and could become the baseline
+every ensemble is measured against without ever having faced those rows. A
+single that answered too little to be ranked does not shrink the population the
+others share.
+
+The bootstrap resamples blocks of consecutive stream positions rather than of
+answered rows alone. An abstention keeps its position as an empty slot, so a
+block can never splice together two answered rows that many original events
+apart; each replication averages only the values it actually drew. The interval
+reports the answered pairs it used and the stream positions its blocks span,
+which differ whenever a predictor abstains. Each predictor's difference from
+the base rate is tested at the configured `bootstrap_alpha` divided across
+every predictor the verdict could name (Bonferroni), so the verdict as a whole
+holds at the level the config pins rather than giving several predictors
+independent chances to clear zero on noise. `results.json` records that
+per-comparison level as `verdict_alpha`, and the comparison table labels its
+interval column with it. The commit named in the report is read from the
+repository that holds the benchmark module, and only when that repository
+tracks the module's own path; an installed copy therefore reports `unknown`
+rather than borrowing its host project's commit.
+
+Admission times are the one input the existing records cannot always supply. An
+outcome-store record carries a label time but no admission time; an adapter
+journal row carries metrics without a compilation identity; a supervisor
+journal row carries queue events without a compilation identity. None of those
+sources can be joined into a per-compilation admission history, so the
+benchmark reports the correlation it could not establish rather than inventing
+one: the journal note records the records it saw, the retention span they
+cover, the supervisor restarts it witnessed and whether the query reached its
+cap, and it is context only. On a host whose store holds no admission times
+every event is unpredictable, and the run reports
+`insufficient admission times` with those counts instead of substituting a
+synthetic stream.
+
+`results.md` ranks every predictor that scored held-out rows by Brier score and
+places the under-powered ones after the qualified, so a predictor with a
+handful of rows cannot head the list. Calibration bins are reported for every
+predictor with a scored held-out row, not only the leader, and the comparison
+table carries each predictor's coverage, scored row count, calibration error
+and difference from the base rate with its interval.
+
+`make predict-dataset` refuses any `--output` path that resolves to the store
+it is reading, including through a symbolic link, so it cannot replace the
+outcome store with a snapshot document. An output path that cannot be written,
+such as a directory or a read-only location, is reported as a command failure
+with status 1 rather than a traceback.
+
+### 2.3. The prediction domain boundary
+
+`buildlimits.predict` follows the same dependency rule as the admission core:
+values and decisions sit in domain modules, and everything that reaches outside
+the process is an adapter at its edge. The domain modules are `bootstrap`,
+`comparison`, `config`, `dataset`, `ensemble_runs`, `ensembles`, `evaluation`,
+`events`, `fitting`, `harness`, `journal_codec`, `journal_provenance`,
+`metrics`, `predictors`, `probability`, `report`, `report_codec` and `scoring`.
+
+None of those modules imports a file-system, JSON, process or command module,
+and none imports an adapter. `journal_codec` and `report_codec` are domain
+modules even though they build documents: neither parses or writes JSON itself.
+`journal_codec` converts the journal provenance in both directions, while
+`report_codec` only encodes values into plain mappings through its `*_to_dict`
+functions and never decodes one. The report's `data` block, including the
+snapshot's source and summary counts, is built by `report_codec`, so the domain
+report never reaches the JSON codec. `snapshot_codec` is outside the list
+because it does read and write JSON document fragments, and `snapshot_store`
+owns the file those fragments go to.
+
+The adapters are `config_loader` (reads and validates the packaged
+configuration), `snapshot_store` (parses and writes a snapshot document),
+`report_writer` (writes a report to a directory), `records` (decodes the
+outcome store into events), `provenance` (`git_revision`: the commit that
+tracks the module), `paths` (`same_file`: whether two paths name one file), and
+the two commands `dataset_cli` and `benchmark_cli`.
+
+`tests/test_predict_boundaries.py` enforces the rule. It parses each listed
+domain module's imports, resolves relative forms against the module's package
+so both `from .config_loader import load_config` and
+`from . import config_loader` are seen, and fails on an infrastructure module
+or an adapter. A forbidden module is matched by its exact name or as the head
+of a dotted name, so `import os.path` and a submodule of an adapter are caught
+as well. A companion test fails when the list names a module that does not
+exist, so a rename cannot quietly skip the check.
 
 ## 3. Architecture overview
 
@@ -138,85 +286,90 @@ second token.
 
 Each module owns one decision. This table is the single module inventory.
 
-| Module                                                                             | Responsibility                                                                                         |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `admission`, `effects`                                                             | Pure state machine: queue, tokens, draining                                                            |
-| `admission_state`                                                                  | Group lifecycle values; the identifier-free `Counts` snapshot and the `Gauges` read-only views         |
-| `supervisor`                                                                       | Event loop that carries out admission's effects                                                        |
-| `supervisor_polling`                                                               | Poll cadence and ordered server, pool and cache checks; no token-release decisions                     |
-| `supervisor_signals`, `supervisor_shutdown`                                        | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                                    |
-| `supervisor_outcome_setup`, `supervisor_outcomes`                                  | Resource-free disabled shell and failure-isolated recording shell                                      |
-| `supervisor_wiring`                                                                | Builds the cache watch and recovery machine, including their late-resolved mutual probes               |
-| `supervisor_observability`                                                         | Wires cached pressure, periodic gauges and drain observation into existing owners                      |
-| `effect_dispatch`                                                                  | Effect handlers and their metric and health mappings                                                   |
-| `requesters`, `pending_request`                                                    | Connections, queued requests and replies; recorded request data                                        |
-| `request_connections`                                                              | Unrecorded sockets, received rights and refusals                                                       |
-| `request_validation`, `requester_metrics`                                          | Pure validation over explicit context; terminal metric fields                                          |
-| `request_state`                                                                    | Compatibility re-export of `pending_request.Pending`                                                   |
-| `request_observation`                                                              | The metric and journal dependencies one request table reports through                                  |
-| `descriptor_policy`, `descriptor_budget`                                           | Pure budget arithmetic; OS sampling, retention accounting and status                                   |
-| `listener_pressure`                                                                | Listener backpressure after accept-time exhaustion                                                     |
-| `groups`, `group_drain`, `group_recovery`                                          | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                          |
-| `supervisor_placement`                                                             | Admitted compiler placement, terminal scope outcome and stop-mode classification                       |
-| `launch`, `launch_setup`                                                           | Held launch child and bounded setup diagnostics                                                        |
-| `relocation`, `descriptors`                                                        | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution                     |
-| `attributes`                                                                       | The caller's umask, niceness and resource limits                                                       |
-| `pool`                                                                             | The token device, read on a thread of its own                                                          |
-| `sccache`, `sccache_cgroup`, `server_watch`                                        | The managed cache's reachability, control-group reads and accounting; `SERVER_DRAIN` release           |
-| `cache_backend`, `cache_backends`, `cache_modes`                                   | The backend protocols, the composition root that turns a mode into adapters, and the vocabulary        |
-| `kache`, `kache_guard`, `compiler_argv`                                            | The in-scope cache's composition and health; stray-process reports; leading cache-layer removal        |
-| `server_drain`                                                                     | The `SERVER_DRAIN` lifecycle, reachable only for a backend that leaves detached work                   |
-| `cache_recovery`, `recovery_*`                                                     | The recovery transaction, its barrier, reclamation, trigger and guidance                               |
-| `cache_quiesce`                                                                    | Start-up stop of a live managed cache under the barrier, before the strict accounting                  |
-| `bus_properties`, `systemd`                                                        | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl`        |
-| `cgroups`, `startup`, `proc_trees`                                                 | Control-group reads, the restart barrier, diagnostic process trees and shared `/proc` identity parsing |
-| `protocol`, `replies`, `framing`, `frame_payload`, `wire`                          | Versioned JSON frames with passed descriptors                                                          |
-| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`                           | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc                     |
-| `adapter_invocation`, `adapter_retry`                                              | Invocation state and deadline-preserving busy and restart retries                                      |
-| `tracing`, `tracing_export`, `tracing_sdk_export`                                  | Bounded spans, the fixed journal schema and synchronous native-journal export                          |
-| `outcome_telemetry`                                                                | Maps recorder effects to bounded metrics and spans                                                     |
-| `outcome_replay`, `outcome_replay_cli`                                             | Read-only H2 and H3 evaluation over the local outcome store                                            |
-| `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                 |
-| `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper              |
-| `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar       |
-| `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                        |
-| `status`, `status_client`, `status_render`, `status_cli`                           | The status document, its transport, rendering and command                                              |
-| `admission_readiness`                                                              | Pure admission-progress classification from health, ledger counts and recovery outlook                 |
-| `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                                   |
-| `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                            |
-| `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, periodic gauge accumulator, native journal queries and reports                      |
-| `journal_policy`                                                                   | Which supervisor lines are written, and at which syslog priority                                       |
-| `outcome_vocabulary`                                                               | Closed cache-outcome and reading-reason vocabularies                                                   |
-| `outcome_stats`                                                                    | Pure parsing of supported sccache statistics into validated counters                                   |
-| `outcome_attribution`                                                              | Pure whole-window classification of labelled sccache counter windows                                   |
-| `outcome_footprints`                                                               | Approved sccache counter footprint table and the composition rules that accept a window delta          |
-| `outcome_gate`                                                                     | Pure quiet-point decision for starting an outcome statistics reading                                   |
-| `json_values`                                                                      | Pure JSON object and non-negative integer validators shared by boundary adapters                       |
-| `outcome_key`                                                                      | Pure, salted compile-request identity with local paths hidden                                          |
-| `outcome_key_arguments`                                                            | Canonical compiler arguments and selected Cargo environment for key digests                            |
-| `outcome_parser`                                                                   | In-memory sccache 0.14 Rust-parser prediction used for H3 evidence                                     |
-| `outcome_record_format`                                                            | Typed outcome records and format-specific field validation                                             |
-| `outcome_record_codec`                                                             | Strict JSON Lines encoding and decoding for outcome records                                            |
-| `outcome_records`                                                                  | Public record API and pure age, count and byte compaction                                              |
-| `outcome_store`                                                                    | Non-blocking writer port, asynchronous salt handoff and bounded result reporting                       |
-| `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes and atomic compaction replacement                    |
-| `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                           |
-| `nonblocking_child`                                                                | Non-blocking helper-process pipes and bounded child reaping for supervisor-loop work                   |
-| `outcome_queries`                                                                  | Statistics child execution and non-blocking managed-server generation reads                            |
-| `outcome_window`                                                                   | Bounded immutable payload ledger for open statistics windows                                           |
-| `outcome_ports`                                                                    | Domain-owned protocols and result types for statistics, server generation and storage                  |
-| `outcome_recorder_types`                                                           | Immutable recorder events, outputs and typestate values                                                |
-| `outcome_recorder_outputs`                                                         | Pure construction of outcome events, records and terminal transition outputs                           |
-| `outcome_recorder`                                                                 | Pure quiet-point reading sequencer and attribution state transitions                                   |
-| `outcome_recorder_reading`                                                         | Validates terminal readings, updates baselines and schedules bounded retries                           |
-| `outcome_recorder_driver`                                                          | Executes statistics-port commands and returns effects to the supervisor                                |
-| `outcome_process_sampler`                                                          | Bounded control-group inspection and per-process metadata caching                                      |
-| `outcome_sampling`, `outcome_recorder_sampling`                                    | Sampling cadence, failure back-off and pure recorder sample folding                                    |
-| `outcome_sightings`, `outcome_shell_keys`                                          | In-memory child matching and privacy-safe supervisor key assembly                                      |
-| `outcome_resources`                                                                | Helper-reaper and store-writer ownership, with a non-blocking fault path and a bounded shutdown path   |
-| `outcome_shell_stats`                                                              | Bounded, privacy-safe counters for the optional recording status section                               |
-| `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                              |
-| `drain_summary`                                                                    | Decides when a repeated drain success still deserves its own record                                    |
+| Module                                                                             | Responsibility                                                                                                                                              |
+| ---------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `admission`, `effects`                                                             | Pure state machine: queue, tokens, draining                                                                                                                 |
+| `admission_state`                                                                  | Group lifecycle values; the identifier-free `Counts` snapshot and the `Gauges` read-only views                                                              |
+| `supervisor`                                                                       | Event loop that carries out admission's effects                                                                                                             |
+| `supervisor_polling`                                                               | Poll cadence and ordered server, pool and cache checks; no token-release decisions                                                                          |
+| `supervisor_signals`, `supervisor_shutdown`                                        | `SIGCHLD` self-pipe wake-up; graceful and immediate stop sequencing                                                                                         |
+| `supervisor_outcome_setup`, `supervisor_outcomes`                                  | Resource-free disabled shell and failure-isolated recording shell                                                                                           |
+| `supervisor_wiring`                                                                | Builds the cache watch and recovery machine, including their late-resolved mutual probes                                                                    |
+| `supervisor_observability`                                                         | Wires cached pressure, periodic gauges and drain observation into existing owners                                                                           |
+| `effect_dispatch`                                                                  | Effect handlers and their metric and health mappings                                                                                                        |
+| `requesters`, `pending_request`                                                    | Connections, queued requests and replies; recorded request data                                                                                             |
+| `request_connections`                                                              | Unrecorded sockets, received rights and refusals                                                                                                            |
+| `request_validation`, `requester_metrics`                                          | Pure validation over explicit context; terminal metric fields                                                                                               |
+| `request_state`                                                                    | Compatibility re-export of `pending_request.Pending`                                                                                                        |
+| `request_observation`                                                              | The metric and journal dependencies one request table reports through                                                                                       |
+| `descriptor_policy`, `descriptor_budget`                                           | Pure budget arithmetic; OS sampling, retention accounting and status                                                                                        |
+| `listener_pressure`                                                                | Listener backpressure after accept-time exhaustion                                                                                                          |
+| `groups`, `group_drain`, `group_recovery`                                          | Compiler scopes; terminate, escalate and empty checks; consumed-exit recovery                                                                               |
+| `supervisor_placement`                                                             | Admitted compiler placement, terminal scope outcome and stop-mode classification                                                                            |
+| `launch`, `launch_setup`                                                           | Held launch child and bounded setup diagnostics                                                                                                             |
+| `relocation`, `descriptors`                                                        | Pure descriptor placement planner; inherited-descriptor cleanup and plan execution                                                                          |
+| `attributes`                                                                       | The caller's umask, niceness and resource limits                                                                                                            |
+| `pool`                                                                             | The token device, read on a thread of its own                                                                                                               |
+| `sccache`, `sccache_cgroup`, `server_watch`                                        | The managed cache's reachability, control-group reads and accounting; `SERVER_DRAIN` release                                                                |
+| `cache_backend`, `cache_backends`, `cache_modes`                                   | The backend protocols, the composition root that turns a mode into adapters, and the vocabulary                                                             |
+| `kache`, `kache_guard`, `compiler_argv`                                            | The in-scope cache's composition and health; stray-process reports; leading cache-layer removal                                                             |
+| `server_drain`                                                                     | The `SERVER_DRAIN` lifecycle, reachable only for a backend that leaves detached work                                                                        |
+| `cache_recovery`, `recovery_*`                                                     | The recovery transaction, its barrier, reclamation, trigger and guidance                                                                                    |
+| `cache_quiesce`                                                                    | Start-up stop of a live managed cache under the barrier, before the strict accounting                                                                       |
+| `bus_properties`, `systemd`                                                        | Validated public-bus fallback for unit queries; transient scopes and unit jobs through `busctl`                                                             |
+| `cgroups`, `startup`, `proc_trees`                                                 | Control-group reads, the restart barrier, diagnostic process trees and shared `/proc` identity parsing                                                      |
+| `protocol`, `replies`, `framing`, `frame_payload`, `wire`                          | Versioned JSON frames with passed descriptors                                                                                                               |
+| `adapter`, `adapter_*`, `heartbeat`, `rustdoc`, `timing`                           | Cargo-facing entry points, restart handling, signal handling, progress and rustdoc                                                                          |
+| `adapter_invocation`, `adapter_retry`                                              | Invocation state and deadline-preserving busy and restart retries                                                                                           |
+| `tracing`, `tracing_export`, `tracing_sdk_export`                                  | Bounded spans, the fixed journal schema and synchronous native-journal export                                                                               |
+| `outcome_telemetry`                                                                | Maps recorder effects to bounded metrics and spans                                                                                                          |
+| `outcome_replay`, `outcome_replay_cli`                                             | Read-only H2 and H3 evaluation over the local outcome store                                                                                                 |
+| `predict`                                                                          | Snapshot, predictors, walk-forward harness and the cache-hit comparison report; its domain modules import no file-system, JSON or command module (see §2.3) |
+| `predict.predictors`                                                               | The `Predictor` protocol: predict at one admission moment, learn from a delivered label                                                                     |
+| `predict.paths`                                                                    | `same_file`: whether two paths name one file, including through a symbolic link                                                                             |
+| `predict.provenance`                                                               | `git_revision`: the commit that tracks the benchmark module, or `unknown` when none does                                                                    |
+| `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                                                                      |
+| `utc_text`                                                                         | The canonical UTC ISO 8601 text with a trailing `Z`, and the parser that reads it back                                                                      |
+| `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper                                                                   |
+| `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar                                                            |
+| `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                                                                             |
+| `status`, `status_client`, `status_render`, `status_cli`                           | The status document, its transport, rendering and command                                                                                                   |
+| `admission_readiness`                                                              | Pure admission-progress classification from health, ledger counts and recovery outlook                                                                      |
+| `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                                                                                        |
+| `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                                                                                 |
+| `metrics*`, `journal`, `journal_native`                                            | Metric vocabulary, periodic gauge accumulator, native journal queries and reports                                                                           |
+| `journal_policy`                                                                   | Which supervisor lines are written, and at which syslog priority                                                                                            |
+| `outcome_vocabulary`                                                               | Closed cache-outcome and reading-reason vocabularies                                                                                                        |
+| `outcome_stats`                                                                    | Pure parsing of supported sccache statistics into validated counters                                                                                        |
+| `outcome_attribution`                                                              | Pure whole-window classification of labelled sccache counter windows                                                                                        |
+| `outcome_footprints`                                                               | Approved sccache counter footprint table and the composition rules that accept a window delta                                                               |
+| `outcome_gate`                                                                     | Pure quiet-point decision for starting an outcome statistics reading                                                                                        |
+| `json_values`                                                                      | Pure JSON object and non-negative integer validators shared by boundary adapters                                                                            |
+| `outcome_key`                                                                      | Pure, salted compile-request identity with local paths hidden                                                                                               |
+| `outcome_key_arguments`                                                            | Canonical compiler arguments and selected Cargo environment for key digests                                                                                 |
+| `outcome_parser`                                                                   | In-memory sccache 0.14 Rust-parser prediction used for H3 evidence                                                                                          |
+| `outcome_record_format`                                                            | Typed outcome records and format-specific field validation                                                                                                  |
+| `outcome_record_codec`                                                             | Strict JSON Lines encoding and decoding for outcome records                                                                                                 |
+| `outcome_records`                                                                  | Public record API and pure age, count and byte compaction                                                                                                   |
+| `outcome_store`                                                                    | Non-blocking writer port, asynchronous salt handoff and bounded result reporting                                                                            |
+| `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes and atomic compaction replacement                                                                         |
+| `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                                                                                |
+| `nonblocking_child`                                                                | Non-blocking helper-process pipes and bounded child reaping for supervisor-loop work                                                                        |
+| `outcome_queries`                                                                  | Statistics child execution and non-blocking managed-server generation reads                                                                                 |
+| `outcome_window`                                                                   | Bounded immutable payload ledger for open statistics windows                                                                                                |
+| `outcome_ports`                                                                    | Domain-owned protocols and result types for statistics, server generation and storage                                                                       |
+| `outcome_recorder_types`                                                           | Immutable recorder events, outputs and typestate values                                                                                                     |
+| `outcome_recorder_outputs`                                                         | Pure construction of outcome events, records and terminal transition outputs                                                                                |
+| `outcome_recorder`                                                                 | Pure quiet-point reading sequencer and attribution state transitions                                                                                        |
+| `outcome_recorder_reading`                                                         | Validates terminal readings, updates baselines and schedules bounded retries                                                                                |
+| `outcome_recorder_driver`                                                          | Executes statistics-port commands and returns effects to the supervisor                                                                                     |
+| `outcome_process_sampler`                                                          | Bounded control-group inspection and per-process metadata caching                                                                                           |
+| `outcome_sampling`, `outcome_recorder_sampling`                                    | Sampling cadence, failure back-off and pure recorder sample folding                                                                                         |
+| `outcome_sightings`, `outcome_shell_keys`                                          | In-memory child matching and privacy-safe supervisor key assembly                                                                                           |
+| `outcome_resources`                                                                | Helper-reaper and store-writer ownership, with a non-blocking fault path and a bounded shutdown path                                                        |
+| `outcome_shell_stats`                                                              | Bounded, privacy-safe counters for the optional recording status section                                                                                    |
+| `drain_loop`, `drain_metrics`                                                      | Paces drain-fault retries; observes drain progress without exit authority                                                                                   |
+| `drain_summary`                                                                    | Decides when a repeated drain success still deserves its own record                                                                                         |
 
 _Table 2: Package modules._
 
@@ -1432,6 +1585,15 @@ reason when the code it names changes.
   asserts the cadence, the integral, the peaks and the failed-emission merge.
   If the publisher is ever inlined into its caller, re-run `make lint` before
   trusting these entries.
+- **Prediction benchmark.** Every predictor is called through the `Predictor`
+  protocol, so no static edge reaches the concrete classes. Its Skylos entry
+  points name the protocol-dispatched methods of `LastOutcome`, `RollingRate`,
+  `ExponentialRate` and `LogisticModel`, and the private `_sigmoid` and
+  `outcome_value`. Serialization needs no entry: after the codec split the
+  encoders are module-level functions that their callers name directly. Its
+  duplication allowances cover matching import lists, the parallel dataset and
+  benchmark CLI wiring, and the assertion idioms each prediction test suite
+  repeats. Every entry and its reason is recorded in `pyproject.toml`.
 - **Vulture.** Only `tests/` is scanned, so attributes that tests set and
   production code reads, mock configuration, runner doubles' `__call__` and the
   CrossHair contracts are listed in `ignore_names`; pytest-bdd steps and

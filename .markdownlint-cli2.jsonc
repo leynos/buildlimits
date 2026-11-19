@@ -11,6 +11,9 @@
     "MD029": { "style": "ordered" }
   },
   "ignores": [
+    // Generated artefacts, such as the prediction benchmark's results.md, are
+    // written under build/ and are not authored Markdown.
+    "**/build/**",
     "**/.venv/**",
     ".node_modules/**",
     "**/node_modules/**",

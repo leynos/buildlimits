@@ -9,10 +9,13 @@ import typing as typ
 
 from hypothesis import event
 
+from buildlimits.outcome_record_format import OutcomeRecord
+
 if typ.TYPE_CHECKING:
     from types import ModuleType
 
     from buildlimits.outcome_key import CacheKey
+    from buildlimits.outcome_vocabulary import CacheResult
 
 
 class _TimedGateEvent(typ.Protocol):
@@ -151,6 +154,38 @@ def cache_key() -> CacheKey:
     salt = keys.Salt(b"s" * 32, "fixed-salt")
     identity = keys.toolchain_identity("/toolchain/rustc", {}, "0.14.0", salt)
     return keys.CacheKey("serde", "registry:serde@1.2.3", "host", "a" * 64, identity)
+
+
+def attributed_record(
+    *,
+    observed_at: dt.datetime = OBSERVED_AT,
+    outcome: CacheResult = "hit",
+) -> OutcomeRecord:
+    """Build one attributed registry record with fixed test values.
+
+    Parameters
+    ----------
+    observed_at : datetime.datetime
+        When the compilation outcome became known.
+    outcome : str
+        The recorded cache outcome; an unattributed value stays in the record
+        so a test can check that it never becomes a label or a miss.
+
+    Returns
+    -------
+    OutcomeRecord
+        A cacheable registry record observed at ``observed_at``.
+    """
+    return OutcomeRecord(
+        key=cache_key(),
+        outcome=outcome,
+        origin="registry",
+        runtime_seconds=0.25,
+        observed_at=observed_at,
+        parser_class="cacheable",
+        child_sighting="unavailable",
+        child_samples=0,
+    )
 
 
 def launch_payload(recorder: ModuleType, key: object) -> object:

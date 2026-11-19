@@ -214,6 +214,10 @@ target/
 # FizzBee link `make fizzbee` keeps beside it. Both are install artefacts.
 .tools/
 
+# Mutex the df12 pylint tool takes beside the pyproject it rewrites metadata
+# for. It appears on every lint run and is never part of a commit.
+.pyproject.toml.df12.lock
+
 # FizzBee writes `<spec>.json` beside the spec it was given and a run
 # directory under `out/`. Every target copies the spec into a scratch
 # directory under `.model-check/` first, so these cover only a manual run
