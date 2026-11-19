@@ -145,8 +145,7 @@ def archive_source(context: ArchiveContext, entry: SegmentEntry) -> ActionResult
     finally:
         _discard(temporary)
     sidecar = _write_sidecar(context, entry.sequence, facts)
-    _unlink(entry.path)
-    fsync_directory(context.layout.sealed_dir)
+    _remove_sealed_source(context, entry.sequence)
     return ActionResult(
         "archived", entry.sequence, sidecar.logical_bytes, sidecar.physical_bytes
     )
@@ -260,8 +259,7 @@ def reconcile_duplicate(
             context, archived.path, archived.sequence, "mismatch"
         )
         return _rearchive(context, sealed)
-    _unlink(sealed.path)
-    fsync_directory(context.layout.sealed_dir)
+    _remove_sealed_source(context, sealed.sequence)
     return ActionResult(
         "reconciled",
         sealed.sequence,
@@ -599,6 +597,24 @@ def _quarantine_and_remove_sidecar(
     _unlink(context.layout.archive_dir / outcome_segments.sidecar_name(sequence))
     fsync_directory(context.layout.archive_dir)
     return name
+
+
+def _remove_sealed_source(context: ArchiveContext, sequence: int) -> None:
+    """Remove one archived source and the writer metadata that described it.
+
+    The sidecar is now the authoritative record of the segment's facts, so the
+    writer's metadata would otherwise accumulate beside an empty directory.
+
+    Parameters
+    ----------
+    context : ArchiveContext
+        The run's layout, policy and moment.
+    sequence : int
+        The archived sequence whose source must be released.
+    """
+    _unlink(context.layout.sealed_dir / outcome_segments.segment_name(sequence))
+    _unlink(context.layout.sealed_dir / outcome_segments.sealed_meta_name(sequence))
+    fsync_directory(context.layout.sealed_dir)
 
 
 def _archive_path(context: ArchiveContext, sequence: int) -> Path:

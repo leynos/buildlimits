@@ -163,6 +163,7 @@ def _execute(run: _Run, active: int) -> RunReport:
     )
     outcome = _Outcome()
     _perform(run, outcome)
+    _retain(run, outcome)
     floor = _retention_floor(outcome_segments.read_inventory(layout))
     final = outcome_segments.read_inventory(layout, retention_floor=floor)
     retained = _active_bytes(layout.active) + final.sealed_bytes
@@ -203,6 +204,38 @@ def _perform(run: _Run, outcome: _Outcome) -> None:
         _trim_one(run, entry, trim, outcome)
     for entry in run.plan.deletes:
         _delete_one(run, entry, outcome)
+
+
+def _retain(run: _Run, outcome: _Outcome) -> None:
+    """Apply age and byte retention to history this run just archived.
+
+    The first plan saw the newly published archives as sealed sources, so it
+    could not evict them. Re-planning over the settled store keeps the byte
+    budget true after one successful run instead of leaving the excess for the
+    next timer firing.
+    """
+    if not (run.plan.archive or run.plan.reconcile):
+        return
+    layout = run.context.layout
+    inventory = outcome_segments.read_inventory(layout)
+    follow_up = plan_run(
+        inventory,
+        run.context.policy,
+        now=run.context.now,
+        active_bytes=_active_bytes(layout.active),
+    )
+    settled = {
+        action.sequence
+        for action in outcome.actions
+        if action.action in {"deleted", "quarantined"}
+    }
+    settled.update(sequence for sequence, _reason in outcome.failures)
+    for entry, trim in follow_up.trims:
+        if entry.sequence not in settled:
+            _trim_one(run, entry, trim, outcome)
+    for entry in follow_up.deletes:
+        if entry.sequence not in settled:
+            _delete_one(run, entry, outcome)
 
 
 def _reconcile_one(

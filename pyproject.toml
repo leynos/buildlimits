@@ -18,6 +18,7 @@ build-limits-status = "buildlimits.status_cli:main"
 build-limits-recover = "buildlimits.recover_cli:main"
 build-limits-metrics = "buildlimits.metrics_cli:main"
 build-limits-cache-replay = "buildlimits.outcome_replay_cli:main"
+build-limits-outcome-archive = "buildlimits.outcome_archive_cli:main"
 build-limits-predict-dataset = "buildlimits.predict.dataset_cli:main"
 build-limits-predict-benchmark = "buildlimits.predict.benchmark_cli:main"
 

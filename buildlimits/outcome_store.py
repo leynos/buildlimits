@@ -429,6 +429,12 @@ class StoreWriter(OutcomeStorePort):
         salt = self._salt
         if self._header is None or salt is None:
             return False
+        if not self._records:
+            # Nothing has been appended since the last seal, so the active file
+            # holds only a header. Claiming a sequence now would publish
+            # metadata for a source that never exists and leave a permanent gap.
+            # The header file still has to exist, because appends open it.
+            return self._restart_active()
         try:
             now = self._observe_clock()
             _ensure_directory(self._sealed_dir)
