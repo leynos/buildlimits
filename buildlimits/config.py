@@ -16,16 +16,11 @@ import tomllib
 import typing as typ
 from pathlib import Path
 
-from buildlimits import cache_modes
+from buildlimits import cache_modes, config_retention, config_values
 from buildlimits.outcome_retention import (
     DEFAULT_HEADROOM_BYTES,
     DEFAULT_MAX_AGE_DAYS,
     LEGACY_MAX_BYTES,
-    MAX_AGE_DAYS,
-    MAX_POLICY_VALUE,
-    MAX_XZ_PRESET,
-    MIN_XZ_PRESET,
-    SEGMENT_BYTES,
 )
 
 if typ.TYPE_CHECKING:
@@ -59,17 +54,6 @@ _MODE_KEYS: dict[str, frozenset[str]] = {
     "sccache": frozenset({"sccache_executable", "sccache_unit", "sccache_socket"}),
     "kache": frozenset({"kache_executable", "kache_socket", "kache_cache_dir"}),
 }
-
-# Retention settings describe a history that only exists while recording is
-# on. Accepting one with ``cache_outcomes = "off"`` would look configured and
-# silently do nothing, so a written retention key requires record mode.
-_RETENTION_KEYS = frozenset({
-    "cache_outcomes_max_age_days",
-    "cache_outcomes_max_bytes",
-    "cache_outcomes_max_records",
-    "cache_outcomes_archive_headroom_bytes",
-    "cache_outcomes_archive_preset",
-})
 
 
 class ConfigError(Exception):
@@ -274,7 +258,11 @@ def from_mapping(raw: cabc.Mapping[str, object]) -> SupervisorConfig:
         if key not in fields:
             msg = f"unknown setting {key!r}"
             raise ConfigError(msg)
-        values[key] = _coerce(key, fields[key].type, value)
+        converted = config_values.coerce(fields[key].type, value)
+        if converted is None:
+            msg = f"setting {key!r} has the wrong type"
+            raise ConfigError(msg)
+        values[key] = converted
     _reject_foreign_keys(values)
     # _coerce has converted each value to its field's declared type.
     return SupervisorConfig(**typ.cast("dict[str, typ.Any]", values))
@@ -303,12 +291,9 @@ def _reject_foreign_keys(values: cabc.Mapping[str, object]) -> None:
         If one backend's setting was written while another backend is
         selected.
     """
-    if values.get("cache_outcomes", "off") != "record":
-        written = _RETENTION_KEYS & values.keys()
-        if written:
-            key = min(written)
-            msg = f"setting {key!r} is only valid when cache_outcomes is 'record'"
-            raise ConfigError(msg)
+    retention_error = config_retention.reject_written_keys(values)
+    if retention_error is not None:
+        raise ConfigError(retention_error)
     mode = values.get("cache_mode", "sccache")
     if mode not in _MODE_KEYS:
         # ``validate`` owns an unknown mode's message, and ``direct`` owns no
@@ -370,32 +355,7 @@ _RANGE_RULES: tuple[tuple[cabc.Callable[[SupervisorConfig], bool], str], ...] = 
         ),
         'cache_outcomes="record" requires cache_mode="sccache"',
     ),
-    (
-        lambda config: 0 <= config.cache_outcomes_max_age_days <= MAX_AGE_DAYS,
-        f"cache_outcomes_max_age_days must be between 0 and {MAX_AGE_DAYS}",
-    ),
-    (
-        lambda config: 0 <= config.cache_outcomes_max_bytes <= MAX_POLICY_VALUE,
-        "cache_outcomes_max_bytes is outside the supported range",
-    ),
-    (
-        lambda config: 0 <= config.cache_outcomes_max_records <= MAX_POLICY_VALUE,
-        "cache_outcomes_max_records is outside the supported range",
-    ),
-    (
-        lambda config: (
-            SEGMENT_BYTES
-            <= config.cache_outcomes_archive_headroom_bytes
-            <= MAX_POLICY_VALUE
-        ),
-        "cache_outcomes_archive_headroom_bytes must hold at least one segment",
-    ),
-    (
-        lambda config: (
-            MIN_XZ_PRESET <= config.cache_outcomes_archive_preset <= MAX_XZ_PRESET
-        ),
-        "cache_outcomes_archive_preset must be between 0 and 9",
-    ),
+    *config_retention.RETENTION_RULES,
     (
         lambda config: (
             min(config.cancel_grace_seconds, config.drain_timeout_seconds) > 0
@@ -407,51 +367,3 @@ _RANGE_RULES: tuple[tuple[cabc.Callable[[SupervisorConfig], bool], str], ...] = 
         "compilers_slice must name a slice unit",
     ),
 )
-
-
-def _coerce(key: str, annotation: object, value: object) -> object:
-    """Check and convert one TOML value to its field's type.
-
-    Returns
-    -------
-    object
-        The converted value.
-
-    Raises
-    ------
-    ConfigError
-        If the value does not have the field's type.
-    """
-    # Python 3.14 evaluates annotations lazily, so dataclass fields carry the
-    # field's type object rather than its source text. A ``X | None`` field
-    # carries a ``types.UnionType``, which is not a ``type``, so membership is
-    # asked of the table rather than gated on ``isinstance``.
-    converter = _CONVERTERS.get(annotation)
-    converted = converter(value) if converter is not None else None
-    if converted is None:
-        msg = f"setting {key!r} has the wrong type"
-        raise ConfigError(msg)
-    return converted
-
-
-def _is_number(value: object) -> bool:
-    """Report whether a TOML value is a number; TOML booleans are not.
-
-    Returns
-    -------
-    bool
-        Whether the value is an integer or a float.
-    """
-    return isinstance(value, int | float) and not isinstance(value, bool)
-
-
-# Each converter returns None for a value of the wrong type; no setting is
-# ever None, so None cannot be confused with a converted value. The key type is
-# ``object`` because a ``X | None`` field's annotation is a union object.
-_CONVERTERS: dict[object, cabc.Callable[[object], object]] = {
-    Path: lambda value: Path(value) if isinstance(value, str) else None,
-    Path | None: lambda value: Path(value) if isinstance(value, str) else None,
-    int: lambda value: value if _is_number(value) and isinstance(value, int) else None,
-    float: lambda value: float(typ.cast("float", value)) if _is_number(value) else None,
-    str: lambda value: value if isinstance(value, str) else None,
-}
