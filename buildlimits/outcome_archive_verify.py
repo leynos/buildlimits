@@ -12,22 +12,16 @@ import hashlib
 import lzma
 import typing as typ
 
-from buildlimits import outcome_record_codec
-from buildlimits.outcome_record_format import RecordFailure, StoreHeader, StoreRecord
+from buildlimits.outcome_archive_rows import (
+    DocumentReader,
+    HeaderRow,
+    RecordRow,
+    SegmentFaultError,
+)
 from buildlimits.outcome_record_stream import LineStream, StreamFaultError
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     import datetime as dt
-
-type FaultReason = typ.Literal[
-    "corrupt",
-    "version_mismatch",
-    "truncated_xz",
-    "trailing_data",
-    "bad_xz",
-    "line_too_long",
-]
 
 __all__ = [
     "ArchiveFacts",
@@ -39,40 +33,6 @@ __all__ = [
     "scan_archive",
     "write_archive",
 ]
-
-
-class SegmentFaultError(Exception):
-    """A segment that cannot be archived or verified faithfully.
-
-    Parameters
-    ----------
-    reason : FaultReason
-        Closed classification used in reports and quarantine notes.
-    """
-
-    def __init__(self, reason: FaultReason) -> None:
-        """Retain the closed reason as the exception message."""
-        super().__init__(reason)
-        self.reason = reason
-
-
-@dc.dataclass(frozen=True, slots=True)
-class HeaderRow:
-    """One decoded header row with its original bytes."""
-
-    raw: bytes
-    header: StoreHeader
-
-
-@dc.dataclass(frozen=True, slots=True)
-class RecordRow:
-    """One decoded record row with its original bytes."""
-
-    raw: bytes
-    record: StoreRecord
-
-
-type DocumentRow = HeaderRow | RecordRow
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -158,138 +118,6 @@ class Trim:
         return self.before is None and self.records == 0 and self.allowed_bytes is None
 
 
-class DocumentReader:
-    """Decode one line stream into typed rows, tolerating only a torn tail.
-
-    Parameters
-    ----------
-    stream : LineStream
-        The plain or decompressed line source.
-
-    Attributes
-    ----------
-    header : StoreHeader | None
-        Set once the first row is read.
-    had_torn_tail : bool
-        Whether an unusable final fragment was dropped.
-    """
-
-    def __init__(self, stream: LineStream) -> None:
-        """Bind the line stream without consuming it."""
-        self._stream = stream
-        self.header: StoreHeader | None = None
-        self.had_torn_tail = False
-
-    def __iter__(self) -> cabc.Iterator[DocumentRow]:
-        """Iterate the header then typed rows in document order.
-
-        Yields
-        ------
-        DocumentRow
-            Header and record rows carrying their original bytes.
-
-        Raises
-        ------
-        SegmentFaultError
-            If the header, or a terminated row, is invalid.
-        """
-        iterator = iter(self._stream)
-        first = next(iterator, None)
-        if first is None:
-            raise SegmentFaultError("corrupt")
-        self.header = _decode_header(first)
-        yield HeaderRow(first, self.header)
-        pending: bytes | None = None
-        for raw in iterator:
-            if pending is not None:
-                yield _decode_record(pending)
-            pending = raw
-        yield from self._finish(pending)
-
-    def _finish(self, pending: bytes | None) -> cabc.Iterator[DocumentRow]:
-        """Emit or drop the final row according to stream termination.
-
-        Parameters
-        ----------
-        pending : bytes | None
-            The final row, held back until its newline status is known.
-
-        Yields
-        ------
-        DocumentRow
-            The final row when it decodes and the stream is terminated.
-
-        Raises
-        ------
-        SegmentFaultError
-            If a terminated final row is invalid.
-        """
-        if pending is None:
-            if not self._stream.is_terminated:
-                self.had_torn_tail = True
-            return
-        decoded = outcome_record_codec.decode_record_line(pending)
-        if isinstance(decoded, RecordFailure):
-            if self._stream.is_terminated:
-                raise SegmentFaultError("corrupt")
-            self.had_torn_tail = True
-            return
-        yield RecordRow(pending, decoded)
-        if not self._stream.is_terminated:
-            self.had_torn_tail = True
-
-
-def _decode_header(raw: bytes) -> StoreHeader:
-    """Decode the first row as a supported header.
-
-    Parameters
-    ----------
-    raw : bytes
-        One raw header row.
-
-    Returns
-    -------
-    StoreHeader
-        The typed header.
-
-    Raises
-    ------
-    SegmentFaultError
-        If the row is not a supported header.
-    """
-    decoded = outcome_record_codec.decode_header_line(raw)
-    if isinstance(decoded, RecordFailure):
-        reason: FaultReason = (
-            "version_mismatch" if decoded.reason == "version_mismatch" else "corrupt"
-        )
-        raise SegmentFaultError(reason)
-    return decoded
-
-
-def _decode_record(raw: bytes) -> RecordRow:
-    """Decode one terminated row as a record.
-
-    Parameters
-    ----------
-    raw : bytes
-        One raw record row.
-
-    Returns
-    -------
-    RecordRow
-        The typed row with its original bytes.
-
-    Raises
-    ------
-    SegmentFaultError
-        If the row is not a valid record.
-    """
-    decoded = outcome_record_codec.decode_record_line(raw)
-    if isinstance(decoded, RecordFailure):
-        raise SegmentFaultError("corrupt")
-    return RecordRow(raw, decoded)
-
-
 def scan_archive(stream: LineStream) -> ArchiveFacts:
     """Read one archive or source to its end and prove its contents.
 
@@ -368,7 +196,7 @@ def write_archive(
     --------
     >>> import datetime as dt, io
     >>> header = StoreHeader("s", dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
-    >>> text = outcome_record_codec.encode_line(header) + chr(10)
+    >>> text = outcome_record_encode.encode_line(header) + chr(10)
     >>> source = LineStream(io.BytesIO(text.encode()))
     >>> facts = write_archive(source, io.BytesIO(), preset=0, trim=Trim())
     >>> facts.record_count, facts.salt_id
@@ -387,7 +215,8 @@ def write_archive(
         for row in reader:
             consumed += len(row.raw) + 1
             if isinstance(row, HeaderRow):
-                emitted.push_header(row.raw)
+                # The header belongs in the archive but is not a record.
+                emitted.write(row.raw)
                 continue
             keep = _should_keep(row, trim, seen=seen, consumed=consumed)
             seen += 1
@@ -438,7 +267,13 @@ def _should_keep(row: RecordRow, trim: Trim, *, seen: int, consumed: int) -> boo
         return False
     if trim.allowed_bytes is None:
         return True
-    return trim.source_bytes - consumed <= trim.allowed_bytes
+    # ``consumed`` already includes this row, so add its bytes back: the
+    # suffix that survives is this row plus everything after it, and that
+    # whole suffix must fit the allowance. ``_planned_size`` relies on this
+    # bound, so comparing only the later bytes would overstate freed space by
+    # one row.
+    retained = trim.source_bytes - consumed + len(row.raw) + 1
+    return retained <= trim.allowed_bytes
 
 
 class _Emitted:
@@ -452,20 +287,16 @@ class _Emitted:
         self.logical_bytes = 0
         self.records = 0
 
-    def push_header(self, raw: bytes) -> None:
-        """Write the one header row without counting it as a record."""
-        self._write(raw)
-
     def push_record(self, raw: bytes) -> None:
         """Write one retained record row and count it."""
-        self._write(raw)
+        self.write(raw)
         self.records += 1
 
     def finish(self) -> None:
         """Flush the XZ footer so the archive is a complete stream."""
         self._sink.write(self._compressor.flush())
 
-    def _write(self, raw: bytes) -> None:
+    def write(self, raw: bytes) -> None:
         """Compress and count one newline-terminated row."""
         data = raw + b"\n"
         self._sink.write(self._compressor.compress(data))
