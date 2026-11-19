@@ -17,7 +17,12 @@ from outcome_test_helpers import attributed_record
 
 from buildlimits import outcome_history, outcome_replay_cli
 from buildlimits.outcome_archive import RunOptions, run_archive
-from buildlimits.outcome_record_format import OutcomeRecord, StoreRecord, WindowSummary
+from buildlimits.outcome_record_format import (
+    DecodedStore,
+    OutcomeRecord,
+    StoreRecord,
+    WindowSummary,
+)
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segments import SegmentLayout
 from buildlimits.outcome_store import StoreWriter
@@ -84,7 +89,7 @@ def _window(first: int, count: int) -> WindowSummary:
     Returns
     -------
     WindowSummary
-        The summary, so a test can recognise it among outcome records.
+        The summary, so a test can recognize it among outcome records.
     """
     return WindowSummary(
         observed_at=NOW - dt.timedelta(minutes=first),
@@ -152,7 +157,7 @@ def test_history_reads_archived_and_active_records_in_append_order(
     _archived_segments(store, 3)
     _active_records(store, first=3, count=2)
 
-    active_only = typ.cast("OutcomeRecord", read_store(store))
+    active_only = typ.cast("DecodedStore", read_store(store))
     history = outcome_history.read_history_beside(store)
 
     assert len(active_only.records) == 2, (
@@ -191,7 +196,7 @@ def test_history_defaults_to_the_newest_salt_domain(tmp_path: Path) -> None:
     _write(store, policy, (_window(0, 1), _window(1, 1)))
     (tmp_path / _SALT_NAME).unlink()
     _active_records(store, first=2, count=2)
-    newest_salt = typ.cast("OutcomeRecord", read_store(store)).header.salt_id
+    newest_salt = typ.cast("DecodedStore", read_store(store)).header.salt_id
 
     default = outcome_history.read_history_beside(store)
     selected = outcome_history.read_history_beside(

@@ -12,7 +12,7 @@ records are comparable.
 import dataclasses as dc
 import typing as typ
 
-from buildlimits import outcome_segments
+from buildlimits import outcome_segment_inventory, outcome_segments
 from buildlimits.outcome_archive_verify import (
     DocumentReader,
     HeaderRow,
@@ -207,7 +207,7 @@ def _documents(layout: SegmentLayout) -> cabc.Iterator[_Document]:
     A corrupt or truncated segment surfaces as ``HistoryFaultError`` from the
     per-document decoder.
     """
-    inventory = outcome_segments.read_inventory(layout)
+    inventory = outcome_segment_inventory.read_inventory(layout)
     for entry in inventory.effective:
         try:
             yield _read_document(entry.path, is_compressed=entry.state == "archived")

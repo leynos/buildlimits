@@ -19,7 +19,7 @@ if typ.TYPE_CHECKING:
     import datetime as dt
 
     from buildlimits.outcome_retention import RetentionPolicy
-    from buildlimits.outcome_segments import Inventory, SegmentEntry
+    from buildlimits.outcome_segment_inventory import Inventory, SegmentEntry
 
 __all__ = ["Plan", "PlanSummary", "plan_run"]
 
@@ -175,7 +175,7 @@ def plan_run(
     An empty inventory plans nothing and retains only the active bytes.
     >>> import datetime as dt
     >>> from buildlimits.outcome_retention import RetentionPolicy
-    >>> from buildlimits.outcome_segments import Inventory
+    >>> from buildlimits.outcome_segment_inventory import Inventory
     >>> now = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
     >>> plan_run(Inventory(), RetentionPolicy(), now=now, active_bytes=7).retained_bytes
     7
@@ -306,6 +306,11 @@ def _plan_byte_steps(
     if excess <= 0:
         return
     for entry in candidates:
+        if excess <= 0:
+            # A whole-archive deletion may have met the budget exactly. The
+            # next archive then needs no rewrite, and trimming it to its own
+            # size would churn the file without dropping a row.
+            return
         if entry.sequence in deletes:
             continue
         size = _planned_size(entry, trims.get(entry.sequence))
