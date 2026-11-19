@@ -14,7 +14,7 @@ from buildlimits.utc_text import optional_utc_text, utc_text
 if typ.TYPE_CHECKING:
     import datetime as dt
 
-    from buildlimits.outcome_archive_files import ActionResult
+    from buildlimits.outcome_archive_context import ActionResult
     from buildlimits.outcome_archive_plan import PlanSummary
 
 ARCHIVE_SCHEMA = 1
