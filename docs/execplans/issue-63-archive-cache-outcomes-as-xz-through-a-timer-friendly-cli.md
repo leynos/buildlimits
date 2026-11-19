@@ -116,7 +116,10 @@ verified archive is published, and leaves compile admission untouched.
 - [x] Archive-aware history, replay and dataset integration. `outcome_history`
   reads archived, sealed and active documents in append order; the replay and
   dataset commands gained `--history`, `--salt-id` and `--all-salts`.
-- [ ] Fault, boundary, memory and replay-equivalence tests.
+- [x] Memory tests: the benchmark reports the per-chunk peak, and a traced
+  allocation test holds a multi-megabyte segment under one mebibyte.
+- [x] Benchmark: `make outcome-archive-bench` prints a JSON report.
+- [ ] Fault, boundary and replay-equivalence tests.
 - [ ] Benchmark and documentation (ADR 0010, guides, layout, contents).
 
 ## Surprises & discoveries

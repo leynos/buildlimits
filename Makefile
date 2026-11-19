@@ -75,7 +75,7 @@ FIZZ ?= .tools/fizzbee/fizz
         markdownlint nixie spelling test test-systemd-user test-sccache-host \
         test-kache-host typecheck dead-code duplication install-nose \
         lint-actions validate model-check model-fidelity predict-dataset \
-        predict-benchmark $(TOOLS) $(VENV_TOOLS)
+        predict-benchmark outcome-archive-bench $(TOOLS) $(VENV_TOOLS)
 
 .DEFAULT_GOAL := all
 # Shared build caches require sequential gates even when make receives -j.
@@ -209,6 +209,14 @@ predict-dataset: build ## Snapshot this host's cache-outcome history
 predict-benchmark: build $(PREDICT_SNAPSHOT) ## Compare cache-hit predictors on the snapshot
 	$(UV_ENV) $(UV) run build-limits-predict-benchmark \
 	  --snapshot $(PREDICT_SNAPSHOT) --output $(PREDICT_OUTPUT)
+
+# The archive benchmark compresses one segment and prints the sizes, ratio and
+# streaming peak as JSON. It generates a representative segment when no path is
+# given, and reads a real sealed segment when `SEGMENT=` names one.
+SEGMENT ?=
+
+outcome-archive-bench: build ## Measure archiving one segment in bounded memory
+	$(UV_ENV) $(UV) run python -m buildlimits.outcome_archive_bench $(SEGMENT)
 
 # The model-check opt-in is cleared here so an opt-in left in the calling
 # shell cannot make `make test` depend on the pinned checker being installed.
