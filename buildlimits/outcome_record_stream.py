@@ -30,7 +30,7 @@ type StreamReason = typ.Literal[
 class Readable(typ.Protocol):
     """A binary source the line reader consumes in fixed-size chunks."""
 
-    def read(self, size: int = -1) -> bytes:
+    def read(self, size: int = -1, /) -> bytes:
         """Read up to ``size`` bytes, returning an empty value at end."""
         ...
 

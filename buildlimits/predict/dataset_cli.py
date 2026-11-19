@@ -12,9 +12,10 @@ import sys
 import typing as typ
 from pathlib import Path
 
-from buildlimits import outcome_store_io
+from buildlimits import outcome_history, outcome_store_io
 from buildlimits.metrics_query import MAX_RECORDS, Window, window_seconds
 from buildlimits.metrics_query import query as read_journal
+from buildlimits.outcome_history_args import add_history_arguments, selection_from
 from buildlimits.outcome_record_format import RecordFailure
 from buildlimits.outcome_store_salt import store_path
 from buildlimits.predict.config_loader import load_config as _read_config
@@ -32,6 +33,7 @@ from buildlimits.utc_text import utc_text
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
+    from buildlimits.outcome_history import HistorySelection
     from buildlimits.outcome_record_format import DecodedStore
     from buildlimits.predict.config import Config
 
@@ -82,6 +84,7 @@ def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
         action="store_true",
         help="do not query the user journal at all",
     )
+    add_history_arguments(parser)
     try:
         options = parser.parse_args(argv)
     except SystemExit as error:
@@ -103,7 +106,12 @@ def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    decoded = chosen.read_store(store)
+    selection = selection_from(options)
+    decoded = (
+        chosen.read_store(store)
+        if selection is None
+        else chosen.read_history(store, selection)
+    )
     if isinstance(decoded, int):
         return decoded
     note: JournalProvenance = (
@@ -202,6 +210,34 @@ def _read(store: Path) -> DecodedStore | int:
     return decoded
 
 
+def _read_history(store: Path, selection: HistorySelection) -> DecodedStore | int:
+    """Read retained history across every segment state.
+
+    Parameters
+    ----------
+    store : Path
+        The configured active store path.
+    selection : HistorySelection
+        The salt domain the snapshot should cover.
+
+    Returns
+    -------
+    DecodedStore | int
+        An exit status on failure, otherwise the decoded history.
+    """
+    try:
+        return outcome_history.read_history_beside(store, selection)
+    except outcome_history.HistoryFaultError as fault:
+        print(
+            f"build-limits-predict-dataset: the history was rejected as {fault.reason}",
+            file=sys.stderr,
+        )
+        return 1
+    except (OSError, ValueError) as error:
+        print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
+        return 1
+
+
 def _journal_window(since: str) -> Window:
     """Ask the user journal for its most recent records.
 
@@ -295,7 +331,10 @@ class Edges:
     now : Callable[[], datetime]
         The clock the snapshot records.
     read_store : Callable[[Path], DecodedStore | int]
-        Reads the outcome store, or returns an exit status on failure.
+        Reads the active outcome store, or returns an exit status on failure.
+    read_history : Callable[[Path, HistorySelection], DecodedStore | int]
+        Reads archived, sealed and active history for one salt domain, or
+        returns an exit status on failure.
     write_snapshot : Callable[[Snapshot, Path], int]
         Writes the snapshot and reports what it holds.
     resolve_store : Callable[[Path | None], Path]
@@ -310,6 +349,9 @@ class Edges:
     journal: cabc.Callable[[str], Window] = _journal_window
     now: cabc.Callable[[], dt.datetime] = _utc_now
     read_store: cabc.Callable[[Path], DecodedStore | int] = _read
+    read_history: cabc.Callable[[Path, HistorySelection], DecodedStore | int] = (
+        _read_history
+    )
     write_snapshot: cabc.Callable[[Snapshot, Path], int] = _write
     resolve_store: cabc.Callable[[Path | None], Path] = _store_path
     load_config: cabc.Callable[[], Config] = _read_config

@@ -108,9 +108,14 @@ verified archive is published, and leaves compile admission untouched.
   publishes the sequence counter and sidecar metadata before the rename, emits
   `seal`/`seal_failed`/`archive_backlog`, and keeps the legacy module bounds
   live when no policy is configured. Focused store tests pass.
-- [ ] Archiver, verification, publication and retention execution.
-- [ ] Timer-friendly CLI and systemd examples.
-- [ ] Archive-aware history, replay and dataset integration.
+- [x] Archiver, verification, publication and retention execution. A run
+  reconciles, archives, heals, trims and deletes under the private lock, then
+  replans over the settled store so one run leaves the byte budget true.
+- [x] Timer-friendly CLI. `build-limits-outcome-archive run|inspect` reports
+  bounded status lines or JSON and exits 0/1/2/3/75.
+- [x] Archive-aware history, replay and dataset integration. `outcome_history`
+  reads archived, sealed and active documents in append order; the replay and
+  dataset commands gained `--history`, `--salt-id` and `--all-salts`.
 - [ ] Fault, boundary, memory and replay-equivalence tests.
 - [ ] Benchmark and documentation (ADR 0010, guides, layout, contents).
 
@@ -125,6 +130,12 @@ verified archive is published, and leaves compile admission untouched.
 - The writer's default policy is built on each access from the documented
   `outcome_records` bounds. Snapshotting it at construction froze the limits
   and made the existing high-water-mark test unable to shrink the bound.
+- A record offered to a writer whose startup has not settled is discarded as
+  `save_failed`. Tests that build a segmented store must wait for the startup
+  `load` result before appending, exactly as the writer's own tests do.
+- The first `seal` of an empty store must not claim a sequence, or the store
+  would begin with a permanent gap. The writer installs a header-only active
+  file instead.
 
 ## Decision log
 
@@ -145,6 +156,9 @@ verified archive is published, and leaves compile admission untouched.
 - History defaults to the newest salt domain and supports explicit selection
   or all salts. H2 remains a two-pass evaluation over a re-iterable stream that
   retains only per-key state; H3 consumes one pass.
+- `--salt-id` and `--all-salts` imply history mode, while no flag keeps each
+  command reading only the active store, so existing invocations are unchanged.
+  Both commands share the option definitions in `outcome_history_args`.
 
 ## Outcomes & retrospective
 

@@ -7,7 +7,8 @@ import sys
 import typing as typ
 from pathlib import Path
 
-from buildlimits import outcome_records, outcome_replay
+from buildlimits import outcome_history, outcome_records, outcome_replay
+from buildlimits.outcome_history_args import add_history_arguments, selection_from
 from buildlimits.outcome_store_io import read_store
 from buildlimits.outcome_store_salt import store_path
 
@@ -25,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("hypothesis", choices=("h2", "h3"))
     parser.add_argument("--store", type=Path, help="read this store instead")
     parser.add_argument("--json", action="store_true", help="print JSON output")
+    add_history_arguments(parser)
     try:
         options = parser.parse_args(argv)
     except SystemExit as error:
@@ -33,14 +35,24 @@ def main(argv: list[str] | None = None) -> int:
         path = options.store if options.store is not None else store_path(os.environ)
     except OSError, ValueError:
         return _write_failure("unreadable", as_json=options.json)
+    selection = selection_from(options)
     try:
-        decoded = read_store(path)
+        decoded = (
+            read_store(path)
+            if selection is None
+            else outcome_history.read_history_beside(path, selection)
+        )
     except FileNotFoundError:
         report = _empty_report(options.hypothesis)
         _write_report(report, as_json=options.json)
         return 0
-    except OSError:
-        return _write_failure("unreadable", as_json=options.json)
+    except (outcome_history.HistoryFaultError, OSError) as error:
+        reason = (
+            error.reason
+            if isinstance(error, outcome_history.HistoryFaultError)
+            else "unreadable"
+        )
+        return _write_failure(reason, as_json=options.json)
     if isinstance(decoded, outcome_records.RecordFailure):
         return _write_failure(decoded.reason, as_json=options.json)
     report = (
