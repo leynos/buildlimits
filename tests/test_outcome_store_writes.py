@@ -19,7 +19,7 @@ from outcome_store_helpers import (
     worker_exited,
 )
 
-from buildlimits import outcome_store, outcome_store_io
+from buildlimits import outcome_store, outcome_store_io, outcome_store_state
 from buildlimits.outcome_ports import StoreResult
 
 
@@ -117,7 +117,7 @@ def test_failed_append_keeps_the_previous_store_readable(tmp_path: Path) -> None
     with running_writer(path) as writer:
         append_and_wait(writer, original)
         with mock.patch.object(
-            outcome_store, "_append_line", side_effect=OSError("disk full")
+            outcome_store_state, "append_line", side_effect=OSError("disk full")
         ):
             writer.append(window_summary(server_version="0.15.0"))
             results = wait_for_results(writer, operation="append", reason="save_failed")

@@ -10,7 +10,7 @@ from unittest import mock
 
 import pytest
 
-from buildlimits import outcome_records, outcome_store
+from buildlimits import outcome_records, outcome_store_state
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_record_format import WindowSummary
 from buildlimits.outcome_store import StoreWriter
@@ -373,7 +373,7 @@ def stalled_append() -> cabc.Generator[tuple[threading.Event, threading.Event]]:
     """
     entered = threading.Event()
     release = threading.Event()
-    append_line = outcome_store._append_line
+    append_line = outcome_store_state.append_line
 
     def stall(store: Path, line: bytes) -> None:
         """Delay the first append before calling the underlying writer."""
@@ -383,7 +383,7 @@ def stalled_append() -> cabc.Generator[tuple[threading.Event, threading.Event]]:
         append_line(store, line)
 
     try:
-        with mock.patch.object(outcome_store, "_append_line", side_effect=stall):
+        with mock.patch.object(outcome_store_state, "append_line", side_effect=stall):
             yield entered, release
     finally:
         release.set()

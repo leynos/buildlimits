@@ -27,7 +27,11 @@ from outcome_store_helpers import wait_for_salt as _wait_for_salt
 from outcome_store_helpers import window_summary as _window_summary
 from outcome_store_helpers import write_private_file as _write_private_file
 
-from buildlimits import outcome_records, outcome_store, outcome_store_io
+from buildlimits import (
+    outcome_records,
+    outcome_store_io,
+    outcome_store_state,
+)
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_record_format import StoreHeader, StoreRecord, WindowSummary
@@ -176,7 +180,7 @@ def test_compaction_failure_obeys_the_16_mib_hard_limit(
             mock.patch.object(outcome_records, "MAX_COMPACT_BYTES", prior_size - 1),
             mock.patch.object(outcome_records, "MAX_STORE_BYTES", hard_limit),
             mock.patch.object(
-                outcome_store, "_replace_store", side_effect=OSError("disk full")
+                outcome_store_state, "replace_store", side_effect=OSError("disk full")
             ),
         ):
             writer.append(new_record)
@@ -261,7 +265,7 @@ def test_startup_compaction_is_retried_before_appending_after_failure(
     )
     appended = _window_summary(server_version="0.14.0")
 
-    replace_store = outcome_store._replace_store
+    replace_store = outcome_store_state.replace_store
     compaction_attempts = 0
 
     def fail_first_compaction(
@@ -277,7 +281,7 @@ def test_startup_compaction_is_retried_before_appending_after_failure(
         replace_store(store_path, header, records)
 
     with mock.patch.object(
-        outcome_store, "_replace_store", side_effect=fail_first_compaction
+        outcome_store_state, "replace_store", side_effect=fail_first_compaction
     ):
         writer = _start_writer(path)
         try:
