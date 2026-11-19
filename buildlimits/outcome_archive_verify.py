@@ -96,7 +96,9 @@ class Trim:
     records : int
         Drop this many leading rows regardless of time.
     allowed_bytes : int | None
-        Keep at most this many logical bytes, dropping leading rows.
+        Keep at most this many logical bytes, dropping leading rows. The
+        header is always written and counts against the allowance, because
+        the plan compares this bound with ``ArchiveFacts.logical_bytes``.
     source_bytes : int
         Original logical size, needed to honour ``allowed_bytes`` exactly.
     """
@@ -210,19 +212,19 @@ def write_archive(
     )
     emitted = _Emitted(sink, compressor)
     seen = 0
-    consumed = 0
+    dropped = 0
     first: dt.datetime | None = None
     last: dt.datetime | None = None
     try:
         for row in reader:
-            consumed += len(row.raw) + 1
             if isinstance(row, HeaderRow):
                 # The header belongs in the archive but is not a record.
                 emitted.write(row.raw)
                 continue
-            keep = _should_keep(row, trim, seen=seen, consumed=consumed)
+            keep = _should_keep(row, trim, seen=seen, dropped=dropped)
             seen += 1
             if not keep:
+                dropped += len(row.raw) + 1
                 continue
             emitted.push_record(row.raw)
             observed = row.record.observed_at
@@ -244,7 +246,7 @@ def write_archive(
     )
 
 
-def _should_keep(row: RecordRow, trim: Trim, *, seen: int, consumed: int) -> bool:
+def _should_keep(row: RecordRow, trim: Trim, *, seen: int, dropped: int) -> bool:
     """Decide whether one record survives the prefix trim.
 
     Parameters
@@ -255,8 +257,8 @@ def _should_keep(row: RecordRow, trim: Trim, *, seen: int, consumed: int) -> boo
         The prefix policy.
     seen : int
         Records already decided, used by the explicit count trim.
-    consumed : int
-        Source bytes represented by this row and everything before it.
+    dropped : int
+        Bytes of the records already rejected by this trim.
 
     Returns
     -------
@@ -269,12 +271,12 @@ def _should_keep(row: RecordRow, trim: Trim, *, seen: int, consumed: int) -> boo
         return False
     if trim.allowed_bytes is None:
         return True
-    # ``consumed`` already includes this row, so add its bytes back: the
-    # suffix that survives is this row plus everything after it, and that
-    # whole suffix must fit the allowance. ``_planned_size`` relies on this
-    # bound, so comparing only the later bytes would overstate freed space by
-    # one row.
-    retained = trim.source_bytes - consumed + len(row.raw) + 1
+    # The header is always written, so what a trim frees is exactly the rows
+    # it drops. Keeping this row and every later one writes everything except
+    # the dropped prefix, and that whole document must fit the allowance.
+    # ``_planned_size`` relies on this bound, so counting only the later rows
+    # would overstate the space the plan expects to free.
+    retained = trim.source_bytes - dropped
     return retained <= trim.allowed_bytes
 
 

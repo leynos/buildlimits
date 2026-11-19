@@ -251,31 +251,36 @@ def test_an_age_trim_keeps_the_record_at_the_cutoff() -> None:
 
 
 def test_a_byte_trim_keeps_a_suffix_within_its_allowance() -> None:
-    """The allowed size is the retained suffix, boundary included."""
+    """The allowed size is the whole written document, header included."""
     document = encode_document(_records(3))
+    header_bytes = len(_row(document, 0))
     last_row_bytes = len(_row(document, 3))
 
     facts, archived = _write(
         document,
-        Trim(allowed_bytes=last_row_bytes, source_bytes=len(document)),
+        Trim(allowed_bytes=header_bytes + last_row_bytes, source_bytes=len(document)),
     )
 
     assert archived == _row(document, 0) + _row(document, 3), (
         "the largest suffix that fits the allowance is kept"
     )
-    assert facts.logical_bytes == last_row_bytes + len(_row(document, 0)), (
-        "the reported size is the written size"
+    assert facts.logical_bytes == header_bytes + last_row_bytes, (
+        "the allowance is measured in the bytes the archive actually holds"
     )
 
 
-def test_one_byte_below_the_row_size_drops_the_whole_suffix() -> None:
+def test_one_byte_below_the_document_size_drops_the_whole_suffix() -> None:
     """The boundary is inclusive: an allowance one byte short keeps nothing."""
     document = encode_document(_records(2))
+    header_bytes = len(_row(document, 0))
     last_row_bytes = len(_row(document, 2))
 
     facts, archived = _write(
         document,
-        Trim(allowed_bytes=last_row_bytes - 1, source_bytes=len(document)),
+        Trim(
+            allowed_bytes=header_bytes + last_row_bytes - 1,
+            source_bytes=len(document),
+        ),
     )
 
     assert archived == _row(document, 0), "no record fits the allowance"

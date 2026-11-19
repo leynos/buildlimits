@@ -16,7 +16,7 @@ from outcome_archive_helpers import write as write_store
 from outcome_test_helpers import attributed_record
 from segment_test_helpers import history_policy
 
-from buildlimits import outcome_history, outcome_replay_cli
+from buildlimits import outcome_history, outcome_replay_cli, outcome_segment_inventory
 from buildlimits.outcome_archive import RunOptions, run_archive
 from buildlimits.outcome_record_format import (
     DecodedStore,
@@ -24,7 +24,7 @@ from buildlimits.outcome_record_format import (
     StoreRecord,
     WindowSummary,
 )
-from buildlimits.outcome_segments import SegmentLayout
+from buildlimits.outcome_segments import SegmentLayout, archive_name
 from buildlimits.outcome_store_io import read_store
 from buildlimits.predict import dataset_cli
 from buildlimits.predict.snapshot_store import load_snapshot
@@ -113,25 +113,62 @@ def test_history_reads_archived_and_active_records_in_append_order(
     ), "history reads archived rows before active rows without a gap"
 
 
-def test_history_reads_a_sealed_source_before_its_archive(
+def _archived_store_with_source(
     tmp_path: Path,
-) -> None:
-    """A sealed source that survived a crash is read instead of its archive."""
+) -> tuple[Path, SegmentLayout, Path]:
+    """Archive a store and rebuild the sealed source beside its archive.
+
+    The rebuild restores the state a crash can leave behind: an archive
+    published while its sealed source still exists, which the next scan lists
+    as a duplicate.
+
+    Returns
+    -------
+    tuple[Path, SegmentLayout, Path]
+        The store path, its layout, and the rebuilt sealed source.
+    """
     store = tmp_path / "cache-outcomes.jsonl"
     policy = history_policy(1)
     write_store(store, _records(0, 2), policy)
     layout = SegmentLayout.beside(store)
     run_archive(layout, policy, RunOptions(now=NOW))
-    archive = next(layout.archive_dir.glob("*.jsonl.xz"))
+    archive = layout.archive_dir / archive_name(1)
     source = layout.sealed_dir / archive.name.removesuffix(".xz")
     source.write_bytes(lzma.decompress(archive.read_bytes()))
     source.chmod(0o600)
+    return store, layout, source
+
+
+def test_history_reads_a_sealed_source_before_its_archive(
+    tmp_path: Path,
+) -> None:
+    """A sealed source that survived a crash is read instead of its archive."""
+    store, _layout, _source = _archived_store_with_source(tmp_path)
 
     history = outcome_history.read_history_beside(store)
 
     assert len(history.records) == 2, (
         "reading the surviving sealed source does not duplicate its archived copy"
     )
+
+
+def test_a_source_removed_after_the_scan_is_read_from_its_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scan that lists a source the archiver then removes loses no rows."""
+    store, layout, source = _archived_store_with_source(tmp_path)
+    scanned = outcome_segment_inventory.read_inventory(layout)
+    source.unlink()
+    monkeypatch.setattr(
+        outcome_segment_inventory, "read_inventory", lambda _layout: scanned
+    )
+
+    history = outcome_history.read_history_beside(store)
+
+    assert _observed(history.records) == (
+        NOW,
+        NOW - dt.timedelta(minutes=1),
+    ), "the vanished source's rows come from the archive that replaced it"
 
 
 def test_history_defaults_to_the_newest_salt_domain(tmp_path: Path) -> None:

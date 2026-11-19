@@ -16,6 +16,8 @@ import dataclasses as dc
 import datetime as dt
 import typing as typ
 
+from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
+
 SEGMENT_BYTES = 12 * 1024 * 1024
 """The active file's high-water mark before the writer seals it."""
 
@@ -247,7 +249,8 @@ def validate_policy(policy: RetentionPolicy) -> None:
     Raises
     ------
     ValueError
-        If a bound is negative, overflows the policy range, or the temporary
+        If a bound is negative, overflows the policy range, the segment is
+        larger than an in-place compaction can write, or the temporary
         headroom cannot hold one maximal segment.
     """
     _require_range("max_bytes", policy.max_bytes)
@@ -255,6 +258,11 @@ def validate_policy(policy: RetentionPolicy) -> None:
     _require_range("segment_bytes", policy.segment_bytes)
     if policy.segment_bytes <= 0:
         msg = "segment_bytes must be positive"
+        raise ValueError(msg)
+    if policy.segment_bytes > MAX_COMPACT_BYTES:
+        # Legacy mode compacts in place under this bound. A larger active file
+        # would make every compaction fail, so the policy is refused instead.
+        msg = "segment_bytes exceeds the largest compactable document"
         raise ValueError(msg)
     if policy.headroom_bytes < policy.segment_bytes:
         msg = "headroom_bytes must hold at least one segment"

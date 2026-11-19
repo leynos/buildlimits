@@ -5,6 +5,7 @@ store writer and salt adapter, not a standalone public API.
 """
 
 import contextlib
+import errno
 import json
 import os
 import stat
@@ -44,6 +45,10 @@ def append_line(path: Path, line: bytes) -> None:
         os.close(descriptor)
 
 
+class _OversizedError(OSError):
+    """A private file grew past the caller's read bound."""
+
+
 def read_store(
     path: Path,
 ) -> outcome_records.DecodedStore | outcome_records.RecordFailure:
@@ -55,14 +60,9 @@ def read_store(
         Validated store rows or the closed corruption/version result.
 
     """
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor, metadata = open_private_regular(path, flags, enforce_mode=False)
-    if metadata.st_size > outcome_records.MAX_STORE_BYTES:
-        os.close(descriptor)
-        return outcome_records.RecordFailure("corrupt")
-    with os.fdopen(descriptor, "rb") as source:
-        document = source.read(outcome_records.MAX_STORE_BYTES + 1)
-    if len(document) > outcome_records.MAX_STORE_BYTES:
+    try:
+        document = read_private_bytes(path, limit=outcome_records.MAX_STORE_BYTES)
+    except _OversizedError:
         return outcome_records.RecordFailure("corrupt")
     try:
         complete_document = document[: document.rfind(b"\n") + 1]
@@ -71,6 +71,43 @@ def read_store(
         return outcome_records.decode_lines(complete_document.decode("utf-8"))
     except UnicodeError:
         return outcome_records.RecordFailure("corrupt")
+
+
+def read_private_bytes(path: Path, *, limit: int) -> bytes:
+    """Read one private regular file entirely, refusing anything over ``limit``.
+
+    The file is opened without following links and its size is checked both
+    from the descriptor's metadata and from the bytes actually read, so a file
+    that grows while it is read cannot exceed the caller's bound either.
+    Filesystem failures other than an oversized file propagate as ``OSError``.
+
+    Parameters
+    ----------
+    path : Path
+        The private regular file to read.
+    limit : int
+        The largest permitted size in bytes.
+
+    Returns
+    -------
+    bytes
+        The file's contents.
+
+    Raises
+    ------
+    _OversizedError
+        If the file's size, measured either way, exceeds ``limit``.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor, metadata = open_private_regular(path, flags, enforce_mode=False)
+    if metadata.st_size > limit:
+        os.close(descriptor)
+        raise _OversizedError(errno.EFBIG, "file exceeds its read bound")
+    with os.fdopen(descriptor, "rb") as source:
+        data = source.read(limit + 1)
+    if len(data) > limit:
+        raise _OversizedError(errno.EFBIG, "file exceeds its read bound")
+    return data
 
 
 def store_size(path: Path) -> int:
@@ -203,15 +240,44 @@ def prepare_store(path: Path, header: outcome_records.StoreHeader) -> Path:
     return write_private_temporary(path, document, suffix=".new")
 
 
-def seal_active(active: Path, destination: Path) -> None:
-    """Rename the active store into the sealed directory and sync both.
+def move_aside(path: Path) -> bool:
+    """Move a rejected store to its ``.bad`` sibling without replacing one.
 
-    Filesystem failures propagate as ``OSError``; the caller reports them as a
-    failed seal and retries after the next append.
+    Parameters
+    ----------
+    path : Path
+        The unreadable store.
+
+    Returns
+    -------
+    bool
+        Whether the file was moved aside. ``False`` means a backup already
+        exists or the rename failed, so the rejected data must be reported
+        rather than silently overwritten.
     """
-    active.replace(destination)
-    fsync_directory(destination.parent)
-    fsync_directory(active.parent)
+    backup = path.with_name(f"{path.name}.bad")
+    try:
+        backup.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        return False
+    try:
+        path.replace(backup)
+    except OSError:
+        return False
+    return True
+
+
+def sync_rename(first: Path, second: Path) -> None:
+    """Make a completed cross-directory rename durable in both directories.
+
+    Filesystem failures propagate as ``OSError``. The rename itself has
+    already happened, so the caller reports the durability fault without
+    pretending the rows are still active.
+    """
+    fsync_directory(first)
+    fsync_directory(second)
 
 
 def ensure_directory(path: Path) -> None:

@@ -58,7 +58,22 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         settings = config.load(options.config)
         layout = SegmentLayout.beside(_store(options.store))
         policy = policy_from_settings(settings)
-    except (config.ConfigError, OSError, ValueError) as error:
+    except config.ConfigError as error:
+        # An unreadable configuration is the one documented path exception: the
+        # operator must learn which file failed before any report exists.
+        print(f"build-limits-outcome-archive: {error}", file=sys.stderr)
+        return EXIT_USAGE
+    except OSError as error:
+        # ``strerror`` never carries the file name, so a store fault stays
+        # free of host-specific detail in a timer's journal.
+        print(
+            f"build-limits-outcome-archive: {error.strerror or 'store is unreadable'}",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    except ValueError as error:
+        # Store and policy failures carry a closed message this package
+        # authored, which names the missing setting rather than a path.
         print(f"build-limits-outcome-archive: {error}", file=sys.stderr)
         return EXIT_USAGE
     report = _report(options, layout, settings, policy)
@@ -110,11 +125,13 @@ def _store(explicit: Path | None) -> Path:
     Returns
     -------
     Path
-        The configured ``cache-outcomes.jsonl`` path. A ``ValueError`` from
+        The configured ``cache-outcomes.jsonl`` path as an absolute path, so a
+        relative ``--store`` resolves against the process working directory
+        exactly as the layout beside it does. A ``ValueError`` from
         ``store_path`` propagates when the environment names no usable root.
     """
     if explicit is not None:
-        return explicit
+        return explicit.absolute()
     return store_path(os.environ)
 
 

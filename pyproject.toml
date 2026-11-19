@@ -2209,3 +2209,10 @@ reason = "Both spans are the same min/max update: one counts a source as it scan
 [[tool.duplication_gate.allow]]
 unit = "tests/test_outcome_archive_fs.py"
 reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_predict_dataset.py::refuse",
+    "tests/test_outcome_archive.py::refuse",
+]
+reason = "Two three-line fault stubs that raise the same error through different seams: one replaces `Path.replace` while a snapshot is written, the other replaces the archive's quarantine call. The signatures, the patched targets and the behaviour under test differ, so a shared helper would hide which seam each test forces to fail."

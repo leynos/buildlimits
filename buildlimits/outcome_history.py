@@ -21,7 +21,7 @@ from buildlimits.outcome_archive_verify import (
 )
 from buildlimits.outcome_record_format import DecodedStore
 from buildlimits.outcome_record_stream import LineStream, StreamFaultError
-from buildlimits.outcome_segments import SegmentLayout
+from buildlimits.outcome_segments import SegmentLayout, archive_name
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -199,23 +199,36 @@ def _records(documents: cabc.Iterable[_Document]) -> tuple[StoreRecord, ...]:
 def _documents(layout: SegmentLayout) -> cabc.Iterator[_Document]:
     """Iterate one decoded document per retained segment, oldest first.
 
+    A corrupt or truncated segment surfaces as ``HistoryFaultError`` from the
+    per-document decoder.
+
     Yields
     ------
     _Document
         The segment's header and records.
 
-    A corrupt or truncated segment surfaces as ``HistoryFaultError`` from the
-    per-document decoder.
+    Raises
+    ------
+    FileNotFoundError
+        When an entry the scan reported as archived has since disappeared.
+        A sealed source is different: its archive stands in for the removed
+        name, so only an already-archived path is re-raised.
     """
     inventory = outcome_segment_inventory.read_inventory(layout)
     for entry in inventory.effective:
         try:
             yield _read_document(entry.path, is_compressed=entry.state == "archived")
         except FileNotFoundError:
-            # The archiver may have removed this source after publishing its
-            # archive, which the inventory scan did not list yet. A later read
-            # sees the archive; skipping the vanished name keeps this one quick.
-            continue
+            # The archiver may have removed this sealed source after
+            # publishing its archive, which the scan did not list yet. Read
+            # the archive it was replaced by so the segment's rows survive;
+            # skipping the vanished name would silently shorten history.
+            if entry.state == "archived":
+                raise
+            yield _read_document(
+                layout.archive_dir / archive_name(entry.sequence),
+                is_compressed=True,
+            )
     if layout.active.exists():
         yield _read_document(layout.active, is_compressed=False)
 
@@ -240,15 +253,19 @@ def _read_document(path: Path, *, is_compressed: bool) -> _Document:
     HistoryFaultError
         If the stream or a row is invalid.
     """
+    header: StoreHeader | None = None
+    records: list[StoreRecord] = []
     try:
         with path.open("rb") as source:
-            rows = tuple(
-                DocumentReader(LineStream(source, is_compressed=is_compressed))
-            )
+            rows = DocumentReader(LineStream(source, is_compressed=is_compressed))
+            for row in rows:
+                match row:
+                    case HeaderRow(header=first) if header is None:
+                        header = first
+                    case RecordRow(record=record):
+                        records.append(record)
     except (SegmentFaultError, StreamFaultError) as error:
         raise HistoryFaultError(str(error.reason)) from error
-    header = next((row.header for row in rows if isinstance(row, HeaderRow)), None)
     if header is None:
         raise HistoryFaultError("corrupt")
-    records = tuple(row.record for row in rows if isinstance(row, RecordRow))
-    return _Document(header, records)
+    return _Document(header, tuple(records))

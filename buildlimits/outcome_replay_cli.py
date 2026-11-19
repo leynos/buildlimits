@@ -35,6 +35,17 @@ def main(argv: list[str] | None = None) -> int:
         path = options.store if options.store is not None else store_path(os.environ)
     except OSError, ValueError:
         return _write_failure("unreadable", as_json=options.json)
+    return _run(options, path)
+
+
+def _run(options: argparse.Namespace, path: Path) -> int:
+    """Read one history and print its report or its closed failure.
+
+    Returns
+    -------
+    int
+        Zero for a report, otherwise the bounded unreadable-store status.
+    """
     selection = selection_from(options)
     try:
         decoded = (
@@ -46,13 +57,10 @@ def main(argv: list[str] | None = None) -> int:
         report = _empty_report(options.hypothesis)
         _write_report(report, as_json=options.json)
         return 0
-    except (outcome_history.HistoryFaultError, OSError) as error:
-        reason = (
-            error.reason
-            if isinstance(error, outcome_history.HistoryFaultError)
-            else "unreadable"
-        )
-        return _write_failure(reason, as_json=options.json)
+    except outcome_history.HistoryFaultError as error:
+        return _write_failure(error.reason, as_json=options.json)
+    except OSError:
+        return _write_failure("unreadable", as_json=options.json)
     if isinstance(decoded, outcome_records.RecordFailure):
         return _write_failure(decoded.reason, as_json=options.json)
     report = (

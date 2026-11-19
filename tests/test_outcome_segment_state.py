@@ -47,6 +47,16 @@ def test_a_directory_is_not_a_sequence_counter(tmp_path: Path) -> None:
         read_sequence(tmp_path / "cache-outcomes.seq")
 
 
+def test_a_symlinked_counter_is_a_fault(tmp_path: Path) -> None:
+    """A link out of the store is never followed to read the counter."""
+    target = write_private(tmp_path / "elsewhere.seq", b"12\n")
+    path = tmp_path / "cache-outcomes.seq"
+    path.symlink_to(target)
+
+    with pytest.raises(ValueError, match="sequence counter"):
+        read_sequence(path)
+
+
 def test_retention_floor_is_read_from_state(tmp_path: Path) -> None:
     """The last successful run's floor survives a later read."""
     layout = store_layout(tmp_path)
@@ -73,3 +83,11 @@ def test_unusable_retention_state_is_ignored(tmp_path: Path, document: bytes) ->
     write_private(layout.retention_file, document)
 
     assert read_retention_floor(layout) is None, "no floor is trusted from damage"
+
+
+def test_an_oversized_retention_record_is_not_read(tmp_path: Path) -> None:
+    """A huge file in the state directory cannot be pulled into memory."""
+    layout = store_layout(tmp_path)
+    write_private(layout.retention_file, b" " * (4096 + 1))
+
+    assert read_retention_floor(layout) is None, "the record is refused unread"

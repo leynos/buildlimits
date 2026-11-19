@@ -110,6 +110,30 @@ def wait_for_results(
     return pytest.fail(f"writer did not report {operation} with reason {reason!r}")
 
 
+def close_writer(writer: StoreWriter, timeout: float = 2.0) -> None:
+    """Close one test writer and require its worker to stop.
+
+    A close that only expires its caller's bound can leave a write running
+    after the test ends, where it is charged to an unrelated test. Requiring
+    the worker to exit makes that fault visible in the test that caused it.
+
+    Parameters
+    ----------
+    writer : StoreWriter
+        The writer to close.
+    timeout : float
+        Seconds to allow the worker to stop.
+
+    Examples
+    --------
+    ``close_writer(writer)`` fails the current test if the worker is still
+    running afterwards.
+    """
+    writer.close(timeout)
+    if not worker_exited(writer, max(timeout, 1.0)):
+        pytest.fail("the writer worker did not stop within its bound")
+
+
 def worker_exited(writer: StoreWriter, timeout: float) -> bool:
     """Wait until the writer's worker has stopped, bounded by ``timeout``.
 

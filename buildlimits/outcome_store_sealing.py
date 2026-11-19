@@ -15,8 +15,8 @@ from buildlimits.outcome_store_io import (
     ensure_directory,
     prepare_store,
     replace_temp,
-    seal_active,
     store_size,
+    sync_rename,
     write_metadata,
     write_sequence,
 )
@@ -69,15 +69,17 @@ def seal(files: StoreFiles, *, salt_id: str | None = None) -> bool:
         domain = salt.salt_id if salt_id is None else salt_id
         metadata = sealed_metadata(files.records, sequence, domain, now)
         destination = files.sealed_dir / outcome_segments.segment_name(sequence)
-        write_sealing_state(files, sequence, destination, metadata)
-        released = len(files.records)
-        files.records = []
-        files.header = outcome_records.StoreHeader(salt.salt_id, now)
-        installed = restart_active(files)
+        moved = write_sealing_state(files, sequence, destination, metadata)
     except OSError, ValueError, TypeError, UnicodeError, OverflowError:
         files.publish("seal", "save_failed")
         return False
-    if not installed:
+    # The rows have left the active file, so the writer must stop treating
+    # them as active even if the steps that follow fail.
+    released = len(files.records)
+    files.records = []
+    files.header = outcome_records.StoreHeader(salt.salt_id, now)
+    installed = restart_active(files)
+    if not (installed and (not moved or _sync_sealed(files))):
         files.publish("seal", "save_failed", records=released)
         return False
     files.needs_compaction = False
@@ -153,8 +155,15 @@ def write_sealing_state(
     sequence: int,
     destination: Path,
     metadata: dict[str, object],
-) -> None:
+) -> bool:
     """Publish the sequence and metadata, then move the active file.
+
+    Returns
+    -------
+    bool
+        Whether the active file was renamed into the sealed directory. The
+        caller resets its rows either way, but only a rename needs its
+        directory entry synced afterwards.
 
     Raises
     ------
@@ -166,13 +175,32 @@ def write_sealing_state(
         files.sealed_dir / outcome_segments.sealed_meta_name(sequence), metadata
     )
     if store_has_rows(files.path):
-        seal_active(files.path, destination)
-        return
+        # The rename is kept separate from the directory sync so the caller can
+        # reset its rows as soon as they have left the active file. A rename
+        # failure propagates as ``OSError`` and leaves the source in place.
+        files.path.replace(destination)
+        return True
     header = files.header
     if header is None:
         msg = "an active header is required to seal"
         raise RuntimeError(msg)
     replace_temp(prepare_store(files.path, header), files.path)
+    return False
+
+
+def _sync_sealed(files: StoreFiles) -> bool:
+    """Make a completed rename durable across both directories.
+
+    Returns
+    -------
+    bool
+        Whether both directory entries were synced.
+    """
+    try:
+        sync_rename(files.sealed_dir, files.path.parent)
+    except OSError:
+        return False
+    return True
 
 
 def store_has_rows(path: Path) -> bool:

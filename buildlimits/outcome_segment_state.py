@@ -10,12 +10,17 @@ import os
 import stat
 import typing as typ
 
+from buildlimits.outcome_store_io import read_private_bytes
+
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.outcome_segments import SegmentLayout
 
 _MAX_SEQUENCE_TEXT = 32
+# The retention record is a handful of JSON fields; anything larger is not
+# state this code wrote and must not be read into memory.
+_MAX_STATE_BYTES = 4096
 
 __all__ = ["read_retention_floor", "read_sequence"]
 
@@ -44,6 +49,12 @@ def read_sequence(path: Path) -> int | None:
         descriptor = os.open(path, flags)
     except FileNotFoundError:
         return None
+    except OSError as error:
+        # A link, a permission fault or unreadable state is damage, not a
+        # missing counter: report the same closed fault as a non-regular file
+        # so the caller falls back to the sealed directory.
+        msg = "sequence counter is not readable"
+        raise ValueError(msg) from error
     try:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
@@ -80,7 +91,7 @@ def read_retention_floor(layout: SegmentLayout) -> int | None:
         The lowest retained sequence, or None when no valid state exists.
     """
     try:
-        raw = layout.retention_file.read_bytes()
+        raw = read_private_bytes(layout.retention_file, limit=_MAX_STATE_BYTES)
     except OSError:
         return None
     try:

@@ -146,6 +146,24 @@ verified archive is published, and leaves compile admission untouched.
   `main`. GitHub reports no checks configured for the branch, so the local
   gates above are the acceptance evidence. The first CodeRabbit pass returned
   its review rate-limit response; retries continue under `scrutineer`.
+- [x] Review remediation (2026-11-19): every CodeRabbit finding is implemented
+  and checked against the source before changing it. Inventory listing failures
+  now propagate instead of reading as an empty store; a sealed source removed
+  after the scan is read from the archive that replaced it; the archive CLI
+  prints `strerror` rather than a path; the benchmark measures a supplied
+  segment and generates a header row; the replay CLI reports store faults
+  separately; trim accounting counts dropped bytes so the header is inside the
+  allowance; the retention policy refuses a segment larger than the compaction
+  bound; a seal whose directory sync fails keeps its rows closed; and sidecars,
+  retention state and the sequence counter are read through the private,
+  bounded reader.
+- [x] Test hardening (2026-11-19): sidecar symlinks and oversized sidecars and
+  retention records are corrupt or absent rather than readable; the sequence
+  counter reports a link or permission fault; the published sidecar has exactly
+  the fifteen documented fields; the benchmark, trim and history tests assert
+  the new boundaries. `tests/test_harness_ownership.py` now uses
+  `resource.RLIM_INFINITY` instead of `-1`, so the Python 3.15 free-threaded
+  failure recorded above is gone.
 
 ## Surprises & discoveries
 
@@ -215,10 +233,11 @@ verified archive is published, and leaves compile admission untouched.
   churns the next archive.
 - A trimmed row survives only when its whole retained suffix, including the
   row itself, fits the byte allowance.
-- `tests/test_harness_ownership.py` fails on Python 3.15.2 free-threading
-  because `resource.RLIM_INFINITY` is `18446744073709551615` there rather than
-  `-1`. The file is untouched by this branch and needs a separate base fix, so
-  it is reported rather than changed here.
+- `tests/test_harness_ownership.py` failed on Python 3.15.2 free-threading
+  because its parameter list spelled the infinite limit as the literal `-1`,
+  while this build reports `resource.RLIM_INFINITY` as `18446744073709551615`.
+  The test now uses the runtime constant, so the case passes on any supported
+  interpreter. This is a test-portability fix, carried in its own commit.
 
 ## Outcomes & retrospective
 
@@ -274,3 +293,6 @@ failure or an accumulating buffer both fail.
 ## Revision note
 
 - Initial draft created while implementing issue #63.
+- Review remediation added the CodeRabbit fixes, the new boundary tests and the
+  `RLIM_INFINITY` portability fix for `tests/test_harness_ownership.py`; the
+  decision log's "report rather than change" entry was replaced accordingly.

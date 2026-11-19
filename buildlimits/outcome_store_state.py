@@ -14,6 +14,7 @@ from buildlimits import outcome_records, outcome_segments
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_store_io import (
     append_line,
+    move_aside,
     read_store,
     replace_store,
     store_size,
@@ -201,7 +202,7 @@ class StoreFiles:
         """Choose which validated rows can belong to the active salt."""
         match decoded:
             case outcome_records.RecordFailure() as failure:
-                if not self.move_aside():
+                if not move_aside(self.path):
                     self.publish("load", failure.reason)
                     return
                 self.publish("load", failure.reason)
@@ -268,27 +269,6 @@ class StoreFiles:
         # ``seal`` installs the active salt's header afterwards, so success
         # leaves the writer holding the new domain and no rows.
         return seal(self, salt_id=store.header.salt_id)
-
-    def move_aside(self) -> bool:
-        """Move one rejected store without replacing an earlier backup.
-
-        Returns
-        -------
-        bool
-            Whether the rejected file was moved aside.
-        """
-        backup = self.path.with_name(f"{self.path.name}.bad")
-        try:
-            backup.lstat()
-        except FileNotFoundError:
-            pass
-        else:
-            return False
-        try:
-            self.path.replace(backup)
-        except OSError:
-            return False
-        return True
 
     def append(self, line: bytes, record: StoreRecord) -> None:
         """Compact at high water, preserve the hard bound and append one row."""

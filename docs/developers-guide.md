@@ -995,17 +995,19 @@ validated in the range 0 to 9.
 publication: the XZ stream must reach its end with only four-byte-multiple NUL
 padding, the record count, logical byte count and SHA-256 must equal the facts
 accumulated while compressing the source, and `outcome_archive_rows` decodes
-every row as a supported header or a valid record within the record byte bound,
-dropping an unterminated final fragment as a torn tail.
-`outcome_archive_encode` produces the verified temporary archives and their
-sidecars. Publication then uses a private `O_EXCL` temporary file, an `fsync`,
-a no-clobber hard link and a sidecar written after the archive; the sealed
-source is removed only after the archive and sidecar are durable.
-`outcome_archive_fs` owns the private filesystem primitives and atomic state
-writes. `outcome_archive_files` owns the per-segment operations: archive,
-reconcile, heal, trim, delete and quarantine. `outcome_archive_quarantine`
-performs the quarantine moves for files a run cannot trust, and
-`outcome_archive_run` executes one plan operation by operation.
+every row as a supported header or a valid record within the record byte bound.
+A terminated row that does not decode is a `corrupt` fault; only an
+unterminated final fragment is dropped as a torn tail, whether or not that
+fragment happens to decode on its own. `outcome_archive_encode` produces the
+verified temporary archives and their sidecars. Publication then uses a private
+`O_EXCL` temporary file, an `fsync`, a no-clobber hard link and a sidecar
+written after the archive; the sealed source is removed only after the archive
+and sidecar are durable. `outcome_archive_fs` owns the private filesystem
+primitives and atomic state writes. `outcome_archive_files` owns the
+per-segment operations: archive, reconcile, heal, trim, delete and quarantine.
+`outcome_archive_quarantine` performs the quarantine moves for files a run
+cannot trust, and `outcome_archive_run` executes one plan operation by
+operation.
 
 The segment contract is defined by `outcome_segments`, which owns naming and
 layout only; `outcome_segment_sidecar` defines the record that describes one

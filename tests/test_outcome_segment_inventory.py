@@ -162,6 +162,25 @@ def test_a_sidecar_behind_a_directory_is_corrupt(tmp_path: Path) -> None:
     assert read_inventory(layout).corrupt_sidecars == (1,), "the read failure is closed"
 
 
+def test_a_sidecar_symlink_is_corrupt(tmp_path: Path) -> None:
+    """A link out of the archive directory is never followed."""
+    layout = store_layout(tmp_path)
+    write_private(layout.archive_dir / archive_name(1), b"x" * 40)
+    target = write_private(tmp_path / "elsewhere.json", b"{}")
+    (layout.archive_dir / sidecar_name(1)).symlink_to(target)
+
+    assert read_inventory(layout).corrupt_sidecars == (1,), "the link is refused"
+
+
+def test_an_oversized_sidecar_is_corrupt(tmp_path: Path) -> None:
+    """A huge sidecar cannot be pulled into memory by an inventory scan."""
+    layout = store_layout(tmp_path)
+    write_private(layout.archive_dir / archive_name(1), b"x" * 40)
+    write_private(layout.archive_dir / sidecar_name(1), b" " * (64 * 1024 + 1))
+
+    assert read_inventory(layout).corrupt_sidecars == (1,), "the file is refused unread"
+
+
 def test_an_orphan_sidecar_is_flagged(tmp_path: Path) -> None:
     """A sidecar with no archive describes nothing and is reported."""
     layout = store_layout(tmp_path)

@@ -11,13 +11,17 @@ segment; a caller with a real segment passes its path instead.
 """
 
 import dataclasses as dc
+import datetime as dt
 import io
 import json
 import lzma
+import sys
 import tempfile
 import typing as typ
 from pathlib import Path
 
+from buildlimits.outcome_record_encode import encode_line
+from buildlimits.outcome_record_format import StoreHeader
 from buildlimits.outcome_record_stream import CHUNK_BYTES, LineStream
 
 if typ.TYPE_CHECKING:
@@ -167,8 +171,9 @@ def _compress(raw: typ.BinaryIO, preset: int) -> tuple[int, int, int]:
     Returns
     -------
     tuple[int, int, int]
-        The record count excluding the header, the peak rows held in one
-        chunk, and the archive's physical size.
+        The record count excluding the header row, the peak rows held in one
+        chunk, and the archive's physical size. A sealed segment always starts
+        with a header row, which is not a record.
     """
     rows = 0
     observer = _ChunkObserver(raw)
@@ -189,23 +194,26 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
     Parameters
     ----------
     argv : Sequence[str] | None
-        Optionally one segment path; otherwise a segment is generated.
+        Optionally one segment path; ``sys.argv[1:]`` when ``None``. Without a
+        path a representative segment is generated in a temporary directory.
 
     Returns
     -------
     int
         Zero when a report was printed.
     """
-    arguments = list(argv or [])
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments:
+        print(json.dumps(measure(Path(arguments[0])).as_dict(), sort_keys=True))
+        return 0
     with tempfile.TemporaryDirectory(prefix="buildlimits-archive-bench-") as scratch:
-        source = Path(arguments[0]) if arguments else _generated(Path(scratch))
-        report = measure(source)
+        report = measure(_generated(Path(scratch)))
         print(json.dumps(report.as_dict(), sort_keys=True))
     return 0
 
 
 def _generated(directory: Path) -> Path:
-    """Write a representative segment of attributed rows.
+    """Write a representative segment: one header row and attributed rows.
 
     Returns
     -------
@@ -220,8 +228,13 @@ def _generated(directory: Path) -> Path:
         "runtime_seconds": 0.25,
         "observed_at": "2026-11-19T00:00:00Z",
     })
+    header = encode_line(
+        StoreHeader("0" * 64, dt.datetime(2026, 11, 19, tzinfo=dt.UTC))
+    )
     path = directory / "segment-generated.jsonl"
     with path.open("w", encoding="utf-8") as sink:
+        sink.write(header)
+        sink.write("\n")
         for _ in range(5_000):
             sink.write(row)
             sink.write("\n")

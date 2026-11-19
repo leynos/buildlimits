@@ -220,23 +220,23 @@ def _scan_sealed(
     """
     entries: list[SegmentEntry] = []
     metadata: dict[int, dict[str, object]] = {}
-    for name, size in _regular_files(directory):
-        matched = _SEALED_RE.fullmatch(name)
+    for path, size in _regular_files(directory):
+        matched = _SEALED_RE.fullmatch(path.name)
         if matched is not None:
             sequence = int(matched.group(1))
             entries.append(
                 SegmentEntry(
                     sequence=sequence,
-                    path=directory / name,
+                    path=path,
                     state="sealed",
                     physical_bytes=size,
                     logical_bytes=size,
                 )
             )
             continue
-        meta_match = _SEALED_META_RE.fullmatch(name)
+        meta_match = _SEALED_META_RE.fullmatch(path.name)
         if meta_match is not None:
-            document = read_mapping(directory / name)
+            document = read_mapping(path)
             if document is not None:
                 metadata[int(meta_match.group(1))] = document
     return entries, metadata
@@ -258,81 +258,111 @@ def _scan_archived(
     sidecar_sequences: set[int] = set()
     missing: list[int] = []
     corrupt: list[int] = []
-    for name, size in _regular_files(directory):
-        matched = _ARCHIVE_RE.fullmatch(name)
+    for path, size in _regular_files(directory):
+        matched = _ARCHIVE_RE.fullmatch(path.name)
         if matched is not None:
             sequence = int(matched.group(1))
             archive_sequences.add(sequence)
-            sidecar = read_sidecar(directory / sidecar_name(sequence), sequence)
-            if sidecar is None:
-                missing.append(sequence)
-                entries.append(
-                    SegmentEntry(
-                        sequence=sequence,
-                        path=directory / name,
-                        state="archived",
-                        physical_bytes=size,
-                        logical_bytes=size,
+            match read_sidecar(directory / sidecar_name(sequence), sequence):
+                case None:
+                    missing.append(sequence)
+                    entries.append(_archive_entry(path, size, sequence))
+                case Sidecar() as sidecar:
+                    sidecar_sequences.add(sequence)
+                    entries.append(
+                        _archive_entry(path, size, sequence, sidecar=sidecar)
                     )
-                )
-            elif isinstance(sidecar, Sidecar):
-                sidecar_sequences.add(sequence)
-                entries.append(
-                    SegmentEntry(
-                        sequence=sequence,
-                        path=directory / name,
-                        state="archived",
-                        physical_bytes=size,
-                        logical_bytes=sidecar.logical_bytes,
-                        record_count=sidecar.record_count,
-                        first_observed_at=sidecar.first_observed_at,
-                        last_observed_at=sidecar.last_observed_at,
-                        salt_id=sidecar.salt_id,
-                        sha256=sidecar.sha256,
-                        has_metadata=True,
-                    )
-                )
-            else:
-                corrupt.append(sequence)
-                entries.append(
-                    SegmentEntry(
-                        sequence=sequence,
-                        path=directory / name,
-                        state="archived",
-                        physical_bytes=size,
-                        logical_bytes=size,
-                    )
-                )
+                case _:
+                    corrupt.append(sequence)
+                    entries.append(_archive_entry(path, size, sequence))
             continue
-        side_match = _SIDECAR_RE.fullmatch(name)
+        side_match = _SIDECAR_RE.fullmatch(path.name)
         if side_match is not None:
             sidecar_sequences.add(int(side_match.group(1)))
     orphans = tuple(sorted(sidecar_sequences - archive_sequences))
     return entries, tuple(sorted(missing)), tuple(sorted(corrupt)), orphans
 
 
-def _regular_files(directory: Path) -> list[tuple[str, int]]:
-    """List regular files in one directory without following links.
+def _archive_entry(
+    path: Path,
+    size: int,
+    sequence: int,
+    *,
+    sidecar: Sidecar | None = None,
+) -> SegmentEntry:
+    """Describe one archive, trusting its sidecar only when one was validated.
+
+    Without a trustworthy sidecar the archive's logical size falls back to its
+    physical size, so a damaged or missing sidecar never understates the bytes
+    an archive represents.
+
+    Parameters
+    ----------
+    path : Path
+        The archive file.
+    size : int
+        The archive's physical size in bytes.
+    sequence : int
+        The sequence parsed from the file name.
+    sidecar : Sidecar | None
+        The validated sidecar, when one described this archive.
 
     Returns
     -------
-    list[tuple[str, int]]
-        Name and size of every regular file, or an empty list when the
+    SegmentEntry
+        The archived entry.
+    """
+    if sidecar is None:
+        return SegmentEntry(
+            sequence=sequence,
+            path=path,
+            state="archived",
+            physical_bytes=size,
+            logical_bytes=size,
+        )
+    return SegmentEntry(
+        sequence=sequence,
+        path=path,
+        state="archived",
+        physical_bytes=size,
+        logical_bytes=sidecar.logical_bytes,
+        record_count=sidecar.record_count,
+        first_observed_at=sidecar.first_observed_at,
+        last_observed_at=sidecar.last_observed_at,
+        salt_id=sidecar.salt_id,
+        sha256=sidecar.sha256,
+        has_metadata=True,
+    )
+
+
+def _regular_files(directory: Path) -> list[tuple[Path, int]]:
+    """List regular files in one directory without following links.
+
+    A missing directory is an empty listing, but any other listing failure
+    propagates: reporting no entries for an unreadable directory would present
+    damage as an empty store.
+
+    Returns
+    -------
+    list[tuple[Path, int]]
+        Path and size of every regular file, or an empty list when the
         directory does not exist.
     """
     try:
         iterator = os.scandir(directory)
-    except OSError:
+    except FileNotFoundError:
         return []
-    found: list[tuple[str, int]] = []
+    found: list[tuple[Path, int]] = []
     try:
         for entry in iterator:
             try:
                 metadata = entry.stat(follow_symlinks=False)
-            except OSError:
+            except FileNotFoundError:
+                # The entry was removed between listing and stat; it is gone
+                # rather than unreadable, so it simply is not part of the scan.
                 continue
             if stat.S_ISREG(metadata.st_mode):
-                found.append((entry.name, metadata.st_size))
+                found.append((directory / entry.name, metadata.st_size))
     finally:
         iterator.close()
     return found

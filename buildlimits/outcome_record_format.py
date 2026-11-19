@@ -22,6 +22,10 @@ FORMAT_NAME = "buildlimits-cache-outcomes"
 FORMAT_VERSION = 1
 MAX_RECORD_BYTES = 16 * 1024
 MAX_STORE_BYTES = 16 * 1024 * 1024
+# The largest document an in-place compaction may write. A policy that lets
+# the active file grow past this bound cannot compact it in legacy mode, so
+# the retention policy refuses such a segment size.
+MAX_COMPACT_BYTES = 12 * 1024 * 1024
 _DIGEST_HEX_LENGTH = 64
 _ORIGINS = frozenset({"registry", "git", "path", "unknown"})
 _CHILD_SIGHTINGS = frozenset({"seen", "ambiguous", "not_seen", "unavailable"})

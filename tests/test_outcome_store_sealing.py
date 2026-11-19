@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from outcome_store_helpers import (
+    close_writer,
     salt_path,
     segment_writer,
     wait_for_results,
@@ -115,7 +116,7 @@ def test_a_seal_publishes_a_source_and_its_metadata(tmp_path: Path) -> None:
         writer.append(_record(1))
         wait_for_results(writer, operation="seal", reason="none")
     finally:
-        writer.close(2.0)
+        close_writer(writer)
 
     salt = file_salt(store.with_name("cache-outcomes.salt"))
     assert isinstance(salt, Salt), "the stored salt is readable"
@@ -145,7 +146,7 @@ def test_the_active_file_is_reset_to_its_header(tmp_path: Path) -> None:
         writer.append(_record(1))
         wait_for_results(writer, operation="seal", reason="none")
     finally:
-        writer.close(2.0)
+        close_writer(writer)
 
     active = _active(store)
     assert active.records == (), "the active file holds no rows"
@@ -161,7 +162,7 @@ def test_the_writer_never_creates_an_archive(tmp_path: Path) -> None:
         writer.append(_record(1))
         wait_for_results(writer, operation="seal", reason="none")
     finally:
-        writer.close(2.0)
+        close_writer(writer)
 
     assert not _layout(store).archive_dir.exists(), "the writer owns no archive"
 
@@ -179,7 +180,7 @@ def test_an_empty_seal_claims_no_sequence(tmp_path: Path) -> None:
         assert read_sequence(layout.sequence_file) is None, "no sequence was claimed"
         assert _active(store).records != (), "the row stayed in the active file"
     finally:
-        writer.close(2.0)
+        close_writer(writer)
 
 
 def test_the_counter_follows_the_highest_sealed_name(tmp_path: Path) -> None:
@@ -196,7 +197,7 @@ def test_the_counter_follows_the_highest_sealed_name(tmp_path: Path) -> None:
         writer.append(_record(1))
         wait_for_results(writer, operation="seal", reason="none")
     finally:
-        writer.close(2.0)
+        close_writer(writer)
 
     names = _sealed_names(store)
     assert segment_name(6) in names, "the next sequence follows the directory"
@@ -214,7 +215,7 @@ def test_a_fresh_store_keeps_its_first_row(tmp_path: Path) -> None:
         writer.append(_record(0))
         wait_for_results(writer, operation="append", reason="none")
     finally:
-        writer.close(2.0)
+        close_writer(writer)
 
     assert [record.observed_at for record in _active(store).records] == [NOW], (
         "the first row is written rather than discarded"
@@ -228,7 +229,7 @@ def test_metadata_covers_every_row_sealed_together(tmp_path: Path) -> None:
     try:
         writer.append(_record(0))
     finally:
-        writer.close(2.0)
+        close_writer(writer)
     line_bytes = len(outcome_record_encode.encode_line(_record(0))) + 1
     # Two rows fit the watermark and the third crosses it, so the seal closes
     # exactly two rows and the metadata must describe the whole span.
@@ -242,7 +243,7 @@ def test_metadata_covers_every_row_sealed_together(tmp_path: Path) -> None:
             writer.append(_record(minute))
         wait_for_results(writer, operation="seal", reason="none")
     finally:
-        writer.close(2.0)
+        close_writer(writer)
 
     document = _metadata(store, 1)
     assert document["record_count"] == 2, "both rows are counted together"
@@ -269,7 +270,7 @@ def test_the_backlog_is_reported_at_eight_entries(tmp_path: Path) -> None:
         writer.append(_record(4))
         observed = wait_for_results(writer, operation="seal", reason="archive_backlog")
     finally:
-        writer.close(2.0)
+        close_writer(writer)
 
     backlog = [result for result in observed if result.reason == "archive_backlog"]
     assert backlog, "the fourth seal crosses the step"
@@ -298,7 +299,7 @@ def _load_previous_domain(
         wait_for_salt(writer)
         results = wait_for_results(writer, operation="load", reason="salt_changed")
     finally:
-        writer.close(2.0)
+        close_writer(writer)
     return previous, results
 
 
@@ -362,4 +363,34 @@ def test_a_failed_seal_is_reported(
             wait_for_results(writer, operation="seal", reason="save_failed")
             assert _sealed_names(store) == [], "no partial source is published"
     finally:
-        writer.close(2.0)
+        close_writer(writer)
+
+
+def test_a_seal_that_cannot_sync_keeps_its_rows_closed(tmp_path: Path) -> None:
+    """A sync fault after the rename does not resurrect the sealed rows."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    writer = segment_writer(store, history_policy(), NOW)
+    try:
+        with mock.patch.object(
+            outcome_store_sealing, "sync_rename", side_effect=OSError("sync failed")
+        ):
+            writer.append(_record(0))
+            writer.append(_record(1))
+            results = wait_for_results(writer, operation="seal", reason="save_failed")
+    finally:
+        close_writer(writer)
+
+    assert any(
+        result.operation == "seal"
+        and result.reason == "save_failed"
+        and result.records == 1
+        for result in results
+    ), "the failed sync is reported against the row it closed"
+    assert _sealed_names(store) == [segment_name(1), segment_name(2)], (
+        "the rename published the first source; the next seal publishes the second"
+    )
+    assert _metadata(store, 1)["record_count"] == 1, "metadata describes the source"
+    assert _metadata(store, 2)["record_count"] == 1, (
+        "the row sealed before the sync fault is never counted as active again"
+    )
+    assert _active(store).records == (), "the active file holds only its header"

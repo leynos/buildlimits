@@ -11,6 +11,9 @@ from buildlimits.outcome_record_encode import (
     encode_line as encode_line,
 )
 from buildlimits.outcome_record_format import (
+    MAX_COMPACT_BYTES as MAX_COMPACT_BYTES,
+)
+from buildlimits.outcome_record_format import (
     MAX_RECORD_BYTES as MAX_RECORD_BYTES,
 )
 from buildlimits.outcome_record_format import (
@@ -45,7 +48,6 @@ from buildlimits.outcome_retention import RetentionPolicy
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_vocabulary import StoreReason
 
-MAX_COMPACT_BYTES = 12 * 1024 * 1024
 MAX_COMPACT_RECORDS = 10_000
 RETENTION_DAYS = 30
 

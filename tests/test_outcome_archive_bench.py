@@ -85,6 +85,30 @@ def test_a_generated_report_names_every_measurement(tmp_path: Path) -> None:
     assert report.peak_rows >= 1, "a report always names a peak"
 
 
+def test_main_measures_a_supplied_segment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A path on the command line is measured instead of a generated segment."""
+    source = _segment(tmp_path, 12)
+
+    status = outcome_archive_bench.main([str(source)])
+    report = json.loads(capsys.readouterr().out)
+
+    assert status == 0, "a supplied segment is measured"
+    assert report["record_count"] == 12, "the supplied segment is the one measured"
+
+
+def test_the_generated_segment_counts_only_its_records(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The generated input is shaped like a sealed segment, header included."""
+    status = outcome_archive_bench.main([])
+    report = json.loads(capsys.readouterr().out)
+
+    assert status == 0, "a segment is generated and measured"
+    assert report["record_count"] == 5_000, "the generated header is not a record"
+
+
 def test_report_round_trips_as_closed_json(tmp_path: Path) -> None:
     """A report renders as stable JSON a reviewer can diff between runs."""
     source = _segment(tmp_path, 5)

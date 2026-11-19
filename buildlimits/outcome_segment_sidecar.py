@@ -10,6 +10,7 @@ import dataclasses as dc
 import json
 import typing as typ
 
+from buildlimits.outcome_store_io import read_private_bytes
 from buildlimits.utc_text import optional_utc_moment, optional_utc_text
 
 if typ.TYPE_CHECKING:
@@ -18,6 +19,9 @@ if typ.TYPE_CHECKING:
 
 SIDECAR_SCHEMA = 1
 _SHA256_HEX_LENGTH = 64
+# A sidecar holds one small object. The bound stops an oversized or hostile
+# file in the archive directory from being read into memory.
+_MAX_SIDECAR_BYTES = 64 * 1024
 
 __all__ = [
     "SIDECAR_SCHEMA",
@@ -108,7 +112,7 @@ def read_mapping(path: Path) -> dict[str, object] | None:
         The mapping, or None.
     """
     try:
-        raw = path.read_bytes()
+        raw = read_private_bytes(path, limit=_MAX_SIDECAR_BYTES)
     except OSError:
         return None
     try:
@@ -127,7 +131,7 @@ def read_sidecar(path: Path, sequence: int) -> Sidecar | typ.Literal["corrupt"] 
         The sidecar, the corruption marker, or None when it is absent.
     """
     try:
-        raw = path.read_bytes()
+        raw = read_private_bytes(path, limit=_MAX_SIDECAR_BYTES)
     except FileNotFoundError:
         return None
     except OSError:

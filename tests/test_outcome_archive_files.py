@@ -8,6 +8,7 @@ quarantine rather than rewritten.
 """
 
 import datetime as dt
+import json
 import lzma
 import typing as typ
 
@@ -35,6 +36,26 @@ from buildlimits.outcome_segments import archive_name, sealed_meta_name, sidecar
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
+# The sidecar's whole key set is a contract every reader shares, so the test
+# names it once and compares sets rather than restating a large literal inline.
+_SIDECAR_FIELDS = frozenset({
+    "schema",
+    "sequence",
+    "format",
+    "format_version",
+    "salt_id",
+    "record_count",
+    "logical_bytes",
+    "physical_bytes",
+    "sha256",
+    "first_observed_at",
+    "last_observed_at",
+    "archived_at",
+    "xz_preset",
+    "xz_check",
+    "had_torn_tail",
+})
+
 
 def test_archiving_publishes_and_releases_the_source(tmp_path: Path) -> None:
     """A verified archive, its sidecar and the removal of the source."""
@@ -56,6 +77,19 @@ def test_archiving_publishes_and_releases_the_source(tmp_path: Path) -> None:
     archived = read_inventory(run.layout).archived[0]
     assert archived.has_metadata, "the published sidecar is trusted"
     assert archived.record_count == 2, "the sidecar's count is available"
+
+
+def test_a_published_sidecar_has_exactly_the_documented_fields(
+    tmp_path: Path,
+) -> None:
+    """The sidecar's key set is a contract shared by every reader."""
+    sealed = source(tmp_path, 1, document(records(1)))
+    run = context(tmp_path)
+
+    archive_source(run, sealed_entry(sealed, 1))
+
+    sidecar = json.loads((run.layout.archive_dir / sidecar_name(1)).read_bytes())
+    assert set(sidecar) == _SIDECAR_FIELDS, "the sidecar schema is closed"
 
 
 def test_the_configured_preset_is_recorded(tmp_path: Path) -> None:

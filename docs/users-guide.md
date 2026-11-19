@@ -293,6 +293,13 @@ firing, so a host that was off still archives its closed history. If
 unit does not read your shell's `PATH`. A second run that starts while one is
 in progress exits with status 75 rather than waiting or racing.
 
+A user unit also does not read your shell's environment, so the command falls
+back to the same defaults the supervisor uses: `--config` resolves to
+`~/.config/buildlimits/supervisor.toml`, and `%h` in `ExecStart` expands to
+your home directory. If the supervisor reads a different configuration file,
+pass `--config` with its absolute path in the unit; the retention keys come
+from that file, never from the unit's environment.
+
 Use `inspect` to see what a run would do without changing a file, or
 `run --dry-run` to take no lock and write no state. `run` performs the plan
 under its own lock:
@@ -344,6 +351,13 @@ The writer and archiver keep their state beside the store:
 - `cache-outcomes.archive/` holds `segment-NNNNNNNNNNNN.jsonl.xz` archives
   with `.jsonl.xz.json` sidecars, plus `retention.json`, `last-run.json`,
   `archive.lock` and `quarantine/`.
+
+The archiver refuses a store whose directories, or any directory above them,
+are symlinks, are not directories, or are writable by another user; such a run
+exits 1 with `reason: unreadable` and prints no path. Keep the store in a real,
+private directory tree. A root-owned directory with the sticky bit set, such as
+`/tmp`, is accepted as an ancestor, but the store's own directories must be
+private and owned by the account that runs the archiver.
 
 An archive preserves the version-1 record schema and the salt identifier, so
 decompressing one yields the segment's JSON Lines content byte for byte apart
