@@ -9,10 +9,10 @@ from unittest import mock
 import outcome_store_helpers as store_helpers
 import pytest
 from outcome_store_fault_helpers import partial_append, stalled_append
+from outcome_store_fixture_helpers import loaded_store_files
 from outcome_store_helpers import (
     append_and_wait,
     assert_failed_append,
-    loaded_store_files,
     running_writer,
     salt_path,
     start_writer,
@@ -259,6 +259,10 @@ def test_a_close_error_after_a_complete_write_keeps_the_row(
     nothing about the row. Treating it as a refused append would leave a row
     on disk that the writer's rows do not hold, and the next compaction would
     silently drop it.
+
+    The snapshot is read after the writer has stopped. The append result is
+    published before the worker installs its snapshot, so a read inside the
+    block could observe the state before the landed row.
     """
     path = tmp_path / "cache-outcomes.jsonl"
     original = window_summary()
@@ -272,14 +276,14 @@ def test_a_close_error_after_a_complete_write_keeps_the_row(
         if fail_close:
             raise OSError("close failed after the write")
 
-    with running_writer(path) as writer:
+    with running_writer(path, wall_clock=lambda: NOW) as writer:
         append_and_wait(writer, original)
         fail_close = True
         with mock.patch.object(outcome_store_io.os, "close", close_reporting_a_fault):
             writer.append(appended)
             results = wait_for_results(writer, operation="append", reason="none")
         fail_close = False
-        snapshot = writer.retention()
+    snapshot = writer.retention()
 
     assert StoreResult("append", "none", 1, 0) in results, (
         "the row whose bytes reached disk is reported as appended"

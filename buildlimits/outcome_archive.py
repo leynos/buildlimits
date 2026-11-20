@@ -351,47 +351,9 @@ def _measure(
     tuple[int, _StoreView]
         The floor to persist and the store as the final read observed it.
     """
-    floor = _retention_floor(
+    floor = outcome_archive_state.retention_floor(
         outcome_segment_inventory.read_inventory(layout),
         outcome_segment_state.read_retention_floor(layout),
-        outcome,
+        outcome_archive_run.deleted_sequences(outcome.actions),
     )
     return floor, _read_store(layout, floor)
-
-
-def _retention_floor(
-    inventory: outcome_segment_inventory.Inventory,
-    previous: int | None,
-    outcome: outcome_archive_run.RunOutcome,
-) -> int:
-    """Return the lowest sequence this history intentionally starts at.
-
-    The floor records what retention removed, not what happens to be absent.
-    Deriving it from the surviving sequences would raise it past a sequence
-    that went missing for another reason, and the next scan would then stop
-    reporting that sequence as a gap. It therefore advances only across a
-    contiguous run of deletions from the previous floor: a deletion beyond a
-    sequence this run did not remove stops the walk, so the hole stays
-    reported. It never falls below the first sequence this store ever had,
-    so an empty prefix is not reported as missing history.
-
-    Parameters
-    ----------
-    inventory : Inventory
-        The store as it stands after the run.
-    previous : int | None
-        The floor the last successful run recorded.
-    outcome : RunOutcome
-        The actions this run performed.
-
-    Returns
-    -------
-    int
-        The retention floor to persist.
-    """
-    present = [entry.sequence for entry in inventory.effective]
-    baseline = min(present, default=0) if previous is None else previous
-    deleted = outcome_archive_run.deleted_sequences(outcome.actions)
-    if not deleted:
-        return baseline
-    return outcome_archive_state.contiguous_floor(max(baseline, 1), deleted)

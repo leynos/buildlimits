@@ -537,7 +537,10 @@ force, and what history it currently retains.
   the budget, the cutoff, and the `limits` and `retained` documents. The floor
   advances only across a contiguous run of deletions from its recorded value,
   so an archive removed beyond a sequence that is already missing does not
-  excuse that missing sequence: it keeps being reported as a gap. A run that
+  excuse that missing sequence: it keeps being reported as a gap. With no
+  recorded floor, the walk starts at the lowest sequence the run can account
+  for, counting both surviving history and the archives it deleted itself, so a
+  lost record does not hide a hole below this run's own deletions. A run that
   cannot replace this file writes its floor to `retention-pending.json`
   instead; every later read merges the two records and uses the higher valid
   floor, so a fault local to one file does not turn a completed deletion into a

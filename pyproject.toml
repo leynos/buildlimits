@@ -2245,7 +2245,7 @@ members = [
     "tests/test_recovery_roots_deadline.py",
     "buildlimits/group_recovery.py",
     "buildlimits/outcome_archive_files.py",
-    "buildlimits/outcome_record_codec.py",
+    "tests/outcome_store_fixture_helpers.py",
     "buildlimits/predict/report_codec.py",
     "tests/differential_trace_test_helpers.py",
     "tests/test_outcome_archive_run_faults.py",

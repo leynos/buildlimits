@@ -5,22 +5,19 @@ import threading
 import time
 import typing as typ
 import weakref
-from unittest import mock
 
 import pytest
 
-from buildlimits import outcome_records, outcome_store_state
-from buildlimits.outcome_key import Salt
+from buildlimits import outcome_records
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_store import StoreWriter
-from buildlimits.outcome_store_clock import Clocks
-from buildlimits.outcome_store_salt import file_salt
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
     from pathlib import Path
 
+    from buildlimits.outcome_key import Salt
     from buildlimits.outcome_ports import StoreFailure
     from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_retention import RetentionPolicy
@@ -167,37 +164,12 @@ def salt_path(path: Path) -> Path:
     return path.with_name(_SALT_NAME)
 
 
-def loaded_store_files(
-    path: Path, *, policy: RetentionPolicy, now: dt.datetime
-) -> outcome_store_state.StoreFiles:
-    """Return writer state loaded from a fresh salted store at ``path``.
-
-    A synchronous test that drives the writer's transitions needs the same
-    salted, loaded state its worker builds. Loading also installs the header,
-    so the returned state is ready for appends and measurements.
-
-    Returns
-    -------
-    StoreFiles
-        The loaded writer state.
-
-    Examples
-    --------
-    ``loaded_store_files(path, policy=policy, now=NOW)`` loads an empty store
-    and leaves ``files.records`` empty.
-    """
-    salted = file_salt(salt_path(path))
-    if not isinstance(salted, Salt):
-        pytest.fail(f"the salt fixture failed: {salted.reason}")
-    files = outcome_store_state.StoreFiles(
-        path, mock.Mock(), Clocks(wall=lambda: now), policy=policy
-    )
-    files.salt = salted
-    files.load(salted, now)
-    return files
-
-
-def start_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
+def start_writer(
+    path: Path,
+    *,
+    queue_capacity: int = 4096,
+    wall_clock: cabc.Callable[[], dt.datetime] | None = None,
+) -> StoreWriter:
     """Start a writer for one isolated temporary store.
 
     Returns
@@ -205,10 +177,15 @@ def start_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
     StoreWriter
         The new asynchronous writer.
     """
-    return StoreWriter(path, queue_capacity=queue_capacity)
+    return StoreWriter(path, queue_capacity=queue_capacity, wall_clock=wall_clock)
 
 
-def ready_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
+def ready_writer(
+    path: Path,
+    *,
+    queue_capacity: int = 4096,
+    wall_clock: cabc.Callable[[], dt.datetime] | None = None,
+) -> StoreWriter:
     """Start a writer after its startup salt and compaction have completed.
 
     Returns
@@ -220,7 +197,7 @@ def ready_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
     --------
     ``ready_writer(path)`` returns only after startup compaction completes.
     """
-    writer = start_writer(path, queue_capacity=queue_capacity)
+    writer = start_writer(path, queue_capacity=queue_capacity, wall_clock=wall_clock)
     try:
         wait_for_salt(writer)
         wait_for_results(writer, operation="compact", reason="none")
@@ -256,9 +233,15 @@ def segment_writer(
 
 @contextlib.contextmanager
 def running_writer(
-    path: Path, *, queue_capacity: int = 4096
+    path: Path,
+    *,
+    queue_capacity: int = 4096,
+    wall_clock: cabc.Callable[[], dt.datetime] | None = None,
 ) -> cabc.Generator[StoreWriter]:
     """Yield an initialized writer and always close its worker afterwards.
+
+    A test that asserts against a fixed instant passes ``wall_clock`` so the
+    writer's retention decisions do not depend on when the test runs.
 
     Yields
     ------
@@ -269,7 +252,7 @@ def running_writer(
     --------
     ``with running_writer(path) as writer`` closes the worker on exit.
     """
-    writer = ready_writer(path, queue_capacity=queue_capacity)
+    writer = ready_writer(path, queue_capacity=queue_capacity, wall_clock=wall_clock)
     try:
         yield writer
     except BaseException:

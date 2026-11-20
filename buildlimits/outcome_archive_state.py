@@ -18,10 +18,12 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.outcome_archive_report import RunReport
+    from buildlimits.outcome_segment_inventory import Inventory
     from buildlimits.outcome_segments import SegmentLayout
 
 __all__ = [
     "contiguous_floor",
+    "retention_floor",
     "write_deleted_floor",
     "write_floor",
     "write_floor_after_failure",
@@ -138,6 +140,50 @@ def contiguous_floor(start: int, deleted: cabc.Iterable[int]) -> int:
     while floor in removed:
         floor += 1
     return floor
+
+
+def retention_floor(
+    inventory: Inventory,
+    previous: int | None,
+    deleted: tuple[int, ...],
+) -> int:
+    """Return the lowest sequence this history intentionally starts at.
+
+    The floor records what retention removed, not what happens to be absent.
+    Deriving it from the surviving sequences would raise it past a sequence
+    that went missing for another reason, and the next scan would then stop
+    reporting that sequence as a gap. It therefore advances only across a
+    contiguous run of deletions from the previous floor: a deletion beyond a
+    sequence this run did not remove stops the walk, so the hole stays
+    reported. It never falls below the first sequence this store can account
+    for, either one that survives or one this run deleted, so an empty prefix
+    is not reported as missing history, and a lost floor does not start the
+    walk above this run's own deletions.
+
+    Parameters
+    ----------
+    inventory : Inventory
+        The store as it stands after the run.
+    previous : int | None
+        The floor the last successful run recorded.
+    deleted : tuple[int, ...]
+        The sequences this run removed.
+
+    Returns
+    -------
+    int
+        The retention floor to persist.
+    """
+    present = [entry.sequence for entry in inventory.effective]
+    # A store with no recorded floor starts at the lowest sequence this run can
+    # account for. Counting only the survivors would start the walk above the
+    # run's own deletions, so a hole below them would never be reported.
+    baseline = (
+        previous if previous is not None else min([*present, *deleted], default=0)
+    )
+    if not deleted:
+        return baseline
+    return contiguous_floor(max(baseline, 1), deleted)
 
 
 def write_deleted_floor(
