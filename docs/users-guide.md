@@ -541,8 +541,9 @@ is never mistaken for "retain nothing".
 `archived_logical_bytes` and `archived_physical_bytes`, `closed_segments`,
 `active_records`, the first and last observation times, the `span_seconds`
 between them, and `complete`. `complete` is `false` when a closed segment's
-metadata is missing or the active file could not be read; the counts are then
-lower bounds, not a claim that history was lost. Retained counts are not the
+metadata is missing, the active file could not be read, or the writer replaced
+the active file while the run was measuring it; the counts are then lower
+bounds, not a claim that history was lost. Retained counts are not the
 recorder's cumulative `attributed` and `readings` counters, and neither is a
 journal reader's `--max-records` query cap.
 

@@ -12,7 +12,7 @@ from unittest import mock
 
 import outcome_archive_helpers as archive
 
-from buildlimits import outcome_segment_inventory
+from buildlimits import outcome_archive_run, outcome_segment_inventory
 from buildlimits.outcome_archive import EXIT_CORRUPT, EXIT_FAILED
 from buildlimits.outcome_archive_lock import ArchiveLock
 
@@ -154,3 +154,63 @@ def test_a_failed_post_work_read_keeps_the_work_already_done(
     assert not store_layout.retention_file.exists(), "no floor is recorded"
     assert not store_layout.last_run_file.exists(), "no report is installed"
     assert not report.maintenance.state_written, "the report says so"
+
+
+def test_a_seal_during_the_run_is_not_counted_twice(tmp_path: Path) -> None:
+    """Rows sealed mid-run are counted once, in the segment they moved into.
+
+    The writer never takes the archive lock, so it can seal the file the plan
+    read while the run works. Reporting that pre-run snapshot beside the final
+    inventory would count the sealed rows in both places.
+    """
+    store = archive.unsealed_store(tmp_path)
+    retain = outcome_archive_run.retain
+
+    def retain_then_seal(
+        run: outcome_archive_run.ArchiveRun,
+        outcome: outcome_archive_run.RunOutcome,
+    ) -> None:
+        """Seal the active file just after the retention pass."""
+        retain(run, outcome)
+        archive.seal_store(store)
+
+    with mock.patch.object(outcome_archive_run, "retain", retain_then_seal):
+        report = archive.run(tmp_path, archive.policy(max_bytes=0, segment_bytes=4000))
+
+    retained = report.retained
+    assert retained is not None, "the run measures what it retains"
+    assert (retained.record_count, retained.complete) == (3, True), (
+        "each row is counted once and both reads describe the same file"
+    )
+
+
+def test_a_seal_during_measurement_makes_the_totals_a_lower_bound(
+    tmp_path: Path,
+) -> None:
+    """A replacement inside the measurement window is reported as incomplete.
+
+    The closed history is read first and the active file second. A seal
+    between the two leaves them describing different files, so neither an
+    exact count nor a silently undercounted one is acceptable.
+    """
+    store = archive.unsealed_store(tmp_path)
+    read_inventory = outcome_segment_inventory.read_inventory
+
+    def seal_then_read(
+        inventory_layout: SegmentLayout, *, retention_floor: int | None = None
+    ) -> outcome_segment_inventory.Inventory:
+        """Seal the active file as the final scan begins."""
+        if retention_floor is not None:
+            archive.seal_store(store)
+        return read_inventory(inventory_layout, retention_floor=retention_floor)
+
+    with mock.patch.object(outcome_segment_inventory, "read_inventory", seal_then_read):
+        report = archive.run(tmp_path, archive.policy(max_bytes=0, segment_bytes=4000))
+
+    assert report.retained is not None, "the run still reports what it saw"
+    assert (report.retained.record_count, report.retained.active_records) == (3, 0), (
+        "the sealed rows are counted once and the replaced file contributes none"
+    )
+    assert report.retained.complete is False, (
+        "an unmeasured active file makes the totals a lower bound"
+    )

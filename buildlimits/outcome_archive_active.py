@@ -22,7 +22,38 @@ from buildlimits.outcome_store_io import read_store_snapshot
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
-__all__ = ["read_active_history"]
+__all__ = ["active_identity", "read_active_history"]
+
+
+def active_identity(path: Path) -> tuple[int, int] | None:
+    """Return the identity a writer changes when it replaces the active file.
+
+    A seal or a compaction installs a new file, so the device and inode pair
+    changes; an append does not. Comparing the pair either side of a closed
+    history read tells a caller whether both reads describe the same active
+    file, which is what stops a sealed segment being counted twice.
+
+    Parameters
+    ----------
+    path : Path
+        The active cache-outcome store.
+
+    Returns
+    -------
+    tuple[int, int] | None
+        The file's ``(st_dev, st_ino)`` pair, or None while no file exists.
+
+    Examples
+    --------
+    >>> from pathlib import Path
+    >>> active_identity(Path("no-such-store.jsonl")) is None
+    True
+    """
+    try:
+        status = path.stat()
+    except FileNotFoundError:
+        return None
+    return (status.st_dev, status.st_ino)
 
 
 def read_active_history(path: Path) -> ActiveHistory:
