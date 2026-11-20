@@ -208,6 +208,12 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
     ``state_write_failed``, so a timer retries and the next run rewrites the
     state from what is on disk.
 
+    The floor gets its own attempt before that failure is returned. A later
+    run that deletes nothing can only learn about this run's deletions from
+    the recorded floor, so a transient failure of the full write must not
+    turn them into permanent gaps. If the floor write fails as well, the run
+    still reports ``failed`` and the loss is not silent.
+
     The retained totals come from ``_measure``, which reads each side of the
     store once and detects a seal racing those reads. A replacement in the
     window leaves the active contribution unmeasured, which marks the totals
@@ -273,6 +279,7 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
     try:
         outcome_archive_reports.write_state(layout, floor, report)
     except OSError:
+        outcome_archive_reports.write_floor_after_failure(layout, floor, report)
         return dc.replace(
             report,
             status="failed",

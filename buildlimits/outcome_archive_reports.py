@@ -6,6 +6,7 @@ caller, a timer or a later inspection reads is assembled here, including the
 documents written beside the archives.
 """
 
+import contextlib
 import dataclasses as dc
 import typing as typ
 
@@ -33,6 +34,8 @@ __all__ = [
     "dry_report",
     "observed",
     "unfinished",
+    "write_floor",
+    "write_floor_after_failure",
     "write_state",
 ]
 
@@ -246,6 +249,28 @@ def write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:
         The completed run's report. A filesystem failure propagates as
         ``OSError`` so the caller can report that no state was installed.
     """
+    write_floor(layout, floor, report)
+    outcome_archive_fs.atomic_write_json(layout.last_run_file, report.as_dict())
+
+
+def write_floor(layout: SegmentLayout, floor: int, report: RunReport) -> None:
+    """Persist the retention floor and the history measured beside it.
+
+    The floor is the only record that a sequence was deleted rather than
+    lost, so it is written on its own. A caller whose full state write fails
+    can then give this document a second attempt without pretending the run
+    report was installed.
+
+    Parameters
+    ----------
+    layout : SegmentLayout
+        The store's segment layout.
+    floor : int
+        The retention floor to record.
+    report : RunReport
+        The measurements the floor document describes. A filesystem failure
+        propagates as ``OSError``.
+    """
     outcome_archive_fs.atomic_write_json(
         layout.retention_file,
         {
@@ -259,4 +284,28 @@ def write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:
             "updated_at": utc_text(report.finished_at),
         },
     )
-    outcome_archive_fs.atomic_write_json(layout.last_run_file, report.as_dict())
+
+
+def write_floor_after_failure(
+    layout: SegmentLayout, floor: int, report: RunReport
+) -> None:
+    """Give the retention floor a second attempt after the state write failed.
+
+    The retention pass has already deleted every sequence the floor advances
+    past, and a later run that performs no deletion derives its floor from
+    this document alone. A failure of the full state write therefore gets one
+    more attempt at the floor, so a transient fault does not turn completed
+    deletions into reported gaps. A second failure is not raised: the caller
+    already returns a failed report, and there is nothing else to record.
+
+    Parameters
+    ----------
+    layout : SegmentLayout
+        The store's segment layout.
+    floor : int
+        The retention floor to record.
+    report : RunReport
+        The measurements the floor document describes.
+    """
+    with contextlib.suppress(OSError):
+        write_floor(layout, floor, report)

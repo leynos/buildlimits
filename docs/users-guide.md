@@ -565,11 +565,15 @@ that acted are non-zero. Each action in `actions` also names its reason, and
 reports whether `retention.json` and `last-run.json` were installed, with
 `state_write_failed` when they were not: archives and evictions already
 published stay in place, and the next firing rewrites the state from what is on
-disk. A dry run, a deferred run and a run that could not start install no state
-and report `state_written` as false. A run that published archives and then
-could not measure the result reports `retained` as `null` and `reason` as
-`unreadable`, and still lists the actions it performed, so the evictions it did
-are not hidden by the missing total.
+disk. A failed write still gives the retention floor its own attempt, so a
+deletion the run completed is not later reported as a missing sequence when the
+fault was transient; if that write fails too, the run still reports
+`state_write_failed` and the next firing tries again. A dry run, a deferred run
+and a run that could not start install no state and report `state_written` as
+false. A run that published archives and then could not measure the result
+reports `retained` as `null` and `reason` as `unreadable`, and still lists the
+actions it performed, so the evictions it did are not hidden by the missing
+total.
 
 ### Compare offline hit predictors
 
