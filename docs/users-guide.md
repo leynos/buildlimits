@@ -508,8 +508,12 @@ compressed and verified whole before any eviction, and a trim needs room for
 the archive it is rewriting, so `cache_outcomes_archive_headroom_bytes` is a
 floor on free space beside the archive directory rather than part of the
 retained total. Retained bytes can exceed the budget between runs by the
-history sealed since the last one; the run replans after archiving, so one
-successful run finishes within the budget unless a failure stops it.
+history sealed since the last one. The run replans after archiving, so one
+successful run brings closed history within the budget unless a failure stops
+it. The archiver evicts closed history only and never rewrites the active file,
+so when the active file alone is over the budget the retained total stays above
+it until the writer next compacts or seals, which a reduced bound defers to its
+next start or clean shutdown.
 
 A changed bound takes effect where its owner next acts. Reducing the byte, age
 or record bound compacts the active file at the next supervisor start or clean
