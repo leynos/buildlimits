@@ -308,6 +308,32 @@ def _execute(
     Persisting the report is left to the locked caller: writing state is a
     separate effect from deciding what the run achieved.
 
+    A run whose active file cannot be counted, or was replaced while it was
+    read, is reported as ``corrupt`` even when every closed segment succeeded:
+    the retained total is then a lower bound, and a timer that recorded ``ok``
+    would hide history it cannot see.
+
+    A state write that fails does not discard the report of work already done:
+    the archive and its evictions are real even when ``retention.json`` could
+    not be replaced. The run then reports ``failed`` with
+    ``state_write_failed``, so a timer retries and the next run rewrites the
+    state from what is on disk.
+
+    The floor gets its own attempt before that failure is returned. A later
+    run that deletes nothing can only learn about this run's deletions from
+    the recorded floor, so a transient failure of the full write must not
+    turn them into permanent gaps. A post-run read that fails takes the same
+    path: the deletions are already real, so the floor is written from their
+    actions without needing another inventory read. A retry that still cannot
+    replace ``retention.json`` falls back to ``retention-pending.json``, which
+    every reader merges with the primary record; only when both records refuse
+    the write is the loss reported as a gap.
+
+    The retained totals come from ``_measure``, which reads each side of the
+    store once and detects a seal racing those reads. A replacement in the
+    window leaves the active contribution unmeasured, which marks the totals
+    incomplete rather than counting the sealed rows twice.
+
     Returns
     -------
     tuple[int, RunReport]

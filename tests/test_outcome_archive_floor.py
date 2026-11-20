@@ -116,6 +116,46 @@ def test_a_failed_state_write_still_records_the_deletions_it_completed(
     assert_floor_survives(tmp_path, recovered, 2)
 
 
+def test_a_primary_floor_that_stays_unwritable_falls_back_to_pending(
+    tmp_path: Path,
+) -> None:
+    """A fault local to ``retention.json`` must not lose completed deletions.
+
+    The retry after a failed state write can fail for the same reason the
+    first write did, such as a directory squatting on the primary name. The
+    floor is then written to the pending record, which readers merge with the
+    primary one, so the deletions are still reported as intentional. The next
+    successful run installs the floor in the primary record and removes the
+    fallback.
+    """
+    files = archive.layout(tmp_path)
+    write_json = outcome_archive_fs.atomic_write_json
+    wrote_pending = False
+
+    def fail_every_primary_write(path: Path, document: dict[str, object]) -> None:
+        """Refuse every write to the primary record and keep the fallback."""
+        nonlocal wrote_pending
+        if path == files.retention_file:
+            archive.refuse()
+        wrote_pending = wrote_pending or path == files.pending_retention_file
+        write_json(path, document)
+
+    failed, recovered = recover_after_failure(
+        tmp_path,
+        mock.patch.object(
+            outcome_archive_fs, "atomic_write_json", fail_every_primary_write
+        ),
+        max_records=2,
+    )
+
+    assert failed.status == "failed", "the timer must retry the state write"
+    assert wrote_pending, "the floor has a fallback record"
+    assert_floor_survives(tmp_path, recovered, 2)
+    assert not files.pending_retention_file.exists(), (
+        "the next successful run folds the fallback into the primary record"
+    )
+
+
 def test_an_unmeasurable_run_still_records_the_deletions_it_completed(
     tmp_path: Path,
 ) -> None:

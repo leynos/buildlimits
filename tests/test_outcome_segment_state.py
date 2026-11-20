@@ -95,14 +95,39 @@ def test_a_symlinked_counter_is_a_fault(tmp_path: Path) -> None:
         read_sequence(path)
 
 
-def test_retention_floor_is_read_from_state(tmp_path: Path) -> None:
-    """The last successful run's floor survives a later read."""
+@pytest.mark.parametrize(
+    ("primary", "pending", "expected"),
+    [
+        (b'{"floor_sequence": 4}', None, 4),
+        (b'{"floor_sequence": 2}', b'{"floor_sequence": 5}', 5),
+        (None, b'{"floor_sequence": 4}', 4),
+        (b'{"floor_sequence": 4}', b"not json", 4),
+    ],
+    ids=["primary-only", "higher-wins", "pending-only", "damaged-pending"],
+)
+def test_the_retention_floor_is_the_higher_valid_record(
+    tmp_path: Path,
+    primary: bytes | None,
+    pending: bytes | None,
+    expected: int,
+) -> None:
+    """The last successful run's floor survives a later read.
+
+    A run that cannot replace ``retention.json`` leaves the pending record
+    instead, so both are read and the higher valid floor wins. A damaged
+    record never discards the floor the other one still holds.
+    """
     layout = store_layout(tmp_path)
-    write_private(layout.retention_file, b'{"floor_sequence": 4}')
+    for path, data in (
+        (layout.retention_file, primary),
+        (layout.pending_retention_file, pending),
+    ):
+        if data is not None:
+            write_private(path, data)
 
     floor = read_retention_floor(layout)
 
-    assert floor.sequence == 4, "the recorded floor is reported"
+    assert floor.sequence == expected, "the recorded floor is reported"
     assert floor.state == "recorded", "a floor this archiver wrote is trusted"
 
 

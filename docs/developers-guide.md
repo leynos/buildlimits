@@ -411,6 +411,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_events`                                                           | One bounded `archive_run` metrics event per timer firing                                                                                                    |
 | `outcome_archive_codec`                                                            | Stable JSON rendering of one run report                                                                                                                     |
 | `outcome_archive_exit`                                                             | Mapping a run status to the process exit code a timer records                                                                                               |
+| `outcome_archive_state`                                                            | The retention-floor rule and the state writers, including the pending fallback record                                                                       |
 | `outcome_archive_cli`                                                              | The `build-limits-outcome-archive` timer-facing command                                                                                                     |
 | `outcome_archive_bench`                                                            | Bounded-memory archive benchmark behind `make outcome-archive-bench`                                                                                        |
 | `nonblocking_child`                                                                | Non-blocking helper-process pipes and bounded child reaping for supervisor-loop work                                                                        |
@@ -1112,7 +1113,9 @@ so a gap below the first survivor is still reported instead of being silently
 raised over. `outcome_archive_state.retention_floor` derives the floor a run
 records: it advances only past a contiguous deleted prefix, and its
 `write_state` replaces `retention.json` and the run report together once the
-final snapshot is read. The floor is why evicting old history does not look
+final snapshot is read. A run that could not replace `retention.json` leaves
+`retention-pending.json` instead, and every read merges the two records and
+uses the higher valid floor. The floor is why evicting old history does not look
 like corruption, so the inventory reports a missing sequence only at or above
 it. `outcome_segment_gaps.retained_gaps` names those sequences for an operator;
 it stops at `MAX_GAP_SEQUENCES` and flags the list as truncated, because a
