@@ -192,6 +192,7 @@ def test_an_incomplete_active_measurement_contributes_no_rows_to_the_cap() -> No
     )
 
     assert not decision.deletes, "an unread count does not evict history"
+    assert not decision.trims, "nor does it trim history to meet the cap"
 
 
 def test_the_summary_counts_every_operation(snapshot: SnapshotAssertion) -> None:

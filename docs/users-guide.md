@@ -912,11 +912,14 @@ history; `build-limits-metrics` summarizes history.
 When `cache_outcomes = "record"`, status also shows the number of attributed
 outcomes and completed readings, and a `cache outcomes retention` line naming
 the effective age, byte and record bounds with the active file's retained rows.
-Its `retention` object carries the same `limits` and `active` documents the
-archive report uses. Those optional objects and lines are absent when recording
-is off; the `retention` object is also omitted when the writer cannot supply
-its snapshot, so a status read never fails because history could not be
-measured. See [Read the retention diagnostics](#read-the-retention-diagnostics).
+Its `retention` object carries the same `limits` document the archive report
+uses, beside an `active` snapshot of the writer's current file. The archive
+report pairs those limits with a `retained` document instead, whose
+`active_records` and `active_bytes` fields describe the same file as the run
+left it. Those optional objects and lines are absent when recording is off; the
+`retention` object is also omitted when the writer cannot supply its snapshot,
+so a status read never fails because history could not be measured. See
+[Read the retention diagnostics](#read-the-retention-diagnostics).
 
 | Exit status | Default: health check                         | With `--ready`                                  |
 | ----------- | --------------------------------------------- | ----------------------------------------------- |
