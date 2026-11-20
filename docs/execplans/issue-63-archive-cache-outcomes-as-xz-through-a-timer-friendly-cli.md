@@ -697,6 +697,23 @@ verified archive is published, and leaves compile admission untouched.
   `save_failed`. Regressions cover a symlinked sealed directory, a symlinked
   archive directory, a symlinked parent, an external file surviving a run, an
   out-of-range counter and the last nameable sequence.
+- [ ] CodeRabbit review 6000304047 remediation, group 3 (2026-11-21): walk
+  settlement and the planner oracle (findings 4, 22). `_BudgetWalk.evict` now
+  reports whether the pass decided everything the bound needs: an excess no
+  whole deletion covers, that only the active rows create, and that no planned
+  trim composes returns False instead of claiming success, so `retain` returns
+  False and the run reports `unsettled` with exit 75 for the timer to retry. A
+  straddler trim sets the excess it frees to zero before the final test, so a
+  composed trim still settles. The byte-budget property now pins
+  `retained_bytes == min(sum(sizes), budget)` with an independent sum of the
+  surviving entries plus the straddler's allowance, which rejects a plan that
+  deletes history it could have kept, and the record-cap property accepts
+  deferral exactly when the surviving rows plus the active rows exceed the cap.
+  Finding 9 needs no change: `_Emitted.push_record` always terminates a written
+  row with a newline, the sidecar records `emitted.logical_bytes`, and an
+  archive with no trustworthy sidecar makes `budget_totals_are_unsettled` true,
+  so the walk never trims a sealed source or an unmeasured archive. The
+  planner, active-budget and settlement tests pass.
 
 ## Surprises & discoveries
 

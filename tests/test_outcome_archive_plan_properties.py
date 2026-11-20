@@ -133,14 +133,17 @@ def _assert_record_cap(
         The rows the active file holds, which the cap also counts.
     """
     survivors = _assert_oldest_first(entries, decision)
-    assert not decision.retention_deferred, "a measured history decides its cap"
     trim = _trim_of(decision)
     kept = sum(entry.record_count or 0 for entry in survivors)
     kept = kept if trim is None else kept - trim.records
-    assert kept + active <= cap or not survivors, (
-        "an excess only the active rows cause leaves no closed entry"
+    assert decision.retention_deferred == (kept + active > cap), (
+        "the cap is deferred exactly when the plan cannot meet it"
     )
+    if decision.retention_deferred:
+        assert not survivors, "an exhausted closed history is what defers a cap"
+        return
     if trim is None:
+        assert kept + active <= cap, "a settled plan meets the cap"
         return
     assert trim.records < (survivors[0].record_count or 0), (
         "the straddler keeps some rows and needs no whole deletion"
@@ -167,6 +170,12 @@ def test_a_planned_byte_budget_fits_every_generated_history(
     survivors = _assert_oldest_first(entries, decision)
     assert not decision.retention_deferred, "a measured history decides its budget"
     assert decision.retained_bytes <= budget, "the planned history fits the budget"
+    # The walk stops as soon as the budget is met, so the plan keeps every byte
+    # it can afford: deleting more than min(sum, budget) would discard history
+    # the settled store keeps, which the surviving-sum check alone accepts.
+    assert decision.retained_bytes == min(sum(sizes), budget), (
+        "the plan retains the history the budget can afford"
+    )
     trim = _trim_of(decision)
     if trim is None:
         assert decision.retained_bytes == sum(
@@ -183,6 +192,11 @@ def test_a_planned_byte_budget_fits_every_generated_history(
     assert decision.retained_bytes == budget, (
         "the straddler is trimmed to exactly the remaining allowance"
     )
+    allowance = trim.allowed_bytes
+    assert allowance is not None, "a byte trim records its allowance"
+    assert decision.retained_bytes == (
+        sum(entry.logical_bytes for entry in survivors[1:]) + allowance
+    ), "the estimate composes the surviving sum with the trim allowance"
 
 
 @given(

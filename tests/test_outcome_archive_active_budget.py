@@ -14,7 +14,15 @@ import typing as typ
 from pathlib import Path
 
 from outcome_append_helpers import archived_store, run_during_paused_append
-from outcome_archive_helpers import NOW, archives, policy, records, refuse, run
+from outcome_archive_helpers import (
+    NOW,
+    archives,
+    policy,
+    records,
+    refuse,
+    run,
+    write,
+)
 from segment_test_helpers import document, write_private
 
 from buildlimits import outcome_archive_active, outcome_record_encode
@@ -334,3 +342,43 @@ def test_a_failed_scan_of_a_paused_append_defers_the_byte_budget(
     assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
     evictions = [action for action in report.actions if action.action != "archived"]
     assert not evictions, "nothing is evicted against an unread active file"
+
+
+def test_active_rows_over_the_cap_leave_the_cap_unsettled(
+    tmp_path: Path,
+) -> None:
+    """A cap the active rows exceed on their own cannot settle.
+
+    The archiver cannot trim the active file, and no closed entry is left to
+    evict, so the walk must report the excess it could not cover. Claiming
+    success would tell the timer the cap is met while every later firing still
+    owes the same eviction.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 4), policy(segment_bytes=1_000_000))
+
+    report = run(
+        tmp_path, policy(segment_bytes=1_000_000, max_age_days=1, max_records=2)
+    )
+
+    assert report.retained_records == 4, "the active rows cannot be trimmed"
+    assert report.status == "unsettled", "the cap is still over its bound"
+    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+
+
+def test_active_bytes_over_the_bound_leave_the_budget_unsettled(
+    tmp_path: Path,
+) -> None:
+    """A byte bound the active rows exceed alone is reported, not claimed met."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 4), policy(segment_bytes=1_000_000))
+    kept = store.stat().st_size
+
+    report = run(
+        tmp_path,
+        policy(segment_bytes=1_000_000, max_age_days=1, max_bytes=kept - 1),
+    )
+
+    assert report.active_bytes == kept, "the active file holds the excess"
+    assert report.status == "unsettled", "the byte bound is still over its bound"
+    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"

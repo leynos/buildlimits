@@ -101,7 +101,8 @@ def plan_byte_steps(
     -------
     bool
         Whether this pass settled the budget. A walk that stopped at a source
-        it cannot trim leaves the remainder to the follow-up plan.
+        it cannot trim, or that exhausted closed history with bytes still to
+        free, leaves the remainder to the follow-up plan.
     """
     if not budget.policy.has_byte_limit:
         return True
@@ -289,28 +290,32 @@ class _BudgetWalk:
         -------
         bool
             Whether this pass decided everything the budget needs. False when
-            the walk stopped at an entry it cannot measure or rewrite yet.
+            the walk stopped at an entry it cannot measure or rewrite yet, or
+            when closed history ran out with excess still to free. Retention
+            cannot trim the active file, so an excess that only the active
+            rows create stays for a later pass to report rather than being
+            counted as settled.
         """
-        settled = True
         for entry, value in self.surviving(keep):
             if excess <= 0:
                 break
             if value is None:
-                settled = False
-                break
+                return False
             if value <= excess:
                 self.deletes[entry.sequence] = entry
                 excess -= value
                 continue
             if entry.state == "sealed":
-                settled = False
-                break
+                return False
             trim = trim_straddler(self.trims.get(entry.sequence, Trim()), value, excess)
-            settled = trim is not None
-            if trim is not None:
-                self.trims[entry.sequence] = trim
+            if trim is None:
+                return False
+            self.trims[entry.sequence] = trim
+            # A straddler trim is planned to free exactly the excess it was
+            # given, so nothing remains to cover.
+            excess = 0
             break
-        return settled
+        return excess <= 0
 
 
 def _byte_trim(existing: Trim, size: int, excess: int) -> Trim:
