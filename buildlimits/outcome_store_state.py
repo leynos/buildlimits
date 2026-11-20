@@ -85,8 +85,9 @@ class StoreFiles:
 
     Examples
     --------
-    ``files.load(salt, now)`` populates ``files.records`` from disk and leaves
-    ``files.ready`` true once the active file is within its bound.
+    ``files.load_and_settle(salt, now)`` populates ``files.records`` from disk,
+    then repairs, seals or compacts what it read, and leaves ``files.ready``
+    true once the active file is within its bound.
     """
 
     def __init__(
@@ -129,8 +130,13 @@ class StoreFiles:
             max_records=outcome_records.MAX_COMPACT_RECORDS,
         )
 
-    def load(self, salt: Salt, now: dt.datetime) -> None:
-        """Load validated rows, initialize an empty store, then settle it."""
+    def load_and_settle(self, salt: Salt, now: dt.datetime) -> None:
+        """Load validated rows, initialize an empty store, then settle it.
+
+        The name states the write: a startup that only read the file could be
+        called ``load``, but this one may repair, seal or compact the store, so
+        a reader that must stay side-effect free cannot use it.
+        """
         try:
             decoded = read_store(self.path)
         except FileNotFoundError:

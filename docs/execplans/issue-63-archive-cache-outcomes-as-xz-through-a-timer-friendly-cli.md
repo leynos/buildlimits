@@ -571,9 +571,13 @@ verified archive is published, and leaves compile admission untouched.
   `outcome_archive_report` and the seal-once test seam to
   `outcome_archive_helpers`, keeping every module under the 400-line ceiling,
   and `settled_snapshot` accepts the absent retention floor the planner can
-  read. All seven commit gates passed once each on the final tree: `check-fmt`,
-  `lint` (272 reasoned duplication exceptions), `typecheck`, `test` (4554
-  passed, 86 skipped, 76 snapshots), `markdownlint`, `nixie` and `audit`.
+  read. The saved error-mode gate was reassessed: `StoreFiles.load` is renamed
+  `load_and_settle` to state the repair, seal or compaction it may perform, and
+  `ArchiveLock` remains at the `run_archive` composition root, exercised
+  through the real lock. All seven commit gates passed once each on the final
+  tree: `check-fmt`, `lint` (272 reasoned duplication exceptions), `typecheck`,
+  `test` (4554 passed, 86 skipped, 76 snapshots), `markdownlint`, `nixie` and
+  `audit`.
 
 ## Surprises & discoveries
 
@@ -1472,4 +1476,10 @@ Each mutation was reverted and the focused suite passed again.
   ceiling also forced the report builders into `outcome_archive_report`
   (`dry_report`, `unsettled_report` and `unfinished_report`) and the seal-once
   test seam into `outcome_archive_helpers`; `settled_snapshot` now accepts the
-  absent retention floor the planner's reading can return.
+  absent retention floor the planner's reading can return. Revision 19 also
+  reassesses the saved error-mode gate: `StoreFiles.load` is renamed
+  `load_and_settle`, because it repairs, seals or compacts what it reads and
+  the old name described only the read; `ArchiveLock` stays constructed at
+  `run_archive`, the composition root, because busy and no-headroom are
+  exercised against the real lock rather than a substituted one, and an
+  injected factory would add a port with no second implementation.

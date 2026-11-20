@@ -231,7 +231,7 @@ class StoreWriter(OutcomeStorePort):
         except TypeError, ValueError, OverflowError:
             self._publish("load", "unreadable")
             return
-        self._files.load(salt, now)
+        self._files.load_and_settle(salt, now)
 
     def _read_initial_salt(self) -> Salt | None:
         """Publish the one-shot result of creating or loading the local salt.
