@@ -24,8 +24,8 @@
   and the rollback sequence for the new `gauges` event.
 - [Migrating to 0.2.0](migrating-to-0.2.0.md) signposts the FizzBee model
   check, its prerequisites, the `make fizzbee`, `make model-fidelity` and
-  `make model-check` targets, the `python -m modelcheck` command, and what a
-  rollback removes.
+  `make model-check` targets, the `python -m modelcheck` command, the optional
+  outcome archiver and segmented store, and what a rollback removes.
 
 ## Decisions
 

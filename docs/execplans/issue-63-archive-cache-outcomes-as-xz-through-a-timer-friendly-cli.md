@@ -413,6 +413,16 @@ verified archive is published, and leaves compile admission untouched.
   had failed only on the two doctests whose example now names the typing-only
   `LineStream`, because a doctest executes in the module's globals; each
   Example block imports that name explicitly.
+- [x] Migration-documentation remediation (2026-11-20): the 0.2.0 migration
+  guide now signposts the archiver and the segmented store. The opening
+  paragraph names `build-limits-outcome-archive` and states that the archive
+  keys are new and optional; Table 1 gains configuration, command-line, make
+  target and store-layout rows; a new upgrade step sets the history budget
+  before the timer; the reset procedure covers `cache-outcomes.seq`, the sealed
+  directory and the archive directory; and `docs/contents.md` lists the guide's
+  new subject. The guide also no longer implies the journal is the only change
+  an operator sees without opting in: sealing begins only when the history
+  budget is raised above its 12 MiB default.
 
 ## Surprises & discoveries
 
@@ -838,3 +848,7 @@ growth proves the traces observe rows; and disabling the publication gate makes
   boundaries. The exception the consolidation made obsolete was removed. The
   final gate run passed all seven gates, with 4,513 tests passed and 86
   skipped, after the two doctest Examples gained their `LineStream` import.
+- Revision 11 records the migration-documentation remediation: the 0.2.0
+  guide now names the archiver and the segmented store in its introduction,
+  Table 1 and a new upgrade step, gives the reset procedure for a store with
+  segments, and is described accordingly in `docs/contents.md`.
