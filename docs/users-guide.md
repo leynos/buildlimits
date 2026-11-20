@@ -544,7 +544,10 @@ force, and what history it currently retains.
   cannot replace this file writes its floor to `retention-pending.json`
   instead; every later read merges the two records and uses the higher valid
   floor, so a fault local to one file does not turn a completed deletion into a
-  reported gap.
+  reported gap. A removal counts as completed once the archive itself is gone:
+  a sidecar cleanup or directory sync that fails afterwards is still reported
+  as a failure, but the deletion advances the floor rather than leaving the
+  sequence to be reported as lost history.
 - `last-run.json` is the full run report. Its `limits`, `retained`,
   `evictions` and `maintenance` sections are the documents the `--json` form
   prints.
@@ -562,9 +565,11 @@ is never mistaken for "retain nothing".
 between them, and `complete`. `complete` is `false` when a closed segment's
 metadata is missing, the active file could not be read, or the writer replaced
 the active file while the run or an inspection was measuring it; the counts are
-then lower bounds, not a claim that history was lost. Retained counts are not
-the recorder's cumulative `attributed` and `readings` counters, and neither is
-a journal reader's `--max-records` query cap.
+then lower bounds, not a claim that history was lost. A run or inspection that
+could not count the active file also names the closed `reason` in its report,
+so the status and the fault behind it are readable from the same document.
+Retained counts are not the recorder's cumulative `attributed` and `readings`
+counters, and neither is a journal reader's `--max-records` query cap.
 
 `evictions` counts the trims and deletions a run performed under `age`, `bytes`,
 `records`, `age_and_bytes`, `age_and_records`, `bytes_and_records` and

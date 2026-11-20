@@ -168,7 +168,6 @@ def test_a_retention_snapshot_failure_omits_the_section(tmp_path: Path) -> None:
     with mock.patch.object(writer, "retention", side_effect=OSError("unreadable")):
         assert shell.retention() is None, "the section is unavailable, not raised"
 
-    assert shell._disabled is False, "a status read cannot fail the shell closed"
     assert shell.describe()["enabled"] is True, "recording continues unchanged"
 
 

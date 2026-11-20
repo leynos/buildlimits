@@ -28,6 +28,7 @@ from outcome_archive_helpers import (
 from buildlimits import outcome_archive_files
 from buildlimits.outcome_archive_verify import OutputFaultError
 from buildlimits.outcome_segment_inventory import read_inventory
+from buildlimits.outcome_segment_state import read_retention_floor
 from buildlimits.outcome_segments import archive_name, segment_name
 
 if typ.TYPE_CHECKING:
@@ -143,6 +144,44 @@ def test_a_failed_delete_is_recorded_and_keeps_the_archive(
         "the archive is published even though eviction failed"
     )
     assert archives(tmp_path), "the unremovable archive stays"
+
+
+def test_a_sync_fault_after_removal_still_records_the_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An archive removed before a sync fault is a deletion, not lost history.
+
+    ``delete_archive`` removes the archive and its sidecar before making the
+    removal durable. A fault in that last step leaves the sequence gone from
+    the store with nothing in the report saying it was removed on purpose, so
+    the floor would never advance over it. The failure is still reported, but
+    the completed removal is recorded beside it.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    old = NOW - dt.timedelta(days=40)
+    write(store, records(old, 1), policy())
+    archive_dir = layout(tmp_path).archive_dir
+    real_sync = outcome_archive_files.fsync_directory
+    archive = archive_dir / archive_name(1)
+
+    def refuse_after_removal(directory: Path) -> None:
+        """Fail the sync once the archive the deletion removed is gone."""
+        if directory == archive_dir and not archive.exists():
+            refuse()
+        real_sync(directory)
+
+    monkeypatch.setattr(outcome_archive_files, "fsync_directory", refuse_after_removal)
+
+    report = run(tmp_path, policy(max_age_days=30))
+
+    assert (1, "unreadable") in report.failures, "the failed sync is reported"
+    assert [(action.action, action.sequence) for action in report.actions] == [
+        ("archived", 1),
+        ("deleted", 1),
+    ], "the removal the run completed is recorded beside the fault"
+    assert read_retention_floor(layout(tmp_path)) == 2, (
+        "the floor advances over the sequence the run removed"
+    )
 
 
 def test_a_record_cap_trims_an_archive_in_the_planning_run(tmp_path: Path) -> None:

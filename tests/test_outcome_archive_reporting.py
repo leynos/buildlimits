@@ -74,6 +74,7 @@ def test_a_corrupt_active_file_makes_the_retained_total_a_lower_bound(
 
     assert len(archive.archives(tmp_path)) == 2, "readable closed history is archived"
     assert report.status == "corrupt", "the run names the active-file fault"
+    assert report.reason == "version_mismatch", "the report names the closed fault"
     assert report.exit_status == EXIT_CORRUPT, "an operator must look"
     assert report.active_bytes == len(damaged), "the file's size is still reported"
     assert report.retained is not None and not report.retained.complete, (
@@ -93,6 +94,7 @@ def test_a_corrupt_active_file_fails_a_dry_run_without_writing_state(
 
     assert report.dry_run, "the report still says no file changed"
     assert report.status == "corrupt", "inspection names the same fault"
+    assert report.reason == "corrupt", "inspection names the closed fault"
     assert report.exit_status == EXIT_CORRUPT, "a caller can act on it"
     assert not report.maintenance.state_written, "a dry run installs no state"
 
@@ -122,6 +124,7 @@ def test_a_dry_run_reports_the_inventory_it_planned_from(tmp_path: Path) -> None
     assert report.retained is not None, "the report describes the planned history"
     assert report.retained.closed_segments == 2, "both planned segments are described"
     assert report.retained.complete, "an undisturbed active file is still measured"
+    assert report.reason is None, "a complete inspection reports no fault"
 
 
 def test_an_unreadable_store_fails_a_dry_run_without_writing_state(

@@ -285,6 +285,10 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
         orphan_sidecars=view.inventory.orphan_sidecars,
         limits=RetentionLimits.of(run.context.policy),
         retained=measured,
+        # An unreadable active file is why these totals are a lower bound. The
+        # closed reason belongs in the report rather than in the retained
+        # snapshot alone, so a timer learns the fault without parsing it.
+        reason=None if view.active.complete else view.active.reason,
     )
     try:
         outcome_archive_state.write_state(layout, floor, report)

@@ -283,12 +283,21 @@ def _trim_one(
 def _delete_one(
     run: ArchiveRun, entry: SegmentEntry, cause: str, outcome: RunOutcome
 ) -> None:
-    """Remove one planned archive, naming the bound that made it eligible."""
+    """Remove one planned archive, naming the bound that made it eligible.
+
+    The removal is only refused when the archive itself survives. A fault that
+    follows its removal, such as a sidecar cleanup or a directory sync, leaves
+    the sequence gone from the store, and the floor is the only record that it
+    was deleted on purpose. The failure is still reported, but the completed
+    deletion is recorded as well, rather than leaving the sequence to be
+    reported as lost history for ever.
+    """
     try:
         outcome_archive_files.delete_archive(run.context, entry)
     except OSError:
         outcome.failures.append((entry.sequence, "unreadable"))
-        return
+        if entry.path.exists():
+            return
     outcome.actions.append(ActionResult("deleted", entry.sequence, reason=cause))
 
 
