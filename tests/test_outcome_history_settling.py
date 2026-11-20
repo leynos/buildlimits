@@ -13,15 +13,24 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from history_fixtures import active_records, archived_segments, records
+from history_fixtures import (
+    SALT_NAME,
+    active_records,
+    archived_segments,
+    observed,
+    records,
+)
+from outcome_archive_helpers import seal_active
 from outcome_archive_helpers import write as write_store
 from segment_test_helpers import history_policy, write_private
 
 from buildlimits import outcome_history, outcome_records, outcome_segment_inventory
 from buildlimits.outcome_segment_inventory import Inventory
 from buildlimits.outcome_segments import SegmentLayout, segment_name
+from buildlimits.outcome_store_io import read_store
 
 if typ.TYPE_CHECKING:
+    from buildlimits.outcome_record_format import DecodedStore
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
 type _Scan = cabc.Callable[[SegmentLayout], Inventory]
@@ -133,6 +142,83 @@ def test_an_unreadable_settle_check_never_settles(
     assert raised.value.reason == "unsettled", "the fault is bounded"
     assert calls == 2 * outcome_history.HISTORY_ATTEMPTS, (
         "every attempt both scanned and failed to settle"
+    )
+
+
+def test_an_empty_scan_is_not_empty_history_once_a_seal_lands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seal after an empty scan still returns the rows it closed.
+
+    The scan finds no closed segment because the rows are still active, and
+    the writer then seals them, so the active path is gone when the emptiness
+    check runs. Raising ``FileNotFoundError`` there would hand replay a
+    successful empty history while the new segment holds the rows.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    rows = records(0, 1)
+    write_store(store, rows, history_policy(10**6))
+    layout = SegmentLayout.beside(store)
+    real = outcome_segment_inventory.read_inventory
+    sealed = False
+
+    def scan_then_seal(
+        target: SegmentLayout, *, retention_floor: int | None = None
+    ) -> Inventory:
+        """Report the pre-seal inventory, then seal the active rows once."""
+        nonlocal sealed
+        inventory = real(target, retention_floor=retention_floor)
+        if not sealed:
+            sealed = True
+            target.sealed_dir.mkdir(parents=True, exist_ok=True)
+            seal_active(target, rows, 1)
+        return inventory
+
+    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", scan_then_seal)
+
+    history = outcome_history.read_history(layout)
+
+    assert observed(history.records) == observed(rows), "the sealed rows are read"
+
+
+def test_a_salt_sealed_during_the_pin_is_not_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A domain that moves into a new segment mid-pin is still retained.
+
+    The scan lists only domain A's archive while domain B's rows are active,
+    and the writer seals B before the pin reads the active file. Resolution
+    then finds no B segment and no active B header; rejecting the selection
+    would deny a domain the store still retains.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    archived_segments(store, 1)
+    (tmp_path / SALT_NAME).unlink()
+    active_records(store, 2, 1)
+    sealed_b = records(2, 1)
+    salt_b = typ.cast("DecodedStore", read_store(store)).header.salt_id
+    real = outcome_segment_inventory.read_inventory
+    sealed = False
+
+    def scan_then_seal(
+        target: SegmentLayout, *, retention_floor: int | None = None
+    ) -> Inventory:
+        """Report the pre-seal inventory, then seal domain B once."""
+        nonlocal sealed
+        inventory = real(target, retention_floor=retention_floor)
+        if not sealed:
+            sealed = True
+            seal_active(target, sealed_b, 2)
+        return inventory
+
+    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", scan_then_seal)
+
+    history = outcome_history.read_history_beside(
+        store, outcome_history.HistorySelection(salt_id=salt_b)
+    )
+
+    assert observed(history.records) == observed(sealed_b), (
+        "the domain sealed mid-pin is read from its new segment"
     )
 
 

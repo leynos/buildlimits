@@ -743,6 +743,17 @@ verified archive is published, and leaves compile admission untouched.
   recording its trims or deletions. The regression archives a sealed source,
   leaves a corrupt copy behind so the follow-up reconcile quarantines it, and
   asserts an expired archive beside it is still deleted by a later pass.
+- [ ] CodeRabbit review 6000304047 remediation, group 7 (2026-11-21): history
+  pin settlement (findings 10, 11). An empty-looking store is now raised as
+  `FileNotFoundError` only when a second scan still finds no closed segment and
+  the active path is still absent, so a seal between the scan and that check
+  cannot turn retained rows into a successful empty report. A resolution that
+  reports `unknown_salt` rechecks the inventory and retries when the writer
+  sealed the named domain out of the active file during the pin; a settled
+  store keeps the rejection. The pin's retry decision moved to
+  `_pinned_or_retry`, which keeps the loop inside the complexity bound.
+  Regressions seal the active rows after the empty scan and seal domain B
+  during the pin; both fail against the previous module.
 
 ## Surprises & discoveries
 

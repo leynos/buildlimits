@@ -134,7 +134,7 @@ def pin_history(
     Raises
     ------
     FileNotFoundError
-        If the store holds no segment and no active file.
+        If a settled scan finds no segment and no active file.
     HistoryFaultError
         If the store never settles, a listed segment vanished, a segment is
         corrupt, or an explicitly named salt was never written.
@@ -142,22 +142,70 @@ def pin_history(
     chosen = HistorySelection() if selection is None else selection
     for _attempt in range(HISTORY_ATTEMPTS):
         inventory = outcome_segment_inventory.read_inventory(layout)
-        if not inventory.effective and not layout.active.exists():
+        if _is_empty_store(layout, inventory):
             raise FileNotFoundError(layout.active)
-        try:
-            snapshot = _pin(layout, inventory, chosen)
-        except FileNotFoundError as error:
-            # The archiver removed a segment between the scan and the pin.
-            # A retry sees the archive it was replaced by; a store that never
-            # settles is a fault, not empty history.
-            if not is_settled(layout, inventory):
-                continue
-            raise HistoryFaultError("vanished") from error
-        except _MovedError:
-            continue
-        if is_settled(layout, inventory):
+        snapshot = _pinned_or_retry(layout, inventory, chosen)
+        if snapshot is not None:
             return snapshot
     raise HistoryFaultError("unsettled")
+
+
+def _pinned_or_retry(
+    layout: SegmentLayout, inventory: Inventory, chosen: HistorySelection
+) -> _Snapshot | None:
+    """Pin one scanned version, or report that the store moved.
+
+    Returns
+    -------
+    _Snapshot | None
+        The pinned snapshot, or None when a fresh scan should be tried.
+
+    Raises
+    ------
+    HistoryFaultError
+        If a settled store cannot supply the snapshot: a listed segment
+        vanished, or the selection names a salt the store does not carry.
+    """
+    try:
+        snapshot = _pin(layout, inventory, chosen)
+    except FileNotFoundError as error:
+        # The archiver removed a segment between the scan and the pin. A retry
+        # sees the archive it was replaced by; a store that never settles is a
+        # fault, not empty history.
+        if not is_settled(layout, inventory):
+            return None
+        raise HistoryFaultError("vanished") from error
+    except _MovedError:
+        return None
+    except HistoryFaultError as error:
+        # A salt that was active at the scan can be sealed before the pin reads
+        # the active file, so the named domain appears to be missing while its
+        # rows are retained in the new segment. Recheck the scan before
+        # rejecting the selection; a settled store keeps the fault.
+        if error.reason == "unknown_salt" and not is_settled(layout, inventory):
+            return None
+        raise
+    return snapshot if is_settled(layout, inventory) else None
+
+
+def _is_empty_store(layout: SegmentLayout, inventory: Inventory) -> bool:
+    """Whether a settled scan found no history at all.
+
+    The writer seals by renaming the active file into the sealed directory, so
+    a seal between the scan and this check empties the active path while the
+    rows live on in a segment the scan did not list. Only a store that a
+    second scan still reports empty has no history; a changed one is left to
+    the pin, whose missing active file sends it back for a fresh scan.
+
+    Returns
+    -------
+    bool
+        True when neither the scan nor the active path holds any history and
+        a re-scan agrees with the scan.
+    """
+    if inventory.effective or layout.active.exists():
+        return False
+    return is_settled(layout, inventory)
 
 
 def _pin(
