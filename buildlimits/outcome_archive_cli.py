@@ -272,10 +272,14 @@ def _write_evictions(report: RunReport) -> None:
     counts = eviction_counts(report.actions)
     if not any(counts.values()):
         return
-    print(
-        f"evictions: age {counts['age']}, bytes {counts['bytes']}, "
-        f"age and bytes {counts['age_and_bytes']}"
+    # Only the bounds that removed something are printed, so a run under an age
+    # limit alone does not read as though a byte or record bound acted.
+    performed = ", ".join(
+        f"{cause.replace('_and_', ' and ')} {count}"
+        for cause, count in counts.items()
+        if count
     )
+    print(f"evictions: {performed}")
 
 
 def _write_maintenance(report: RunReport) -> None:

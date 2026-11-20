@@ -34,7 +34,15 @@ if typ.TYPE_CHECKING:
 
 # The closed vocabulary a report counts evictions under. A trim that serves
 # more than one bound names each of them, so every combination is listed.
-EVICTION_CAUSES = ("age", "bytes", "age_and_bytes")
+EVICTION_CAUSES = (
+    "age",
+    "bytes",
+    "records",
+    "age_and_bytes",
+    "age_and_records",
+    "bytes_and_records",
+    "age_and_bytes_and_records",
+)
 
 type RunStatus = typ.Literal[
     "ok", "failed", "corrupt", "busy", "no_headroom", "unsettled"

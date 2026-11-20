@@ -98,8 +98,9 @@ class ActionResult:
         Bytes the archive occupies after the operation.
     reason : str | None
         A closed reason for the operation. A quarantine names the fault; a
-        deletion or trim names the bound that caused it: ``age``, ``bytes`` or
-        ``age_and_bytes``.
+        deletion or trim names every bound that caused it, from ``age``,
+        ``bytes`` and ``records``, joined by ``_and_`` when a single rewrite
+        serves more than one.
     """
 
     action: ActionName
