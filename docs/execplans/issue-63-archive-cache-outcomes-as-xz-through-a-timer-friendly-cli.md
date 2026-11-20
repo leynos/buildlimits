@@ -683,6 +683,20 @@ verified archive is published, and leaves compile admission untouched.
   rename and the rename-despite-failed-install paths;
   `tests/test_outcome_store_sealing.py` and the archive filesystem tests pass.
   The remaining 23 findings are grouped for later commits.
+- [ ] CodeRabbit review 6000304047 remediation, group 2 (2026-11-21):
+  unsafe and out-of-range store paths (findings 6, 15). `regular_files` now
+  validates the whole directory chain with `require_private_chain_when_present`
+  before listing, so an inventory never follows a symlinked sealed or archive
+  directory, or a link above one, into files a retention pass would then
+  delete; a missing directory is still an empty listing. A refused chain
+  reaches the run as `UnsafePathError` and is reported as `failed`/`unreadable`
+  without deleting anything outside the store. `read_sequence` rejects a
+  counter above `MAX_SEQUENCE` (the largest value a twelve-digit name can
+  carry) so the damaged-counter fallback runs, and `next_sequence` raises
+  `OverflowError` at exhaustion, which `seal` already reports as
+  `save_failed`. Regressions cover a symlinked sealed directory, a symlinked
+  archive directory, a symlinked parent, an external file surviving a run, an
+  out-of-range counter and the last nameable sequence.
 
 ## Surprises & discoveries
 

@@ -10,6 +10,7 @@ import pytest
 from segment_test_helpers import store_layout, write_private
 
 from buildlimits.outcome_segment_state import read_retention_floor, read_sequence
+from buildlimits.outcome_segments import MAX_SEQUENCE
 
 
 def test_sequence_counter_accepts_surrounding_whitespace(tmp_path: Path) -> None:
@@ -37,6 +38,25 @@ def test_a_counter_that_is_not_one_decimal_integer_is_a_fault(
 
     with pytest.raises(ValueError, match="sequence counter"):
         read_sequence(path)
+
+
+def test_a_counter_beyond_the_name_width_is_a_fault(tmp_path: Path) -> None:
+    """An out-of-range counter would name a segment the inventory cannot see.
+
+    Accepting it would make every later seal publish a source the twelve-digit
+    scan ignores, so the counter is reported as damaged instead.
+    """
+    path = write_private(tmp_path / "cache-outcomes.seq", b"1000000000000\n")
+
+    with pytest.raises(ValueError, match="out of range"):
+        read_sequence(path)
+
+
+def test_the_largest_nameable_sequence_is_accepted(tmp_path: Path) -> None:
+    """The bound itself is still a sequence the store can name."""
+    path = write_private(tmp_path / "cache-outcomes.seq", f"{MAX_SEQUENCE}\n".encode())
+
+    assert read_sequence(path) == MAX_SEQUENCE, "the last nameable counter reads"
 
 
 def test_a_directory_is_not_a_sequence_counter(tmp_path: Path) -> None:

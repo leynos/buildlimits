@@ -12,6 +12,7 @@ import re
 import stat
 import typing as typ
 
+from buildlimits.outcome_archive_dirs import require_private_chain_when_present
 from buildlimits.outcome_segment_sidecar import (
     Sidecar,
     read_mapping,
@@ -319,16 +320,24 @@ def _archive_entry(
 def regular_files(directory: Path) -> list[tuple[Path, int]]:
     """List regular files in one directory without following links.
 
-    A missing directory is an empty listing, but any other listing failure
-    propagates: reporting no entries for an unreadable directory would present
-    damage as an empty store.
+    The directory's whole chain is validated before it is listed. ``scandir``
+    follows a symlinked directory argument, and an inventory that followed one
+    would name files outside the store that a retention pass then deletes. A
+    missing directory is an empty listing, but any other listing or validation
+    failure propagates: reporting no entries for an unreadable directory would
+    present damage as an empty store.
 
     Returns
     -------
     list[tuple[Path, int]]
         Path and size of every regular file, or an empty list when the
         directory does not exist.
+
+    Notes
+    -----
+    A refused chain propagates `outcome_archive_dirs.UnsafePathError`.
     """
+    require_private_chain_when_present(directory)
     try:
         iterator = os.scandir(directory)
     except FileNotFoundError:

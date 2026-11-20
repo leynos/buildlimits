@@ -20,11 +20,14 @@ LAST_RUN_NAME = "last-run.json"
 QUARANTINE_DIR_NAME = "quarantine"
 LOCK_NAME = "archive.lock"
 _SEQUENCE_WIDTH = 12
+MAX_SEQUENCE = 10**_SEQUENCE_WIDTH - 1
+"""The largest sequence a twelve-digit segment name can carry."""
 
 __all__ = [
     "ARCHIVE_DIR_NAME",
     "LAST_RUN_NAME",
     "LOCK_NAME",
+    "MAX_SEQUENCE",
     "QUARANTINE_DIR_NAME",
     "RETENTION_NAME",
     "SEALED_DIR_NAME",

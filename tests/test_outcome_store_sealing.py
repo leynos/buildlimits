@@ -12,6 +12,7 @@ import typing as typ
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from outcome_store_helpers import (
     close_writer,
     salt_path,
@@ -28,6 +29,7 @@ from buildlimits.outcome_key import Salt
 from buildlimits.outcome_record_format import DecodedStore
 from buildlimits.outcome_segment_state import read_sequence
 from buildlimits.outcome_segments import (
+    MAX_SEQUENCE,
     SegmentLayout,
     sealed_meta_name,
     segment_name,
@@ -37,8 +39,6 @@ from buildlimits.outcome_store_io import read_store
 from buildlimits.outcome_store_salt import file_salt
 
 if typ.TYPE_CHECKING:
-    import pytest
-
     from buildlimits.outcome_ports import StoreResult
     from buildlimits.outcome_retention import RetentionPolicy
 
@@ -446,3 +446,39 @@ def test_a_seal_that_cannot_sync_the_source_keeps_it_active(tmp_path: Path) -> N
             )
     finally:
         close_writer(writer)
+
+
+def test_an_out_of_range_counter_falls_back_to_the_directory(
+    tmp_path: Path,
+) -> None:
+    """A damaged counter never forces an unsupported segment name.
+
+    The twelve-digit inventory cannot see a longer name, so a counter beyond
+    that range is ignored and the highest name on disk decides the next
+    sequence instead.
+    """
+    sealed = tmp_path / "sealed"
+    sealed.mkdir()
+    (sealed / segment_name(5)).write_bytes(b"older source")
+    counter = tmp_path / "cache-outcomes.seq"
+    counter.write_text("1000000000000\n", encoding="utf-8")
+
+    sequence = outcome_store_sealing.next_sequence(counter, sealed, tmp_path)
+
+    assert sequence == 6, "the directory decides when the counter is damaged"
+
+
+def test_the_next_sequence_refuses_an_exhausted_range(tmp_path: Path) -> None:
+    """No seal may publish a name the inventory cannot see.
+
+    The last nameable sequence is already taken, so the seal reports a save
+    failure instead of writing a thirteen-digit file.
+    """
+    sealed = tmp_path / "sealed"
+    sealed.mkdir()
+    (sealed / segment_name(MAX_SEQUENCE)).write_bytes(b"last source")
+
+    with pytest.raises(OverflowError, match="exhausted"):
+        outcome_store_sealing.next_sequence(
+            tmp_path / "cache-outcomes.seq", sealed, tmp_path
+        )

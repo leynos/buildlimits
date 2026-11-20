@@ -19,6 +19,7 @@ from segment_test_helpers import (
     write_sidecar,
 )
 
+from buildlimits.outcome_archive_dirs import UnsafePathError
 from buildlimits.outcome_segment_gaps import MAX_GAP_SEQUENCES
 from buildlimits.outcome_segment_inventory import (
     Inventory,
@@ -308,3 +309,47 @@ def test_sealed_entries_carry_their_path_and_state(tmp_path: Path) -> None:
     assert entry == SegmentEntry(
         sequence=1, path=path, state="sealed", physical_bytes=4, logical_bytes=4
     ), "the entry describes the source without reading it"
+
+
+def test_a_symlinked_sealed_directory_is_refused(tmp_path: Path) -> None:
+    """Inventory never follows a link out of the store.
+
+    A retention pass deletes what the inventory names, so a sealed directory
+    that is a link would present a file outside the store as expired history.
+    """
+    layout = store_layout(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    write_private(outside / segment_name(1), b"external bytes")
+    layout.sealed_dir.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(UnsafePathError):
+        read_inventory(layout)
+
+
+def test_a_symlinked_archive_directory_is_refused(tmp_path: Path) -> None:
+    """An archive directory outside the store is not inventoried either."""
+    layout = store_layout(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    write_private(outside / archive_name(1), b"external archive")
+    layout.archive_dir.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(UnsafePathError):
+        read_inventory(layout)
+
+
+def test_a_symlinked_parent_of_the_store_is_refused(tmp_path: Path) -> None:
+    """Every component is checked, not only the directory being listed.
+
+    A link above the sealed directory redirects the listing just as surely as
+    one at the final component, and the final-component no-follow flag cannot
+    see it.
+    """
+    outside = tmp_path / "outside"
+    (outside / "store").mkdir(parents=True)
+    write_private(outside / "store" / segment_name(1), b"external bytes")
+    (tmp_path / "link").symlink_to(outside / "store", target_is_directory=True)
+
+    with pytest.raises(UnsafePathError):
+        read_inventory(store_layout(tmp_path / "link"))

@@ -119,6 +119,13 @@ def next_sequence(sequence_file: Path, sealed_dir: Path, archived_dir: Path) -> 
     -------
     int
         One past every sequence already claimed.
+
+    Raises
+    ------
+    OverflowError
+        If no sequence is left that the twelve-digit inventory can name. A
+        seal that cannot produce a visible source is reported as a save
+        failure rather than publishing an invisible one.
     """
     try:
         recorded = read_sequence(sequence_file)
@@ -130,6 +137,9 @@ def next_sequence(sequence_file: Path, sealed_dir: Path, archived_dir: Path) -> 
         highest_segment_name(sealed_dir),
         highest_segment_name(archived_dir),
     )
+    if highest >= outcome_segments.MAX_SEQUENCE:
+        msg = "the segment sequence is exhausted"
+        raise OverflowError(msg)
     return highest + 1
 
 

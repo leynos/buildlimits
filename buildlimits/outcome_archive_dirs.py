@@ -19,14 +19,20 @@ if typ.TYPE_CHECKING:
 _DIRECTORY_MODE = 0o700
 
 __all__ = [
+    "MissingPathError",
     "UnsafePathError",
     "ensure_private_directory",
     "require_private_chain",
+    "require_private_chain_when_present",
 ]
 
 
 class UnsafePathError(OSError):
     """A path is a symlink, a non-directory, or not owned by this user."""
+
+
+class MissingPathError(UnsafePathError):
+    """A path component does not exist and this check may not create it."""
 
 
 def ensure_private_directory(path: Path) -> None:
@@ -72,6 +78,11 @@ def _walk_chain(path: Path, *, create: bool) -> os.stat_result:
     UnsafePathError
         If the path is relative, a component is a link or not a directory, or
         a component is shared with another account.
+
+    Notes
+    -----
+    A component missing while ``create`` is false propagates `MissingPathError`
+    from `_descend`.
     """
     if not path.is_absolute():
         msg = "an archive path must be absolute"
@@ -105,18 +116,18 @@ def _descend(parent: int, part: str, *, create: bool) -> tuple[int, bool]:
 
     Raises
     ------
-    UnsafePathError
-        If the component is a symlink, is not a directory, or is missing when
-        ``create`` is false.
+    MissingPathError
+        If the component is missing when ``create`` is false.
     OSError
-        If the component cannot be opened or created for another reason.
+        If the component cannot be opened or created for another reason; a
+        link or non-directory is reported as `UnsafePathError`.
     """
     try:
         return os.open(part, _directory_flags(), dir_fd=parent), False
     except FileNotFoundError:
         if not create:
             msg = f"archive path component is missing: {part}"
-            raise UnsafePathError(msg) from None
+            raise MissingPathError(msg) from None
     except OSError as error:
         _refuse_non_directory(error, part)
         raise
@@ -193,11 +204,42 @@ def require_private_chain(path: Path) -> None:
         If a component is not a directory reachable without a symlink, is
         writable by another user, is owned by an account other than this one
         or root, or the final component is not owned by this user.
+
+    Notes
+    -----
+    A directory, or parent, that does not exist propagates `MissingPathError`.
     """
     final = _walk_chain(path, create=False)
     if final.st_uid != os.getuid():
         msg = "an archive directory must be owned by this user"
         raise UnsafePathError(msg)
+
+
+def require_private_chain_when_present(path: Path) -> None:
+    """Validate a directory chain that may not exist yet.
+
+    The writer creates the sealed directory on its first seal, so a store that
+    has never sealed one has no such directory to check. Absence is the only
+    tolerated outcome: a directory that exists is validated exactly as
+    `require_private_chain` does, so a link or a shared component is still
+    refused.
+
+    Parameters
+    ----------
+    path : Path
+        An absolute directory path that may be absent.
+
+    Notes
+    -----
+    A directory that exists is validated with `require_private_chain`, whose
+    refusals propagate unchanged.
+    """
+    try:
+        require_private_chain(path)
+    except MissingPathError:
+        # Every component above the missing one was validated before the walk
+        # stopped, so an absent directory is the only thing this call accepts.
+        return
 
 
 def _require_private_directory(metadata: os.stat_result, part: str) -> None:

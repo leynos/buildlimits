@@ -340,3 +340,27 @@ def test_a_record_cap_evicts_the_oldest_source_in_the_planning_run(
     assert active.records + sum(entry.record_count or 0 for entry in kept) == 8, (
         "the active rows count towards the cap"
     )
+
+
+def test_a_symlinked_sealed_directory_is_refused_before_any_delete(
+    tmp_path: Path,
+) -> None:
+    """A linked sealed directory never becomes a deletion outside the store.
+
+    The inventory follows a directory argument, so a linked sealed directory
+    would present an external expired segment as history. The run must refuse
+    the store rather than remove the file the link names.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, (), policy(segment_bytes=1_000_000))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    external = outside / segment_name(1)
+    write_private(external, b"external bytes")
+    layout(tmp_path).sealed_dir.symlink_to(outside, target_is_directory=True)
+
+    report = run(tmp_path, policy(max_age_days=0))
+
+    assert report.status == "failed", "the unsafe store is not acted on"
+    assert report.reason == "unreadable", "the operator-visible reason is closed"
+    assert external.exists(), "the file outside the store is not deleted"

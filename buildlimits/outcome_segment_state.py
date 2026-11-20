@@ -13,6 +13,7 @@ import os
 import stat
 import typing as typ
 
+from buildlimits.outcome_segments import MAX_SEQUENCE
 from buildlimits.outcome_store_files import OversizedFileError, read_private_bytes
 
 if typ.TYPE_CHECKING:
@@ -66,8 +67,8 @@ def read_sequence(path: Path) -> int | None:
     Raises
     ------
     ValueError
-        If the file is not a regular file, is oversized, or is not a decimal
-        integer.
+        If the file is not a regular file, is oversized, is not a decimal
+        integer, or exceeds the largest sequence the segment naming can carry.
     """
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
@@ -99,7 +100,14 @@ def read_sequence(path: Path) -> int | None:
     if not text.isdecimal():
         msg = "sequence counter is not a decimal integer"
         raise ValueError(msg)
-    return int(text)
+    sequence = int(text)
+    if sequence > MAX_SEQUENCE:
+        # A counter this large names a file the twelve-digit inventory cannot
+        # see, so every later seal would vanish from reports. Report the
+        # damage and let the caller fall back to the directory names.
+        msg = "sequence counter is out of range"
+        raise ValueError(msg)
+    return sequence
 
 
 def read_retention_floor(layout: SegmentLayout) -> RetentionFloor:
