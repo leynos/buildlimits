@@ -20,6 +20,18 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_segments import SegmentLayout
 
 
+def seal_on_final_scan(store: Path, retention_floor: int | None) -> None:
+    """Seal the active file only when the scan being patched is a later one.
+
+    The planning read and the measurement that follows retention read the
+    same store, and only the later scans carry a retention floor. Sealing the
+    planning read would move history into a segment the plan never saw, so
+    every patch seals only the scan whose floor says retention has run.
+    """
+    if retention_floor is not None:
+        archive.seal_store(store)
+
+
 def test_a_corrupt_active_file_makes_the_retained_total_a_lower_bound(
     tmp_path: Path,
 ) -> None:
@@ -207,8 +219,7 @@ def test_a_seal_during_measurement_makes_the_totals_a_lower_bound(
         inventory_layout: SegmentLayout, *, retention_floor: int | None = None
     ) -> outcome_segment_inventory.Inventory:
         """Seal the active file as the final scan begins."""
-        if retention_floor is not None:
-            archive.seal_store(store)
+        seal_on_final_scan(store, retention_floor)
         return read_inventory(inventory_layout, retention_floor=retention_floor)
 
     with mock.patch.object(outcome_segment_inventory, "read_inventory", seal_then_read):
@@ -221,6 +232,41 @@ def test_a_seal_during_measurement_makes_the_totals_a_lower_bound(
     assert report.retained.complete is False, (
         "an unmeasured active file makes the totals a lower bound"
     )
+
+
+def test_a_seal_after_the_final_inventory_read_is_a_lower_bound(
+    tmp_path: Path,
+) -> None:
+    """Rows that move after the last inventory read belong to neither read.
+
+    The measurement reads closed history first and the active file second. A
+    seal between those reads leaves the saved inventory without the new
+    segment and an empty file at the active path, so the run must report a
+    lower bound rather than a complete zero-row history.
+    """
+    store = archive.unsealed_store(tmp_path)
+    read_inventory = outcome_segment_inventory.read_inventory
+
+    def read_then_seal(
+        inventory_layout: SegmentLayout, *, retention_floor: int | None = None
+    ) -> outcome_segment_inventory.Inventory:
+        """Return the inventory as it was before the final scan seals the store."""
+        inventory = read_inventory(inventory_layout, retention_floor=retention_floor)
+        seal_on_final_scan(store, retention_floor)
+        return inventory
+
+    with mock.patch.object(outcome_segment_inventory, "read_inventory", read_then_seal):
+        report = archive.run(tmp_path, archive.policy(max_bytes=0, segment_bytes=4000))
+
+    assert report.retained is not None, "the run still reports what it saw"
+    assert report.retained.record_count == 0, (
+        "neither the saved inventory nor the replaced file holds the rows"
+    )
+    assert report.retained.complete is False, (
+        "history the final reads could not see is a lower bound"
+    )
+    assert report.status == "corrupt", "a replaced active file is not a clean run"
+    assert report.exit_status == EXIT_CORRUPT, "the timer sees a failed measurement"
 
 
 def test_a_seal_during_planning_makes_a_dry_run_a_lower_bound(

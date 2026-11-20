@@ -197,9 +197,10 @@ def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.Arc
 def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunReport:
     """Take the archive directories, perform the plan and write state.
 
-    A run whose active file cannot be counted is reported as ``corrupt`` even
-    when every closed segment succeeded: the retained total is then a lower
-    bound, and a timer that recorded ``ok`` would hide history it cannot see.
+    A run whose active file cannot be counted, or was replaced while it was
+    read, is reported as ``corrupt`` even when every closed segment succeeded:
+    the retained total is then a lower bound, and a timer that recorded ``ok``
+    would hide history it cannot see.
 
     A state write that fails does not discard the report of work already done:
     the archive and its evictions are real even when ``retention.json`` could
@@ -244,7 +245,11 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
         view.inventory
     )
     report = RunReport(
-        status="corrupt" if outcome.failures or not view.active.complete else "ok",
+        status=(
+            "corrupt"
+            if outcome.failures or view.is_replaced or not view.active.complete
+            else "ok"
+        ),
         started_at=run.started_at,
         finished_at=utc_now(),
         active_bytes=view.active.logical_bytes,

@@ -18,6 +18,7 @@ from buildlimits.outcome_store_io import (
     append_line,
     replace_store,
     store_size,
+    store_size_if_present,
 )
 from buildlimits.outcome_store_read import read_store
 from buildlimits.outcome_store_sealing import seal
@@ -47,8 +48,8 @@ class _Published:
     count : int
         The number of rows the state held.
     logical_bytes : int | None
-        The active file's size in that state, or None when it could not be
-        measured.
+        The active file's size in that state, or None when no file exists or
+        it could not be measured.
     reason : str | None
         A closed reason the size and the count do not describe one state, or
         None when they do.
@@ -185,9 +186,14 @@ class StoreFiles:
         the measured size and the row count describe different states. The
         snapshot names that instead of pairing them, and keeps naming it until
         a compaction or a new active file removes the fragment.
+
+        A missing active file is published as unmeasured rather than as an
+        empty one. A seal that moved the file but could not install its
+        replacement leaves no file to measure, and a zero-byte size beside the
+        writer's rows would describe a state that never existed.
         """
         try:
-            size: int | None = store_size(self.path)
+            size: int | None = store_size_if_present(self.path)
         except OSError:
             size = None
         reason = "repair_pending" if self.torn_tail else None

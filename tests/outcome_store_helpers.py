@@ -5,19 +5,22 @@ import threading
 import time
 import typing as typ
 import weakref
+from unittest import mock
 
 import pytest
 
-from buildlimits import outcome_records
+from buildlimits import outcome_records, outcome_store_state
+from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_store import StoreWriter
+from buildlimits.outcome_store_clock import Clocks
+from buildlimits.outcome_store_salt import file_salt
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
     from pathlib import Path
 
-    from buildlimits.outcome_key import Salt
     from buildlimits.outcome_ports import StoreFailure
     from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_retention import RetentionPolicy
@@ -162,6 +165,36 @@ def salt_path(path: Path) -> Path:
         The sibling salt path.
     """
     return path.with_name(_SALT_NAME)
+
+
+def loaded_store_files(
+    path: Path, *, policy: RetentionPolicy, now: dt.datetime
+) -> outcome_store_state.StoreFiles:
+    """Return writer state loaded from a fresh salted store at ``path``.
+
+    A synchronous test that drives the writer's transitions needs the same
+    salted, loaded state its worker builds. Loading also installs the header,
+    so the returned state is ready for appends and measurements.
+
+    Returns
+    -------
+    StoreFiles
+        The loaded writer state.
+
+    Examples
+    --------
+    ``loaded_store_files(path, policy=policy, now=NOW)`` loads an empty store
+    and leaves ``files.records`` empty.
+    """
+    salted = file_salt(salt_path(path))
+    if not isinstance(salted, Salt):
+        pytest.fail(f"the salt fixture failed: {salted.reason}")
+    files = outcome_store_state.StoreFiles(
+        path, mock.Mock(), Clocks(wall=lambda: now), policy=policy
+    )
+    files.salt = salted
+    files.load(salted, now)
+    return files
 
 
 def start_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
