@@ -374,6 +374,13 @@ def _delete_one(
 ) -> bool:
     """Remove one planned entry, naming the bound that made it eligible.
 
+    The removal is only refused when the entry itself survives. A fault that
+    follows its removal, such as a sidecar cleanup or a directory sync, leaves
+    the sequence gone from the store, and the floor is the only record that it
+    was deleted on purpose. The failure is still reported, but the completed
+    deletion is recorded as well, rather than leaving the sequence to be
+    reported as lost history for ever.
+
     Returns
     -------
     bool
@@ -386,7 +393,8 @@ def _delete_one(
             outcome_archive_files.delete_archive(run.context, entry)
     except OSError as error:
         outcome.failures.append((entry.sequence, failure_reason(error)))
-        return False
+        if entry.path.exists():
+            return False
     outcome.actions.append(ActionResult("deleted", entry.sequence, reason=cause))
     return True
 

@@ -162,5 +162,5 @@ def loaded_store_files(
         path, mock.Mock(), Clocks(wall=lambda: now), policy=policy
     )
     files.salt = salted
-    files.load(salted, now)
+    files.load_and_settle(salted, now)
     return files

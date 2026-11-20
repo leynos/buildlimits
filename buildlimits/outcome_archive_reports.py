@@ -155,6 +155,10 @@ def dry_report(
         limits=RetentionLimits.of(run.context.policy),
         retained=retained_history(inventory, active),
         maintenance=Maintenance(state_written=False),
+        # The reason the active file could not be counted is the reason the
+        # inspection reports ``corrupt``; leaving it out would name the status
+        # without the closed fault behind it.
+        reason=None if active.complete else active.reason,
     )
 
 

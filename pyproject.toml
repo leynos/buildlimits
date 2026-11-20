@@ -2239,7 +2239,6 @@ members = [
     "tests/test_predict_evaluation.py",
     "buildlimits/outcome_archive.py",
     "buildlimits/outcome_history_pin.py",
-    "buildlimits/outcome_archive.py",
     "buildlimits/outcome_ports.py",
     "modelcheck/cli.py",
     "tests/outcome_archive_helpers.py",
@@ -2570,7 +2569,3 @@ members = [
     "tests/test_outcome_archive_reporting.py::read_then_seal",
 ]
 reason = "These local readers are deliberate mirror images: one seals the active file immediately before the final inventory scan and the other immediately after it, so each test exercises one side of the same measurement window. The shared seal condition already lives in seal_on_final_scan; folding the remaining ordering into a parameterized factory would hide which side of the window each test depends on."
-
-[[tool.duplication_gate.allow]]
-unit = "tests/test_outcome_store_writes.py"
-reason = "The matched fragment is the arrangement two snapshot tests share: both witness the same contract, that the status snapshot must not pair a size with a row count it cannot describe, through different faults. The loaded-store fixture and the publish/assert steps are already named helpers, and the detector reports this family without function names, so a narrower member key cannot match."

@@ -29,6 +29,7 @@ from outcome_archive_helpers import (
 from segment_test_helpers import write_private
 
 from buildlimits import outcome_archive_encode, outcome_archive_files
+from buildlimits.outcome_segment_state import read_retention_floor
 from buildlimits.outcome_archive_active import active_history
 from buildlimits.outcome_archive_exit import EXIT_TEMPFAIL, exit_status
 from buildlimits.outcome_archive_verify import OutputFaultError, SegmentFaultError
@@ -364,3 +365,39 @@ def test_a_symlinked_sealed_directory_is_refused_before_any_delete(
     assert report.status == "failed", "the unsafe store is not acted on"
     assert report.reason == "unreadable", "the operator-visible reason is closed"
     assert external.exists(), "the file outside the store is not deleted"
+
+
+def test_a_fault_after_removal_still_records_the_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A source removed before a later fault is a deletion, not lost history.
+
+    The removal deletes the source before making the change durable, so a
+    fault in the step after it leaves the sequence gone from the store with
+    nothing in the report saying it was removed on purpose. The floor would
+    then never advance over it. The failure is still reported, but the
+    completed removal is recorded beside it.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    old = NOW - dt.timedelta(days=40)
+    # The rows are seeded under a policy with no age bound, because the writer
+    # expires an aged row when it compacts: a store written under the
+    # thirty-day bound would already hold none of them.
+    write(store, records(old, 1), policy(max_age_days=0))
+
+    def remove_then_refuse(context: object, entry: object) -> None:
+        """Remove the entry's file, then report the fault after it."""
+        Path(entry.path).unlink()
+        refuse()
+
+    monkeypatch.setattr(outcome_archive_files, "delete_source", remove_then_refuse)
+
+    report = run(tmp_path, policy(max_age_days=30))
+
+    assert (1, "unreadable") in report.failures, "the failed removal is reported"
+    assert [(action.action, action.sequence) for action in report.actions] == [
+        ("deleted", 1)
+    ], "the removal the run completed is recorded beside the fault"
+    assert read_retention_floor(layout(tmp_path)).sequence == 2, (
+        "the floor advances over the sequence the run removed"
+    )
