@@ -145,6 +145,7 @@ def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
             "busy",
             clock=context.clock,
             limits=RetentionLimits.of(context.policy),
+            dry_run=selected.dry_run,
         )
     except outcome_archive_lock.NoHeadroomError:
         return unfinished_report(
@@ -153,6 +154,7 @@ def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
             "no_headroom",
             clock=context.clock,
             limits=RetentionLimits.of(context.policy),
+            dry_run=selected.dry_run,
         )
     except UnknownActiveHistoryError:
         # The record cap counts the writer's unsealed rows. A run that cannot
@@ -164,6 +166,7 @@ def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
             "unreadable",
             clock=context.clock,
             limits=RetentionLimits.of(context.policy),
+            dry_run=selected.dry_run,
         )
     except OSError as error:
         # The headroom check reads free space once, before the pass, so the
@@ -177,6 +180,7 @@ def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
             reason,
             clock=context.clock,
             limits=RetentionLimits.of(context.policy),
+            dry_run=selected.dry_run,
         )
 
 
@@ -221,6 +225,8 @@ def _execute_locked(
     if not settled:
         return unsettled_report(started, clock=context.clock)
     floor, report = _execute(_archive_run(context, plan))
+    if floor is None:
+        return report
     try:
         outcome_archive_state.write_state(context.layout, floor, report)
     except OSError:
@@ -309,12 +315,28 @@ def _execute(
     """
     _prepare(run.context.layout, run.context.policy)
     outcome = _perform(run)
-    floor = outcome_archive_state.retention_floor(
-        outcome_segment_inventory.read_inventory(run.context.layout),
-        outcome_segment_state.read_retention_floor(run.context.layout),
-        outcome,
-    )
-    return floor, _report(run, outcome, floor)
+    try:
+        floor = outcome_archive_state.retention_floor(
+            outcome_segment_inventory.read_inventory(run.context.layout),
+            outcome_segment_state.read_retention_floor(run.context.layout),
+            outcome,
+        )
+        return floor, _report(run, outcome, floor)
+    except OSError:
+        # The archives and evictions are already published. The deletions
+        # are the only record the floor has, so it is written from the
+        # actions before the unmeasurable result is reported.
+        outcome_archive_state.write_deleted_floor(
+            run.context.layout,
+            outcome_segment_state.read_retention_floor(
+                run.context.layout
+            ).sequence,
+            outcome_archive_run.deleted_sequences(outcome.actions),
+        )
+        return (
+            None,
+            outcome_archive_report.after_work_failure(run, outcome, "unreadable"),
+        )
 
 
 def _report(
@@ -396,5 +418,12 @@ def _perform(run: outcome_archive_run.ArchiveRun) -> outcome_archive_run.RunOutc
     """
     outcome = outcome_archive_run.RunOutcome()
     outcome_archive_run.perform(run, outcome)
-    outcome.retention_unsettled = not outcome_archive_retain.retain(run, outcome)
+    try:
+        # The retention pass re-plans from the store this run has just
+        # published, so it can fail to read what ``perform`` already wrote.
+        outcome.retention_unsettled = not outcome_archive_retain.retain(run, outcome)
+    except OSError:
+        # The work is already published. Keep its record and let the caller's
+        # measurement report the store as unreadable.
+        outcome.retention_unsettled = True
     return outcome

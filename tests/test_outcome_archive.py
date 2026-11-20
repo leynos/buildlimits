@@ -12,16 +12,7 @@ import json
 import typing as typ
 from pathlib import Path
 
-from outcome_archive_helpers import (
-    NOW,
-    archives,
-    layout,
-    policy,
-    records,
-    run,
-    write,
-    seeded_store,
-)
+from outcome_archive_helpers import NOW, archives, layout, policy, records, run, write
 from segment_test_helpers import sidecar_document, write_private
 
 from buildlimits import (
@@ -142,7 +133,8 @@ def test_an_unreadable_active_file_is_reported_unmeasured(tmp_path: Path) -> Non
 
 def test_a_dry_run_changes_nothing(tmp_path: Path) -> None:
     """A plan may be inspected without taking the lock or writing a file."""
-    seeded_store(tmp_path, records(NOW, 2))
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 2), policy())
 
     report = run(tmp_path, policy(), dry_run=True)
 
@@ -159,7 +151,8 @@ def test_a_dry_run_changes_nothing(tmp_path: Path) -> None:
 
 def test_inspect_is_a_dry_run(tmp_path: Path) -> None:
     """The inspect entry point never mutates the store."""
-    seeded_store(tmp_path, records(NOW, 1))
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 1), policy())
 
     report = inspect_store(layout(tmp_path), policy())
 

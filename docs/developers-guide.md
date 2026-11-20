@@ -372,6 +372,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_store_sealing`                                                            | The writer's sealing transition into a closed segment                                                                                                       |
 | `outcome_store_files`                                                              | Private regular-file primitives shared by the store, the sidecars and the history pin: no-follow opens, mode checks and bounded reads                       |
 | `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes, atomic replacement and the seal rename                                                                   |
+| `outcome_store_documents`                                                          | The sequence counter and segment metadata documents, each replaced atomically                                                                               |
 | `outcome_store_tail`                                                               | Backward-chunked removal of an unterminated final row a stopped writer left                                                                                 |
 | `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                                                                                |
 | `outcome_retention`                                                                | Validated age, byte, record and headroom policy shared by the writer and archiver                                                                           |
@@ -408,7 +409,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_lock`                                                             | The archive lock and the disk-headroom guard for one run                                                                                                    |
 | `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication, descriptor-relative removal and atomic state writes                |
 | `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates, syncs and validates each private path component, and returns the descriptor it validated                   |
-| `outcome_archive_report`                                                           | Bounded run report and status vocabulary                                                                                                                    |
+| `outcome_archive_report`                                                           | Bounded run report, status vocabulary and the report builders a run and an inspection share                                                               |
 | `outcome_archive_events`                                                           | One bounded `archive_run` metrics event per timer firing                                                                                                    |
 | `outcome_archive_codec`                                                            | Stable JSON rendering of one run report                                                                                                                     |
 | `outcome_archive_exit`                                                             | Mapping a run status to the process exit code a timer records                                                                                               |
@@ -1273,8 +1274,9 @@ The archive tests are `tests/test_outcome_archive.py`,
 `test_outcome_record_stream.py`, `test_outcome_sealing_bounds.py`,
 `test_outcome_store_tail.py`, `test_outcome_store_sealing.py`,
 `test_outcome_store_sealing_durability.py`, `test_outcome_retention_config.py`,
-`test_outcome_retention_compaction.py`, `test_outcome_retention_report.py` and
-`test_outcome_retention_diagnostics.py`; the store and startup fixtures the
+`test_outcome_retention_compaction.py`, `test_outcome_retention_report.py`,
+`test_outcome_retention_diagnostics.py`, `test_outcome_archive_reporting.py`
+and `test_outcome_store_snapshot.py`; the store and startup fixtures the
 retention tests share live in `tests/outcome_retention_helpers.py`.
 `test_outcome_archive_subprocess.py` runs the installed console script, and the
 `python -m` form, as separate processes, including two overlapping runs, and

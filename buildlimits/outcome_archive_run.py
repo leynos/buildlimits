@@ -90,6 +90,21 @@ def failure_reason(error: OSError) -> str:
     return "no_headroom" if error.errno in _NO_SPACE_ERRNOS else "unreadable"
 
 
+def deleted_sequences(actions: cabc.Iterable[ActionResult]) -> tuple[int, ...]:
+    """Return the sequences a run's recorded actions removed from the archive.
+
+    The actions are passed rather than a whole outcome or report, because both
+    the outcomes a run accumulates and the report it publishes list the same
+    ``ActionResult`` values.
+
+    Returns
+    -------
+    tuple[int, ...]
+        Each deleted sequence, in the order the run removed it.
+    """
+    return tuple(action.sequence for action in actions if action.action == "deleted")
+
+
 def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
     """Execute every planned operation in a fixed order.
 

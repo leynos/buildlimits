@@ -2201,22 +2201,23 @@ reason = "Three-line fault stubs that raise through different seams: one replace
 
 [[tool.duplication_gate.allow]]
 members = [
-    "buildlimits/outcome_recorder_types.py",
-    "buildlimits/outcome_recorder_outputs.py",
-    "tests/outcome_shell_test_support.py",
+    "buildlimits/supervisor_outcome_setup.py",
     "tests/modelcheck_cases.py",
+    "tests/outcome_store_helpers.py",
+    "buildlimits/outcome_archive_report.py",
+    "buildlimits/outcome_store.py",
     "buildlimits/server_watch.py",
     "tests/modelcheck_service_cases.py",
-    "tests/outcome_store_helpers.py",
     "buildlimits/cache_recovery.py",
     "buildlimits/outcome_store.py",
+    "buildlimits/outcome_archive_reports.py",
+    "buildlimits/outcome_store_state.py",
     "buildlimits/predict/dataset_cli.py",
     "buildlimits/predict/ensemble_runs.py",
     "buildlimits/predict/harness.py",
     "buildlimits/supervisor_wiring.py",
     "tests/test_group_drain_metrics.py",
     "buildlimits/outcome_archive_run.py",
-    "buildlimits/outcome_store_state.py",
     "buildlimits/predict/evaluation.py",
     "buildlimits/predict/report.py",
     "buildlimits/predict/scoring.py",
@@ -2230,6 +2231,7 @@ members = [
     "tests/test_recovery_roots_deadline.py",
     "buildlimits/group_recovery.py",
     "buildlimits/outcome_archive_files.py",
+    "buildlimits/outcome_record_codec.py",
     "buildlimits/predict/report_codec.py",
     "tests/differential_trace_test_helpers.py",
     "tests/test_outcome_archive_run_faults.py",
@@ -2237,6 +2239,8 @@ members = [
     "tests/test_predict_evaluation.py",
     "buildlimits/outcome_archive.py",
     "buildlimits/outcome_history_pin.py",
+    "buildlimits/outcome_archive.py",
+    "buildlimits/outcome_ports.py",
     "modelcheck/cli.py",
     "tests/outcome_archive_helpers.py",
     "tests/test_kache_detached_events.py",
@@ -2505,10 +2509,10 @@ reason = "Two independent readers of two different JSON artefacts: the model-che
 
 [[tool.duplication_gate.allow]]
 members = [
-    "tests/test_outcome_archive.py",
+    "tests/test_outcome_archive_run_faults.py",
     "tests/test_outcome_retention_diagnostics.py",
 ]
-reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+reason = "Matching import lists: both drive a real archive run through the store, policy, clock and record fixtures in ``outcome_archive_helpers``, and both name the buildlimits modules they read individually. Sharing the list through a re-export module would hide each module's real dependencies from the checker and couple two unrelated test families."
 
 [[tool.duplication_gate.allow]]
 members = [

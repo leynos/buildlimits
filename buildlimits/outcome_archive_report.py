@@ -46,6 +46,7 @@ __all__ = [
     "RunOptions",
     "RunReport",
     "RunStatus",
+    "after_work_failure",
     "dry_report",
     "eviction_counts",
     "settled_report",
@@ -440,3 +441,43 @@ def _eviction_cause(action: ActionResult) -> str | None:
     if action.action in {"trimmed", "deleted"} and isinstance(reason, str):
         return reason
     return None
+
+
+def after_work_failure(
+    run: ArchiveRun,
+    outcome: RunOutcome,
+    reason: str,
+) -> RunReport:
+    """Report a run whose result could not be measured after it did the work.
+
+    The archives and evictions are already published, so the actions and
+    failures are reported as they happened. The retained totals are unknown,
+    and no state file was installed; a retry recomputes both from the disk.
+
+    Parameters
+    ----------
+    run : ArchiveRun
+        The plan and context this run executed.
+    outcome : RunOutcome
+        The actions and failures this run performed.
+    reason : str
+        The closed reason the result could not be measured.
+
+    Returns
+    -------
+    RunReport
+        A failed report that still records the work the run completed.
+    """
+    return RunReport(
+        status="failed",
+        started_at=run.started_at,
+        finished_at=run.context.clock(),
+        budget_bytes=run.context.policy.max_bytes,
+        cutoff=run.plan.cutoff,
+        plan=run.summary,
+        actions=tuple(outcome.actions),
+        failures=tuple(outcome.failures),
+        limits=RetentionLimits.of(run.context.policy),
+        maintenance=Maintenance(state_written=False, reason=reason),
+        reason=reason,
+    )

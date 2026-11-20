@@ -11,6 +11,7 @@ import typing as typ
 
 from buildlimits import outcome_records, outcome_segments
 from buildlimits.outcome_segment_state import read_sequence
+from buildlimits.outcome_store_documents import write_metadata, write_sequence
 from buildlimits.outcome_store_io import (
     ensure_directory,
     prepare_store,
@@ -18,8 +19,6 @@ from buildlimits.outcome_store_io import (
     store_size,
     sync_file,
     sync_rename,
-    write_metadata,
-    write_sequence,
 )
 from buildlimits.utc_text import optional_utc_text, utc_text
 
