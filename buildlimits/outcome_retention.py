@@ -48,6 +48,7 @@ __all__ = [
     "MIN_XZ_PRESET",
     "SEGMENT_BYTES",
     "RetentionPolicy",
+    "header_floor_bytes",
     "policy_from_settings",
     "validate_policy",
 ]
@@ -268,7 +269,7 @@ def validate_policy(policy: RetentionPolicy) -> None:
     if policy.headroom_bytes < policy.segment_bytes:
         msg = "headroom_bytes must hold at least one segment"
         raise ValueError(msg)
-    if 0 < policy.max_bytes < _header_floor_bytes():
+    if 0 < policy.max_bytes < header_floor_bytes():
         # Compaction discards records but always writes a replacement header.
         # A budget smaller than that header can never be met, and accepting it
         # would make every compacted result over budget.
@@ -284,16 +285,30 @@ def validate_policy(policy: RetentionPolicy) -> None:
         raise ValueError(msg)
 
 
-def _header_floor_bytes() -> int:
+def header_floor_bytes() -> int:
     """Return the smallest possible compacted document: one maximal header.
+
+    A compacted document always starts with a replacement header, so no
+    reachable store is smaller than one. The timestamp carries microseconds
+    because the encoder preserves fractional seconds: a header written at a
+    whole second is four bytes shorter than one written with any fraction, and
+    a budget sized to the shorter form would still be unable to hold the
+    longer one.
 
     Returns
     -------
     int
-        The encoded size of a header with the longest salt identifier, plus
-        its newline. A positive byte budget below this cannot be honoured.
+        The encoded size of a header with the longest salt identifier and a
+        fractional-second timestamp, plus its newline. A positive byte budget
+        below this cannot be honoured.
+
+    Examples
+    --------
+    >>> header_floor_bytes() > 0
+    True
     """
-    header = StoreHeader("0" * 64, dt.datetime(1970, 1, 1, tzinfo=dt.UTC))
+    written_at = dt.datetime(1970, 1, 1, microsecond=1, tzinfo=dt.UTC)
+    header = StoreHeader("0" * 64, written_at)
     return len(encode_line(header).encode("utf-8")) + 1
 
 

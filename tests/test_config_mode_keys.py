@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from buildlimits import config
+from buildlimits.outcome_retention import header_floor_bytes
 
 
 def test_defaults_load_without_a_file(tmp_path: Path) -> None:
@@ -121,4 +122,34 @@ def test_a_backend_setting_is_inert_in_direct_mode(tmp_path: Path) -> None:
 
     assert config.load(path).cache_mode == "direct", (
         "direct names no backend and so has no key to clash with"
+    )
+
+
+def test_a_byte_budget_below_the_header_floor_is_rejected(tmp_path: Path) -> None:
+    """Loading refuses a budget that no compacted store could ever meet.
+
+    ``policy_from_settings`` refused this after loading, but the supervisor
+    catches that construction failure and disables recording, so the operator
+    who asked for a history silently got none. The configuration check now
+    refuses the document instead.
+    """
+    _rejected(
+        tmp_path,
+        'cache_outcomes = "record"\ncache_outcomes_max_bytes = 1\n',
+        "replacement store header",
+    )
+
+
+def test_a_byte_budget_at_the_header_floor_is_accepted(tmp_path: Path) -> None:
+    """The floor itself is usable, so the boundary is not off by one."""
+    path = tmp_path / "s.toml"
+    path.write_text(
+        'cache_outcomes = "record"\n'
+        f"cache_outcomes_max_bytes = {header_floor_bytes()}\n"
+    )
+
+    settings = config.load(path)
+
+    assert settings.cache_outcomes_max_bytes == header_floor_bytes(), (
+        "a budget that holds one maximal header is accepted"
     )

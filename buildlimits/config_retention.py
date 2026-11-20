@@ -13,6 +13,7 @@ from buildlimits.outcome_retention import (
     MAX_XZ_PRESET,
     MIN_XZ_PRESET,
     SEGMENT_BYTES,
+    header_floor_bytes,
 )
 
 if typ.TYPE_CHECKING:
@@ -88,6 +89,16 @@ RETENTION_RULES: tuple[tuple[cabc.Callable[[RetentionSettings], bool], str], ...
     (
         lambda config: 0 <= config.cache_outcomes_max_bytes <= MAX_POLICY_VALUE,
         "cache_outcomes_max_bytes is outside the supported range",
+    ),
+    (
+        # A positive byte budget below one replacement header can never be met:
+        # compaction writes a header whatever it removes, and the supervisor
+        # would otherwise disable recording when policy construction failed.
+        lambda config: (
+            config.cache_outcomes_max_bytes == 0
+            or config.cache_outcomes_max_bytes >= header_floor_bytes()
+        ),
+        "cache_outcomes_max_bytes cannot hold the replacement store header",
     ),
     (
         lambda config: 0 <= config.cache_outcomes_max_records <= MAX_POLICY_VALUE,
