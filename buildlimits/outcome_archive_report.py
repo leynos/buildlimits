@@ -316,6 +316,7 @@ def unfinished_report(
         started_at=started_at,
         finished_at=clock(),
         dry_run=dry_run,
+        budget_bytes=0 if limits is None else limits.max_bytes,
         limits=limits,
         maintenance=Maintenance(state_written=False, reason=reason),
         reason=reason,

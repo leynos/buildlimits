@@ -6,14 +6,28 @@ deferred run, a dry run and a read that fails after the archives were
 published.
 """
 
+import dataclasses as dc
+import json
+import dataclasses as dc
+import json
 import typing as typ
 from pathlib import Path
 from unittest import mock
 
 import outcome_archive_helpers as archive
 
-from buildlimits import outcome_archive_retain, outcome_archive_run, outcome_segment_inventory
-from buildlimits.outcome_archive_exit import EXIT_CORRUPT, EXIT_FAILED, exit_status
+from buildlimits import (
+    outcome_archive_fs,
+    outcome_archive_retain,
+    outcome_archive_run,
+    outcome_segment_inventory,
+)
+from buildlimits.outcome_archive_exit import (
+    EXIT_CORRUPT,
+    EXIT_FAILED,
+    EXIT_TEMPFAIL,
+    exit_status,
+)
 from buildlimits.outcome_archive_lock import ArchiveLock
 
 if typ.TYPE_CHECKING:
@@ -259,3 +273,48 @@ def test_a_seal_during_planning_is_retried_to_one_exact_reading(
     assert report.retained.complete is True, (
         "the retried readings describe one version of the store"
     )
+
+
+def test_a_failed_state_write_still_records_the_deletions_it_completed(
+    tmp_path: Path,
+) -> None:
+    """A later run must inherit deletions whose run could not save its state.
+
+    The retention pass has already removed the oldest archive when the state
+    write fails. The floor is the only record that the sequence was deleted
+    rather than lost, so the failed run gives it a second attempt. A later run
+    with nothing left to delete then persists the advanced floor instead of
+    reporting the deleted sequence as a gap for ever.
+    """
+    archive.seeded_store(tmp_path, archive.records(archive.NOW, 3))
+    unlimited = archive.policy(max_bytes=0)
+    archive.run(tmp_path, unlimited)
+    files = archive.layout(tmp_path)
+    write_json = outcome_archive_fs.atomic_write_json
+    attempts = 0
+
+    def fail_first_floor_write(target: Path, document: dict[str, object]) -> None:
+        """Refuse the first floor write, then delegate every later one."""
+        nonlocal attempts
+        if target == files.retention_file:
+            attempts += 1
+            if attempts == 1:
+                archive.refuse()
+        write_json(target, document)
+
+    with mock.patch.object(
+        outcome_archive_fs, "atomic_write_json", fail_first_floor_write
+    ):
+        failed = archive.run(tmp_path, dc.replace(unlimited, max_records=2))
+
+    assert failed.status == "failed", "the timer must retry the state write"
+    assert [
+        action.sequence for action in failed.actions if action.action == "deleted"
+    ] == [1], "the run deleted the oldest archive before the write failed"
+
+    recovered = archive.run(tmp_path, dc.replace(unlimited, max_records=2))
+    floor = json.loads(files.retention_file.read_text(encoding="utf-8"))
+
+    assert recovered.status == "ok", "the next firing completes normally"
+    assert floor["floor_sequence"] == 2, "the floor advances past the deletion"
+    assert not recovered.gaps, "the deletion is not reported as lost history"
