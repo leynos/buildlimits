@@ -332,13 +332,16 @@ Each module owns one decision. This table is the single module inventory.
 | `predict.provenance`                                                               | `git_revision`: the commit that tracks the benchmark module, or `unknown` when none does                                                                    |
 | `predict.dataset_journal`                                                          | The dataset command's journal lookback option and its best-effort provenance note                                                                           |
 | `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                                                                      |
-| `utc_text`                                                                         | The wall clock as aware UTC, the canonical ISO 8601 text with a trailing `Z`, and its parser                                                                |
+| `utc_text`                                                                         | The system wall clock as aware UTC, re-exporting the canonical text helpers from `utc_format`                                                               |
+| `utc_format`                                                                       | Pure canonical ISO 8601 UTC text with a trailing `Z`, and its parser, with no clock reads                                                                   |
 | `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper                                                                   |
 | `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar                                                            |
 | `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                                                                             |
 | `config_retention`                                                                 | Retention settings and validation rules shared by the supervisor loader and the archive command                                                             |
 | `config_values`                                                                    | Type coercion from parsed TOML values to supervisor field types                                                                                             |
 | `status`, `status_client`, `status_render`, `status_cli`                           | The status document, its transport, rendering and command                                                                                                   |
+| `status_sections`                                                                  | Reading an optional nested status section, treating an absent or malformed one as empty                                                                     |
+| `status_render_retention`                                                          | The retention line of the rendered status, naming the same bounds as the archive report                                                                     |
 | `admission_readiness`                                                              | Pure admission-progress classification from health, ledger counts and recovery outlook                                                                      |
 | `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                                                                                        |
 | `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                                                                                 |
@@ -360,11 +363,15 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_store`                                                                    | Queue and worker plumbing for the non-blocking writer; bounded result reporting                                                                             |
 | `outcome_store_state`                                                              | The writer's file state machine: compaction and bounded appends                                                                                             |
 | `outcome_store_restart`                                                            | What a restart settles before the first append: a torn tail, an oversized segment, an expired file and a replaced salt domain                               |
+| `outcome_store_clock`                                                              | The wall and monotonic clock pair the writer reads together                                                                                                 |
 | `outcome_store_sealing`                                                            | The writer's sealing transition into a closed segment                                                                                                       |
 | `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes, atomic replacement and the seal rename                                                                   |
+| `outcome_store_documents`                                                          | The sequence counter and segment metadata documents, each replaced atomically                                                                               |
 | `outcome_store_tail`                                                               | Backward-chunked removal of an unterminated final row a stopped writer left                                                                                 |
 | `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                                                                                |
 | `outcome_retention`                                                                | Validated age, byte, record and headroom policy shared by the writer and archiver                                                                           |
+| `outcome_retention_report`                                                         | Pure effective limits, active-history and retained-history value shapes, with one in-memory measurement                                                     |
+| `outcome_retention_history`                                                        | Combining the closed-history inventory with the active snapshot into one retained view                                                                      |
 | `outcome_segments`                                                                 | Segment naming and layout derivation only                                                                                                                   |
 | `outcome_segment_inventory`                                                        | Read-only, content-free inventory of sealed and archived segments                                                                                           |
 | `outcome_segment_sidecar`                                                          | One verified archive or sealed source's sidecar record, with strict validation                                                                              |
@@ -374,6 +381,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_history`, `outcome_history_args`                                          | Cross-state history reader and the shared replay and dataset options                                                                                        |
 | `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
 | `outcome_archive_context`                                                          | Shared context and result values for one archive run                                                                                                        |
+| `outcome_archive_active`                                                           | Bounded, read-only measurement of the active file for diagnostics only                                                                                      |
 | `outcome_archive_plan`                                                             | Pure retention and repair plan from the inventory                                                                                                           |
 | `outcome_archive_budget`                                                           | Logical-byte budget: oldest-first archive deletion, then one straddling trim                                                                                |
 | `outcome_archive_run`                                                              | Executing one archive plan operation by operation                                                                                                           |
@@ -386,6 +394,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication and atomic state writes                                             |
 | `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates and validates each private path component                                                                   |
 | `outcome_archive_report`                                                           | Bounded run report, status vocabulary and exit statuses                                                                                                     |
+| `outcome_archive_reports`                                                          | Assembling a run's report from what it measured, and writing the state beside the archives                                                                  |
 | `outcome_archive_cli`                                                              | The `build-limits-outcome-archive` timer-facing command                                                                                                     |
 | `outcome_archive_bench`                                                            | Bounded-memory archive benchmark behind `make outcome-archive-bench`                                                                                        |
 | `nonblocking_child`                                                                | Non-blocking helper-process pipes and bounded child reaping for supervisor-loop work                                                                        |
@@ -988,13 +997,14 @@ appending above the fragment, an oversized active file is sealed, and an active
 file whose oldest record predates the age cutoff is compacted, so a store that
 stayed small is not exempt from the age bound.
 
-The archiver in `outcome_archive` only reads the active file's size. It never
-opens its content and never takes its queue. `outcome_archive_lock` takes a
-non-blocking exclusive `flock` on `cache-outcomes.archive/archive.lock` for the
-whole run, and its headroom guard refuses a run whose temporary files cannot
-fit; a second invocation reports `busy` and exits 75 rather than waiting. There
-is no shared lock between writer and archiver, so there is no lock ordering to
-get wrong.
+The archiver in `outcome_archive` never writes the active file and never takes
+its queue. It reads the file's size for every retention decision and, once per
+run, reads its content through the same bounded reader the writer uses, only to
+report the retained rows. `outcome_archive_lock` takes a non-blocking exclusive
+`flock` on `cache-outcomes.archive/archive.lock` for the whole run, and its
+headroom guard refuses a run whose temporary files cannot fit; a second
+invocation reports `busy` and exits 75 rather than waiting. There is no shared
+lock between writer and archiver, so there is no lock ordering to get wrong.
 
 Compression and verification stream in `outcome_record_stream`'s 64 KiB chunks
 with at most one row buffered (`CHUNK_BYTES`). Peak memory therefore follows
@@ -1094,26 +1104,46 @@ should retry. The report names no path and carries no raw exception text; the
 only path a run prints is an unreadable configuration file, on standard error
 before the report exists.
 
+`outcome_retention_report` is the single derivation every diagnostic surface
+uses. `RetentionLimits.of(policy)` describes the effective bounds, and
+`measured_history(records, logical_bytes=...)` summarizes rows a caller already
+holds. Both value shapes are pure and import no clock, filesystem or inventory
+module, so they stay inside the domain's import closure.
+`outcome_retention_history.retained_history(inventory, active)` combines closed
+history and one active snapshot into a `RetainedHistory`; it owns the one
+inventory dependency so the pure shapes do not acquire it. The status document,
+`retention.json` and `last-run.json` all carry these shapes, so they cannot
+disagree about a policy. Neither shape is a cumulative recorder counter or a
+journal query cap, and `complete=False` marks a lower bound rather than an
+exact count. `outcome_archive_active.read_active_history` performs the one
+bounded, read-only read of the active file that feeds the archiver's diagnostic
+snapshot; retention decisions use the file's `lstat` size only.
+
 `outcome_archive_cli` is the timer-facing surface. `inspect` is a dry run by
 definition; `run --dry-run` plans without taking the lock or writing state; and
 `run` executes. All three accept `--store`, `--config` (default
 `~/.config/buildlimits/supervisor.toml`) and `--json`.
 
 The archive tests are `tests/test_outcome_archive.py`,
-`test_outcome_archive_files.py`, `test_outcome_archive_fs.py`,
-`test_outcome_archive_lock.py`, `test_outcome_archive_plan.py`,
-`test_outcome_archive_plan_age.py`, `test_outcome_archive_plan_bytes.py`,
-`test_outcome_archive_reconcile.py`, `test_outcome_archive_retention.py`,
-`test_outcome_archive_verify.py`, `test_outcome_archive_cli.py`,
-`test_outcome_history.py`, `test_outcome_segments.py`,
-`test_outcome_segment_inventory.py`, `test_outcome_segment_state.py`,
-`test_outcome_record_stream.py`, `test_outcome_sealing_bounds.py`,
-`test_outcome_store_tail.py` and `test_outcome_store_sealing.py`.
-`tests/test_outcome_archive_bench.py` holds the reader's traced-memory test,
-which streams a multi-megabyte segment under one mebibyte, and the tests that
-pin the report's schema and its tracing ownership. `make outcome-archive-bench`
-runs `buildlimits.outcome_archive_bench` and prints a JSON report with the
-source size, record count, archive size, ratio, chunk size, peak buffered rows,
+`test_outcome_archive_reporting.py`, `test_outcome_archive_files.py`,
+`test_outcome_archive_fs.py`, `test_outcome_archive_lock.py`,
+`test_outcome_archive_plan.py`, `test_outcome_archive_plan_age.py`,
+`test_outcome_archive_plan_bytes.py`, `test_outcome_archive_reconcile.py`,
+`test_outcome_archive_retention.py`, `test_outcome_archive_verify.py`,
+`test_outcome_archive_cli.py`, `test_outcome_history.py`,
+`test_outcome_segments.py`, `test_outcome_segment_inventory.py`,
+`test_outcome_segment_state.py`, `test_outcome_record_stream.py`,
+`test_outcome_sealing_bounds.py`, `test_outcome_store_tail.py`,
+`test_outcome_store_sealing.py`, `test_outcome_store_snapshot.py`,
+`test_outcome_retention_config.py`, `test_outcome_retention_compaction.py`,
+`test_outcome_retention_report.py` and `test_outcome_retention_diagnostics.py`;
+the store and startup fixtures they share live in
+`tests/outcome_retention_helpers.py`. `tests/test_outcome_archive_bench.py`
+holds the reader's traced-memory test, which streams a multi-megabyte segment
+under one mebibyte, and the tests that pin the report's schema and its tracing
+ownership. `make outcome-archive-bench` runs
+`buildlimits.outcome_archive_bench` and prints a JSON report with the source
+size, record count, archive size, ratio, chunk size, peak buffered rows,
 elapsed time, peak resident set, temporary disk and peak traced allocation; it
 generates a representative segment when `SEGMENT=` names none and reads the
 named segment when it does.

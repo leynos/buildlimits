@@ -18,9 +18,8 @@ from outcome_store_helpers import (
     stored_records,
     wait_for_results,
     wait_for_salt,
-    window_summary,
 )
-from outcome_test_helpers import record_generated_case
+from outcome_test_helpers import record_generated_case, window_summary
 
 from buildlimits import outcome_records
 from buildlimits.outcome_key import Salt

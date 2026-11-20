@@ -15,7 +15,10 @@ from pathlib import Path
 from outcome_archive_helpers import NOW, archives, layout, policy, records, run, write
 from segment_test_helpers import sidecar_document, write_private
 
-from buildlimits import outcome_archive_files, outcome_archive_quarantine
+from buildlimits import (
+    outcome_archive_files,
+    outcome_archive_quarantine,
+)
 from buildlimits.outcome_archive import (
     EXIT_CORRUPT,
     EXIT_OK,
@@ -91,6 +94,7 @@ def test_a_held_lock_reports_a_retryable_status(tmp_path: Path) -> None:
     assert report.status == "busy", "the run did not start"
     assert report.exit_status == EXIT_TEMPFAIL, "a retry may succeed"
     assert report.reason == "busy", "the reason is closed"
+    assert report.maintenance.reason == "busy", "the state reason is closed too"
     assert not archives(tmp_path), "a busy run publishes nothing"
 
 
@@ -109,7 +113,13 @@ def test_a_run_plans_the_store_it_finds_under_its_lock(
     def enter_after_sealing(lock: ArchiveLock) -> ArchiveLock:
         """Acquire the lock, then seal a new segment before the run plans."""
         held = enter(lock)
-        write(store, records(NOW, 1), policy())
+        try:
+            write(store, records(NOW, 1), policy())
+        except BaseException:
+            # A failure here happens inside ``__enter__``, so the ``with``
+            # statement will never call ``__exit__`` and must not leak the lock.
+            lock.__exit__(None, None, None)
+            raise
         return held
 
     monkeypatch.setattr(ArchiveLock, "__enter__", enter_after_sealing)

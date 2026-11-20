@@ -75,8 +75,9 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
         _quarantine_orphan(run, sequence, outcome)
     for entry, trim in run.plan.trims:
         _trim_one(run, entry, trim, outcome)
+    causes = dict(run.plan.eviction_causes)
     for entry in run.plan.deletes:
-        _delete_one(run, entry, outcome)
+        _delete_one(run, entry, causes[entry.sequence], outcome)
 
 
 def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
@@ -108,9 +109,10 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
     for entry, trim in follow_up.trims:
         if entry.sequence not in settled and entry.path.exists():
             _trim_one(run, entry, trim, outcome)
+    causes = dict(follow_up.eviction_causes)
     for entry in follow_up.deletes:
         if entry.sequence not in settled and entry.path.exists():
-            _delete_one(run, entry, outcome)
+            _delete_one(run, entry, causes[entry.sequence], outcome)
 
 
 def active_bytes(path: Path) -> int:
@@ -238,22 +240,59 @@ def _trim_one(
     trim: Trim,
     outcome: RunOutcome,
 ) -> None:
-    """Apply one planned trim, quarantining an archive that will not verify."""
+    """Apply one planned trim, quarantining an archive that will not verify.
+
+    The recorded action names the bounds that caused the rewrite, so a report
+    reader can tell an age eviction, a byte allowance and a record cap apart
+    without re-planning.
+    """
     _quarantining(
         outcome,
         entry.sequence,
-        lambda: outcome_archive_files.recompress_archive(run.context, entry, trim),
+        lambda: dc.replace(
+            outcome_archive_files.recompress_archive(run.context, entry, trim),
+            reason=_trim_reason(trim),
+        ),
         lambda reason: outcome_archive_quarantine.quarantine_archive(
             run.context, entry, reason
         ),
     )
 
 
-def _delete_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
-    """Remove one expired archive."""
+def _delete_one(
+    run: ArchiveRun, entry: SegmentEntry, cause: str, outcome: RunOutcome
+) -> None:
+    """Remove one planned archive, naming the bound that made it eligible."""
     try:
         outcome_archive_files.delete_archive(run.context, entry)
     except OSError:
         outcome.failures.append((entry.sequence, "unreadable"))
         return
-    outcome.actions.append(ActionResult("deleted", entry.sequence))
+    outcome.actions.append(ActionResult("deleted", entry.sequence, reason=cause))
+
+
+def _trim_reason(trim: Trim) -> str:
+    """Return the bounds one planned trim applies.
+
+    Each bound a trim serves is visible in the field it acts on, so the cause
+    is read from the trim rather than inferred from the policy. A count-driven
+    rewrite therefore names ``records`` even when no byte budget is set, and
+    an age or byte bound that did not cause the rewrite is never named.
+
+    Returns
+    -------
+    str
+        The closed names of the bounds, joined in a fixed order: ``age``,
+        ``bytes``, ``records``, ``age_and_bytes``, ``age_and_records``,
+        ``bytes_and_records`` or ``age_and_bytes_and_records``.
+    """
+    bounds = [
+        name
+        for name, is_applied in (
+            ("age", trim.before is not None),
+            ("bytes", trim.allowed_bytes is not None),
+            ("records", trim.records > 0),
+        )
+        if is_applied
+    ]
+    return "_and_".join(bounds)

@@ -21,6 +21,7 @@ from buildlimits.outcome_archive import (
     inspect_store,
     run_archive,
 )
+from buildlimits.outcome_archive_report import eviction_counts
 from buildlimits.outcome_retention import RetentionPolicy, policy_from_settings
 from buildlimits.outcome_segments import SegmentLayout
 from buildlimits.outcome_store_salt import store_path
@@ -179,9 +180,79 @@ def _write_report(report: RunReport, *, as_json: bool) -> None:
     print(f"retained: {report.retained_bytes} of {report.budget_bytes} logical bytes")
     print(f"active: {report.active_bytes} logical bytes")
     print(f"cutoff: {_cutoff_text(report)}")
+    _write_limits(report)
+    _write_history(report)
     _write_plan(report)
     _write_actions(report)
+    _write_evictions(report)
     _write_diagnostics(report)
+    _write_maintenance(report)
+
+
+def _write_limits(report: RunReport) -> None:
+    """Print the effective policy in the same units the JSON report uses."""
+    limits = report.limits
+    if limits is None:
+        return
+    age = f"{limits.max_age_days} days" if limits.age_eviction else "disabled"
+    logical = str(limits.max_bytes) if limits.byte_eviction else "unlimited"
+    records = "none" if limits.max_records is None else str(limits.max_records)
+    mode = "segmented" if limits.segmented else "in-place"
+    print(
+        f"limits: age {age}, {logical} logical bytes, {records} record cap, "
+        f"{limits.headroom_bytes} headroom bytes, {mode}"
+    )
+
+
+def _write_history(report: RunReport) -> None:
+    """Print the retained row count, bytes and observation span."""
+    retained = report.retained
+    if retained is None:
+        return
+    span = _span_text(retained.span_seconds)
+    print(
+        f"history: {retained.record_count} records, "
+        f"{retained.logical_bytes} logical bytes, span {span}"
+    )
+    if not retained.complete:
+        print("history: retained count is a lower bound; some rows lack metadata")
+
+
+def _span_text(seconds: int | None) -> str:
+    """Describe a retained observation span.
+
+    Returns
+    -------
+    str
+        Whole seconds, or a marker when no row time was counted.
+    """
+    return "unknown" if seconds is None else f"{seconds} seconds"
+
+
+def _write_evictions(report: RunReport) -> None:
+    """Print how many trims and deletions each bound caused."""
+    counts = eviction_counts(report.actions)
+    if not any(counts.values()):
+        return
+    # Only the bounds that removed something are printed, so a run under an age
+    # limit alone does not read as though a byte or record bound acted.
+    performed = ", ".join(
+        f"{cause.replace('_and_', ' and ')} {count}"
+        for cause, count in counts.items()
+        if count
+    )
+    print(f"evictions: {performed}")
+
+
+def _write_maintenance(report: RunReport) -> None:
+    """Print a state-persistence failure an operator may need to act on.
+
+    A run that never expected to install state, such as a dry run, carries no
+    maintenance reason and is already labelled above; only a fault is printed.
+    """
+    reason = report.maintenance.reason
+    if not report.maintenance.state_written and reason is not None:
+        print(f"state: not written ({reason})")
 
 
 def _cutoff_text(report: RunReport) -> str:

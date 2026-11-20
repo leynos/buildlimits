@@ -6,8 +6,12 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from outcome_store_helpers import window_summary
-from outcome_test_helpers import OBSERVED_AT, attributed_record, cache_key
+from outcome_test_helpers import (
+    OBSERVED_AT,
+    attributed_record,
+    cache_key,
+    window_summary,
+)
 
 from buildlimits.metrics_query import Window
 from buildlimits.metrics_records import Record

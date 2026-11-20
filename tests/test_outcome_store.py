@@ -25,7 +25,7 @@ from outcome_store_helpers import start_writer as _start_writer
 from outcome_store_helpers import stored_records as _stored_records
 from outcome_store_helpers import wait_for_results as _wait_for_results
 from outcome_store_helpers import wait_for_salt as _wait_for_salt
-from outcome_store_helpers import window_summary as _window_summary
+from outcome_test_helpers import window_summary as _window_summary
 
 from buildlimits import (
     outcome_records,

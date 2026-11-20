@@ -16,6 +16,10 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.outcome_archive_context import ActionResult
     from buildlimits.outcome_archive_plan import PlanSummary
+    from buildlimits.outcome_retention_report import (
+        RetainedHistory,
+        RetentionLimits,
+    )
 
 ARCHIVE_SCHEMA = 1
 EXIT_OK = 0
@@ -24,19 +28,34 @@ EXIT_USAGE = 2
 EXIT_CORRUPT = 3
 EXIT_TEMPFAIL = 75
 
+# The closed vocabulary a report counts evictions under. A trim that serves
+# more than one bound names each of them, so every combination is listed.
+EVICTION_CAUSES = (
+    "age",
+    "bytes",
+    "records",
+    "age_and_bytes",
+    "age_and_records",
+    "bytes_and_records",
+    "age_and_bytes_and_records",
+)
+
 type RunStatus = typ.Literal["ok", "failed", "corrupt", "busy", "no_headroom"]
 
 __all__ = [
     "ARCHIVE_SCHEMA",
+    "EVICTION_CAUSES",
     "EXIT_CORRUPT",
     "EXIT_FAILED",
     "EXIT_OK",
     "EXIT_TEMPFAIL",
     "EXIT_USAGE",
+    "Maintenance",
     "RunOptions",
     "RunReport",
     "RunStatus",
     "action_dict",
+    "eviction_counts",
 ]
 
 
@@ -57,6 +76,32 @@ class RunOptions:
     preset: int = 6
     now: dt.datetime | None = None
     dry_run: bool = False
+
+
+@dc.dataclass(frozen=True, slots=True)
+class Maintenance:
+    """The state a run left behind after its plan had executed.
+
+    Attributes
+    ----------
+    state_written : bool
+        Whether ``retention.json`` and ``last-run.json`` were installed.
+    reason : str | None
+        A closed reason when state persistence failed.
+    """
+
+    state_written: bool = True
+    reason: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        """Return the stable JSON fields for maintenance state.
+
+        Returns
+        -------
+        dict[str, object]
+            Whether state was persisted and why it was not.
+        """
+        return {"state_written": self.state_written, "reason": self.reason}
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -104,6 +149,12 @@ class RunReport:
         Archives whose sidecar cannot be trusted.
     orphan_sidecars : tuple[int, ...]
         Sidecars with no archive.
+    limits : RetentionLimits | None
+        The effective retention bounds, or None when none was derived.
+    retained : RetainedHistory | None
+        What the store retains after the run, or after the inspected state.
+    maintenance : Maintenance
+        Whether the run persisted its state.
     reason : str | None
         A closed run-level reason when the run did not complete.
     """
@@ -127,6 +178,9 @@ class RunReport:
     missing_sidecars: tuple[int, ...] = ()
     corrupt_sidecars: tuple[int, ...] = ()
     orphan_sidecars: tuple[int, ...] = ()
+    limits: RetentionLimits | None = None
+    retained: RetainedHistory | None = None
+    maintenance: Maintenance = dc.field(default_factory=Maintenance)
     reason: str | None = None
 
     @property
@@ -179,6 +233,10 @@ class RunReport:
             "missing_sidecars": list(self.missing_sidecars),
             "corrupt_sidecars": list(self.corrupt_sidecars),
             "orphan_sidecars": list(self.orphan_sidecars),
+            "limits": None if self.limits is None else self.limits.as_dict(),
+            "retained": None if self.retained is None else self.retained.as_dict(),
+            "evictions": eviction_counts(self.actions),
+            "maintenance": self.maintenance.as_dict(),
             "reason": self.reason,
         }
 
@@ -194,7 +252,10 @@ def action_dict(action: ActionResult) -> dict[str, object]:
     Returns
     -------
     dict[str, object]
-        The action's closed name, sequence, sizes and optional reason.
+        The action's closed name, sequence, sizes and optional reason. For an
+        eviction the reason names every bound that caused it, from ``age``,
+        ``bytes`` and ``records`` (joined by ``_and_`` when one rewrite serves
+        more than one); for a quarantine it names the closed fault.
     """
     return {
         "action": action.action,
@@ -203,3 +264,48 @@ def action_dict(action: ActionResult) -> dict[str, object]:
         "physical_bytes": action.physical_bytes,
         "reason": action.reason,
     }
+
+
+def eviction_counts(actions: tuple[ActionResult, ...]) -> dict[str, int]:
+    """Count the trims and deletions by the bound that caused them.
+
+    Parameters
+    ----------
+    actions : tuple[ActionResult, ...]
+        The operations a run performed.
+
+    Returns
+    -------
+    dict[str, int]
+        Closed counts keyed by eviction cause, always present so a reader can
+        compare two runs without checking whether a key exists.
+
+    Examples
+    --------
+    >>> counts = eviction_counts(())
+    >>> {cause: count for cause, count in counts.items() if count}
+    {}
+    >>> list(counts) == list(EVICTION_CAUSES)
+    True
+    """
+    counts = dict.fromkeys(EVICTION_CAUSES, 0)
+    for action in actions:
+        reason = _eviction_cause(action)
+        if reason is not None and reason in counts:
+            counts[reason] += 1
+    return counts
+
+
+def _eviction_cause(action: ActionResult) -> str | None:
+    """Return the eviction cause an action names, if it is an eviction.
+
+    Returns
+    -------
+    str | None
+        The closed cause for a trim or deletion, or None for every other
+        action and for a reason that is not a cause.
+    """
+    reason = action.reason
+    if action.action in {"trimmed", "deleted"} and isinstance(reason, str):
+        return reason
+    return None

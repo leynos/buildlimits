@@ -4,8 +4,8 @@ import datetime as dt
 import typing as typ
 
 import pytest
-from outcome_store_helpers import salt_path, window_summary
-from outcome_test_helpers import OBSERVED_AT, attributed_record
+from outcome_store_helpers import salt_path
+from outcome_test_helpers import OBSERVED_AT, attributed_record, window_summary
 
 from buildlimits import outcome_records, outcome_store, outcome_store_io
 from buildlimits.outcome_key import Salt
