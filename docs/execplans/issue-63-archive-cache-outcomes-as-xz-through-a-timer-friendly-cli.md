@@ -477,7 +477,10 @@ verified archive is published, and leaves compile admission untouched.
   a complete-run regression and two planner tests pin it. The bounded-memory
   claim now names the per-segment bookkeeping, and a new measurement of the
   same 16,000-row history in 18 and 74 segments bounds that share at about 4
-  KiB per segment.
+  KiB per segment. The first lint run found one C1803 empty-tuple comparison in
+  the new retention assertion; after that fix all seven gates pass once each,
+  with `make test` reporting 4526 passed and 86 skipped, 76 snapshots, and the
+  duplication gate allowing 267 reasoned exceptions.
 
 ## Surprises & discoveries
 
