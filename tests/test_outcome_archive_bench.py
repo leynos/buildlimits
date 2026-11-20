@@ -7,6 +7,7 @@ reader must hold one chunk rather than one segment.
 """
 
 import json
+import tempfile
 import tracemalloc
 import typing as typ
 from pathlib import Path
@@ -15,7 +16,9 @@ import pytest
 
 from buildlimits import outcome_archive_bench
 from buildlimits.outcome_archive_bench import CHUNK_BYTES, measure, peak_rows
+from buildlimits.outcome_record_format import DecodedStore
 from buildlimits.outcome_record_stream import LineStream
+from buildlimits.outcome_store_io import read_store
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
@@ -150,6 +153,52 @@ def test_measure_leaves_a_callers_tracing_running(tmp_path: Path) -> None:
         assert tracemalloc.is_tracing(), "the caller's tracing is not stopped"
     finally:
         tracemalloc.stop()
+
+
+def test_measure_preserves_a_callers_traced_peak(tmp_path: Path) -> None:
+    """A caller's earlier allocation peak survives the benchmark.
+
+    ``reset_peak`` would discard it, so the caller would observe only the
+    smaller peak this pass reached and could not tell which pass allocated
+    what. The report leaves its traced figure at zero rather than claiming the
+    caller's peak as its own.
+    """
+    source = _segment(tmp_path, 5)
+    earlier = 2 * 1_048_576
+    tracemalloc.start()
+    try:
+        held = bytearray(earlier)
+        caller_peak = tracemalloc.get_traced_memory()[1]
+        report = measure(source, preset=1)
+        after = tracemalloc.get_traced_memory()[1]
+    finally:
+        del held
+        tracemalloc.stop()
+
+    assert caller_peak >= earlier, "the caller's own peak is established"
+    assert after >= caller_peak, "the caller's peak is not reset by the pass"
+    assert report.peak_python_bytes == 0, (
+        "the caller's traced peak is not reported as this pass's allocation"
+    )
+
+
+def test_the_generated_segment_is_decodable() -> None:
+    """The generated input is a segment the production decoder accepts.
+
+    A shape the decoder rejects would benchmark a document the archiver never
+    meets, so the report's record count would describe a store that cannot
+    exist.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        path = outcome_archive_bench.generate_segment(
+            Path(scratch) / "segment-generated.jsonl"
+        )
+        decoded = read_store(path)
+
+    assert isinstance(decoded, DecodedStore), "the generated segment decodes"
+    assert len(decoded.records) == outcome_archive_bench.GENERATED_RECORDS, (
+        "every generated row is a record, and the header is not"
+    )
 
 
 def test_measure_leaves_an_untraced_process_untraced(tmp_path: Path) -> None:

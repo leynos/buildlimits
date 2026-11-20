@@ -546,7 +546,11 @@ The peak does not follow the segment: eight times the rows moved the peak
 resident set by 3 MB. What dominates it is the compressor's dictionary, which
 the report also gives as a traced peak of about 98 MB; that figure tracks the
 XZ preset, not the history. Compare `peak_rss_bytes` with a unit's limit, and
-leave headroom for the interpreter: `MemoryMax=512M` is ample for preset 6.
+leave headroom for the interpreter: `MemoryMax=512M` is ample for preset 6. Run
+the benchmark as a plain command to get the traced peak. A process that is
+already tracing, such as one started with `PYTHONTRACEMALLOC=1`, keeps its own
+peak and the report states `peak_python_bytes` as zero rather than discarding
+or misattributing that peak.
 
 Throughput is about 3 MB/s of logical input, so a first run over a 15 GB
 backlog takes roughly 80 minutes, while a daily run over one day's segments

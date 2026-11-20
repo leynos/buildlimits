@@ -1204,12 +1204,15 @@ installed console script, and the `python -m` form, as separate processes,
 including two overlapping runs, and shares its launcher and configuration with
 `tests/archive_cli_helpers.py`. `tests/test_outcome_archive_bench.py` holds the
 reader's traced-memory test, which streams a multi-megabyte segment under one
-mebibyte, and the tests that pin the report's schema and its tracing ownership.
-`make outcome-archive-bench` runs `buildlimits.outcome_archive_bench` and
-prints a JSON report with the source size, record count, archive size, ratio,
-chunk size, peak buffered rows, elapsed time, peak resident set, temporary disk
-and peak traced allocation; it generates a representative segment when
-`SEGMENT=` names none and reads the named segment when it does.
+mebibyte, and the tests that pin the report's schema, its tracing ownership and
+the decodability of the generated segment. `make outcome-archive-bench` runs
+`buildlimits.outcome_archive_bench` and prints a JSON report with the source
+size, record count, archive size, ratio, chunk size, peak buffered rows,
+elapsed time, peak resident set, temporary disk and peak traced allocation; it
+generates a representative segment through `encode_line` when `SEGMENT=` names
+none, and reads the named segment when it does. A caller that is already
+tracing keeps its own peak: the pass reports `peak_python_bytes` as zero rather
+than resetting, or claiming, the caller's figure.
 
 `tests/test_outcome_archive_memory.py` traces the archiver, the materializing
 read and the streaming replay separately at 4,000 and 16,000 rows, so a fixed

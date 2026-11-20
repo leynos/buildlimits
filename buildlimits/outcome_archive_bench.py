@@ -31,8 +31,9 @@ import tracemalloc
 import typing as typ
 from pathlib import Path
 
+from buildlimits.outcome_key import CacheKey, ToolchainIdentity
 from buildlimits.outcome_record_encode import encode_line
-from buildlimits.outcome_record_format import StoreHeader
+from buildlimits.outcome_record_format import OutcomeRecord, StoreHeader
 from buildlimits.outcome_record_stream import CHUNK_BYTES, LineStream
 
 if typ.TYPE_CHECKING:
@@ -40,11 +41,30 @@ if typ.TYPE_CHECKING:
 
 BENCH_SCHEMA = 1
 _PRESET = 6
+# A generated segment holds enough rows for the chunk split to be visible.
+GENERATED_RECORDS = 5_000
+_GENERATED_AT = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
+# Every key uses this toolchain and observation time; only the crate and the
+# argument digest vary, so the generated history looks like one build session.
+_GENERATED_KEY = CacheKey(
+    crate_name="serde",
+    crate_origin="registry:serde@1.2.3",
+    target="x86_64-unknown-linux-gnu",
+    argument_digest="0" * 64,
+    toolchain_identity=ToolchainIdentity(
+        compiler_digest="a" * 64,
+        rustup_toolchain_digest="b" * 64,
+        cache_version="0.14.0",
+        server_version="0.14.0",
+    ),
+)
 
 __all__ = [
     "BENCH_SCHEMA",
     "CHUNK_BYTES",
+    "GENERATED_RECORDS",
     "BenchmarkReport",
+    "generate_segment",
     "measure",
     "peak_rows",
 ]
@@ -101,11 +121,12 @@ class BenchmarkReport:
     temp_bytes : int
         Scratch disk the pass used: the temporary archive's own size.
     peak_python_bytes : int
-        Peak allocation Python's allocator served while the pass ran. liblzma
-        allocates through that allocator, so this figure is dominated by the
-        preset's encoder dictionary; it rises with the preset but not with the
-        rows read. Unlike ``peak_rows``, it also detects a reader that starts
-        retaining rows.
+        Peak allocation Python's allocator served while the pass ran, or zero
+        when the caller already had tracing active. liblzma allocates through
+        that allocator, so this figure is dominated by the preset's encoder
+        dictionary; it rises with the preset but not with the rows read.
+        Unlike ``peak_rows``, it also detects a reader that starts retaining
+        rows.
     """
 
     chunk_bytes: int
@@ -158,18 +179,18 @@ def measure(source: Path, *, preset: int = _PRESET) -> BenchmarkReport:
         The measured sizes, record count, ratio and peak buffering.
     """
     source_bytes = source.stat().st_size
-    # This pass owns its trace only when it starts one: a caller running under
-    # PYTHONTRACEMALLOC must not have its session cleared by the benchmark.
+    # The pass owns its trace only when it starts one. A caller already tracing
+    # keeps its own peak: resetting it would hide the allocations it made
+    # before this call, and reading it would attribute the caller's peak to the
+    # pass, so the report leaves the figure at zero instead.
     owns_trace = not tracemalloc.is_tracing()
     if owns_trace:
         tracemalloc.start()
-    else:
-        tracemalloc.reset_peak()
     started = time.perf_counter()
     try:
         with source.open("rb") as raw:
             rows, peak, archive_bytes = _compress(raw, preset)
-        _, peak_python = tracemalloc.get_traced_memory()
+        peak_python = tracemalloc.get_traced_memory()[1] if owns_trace else 0
     finally:
         if owns_trace:
             tracemalloc.stop()
@@ -260,38 +281,61 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         print(json.dumps(measure(Path(arguments[0])).as_dict(), sort_keys=True))
         return 0
     with tempfile.TemporaryDirectory(prefix="buildlimits-archive-bench-") as scratch:
-        report = measure(_generated(Path(scratch)))
+        report = measure(generate_segment(Path(scratch) / "segment-generated.jsonl"))
         print(json.dumps(report.as_dict(), sort_keys=True))
     return 0
 
 
-def _generated(directory: Path) -> Path:
-    """Write a representative segment: one header row and attributed rows.
+def generate_segment(path: Path) -> Path:
+    """Write one decodable sealed segment: a header and attributed rows.
+
+    The rows are built as ``OutcomeRecord`` values and written through the
+    store's own encoder, so the generated input is exactly the document the
+    archiver will one day meet. A handwritten row that the decoder rejects
+    would benchmark a shape the archive workflow never sees.
 
     Returns
     -------
     Path
         The generated segment.
+
+    Notes
+    -----
+    A generated row the encoder rejects raises ``ValueError``, which means the
+    generator and the record vocabulary have drifted apart.
     """
-    row = json.dumps({
-        "kind": "outcome",
-        "key": {"crate_name": "serde", "crate_origin": "registry:serde@1.2.3"},
-        "outcome": "hit",
-        "origin": "registry",
-        "runtime_seconds": 0.25,
-        "observed_at": "2026-11-19T00:00:00Z",
-    })
-    header = encode_line(
-        StoreHeader("0" * 64, dt.datetime(2026, 11, 19, tzinfo=dt.UTC))
-    )
-    path = directory / "segment-generated.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = encode_line(StoreHeader("0" * 64, _GENERATED_AT))
     with path.open("w", encoding="utf-8") as sink:
         sink.write(header)
         sink.write("\n")
-        for _ in range(5_000):
-            sink.write(row)
+        for index in range(GENERATED_RECORDS):
+            sink.write(encode_line(_generated_record(index)))
             sink.write("\n")
     return path
+
+
+def _generated_record(index: int) -> OutcomeRecord:
+    """Build one representative row, alternating hit and miss on shared keys.
+
+    Returns
+    -------
+    OutcomeRecord
+        A cacheable row whose key repeats, so the generated history has the
+        paired evidence a real store carries.
+    """
+    key = dc.replace(_GENERATED_KEY, argument_digest=f"{index // 2:064x}")
+    label = "hit" if index % 2 == 0 else "miss"
+    return OutcomeRecord(
+        key=key,
+        outcome=label,
+        origin="registry",
+        runtime_seconds=0.25 if label == "hit" else 1.5,
+        observed_at=_GENERATED_AT,
+        parser_class="cacheable",
+        child_sighting="not_seen" if label == "hit" else "seen",
+        child_samples=1,
+    )
 
 
 if __name__ == "__main__":

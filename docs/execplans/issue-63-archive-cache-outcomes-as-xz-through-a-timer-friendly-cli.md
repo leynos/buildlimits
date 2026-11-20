@@ -674,15 +674,15 @@ verified archive is published, and leaves compile admission untouched.
   findings on head `db26169`. Group 1, sealing and directory durability
   (findings 5, 16, 17): `_descend` now syncs the retained parent descriptor
   after `os.mkdir`, before the walk descends into a directory it created, so a
-  published archive cannot depend on an unsynced name; `sync_file` was added
-  to `outcome_store_io` and `write_sealing_state` syncs the record-bearing
-  file before `Path.replace`, leaving the source in place when the sync fails;
-  and `seal` computes `_sync_sealed` from `moved` before calling
-  `restart_active`, so a completed rename is still synced when the fresh
-  active file cannot be installed. Two regressions cover the sync-before-
-  rename and the rename-despite-failed-install paths;
-  `tests/test_outcome_store_sealing.py` and the archive filesystem tests pass.
-  The remaining 23 findings are grouped for later commits.
+  published archive cannot depend on an unsynced name; `sync_file` was added to
+  `outcome_store_io` and `write_sealing_state` syncs the record-bearing file
+  before `Path.replace`, leaving the source in place when the sync fails; and
+  `seal` computes `_sync_sealed` from `moved` before calling `restart_active`,
+  so a completed rename is still synced when the fresh active file cannot be
+  installed. Two regressions cover the sync that must precede a rename and the
+  rename-despite-failed-install paths; `tests/test_outcome_store_sealing.py`
+  and the archive filesystem tests pass. The remaining 23 findings are grouped
+  for later commits.
 - [ ] CodeRabbit review 6000304047 remediation, group 2 (2026-11-21):
   unsafe and out-of-range store paths (findings 6, 15). `regular_files` now
   validates the whole directory chain with `require_private_chain_when_present`
@@ -693,9 +693,9 @@ verified archive is published, and leaves compile admission untouched.
   without deleting anything outside the store. `read_sequence` rejects a
   counter above `MAX_SEQUENCE` (the largest value a twelve-digit name can
   carry) so the damaged-counter fallback runs, and `next_sequence` raises
-  `OverflowError` at exhaustion, which `seal` already reports as
-  `save_failed`. Regressions cover a symlinked sealed directory, a symlinked
-  archive directory, a symlinked parent, an external file surviving a run, an
+  `OverflowError` at exhaustion, which `seal` already reports as `save_failed`.
+  Regressions cover a symlinked sealed directory, a symlinked archive
+  directory, a symlinked parent, an external file surviving a run, an
   out-of-range counter and the last nameable sequence.
 - [ ] CodeRabbit review 6000304047 remediation, group 3 (2026-11-21): walk
   settlement and the planner oracle (findings 4, 22). `_BudgetWalk.evict` now
@@ -718,12 +718,12 @@ verified archive is published, and leaves compile admission untouched.
   budget floor at load (findings 1, 13). `header_floor_bytes` is now public and
   measured from a header whose timestamp carries one microsecond, because the
   encoder preserves fractional seconds and a whole-second header is four bytes
-  shorter. `validate_policy` and the configuration rules both use it: a
-  positive `cache_outcomes_max_bytes` below the floor is refused when the
-  document loads, instead of constructing a policy the supervisor would catch
-  and turn into silent non-recording. Zero still means unlimited. Regressions
-  pin the floor as accepted, one byte less as refused, in both the policy
-  validator and the document loader.
+  shorter. `validate_policy` and the configuration rules both use it: a positive
+  `cache_outcomes_max_bytes` below the floor is refused when the document
+  loads, instead of constructing a policy the supervisor would catch and turn
+  into silent non-recording. Zero still means unlimited. Regressions pin the
+  floor as accepted, one byte less as refused, in both the policy validator and
+  the document loader.
 - [ ] CodeRabbit review 6000304047 remediation, group 5 (2026-11-21): inverted
   spans and duplicate indexing (findings 7, 14). A sidecar whose
   `first_observed_at` follows its `last_observed_at` is `corrupt`, and writer
@@ -758,12 +758,23 @@ verified archive is published, and leaves compile admission untouched.
   non-repeatable replay input (finding 12). `reiterable` passed any object that
   was not its own iterator straight to H2's two passes, so a wrapper whose
   `__iter__` hands back one shared internal iterator was drained by the survey
-  and scored as an empty history. The identity check is replaced by an
-  explicit `HistoryStream` test: the pin-backed stream re-streams its snapshot
-  and stays unbuffered on the hot replay path, and every other input is
-  collected once. The regression wraps a full history in such a wrapper and
-  asserts the report still counts every evaluable row; it fails against the
-  previous body with `evaluable_records == 0`.
+  and scored as an empty history. The identity check is replaced by an explicit
+  `HistoryStream` test: the pin-backed stream re-streams its snapshot and stays
+  unbuffered on the hot replay path, and every other input is collected once.
+  The regression wraps a full history in such a wrapper and asserts the report
+  still counts every evaluable row; it fails against the previous body with
+  `evaluable_records == 0`.
+- [ ] CodeRabbit review 6000304047 remediation, group 9 (2026-11-21): the
+  benchmark's trace and its generated input (findings 2, 3). `measure` no
+  longer calls `tracemalloc.reset_peak` when the caller was already tracing:
+  that discarded the caller's earlier maximum, and reading the shared peak
+  would have attributed the caller's allocations to the pass, so the report now
+  states `peak_python_bytes` as zero in that case. The generated segment is
+  written through `encode_line` from real `OutcomeRecord` values (alternating
+  hit and miss on shared keys) instead of a handwritten JSON row the decoder
+  rejects as `corrupt`; `generate_segment` is public, and a regression reads
+  the generated file with `read_store` and asserts every row decodes. Both
+  regressions fail against the previous module.
 
 ## Surprises & discoveries
 
