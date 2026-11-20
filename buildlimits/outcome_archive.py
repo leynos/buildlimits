@@ -27,6 +27,7 @@ from buildlimits.outcome_archive_history import SettledStore
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
 from buildlimits.outcome_archive_quarantine import fresh_quarantine_token
 from buildlimits.outcome_archive_report import (
+    Maintenance,
     RunOptions,
     RunReport,
     RunStatus,
@@ -34,6 +35,7 @@ from buildlimits.outcome_archive_report import (
     unfinished_report,
     unsettled_report,
 )
+from buildlimits.outcome_retention_report import RetentionLimits
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -137,23 +139,45 @@ def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
         with outcome_archive_lock.ArchiveLock(context.layout.lock_file):
             return _execute_locked(context, context.policy, started)
     except outcome_archive_lock.ArchiveBusyError:
-        return unfinished_report(started, "busy", "busy", clock=context.clock)
+        return unfinished_report(
+            started,
+            "busy",
+            "busy",
+            clock=context.clock,
+            limits=RetentionLimits.of(context.policy),
+        )
     except outcome_archive_lock.NoHeadroomError:
         return unfinished_report(
-            started, "no_headroom", "no_headroom", clock=context.clock
+            started,
+            "no_headroom",
+            "no_headroom",
+            clock=context.clock,
+            limits=RetentionLimits.of(context.policy),
         )
     except UnknownActiveHistoryError:
         # The record cap counts the writer's unsealed rows. A run that cannot
         # read them cannot show the store is within the cap, so it reports an
         # operational failure rather than counting the active file as empty.
-        return unfinished_report(started, "failed", "unreadable", clock=context.clock)
+        return unfinished_report(
+            started,
+            "failed",
+            "unreadable",
+            clock=context.clock,
+            limits=RetentionLimits.of(context.policy),
+        )
     except OSError as error:
         # The headroom check reads free space once, before the pass, so the
         # filesystem can still fill while this run works. A full filesystem is
         # retryable; anything else needs an operator.
         reason = outcome_archive_run.failure_reason(error)
         status: RunStatus = "no_headroom" if reason == "no_headroom" else "failed"
-        return unfinished_report(started, status, reason, clock=context.clock)
+        return unfinished_report(
+            started,
+            status,
+            reason,
+            clock=context.clock,
+            limits=RetentionLimits.of(context.policy),
+        )
 
 
 def _inspect(
@@ -197,7 +221,23 @@ def _execute_locked(
     if not settled:
         return unsettled_report(started, clock=context.clock)
     floor, report = _execute(_archive_run(context, plan))
-    outcome_archive_state.write_state(context.layout, floor, report)
+    try:
+        outcome_archive_state.write_state(context.layout, floor, report)
+    except OSError:
+        # The archive and its evictions are real even when the state could not
+        # be replaced. The floor gets its own attempt, so completed deletions
+        # are not reported as gaps later.
+        outcome_archive_state.write_floor_after_failure(
+            context.layout, floor, report
+        )
+        return dc.replace(
+            report,
+            status="failed",
+            reason="state_write_failed",
+            maintenance=Maintenance(
+                state_written=False, reason="state_write_failed"
+            ),
+        )
     return report
 
 

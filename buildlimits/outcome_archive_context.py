@@ -97,7 +97,9 @@ class ActionResult:
     physical_bytes : int
         Bytes the archive occupies after the operation.
     reason : str | None
-        A closed fault reason when the operation quarantined something.
+        A closed reason for the operation. A quarantine names the fault; a
+        deletion or trim names the bound that caused it: ``age``, ``bytes`` or
+        ``age_and_bytes``.
     """
 
     action: ActionName

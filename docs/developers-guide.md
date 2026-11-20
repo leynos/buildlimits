@@ -336,7 +336,8 @@ Each module owns one decision. This table is the single module inventory.
 | `predict.dataset_journal`                                                          | The dataset command's journal lookback option and its best-effort provenance note                                                                           |
 | `predict.render_tables`                                                            | The held-out comparison, calibration, ablation and origin tables in the prediction report                                                                   |
 | `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                                                                      |
-| `utc_text`                                                                         | The wall clock as aware UTC, the canonical ISO 8601 text with a trailing `Z`, and its parser                                                                |
+| `utc_text`                                                                         | The system wall clock as aware UTC, re-exporting the canonical text helpers from `utc_format`                                                               |
+| `utc_format`                                                                       | Pure canonical ISO 8601 UTC text with a trailing `Z`, and its parser, with no clock reads                                                                   |
 | `retry_notice`                                                                     | The bounded line a command writes when it retries an unsettled reading                                                                                      |
 | `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper                                                                   |
 | `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar                                                            |
@@ -344,6 +345,8 @@ Each module owns one decision. This table is the single module inventory.
 | `config_retention`                                                                 | Retention settings and validation rules shared by the supervisor loader and the archive command                                                             |
 | `config_values`                                                                    | Type coercion from parsed TOML values to supervisor field types                                                                                             |
 | `status`, `status_client`, `status_render`, `status_cli`                           | The status document, its transport, rendering and command                                                                                                   |
+| `status_sections`                                                                  | Reading an optional nested status section, treating an absent or malformed one as empty                                                                     |
+| `status_render_retention`                                                          | The retention line of the rendered status, naming the same bounds as the archive report                                                                     |
 | `admission_readiness`                                                              | Pure admission-progress classification from health, ledger counts and recovery outlook                                                                      |
 | `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                                                                                        |
 | `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                                                                                 |
@@ -365,12 +368,15 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_store`                                                                    | Queue and worker plumbing for the non-blocking writer; bounded result reporting                                                                             |
 | `outcome_store_state`                                                              | The writer's file state machine: compaction and bounded appends                                                                                             |
 | `outcome_store_restart`                                                            | What a restart settles before the first append: a torn tail, an oversized segment, an expired file and a replaced salt domain                               |
+| `outcome_store_clock`                                                              | The wall and monotonic clock pair the writer reads together                                                                                                 |
 | `outcome_store_sealing`                                                            | The writer's sealing transition into a closed segment                                                                                                       |
 | `outcome_store_files`                                                              | Private regular-file primitives shared by the store, the sidecars and the history pin: no-follow opens, mode checks and bounded reads                       |
 | `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes, atomic replacement and the seal rename                                                                   |
 | `outcome_store_tail`                                                               | Backward-chunked removal of an unterminated final row a stopped writer left                                                                                 |
 | `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                                                                                |
 | `outcome_retention`                                                                | Validated age, byte, record and headroom policy shared by the writer and archiver                                                                           |
+| `outcome_retention_report`                                                         | Pure effective limits, active-history and retained-history value shapes, with one in-memory measurement                                                     |
+| `outcome_retention_history`                                                        | Combining the closed-history inventory with the active snapshot into one retained view                                                                      |
 | `outcome_segments`                                                                 | Segment naming and layout derivation only                                                                                                                   |
 | `outcome_segment_inventory`, `outcome_segment_scan`                                | Read-only, content-free inventory of sealed and archived segments, and the filesystem walk that lists them                                                  |
 | `outcome_segment_sidecar`                                                          | One verified archive or sealed source's sidecar record, with strict validation                                                                              |
@@ -383,6 +389,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
 | `outcome_archive_state`                                                            | Deriving the retention floor and persisting the floor and run report                                                                                        |
 | `outcome_archive_context`                                                          | Shared context and result values for one archive run                                                                                                        |
+| `outcome_archive_active`                                                           | Bounded, read-only measurement of the active file for diagnostics only                                                                                      |
 | `outcome_archive_plan`                                                             | Pure retention and repair plan from the inventory                                                                                                           |
 | `outcome_archive_active`                                                           | Lock-free bounded read of the writer's active file through one descriptor, and the non-regular path it refuses                                              |
 | `outcome_archive_age`                                                              | Which closed history the age rule evicts whole, and which straddling archive it trims                                                                       |
@@ -1226,6 +1233,21 @@ sequences and elapsed seconds, all from the closed vocabularies.
 systemd supplies `JOURNAL_STREAM`, so a shell run stays silent and a test run
 never writes to the host journal.
 
+`outcome_retention_report` is the single derivation every diagnostic surface
+uses. `RetentionLimits.of(policy)` describes the effective bounds, and
+`measured_history(records, logical_bytes=...)` summarizes rows a caller already
+holds. Both value shapes are pure and import no clock, filesystem or inventory
+module, so they stay inside the domain's import closure.
+`outcome_retention_history.retained_history(inventory, active)` combines closed
+history and one active snapshot into a `RetainedHistory`; it owns the one
+inventory dependency so the pure shapes do not acquire it. The status document,
+`retention.json` and `last-run.json` all carry these shapes, so they cannot
+disagree about a policy. Neither shape is a cumulative recorder counter or a
+journal query cap, and `complete=False` marks a lower bound rather than an
+exact count. `outcome_archive_active.read_active_history` performs the one
+bounded, read-only read of the active file that feeds the archiver's diagnostic
+snapshot; retention decisions use the file's `lstat` size only.
+
 `outcome_archive_cli` is the timer-facing surface. `inspect` is a dry run by
 definition; `run --dry-run` plans without taking the lock or writing state; and
 `run` executes. All three accept `--store`, `--config` (default
@@ -1249,8 +1271,11 @@ The archive tests are `tests/test_outcome_archive.py`,
 `test_outcome_segment_inventory.py`, `test_outcome_segment_scan.py`,
 `test_outcome_segment_sidecar_faults.py`, `test_outcome_segment_state.py`,
 `test_outcome_record_stream.py`, `test_outcome_sealing_bounds.py`,
-`test_outcome_store_tail.py`, `test_outcome_store_sealing.py` and
-`test_outcome_store_sealing_durability.py`.
+`test_outcome_store_tail.py`, `test_outcome_store_sealing.py`,
+`test_outcome_store_sealing_durability.py`, `test_outcome_retention_config.py`,
+`test_outcome_retention_compaction.py`, `test_outcome_retention_report.py` and
+`test_outcome_retention_diagnostics.py`; the store and startup fixtures the
+retention tests share live in `tests/outcome_retention_helpers.py`.
 `test_outcome_archive_subprocess.py` runs the installed console script, and the
 `python -m` form, as separate processes, including two overlapping runs, and
 shares its launcher and configuration with `tests/archive_cli_helpers.py`.

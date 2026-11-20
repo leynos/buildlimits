@@ -7,6 +7,7 @@ and the state writer cannot disagree about the persisted shape.
 
 import typing as typ
 
+from buildlimits.outcome_archive_report import eviction_counts
 from buildlimits.utc_text import optional_utc_text, utc_text
 
 if typ.TYPE_CHECKING:
@@ -62,6 +63,10 @@ def report_dict(report: RunReport) -> dict[str, object]:
         "missing_sidecars": list(report.missing_sidecars),
         "corrupt_sidecars": list(report.corrupt_sidecars),
         "orphan_sidecars": list(report.orphan_sidecars),
+        "evictions": eviction_counts(report.actions),
+        "limits": None if report.limits is None else report.limits.as_dict(),
+        "retained": None if report.retained is None else report.retained.as_dict(),
+        "maintenance": report.maintenance.as_dict(),
         "reason": report.reason,
     }
 

@@ -1,7 +1,6 @@
 """Shared factories for outcome-store tests, with the result waits re-exported."""
 
 import contextlib
-import datetime as dt
 import threading
 import time
 import typing as typ
@@ -11,14 +10,15 @@ import pytest
 from outcome_result_waits import wait_for_records as wait_for_records
 from outcome_result_waits import wait_for_results as wait_for_results
 from outcome_store_clock import FIXED_NOW as _NOW
+from outcome_test_helpers import window_summary
 
 from buildlimits import outcome_records, outcome_store_state
 from buildlimits.outcome_ports import StoreResult
-from buildlimits.outcome_record_format import WindowSummary
 from buildlimits.outcome_store import StoreWriter
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
     from pathlib import Path
 
     from buildlimits.outcome_key import Salt
@@ -29,34 +29,6 @@ if typ.TYPE_CHECKING:
 
 _SALT_NAME = "cache-outcomes.salt"
 _WAIT_SECONDS = 2.0
-
-
-def window_summary(
-    *,
-    server_version: str = "0.14.0",
-    observed_at: dt.datetime = dt.datetime(2026, 10, 25, tzinfo=dt.UTC),
-) -> WindowSummary:
-    """Build one small valid row for store-writer contracts.
-
-    Returns
-    -------
-    WindowSummary
-        A balanced one-group summary with fixed test values.
-
-    Examples
-    --------
-    ``window_summary().window_groups`` is one.
-    """
-    return WindowSummary(
-        observed_at=observed_at,
-        server_version=server_version,
-        window_groups=1,
-        requests_not_compile=0,
-        requests_not_cacheable=0,
-        predicted_not_compile=0,
-        predicted_declined=0,
-        predicted_cacheable=1,
-    )
 
 
 def wait_for_salt(writer: StoreWriter) -> Salt | StoreFailure:

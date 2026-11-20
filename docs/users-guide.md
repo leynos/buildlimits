@@ -122,7 +122,7 @@ with exit status 2, and nothing is half-applied.
 | `cache_outcomes`                        | `off`                                          | `record` opts in to observation-only cache outcome recording; it requires `cache_mode = "sccache"`                                                                                                          |
 | `cache_outcomes_max_age_days`           | `30`                                           | Oldest retained outcome age in days; `0` disables age eviction                                                                                                                                              |
 | `cache_outcomes_max_bytes`              | `12582912` (12 MiB)                            | Logical uncompressed bytes retained across active, sealed and archived history; `0` disables the byte bound and requires segmentation. The default is the legacy 12 MiB bound                               |
-| `cache_outcomes_max_records`            | `0`                                            | Retained-record cap; `0` leaves segmented history uncapped and keeps the legacy 10,000-row cap otherwise                                                                                                    |
+| `cache_outcomes_max_records`            | `0`                                            | Cap on the rows the writer keeps in active history; `0` keeps the legacy 10,000-row cap in legacy mode and means no cap in segmented mode. The cap never evicts sealed or archived history                  |
 | `cache_outcomes_archive_headroom_bytes` | `25165824` (24 MiB)                            | Temporary disk space an archive run may use; never counted against retained bytes. Must hold at least one 12 MiB segment                                                                                    |
 | `cache_outcomes_archive_preset`         | `6`                                            | XZ preset from 0 (fastest) to 9 (smallest)                                                                                                                                                                  |
 | `sccache_executable`                    | `sccache`                                      | The sccache client used in `sccache` mode                                                                                                                                                                   |
@@ -138,6 +138,13 @@ _Table 2: Supervisor configuration keys._
 
 Every `cache_outcomes_*` retention key requires `cache_outcomes = "record"`;
 validation rejects one written while recording is off.
+
+Every retention value is a non-negative integer. A boolean, a string, a
+fractional value or one outside the supported range is a configuration error
+rather than a value to coerce: age is limited to 365,000 days, the byte and
+record bounds to 2^63 - 1, the archive preset to 0 to 9, and the headroom to at
+least one 12 MiB segment. Start-up fails with exit status 2 before any recorded
+history is read, moved or deleted, so a mistyped policy never costs records.
 
 Sockets live under `$XDG_RUNTIME_DIR/buildlimits`, falling back to
 `/run/user/UID/buildlimits` when the variable is unset, because Unix socket
@@ -418,19 +425,23 @@ written is the writer's append in flight, which a failed write truncates back
 out, so it is not counted.
 
 Retention is one policy shared by the writer, the archiver and the read-only
-history view:
+history view. Whichever bound is reached first evicts the oldest history:
 
+- Age is counted from each row's observation time. A row whose observation
+  time equals the cutoff is retained; one older than the cutoff is not.
 - The byte budget counts logical uncompressed bytes across active, sealed and
-  archived history. An archive's contribution is its sidecar's `logical_bytes`,
-  so compression does not move the boundary. The active file contributes only
-  the bytes of the rows the age rule keeps, because a row the writer will
-  compact away is not retained history; counting it would evict closed history
-  to make room for bytes retention has already released. When the active file
-  cannot be decoded, its committed bytes are unknown, so the byte budget is
-  deferred rather than decided from the whole file, whether or not an age
-  cutoff applies: the whole file includes any append the writer has not
-  committed and may roll back. The run reports `unsettled` and exits 75, and
-  the next firing retries.
+  archived history. The header row and every row's terminating newline are
+  included, and an archive contributes its sidecar's `logical_bytes`, so
+  compression never moves the boundary. The archives' physical XZ size is
+  reported beside that figure but is not compared with the budget. The active
+  file contributes only the bytes of the rows the age rule keeps, because a
+  row the writer will compact away is not retained history; counting it would
+  evict closed history to make room for bytes retention has already released.
+  When the active file cannot be decoded, its committed bytes are unknown, so
+  the byte budget is deferred rather than decided from the whole file, whether
+  or not an age cutoff applies: the whole file includes any append the writer
+  has not committed and may roll back. The run reports `unsettled` and exits
+  75, and the next firing retries.
 - Eviction is oldest-first. A record whose observation time equals the age
   cutoff is retained; one older than the cutoff is not.
 - The record cap bounds the retained record count across active, sealed and
@@ -443,7 +454,8 @@ history view:
   evicted whole when the cap reaches it before the run has compressed it; a
   source that straddles the boundary is archived first, and the next plan trims
   its archive. Only the writer's active file is never trimmed, because the
-  writer owns it. A cap of zero leaves segmented history uncapped.
+  writer owns it. Zero leaves a segmented history uncapped, and a legacy store
+  that configures none keeps its historical 10,000-row cap.
 
 A single firing may apply retention over more than one pass. The byte and
 record walks act on the rows that survive the age rule, so while an age trim is
@@ -491,11 +503,55 @@ one that only receives old observations, therefore does not carry its expired
 rows forward indefinitely. An oversized file is sealed first, and the
 archiver's next run applies the age policy to that segment.
 
+Temporary disk use is separate from the budget. Each sealed segment is
+compressed and verified whole before any eviction, and a trim needs room for
+the archive it is rewriting, so `cache_outcomes_archive_headroom_bytes` is a
+floor on free space beside the archive directory rather than part of the
+retained total. Retained bytes can exceed the budget between runs by the
+history sealed since the last one; the run replans after archiving, so one
+successful run finishes within the budget unless a failure stops it.
+
+A changed bound takes effect where its owner next acts. Reducing the byte, age
+or record bound compacts the active file at the next supervisor start or clean
+shutdown, and evicts closed history at the next archive run. No running process
+rewrites history merely because the configuration changed.
+
+A wall-clock jump of more than a day, in either direction, is treated as
+suspect. The writer then skips age eviction for that pass, reports `clock_skew`
+rather than `expired`, and still applies the byte and record bounds; the next
+undisturbed pass applies the real age bound. Future-dated rows stay until the
+clock agrees with them, so moving the clock back never deletes history.
+
 The retention keys and their defaults are in [Table 2](#supervisor-settings).
 The 12 MiB default is the legacy bound, so a host that writes none of the keys
 keeps its current store shape. Set `cache_outcomes_max_bytes` to a larger
-logical budget to retain more history. Every retention key requires
-`cache_outcomes = "record"`.
+logical budget to retain more history; a budget larger than one 12 MiB segment,
+or `0`, switches the store to segmentation so the active file stays bounded.
+Every retention key requires `cache_outcomes = "record"`.
+
+To retain up to 30 days or 15,000,000,000 logical bytes, whichever is reached
+first, with no hidden row cap:
+
+```toml
+cache_outcomes = "record"
+cache_outcomes_max_age_days = 30
+cache_outcomes_max_bytes = 15000000000
+cache_outcomes_max_records = 0
+cache_outcomes_archive_headroom_bytes = 25165824
+```
+
+The same text can be written by an Ansible `copy` or `template` task for
+`~/.config/buildlimits/supervisor.toml`; the supervisor needs no other change
+to honour it.
+
+Configure the retention keys before enabling the archive timer. The archiver
+applies the same policy from the same file, so a timer enabled while the file
+still holds the legacy 12 MiB default evicts archived history down to that
+budget. A deployment that writes none of the keys keeps its pre-timer
+behaviour: one active document, in-place compaction, the 10,000-row cap and no
+archived history. Adding a larger `cache_outcomes_max_bytes` moves the existing
+store into segmented mode at the next start, without rewriting the history
+already on disk.
 
 The 15,000,000,000-byte budget this design targets is not the default. Write
 `cache_outcomes_max_bytes = 15000000000` in `supervisor.toml` before enabling
@@ -610,6 +666,47 @@ reservation, so another writer that fills the filesystem after the check still
 stops the pass. A run that meets a full filesystem reports the retryable
 status: nothing is corrupted, and the next timer firing picks the work up once
 space returns.
+
+### Read the retention diagnostics
+
+Three surfaces answer the same two questions separately: what policy is in
+force, and what history it currently retains.
+
+- `build-limits-status` adds a `cache outcomes retention` line while recording
+  is enabled. It names the effective age, byte and record bounds and the active
+  file's row and logical-byte count; an incomplete read says so rather than
+  showing a partial count as exact. Its JSON form carries the same `limits` and
+  `active` documents.
+- `retention.json` records the retention floor, the retained logical bytes,
+  the budget, the cutoff, and the `limits` and `retained` documents.
+- `last-run.json` is the full run report. Its `limits`, `retained`,
+  `evictions` and `maintenance` sections are the documents the `--json` form
+  prints.
+
+`limits` describes the policy: `max_age_days`, `max_age_seconds`, `max_bytes`,
+`max_records` (`null` when count is unbounded), `headroom_bytes`,
+`segment_bytes`, `segmented`, `age_eviction` and `byte_eviction`. A zero age or
+byte bound is reported as `0` with its `*_eviction` flag `false`, so "disabled"
+is never mistaken for "retain nothing".
+
+`retained` describes the history those bounds produced: total `record_count` and
+`logical_bytes`, the split across `active_bytes`, `sealed_bytes`,
+`archived_logical_bytes` and `archived_physical_bytes`, `closed_segments`,
+`active_records`, the first and last observation times, the `span_seconds`
+between them, and `complete`. `complete` is `false` when a closed segment's
+metadata is missing or the active file could not be read; the counts are then
+lower bounds, not a claim that history was lost. Retained counts are not the
+recorder's cumulative `attributed` and `readings` counters, and neither is a
+journal reader's `--max-records` query cap.
+
+`evictions` counts the trims and deletions a run performed under `age`, `bytes`
+and `age_and_bytes`; every key is always present. Each action in `actions` also
+names its reason, and `failures`, `gaps`, `missing_sidecars`,
+`corrupt_sidecars` and `orphan_sidecars` identify history that could not be
+processed. `maintenance` reports whether `retention.json` and `last-run.json`
+were installed, with `state_write_failed` when they were not: archives and
+evictions already published stay in place, and the next firing rewrites the
+state from what is on disk.
 
 ### Compare offline hit predictors
 
@@ -935,8 +1032,11 @@ the high-water mark and the budget. These are point-in-time diagnostics, not
 history; `build-limits-metrics` summarizes history.
 
 When `cache_outcomes = "record"`, status also shows the number of attributed
-outcomes and completed readings. That optional object and line are absent when
-recording is off.
+outcomes and completed readings, and a `cache outcomes retention` line naming
+the effective age, byte and record bounds with the active file's retained rows.
+Its `retention` object carries the same `limits` and `active` documents the
+archive report uses. Those optional objects and lines are absent when recording
+is off. See [Read the retention diagnostics](#read-the-retention-diagnostics).
 
 | Exit status | Default: health check                         | With `--ready`                                  |
 | ----------- | --------------------------------------------- | ----------------------------------------------- |

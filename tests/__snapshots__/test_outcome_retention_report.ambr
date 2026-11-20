@@ -1,0 +1,56 @@
+# serializer version: 1
+# name: test_omitted_retention_keys_keep_the_legacy_policy
+  dict({
+    'age_eviction': True,
+    'byte_eviction': True,
+    'headroom_bytes': 25165824,
+    'max_age_days': 30,
+    'max_age_seconds': 2592000,
+    'max_bytes': 12582912,
+    'max_records': 10000,
+    'segment_bytes': 12582912,
+    'segmented': False,
+  })
+# ---
+# name: test_the_limits_document_is_closed_json
+  list([
+    'age_eviction',
+    'byte_eviction',
+    'headroom_bytes',
+    'max_age_days',
+    'max_age_seconds',
+    'max_bytes',
+    'max_records',
+    'segment_bytes',
+    'segmented',
+  ])
+# ---
+# name: test_the_retained_document_is_closed_json
+  list([
+    'active_bytes',
+    'active_records',
+    'archived_logical_bytes',
+    'archived_physical_bytes',
+    'closed_segments',
+    'complete',
+    'first_observed_at',
+    'last_observed_at',
+    'logical_bytes',
+    'record_count',
+    'sealed_bytes',
+    'span_seconds',
+  ])
+# ---
+# name: test_the_rohga_policy_is_reported_exactly
+  dict({
+    'age_eviction': True,
+    'byte_eviction': True,
+    'headroom_bytes': 25165824,
+    'max_age_days': 30,
+    'max_age_seconds': 2592000,
+    'max_bytes': 15000000000,
+    'max_records': None,
+    'segment_bytes': 12582912,
+    'segmented': True,
+  })
+# ---

@@ -11,6 +11,7 @@ import time
 import typing as typ
 
 from buildlimits import outcome_records, outcome_segments, outcome_store_restart
+from buildlimits.outcome_archive_history import ActiveHistory, measured_history
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_store_io import (
     append_line,
@@ -177,6 +178,30 @@ class StoreFiles:
     ) -> None:
         """Choose which validated rows can belong to the active salt."""
         outcome_store_restart.restore_loaded_store(self, decoded, salt, now)
+
+    def retention(self) -> ActiveHistory:
+        """Describe the rows the writer currently holds in the active file.
+
+        The supervisor asks for this snapshot while the worker may be
+        appending. Reading a tuple copy means an append that races the copy is
+        included or omitted as a whole; the result is a diagnostic snapshot,
+        not a consistency barrier.
+
+        Returns
+        -------
+        ActiveHistory
+            The active row count, its logical size and observation span, or an
+            incomplete snapshot with a closed reason.
+        """
+        try:
+            size = store_size(self.path)
+        except OSError:
+            return ActiveHistory(has_metadata=False, reason="unreadable")
+        if not self.ready:
+            return ActiveHistory(
+                bytes=size, has_metadata=False, reason="not_loaded"
+            )
+        return measured_history(tuple(self.records), logical_bytes=size)
 
     def set_records(self, records: list[StoreRecord]) -> None:
         """Replace the active rows and cache their oldest observation.

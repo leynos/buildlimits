@@ -317,6 +317,9 @@ def _trim_one(
 ) -> bool:
     """Apply one planned trim, quarantining an archive that will not verify.
 
+    The recorded action names the bound that caused the rewrite, so a report
+    reader can tell age eviction from a byte allowance without re-planning.
+
     Returns
     -------
     bool
@@ -325,7 +328,10 @@ def _trim_one(
     return _quarantining(
         outcome,
         entry.sequence,
-        lambda: outcome_archive_files.recompress_archive(run.context, entry, trim),
+        lambda: dc.replace(
+            outcome_archive_files.recompress_archive(run.context, entry, trim),
+            reason=_trim_reason(trim),
+        ),
         lambda reason: outcome_archive_quarantine.quarantine_archive(
             run.context, entry, reason
         ),
@@ -333,7 +339,7 @@ def _trim_one(
 
 
 def _delete_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> bool:
-    """Remove one evicted archive or sealed source.
+    """Remove one evicted archive or sealed source, naming its bound.
 
     Returns
     -------
@@ -348,5 +354,52 @@ def _delete_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> bo
     except OSError as error:
         outcome.failures.append((entry.sequence, failure_reason(error)))
         return False
-    outcome.actions.append(ActionResult("deleted", entry.sequence))
+    outcome.actions.append(
+        ActionResult("deleted", entry.sequence, reason=_delete_reason(run, entry))
+    )
     return True
+
+
+def _delete_reason(run: ArchiveRun, entry: SegmentEntry) -> str:
+    """Return the bound that made one entry eligible for deletion.
+
+    Age is checked first because the age plan runs before byte planning: an
+    entry whose newest row is older than the cutoff would have been deleted
+    even if the byte budget had room for it.
+
+    Returns
+    -------
+    str
+        ``age`` when the entry's newest row is older than the cutoff,
+        otherwise ``bytes``.
+    """
+    cutoff = run.context.policy.cutoff(run.context.now)
+    return "age" if _is_expired(entry, cutoff) else "bytes"
+
+
+def _is_expired(entry: SegmentEntry, cutoff: dt.datetime | None) -> bool:
+    """Report whether an entry's newest row is older than the cutoff.
+
+    Returns
+    -------
+    bool
+        Whether every row in the entry is past the age bound.
+    """
+    if cutoff is None or entry.last_observed_at is None:
+        return False
+    return entry.last_observed_at < cutoff
+
+
+def _trim_reason(trim: Trim) -> str:
+    """Return the bounds one planned trim applies.
+
+    Returns
+    -------
+    str
+        ``age``, ``bytes`` or ``age_and_bytes`` for a composed rewrite.
+    """
+    by_age = trim.before is not None or trim.records > 0
+    by_bytes = trim.allowed_bytes is not None
+    if by_age and by_bytes:
+        return "age_and_bytes"
+    return "age" if by_age else "bytes"

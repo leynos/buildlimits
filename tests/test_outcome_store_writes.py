@@ -18,10 +18,10 @@ from outcome_store_helpers import (
     stored_records,
     wait_for_results,
     wait_for_salt,
-    window_summary,
     worker_exited,
 )
 from outcome_test_helpers import STORE_EPOCH as NOW
+from outcome_test_helpers import window_summary
 from segment_test_helpers import document, history_policy, write_private
 
 from buildlimits import (

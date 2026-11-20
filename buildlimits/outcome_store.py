@@ -14,9 +14,10 @@ import typing as typ
 from buildlimits import outcome_records
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import OutcomeStorePort, StoreFailure, StoreResult
+from buildlimits.outcome_store_clock import Clocks
 from buildlimits.outcome_store_salt import file_salt as file_salt
 from buildlimits.outcome_store_salt import store_path as store_path
-from buildlimits.outcome_store_state import Clocks, StoreFiles
+from buildlimits.outcome_store_state import StoreFiles
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -25,6 +26,7 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_retention import RetentionPolicy
+    from buildlimits.outcome_retention_report import ActiveHistory
     from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
 
 MAX_APPEND_QUEUE = 4_096
@@ -141,6 +143,22 @@ class StoreWriter(OutcomeStorePort):
                 self._work.put_nowait((line, record))
             except queue.Full:
                 self._publish("append", "save_failed", discarded=1)
+
+    # The writer is the port's adapter: status holds only the port, while the
+    # rows stay owned by the worker-side state machine. Declaring the override
+    # records that this forwarding *is* the port boundary, rather than an
+    # indirection a reader could collapse.
+    @typ.override
+    def retention(self) -> ActiveHistory:
+        """Describe the active file's retained rows for a status snapshot.
+
+        Returns
+        -------
+        ActiveHistory
+            The active count, logical size and observation span. A concurrent
+            append is observed as a whole row or not at all.
+        """
+        return self._files.retention()
 
     def results(self) -> tuple[StoreResult, ...]:
         """Drain aggregated writer outcomes without waiting for I/O.

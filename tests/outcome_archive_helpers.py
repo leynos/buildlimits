@@ -43,6 +43,7 @@ __all__ = [
     "records",
     "refuse",
     "run",
+    "seeded_store",
     "store_with_archive",
     "write",
 ]
@@ -133,6 +134,19 @@ def store_with_archive(root: Path, rows: int) -> tuple[Path, SegmentLayout]:
     if first.status != "ok":
         pytest.fail("the fixture archive is published untrimmed")
     return store, layout(root)
+
+
+def seeded_store(root: Path, rows: tuple[StoreRecord, ...]) -> Path:
+    """Write one default-policy store of ``rows`` and return its path.
+
+    Returns
+    -------
+    Path
+        The active JSON Lines store the archiver will read.
+    """
+    store = root / "cache-outcomes.jsonl"
+    write(store, rows, policy())
+    return store
 
 
 def run(

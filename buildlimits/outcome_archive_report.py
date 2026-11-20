@@ -11,10 +11,13 @@ import typing as typ
 
 from buildlimits.outcome_archive_context import ignore_retry
 from buildlimits.outcome_archive_history import (
+    ActiveHistory,
     observed_history,
     physical_fallback_bytes,
     retained_logical_bytes,
 )
+from buildlimits.outcome_retention_history import retained_history
+from buildlimits.outcome_retention_report import RetentionLimits
 from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
@@ -26,17 +29,25 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_history import ActiveHistory, SettledStore
     from buildlimits.outcome_archive_plan import PlanSummary
     from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome
+    from buildlimits.outcome_retention_report import RetainedHistory
     from buildlimits.outcome_segment_inventory import Inventory
+
+# The closed vocabulary a report counts evictions under. A trim that serves
+# more than one bound names each of them, so every combination is listed.
+EVICTION_CAUSES = ("age", "bytes", "age_and_bytes")
 
 type RunStatus = typ.Literal[
     "ok", "failed", "corrupt", "busy", "no_headroom", "unsettled"
 ]
 
 __all__ = [
+    "EVICTION_CAUSES",
+    "Maintenance",
     "RunOptions",
     "RunReport",
     "RunStatus",
     "dry_report",
+    "eviction_counts",
     "settled_report",
     "unfinished_report",
     "unsettled_report",
@@ -72,6 +83,32 @@ class RunOptions:
     clock: cabc.Callable[[], dt.datetime] = utc_now
     on_retry: cabc.Callable[[str, int, str], None] = ignore_retry
     metrics: MetricsPort | None = None
+
+
+@dc.dataclass(frozen=True, slots=True)
+class Maintenance:
+    """The state a run left behind after its plan had executed.
+
+    Attributes
+    ----------
+    state_written : bool
+        Whether ``retention.json`` and ``last-run.json`` were installed.
+    reason : str | None
+        A closed reason when state persistence failed.
+    """
+
+    state_written: bool = True
+    reason: str | None = None
+
+    def as_dict(self) -> dict[str, object]:
+        """Return the stable JSON fields for maintenance state.
+
+        Returns
+        -------
+        dict[str, object]
+            Whether state was persisted and why it was not.
+        """
+        return {"state_written": self.state_written, "reason": self.reason}
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -131,6 +168,12 @@ class RunReport:
         Archives whose sidecar cannot be trusted.
     orphan_sidecars : tuple[int, ...]
         Sidecars with no archive.
+    limits : RetentionLimits | None
+        The effective retention bounds, or None when none was derived.
+    retained : RetainedHistory | None
+        What the store retains after the run, or after the inspected state.
+    maintenance : Maintenance
+        Whether the run persisted its state.
     reason : str | None
         A closed run-level reason when the run did not complete.
     """
@@ -156,11 +199,18 @@ class RunReport:
     missing_sidecars: tuple[int, ...] = ()
     corrupt_sidecars: tuple[int, ...] = ()
     orphan_sidecars: tuple[int, ...] = ()
+    limits: RetentionLimits | None = None
+    retained: RetainedHistory | None = None
+    maintenance: Maintenance = dc.field(default_factory=Maintenance)
     reason: str | None = None
 
 
 def dry_report(
-    run: ArchiveRun, active: ActiveHistory, inventory: Inventory
+    run: ArchiveRun,
+    active: ActiveHistory,
+    inventory: Inventory,
+    *,
+    clock: cabc.Callable[[], dt.datetime] | None = None,
 ) -> RunReport:
     """Build the report a dry run returns without changing any file.
 
@@ -171,13 +221,17 @@ def dry_report(
     Returns
     -------
     RunReport
-        A successful dry-run report carrying the plan.
+        A dry-run report carrying the plan and the history it planned against.
+        An active file that could not be counted makes the totals a lower
+        bound, so the inspection reports ``corrupt`` rather than presenting
+        the history it could not read as empty. No state file is installed,
+        and the report says so.
     """
     observed = observed_history(inventory, active)
     return RunReport(
-        status="ok",
+        status="ok" if active.has_metadata else "corrupt",
         started_at=run.started_at,
-        finished_at=run.context.clock(),
+        finished_at=run.context.clock() if clock is None else clock(),
         dry_run=True,
         active_bytes=active.bytes,
         retained_bytes=retained_logical_bytes(inventory, active),
@@ -194,6 +248,10 @@ def dry_report(
         missing_sidecars=inventory.missing_sidecars,
         corrupt_sidecars=inventory.corrupt_sidecars,
         orphan_sidecars=inventory.orphan_sidecars,
+        limits=RetentionLimits.of(run.context.policy),
+        retained=retained_history(inventory, active),
+        maintenance=Maintenance(state_written=False),
+        reason=None if active.has_metadata else active.reason,
     )
 
 
@@ -229,8 +287,15 @@ def unfinished_report(
     reason: str,
     *,
     clock: cabc.Callable[[], dt.datetime] = utc_now,
+    limits: RetentionLimits | None = None,
+    dry_run: bool = False,
 ) -> RunReport:
     """Build a report for a run that could not start or complete.
+
+    The effective limits are reported even when no run happened, so a caller
+    that only reads the failure document still learns the policy in force. The
+    dry-run marker is carried too: an inspection that could not start changed
+    no file, and its report must not read as a run that did.
 
     Returns
     -------
@@ -241,6 +306,10 @@ def unfinished_report(
         status=status,
         started_at=started_at,
         finished_at=clock(),
+        dry_run=dry_run,
+        budget_bytes=0 if limits is None else limits.max_bytes,
+        limits=limits,
+        maintenance=Maintenance(state_written=False, reason=reason),
         reason=reason,
     )
 
@@ -273,7 +342,11 @@ def settled_report(
     retained = retained_logical_bytes(inventory, active)
     observed = observed_history(inventory, active)
     return RunReport(
-        status=_run_status(outcome, retention_unsettled=settled.retention_unsettled),
+        status=_run_status(
+            outcome,
+            active,
+            retention_unsettled=settled.retention_unsettled,
+        ),
         started_at=run.started_at,
         finished_at=run.context.clock(),
         active_bytes=active.bytes,
@@ -293,23 +366,78 @@ def settled_report(
         missing_sidecars=inventory.missing_sidecars,
         corrupt_sidecars=inventory.corrupt_sidecars,
         orphan_sidecars=inventory.orphan_sidecars,
+        limits=RetentionLimits.of(run.context.policy),
+        retained=retained_history(inventory, active),
+        reason=None if active.has_metadata else active.reason,
     )
 
 
-def _run_status(outcome: RunOutcome, *, retention_unsettled: bool) -> RunStatus:
-    """Classify a completed pass by the failures it recorded.
+def _run_status(
+    outcome: RunOutcome, active: ActiveHistory, *, retention_unsettled: bool
+) -> RunStatus:
+    """Classify a completed pass by what it recorded and could not measure.
 
     A run that met only a full filesystem is retryable: nothing is corrupt and
     the next timer firing picks the work up once space returns. Any other
     failure needs an operator, so it outranks a space failure in the same run.
+    An active file that could not be counted also makes the totals a lower
+    bound, and a timer that recorded ``ok`` would hide history a later run can
+    see.
 
     Returns
     -------
     RunStatus
         ``ok``, ``unsettled``, ``no_headroom`` or ``corrupt``.
     """
+    if not outcome.failures and not active.has_metadata:
+        return "corrupt"
     if not outcome.failures:
         return "unsettled" if retention_unsettled else "ok"
     if all(reason == "no_headroom" for _sequence, reason in outcome.failures):
         return "no_headroom"
     return "corrupt"
+
+
+def eviction_counts(actions: tuple[ActionResult, ...]) -> dict[str, int]:
+    """Count the trims and deletions by the bound that caused them.
+
+    Parameters
+    ----------
+    actions : tuple[ActionResult, ...]
+        The operations a run performed.
+
+    Returns
+    -------
+    dict[str, int]
+        Closed counts keyed by eviction cause, always present so a reader can
+        compare two runs without checking whether a key exists.
+
+    Examples
+    --------
+    >>> counts = eviction_counts(())
+    >>> {cause: count for cause, count in counts.items() if count}
+    {}
+    >>> list(counts) == list(EVICTION_CAUSES)
+    True
+    """
+    counts = dict.fromkeys(EVICTION_CAUSES, 0)
+    for action in actions:
+        reason = _eviction_cause(action)
+        if reason is not None and reason in counts:
+            counts[reason] += 1
+    return counts
+
+
+def _eviction_cause(action: ActionResult) -> str | None:
+    """Return the eviction cause an action names, if it is an eviction.
+
+    Returns
+    -------
+    str | None
+        The closed cause for a trim or deletion, or None for every other
+        action and for a reason that is not a cause.
+    """
+    reason = action.reason
+    if action.action in {"trimmed", "deleted"} and isinstance(reason, str):
+        return reason
+    return None

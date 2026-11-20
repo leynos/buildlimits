@@ -141,16 +141,17 @@ disagree about a bound.
   one older than the cutoff is not.
 - The byte budget is `cache_outcomes_max_bytes`. It counts logical uncompressed
   bytes across active, sealed and archived history: a sealed file by its
-  `stat`, an archive by its sidecar's `logical_bytes`. The active file
-  contributes only the bytes of the rows the age rule keeps, measured in the
-  same scan that counts them: a row the writer will compact away is not
-  retained history, and counting it would evict closed history to make room for
-  bytes retention has already released. When the active file cannot be decoded,
-  the committed bytes are unknown, so the byte walk is deferred rather than
-  decided from the whole file, whether or not an age cutoff applies: the whole
-  file includes any append the writer has not committed and may roll back, so
-  evicting against it could discard an archive the settled store keeps. Zero
-  disables the byte bound.
+  `stat`, an archive by its sidecar's `logical_bytes`. The header row and each
+  row's terminating newline are part of that total. The active file contributes
+  only the bytes of the rows the age rule keeps, measured in the same scan that
+  counts them: a row the writer will compact away is not retained history, and
+  counting it would evict closed history to make room for bytes retention has
+  already released. When the active file cannot be decoded, the committed bytes
+  are unknown, so the byte walk is deferred rather than decided from the whole
+  file, whether or not an age cutoff applies: the whole file includes any
+  append the writer has not committed and may roll back, so evicting against it
+  could discard an archive the settled store keeps. Zero disables the byte
+  bound, and is reported as a disabled bound rather than a zero-byte target.
 - The record cap is `cache_outcomes_max_records`. A positive value applies in
   either mode. When it is omitted, a segmented store has no count cap and a
   legacy store keeps the historical 10,000-record cap. The cap bounds the whole
@@ -235,7 +236,10 @@ Ownership follows file state, not a shared lock.
   is dropped exactly as a torn tail is dropped from a sealed source; a file
   that cannot be read at all contributes its size alone to the diagnostic
   totals, a configured byte budget is deferred until the next firing can read
-  its committed bytes, and that firing counts its rows again.
+  its committed bytes, and that firing counts its rows again. The report's
+  `retained` document is built from the same settled reading as the plan, so
+  its rows, bytes and span describe the version the run measured; a file that
+  cannot be decoded leaves its rows and span unmeasured rather than empty.
 - Every archiver mutation runs under a non-blocking exclusive `flock` on
   `cache-outcomes.archive/archive.lock`. A second invocation reports `busy` and
   exits 75 instead of waiting. The writer never takes that lock, so there is no
@@ -380,9 +384,10 @@ Each completed run writes two documents into the archive directory:
 
 - `retention.json` records the schema, the lowest intentionally retained
   sequence (the retention floor), retained logical bytes, the budget, the
-  cutoff and the update time.
+  cutoff, the update time, and the `limits` and `retained` documents.
 - `last-run.json` is the run's report document, carrying the fields `--json`
-  prints.
+  prints, including `limits`, `retained`, `evictions`, `maintenance` and the
+  per-action reasons.
 
 Both are written by atomic replacement. The retention floor is why evicting old
 history does not look like corruption: the inventory reports a missing sequence
@@ -451,6 +456,34 @@ archive.
 
 Compression is an encoding change, never a schema change. No record is
 re-encoded, reordered or re-timestamped.
+
+### D9: diagnostics separate the effective policy from retained history
+
+One report shape answers two questions an operator must keep apart, so
+`outcome_retention_report` derives both from validated values rather than from
+either component's private counters.
+
+- `limits` names the effective policy: the age in days and seconds, the
+  logical byte budget, the record cap (`null` when unbounded), the headroom,
+  the segment size, whether the store is segmented, and whether age or byte
+  eviction is active. A zero age or byte bound appears as zero with its
+  eviction flag false.
+- `retained` names what the store holds now: total rows and logical bytes,
+  the split across active, sealed and archived history, the archives' physical
+  bytes, the closed-segment count, the observation span and a `complete` flag.
+  The flag is false when a segment's metadata is missing or the active file
+  could not be read, so a lower bound is never presented as exact.
+- `evictions` counts trims and deletions under `age`, `bytes` and
+  `age_and_bytes`, and each action carries the same reason. `maintenance`
+  reports whether the state documents were installed, so a failed write is a
+  retryable `failed` status rather than silent success.
+- The supervisor's status document carries the same `limits` derivation and
+  the writer's active snapshot, which the renderer prints as one line. Closed
+  history is reported by the archive command, which owns it.
+
+None of these figures is a cumulative recorder counter or a journal-reader
+query cap: `record_count` counts rows retained on disk, not outcomes seen since
+start-up, and `--max-records` limits a query rather than the store.
 
 ## Goals and non-goals
 

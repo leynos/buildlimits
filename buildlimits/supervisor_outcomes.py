@@ -1,7 +1,6 @@
 """Isolate cache-outcome recording from supervisor admission decisions."""
 
 import contextlib
-import dataclasses as dc
 import datetime as dt
 import os
 import typing as typ
@@ -43,18 +42,14 @@ from buildlimits.supervisor_outcome_setup import (
     OUTCOME_CLOSE_SECONDS,
     GroupEnding,
     NullOutcomeShell,
+    OutcomeDependencies,
     build_shell,
 )
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-    from buildlimits.outcome_ports import (
-        OutcomeStorePort,
-        ServerProcessPort,
-        StatisticsPort,
-        StoreResult,
-    )
+    from buildlimits.outcome_ports import StoreResult
     from buildlimits.outcome_recorder_types import Outputs
     from buildlimits.pending_request import Pending
     from buildlimits.supervisor import Supervisor
@@ -69,18 +64,6 @@ __all__ = [
     "OutcomeShell",
     "build_shell",
 ]
-
-
-@dc.dataclass(slots=True)
-class OutcomeDependencies:
-    """Optional collaborators used to test the shell's resource boundaries."""
-
-    environment: cabc.Mapping[str, str] | None = None
-    writer: OutcomeStorePort | None = None
-    statistics: StatisticsPort | None = None
-    server: ServerProcessPort | None = None
-    reaper: ChildReaper | None = None
-    wall_clock: cabc.Callable[[], dt.datetime] | None = None
 
 
 class OutcomeShell:
@@ -178,6 +161,18 @@ class OutcomeShell:
             return self._describe()
         except Exception:  # ruff: ignore[blind-except] - a status read must not disable recording.
             return {"enabled": False, "reason": "snapshot_unavailable"}
+
+    def retention(self) -> dict[str, object]:
+        """Return the effective retention policy and the active snapshot.
+
+        Returns
+        -------
+        dict[str, object]
+            ``limits`` and ``active`` mappings, both JSON-compatible.
+        """
+        return supervisor_outcome_setup.retention_document(
+            self._supervisor, self._resources.writer
+        )
 
     def close(self, timeout: float = OUTCOME_CLOSE_SECONDS) -> None:
         """Cancel the query, reap its helper and close the writer within a bound."""
