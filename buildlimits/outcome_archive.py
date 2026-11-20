@@ -211,8 +211,10 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
     The floor gets its own attempt before that failure is returned. A later
     run that deletes nothing can only learn about this run's deletions from
     the recorded floor, so a transient failure of the full write must not
-    turn them into permanent gaps. If the floor write fails as well, the run
-    still reports ``failed`` and the loss is not silent.
+    turn them into permanent gaps. A post-run read that fails takes the same
+    path: the deletions are already real, so the floor is written from their
+    actions without needing another inventory read. If that write fails as
+    well, the run still reports ``failed`` and the loss is not silent.
 
     The retained totals come from ``_measure``, which reads each side of the
     store once and detects a seal racing those reads. A replacement in the
@@ -241,6 +243,11 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
         # The archives and evictions are already published. Returning the
         # pre-run failure report would erase them from the record, so keep
         # what the run did and say only that the result could not be measured.
+        outcome_archive_reports.write_deleted_floor(
+            layout,
+            outcome_segment_state.read_retention_floor(layout),
+            outcome_archive_run.deleted_sequences(outcome.actions),
+        )
         return outcome_archive_reports.after_work_failure(
             run, active, outcome, "unreadable"
         )
@@ -379,7 +386,5 @@ def _retention_floor(
     """
     present = [entry.sequence for entry in inventory.effective]
     baseline = min(present, default=0) if previous is None else previous
-    deleted = [
-        action.sequence for action in outcome.actions if action.action == "deleted"
-    ]
+    deleted = outcome_archive_run.deleted_sequences(outcome.actions)
     return max([baseline, *(sequence + 1 for sequence in deleted)])

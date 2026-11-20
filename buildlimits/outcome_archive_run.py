@@ -30,7 +30,13 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
-__all__ = ["ArchiveRun", "RunOutcome", "perform", "retain"]
+__all__ = [
+    "ArchiveRun",
+    "RunOutcome",
+    "deleted_sequences",
+    "perform",
+    "retain",
+]
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -61,6 +67,21 @@ class RunOutcome:
 
     actions: list[ActionResult] = dc.field(default_factory=list)
     failures: list[tuple[int, str]] = dc.field(default_factory=list)
+
+
+def deleted_sequences(actions: cabc.Iterable[ActionResult]) -> tuple[int, ...]:
+    """Return the sequences a run's recorded actions removed from the archive.
+
+    The actions are passed rather than a whole outcome or report, because both
+    the outcomes a run accumulates and the report it publishes list the same
+    ``ActionResult`` values.
+
+    Returns
+    -------
+    tuple[int, ...]
+        Each deleted sequence, in the order the run removed it.
+    """
+    return tuple(action.sequence for action in actions if action.action == "deleted")
 
 
 def perform(run: ArchiveRun, outcome: RunOutcome) -> None:

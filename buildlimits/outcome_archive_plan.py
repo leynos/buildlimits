@@ -211,7 +211,7 @@ def plan_run(
         policy=policy,
         cutoff=policy.cutoff(now),
         active_bytes=active.logical_bytes,
-        active_records=active.record_count,
+        active_records=active.record_count if active.complete else 0,
     )
     deletes, trims, causes = _retention_steps(inventory, budget, duplicated_sequences)
     retained = _retained_estimate(

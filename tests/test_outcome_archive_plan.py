@@ -15,6 +15,7 @@ from archive_plan_helpers import NOW, archived, plan, policy, sealed
 
 from buildlimits.outcome_archive_plan import Plan, PlanSummary
 from buildlimits.outcome_archive_verify import Trim
+from buildlimits.outcome_retention_report import ActiveHistory
 from buildlimits.outcome_segment_inventory import Inventory
 
 if typ.TYPE_CHECKING:
@@ -23,7 +24,7 @@ if typ.TYPE_CHECKING:
 
 def test_an_empty_inventory_retains_only_active_bytes() -> None:
     """With no closed history, the active file is the whole estimate."""
-    decision = plan(Inventory(), policy(), active_bytes=7)
+    decision = plan(Inventory(), policy(), active=ActiveHistory(logical_bytes=7))
 
     assert not decision.archive, "nothing is sealed"
     assert decision.retained_bytes == 7, "the estimate is the active size"
@@ -34,7 +35,7 @@ def test_every_sealed_source_is_archived() -> None:
     """Sealed sources with no archive are the run's compression work."""
     inventory = Inventory(sealed=(sealed(2, 20), sealed(1, 10)))
 
-    decision = plan(inventory, policy(), active_bytes=5)
+    decision = plan(inventory, policy(), active=ActiveHistory(logical_bytes=5))
 
     assert [item.sequence for item in decision.archive] == [2, 1], (
         "the inventory's own order is preserved"
@@ -161,7 +162,7 @@ def test_a_record_cap_bounds_retained_history(case: _CapCase) -> None:
     decision = plan(
         Inventory(archived=entries),
         policy(max_bytes=0, max_records=case.cap),
-        active_records=case.active_records,
+        active=ActiveHistory(record_count=case.active_records),
     )
 
     assert tuple(item.sequence for item in decision.deletes) == case.deletes, (
@@ -171,6 +172,26 @@ def test_a_record_cap_bounds_retained_history(case: _CapCase) -> None:
         tuple((item.sequence, trim.records) for item, trim in decision.trims)
         == case.trims
     ), "the archive straddling the cap keeps only its newest rows"
+
+
+def test_an_incomplete_active_measurement_contributes_no_rows_to_the_cap() -> None:
+    """History is never evicted on rows the run could not count.
+
+    An incomplete read reports its row count as a lower bound, so the planner
+    treats it as zero and over-retains rather than deleting archives to meet
+    a cap the unread rows may already exceed.
+    """
+    entries = tuple(
+        dc.replace(archived(sequence), record_count=1) for sequence in (1, 2, 3)
+    )
+
+    decision = plan(
+        Inventory(archived=entries),
+        policy(max_bytes=0, max_records=6),
+        active=ActiveHistory(record_count=6, complete=False, reason="corrupt"),
+    )
+
+    assert not decision.deletes, "an unread count does not evict history"
 
 
 def test_the_summary_counts_every_operation(snapshot: SnapshotAssertion) -> None:

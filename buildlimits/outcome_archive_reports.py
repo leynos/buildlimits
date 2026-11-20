@@ -34,6 +34,7 @@ __all__ = [
     "dry_report",
     "observed",
     "unfinished",
+    "write_deleted_floor",
     "write_floor",
     "write_floor_after_failure",
     "write_state",
@@ -309,3 +310,40 @@ def write_floor_after_failure(
     """
     with contextlib.suppress(OSError):
         write_floor(layout, floor, report)
+
+
+def write_deleted_floor(
+    layout: SegmentLayout, previous: int | None, deleted: tuple[int, ...]
+) -> None:
+    """Persist the floor implied by deletions from an unmeasurable run.
+
+    The post-run read can fail after the retention pass removed archives. A
+    later run that deletes nothing derives its floor from ``retention.json``
+    alone, so the floor is written from the completed deletions and the floor
+    the last successful run recorded; no further inventory read is needed.
+    Only the floor and its time are recorded. The failed run has no
+    measurement to describe, and the previous document's diagnostics describe
+    a state it never observed. A write failure is suppressed because the
+    caller already reports the run as failed.
+
+    Parameters
+    ----------
+    layout : SegmentLayout
+        The store's segment layout.
+    previous : int | None
+        The floor the last successful run recorded, if any.
+    deleted : tuple[int, ...]
+        The sequences this run removed.
+    """
+    if not deleted:
+        return
+    floor = max(previous or 0, max(deleted) + 1)
+    with contextlib.suppress(OSError):
+        outcome_archive_fs.atomic_write_json(
+            layout.retention_file,
+            {
+                "schema": _STATE_SCHEMA,
+                "floor_sequence": floor,
+                "updated_at": utc_text(utc_now()),
+            },
+        )
