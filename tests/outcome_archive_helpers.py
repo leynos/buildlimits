@@ -7,22 +7,31 @@ states only the archive behaviour it observes.
 
 import datetime as dt
 import errno
+import itertools
+import json
 import time
 import typing as typ
 
 import pytest
+from archive_cli_helpers import sealed_measured_source
 from outcome_store_helpers import close_writer, segment_writer
 from outcome_test_helpers import attributed_record
 from segment_test_helpers import document
 from segment_test_helpers import store_layout as layout
 
+from buildlimits import outcome_archive_files
 from buildlimits.outcome_archive import RunOptions, RunReport, run_archive
 from buildlimits.outcome_retention import RetentionPolicy
+from buildlimits.outcome_segments import sealed_meta_name, segment_name
+from buildlimits.outcome_store_sealing import sealed_metadata
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
+    from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
     from buildlimits.outcome_record_format import DecodedStore, StoreRecord
+    from buildlimits.outcome_segment_inventory import SegmentEntry
+    from buildlimits.outcome_segments import SegmentLayout
     from buildlimits.outcome_store import StoreWriter
 
 # ``StoreWriter.append`` never blocks: a full queue refuses the row and counts
@@ -46,6 +55,8 @@ __all__ = [
     "records",
     "refuse",
     "run",
+    "seal_active",
+    "seal_on_each_archive",
     "write",
 ]
 
@@ -122,6 +133,75 @@ def write(
             _append_or_retry(writer, row)
     finally:
         close_writer(writer)
+
+
+def seal_active(
+    store_layout: SegmentLayout,
+    rows: tuple[StoreRecord, ...],
+    sequence: int,
+) -> None:
+    """Close the active file into a sealed source, as the writer's seal does.
+
+    The store is left exactly as the writer leaves it: the active file is
+    renamed into the sealed directory and the metadata that describes the rows
+    it holds is published beside it. A test can therefore make a seal happen at
+    a point inside an archive run without reaching into the archiver.
+
+    Parameters
+    ----------
+    store_layout : SegmentLayout
+        The layout whose active file is sealed.
+    rows : tuple[StoreRecord, ...]
+        The rows the active file holds.
+    sequence : int
+        The sequence the new source takes.
+    """
+    source = store_layout.sealed_dir / segment_name(sequence)
+    store_layout.active.rename(source)
+    metadata = sealed_metadata(list(rows), sequence, "salt-1", NOW)
+    (source.parent / sealed_meta_name(sequence)).write_text(json.dumps(metadata))
+
+
+def seal_on_each_archive(
+    monkeypatch: pytest.MonkeyPatch,
+    store: Path,
+    last_sequence: int,
+) -> None:
+    """Seal one fresh source after each source an archive run archives.
+
+    The writer never takes the archive lock, so it can seal while a run works.
+    This replacement for ``outcome_archive_files.archive_source`` seals a new
+    one-row source after every archive step up to ``last_sequence``, so the
+    run meets a new source in each of its bounded follow-up passes.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        The test's patcher, which owns undoing the replacement.
+    store : Path
+        The ``cache-outcomes.jsonl`` path the sealed sources belong to.
+    last_sequence : int
+        The highest sequence the fixture seals; later archive steps only
+        archive.
+    """
+    real = outcome_archive_files.archive_source
+    created = itertools.count(2)
+
+    def archive_and_seal(context: ArchiveContext, entry: SegmentEntry) -> ActionResult:
+        """Archive one source and seal another until the fixture's bound.
+
+        Returns
+        -------
+        ActionResult
+            The action the real archive step recorded.
+        """
+        result = real(context, entry)
+        sequence = next(created)
+        if sequence <= last_sequence:
+            sealed_measured_source(store, sequence, records(NOW, 1))
+        return result
+
+    monkeypatch.setattr(outcome_archive_files, "archive_source", archive_and_seal)
 
 
 def _append_or_retry(writer: StoreWriter, row: StoreRecord) -> None:

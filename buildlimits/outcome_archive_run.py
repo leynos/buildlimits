@@ -92,8 +92,13 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
     The eviction steps run last, interleaved by sequence, so an older entry is
     settled before any newer one is rewritten or removed. A failure ends that
     phase: the steps after it would act on newer history while the older entry
-    the budget asked for is still present.
+    the budget asked for is still present. A quarantine during the earlier
+    phases also ends the pass before eviction: it moves an archive or sealed
+    source out of the retained history, so the totals the plan's budget was
+    computed from no longer describe the store, and evicting against them
+    could discard history a fresh plan would keep.
     """
+    first_action = len(outcome.actions)
     for sealed, archived in run.plan.reconcile:
         _reconcile_one(run, sealed, archived, outcome)
     for entry in run.plan.archive:
@@ -102,7 +107,27 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
         _heal_one(run, entry, outcome)
     for sequence in run.plan.orphans:
         _quarantine_orphan(run, sequence, outcome)
+    if _quarantined_history(outcome, first_action):
+        return
     _evict(run, outcome, run.plan.trims, run.plan.deletes)
+
+
+def _quarantined_history(outcome: RunOutcome, first_action: int) -> bool:
+    """Whether this pass quarantined an archive or a sealed source.
+
+    An orphaned sidecar holds no history, so quarantining it leaves the plan's
+    budget totals true and eviction may proceed. Any other quarantine removes
+    rows the plan counted, and the run records the fault as well.
+
+    Returns
+    -------
+    bool
+        True when a quarantine changed the retained history.
+    """
+    return any(
+        action.action == "quarantined" and action.reason != "orphan_sidecar"
+        for action in outcome.actions[first_action:]
+    )
 
 
 def _evict(

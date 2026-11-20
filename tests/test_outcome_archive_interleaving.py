@@ -7,19 +7,24 @@ budget to it in the same firing, and reports a retryable status instead of
 ``ok`` when new seals outpace its bounded follow-up work.
 """
 
-import itertools
-import json
 import typing as typ
 from pathlib import Path
 
 from archive_cli_helpers import sealed_measured_source
-from outcome_archive_helpers import NOW, layout, policy, records, run, write
+from outcome_archive_helpers import (
+    NOW,
+    layout,
+    policy,
+    records,
+    run,
+    seal_active,
+    seal_on_each_archive,
+    write,
+)
 from segment_test_helpers import document, write_private
 
 from buildlimits import outcome_archive_files
 from buildlimits.outcome_segment_inventory import read_inventory
-from buildlimits.outcome_segments import sealed_meta_name, segment_name
-from buildlimits.outcome_store_sealing import sealed_metadata
 
 if typ.TYPE_CHECKING:
     import pytest
@@ -28,18 +33,6 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_segment_inventory import SegmentEntry
     from buildlimits.outcome_segments import SegmentLayout
-
-
-def _seal_active(
-    store_layout: SegmentLayout,
-    rows: tuple[StoreRecord, ...],
-    sequence: int,
-) -> None:
-    """Close the active file into a sealed source, as the writer's seal does."""
-    source = store_layout.sealed_dir / segment_name(sequence)
-    store_layout.active.rename(source)
-    metadata = sealed_metadata(list(rows), sequence, "salt-1", NOW)
-    (source.parent / sealed_meta_name(sequence)).write_text(json.dumps(metadata))
 
 
 def _seal_after_first_archive(
@@ -52,9 +45,10 @@ def _seal_after_first_archive(
     real = outcome_archive_files.archive_source
 
     def archive_then_seal(context: ArchiveContext, entry: SegmentEntry) -> ActionResult:
+        """Archive one source, then seal the active rows once."""
         result = real(context, entry)
         if entry.sequence == 1:
-            _seal_active(store_layout, sealed_rows, 2)
+            seal_active(store_layout, sealed_rows, 2)
             write_private(store_layout.active, document(new_rows))
         return result
 
@@ -92,16 +86,7 @@ def test_a_run_reports_unsettled_when_seals_outpace_its_follow_up_passes(
     store_layout = layout(tmp_path)
     sealed_measured_source(store, 1, records(NOW, 1))
     real = outcome_archive_files.archive_source
-    created = itertools.count(2)
-
-    def archive_and_seal(context: ArchiveContext, entry: SegmentEntry) -> ActionResult:
-        result = real(context, entry)
-        sequence = next(created)
-        if sequence <= 5:
-            sealed_measured_source(store, sequence, records(NOW, 1))
-        return result
-
-    monkeypatch.setattr(outcome_archive_files, "archive_source", archive_and_seal)
+    seal_on_each_archive(monkeypatch, store, 5)
 
     report = run(tmp_path, policy(max_age_days=0))
 

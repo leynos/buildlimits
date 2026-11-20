@@ -9,9 +9,10 @@ those rules; these properties pin the ordering and fit across sizes.
 """
 
 import dataclasses as dc
+import datetime as dt
 import typing as typ
 
-from archive_plan_helpers import archived, plan, policy
+from archive_plan_helpers import NOW, archived, plan, policy
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -36,6 +37,21 @@ def _measured_archives(sizes: list[int]) -> tuple[SegmentEntry, ...]:
     )
 
 
+def _deleted_prefix(decision: Plan) -> list[int]:
+    """Return the sequences the plan deletes, requiring an oldest-first prefix.
+
+    Returns
+    -------
+    list[int]
+        The deleted sequences, oldest first and without a gap.
+    """
+    deleted = [entry.sequence for entry in decision.deletes]
+    assert deleted == list(range(1, len(deleted) + 1)), (
+        "whole entries are evicted oldest-first, with no gap"
+    )
+    return deleted
+
+
 def _assert_oldest_first(
     entries: tuple[SegmentEntry, ...], decision: Plan
 ) -> tuple[SegmentEntry, ...]:
@@ -46,10 +62,7 @@ def _assert_oldest_first(
     tuple[SegmentEntry, ...]
         The entries no deletion removes, oldest first.
     """
-    deleted = [entry.sequence for entry in decision.deletes]
-    assert deleted == list(range(1, len(deleted) + 1)), (
-        "whole entries are deleted oldest-first, with no gap"
-    )
+    deleted = _deleted_prefix(decision)
     survivors = tuple(entry for entry in entries if entry.sequence > len(deleted))
     assert len(decision.trims) <= 1, "only the straddler is rewritten"
     if decision.trims:
@@ -67,6 +80,72 @@ def _trim_of(decision: Plan) -> Trim | None:
         The planned trim, or None when nothing is rewritten.
     """
     return decision.trims[0][1] if decision.trims else None
+
+
+def _counted(counts: list[int]) -> tuple[SegmentEntry, ...]:
+    """Build one measured archive per generated row count.
+
+    Returns
+    -------
+    tuple[SegmentEntry, ...]
+        Archives whose sidecars report the given counts, oldest first.
+    """
+    return tuple(
+        dc.replace(entry, record_count=count)
+        for entry, count in zip(
+            _measured_archives([100] * len(counts)), counts, strict=True
+        )
+    )
+
+
+def _cap_plan(entries: tuple[SegmentEntry, ...], cap: int, active: int = 0) -> Plan:
+    """Plan one record cap over the given measured archives.
+
+    Returns
+    -------
+    Plan
+        The record-cap decision, counting the active rows the cap also counts.
+    """
+    return plan(
+        Inventory(archived=entries),
+        policy(max_age_days=0, max_bytes=0, max_records=cap),
+        active_records=active,
+    )
+
+
+def _assert_record_cap(
+    entries: tuple[SegmentEntry, ...],
+    decision: Plan,
+    cap: int,
+    active: int,
+) -> None:
+    """Assert the plan meets the record cap and counts the active rows.
+
+    Parameters
+    ----------
+    entries : tuple[SegmentEntry, ...]
+        The measured inventory the plan decided.
+    decision : Plan
+        The record-cap plan.
+    cap : int
+        The configured record cap.
+    active : int
+        The rows the active file holds, which the cap also counts.
+    """
+    survivors = _assert_oldest_first(entries, decision)
+    assert not decision.retention_deferred, "a measured history decides its cap"
+    trim = _trim_of(decision)
+    kept = sum(entry.record_count or 0 for entry in survivors)
+    kept = kept if trim is None else kept - trim.records
+    assert kept + active <= cap or not survivors, (
+        "an excess only the active rows cause leaves no closed entry"
+    )
+    if trim is None:
+        return
+    assert trim.records < (survivors[0].record_count or 0), (
+        "the straddler keeps some rows and needs no whole deletion"
+    )
+    assert kept + active == cap, "the straddler is capped at what remains"
 
 
 @given(
@@ -115,26 +194,83 @@ def test_a_planned_record_cap_fits_every_generated_history(
     counts: list[int], cap: int
 ) -> None:
     """A measured record cap is met without evicting newer history first."""
+    entries = _counted(counts)
+
+    decision = _cap_plan(entries, cap)
+
+    _assert_record_cap(entries, decision, cap, active=0)
+
+
+@given(
+    spans=st.lists(
+        st.tuples(
+            st.integers(min_value=1, max_value=6),  # days the last row predates NOW
+            st.integers(min_value=0, max_value=4),  # days between first and last row
+        ),
+        max_size=8,
+    ).map(lambda pairs: sorted(pairs, reverse=True))
+)
+@settings(max_examples=50, deadline=None)
+def test_age_retention_removes_an_expired_prefix(
+    spans: list[tuple[int, int]],
+) -> None:
+    """Age eviction deletes an expired prefix and trims only the boundary.
+
+    Sequences are ordered oldest-first, as a store's are, so the property also
+    pins that a fresh entry is never rewritten while an expired one survives.
+    """
+    cutoff = NOW - dt.timedelta(days=1)
     entries = tuple(
-        dc.replace(entry, record_count=count)
-        for entry, count in zip(
-            _measured_archives([100] * len(counts)), counts, strict=True
+        archived(
+            sequence,
+            span=(
+                NOW - dt.timedelta(days=end + width),
+                NOW - dt.timedelta(days=end),
+            ),
         )
+        for sequence, (end, width) in enumerate(spans, start=1)
     )
 
-    decision = plan(
-        Inventory(archived=entries),
-        policy(max_age_days=0, max_bytes=0, max_records=cap),
-    )
+    decision = plan(Inventory(archived=entries), policy(max_age_days=1))
 
-    survivors = _assert_oldest_first(entries, decision)
-    assert not decision.retention_deferred, "a measured history decides its cap"
-    retained = sum(entry.record_count or 0 for entry in survivors)
-    trim = _trim_of(decision)
-    kept = retained if trim is None else retained - trim.records
-    assert kept <= cap, "the planned history fits the cap"
-    if trim is not None:
-        assert trim.records < (survivors[0].record_count or 0), (
-            "the straddler keeps some rows and needs no whole deletion"
+    deleted = _deleted_prefix(decision)
+    survivors = tuple(entry for entry in entries if entry.sequence > len(deleted))
+    for sequence in deleted:
+        last = entries[sequence - 1].last_observed_at
+        assert last is not None, "the generated history is fully measured"
+        assert last < cutoff, "only a wholly expired entry is deleted"
+    straddlers = set()
+    for entry in survivors:
+        first = entry.first_observed_at
+        last = entry.last_observed_at
+        assert first is not None and last is not None, (
+            "the generated history is fully measured"
         )
-        assert kept == cap, "the straddler is capped at exactly the remaining rows"
+        assert last >= cutoff, "a row at the cutoff is still history"
+        if first < cutoff:
+            straddlers.add(entry.sequence)
+    trims = {entry.sequence: trim for entry, trim in decision.trims}
+    assert set(trims) == straddlers, (
+        "every surviving entry holding expired rows is rewritten"
+    )
+    for sequence, trim in trims.items():
+        assert trim.before == cutoff, "the trim drops rows strictly before the cutoff"
+        assert sequence not in deleted, "a deleted entry is never rewritten"
+    assert not decision.retention_deferred, "a measured history decides its deadline"
+
+
+@given(
+    counts=st.lists(st.integers(min_value=1, max_value=6), max_size=6),
+    active=st.integers(min_value=0, max_value=20),
+    cap=st.integers(min_value=0, max_value=20),
+)
+@settings(max_examples=50, deadline=None)
+def test_a_record_cap_counts_the_unsealed_active_rows(
+    counts: list[int], active: int, cap: int
+) -> None:
+    """The cap counts the writer's rows, so an active-only excess evicts all."""
+    entries = _counted(counts)
+
+    decision = _cap_plan(entries, cap, active)
+
+    _assert_record_cap(entries, decision, cap, active)

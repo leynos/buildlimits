@@ -17,18 +17,40 @@ from buildlimits.outcome_archive_plan import PlanSummary, plan_run
 from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome, perform
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_archive_trim import Trim
+    from buildlimits.outcome_segment_inventory import SegmentEntry
+
+    # A trim is only meaningful against the archive version it was planned
+    # for, so each applied trim carries that version's measurement.
+    type AppliedTrims = dict[int, tuple[Trim, int, int | None]]
 
 __all__ = ["retain"]
 
 # Follow-up planning passes one run may make after its plan is performed. The
 # first settles the sources this run archived, including a source the writer
 # sealed mid-run, the second decides a count trim that had to wait for a time
-# or byte trim to be applied, and the third confirms the settled store plans no
-# further work. Work a pass cannot finish is left for the next timer firing
-# rather than retried without bound.
+# or byte trim to be applied, and the third applies a count trim the second
+# pass discovered. Work a pass cannot finish is left for the next timer firing
+# rather than retried without bound, and a check made after the last pass
+# distinguishes "settled" from "ran out of passes".
+#
+# A pass also spends one iteration when the writer seals between the inventory
+# scan and the active-file read: the plan would count neither copy, so it is
+# abandoned and rebuilt from a fresh pair of reads.
 _MAX_RETAIN_PASSES = 3
+
+
+class _InventoryChangedError(Exception):
+    """The writer sealed a source while a follow-up plan read the store.
+
+    A seal moves rows out of the active file and into a source that a stale
+    inventory does not list. Planning from that pair would count neither copy
+    and could leave the store over its bound while reporting success, so the
+    pass is abandoned and retried from a fresh pair of reads.
+    """
 
 
 def retain(run: ArchiveRun, outcome: RunOutcome) -> bool:
@@ -44,11 +66,13 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> bool:
 
     A source the writer seals during the run is discovered by the same pass
     and archived before the budget is planned over it, so a record cap can
-    still be met in one firing. A trim or deletion this run already applied is
-    not repeated. An archive, reconcile, heal or orphan step that failed is
-    left for the next firing, and an eviction failure leaves that entry and
-    every newer eviction to the next firing too, so the oldest-first order the
-    budget planned is never inverted.
+    still be met in one firing. A trim is not repeated against the archive
+    version it already rewrote, but the same trim against an archive the
+    active file has since outgrown is a new decision and is applied. An
+    archive, reconcile, heal or orphan step that failed is left for the next
+    firing, and an eviction failure leaves that entry and every newer eviction
+    to the next firing too, so the oldest-first order the budget planned is
+    never inverted.
 
     Parameters
     ----------
@@ -61,13 +85,19 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> bool:
     -------
     bool
         Whether the bounded passes settled the store. False means work the run
-        discovered is still pending, so the caller reports a retryable result
-        rather than success.
+        discovered is still pending, or a pass could not confirm what it saw,
+        so the caller reports a retryable result rather than success.
     """
     applied = _applied_trims(run, outcome)
     removed = _removed(outcome)
     for _pass in range(_MAX_RETAIN_PASSES):
-        pending = _pending_work(run, outcome, applied, removed)
+        try:
+            pending = _pending_work(run, outcome, applied, removed)
+        except _InventoryChangedError:
+            # The store moved while this pass read it. Spend another bounded
+            # pass on a fresh pair of reads rather than acting on a plan that
+            # counted neither the sealed source nor its active rows.
+            continue
         if pending is None:
             return True
         failures = len(outcome.failures)
@@ -76,15 +106,21 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> bool:
             # The failure is already reported, and it outranks a deferred
             # status: the next firing retries what this one could not change.
             return True
-        applied.update((entry.sequence, trim) for entry, trim in pending.trims)
+        applied.update(_measured(pending.trims))
         removed.update(entry.sequence for entry in pending.deletes)
-    return False
+    try:
+        # The last pass may have finished the last operation, so a check made
+        # without mutating anything distinguishes a settled store from one
+        # that merely ran out of passes.
+        return _pending_work(run, outcome, applied, removed) is None
+    except _InventoryChangedError:
+        return False
 
 
 def _pending_work(
     run: ArchiveRun,
     outcome: RunOutcome,
-    applied: set[tuple[int, Trim]],
+    applied: AppliedTrims,
     removed: set[int],
 ) -> Plan | None:
     """Plan the current store and narrow it to work this run has not done.
@@ -116,7 +152,7 @@ def _pending_work(
         for entry, trim in follow_up.trims
         if _evictable(entry.sequence, removed, blocked)
         and entry.path.exists()
-        and (entry.sequence, trim) not in applied
+        and not _already_applied(entry, trim, applied)
     )
     deletes = tuple(
         entry
@@ -133,6 +169,30 @@ def _pending_work(
         orphans=orphans,
         trims=trims,
         deletes=deletes,
+    )
+
+
+def _already_applied(entry: SegmentEntry, trim: Trim, applied: AppliedTrims) -> bool:
+    """Whether this trim already rewrote this version of the archive.
+
+    A count trim and a byte allowance are relative to the document they
+    rewrite. Once applied, the sidecar describes the smaller archive, so the
+    same trim proposed for the same measurement is the rewrite this run has
+    already performed and repeating it would discard rows a later pass has not
+    accounted for. The same trim proposed for a differently measured archive -
+    the active file grew past the cap and the budget asks for the same number
+    of rows again - is a new decision; suppressing it would leave the store
+    over its bound while the run reported success.
+
+    Returns
+    -------
+    bool
+        True only when the recorded trim and archive measurement both match.
+    """
+    return applied.get(entry.sequence) == (
+        trim,
+        entry.logical_bytes,
+        entry.record_count,
     )
 
 
@@ -165,19 +225,31 @@ def _failed_eviction(run: ArchiveRun, outcome: RunOutcome) -> int | None:
 def _replan(run: ArchiveRun) -> Plan:
     """Plan the store as it stands now, including any concurrent seal.
 
+    The writer never takes the archive lock, so it can seal between the
+    inventory scan and the active-file read. Such a seal moves rows out of the
+    active file and into a source the first scan does not list, so the pair
+    would count neither copy. Reading the inventory again after the active
+    file detects that move; a seal after the second read is harmless, because
+    the plan then describes the store as it stood when the active file was
+    read.
+
     Returns
     -------
     Plan
         The operations the current inventory and active file call for.
+
+    Raises
+    ------
+    _InventoryChangedError
+        If a seal changed the inventory across the active-file read.
     """
     layout = run.context.layout
     inventory = outcome_segment_inventory.read_inventory(layout)
-    return plan_run(
-        inventory,
-        run.context.policy,
-        now=run.context.now,
-        active=active_history(layout.active),
-    )
+    active = active_history(layout.active)
+    if outcome_segment_inventory.read_inventory(layout) != inventory:
+        msg = "a source was sealed while the follow-up plan read the store"
+        raise _InventoryChangedError(msg)
+    return plan_run(inventory, run.context.policy, now=run.context.now, active=active)
 
 
 def _follow_up_run(run: ArchiveRun, plan: Plan) -> ArchiveRun:
@@ -196,21 +268,41 @@ def _follow_up_run(run: ArchiveRun, plan: Plan) -> ArchiveRun:
     )
 
 
-def _applied_trims(run: ArchiveRun, outcome: RunOutcome) -> set[tuple[int, Trim]]:
-    """Return the trims the performed plan applied, so they are not repeated.
+def _applied_trims(run: ArchiveRun, outcome: RunOutcome) -> AppliedTrims:
+    """Return the trims the performed plan applied, with the archive version.
+
+    The measurement is the one the performed plan saw, so a later plan that
+    proposes the same trim against a differently measured archive is known to
+    be making a new decision.
 
     Returns
     -------
-    set[tuple[int, Trim]]
-        The sequence and trim value of every applied trim.
+    AppliedTrims
+        The trim and source measurement of every applied trim, by sequence.
     """
     trimmed = {
         action.sequence for action in outcome.actions if action.action == "trimmed"
     }
+    return _measured(
+        (entry, trim) for entry, trim in run.plan.trims if entry.sequence in trimmed
+    )
+
+
+def _measured(trims: cabc.Iterable[tuple[SegmentEntry, Trim]]) -> AppliedTrims:
+    """Pair each trim with the archive version it was decided from.
+
+    A trim is only comparable with a later plan when it carries the
+    measurement it was planned against, so the trims a plan applied and the
+    trims a later plan proposes are both recorded through this one shape.
+
+    Returns
+    -------
+    AppliedTrims
+        The trim and source measurement of every given trim, by sequence.
+    """
     return {
-        (entry.sequence, trim)
-        for entry, trim in run.plan.trims
-        if entry.sequence in trimmed
+        entry.sequence: (trim, entry.logical_bytes, entry.record_count)
+        for entry, trim in trims
     }
 
 

@@ -158,9 +158,17 @@ disagree about a bound.
   survive and leaves the whole budget to its follow-up pass rather than choose
   a deletion from a partial total. A source the writer seals during the run is
   discovered by that follow-up pass and archived before the budget is planned
-  over it, so a cap can still be met in one firing. If new seals keep the
-  bounded follow-up passes from settling the store, the run reports `unsettled`
-  and exits 75 rather than claiming success; the next firing retries.
+  over it, so a cap can still be met in one firing. A pass does not repeat a
+  trim against the archive version it already rewrote, but the same allowance
+  proposed for a re-measured archive is a new decision, because the active file
+  can re-grow the store past the cap after a rewrite. A pass that quarantines
+  an archive or a source also stops before eviction: the quarantined rows were
+  part of the total the budget was planned over, so eviction waits for a fresh
+  plan. A seal that lands between a pass's inventory and active-file reads is
+  detected by reading the inventory again, and the pass is replanned rather
+  than counting neither copy. If new seals keep the bounded follow-up passes
+  from settling the store, the run reports `unsettled` and exits 75 rather than
+  claiming success; the next firing retries.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
   segment, or a budget of zero, makes the writer seal closed segments. The
   default budget remains the legacy 12 MiB, so a deployment that writes none of
@@ -209,7 +217,9 @@ Ownership follows file state, not a shared lock.
   between the plan and its follow-up passes, each bounded pass re-reads the
   store and archives what it finds before applying the budget. Work that still
   remains after the last pass is reported as `unsettled`, also retryable,
-  rather than treating the plan-time snapshot as the whole store.
+  rather than treating the plan-time snapshot as the whole store; settlement is
+  confirmed by a final plan that mutates nothing, so a store the last pass
+  finished is reported `ok`.
 
 A sealed source is immutable until its verified archive is published; after
 that the archiver owns the segment's lifecycle. Table 2 names the three states

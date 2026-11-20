@@ -402,9 +402,13 @@ remaining allowance, also stops there and leaves the rest of the budget to the
 follow-up pass. The writer does not take the archive lock, so it can also seal
 a source after the run has planned. Each follow-up pass re-reads the store and
 archives what it finds before applying the budget, so a source that arrives
-mid-run is still measured and capped in the same firing. The passes are
-bounded: if new seals keep arriving and work remains, the run reports
-`status: unsettled` and exits 75, and the next timer firing continues.
+mid-run is still measured and capped in the same firing. A pass that
+quarantines a damaged archive or sealed source stops before eviction, because
+the rows it removed were part of the total the budget was planned over; the
+next firing decides retention from what remains, and the run still reports the
+corruption at exit 3. The passes are bounded: if new seals keep arriving and
+work remains, the run reports `status: unsettled` and exits 75, and the next
+timer firing continues.
 
 A plan that leaves a configured budget to a later pass reports
 `retention: deferred` on its plain output and `"retention_deferred": true` under

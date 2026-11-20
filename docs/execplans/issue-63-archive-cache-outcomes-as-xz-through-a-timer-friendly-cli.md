@@ -513,6 +513,23 @@ verified archive is published, and leaves compile admission untouched.
   each on the final tree, with `make test` reporting 4532 passed and 86
   skipped, 76 snapshots, and the duplication gate allowing 269 reasoned
   exceptions.
+- [x] Whole-plan revision-17 remediation (2026-11-20): four settlement defects
+  are fixed. A trim is suppressed only when both the trim and the archive
+  measurement match the one it was applied to, so the same allowance proposed
+  for a re-measured archive - the active file grew past the cap after the
+  rewrite - is applied again instead of leaving the store over its bound while
+  the run reports `ok`. Each pass reads the inventory, the active file and the
+  inventory again, and abandons the pass for a fresh pair of reads when a seal
+  moved rows between the two scans. A pass that quarantines an archive or a
+  sealed source stops before eviction, because the removed rows were part of
+  the total the budget was planned over. A non-mutating plan after the last
+  permitted pass distinguishes a settled store from an exhausted loop, so work
+  the third pass finished reports `ok`. Four complete-run regressions live in
+  the new `test_outcome_archive_settlement`, and the planner's age rule and
+  active-row cap each gained a Hypothesis property with an executable negative
+  control. All seven commit gates pass once each on the final tree, with
+  `make test` reporting 4538 passed and 86 skipped, 76 snapshots, and the
+  duplication gate allowing 272 reasoned exceptions.
 
 ## Surprises & discoveries
 
@@ -681,6 +698,24 @@ verified archive is published, and leaves compile admission untouched.
   barrier, which stops every step at or after the oldest failed sequence, is
   what keeps the follow-up pass as strictly oldest-first as the first plan; a
   regression test that fails only the older deletion pins it.
+- Interrogate's repository-wide percentage is rounded to one decimal place, so
+  a few missing nested-function docstrings still report 100.0% in the
+  `make lint` gate while a focused run over the same files reports 67% or
+  88.6%. The gate remains honest for the tree as a whole but cannot prove each
+  module, so new nested helpers were also checked with a focused
+  `interrogate --fail-under 100` run before the gate.
+- A settled store can still inspect as over budget when the active file moves
+  after a trim. The first plan counts the active rows, the trim rewrites the
+  archive to the remaining allowance, and a writer that appends afterwards
+  re-grows the total; suppressing the follow-up's trim because "this run
+  already trimmed that archive" reports `ok` while the store is over its cap.
+  The suppression has to be keyed on the measurement the trim was planned
+  against, not on the archive alone.
+- A seal between a follow-up pass's two reads is invisible to either read
+  alone: the inventory predates it and the active file has already lost the
+  rows, so the plan counts neither copy. Reading the inventory again after the
+  active file is what makes the move visible; a seal after the second read is
+  consistent with the active snapshot and needs no retry.
 
 ## Decision log
 
@@ -901,6 +936,42 @@ verified archive is published, and leaves compile admission untouched.
   Both properties run the pure planner, so they need no filesystem and stay
   fast. Their negative controls replace the byte allowance or the record trim
   with a no-op: each mutation makes its property fail for the intended reason.
+- The follow-up pass suppresses a trim only when it matches both the recorded
+  trim and the archive measurement it was planned against. A count trim and a
+  byte allowance are relative to the document they rewrite, so repeating one
+  against the same measurement would discard rows a later pass has not
+  accounted for; the same allowance proposed for a re-measured archive is a new
+  decision. Keying the suppression on the sequence alone let a store the active
+  file re-grew past the cap report `ok` while over its bound.
+- A follow-up pass reads the inventory, the active file, then the inventory
+  again, and abandons the pass for a fresh pair of reads when the two scans
+  disagree. A seal between the two reads moves rows out of the active file and
+  into a source the first scan does not list; planning from that pair counts
+  neither copy and can leave the store over its bound. A seal after the second
+  scan is harmless, because the plan then describes the store as it stood when
+  the active file was read. The retry spends one of the three bounded passes
+  rather than looping without bound.
+- A pass that quarantines an archive or a sealed source stops before eviction.
+  Quarantine moves rows out of the retained history, so the totals the plan's
+  budget was computed from no longer describe the store, and evicting against
+  them could discard history a fresh plan would keep. Only an orphaned sidecar
+  leaves the totals true, because it holds no rows, so its quarantine still
+  lets the pass evict. The run records the fault, and the next firing plans
+  from what remains.
+- Settlement is confirmed by a final plan that mutates nothing, not by the
+  loop's exit alone. A pass may finish the last operation the loop can see, so
+  a run that stopped after its third pass would report `unsettled` even though
+  a fresh plan finds no work. The non-mutating check distinguishes "settled"
+  from "ran out of passes" without extending the bound.
+- The age rule and the record cap's treatment of the active file are stated as
+  properties rather than examples.
+  `test_age_retention_removes_an_expired_prefix` generates ordered spans and
+  asserts that whole deletions are an expired prefix, that every survivor at
+  the cutoff is kept, and that every surviving straddler is trimmed at exactly
+  the cutoff. `test_a_record_cap_counts_the_unsealed_active_rows` generates
+  archive counts and an active-row count and asserts the cap counts both. Both
+  were checked with executable negative controls: disabling the age step fails
+  the first, and dropping the active rows from the count fails the second.
 
 ## Outcomes & retrospective
 
@@ -936,7 +1007,10 @@ Invariants:
    is unknown, it leaves the budget to its follow-up pass. A run reports `ok`
    only when its follow-up passes settle the store as it stands after them; a
    source the writer seals mid-run is archived and measured by a pass, and work
-   that still remains reports the retryable `unsettled` status instead.
+   that still remains reports the retryable `unsettled` status instead. A pass
+   that quarantines counted history, or finds the store changed between its two
+   reads, does not evict; it leaves the budget to a fresh pass or the next
+   firing.
 5. Eviction is oldest-first; records at the cutoff survive.
 6. Iterating history yields records in sequence order: archived or sealed
    segments ascending, then the active file.
@@ -991,16 +1065,30 @@ Methods and evidence:
   next run settles it to `ok`. Both failed on the pre-fix code for the intended
   reasons, and the failed-eviction barrier is pinned by
   `test_a_failed_older_delete_stops_before_a_newer_trim`.
+- Settlement regressions (`tests/test_outcome_archive_settlement.py`) drive a
+  real run with one moving part pinned deterministically. One forces the active
+  file to grow after an archive rewrite and proves the same allowance is
+  decided again, ending at the cap with status `ok`; one seals five rows
+  between the inventory and active reads and proves the retried pass archives
+  the source and counts it (`retained_records == 5`); one overwrites the newer
+  source with a non-document and proves the older archive and its sidecar keep
+  their bytes while the run reports `corrupt`; and one seals on each archive
+  step up to the fourth source and proves the store the third pass settles
+  reports `ok` at exit 0.
 - Planner retention properties in
-  `tests/test_outcome_archive_plan_properties.py`: 50 generated measured
-  histories for the byte budget and 50 for the record cap assert that whole
-  deletions form an oldest-first prefix, at most one straddler is trimmed,
-  `retention_deferred` stays false, and the estimate after the plan fits the
-  bound (exactly the bound whenever a trim is planned). The negative control
-  makes `_byte_trim` return the existing trim and the byte property fails on
-  "the planned history fits the budget"; making `_record_trim` return `None`
-  fails the cap property on "a measured history decides its cap". Both
-  mutations were reverted and the properties pass again.
+  `tests/test_outcome_archive_plan_properties.py`: four properties over 50
+  generated histories each assert that whole deletions form an oldest-first
+  prefix, at most one straddler is trimmed, `retention_deferred` stays false,
+  the byte estimate and the record cap both fit the bound (exactly the bound
+  whenever a trim is planned), an expired entry is never kept while a fresh one
+  is deleted, every surviving straddler is trimmed at the cutoff, and the cap
+  counts the active rows. The negative controls make `_byte_trim` return the
+  existing trim (the byte property fails on "the planned history fits the
+  budget"), make `_record_trim` return `None` (both cap properties fail on "a
+  measured history decides its cap"), disable the age step (the age property
+  fails on the deleted prefix or the trim set), and drop the active rows from
+  the count (the active-row property fails on the cap). Every mutation was
+  reverted and the properties pass again.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
@@ -1022,7 +1110,14 @@ have executable negative controls: returning the existing trim from
 fails the cap property, each on the fit assertion, so neither property can pass
 by never planning a trim. The generated sizes and caps span empty, exact-fit
 and over-budget histories, and each property's surviving-sum branch proves the
-no-trim case is reachable.
+no-trim case is reachable. The age property generates ordered spans whose
+widths put entries wholly before the cutoff and entries spanning it in the same
+history, and disabling the age step makes it fail, so its pass is not vacuous;
+the active-row property's generator reaches an excess the active rows alone
+cause, and dropping them from the count makes it fail on the cap. The
+settlement regressions assert the observable outcome before the status - the
+second trim, the archived source, the untouched archive and sidecar, and the
+four archives - so a seam that never fired cannot make any of them pass.
 
 ## Revision note
 
@@ -1157,3 +1252,17 @@ no-trim case is reachable.
   ADR 0010 describe both. The revision also adds the planner retention
   properties the revision-15 assessment asked for, with negative controls that
   make each property fail when its trim or cap step is disabled.
+- Revision 17 records the whole-plan revision-16 assessment's four findings.
+  A trim is suppressed only against the archive measurement it was applied to,
+  so an allowance the active file re-grew past is decided again instead of
+  being skipped. A pass re-reads the inventory after the active file and
+  replans when a seal moved rows between the two reads. A pass that quarantines
+  an archive or a source stops before eviction, because the budget's totals no
+  longer describe the store. A final non-mutating plan distinguishes a settled
+  store from a loop that ran out of passes. Four complete-run regressions live
+  in the new `test_outcome_archive_settlement`, the planner gained an
+  age-retention and an active-row cap property with executable negative
+  controls, the `seal_active` fixture and the archive-and-seal seam moved into
+  `tests/outcome_archive_helpers.py` so both interleaving suites share them,
+  and the duplication gate's prelude and import families are recorded as
+  reasoned exceptions.
