@@ -30,7 +30,22 @@ def test_a_tzinfo_without_an_offset_is_refused() -> None:
             """Report no offset, as an unresolved zone would."""
             return None
 
-    moment = dt.datetime(2026, 11, 17, 12, 30, tzinfo=Offsetless())
+        def tzname(self, _value: dt.datetime | None) -> str | None:
+            """Report no zone name, because no zone was resolved."""
+            return None
+
+        def dst(self, _value: dt.datetime | None) -> dt.timedelta | None:
+            """Report no daylight-saving offset."""
+            return None
+
+    # Assert the fixture once by name: a zone that resolves nothing is the
+    # premise of this test, and naming each method also shows that the whole
+    # ``tzinfo`` protocol is present rather than only the offset.
+    zone = Offsetless()
+    assert zone.utcoffset(None) is None, "the zone resolves no offset"
+    assert zone.tzname(None) is None, "the zone resolves no name"
+    assert zone.dst(None) is None, "the zone knows no daylight-saving offset"
+    moment = dt.datetime(2026, 11, 17, 12, 30, tzinfo=zone)
 
     with pytest.raises(ValueError, match="must carry an offset"):
         utc_text(moment)
