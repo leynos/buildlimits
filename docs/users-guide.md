@@ -394,9 +394,12 @@ A single firing may apply retention over more than one pass. The byte and
 record walks act on the rows that survive the age rule, so while an age trim is
 still pending the run plans no whole deletion and no byte or record trim; it
 applies the age trim first and re-plans from the measured history. The same
-applies after a duplicated source is reconciled, and while an archive's sidecar
-is missing or corrupt: its logical size is then unknown, so no budget is
-decided from the file's own compressed size.
+applies after a duplicated source is reconciled, while an archive's sidecar is
+missing or corrupt, and while a sealed source has no writer metadata: none of
+them is measured well enough to choose a whole deletion or a trim. A walk that
+reaches an entry it cannot yet rewrite, such as a sealed source larger than the
+remaining allowance, also stops there and leaves the rest of the budget to the
+follow-up pass.
 
 A plan that leaves a configured budget to a later pass reports
 `retention: deferred` on its plain output and `"retention_deferred": true` under

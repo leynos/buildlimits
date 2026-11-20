@@ -1,6 +1,6 @@
 # Archive cache outcomes as XZ through a timer-friendly CLI
 
-Status: IN PROGRESS
+Status: COMPLETE
 
 ## Purpose and observable outcome
 
@@ -481,6 +481,18 @@ verified archive is published, and leaves compile admission untouched.
   the new retention assertion; after that fix all seven gates pass once each,
   with `make test` reporting 4526 passed and 86 skipped, 76 snapshots, and the
   duplication gate allowing 267 reasoned exceptions.
+- [x] Whole-plan revision-15 remediation (2026-11-20): the budget walks also
+  wait while a surviving sealed source has no writer metadata, because its
+  exact bytes still carry no span and the plan cannot see the age eviction that
+  removes it; the walk now reports whether it settled the budget, and a stopped
+  walk defers the configured budget in `inspect` and `run --dry-run`. A
+  complete-run regression keeps the older archive byte-identical while the
+  newer unmeasured source is archived, measured and age-evicted, and a CLI
+  regression covers a measured sealed source straddling a byte budget. The
+  suite run also caught a control-flow defect in the rewritten walk, where an
+  exact-fit deletion went on to trim the next archive; the existing planner
+  tests pin the corrected behaviour. All seven commit gates pass once each on
+  the final tree.
 
 ## Surprises & discoveries
 
@@ -636,6 +648,11 @@ verified archive is published, and leaves compile admission untouched.
   budget planned from the physical-size fallback can therefore overstate the
   store, not only understate it. The missing-sidecar deferral and the
   `_archive_entry` docstring were corrected for this.
+- A sealed source's size is exact, but it is not the whole measurement a budget
+  needs. Without writer metadata the planner knows the source's bytes and
+  nothing about its span, so an entry that age eviction will remove whole still
+  inflates the total the byte walk acts on, and a budget that counts it can
+  delete an older archive the settled store keeps.
 
 ## Decision log
 
@@ -860,7 +877,9 @@ Invariants:
    the whole segment as outside the bounds; an evicted segment therefore has no
    archive to match.
 4. Retained logical bytes never exceed the configured budget after a successful
-   run unless one active segment plus one record transiently exceeds it.
+   run unless one active segment plus one record transiently exceeds it. A plan
+   acts on measured history only: while a surviving entry's size, span or count
+   is unknown, it leaves the budget to its follow-up pass.
 5. Eviction is oldest-first; records at the cutoff survive.
 6. Iterating history yields records in sequence order: archived or sealed
    segments ascending, then the active file.
@@ -900,6 +919,11 @@ Methods and evidence:
 - Recovery tests for a filesystem that fills after the headroom check: every
   source it could not hold is recorded as `no_headroom`, the run exits 75, no
   source is lost, and an unpatched second run archives both sources.
+- Deferral regressions: a complete run keeps an older archive byte-identical
+  while a newer unmeasured sealed source is archived, measured and age-evicted
+  (`tests/test_outcome_archive_retention.py`), and the planner and CLI tests
+  prove `retention_deferred` for a walk that stops at a sealed source it cannot
+  trim.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
@@ -1020,3 +1044,14 @@ vacuously; and disabling the publication gate makes
   plus a measured per-segment share, and the segment-count measurement bounds
   that share at about 4 KiB per segment for 18 and 74 segments of the same
   history.
+- Revision 15 records the whole-plan revision-14 assessment's two findings.
+  A surviving sealed source with no writer metadata now defers the byte and
+  record walks as well: its bytes are exact but its span is not, so the plan
+  cannot see the age eviction that will remove it, and a total that counts it
+  would delete an older archive the settled store keeps. A walk that stops at
+  an entry it cannot measure or rewrite now reports an unsettled budget, so
+  `inspect` and `run --dry-run` say the retention is deferred instead of
+  presenting the zeroes as final. A complete-run regression keeps an older
+  archive byte-identical while the newer unmeasured source is archived,
+  measured and age-evicted, and a CLI regression covers a measured sealed
+  source that straddles a byte budget, whose archive the real run then trims.

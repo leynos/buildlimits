@@ -2,9 +2,8 @@
 
 The byte budget counts uncompressed history, so an archive's contribution is
 the size its sidecar records rather than the XZ file's own size. Planning
-deletes whole entries oldest-first and only then trims the one archive that
-straddles the remaining allowance; every estimate is conservative, because a
-planned trim never frees more bytes than its sidecar proves.
+deletes whole entries oldest-first and only then trims the straddler; every
+estimate is conservative, never freeing more bytes than a sidecar proves.
 
 A sealed source counts towards both budgets and can be evicted whole, but it
 is never trimmed: it is still uncompressed, so a straddler ends the walk and
@@ -13,17 +12,17 @@ the follow-up plan trims the archive it becomes.
 A count trim is only planned for an archive that no time or byte trim already
 rewrites. Those trims drop rows the planner never counted, at positions a
 prefix count cannot target: composing both would drop the count's leading rows
-in addition to the rows the other rule removes, discarding rows the policy
-allows. Such a straddler ends the count walk, and the follow-up plan applies
-the count to the measured document the other trim leaves behind.
+and the rows the other rule removes. Such a straddler ends the count walk; the
+follow-up plan applies the count to the measured document that remains.
 
 The walks are only sound over measured history. A time trim removes rows no
 planner can count, so a total that still includes them overstates what the
-store will retain, and an archive with no trustworthy sidecar is counted at
-its compressed file's size, which need not describe the history it holds.
-Deleting a whole older entry against either total would discard history the
-settled store keeps, so the walks run only once every surviving entry has
-been measured; the follow-up plan runs them after the trim and the rebuild.
+store retains. An archive with no trustworthy sidecar falls back to its
+compressed file's size, and a sealed source with no writer metadata has its
+bytes counted but not its span; neither describes the history it holds. A
+whole deletion chosen against such a total could discard history the settled
+store keeps, so the walks run only once every surviving entry is measured;
+the follow-up plan runs them after the trim, rebuild and archival.
 """
 
 import dataclasses as dc
@@ -55,9 +54,9 @@ class UnknownActiveHistoryError(Exception):
     """A record cap was configured but the active file's rows are unknown.
 
     The cap counts the writer's unsealed rows, so a plan that cannot read them
-    cannot show that the retained store meets the cap. The run reports this as
-    an operational failure instead of counting the active file as empty, which
-    would make any store look capped.
+    cannot show the retained store meets the cap. The run reports an
+    operational failure instead of counting the file as empty, which would
+    make any store look capped.
     """
 
 
@@ -66,9 +65,8 @@ class ActiveHistory:
     """What the writer's active file holds at the moment a run plans.
 
     Both bounds measure the whole retained store, so the rows the writer has
-    not yet sealed are counted exactly as closed archives are. The writer owns
-    the file, so this is a snapshot: it can only be as current as the scan that
-    produced it.
+    not sealed count exactly as closed archives do. This is a snapshot, only
+    as current as the scan that produced it.
 
     Attributes
     ----------
@@ -103,9 +101,8 @@ class Budget:
     cutoff : datetime | None
         The age cutoff, or None when no age limit is configured.
     active : ActiveHistory
-        What the writer's active file holds. The candidates passed to the
-        planners cover the closed history the writer has sealed but the
-        archiver has not yet compressed, so no separate sealed count is needed.
+        What the writer's active file holds. The candidates cover the closed
+        history the writer sealed but the archiver has not compressed.
     """
 
     policy: RetentionPolicy
@@ -118,29 +115,33 @@ def plan_byte_steps(
     budget: Budget,
     deletes: dict[int, SegmentEntry],
     trims: dict[int, Trim],
-) -> None:
+) -> bool:
     """Evict the oldest entries until the logical byte budget is met.
 
-    ``deletes`` and ``trims`` are updated in place. The walk is shared with the
-    record cap and documented in ``_BudgetWalk.evict``; only the measure and
-    the straddling archive's trim differ between the two budgets.
+    ``deletes`` and ``trims`` are updated in place. The walk is shared with
+    the record cap and documented in ``_BudgetWalk.evict``.
+
+    Returns
+    -------
+    bool
+        Whether this pass settled the budget. A walk that stopped at a source
+        it cannot trim leaves the remainder to the follow-up plan.
     """
     if not budget.policy.has_byte_limit:
-        return
+        return True
     walk = _BudgetWalk(candidates, deletes, trims)
     retained = budget.active.bytes + sum(
         size for _, size in walk.surviving(planned_size)
     )
-    walk.evict(retained - budget.policy.max_bytes, planned_size, _byte_trim)
+    return walk.evict(retained - budget.policy.max_bytes, planned_size, _byte_trim)
 
 
 def require_measurable_active(budget: Budget) -> None:
     """Refuse a configured record cap whose active rows are unknown.
 
     The cap counts the writer's unsealed rows. A plan that cannot read them
-    cannot show the retained store meets the cap, whether or not this pass
-    decides to evict anything, so the check is separate from the walk: a pass
-    that defers its budget planning still has to report the unmeasurable cap.
+    cannot show the retained store meets the cap, even when it evicts nothing,
+    so the check is separate from the walk: a deferring pass still reports it.
 
     Raises
     ------
@@ -158,23 +159,25 @@ def plan_record_steps(
     budget: Budget,
     deletes: dict[int, SegmentEntry],
     trims: dict[int, Trim],
-) -> None:
+) -> bool:
     """Evict the oldest entries until the retained record cap is met.
 
     Only an explicitly configured cap applies, and it bounds the whole
     retained store: the active file's rows and every closed entry's rows count
     towards it. A sealed source is closed history and is evicted whole like an
-    archive. ``deletes`` and ``trims`` are updated in place, exactly as the
-    byte budget does.
+    archive. ``deletes`` and ``trims`` are updated in place, as the byte budget
+    does. ``require_measurable_active`` raises when the active rows were not
+    read: no plan can show the store is within a cap it cannot count against.
 
-    The cap's precondition is checked by ``require_measurable_active``, which
-    raises when the active file's rows were not read: no plan can show the
-    store is within a cap it cannot count against.
+    Returns
+    -------
+    bool
+        Whether this pass settled the cap, as ``plan_byte_steps`` reports.
     """
     require_measurable_active(budget)
     max_records = budget.policy.max_records
     if max_records is None:
-        return
+        return True
     walk = _BudgetWalk(candidates, deletes, trims)
     retained = budget.active.records
     retained += sum(
@@ -182,7 +185,7 @@ def plan_record_steps(
         for _entry, records in walk.surviving(planned_records)
         if records is not None
     )
-    walk.evict(retained - max_records, planned_records, _record_trim)
+    return walk.evict(retained - max_records, planned_records, _record_trim)
 
 
 def budget_totals_are_unsettled(
@@ -196,12 +199,10 @@ def budget_totals_are_unsettled(
     is only trustworthy when every surviving entry has been measured. Two
     states break that. An entry whose span crosses the cutoff still holds rows
     a time trim removes, so the total counts rows that will not survive. An
-    archive with no trustworthy sidecar is counted at its XZ file's size,
-    which is not the history it holds: the container's own header makes a
-    small document's file larger than its content, so that fallback can
-    overstate the store as well as understate it. The run repairs both -- it
-    applies the age trim and rebuilds the sidecar -- and the follow-up pass
-    measures the result.
+    entry with no trustworthy metadata may be counted wrongly: an archive
+    falls back to its XZ size, which the header can make larger than its
+    content, and a sealed source has bytes but no span, hiding a pending age
+    eviction. The run repairs both, then the follow-up pass measures them.
 
     Parameters
     ----------
@@ -219,10 +220,7 @@ def budget_totals_are_unsettled(
     """
     return any(
         entry.sequence not in deletes
-        and (
-            (entry.state == "archived" and not entry.has_metadata)
-            or _straddles_cutoff(entry, cutoff)
-        )
+        and (not entry.has_metadata or _straddles_cutoff(entry, cutoff))
         for entry in candidates
     )
 
@@ -245,9 +243,8 @@ class _BudgetWalk:
     """One budget's walk over the closed entries, with its decisions so far.
 
     The candidates and the two decision maps travel together because every
-    step of the walk reads and writes all three. The maps are the planners'
-    own and are updated in place, so a walk sees the age cutoff's decisions
-    and the other budget's.
+    step reads and writes all three. The maps are the planners' own and are
+    updated in place, so a walk sees the other rules' decisions.
 
     Attributes
     ----------
@@ -289,19 +286,17 @@ class _BudgetWalk:
         excess: int,
         keep: cabc.Callable[[SegmentEntry, Trim | None], int | None],
         trim_straddler: cabc.Callable[[Trim, int, int], Trim | None],
-    ) -> None:
+    ) -> bool:
         """Delete whole entries oldest-first, then trim the one that straddles.
 
         An entry is deleted while its planned value fits inside the remaining
         excess, and the walk stops as soon as the excess is covered rather than
-        churning a later archive. The first entry that does not fit is trimmed
-        instead, so no later entry is rewritten when the budget is met. A
-        sealed source never gets an allowance, because it cannot be rewritten
-        until this run has compressed it, and an entry whose value cannot be
-        planned ends the walk: evicting newer history ahead of older history
-        whose count is merely unknown would break oldest-first retention. A
-        trim callable may likewise decline to compose, which leaves the
-        decision to the follow-up plan.
+        churning a later archive. The first entry that does not fit is trimmed,
+        so no later entry is rewritten when the budget is met. A sealed source
+        never gets an allowance, because it cannot be rewritten until this run
+        has compressed it, and an unplannable entry ends the walk: evicting
+        newer history ahead of older history of unknown count would break
+        oldest-first retention. A trim callable may decline to compose too.
 
         Parameters
         ----------
@@ -312,25 +307,33 @@ class _BudgetWalk:
         trim_straddler : Callable[[Trim, int, int], Trim | None]
             The updated trim for the first entry that does not fit, or None
             when this walk must leave the entry to a later plan.
+
+        Returns
+        -------
+        bool
+            Whether this pass decided everything the budget needs. False when
+            the walk stopped at an entry it cannot measure or rewrite yet.
         """
-        if excess <= 0:
-            return
+        settled = True
         for entry, value in self.surviving(keep):
             if excess <= 0:
-                return
+                break
             if value is None:
-                return
+                settled = False
+                break
             if value <= excess:
                 self.deletes[entry.sequence] = entry
                 excess -= value
                 continue
             if entry.state == "sealed":
-                return
+                settled = False
+                break
             trim = trim_straddler(self.trims.get(entry.sequence, Trim()), value, excess)
-            if trim is None:
-                return
-            self.trims[entry.sequence] = trim
-            return
+            settled = trim is not None
+            if trim is not None:
+                self.trims[entry.sequence] = trim
+            break
+        return settled
 
 
 def _byte_trim(existing: Trim, size: int, excess: int) -> Trim:
@@ -350,11 +353,9 @@ def _record_trim(existing: Trim, _records: int, excess: int) -> Trim | None:
     A trim that already drops rows by time or by bytes is left for the
     follow-up plan instead. The count is a prefix over the document's row
     positions, and the planner cannot know how many of that prefix the other
-    rule removes: a document ordered *at cutoff, expired, fresh*, capped at two
-    rows, needs no count trim at all once the expired row leaves, while a
-    composed trim would drop the cutoff row too. Once this run has applied the
-    other trim, the follow-up plan reads the surviving count from the sidecar
-    and applies the count to the document that remains.
+    rule removes: *at cutoff, expired, fresh* capped at two rows needs no count
+    trim once the expired row leaves, while a composed trim would drop the
+    cutoff row too. The follow-up plan applies the count to what remains.
 
     Returns
     -------
@@ -374,9 +375,8 @@ def planned_records(entry: SegmentEntry, trim: Trim | None) -> int | None:
     -------
     int | None
         The sidecar's count less a leading count trim, or None when no
-        trustworthy sidecar describes the archive. A time or byte trim cannot
-        be estimated without reading rows, so it is treated as freeing no
-        records.
+        trustworthy sidecar describes the archive. A time or byte trim frees
+        no estimated records, because that cannot be known without the rows.
     """
     if entry.record_count is None:
         return None
@@ -392,8 +392,8 @@ def planned_size(entry: SegmentEntry, trim: Trim | None) -> int:
     -------
     int
         The recorded logical size, capped by an explicit byte allowance. A
-        time-based trim cannot be estimated without reading rows, so it is
-        treated as freeing nothing.
+        time-based trim frees nothing here, because that cannot be known
+        without reading the rows.
     """
     if trim is None or trim.allowed_bytes is None:
         return entry.logical_bytes

@@ -224,6 +224,53 @@ def test_a_byte_budget_waits_for_an_unmeasured_archive_size(tmp_path: Path) -> N
     )
 
 
+def test_a_byte_budget_waits_for_an_unmeasured_sealed_source(
+    tmp_path: Path,
+) -> None:
+    """An unmeasured source's span hides an age eviction the budget must see.
+
+    The source's compressed size cannot be known until it is archived, and
+    without writer metadata its rows have no span either, so the plan cannot
+    tell that age eviction will remove it. Counting its bytes anyway overstates
+    the settled store and would delete an older archive the settled store
+    keeps. The run archives and measures the source first; age eviction then
+    removes it whole and the older archive is left byte-identical.
+    """
+    store_layout = layout(tmp_path)
+    store_layout.sealed_dir.mkdir(parents=True)
+    write_private(
+        store_layout.sealed_dir / segment_name(1),
+        document(records(NOW - dt.timedelta(hours=1), 6)),
+    )
+    run(tmp_path, policy(max_age_days=0))
+    (older,) = read_inventory(store_layout).archived
+    older_archive = store_layout.archive_dir / archive_name(older.sequence)
+    before = older_archive.read_bytes()
+    expired = NOW - dt.timedelta(days=40)
+    write_private(
+        store_layout.sealed_dir / segment_name(2),
+        document(records(expired, 20)),
+    )
+    budget = older.logical_bytes + 1
+
+    report = run(tmp_path, policy(max_bytes=budget))
+
+    assert report.status == "ok", "the deferred budget is not a failure"
+    assert older_archive.exists() and older_archive.read_bytes() == before, (
+        "the older archive is not rewritten or removed from an unmeasured total"
+    )
+    actions = [(action.action, action.sequence) for action in report.actions]
+    assert ("archived", 2) in actions, "the unmeasured source is compressed"
+    assert ("deleted", 2) in actions, (
+        "age eviction removes the expired archive once it is measured"
+    )
+    assert ("trimmed", 1) not in actions, (
+        "the settled store fits, so the older archive needs no trim"
+    )
+    assert report.retained_bytes <= budget, "the budget is met in one firing"
+    assert not read_inventory(store_layout).sealed, "no source is left behind"
+
+
 def test_a_record_cap_evicts_the_oldest_sealed_source_in_one_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

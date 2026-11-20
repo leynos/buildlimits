@@ -152,7 +152,11 @@ disagree about a bound.
   budget is deleted whole rather than compressed into an archive the same run
   would remove, while the writer's active file stays outside the archiver's
   reach, and a sealed source that straddles the age or byte cutoff is archived
-  untrimmed and trimmed by the run's follow-up plan.
+  untrimmed and trimmed by the run's follow-up plan. The walks act only on
+  measured history: while a surviving sealed source has no writer metadata, or
+  an archive has no trustworthy sidecar, the plan cannot tell which rows will
+  survive and leaves the whole budget to its follow-up pass rather than choose
+  a deletion from a partial total.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
   segment, or a budget of zero, makes the writer seal closed segments. The
   default budget remains the legacy 12 MiB, so a deployment that writes none of

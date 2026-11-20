@@ -14,7 +14,12 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from archive_cli_helpers import command_arguments, sealed_source, write_config
+from archive_cli_helpers import (
+    command_arguments,
+    sealed_measured_source,
+    sealed_source,
+    write_config,
+)
 from outcome_test_helpers import attributed_record
 from segment_test_helpers import document as encode_document
 
@@ -187,6 +192,55 @@ def test_inspect_and_dry_run_name_the_retention_they_defer(
     assert ("deleted", 1) in actions and ("trimmed", 2) in actions, (
         "the settled pass does the eviction the first plan deferred"
     )
+
+
+def test_a_sealed_source_straddling_a_budget_defers_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A source too large to trim while sealed leaves the budget to the run.
+
+    The walk reaches the sealed source with bytes still to free, and an
+    uncompressed source has no prefix it can rewrite. Reporting zero trims as
+    settled would hide that work, so inspection and a dry run say the budget is
+    deferred; the run then archives the source and trims the archive it became.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    rows = _records(20)
+    source = sealed_measured_source(store, 1, rows)
+    # One byte over the budget: the source is the entry that must shrink, and
+    # only compressing it lets the follow-up plan trim it.
+    budget = source.stat().st_size - 1
+    config = write_config(tmp_path / "supervisor.toml", max_bytes=budget)
+
+    status = main(["inspect", *command_arguments(store, config), "--json"])
+    inspected = json.loads(capsys.readouterr().out)
+
+    assert status == 0, "inspection succeeds"
+    assert inspected["plan"]["archive"] == 1, "the source is pending compression"
+    assert (inspected["plan"]["trim"], inspected["plan"]["delete"]) == (0, 0), (
+        "the first plan cannot trim a source it has not compressed"
+    )
+    assert inspected["plan"]["retention_deferred"] is True, (
+        "inspection says the budget is decided after the source is archived"
+    )
+
+    status = main(["run", "--dry-run", *command_arguments(store, config), "--json"])
+    dry = json.loads(capsys.readouterr().out)
+
+    assert status == 0, "a dry run succeeds"
+    assert dry["plan"]["retention_deferred"] is True, (
+        "a dry run reports the deferral inspection reported"
+    )
+
+    status = main(["run", *command_arguments(store, config), "--json"])
+    settled = json.loads(capsys.readouterr().out)
+
+    assert status == 0, "the run settles the budget"
+    actions = [(action["action"], action["sequence"]) for action in settled["actions"]]
+    assert ("archived", 1) in actions and ("trimmed", 1) in actions, (
+        "the settled pass trims the archive the first plan deferred"
+    )
+    assert settled["retained_logical_bytes"] <= budget, "the budget is met"
 
 
 def test_a_corrupt_source_exits_three(

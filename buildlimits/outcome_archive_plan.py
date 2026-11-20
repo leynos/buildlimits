@@ -58,9 +58,8 @@ class Plan:
     cutoff : datetime | None
         The age cutoff applied, or None when age eviction is disabled.
     retention_deferred : bool
-        Whether a configured budget was left to a follow-up plan. The trims and
-        deletes above are then provisional: this plan could not measure the
-        store the budget applies to.
+        Whether a configured budget was left to a follow-up plan, making the
+        trims and deletes above provisional.
     """
 
     reconcile: tuple[tuple[SegmentEntry, SegmentEntry], ...] = ()
@@ -236,8 +235,7 @@ def _heal_steps(inventory: Inventory, duplicated: set[int]) -> tuple[SegmentEntr
     Returns
     -------
     tuple[SegmentEntry, ...]
-        Archives with a missing or corrupt sidecar, excluding duplicates that
-        reconciliation already owns.
+        Archives with a missing or corrupt sidecar, excluding duplicates.
     """
     damaged = {*inventory.missing_sidecars, *inventory.corrupt_sidecars}
     return tuple(
@@ -254,18 +252,18 @@ def _retention_steps(
 ) -> tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...], bool]:
     """Decide age and byte eviction over closed history, oldest first.
 
-    Sealed sources are candidates as well as archives. Both count towards the
-    budgets, so excluding a sealed source from eviction would make the plan
-    delete newer archives while older history survived. A sealed source is only
-    ever removed whole: it cannot be trimmed before it is compressed, and the
-    follow-up plan trims it once this run has archived it.
+    Sealed sources are candidates as well as archives, and both count towards
+    the budgets: excluding a sealed source would make the plan delete newer
+    archives while older history survived. A sealed source is only ever removed
+    whole, and the follow-up plan trims it once this run has archived it.
 
     The byte and record walks run only when every surviving entry has been
     measured and no duplicated sequence is excluded from the candidates;
     otherwise their totals misstate what the store retains, and a whole
     deletion chosen against them could remove an older entry the settled
     store keeps. Age eviction is decided from the cutoff alone, so it is
-    planned either way and the follow-up pass re-plans the budgets.
+    planned either way and the follow-up pass re-plans the budgets. A walk
+    that stops at an entry it cannot yet settle defers its budget the same way.
 
     Returns
     -------
@@ -282,9 +280,12 @@ def _retention_steps(
             _plan_age_step(entry, budget.cutoff, deletes)
     trims = _age_trims(candidates, budget.cutoff, deletes)
     measurable = _budgets_are_measurable(candidates, budget.cutoff, deletes, duplicated)
+    settled = True
     if measurable:
-        plan_byte_steps(candidates, budget, deletes, trims)
-        plan_record_steps(candidates, budget, deletes, trims)
+        # Both walks always run: the record walk composes with the byte walk's
+        # decisions, so a stopped byte walk must not skip the cap.
+        settled = plan_byte_steps(candidates, budget, deletes, trims)
+        settled = plan_record_steps(candidates, budget, deletes, trims) and settled
     else:
         # An unmeasurable cap is a run invariant rather than a planning
         # decision: even a pass that defers its walk has to report it.
@@ -298,7 +299,7 @@ def _retention_steps(
         if entry.sequence in trims and entry.sequence not in deletes
     )
     bounded = budget.policy.has_byte_limit or budget.policy.max_records is not None
-    deferred = not measurable and bounded
+    deferred = bounded and (not measurable or not settled)
     return tuple(deletes[sequence] for sequence in sorted(deletes)), trimmed, deferred
 
 
@@ -311,11 +312,10 @@ def _budgets_are_measurable(
     """Whether a budget walk can safely choose whole deletions this pass.
 
     A duplicated sequence is left out of the candidates while reconciliation
-    is expected to settle it, so its retained rows would be missing from the
-    total the walk acts on. The other conditions are the planner's:
-    ``budget_totals_are_unsettled`` reports an entry whose span crosses the
-    cutoff, and an archive whose size has never been measured. A later pass
-    re-plans from the reconciled and measured inventory.
+    settles it, so its rows would be missing from the total the walk acts on.
+    ``budget_totals_are_unsettled`` reports the other conditions: an entry
+    whose span crosses the cutoff, or one with no trustworthy measurement. A
+    later pass re-plans from the reconciled and measured inventory.
 
     Returns
     -------

@@ -139,7 +139,11 @@ def test_a_byte_budget_evicts_a_sealed_source_before_a_newer_archive() -> None:
 
 
 def test_a_sealed_source_that_straddles_the_budget_is_not_trimmed() -> None:
-    """An uncompressed source cannot be trimmed, so the walk stops there."""
+    """An uncompressed source cannot be trimmed, so the walk stops there.
+
+    The stop is not a settled budget: the archive this run publishes still has
+    to be trimmed, so the plan reports its retention as deferred.
+    """
     source = sealed(1, logical_bytes=100)
     archive = archived(2, logical_bytes=100)
 
@@ -152,6 +156,9 @@ def test_a_sealed_source_that_straddles_the_budget_is_not_trimmed() -> None:
     assert not decision.trims, "a sealed source is never given a trim"
     assert [item.sequence for item in decision.archive] == [1], (
         "the source is archived so the follow-up plan can trim it"
+    )
+    assert decision.retention_deferred is True, (
+        "a walk that stopped at a source it cannot trim defers the budget"
     )
 
 

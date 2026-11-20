@@ -6,10 +6,21 @@ configuration it reads and the repository root in one place, so every
 process-level test starts the same surface from the same directory.
 """
 
+import json
 import sys
+import typing as typ
 from pathlib import Path
 
-from buildlimits.outcome_segments import SegmentLayout, segment_name
+from segment_test_helpers import document
+
+from buildlimits.outcome_segments import SegmentLayout, sealed_meta_name, segment_name
+from buildlimits.outcome_store_sealing import sealed_metadata
+from buildlimits.utc_text import utc_now
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+    from buildlimits.outcome_record_format import StoreRecord
 
 # The installed entry point is the surface a systemd unit names, so tests run
 # it rather than a test-only wrapper around ``main``.
@@ -23,6 +34,7 @@ __all__ = [
     "REPO_ROOT",
     "SCRIPT",
     "command_arguments",
+    "sealed_measured_source",
     "sealed_source",
     "write_config",
 ]
@@ -50,6 +62,44 @@ def sealed_source(store: Path, sequence: int, data: bytes) -> Path:
     path = directory / segment_name(sequence)
     path.write_bytes(data)
     path.chmod(0o600)
+    return path
+
+
+def sealed_measured_source(
+    store: Path,
+    sequence: int,
+    rows: cabc.Sequence[StoreRecord],
+    *,
+    salt_id: str = "salt-1",
+) -> Path:
+    """Write one sealed source together with the writer's metadata.
+
+    The planner trusts the writer's ``.meta.json`` rather than reading a
+    source's rows, so a fixture that needs a *measured* sealed source publishes
+    both files. A source without the metadata is unmeasured: its bytes count
+    towards a budget but its span and record count do not.
+
+    Parameters
+    ----------
+    store : Path
+        The ``cache-outcomes.jsonl`` path the source belongs to.
+    sequence : int
+        The sequence number the source's name carries.
+    rows : Sequence[StoreRecord]
+        The rows the writer closed into the source.
+    salt_id : str
+        The salt domain the document is encoded under.
+
+    Returns
+    -------
+    Path
+        The source path.
+    """
+    path = sealed_source(store, sequence, document(tuple(rows), salt_id))
+    # The writer's own builder keeps the fixture's metadata identical to the
+    # document a real seal publishes; only the planner's fields matter here.
+    metadata = sealed_metadata(list(rows), sequence, salt_id, utc_now())
+    (path.parent / sealed_meta_name(sequence)).write_text(json.dumps(metadata))
     return path
 
 
