@@ -156,10 +156,17 @@ def metadata_fields(metadata: dict[str, object] | None) -> dict[str, object]:
     if metadata is None:
         return {}
     try:
+        first_observed_at = _optional_moment(metadata, "first_observed_at")
+        last_observed_at = _optional_moment(metadata, "last_observed_at")
+        if _spans_backwards(first_observed_at, last_observed_at):
+            # The age planner removes a sealed source from its span alone. An
+            # inverted span would claim the source is older than it is, so a
+            # description that contradicts itself is withheld.
+            return {}
         return {
             "record_count": required_int(metadata, "record_count"),
-            "first_observed_at": _optional_moment(metadata, "first_observed_at"),
-            "last_observed_at": _optional_moment(metadata, "last_observed_at"),
+            "first_observed_at": first_observed_at,
+            "last_observed_at": last_observed_at,
             "salt_id": required_text(metadata, "salt_id"),
             "has_metadata": True,
         }
@@ -193,7 +200,13 @@ def _sidecar_from_mapping(
         is_digest = len(sha256) == _SHA256_HEX_LENGTH and all(
             char in "0123456789abcdef" for char in sha256
         )
-        if not is_digest:
+        first_observed_at = _optional_moment(document, "first_observed_at")
+        last_observed_at = _optional_moment(document, "last_observed_at")
+        # A digest that cannot name its bytes leaves the sidecar untrusted,
+        # and so does a span that ends before it starts: the age planner
+        # deletes a trusted sidecar's archive from that span alone, so an
+        # inverted one could remove rows still inside the retention window.
+        if not is_digest or _spans_backwards(first_observed_at, last_observed_at):
             return "corrupt"
         return Sidecar(
             sequence=sequence,
@@ -202,8 +215,8 @@ def _sidecar_from_mapping(
             logical_bytes=required_int(document, "logical_bytes"),
             physical_bytes=required_int(document, "physical_bytes"),
             sha256=sha256,
-            first_observed_at=_optional_moment(document, "first_observed_at"),
-            last_observed_at=_optional_moment(document, "last_observed_at"),
+            first_observed_at=first_observed_at,
+            last_observed_at=last_observed_at,
             archived_at=archived_at,
             xz_preset=required_int(document, "xz_preset"),
             had_torn_tail=document.get("had_torn_tail") is True,
@@ -270,6 +283,19 @@ def required_int(document: dict[str, object], name: str) -> int:
     if value < 0:
         raise ValueError(name)
     return value
+
+
+def _spans_backwards(first: dt.datetime | None, last: dt.datetime | None) -> bool:
+    """Whether an observation span ends before it starts.
+
+    Returns
+    -------
+    bool
+        True when both ends are known and the last precedes the first.
+    """
+    if first is None or last is None:
+        return False
+    return first > last
 
 
 def _optional_moment(document: dict[str, object], name: str) -> dt.datetime | None:

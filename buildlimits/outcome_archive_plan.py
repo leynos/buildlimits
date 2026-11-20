@@ -197,12 +197,7 @@ def plan_run(
     ... ).retained_bytes
     7
     """
-    duplicates = tuple(
-        (sealed, archived)
-        for sealed in inventory.sealed
-        for archived in inventory.archived
-        if sealed.sequence == archived.sequence
-    )
+    duplicates = _duplicates(inventory)
     duplicated_sequences = {sealed.sequence for sealed, _archived in duplicates}
     heal = _heal_steps(inventory, duplicated_sequences)
     budget = Budget(policy=policy, cutoff=policy.cutoff(now), active=active)
@@ -228,6 +223,28 @@ def plan_run(
         retained_bytes=retained,
         cutoff=budget.cutoff,
         retention_deferred=deferred,
+    )
+
+
+def _duplicates(
+    inventory: Inventory,
+) -> tuple[tuple[SegmentEntry, SegmentEntry], ...]:
+    """Pair each sealed source with an archive of the same sequence.
+
+    One lookup pass keeps duplicate detection linear. A store with a thousand
+    sealed sources beside ten thousand archives would otherwise compare every
+    pair on each plan, and a reconciliation is followed by more plans.
+
+    Returns
+    -------
+    tuple[tuple[SegmentEntry, SegmentEntry], ...]
+        Sealed entries with their archive, in sealed-entry order.
+    """
+    archived_by_sequence = {entry.sequence: entry for entry in inventory.archived}
+    return tuple(
+        (sealed, archived_by_sequence[sealed.sequence])
+        for sealed in inventory.sealed
+        if sealed.sequence in archived_by_sequence
     )
 
 

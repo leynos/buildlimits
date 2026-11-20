@@ -84,6 +84,31 @@ def test_unusable_sealed_metadata_is_not_trusted(tmp_path: Path) -> None:
     assert not entry.has_metadata, "the entry does not claim metadata"
 
 
+def test_inverted_sealed_metadata_is_not_trusted(tmp_path: Path) -> None:
+    """A span that ends before it starts never decides an age eviction.
+
+    The age planner deletes a sealed source from ``last_observed_at`` alone, so
+    trusting an inverted span could remove a source still inside the window.
+    """
+    layout = store_layout(tmp_path)
+    write_private(layout.sealed_dir / segment_name(1), b"source bytes")
+    write_private(
+        layout.sealed_dir / sealed_meta_name(1),
+        json.dumps({
+            "sequence": 1,
+            "salt_id": "salt-1",
+            "record_count": 3,
+            "first_observed_at": "2026-11-19T00:10:00Z",
+            "last_observed_at": "2026-11-19T00:00:00Z",
+        }).encode(),
+    )
+
+    entry = read_inventory(layout).sealed[0]
+
+    assert not entry.has_metadata, "the contradictory span is withheld"
+    assert entry.last_observed_at is None, "no age decision can be made"
+
+
 def test_a_sidecar_supplies_the_logical_size(tmp_path: Path) -> None:
     """The byte budget counts sidecar logical bytes, not XZ bytes."""
     layout = store_layout(tmp_path)
@@ -160,18 +185,54 @@ def test_a_corrupt_sidecar_is_flagged(tmp_path: Path, document: bytes) -> None:
         {"archived_at": None},
         {"salt_id": ""},
         {"first_observed_at": 5},
+        {
+            "first_observed_at": "2026-11-19T00:00:00Z",
+            "last_observed_at": "2026-11-18T23:59:00Z",
+        },
     ],
-    ids=["short-digest", "non-hex", "negative", "no-moment", "no-salt", "bad-moment"],
+    ids=[
+        "short-digest",
+        "non-hex",
+        "negative",
+        "no-moment",
+        "no-salt",
+        "bad-moment",
+        "inverted-span",
+    ],
 )
 def test_a_sidecar_field_must_hold_a_usable_value(
     tmp_path: Path, overrides: dict[str, object]
 ) -> None:
-    """Every required field is validated before its value reaches a report."""
+    """Every required field is validated before its value reaches a report.
+
+    The inverted span is the dangerous one: the age planner deletes a trusted
+    sidecar's archive from ``last_observed_at`` alone, so a span claiming the
+    archive ends before it starts could remove rows still inside the window.
+    """
     layout = store_layout(tmp_path)
     write_private(layout.archive_dir / archive_name(1), b"x" * 40)
     write_sidecar(tmp_path, 1, **overrides)
 
     assert read_inventory(layout).corrupt_sidecars == (1,), "the value is rejected"
+
+
+def test_a_sidecar_whose_span_starts_and_ends_together_is_trusted(
+    tmp_path: Path,
+) -> None:
+    """An equal span is the ordinary one-row archive, not an inverted one."""
+    layout = store_layout(tmp_path)
+    write_private(layout.archive_dir / archive_name(1), b"x" * 40)
+    write_sidecar(
+        tmp_path,
+        1,
+        first_observed_at="2026-11-19T00:00:00Z",
+        last_observed_at="2026-11-19T00:00:00Z",
+    )
+
+    inventory = read_inventory(layout)
+
+    assert not inventory.corrupt_sidecars, "one instant is a valid span"
+    assert inventory.archived[0].has_metadata, "the sidecar is trusted"
 
 
 def test_a_sidecar_behind_a_directory_is_corrupt(tmp_path: Path) -> None:
