@@ -373,8 +373,9 @@ either component's private counters.
   the split across active, sealed and archived history, the archives' physical
   bytes, the closed-segment count, the observation span and a `complete` flag.
   The flag is false when a segment's metadata is missing, the active file could
-  not be read, or the writer replaced the active file while the run measured
-  it, so a lower bound is never presented as exact.
+  not be read, or the writer replaced the active file while the run or a dry
+  run's planning reads observed it, so a lower bound is never presented as
+  exact.
 - `evictions` counts trims and deletions under `age`, `bytes`, `records` and
   every combination of those bounds, and each action carries the same reason. A
   bound that is configured but did not cause an eviction is never named.
@@ -383,9 +384,11 @@ either component's private counters.
   deferred run and a run that could not start install no state and report
   `state_written` false.
 - The supervisor's status document carries the same `limits` derivation and
-  the writer's active snapshot, which the renderer prints as one line. A
-  snapshot the writer cannot supply omits the section rather than failing the
-  status read. Closed history is reported by the archive command, which owns it.
+  the writer's active snapshot, which the renderer prints as one line. The
+  worker publishes each state's row count and byte size together, so a status
+  read never pairs one state's rows with another state's size. A snapshot the
+  writer cannot supply omits the section rather than failing the status read.
+  Closed history is reported by the archive command, which owns it.
 
 None of these figures is a cumulative recorder counter or a journal-reader
 query cap: `record_count` counts rows retained on disk, not outcomes seen since

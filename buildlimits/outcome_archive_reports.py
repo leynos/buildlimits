@@ -101,7 +101,11 @@ def unfinished(
 
 
 def dry_report(
-    run: ArchiveRun, active: ActiveHistory, inventory: Inventory
+    run: ArchiveRun,
+    active: ActiveHistory,
+    inventory: Inventory,
+    *,
+    is_replaced: bool = False,
 ) -> RunReport:
     """Build the report a dry run returns without changing any file.
 
@@ -111,6 +115,11 @@ def dry_report(
     the two apart: re-reading the directory here could report a segment that
     the plan never saw. No state file is installed, so the report says so.
 
+    A writer seal racing the planning reads moves rows into a segment the
+    inventory never saw. When the caller detected that replacement, the active
+    contribution is left unmeasured, so the totals are a lower bound rather
+    than a complete zero-row history.
+
     Parameters
     ----------
     run : ArchiveRun
@@ -119,6 +128,8 @@ def dry_report(
         The active file's measured state.
     inventory : Inventory
         The closed-history inventory the plan was derived from.
+    is_replaced : bool
+        Whether the writer replaced the active file while the plan's reads ran.
 
     Returns
     -------
@@ -145,7 +156,7 @@ def dry_report(
         corrupt_sidecars=inventory.corrupt_sidecars,
         orphan_sidecars=inventory.orphan_sidecars,
         limits=RetentionLimits.of(run.context.policy),
-        retained=retained_history(inventory, active),
+        retained=retained_history(inventory, None if is_replaced else active),
         maintenance=Maintenance(state_written=False),
     )
 

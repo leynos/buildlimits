@@ -6,6 +6,7 @@ compaction and bounded-append rules here, apart from the queue plumbing in
 starting a thread. Sealing lives in ``outcome_store_sealing``.
 """
 
+import dataclasses as dc
 import datetime as dt
 import typing as typ
 
@@ -30,6 +31,28 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
 
 _CLOCK_SKEW_SECONDS = 24 * 60 * 60
+
+
+@dc.dataclass(frozen=True, slots=True)
+class _Published:
+    """One completed store state, as the writer's worker observed it.
+
+    Attributes
+    ----------
+    rows : list[StoreRecord]
+        The row list that state held. The worker only appends to a list it has
+        published before replacing it with a new one, so a reader can take the
+        published prefix while the worker appends.
+    count : int
+        The number of rows the state held.
+    logical_bytes : int | None
+        The active file's size in that state, or None when it could not be
+        measured.
+    """
+
+    rows: list[StoreRecord]
+    count: int
+    logical_bytes: int | None
 
 
 class StoreFiles:
@@ -76,6 +99,7 @@ class StoreFiles:
         self.ready = False
         self._last_wall: dt.datetime | None = None
         self._last_monotonic: float | None = None
+        self._published: _Published | None = None
 
     @property
     def policy(self) -> RetentionPolicy:
@@ -142,13 +166,29 @@ class StoreFiles:
         """Choose which validated rows can belong to the active salt."""
         outcome_store_restart.restore_loaded_store(self, decoded, salt, now)
 
+    def publish_snapshot(self) -> None:
+        """Publish the rows and byte size of one completed store state.
+
+        The worker owns every mutation and calls this after each transition it
+        completes, so one immutable pairing always describes one moment. A
+        status read can then report a coherent view without opening the file,
+        waiting for an append or seeing a row that reached disk but not the
+        writer's rows.
+        """
+        try:
+            size: int | None = store_size(self.path)
+        except OSError:
+            size = None
+        self._published = _Published(self.records, len(self.records), size)
+
     def retention(self) -> ActiveHistory:
         """Describe the rows the writer currently holds in the active file.
 
         The supervisor asks for this snapshot while the worker may be
-        appending. Reading a tuple copy means an append that races the copy is
-        included or omitted as a whole; the result is a diagnostic snapshot,
-        not a consistency barrier.
+        appending. It reads the last state the worker published, so the row
+        count and the byte size always describe the same state; an append that
+        races the read is either wholly included in a later snapshot or left
+        to the next one.
 
         Returns
         -------
@@ -156,15 +196,22 @@ class StoreFiles:
             The active row count, its logical size and observation span, or an
             incomplete snapshot with a closed reason.
         """
-        try:
-            size = store_size(self.path)
-        except OSError:
+        published = self._published
+        if published is None:
+            return ActiveHistory(complete=False, reason="not_loaded")
+        size = published.logical_bytes
+        if size is None:
             return ActiveHistory(complete=False, reason="unreadable")
         if not self.ready:
             return ActiveHistory(
                 logical_bytes=size, complete=False, reason="not_loaded"
             )
-        return measured_history(self.records, logical_bytes=size)
+        # A published list only grows until the worker replaces it, and a
+        # replaced list stops changing, so its published prefix is intact even
+        # while an append lands. The slice copies the state the size belongs
+        # to, not whatever the list holds by the time it is read.
+        rows = tuple(published.rows[: published.count])
+        return measured_history(rows, logical_bytes=size)
 
     def append(self, line: bytes, record: StoreRecord) -> None:
         """Compact at high water, preserve the hard bound and append one row."""

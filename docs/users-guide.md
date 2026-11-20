@@ -522,8 +522,9 @@ force, and what history it currently retains.
 - `build-limits-status` adds a `cache outcomes retention` line while recording
   is enabled. It names the effective age, byte and record bounds and the active
   file's row and logical-byte count; an incomplete read says so rather than
-  showing a partial count as exact. Its JSON form carries the same `limits` and
-  `active` documents.
+  showing a partial count as exact, and the count and byte total always
+  describe the same state. Its JSON form carries the same `limits` and `active`
+  documents.
 - `retention.json` records the retention floor, the retained logical bytes,
   the budget, the cutoff, and the `limits` and `retained` documents.
 - `last-run.json` is the full run report. Its `limits`, `retained`,
@@ -542,10 +543,10 @@ is never mistaken for "retain nothing".
 `active_records`, the first and last observation times, the `span_seconds`
 between them, and `complete`. `complete` is `false` when a closed segment's
 metadata is missing, the active file could not be read, or the writer replaced
-the active file while the run was measuring it; the counts are then lower
-bounds, not a claim that history was lost. Retained counts are not the
-recorder's cumulative `attributed` and `readings` counters, and neither is a
-journal reader's `--max-records` query cap.
+the active file while the run or an inspection was measuring it; the counts are
+then lower bounds, not a claim that history was lost. Retained counts are not
+the recorder's cumulative `attributed` and `readings` counters, and neither is
+a journal reader's `--max-records` query cap.
 
 `evictions` counts the trims and deletions a run performed under `age`, `bytes`,
 `records`, `age_and_bytes`, `age_and_records`, `bytes_and_records` and

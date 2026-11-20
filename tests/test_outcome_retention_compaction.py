@@ -8,7 +8,9 @@ wall clock moves under a running writer.
 """
 
 import datetime as dt
+import typing as typ
 from pathlib import Path
+from unittest import mock
 
 import pytest
 from outcome_archive_helpers import NOW, records
@@ -32,12 +34,15 @@ from outcome_store_helpers import (
 from outcome_test_helpers import attributed_record
 from segment_test_helpers import store_layout
 
-from buildlimits import config, outcome_records
+from buildlimits import config, outcome_records, outcome_store_state
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_retention import LEGACY_MAX_RECORDS, policy_from_settings
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_store import StoreWriter
+
+if typ.TYPE_CHECKING:
+    from buildlimits.outcome_retention_report import ActiveHistory
 
 
 def test_a_row_exactly_at_the_age_cutoff_is_kept() -> None:
@@ -262,3 +267,44 @@ def test_the_status_snapshot_never_reads_closed_history(tmp_path: Path) -> None:
     assert snapshot.complete is True, "an unreadable segment cannot spoil the answer"
     assert snapshot.record_count == len(rows), "only active rows are counted"
     assert snapshot.logical_bytes == path.stat().st_size, "the size is the file's own"
+
+
+def test_a_status_snapshot_never_pairs_a_row_with_an_earlier_state(
+    tmp_path: Path,
+) -> None:
+    """A row on disk but not yet in the writer's rows is not half-counted.
+
+    The worker writes a row's line before it adds the row to its in-memory
+    rows. A status read in that window must report the last complete state
+    rather than the new file size beside the old row count.
+    """
+    path = tmp_path / "cache-outcomes.jsonl"
+    rows = records(NOW - dt.timedelta(hours=1), 1)
+    seed(path, rows)
+    append_line = outcome_store_state.append_line
+    seen: list[tuple[ActiveHistory, int, int]] = []
+
+    with running_writer(path, policy(), NOW) as writer:
+
+        def read_before_the_row_lands(target: Path, line: bytes) -> None:
+            """Write the row, then read the status as the append window opens."""
+            append_line(target, line)
+            seen.append((writer.retention(), target.stat().st_size, len(line) + 1))
+
+        with mock.patch.object(
+            outcome_store_state, "append_line", read_before_the_row_lands
+        ):
+            writer.append(attributed_record(observed_at=NOW))
+            wait_for_results(writer, operation="append", reason="none")
+
+    snapshot, size_on_disk, appended = seen[0]
+    assert snapshot.complete is True, "the writer loaded its rows"
+    assert snapshot.record_count == len(rows), (
+        "a row still in the append window is not counted"
+    )
+    assert size_on_disk == snapshot.logical_bytes + appended, (
+        "the row's bytes are not paired with the earlier row count"
+    )
+    assert writer.retention().record_count == len(rows) + 1, (
+        "the final snapshot counts the appended row"
+    )

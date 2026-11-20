@@ -86,6 +86,7 @@ def test_a_dry_run_reports_the_inventory_it_planned_from(tmp_path: Path) -> None
     assert calls == 1, "the dry run plans and reports from one inventory scan"
     assert report.retained is not None, "the report describes the planned history"
     assert report.retained.closed_segments == 2, "both planned segments are described"
+    assert report.retained.complete, "an undisturbed active file is still measured"
 
 
 def test_an_unreadable_store_fails_a_dry_run_without_writing_state(
@@ -213,4 +214,41 @@ def test_a_seal_during_measurement_makes_the_totals_a_lower_bound(
     )
     assert report.retained.complete is False, (
         "an unmeasured active file makes the totals a lower bound"
+    )
+
+
+def test_a_seal_during_planning_makes_a_dry_run_a_lower_bound(
+    tmp_path: Path,
+) -> None:
+    """Inspection must not present a seal race as a complete zero-row history.
+
+    A dry run plans from the inventory and the active file. If the writer
+    seals between those reads, the rows live in a segment the inventory never
+    saw and in neither observation, so a complete zero-row history would be a
+    lie about what the store retains.
+    """
+    store = archive.unsealed_store(tmp_path)
+    read_inventory = outcome_segment_inventory.read_inventory
+
+    def seal_after_read(
+        inventory_layout: SegmentLayout, *, retention_floor: int | None = None
+    ) -> outcome_segment_inventory.Inventory:
+        """Read the inventory, then seal before the active file is read."""
+        inventory = read_inventory(inventory_layout, retention_floor=retention_floor)
+        archive.seal_store(store)
+        return inventory
+
+    with mock.patch.object(
+        outcome_segment_inventory, "read_inventory", seal_after_read
+    ):
+        report = archive.run(
+            tmp_path,
+            archive.policy(max_bytes=0, segment_bytes=4000),
+            dry_run=True,
+        )
+
+    assert report.retained is not None, "the inspection still reports what it saw"
+    assert report.retained.record_count == 0, "the replaced file holds only a header"
+    assert report.retained.complete is False, (
+        "history the planning reads could not see is a lower bound"
     )

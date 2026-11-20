@@ -115,16 +115,19 @@ def run_archive(
     try:
         if selected.dry_run:
             # A dry run mutates nothing, so it may plan without the lock.
-            plan, active, inventory = _plan(layout, policy, started)
+            plan, view = _plan(layout, policy, started)
             return outcome_archive_reports.dry_report(
-                _archive_run(context, plan), active, inventory
+                _archive_run(context, plan),
+                view.active,
+                view.inventory,
+                is_replaced=view.is_replaced,
             )
         with outcome_archive_lock.ArchiveLock(layout.lock_file):
             # Another archiver may have changed the store while this process
             # waited for the lock, so the plan is built from what is on disk
             # now rather than from a pre-lock inventory.
-            plan, active, _ = _plan(layout, policy, started)
-            return _execute(_archive_run(context, plan), active)
+            plan, view = _plan(layout, policy, started)
+            return _execute(_archive_run(context, plan), view.active)
     except outcome_archive_lock.ArchiveBusyError:
         return outcome_archive_reports.unfinished(
             started, outcome_archive_reports.BUSY, policy, dry_run=selected.dry_run
@@ -147,7 +150,7 @@ def run_archive(
 
 def _plan(
     layout: SegmentLayout, policy: RetentionPolicy, now: dt.datetime
-) -> tuple[Plan, ActiveHistory, outcome_segment_inventory.Inventory]:
+) -> tuple[Plan, _StoreView]:
     """Read the store as it is and plan one run from it.
 
     The active file is read once, through a bounded reader, so its size drives
@@ -156,17 +159,24 @@ def _plan(
     reports the same history it planned against rather than a later scan that
     another process may already have changed.
 
+    The writer seals without the archive lock, so both reads are bracketed by
+    the active file's identity. A seal in that window moves rows into a
+    segment the inventory never saw, and leaves that observation complete
+    only if the file did not change. A replaced file leaves the view marked so
+    a dry run reports its totals as a lower bound.
+
     Returns
     -------
-    tuple[Plan, ActiveHistory, Inventory]
-        The operations to perform, the active file's measured state and the
-        closed-history inventory the plan was derived from.
+    tuple[Plan, _StoreView]
+        The operations to perform and the store state the plan was derived
+        from.
     """
     floor = outcome_segment_state.read_retention_floor(layout)
-    inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    active = outcome_archive_active.read_active_history(layout.active)
-    plan = plan_run(inventory, policy, now=now, active_bytes=active.logical_bytes)
-    return plan, active, inventory
+    view = _read_store(layout, floor)
+    plan = plan_run(
+        view.inventory, policy, now=now, active_bytes=view.active.logical_bytes
+    )
+    return plan, view
 
 
 def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.ArchiveRun:
@@ -220,7 +230,7 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
         # The retention pass re-plans from the store this run has just
         # published, so it can fail to read what ``perform`` already wrote.
         outcome_archive_run.retain(run, outcome)
-        measurement = _measure(layout, outcome)
+        floor, view = _measure(layout, outcome)
     except OSError:
         # The archives and evictions are already published. Returning the
         # pre-run failure report would erase them from the record, so keep
@@ -229,18 +239,16 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
             run, active, outcome, "unreadable"
         )
     measured = retained_history(
-        measurement.inventory, None if measurement.is_replaced else measurement.active
+        view.inventory, None if view.is_replaced else view.active
     )
     records, observed_from, observed_until = outcome_archive_reports.observed(
-        measurement.inventory
+        view.inventory
     )
     report = RunReport(
-        status=(
-            "corrupt" if outcome.failures or not measurement.active.complete else "ok"
-        ),
+        status="corrupt" if outcome.failures or not view.active.complete else "ok",
         started_at=run.started_at,
         finished_at=utc_now(),
-        active_bytes=measurement.active.logical_bytes,
+        active_bytes=view.active.logical_bytes,
         retained_bytes=measured.logical_bytes,
         retained_records=records,
         observed_from=observed_from,
@@ -250,16 +258,16 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
         plan=run.summary,
         actions=tuple(outcome.actions),
         failures=tuple(outcome.failures),
-        gaps=measurement.inventory.gaps,
-        gaps_truncated=measurement.inventory.gaps_truncated,
-        missing_sidecars=measurement.inventory.missing_sidecars,
-        corrupt_sidecars=measurement.inventory.corrupt_sidecars,
-        orphan_sidecars=measurement.inventory.orphan_sidecars,
+        gaps=view.inventory.gaps,
+        gaps_truncated=view.inventory.gaps_truncated,
+        missing_sidecars=view.inventory.missing_sidecars,
+        corrupt_sidecars=view.inventory.corrupt_sidecars,
+        orphan_sidecars=view.inventory.orphan_sidecars,
         limits=RetentionLimits.of(run.context.policy),
         retained=measured,
     )
     try:
-        outcome_archive_reports.write_state(layout, measurement.floor, report)
+        outcome_archive_reports.write_state(layout, floor, report)
     except OSError:
         return dc.replace(
             report,
@@ -271,54 +279,63 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
 
 
 @dc.dataclass(frozen=True, slots=True)
-class _Measurement:
-    """The store's history, read once per side after the run's writes.
+class _StoreView:
+    """Both sides of the store, read once each.
 
     Attributes
     ----------
-    floor : int
-        The retention floor to persist.
     inventory : Inventory
-        The closed history as it stands after the run.
+        The closed history as the read observed it.
     active : ActiveHistory
-        The active file as the final read observed it.
+        The active file as the read observed it.
     is_replaced : bool
         Whether the writer installed a different active file during the read.
     """
 
-    floor: int
     inventory: outcome_segment_inventory.Inventory
     active: ActiveHistory
     is_replaced: bool
 
 
-def _measure(
-    layout: SegmentLayout, outcome: outcome_archive_run.RunOutcome
-) -> _Measurement:
-    """Read the retained history after the run's writes.
+def _read_store(layout: SegmentLayout, floor: int | None) -> _StoreView:
+    """Read both sides of the store and detect a seal racing the reads.
 
     The writer may seal the active file at any moment without taking the
-    archive lock, so the file's identity is compared either side of the final
-    reads. A replacement in that window means the closed history and the active
-    file describe different stores: the caller must report a lower bound
-    instead of counting a sealed segment's rows a second time.
+    archive lock, so the file's identity is compared either side of the reads.
+    A replacement in that window means the closed history and the active file
+    describe different stores: the caller must report a lower bound instead of
+    counting a sealed segment's rows a second time, or presenting a complete
+    zero-row history.
 
     Returns
     -------
-    _Measurement
-        The floor, the closed history, the active file and whether the writer
-        replaced it while both were being read.
+    _StoreView
+        The closed history and the active file, with whether the writer
+        replaced the active file while both were being read.
+    """
+    before = outcome_archive_active.active_identity(layout.active)
+    inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
+    active = outcome_archive_active.read_active_history(layout.active)
+    replaced = before != outcome_archive_active.active_identity(layout.active)
+    return _StoreView(inventory, active, replaced)
+
+
+def _measure(
+    layout: SegmentLayout, outcome: outcome_archive_run.RunOutcome
+) -> tuple[int, _StoreView]:
+    """Read the retained history after the run's writes.
+
+    Returns
+    -------
+    tuple[int, _StoreView]
+        The floor to persist and the store as the final read observed it.
     """
     floor = _retention_floor(
         outcome_segment_inventory.read_inventory(layout),
         outcome_segment_state.read_retention_floor(layout),
         outcome,
     )
-    before = outcome_archive_active.active_identity(layout.active)
-    inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    active = outcome_archive_active.read_active_history(layout.active)
-    replaced = before != outcome_archive_active.active_identity(layout.active)
-    return _Measurement(floor, inventory, active, replaced)
+    return floor, _read_store(layout, floor)
 
 
 def _retention_floor(
