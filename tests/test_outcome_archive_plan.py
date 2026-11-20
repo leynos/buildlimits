@@ -119,6 +119,42 @@ def test_a_record_cap_trims_the_archive_it_straddles() -> None:
     ], "the straddling archive drops its oldest rows"
 
 
+def test_a_record_cap_counts_the_writers_unsealed_rows() -> None:
+    """The cap bounds the whole store, so the active file's rows count too.
+
+    Counting only archives would let a store hold the cap in archived history
+    and another cap in the file the writer is still filling.
+    """
+    entries = tuple(archived(sequence) for sequence in range(1, 4))
+
+    decision = plan(
+        Inventory(archived=entries),
+        policy(max_bytes=0, max_records=4),
+        active_records=2,
+    )
+
+    assert [item.sequence for item in decision.deletes] == [1], (
+        "the active rows are part of the excess the plan must remove"
+    )
+
+
+def test_a_record_cap_counts_sealed_rows_still_awaiting_archival() -> None:
+    """A row the writer has closed is retained whether or not it is compressed."""
+    entries = (sealed(1), archived(2))
+
+    decision = plan(
+        Inventory(sealed=entries[:1], archived=entries[1:]),
+        policy(max_bytes=0, max_records=1),
+    )
+
+    assert [item.sequence for item in decision.deletes] == [2], (
+        "the sealed row is counted, so the archive must make room"
+    )
+    assert [item.sequence for item in decision.archive] == [1], (
+        "a sealed source is archived rather than evicted"
+    )
+
+
 def test_the_summary_counts_every_operation(snapshot: SnapshotAssertion) -> None:
     """A summary describes a plan without naming a path or a sequence."""
     decision = Plan(

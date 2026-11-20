@@ -14,7 +14,9 @@ from buildlimits import (
     outcome_archive_quarantine,
     outcome_segment_inventory,
 )
+from buildlimits.outcome_archive_budget import ActiveHistory
 from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
+from buildlimits.outcome_archive_encode import read_source_facts
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
 from buildlimits.outcome_archive_verify import (
     OutputFaultError,
@@ -30,7 +32,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
-__all__ = ["ArchiveRun", "RunOutcome", "active_bytes", "perform", "retain"]
+__all__ = ["ArchiveRun", "RunOutcome", "active_history", "perform", "retain"]
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -97,7 +99,7 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
         inventory,
         run.context.policy,
         now=run.context.now,
-        active_bytes=active_bytes(layout.active),
+        active=active_history(layout.active),
     )
     # Only an archive this run removed is out of reach. A quarantined *source*
     # leaves its archive in place, and that archive is still eligible for the
@@ -113,19 +115,32 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
             _delete_one(run, entry, outcome)
 
 
-def active_bytes(path: Path) -> int:
-    """Return the active file's logical size, or zero when it is absent.
+def active_history(path: Path) -> ActiveHistory:
+    """Read what the writer's active file holds at this moment.
+
+    The store is scanned without the archive lock, because the writer owns
+    that file and never holds the archiver's lock. A concurrent append can
+    therefore leave an unterminated final row, which the reader drops exactly
+    as the archiver drops a torn tail from a sealed source. An absent file has
+    nothing to count; one that cannot be read at all is reported by its size
+    alone, and the next run counts its rows again.
 
     Returns
     -------
-    int
-        The regular file's size in bytes.
+    ActiveHistory
+        The file's size in bytes and the record rows it currently holds.
     """
     try:
-        metadata = path.lstat()
+        size = path.lstat().st_size
     except FileNotFoundError:
-        return 0
-    return metadata.st_size
+        return ActiveHistory()
+    except OSError:
+        return ActiveHistory()
+    try:
+        facts = read_source_facts(path)
+    except OSError, SegmentFaultError:
+        return ActiveHistory(bytes=size)
+    return ActiveHistory(bytes=size, records=facts.record_count)
 
 
 def _reconcile_one(

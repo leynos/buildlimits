@@ -20,6 +20,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
 __all__ = [
+    "ActiveHistory",
     "Budget",
     "plan_byte_steps",
     "plan_record_steps",
@@ -29,8 +30,29 @@ __all__ = [
 
 
 @dc.dataclass(frozen=True, slots=True)
+class ActiveHistory:
+    """What the writer's active file holds at the moment a run plans.
+
+    Both bounds measure the whole retained store, so the rows the writer has
+    not yet sealed are counted exactly as closed archives are. The writer owns
+    the file, so this is a snapshot: it can only be as current as the scan that
+    produced it.
+
+    Attributes
+    ----------
+    bytes : int
+        Logical bytes in the active file.
+    records : int
+        Record rows in the active file, excluding the header.
+    """
+
+    bytes: int = 0
+    records: int = 0
+
+
+@dc.dataclass(frozen=True, slots=True)
 class Budget:
-    """The policy, cutoff and active bytes one plan is measured against.
+    """The policy, cutoff and unsealed history one plan is measured against.
 
     Attributes
     ----------
@@ -38,13 +60,19 @@ class Budget:
         The effective retention policy.
     cutoff : datetime | None
         The age cutoff, or None when no age limit is configured.
-    active_bytes : int
-        Logical bytes in the writer's active file.
+    active : ActiveHistory
+        What the writer's active file holds.
+    sealed_records : int
+        Rows in sealed sources this run will archive, counted so the record cap
+        covers history the writer has closed but the archiver has not yet
+        compressed. Sources without writer metadata have no known count and
+        contribute nothing; the next run counts them once they are archives.
     """
 
     policy: RetentionPolicy
     cutoff: dt.datetime | None
-    active_bytes: int
+    active: ActiveHistory = dc.field(default_factory=ActiveHistory)
+    sealed_records: int = 0
 
 
 def plan_byte_steps(
@@ -62,7 +90,7 @@ def plan_byte_steps(
     """
     if not budget.policy.has_byte_limit:
         return
-    retained = budget.active_bytes + sum(
+    retained = budget.active.bytes + sum(
         size for _, size in _surviving(candidates, deletes, trims, planned_size)
     )
     excess = retained - budget.policy.max_bytes
@@ -87,23 +115,27 @@ def plan_byte_steps(
 
 def plan_record_steps(
     candidates: tuple[SegmentEntry, ...],
-    max_records: int | None,
+    budget: Budget,
     deletes: dict[int, SegmentEntry],
     trims: dict[int, Trim],
 ) -> None:
     """Evict the oldest archives until the retained record cap is met.
 
-    Only an explicitly configured cap applies, and only to closed history: the
-    writer owns the active file, so its rows become evictable once it seals
-    them. An archive with no trustworthy sidecar has no known count and is
-    skipped; the heal step runs before retention on the next pass.
+    Only an explicitly configured cap applies. The cap bounds the whole
+    retained store, so the rows in the active file and in sealed sources count
+    towards it; only archives are evictable, because the writer owns the active
+    file and a sealed source must be archived before it can be dropped. An
+    archive with no trustworthy sidecar has no known count and is skipped; the
+    heal step runs before retention on the next pass.
 
     ``deletes`` and ``trims`` are updated in place, exactly as the byte budget
     does, and a whole archive is deleted while it fits inside the excess.
     """
+    max_records = budget.policy.max_records
     if max_records is None:
         return
-    retained = sum(
+    retained = budget.active.records + budget.sealed_records
+    retained += sum(
         records
         for entry, records in _surviving(candidates, deletes, trims, planned_records)
         if records is not None

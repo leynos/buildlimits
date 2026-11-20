@@ -25,7 +25,11 @@ from outcome_archive_helpers import (
     write,
 )
 
-from buildlimits import outcome_archive_encode, outcome_archive_files
+from buildlimits import (
+    outcome_archive_encode,
+    outcome_archive_files,
+    outcome_archive_run,
+)
 from buildlimits.outcome_archive_verify import OutputFaultError, SegmentFaultError
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import archive_name, segment_name
@@ -154,7 +158,9 @@ def test_a_failed_delete_is_recorded_and_keeps_the_archive(
     """An archive that cannot be removed is reported and left in place."""
     store = tmp_path / "cache-outcomes.jsonl"
     old = NOW - dt.timedelta(days=40)
-    write(store, records(old, 1), policy())
+    # The writer drops a row that arrives already expired, so expired history
+    # on disk is sealed under a longer bound than the run applies.
+    write(store, records(old, 1), policy(max_age_days=60))
 
     monkeypatch.setattr(outcome_archive_files, "delete_archive", refuse)
 
@@ -168,26 +174,30 @@ def test_a_failed_delete_is_recorded_and_keeps_the_archive(
 
 
 def test_a_record_cap_trims_an_archive_in_the_planning_run(tmp_path: Path) -> None:
-    """A cap inside one archive's rows trims that archive in the same run.
+    """A cap is met by deleting whole archives and trimming the straddler.
 
+    The cap counts the rows the writer still holds in the active file, so the
+    plan removes more from the archives than the closed count alone suggests.
     The trim is planned by the run's own plan, so this covers the run's trim
-    step rather than the retention re-plan a heal-only run performs. The cap
-    leaves the trimmed archive holding the rows the cap allows, so a rewrite
-    that dropped the whole archive would fail the count here.
+    step rather than the retention re-plan a heal-only run performs.
     """
     store = tmp_path / "cache-outcomes.jsonl"
     base = policy(segment_bytes=2000)
     write(store, records(NOW, 12), base)
+    active = outcome_archive_run.active_history(layout(tmp_path).active)
 
     report = run(tmp_path, dc.replace(base, max_records=8))
 
     assert report.status == "ok", "a trim is not a failure"
     expected = [("archived", sequence) for sequence in (1, 2, 3)]
-    expected.append(("trimmed", 1))
+    expected += [("trimmed", 2), ("deleted", 1)]
     assert [
         (action.action, action.sequence) for action in report.actions
-    ] == expected, "the archive holding the excess rows is trimmed"
+    ] == expected, "the oldest archive goes and the straddler is trimmed"
     kept = read_inventory(layout(tmp_path)).archived
-    assert [entry.record_count for entry in kept] == [2, 3, 3], (
-        "the trimmed archive keeps exactly the rows the cap allows"
+    assert [entry.record_count for entry in kept] == [2, 3], (
+        "the straddler keeps exactly the rows the cap allows"
+    )
+    assert active.records + sum(entry.record_count or 0 for entry in kept) == 8, (
+        "the active rows count towards the cap"
     )

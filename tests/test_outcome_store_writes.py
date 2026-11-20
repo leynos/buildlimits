@@ -16,6 +16,7 @@ from outcome_store_helpers import (
     start_writer,
     stored_records,
     wait_for_results,
+    wait_for_salt,
     window_summary,
     worker_exited,
 )
@@ -168,6 +169,35 @@ def test_an_expired_active_file_is_compacted_at_startup(tmp_path: Path) -> None:
     decoded = outcome_store_io.read_store(store)
     assert isinstance(decoded, DecodedStore), "the compacted store decodes"
     assert decoded.records == (), "only the replacement header remains"
+
+
+def test_a_row_that_arrives_expired_is_dropped_by_its_own_append(
+    tmp_path: Path,
+) -> None:
+    """The age bound applies to ordinary appends, not only to startup.
+
+    A quiet store never reaches its segment size, so waiting for the next
+    restart would let an expired row outlive the bound indefinitely.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    expired = window_summary(observed_at=NOW - dt.timedelta(days=40))
+    writer = outcome_store.StoreWriter(
+        store, policy=history_policy(1 << 20), wall_clock=lambda: NOW
+    )
+    try:
+        wait_for_salt(writer)
+        wait_for_results(writer, operation="load")
+        append_and_wait(writer, expired)
+        compacted = wait_for_results(writer, operation="compact", reason="expired")
+        decoded = outcome_store_io.read_store(store)
+    finally:
+        writer.close(1.0)
+
+    assert any(result.discarded == 1 for result in compacted), (
+        "the expired row is counted as discarded"
+    )
+    assert isinstance(decoded, DecodedStore), "the compacted store decodes"
+    assert decoded.records == (), "the row is gone before the next restart"
 
 
 def test_failed_append_keeps_the_previous_store_readable(tmp_path: Path) -> None:

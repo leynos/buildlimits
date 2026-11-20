@@ -114,6 +114,33 @@ class OutcomeStoreMachine(RuleBasedStateMachine):
             "the generated append is acknowledged"
         )
         self.expected.append(record)
+        self._model_append_ageing()
+
+    def _model_append_ageing(self) -> None:
+        """Mirror the age check the writer runs after every append.
+
+        The check reads the clock, so the model advances its skew baseline
+        here too. A jump detected on this append is passed to the compaction
+        through the same pending flag the writer uses, which makes that
+        compaction preserve rows rather than age them.
+        """
+        if not self.expected:
+            return
+        self._observe_model_clock()
+        cutoff = self.wall_time - dt.timedelta(days=outcome_records.RETENTION_DAYS)
+        if self.expected[0].observed_at >= cutoff:
+            return
+        wait_for_results(self.writer, operation="compact")
+        self._compact_model()
+
+    def _observe_model_clock(self) -> None:
+        """Mirror ``StoreFiles.observe_clock`` and the flag it retains."""
+        wall_elapsed = (self.wall_time - self.last_wall_time).total_seconds()
+        monotonic_elapsed = self.monotonic_time - self.last_monotonic_time
+        if abs(wall_elapsed - monotonic_elapsed) > _DAY_SECONDS:
+            self.clock_skew_pending = True
+        self.last_wall_time = self.wall_time
+        self.last_monotonic_time = self.monotonic_time
 
     def _advance_in_sync(self, days: int) -> None:
         """Move wall and monotonic clocks together by the generated interval."""
@@ -128,17 +155,12 @@ class OutcomeStoreMachine(RuleBasedStateMachine):
 
     def _compact_model(self) -> bool:
         """Apply the writer's retention, insertion-order and clock rules."""
-        wall_elapsed = (self.wall_time - self.last_wall_time).total_seconds()
-        monotonic_elapsed = self.monotonic_time - self.last_monotonic_time
-        if abs(wall_elapsed - monotonic_elapsed) > _DAY_SECONDS:
-            self.clock_skew_pending = True
+        self._observe_model_clock()
         skipped_ageing = self.clock_skew_pending
-        if self.clock_skew_pending:
+        if skipped_ageing:
             self._mark("clock-skew")
         self._apply_model_retention(should_age=not skipped_ageing)
         self.clock_skew_pending = False
-        self.last_wall_time = self.wall_time
-        self.last_monotonic_time = self.monotonic_time
         return skipped_ageing
 
     def _apply_model_retention(self, *, should_age: bool) -> None:

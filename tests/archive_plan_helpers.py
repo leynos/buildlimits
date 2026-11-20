@@ -9,6 +9,7 @@ import datetime as dt
 import typing as typ
 from pathlib import Path
 
+from buildlimits.outcome_archive_budget import ActiveHistory
 from buildlimits.outcome_archive_plan import Plan, plan_run
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segment_inventory import Inventory, SegmentEntry
@@ -119,6 +120,7 @@ def plan(
     retention: RetentionPolicy,
     *,
     active_bytes: int = 0,
+    active_records: int = 0,
 ) -> Plan:
     """Plan one run at a fixed wall time.
 
@@ -127,4 +129,5 @@ def plan(
     Plan
         The planner's decision.
     """
-    return plan_run(inventory, retention, now=NOW, active_bytes=active_bytes)
+    active = ActiveHistory(bytes=active_bytes, records=active_records)
+    return plan_run(inventory, retention, now=NOW, active=active)

@@ -130,7 +130,10 @@ def test_a_failed_orphan_quarantine_does_not_stop_eviction(
     retrying work it had already planned.
     """
     store = tmp_path / "cache-outcomes.jsonl"
-    write(store, records(NOW - dt.timedelta(days=40), 2), policy())
+    # Sealed under a longer bound than the run applies: the writer drops rows
+    # that arrive already expired, so expired history on disk is history the
+    # writer was allowed to keep and the archiver must evict.
+    write(store, records(NOW - dt.timedelta(days=40), 2), policy(max_age_days=60))
     store_layout = layout(tmp_path)
     store_layout.archive_dir.mkdir(parents=True)
     write_private(

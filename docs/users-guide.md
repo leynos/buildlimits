@@ -350,16 +350,22 @@ history view:
 - Eviction is oldest-first. A record whose observation time equals the age
   cutoff is retained; one older than the cutoff is not.
 - The record cap bounds the retained record count across active, sealed and
-  archived history. It removes whole oldest archives while they fit inside the
-  excess, then trims the archive that straddles the boundary, so a segmented
-  history is capped rather than exempt. Zero leaves segmented history uncapped.
+  archived history. The archiver streams the active file once per plan to
+  count its rows, and counts each sealed source's recorded count, so a store
+  cannot hold the cap in archives while the writer fills another cap beside
+  it. It removes whole oldest archives while they fit inside the excess, then
+  trims the archive that straddles the boundary, so a segmented history is
+  capped rather than exempt. Only archives can be evicted: the writer owns the
+  active file and a sealed source must be archived before it can be dropped.
+  Zero leaves segmented history uncapped.
 
-The writer also enforces the age bound when it starts: an active file whose
-oldest record predates the cutoff, and which is not also oversized, is
-compacted as the store loads. A host that was idle past the bound therefore
-does not carry its expired rows forward indefinitely. An oversized file is
-sealed first, and the archiver's next run applies the age policy to that
-segment.
+The writer also enforces the age bound when it starts, and on every append: an
+active file whose oldest record predates the cutoff, and which is not also
+oversized, is compacted as the store loads, and a row that arrives already
+expired is dropped once it is appended. A host that was idle past the bound,
+or one that only receives old observations, therefore does not carry its
+expired rows forward indefinitely. An oversized file is sealed first, and the
+archiver's next run applies the age policy to that segment.
 
 The retention keys and their defaults are in [Table 2](#supervisor-settings).
 The 12 MiB default is the legacy bound, so a host that writes none of the keys

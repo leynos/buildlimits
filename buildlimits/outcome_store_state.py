@@ -201,6 +201,26 @@ class StoreFiles:
             return
         self.records.append(record)
         self.publish("append", "none", records=1)
+        self.expire_if_aged()
+
+    def expire_if_aged(self) -> None:
+        """Compact once the oldest retained row has aged past the cutoff.
+
+        A segmented store seals only when the active file reaches
+        ``segment_bytes``, so a quiet store would otherwise keep rows past the
+        age bound until shutdown. Compaction drops every row observed before
+        the cutoff, which makes the check cheap and self-limiting: it reads the
+        clock on each append and rewrites the file only when the bound has
+        actually been crossed. Rows are appended in observation order, so the
+        first retained row is the oldest; a caller that appends an older row
+        later still has it dropped by the next compaction.
+        """
+        policy = self.policy
+        if not policy.has_age_limit or not self.records:
+            return
+        cutoff = policy.cutoff(self.observe_clock())
+        if cutoff is not None and self.records[0].observed_at < cutoff:
+            self.compact()
 
     def settle_bytes(self) -> int:
         """Return the active size that triggers compaction or sealing.

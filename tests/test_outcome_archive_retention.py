@@ -83,7 +83,10 @@ def test_age_eviction_settles_in_the_same_run(tmp_path: Path) -> None:
     """History archived by a run is evicted by that run when already too old."""
     store = tmp_path / "cache-outcomes.jsonl"
     old = NOW - dt.timedelta(days=40)
-    write(store, records(old, 2), policy())
+    # The writer enforces the age bound on its own appends, so the fixture is
+    # sealed under a policy that keeps it; the archiver then applies the
+    # shorter bound this test is about.
+    write(store, records(old, 2), policy(max_age_days=60))
 
     report = run(tmp_path, policy(max_age_days=30))
 

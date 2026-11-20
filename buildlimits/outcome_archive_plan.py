@@ -12,6 +12,7 @@ import dataclasses as dc
 import typing as typ
 
 from buildlimits.outcome_archive_budget import (
+    ActiveHistory,
     Budget,
     plan_byte_steps,
     plan_record_steps,
@@ -146,7 +147,7 @@ def plan_run(
     policy: RetentionPolicy,
     *,
     now: dt.datetime,
-    active_bytes: int,
+    active: ActiveHistory,
 ) -> Plan:
     """Decide every operation one archive run should perform.
 
@@ -158,8 +159,8 @@ def plan_run(
         The effective retention policy.
     now : datetime
         The caller-supplied UTC wall time.
-    active_bytes : int
-        Logical bytes in the writer's active file.
+    active : ActiveHistory
+        What the writer's active file holds.
 
     Returns
     -------
@@ -170,10 +171,13 @@ def plan_run(
     --------
     An empty inventory plans nothing and retains only the active bytes.
     >>> import datetime as dt
+    >>> from buildlimits.outcome_archive_budget import ActiveHistory
     >>> from buildlimits.outcome_retention import RetentionPolicy
     >>> from buildlimits.outcome_segment_inventory import Inventory
     >>> now = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
-    >>> plan_run(Inventory(), RetentionPolicy(), now=now, active_bytes=7).retained_bytes
+    >>> plan_run(
+    ...     Inventory(), RetentionPolicy(), now=now, active=ActiveHistory(bytes=7)
+    ... ).retained_bytes
     7
     """
     duplicates = tuple(
@@ -189,10 +193,15 @@ def plan_run(
         if entry.sequence not in duplicated_sequences
     )
     heal = _heal_steps(inventory, duplicated_sequences)
-    budget = Budget(policy=policy, cutoff=policy.cutoff(now), active_bytes=active_bytes)
+    budget = Budget(
+        policy=policy,
+        cutoff=policy.cutoff(now),
+        active=active,
+        sealed_records=_sealed_records(inventory.sealed, duplicated_sequences),
+    )
     deletes, trims = _retention_steps(inventory, budget, duplicated_sequences)
     retained = _retained_estimate(
-        inventory, active_bytes=active_bytes, deletes=deletes, trims=trims
+        inventory, active_bytes=active.bytes, deletes=deletes, trims=trims
     )
     return Plan(
         reconcile=duplicates,
@@ -203,6 +212,22 @@ def plan_run(
         deletes=deletes,
         retained_bytes=retained,
         cutoff=budget.cutoff,
+    )
+
+
+def _sealed_records(sealed: tuple[SegmentEntry, ...], duplicated: set[int]) -> int:
+    """Count the rows in sealed sources this run will archive.
+
+    A duplicated sequence is counted once, through its archive: reconciliation
+    removes the redundant source rather than compressing it again.
+
+    Returns
+    -------
+    int
+        The known record count of the sealed sources, excluding duplicates.
+    """
+    return sum(
+        entry.record_count or 0 for entry in sealed if entry.sequence not in duplicated
     )
 
 
@@ -244,7 +269,7 @@ def _retention_steps(
             _plan_age_step(entry, budget.cutoff, deletes)
     trims = _age_trims(candidates, budget.cutoff, deletes)
     plan_byte_steps(candidates, budget, deletes, trims)
-    plan_record_steps(candidates, budget.policy.max_records, deletes, trims)
+    plan_record_steps(candidates, budget, deletes, trims)
     # Byte planning runs after age planning and may delete an archive that also
     # carries an age trim. Rewriting a file that is about to be removed would
     # only churn it, so a deleted sequence is never also planned as a trim.
@@ -259,7 +284,12 @@ def _retention_steps(
 def _plan_age_step(
     entry: SegmentEntry, cutoff: dt.datetime, deletes: dict[int, SegmentEntry]
 ) -> None:
-    """Record a whole-segment age deletion when every row is older."""
+    """Record a whole-segment age deletion when every row is older.
+
+    An entry without a trustworthy sidecar has neither a count nor a span, so
+    no age decision can be made from it. The heal step repairs the sidecar,
+    and the next firing plans from the span it rebuilt.
+    """
     if not entry.has_metadata or entry.last_observed_at is None:
         return
     if entry.last_observed_at < cutoff:

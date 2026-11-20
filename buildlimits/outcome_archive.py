@@ -33,6 +33,7 @@ from buildlimits.outcome_archive_report import (
 from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
 
 if typ.TYPE_CHECKING:
+    from buildlimits.outcome_archive_budget import ActiveHistory
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_segments import SegmentLayout
@@ -126,18 +127,18 @@ def run_archive(
 
 def _plan(
     layout: SegmentLayout, policy: RetentionPolicy, now: dt.datetime
-) -> tuple[Plan, int]:
+) -> tuple[Plan, ActiveHistory]:
     """Read the store as it is and plan one run from it.
 
     Returns
     -------
-    tuple[Plan, int]
-        The operations to perform and the active file's logical size.
+    tuple[Plan, ActiveHistory]
+        The operations to perform and what the active file holds.
     """
     floor = outcome_segment_state.read_retention_floor(layout)
     inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    active = outcome_archive_run.active_bytes(layout.active)
-    return plan_run(inventory, policy, now=now, active_bytes=active), active
+    active = outcome_archive_run.active_history(layout.active)
+    return plan_run(inventory, policy, now=now, active=active), active
 
 
 def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.ArchiveRun:
@@ -156,7 +157,7 @@ def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.Arc
     )
 
 
-def _execute(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
+def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunReport:
     """Take the archive directories, perform the plan and write state.
 
     Returns
@@ -179,14 +180,15 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
         outcome,
     )
     final = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    retained = outcome_archive_run.active_bytes(layout.active) + final.sealed_bytes
+    retained = outcome_archive_run.active_history(layout.active).bytes
+    retained += final.sealed_bytes
     retained += final.archived_logical_bytes
     records, observed_from, observed_until = _observed(final)
     report = RunReport(
         status="corrupt" if outcome.failures else "ok",
         started_at=run.started_at,
         finished_at=utc_now(),
-        active_bytes=active,
+        active_bytes=active.bytes,
         retained_bytes=retained,
         retained_records=records,
         observed_from=observed_from,
@@ -278,7 +280,9 @@ def _observed(
     return records, min(first, default=None), max(last, default=None)
 
 
-def _dry_report(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
+def _dry_report(
+    run: outcome_archive_run.ArchiveRun, active: ActiveHistory
+) -> RunReport:
     """Build the report a dry run returns without changing any file.
 
     Returns
@@ -295,7 +299,7 @@ def _dry_report(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
         started_at=run.started_at,
         finished_at=utc_now(),
         dry_run=True,
-        active_bytes=active,
+        active_bytes=active.bytes,
         retained_bytes=run.plan.retained_bytes,
         retained_records=records,
         observed_from=observed_from,
