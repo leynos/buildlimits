@@ -162,17 +162,23 @@ class OutcomeShell:
         except Exception:  # ruff: ignore[blind-except] - a status read must not disable recording.
             return {"enabled": False, "reason": "snapshot_unavailable"}
 
-    def retention(self) -> dict[str, object]:
+    def retention(self) -> dict[str, object] | None:
         """Return the effective retention policy and the active snapshot.
+
+        ``describe``-style status query: a fault omits the section rather
+        than disabling a working recorder.
 
         Returns
         -------
-        dict[str, object]
-            ``limits`` and ``active`` mappings, both JSON-compatible.
+        dict[str, object] | None
+            ``limits`` and ``active``, or None when the snapshot failed.
         """
-        return supervisor_outcome_setup.retention_document(
-            self._supervisor, self._resources.writer
-        )
+        try:
+            return supervisor_outcome_setup.retention_document(
+                self._supervisor, self._resources.writer
+            )
+        except Exception:  # ruff: ignore[blind-except] - a status read must not fail status.
+            return None
 
     def close(self, timeout: float = OUTCOME_CLOSE_SECONDS) -> None:
         """Cancel the query, reap its helper and close the writer within a bound."""
