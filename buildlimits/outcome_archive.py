@@ -9,16 +9,17 @@ reported as a closed reason and an exit status a systemd timer can act on.
 
 import dataclasses as dc
 import datetime as dt
-import errno
 import typing as typ
 
 from buildlimits import (
+    outcome_archive_active,
     outcome_archive_fs,
     outcome_archive_lock,
     outcome_archive_run,
     outcome_segment_inventory,
     outcome_segment_state,
 )
+from buildlimits.outcome_archive_budget import UnknownActiveHistoryError
 from buildlimits.outcome_archive_context import ArchiveContext
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
 from buildlimits.outcome_archive_report import (
@@ -123,12 +124,18 @@ def run_archive(
         return _unfinished(started, "busy", "busy")
     except outcome_archive_lock.NoHeadroomError:
         return _unfinished(started, "no_headroom", "no_headroom")
-    except OSError as error:
-        if error.errno == errno.ENOSPC:
-            # The headroom check reads free space once, before the pass; the
-            # filesystem can still fill while this run works.
-            return _unfinished(started, "no_headroom", "no_headroom")
+    except UnknownActiveHistoryError:
+        # The record cap counts the writer's unsealed rows. A run that cannot
+        # read them cannot show the store is within the cap, so it reports an
+        # operational failure rather than counting the active file as empty.
         return _unfinished(started, "failed", "unreadable")
+    except OSError as error:
+        # The headroom check reads free space once, before the pass, so the
+        # filesystem can still fill while this run works. A full filesystem is
+        # retryable; anything else needs an operator.
+        reason = outcome_archive_run.failure_reason(error)
+        status: RunStatus = "no_headroom" if reason == "no_headroom" else "failed"
+        return _unfinished(started, status, reason)
 
 
 def _plan(
@@ -143,7 +150,7 @@ def _plan(
     """
     floor = outcome_segment_state.read_retention_floor(layout)
     inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    active = outcome_archive_run.active_history(layout.active)
+    active = outcome_archive_active.active_history(layout.active)
     return plan_run(inventory, policy, now=now, active=active), active
 
 
@@ -186,7 +193,7 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
         outcome,
     )
     final = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    final_active = outcome_archive_run.active_history(layout.active)
+    final_active = outcome_archive_active.active_history(layout.active)
     retained = final_active.bytes + final.sealed_bytes + final.archived_logical_bytes
     observed = _observed(final, final_active)
     report = RunReport(

@@ -362,10 +362,13 @@ carries the same figures as `retained_records`, `observed_from`,
 The writer seals the active file when an append would take it past 12 MiB, so
 the archiver only ever rewrites closed segments. The archiver compresses each
 sealed segment to XZ, verifies the archive against its source, publishes it,
-and only then removes the plain source. It holds a private lock of its own and
-never writes or replaces the active file. It does read the active file, once
-per plan, to measure the rows and span the writer currently holds; the read is
-bounded and refuses a path that is not a regular file.
+and only then removes the plain source. A segment that retention has placed
+wholly outside the bounds is the exception: it is removed without being
+compressed, so a run never spends its scratch space archiving history the same
+plan deletes. It holds a private lock of its own and never writes or replaces
+the active file. It does read the active file, once per plan, to measure the
+rows and span the writer currently holds; the read is bounded and refuses a
+path that is not a regular file.
 
 Retention is one policy shared by the writer, the archiver and the read-only
 history view:
@@ -381,9 +384,11 @@ history view:
   hold the cap in archives while the writer fills another cap beside it. It
   removes whole oldest archives while they fit inside the excess, then trims
   the archive that straddles the boundary, so a segmented history is capped
-  rather than exempt. Only archives can be evicted: the writer owns the active
-  file and a sealed source must be archived before it can be dropped. Zero
-  leaves segmented history uncapped.
+  rather than exempt. A sealed source is closed history too and is evicted
+  whole when the cap reaches it before the run has compressed it; a source that
+  straddles the boundary is archived first, and the next plan trims its
+  archive. Only the writer's active file is never trimmed, because the writer
+  owns it. A cap of zero leaves segmented history uncapped.
 
 The writer also enforces the age bound when it starts, and on every append: an
 active file whose oldest record predates the cutoff, and which is not also
@@ -420,7 +425,12 @@ are symlinks, are not directories, or are writable by another user; such a run
 exits 1 with `reason: unreadable` and prints no path. Keep the store in a real,
 private directory tree. A root-owned directory with the sticky bit set, such as
 `/tmp`, is accepted as an ancestor, but the store's own directories must be
-private and owned by the account that runs the archiver.
+private and owned by the account that runs the archiver. The active file is
+inspected the same way: only an absent file counts as empty history. A path
+that exists but is not a regular file, or one that cannot be inspected, ends
+the run at exit 1 with `reason: unreadable` instead of being counted as an
+empty store. A run with a record cap also exits 1 when the active file's rows
+cannot be decoded, because it cannot show that the store is within the cap.
 
 An archive preserves the version-1 record schema and the salt identifier, so
 decompressing one yields the segment's JSON Lines content byte for byte apart

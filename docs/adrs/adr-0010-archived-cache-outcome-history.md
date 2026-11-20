@@ -463,11 +463,12 @@ retention policy, the planner, the verification pass and the report are pure or
 streaming functions over values, so they are testable without a supervisor, a
 timer or a large file. `outcome_archive_fs`, `outcome_archive_encode`,
 `outcome_archive_quarantine`, `outcome_archive_files`, `outcome_archive_run`,
-`outcome_archive_lock` and `outcome_archive_cli` are the modules that touch the
-filesystem and the process boundary. That mirrors the repository's hexagonal
-boundary: an out-of-process maintenance task reorganizes files the supervisor
-produces, and never participates in admission. The same boundary is why the
-archive decision could be taken without changing ADR 005's recording rules.
+`outcome_archive_active`, `outcome_archive_lock` and `outcome_archive_cli` are
+the modules that touch the filesystem and the process boundary. That mirrors
+the repository's hexagonal boundary: an out-of-process maintenance task
+reorganizes files the supervisor produces, and never participates in admission.
+The same boundary is why the archive decision could be taken without changing
+ADR 005's recording rules.
 
 ## References
 

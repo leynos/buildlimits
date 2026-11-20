@@ -378,6 +378,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
 | `outcome_archive_context`                                                          | Shared context and result values for one archive run                                                                                                        |
 | `outcome_archive_plan`                                                             | Pure retention and repair plan from the inventory                                                                                                           |
+| `outcome_archive_active`                                                           | Lock-free bounded read of the writer's active file, and the non-regular path it refuses                                                                     |
 | `outcome_archive_budget`                                                           | Logical-byte budget: oldest-first archive deletion, then one straddling trim                                                                                |
 | `outcome_archive_run`                                                              | Executing one archive plan operation by operation                                                                                                           |
 | `outcome_archive_verify`                                                           | Streaming XZ write and verification, and the closed segment-fault reasons                                                                                   |
@@ -1047,12 +1048,15 @@ file owned by another account. `outcome_archive_files` owns the per-segment
 operations: archive, reconcile, heal, trim, delete and quarantine.
 `outcome_archive_quarantine` performs the quarantine moves for files a run
 cannot trust, and `outcome_archive_run` executes one plan operation by
-operation. `outcome_archive_budget` owns the byte budget: it counts an
-archive's uncompressed size from its sidecar, deletes whole archives oldest
-first, and then trims the single archive that straddles the remaining allowance.
-`plan_record_steps` applies the configured record cap to segmented history in
-the same shape: whole oldest archives are deleted while they fit the excess,
-then the straddling archive is trimmed rather than left to break the cap.
+operation. `outcome_archive_active` reads the writer's active file as a
+snapshot without the archive lock, and refuses any existing path that is not a
+regular file; only an absent file is empty history. `outcome_archive_budget`
+owns the byte budget: it counts an archive's uncompressed size from its
+sidecar, deletes whole archives oldest first, and then trims the single archive
+that straddles the remaining allowance. `plan_record_steps` applies the
+configured record cap to segmented history in the same shape: whole oldest
+archives are deleted while they fit the excess, then the straddling archive is
+trimmed rather than left to break the cap.
 
 The segment contract is defined by `outcome_segments`, which owns naming and
 layout only; `outcome_segment_sidecar` defines the record that describes one

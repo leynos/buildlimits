@@ -58,7 +58,11 @@ verified archive is published, and leaves compile admission untouched.
   the archiver lock on the writer thread.
 - A sealed segment is immutable until the archiver publishes its verified XZ
   archive. The uncompressed source is unlinked only after the archive, its
-  sidecar and the archive directory are durable.
+  sidecar and the archive directory are durable. The one exception is a segment
+  wholly outside the retention bounds: retention evicts such a segment without
+  compressing it, because archiving history the same plan would delete spends
+  the scratch headroom for nothing. A partially expired segment is still
+  archived first, and its archive is then trimmed.
 - All archive work is streamed in fixed-size chunks. Peak memory depends on
   the XZ preset and chunk size, not on retained history size.
 - The byte budget counts logical uncompressed retained bytes: active and sealed
@@ -423,6 +427,24 @@ verified archive is published, and leaves compile admission untouched.
   new subject. The guide also no longer implies the journal is the only change
   an operator sees without opting in: sealing begins only when the history
   budget is raised above its 12 MiB default.
+- [x] Whole-plan revision-12 remediation (2026-11-20): a count trim that would
+  compose with a time or byte trim is deferred to a follow-up plan pass, so the
+  other trim is applied and measured before the count is decided and no
+  eligible row is discarded; the follow-up loop is bounded at three passes. The
+  active path is refused unless it is absent or a regular file, and a record
+  cap with unreadable active rows reports `failed`/`unreadable` at exit 1.
+  Constraint 2 and invariant 3 now permit whole eviction of a sealed source
+  outside the bounds, and the users' and migration guides describe that
+  eviction, the active-file refusal and `max_bytes = 0` segmentation. The
+  bounded active-file read moved to a new `outcome_archive_active` module, and
+  the new regression tests live in `test_outcome_archive_active` and
+  `test_outcome_archive_straddling`, so every touched module stays under the
+  400-line limit. Two complete-run regression tests pin the composed retention,
+  and the focused archive suites pass. The first gate run then found
+  duplication in the new tests: the repeated refusal assertions became one
+  `_assert_refused` helper, and the import-list and fixture-shape overlaps with
+  the existing archive suites are recorded as reasoned `df12-duplication`
+  exceptions.
 
 ## Surprises & discoveries
 
@@ -712,14 +734,39 @@ verified archive is published, and leaves compile admission untouched.
   appending past the cap: the archiver cannot evict active rows, so accepting
   it would retain history nothing could remove. The refusal is a `save_failed`
   append with one discarded row, not a store fault.
+- A count trim is deferred, not composed, when the straddling archive already
+  carries a time or byte trim. The count is a prefix over the document's row
+  positions, so it cannot target the rows a time or byte rule removes at other
+  positions: a document ordered *expired, at cutoff, expired, fresh*, capped at
+  two rows, keeps the two eligible rows once the expired pair leaves, while a
+  composed trim would drop the row at the cutoff too. The walk therefore stops
+  at such a straddler, and `retain()` plans again over the rewritten document
+  so the count is decided from the sidecar's measured row count. The follow-up
+  loop is bounded at three passes, and a plan proposing a trim this run already
+  applied is ignored rather than repeated.
+- Only an absent active file is empty history. A path that exists but is not a
+  regular file raises `UnsafePathError`, and any other failure to inspect it
+  propagates, so a substituted or uninspectable path cannot make the store look
+  empty to either budget. A file that exists but cannot be decoded is reported
+  by size with `has_metadata=False`; if a record cap is configured, planning
+  raises `UnknownActiveHistoryError` because the cap cannot be shown to hold,
+  and the run reports `failed` with exit 1. A byte-only run may still proceed,
+  because it measures the active file by `stat`.
+- Constraint 2 and invariant 3 now state the sealed-source eviction the
+  planner already implements: a segment wholly outside the bounds is removed
+  without being compressed, while a partially expired segment is archived first
+  and its archive trimmed. The users' guide and the 0.2.0 migration guide say
+  the same, and the migration guide now names `max_bytes = 0` as the other way
+  to turn on the segmented store.
 
 ## Outcomes & retrospective
 
 The timer-facing archive command, its verification and retention execution, the
 writer-owned sealing and the archive-aware replay and dataset paths are
-implemented and covered by ten test modules. The command keeps paths out of its
-successful output, maps every outcome to the documented exit status, and was
-checked against the real system clock only in the redacted CLI snapshot.
+implemented and covered by dedicated modules across the archive, segment and
+history suites. The command keeps paths out of its successful output, maps
+every outcome to the documented exit status, and was checked against the real
+system clock only in the redacted CLI snapshot.
 
 The notable lesson is that the writer's startup path, not the archiver, was
 where data could be lost: a fresh segmented store had no active file until its
@@ -736,8 +783,10 @@ Invariants:
 1. No byte is appended to the active file except by the writer thread.
 2. A sealed or archived file is never truncated in place; replacement is by a
    private temporary file and an atomic rename.
-3. An uncompressed source exists until a decompressed archive matches its
-   record count, logical bytes and SHA-256.
+3. An uncompressed source is removed only after a decompressed archive matches
+   its record count, logical bytes and SHA-256, or because retention evicted
+   the whole segment as outside the bounds; an evicted segment therefore has no
+   archive to match.
 4. Retained logical bytes never exceed the configured budget after a successful
    run unless one active segment plus one record transiently exceeds it.
 5. Eviction is oldest-first; records at the cutoff survive.
@@ -852,3 +901,16 @@ growth proves the traces observe rows; and disabling the publication gate makes
   guide now names the archiver and the segmented store in its introduction,
   Table 1 and a new upgrade step, gives the reset procedure for a store with
   segments, and is described accordingly in `docs/contents.md`.
+- Revision 12 records the whole-plan revision-11 assessment's four findings.
+  A count trim no longer composes with a time or byte trim: the walk stops at
+  such a straddler and `retain()` plans again after the other trim is applied,
+  so the count is decided over the rows that actually survive. Only an absent
+  active file is empty history; a non-regular path raises `UnsafePathError`,
+  other inspection failures propagate, and a record cap over undecodable rows
+  raises `UnknownActiveHistoryError`, all reported as `failed`/`unreadable` at
+  exit 1. Constraint 2 and invariant 3 now state the sealed-source eviction the
+  planner already performs, and the users' and migration guides describe the
+  eviction, the active-file refusal, and `max_bytes = 0` segmentation. The
+  active-file read moved to `outcome_archive_active`, and the new regression
+  suites split into `test_outcome_archive_active` and
+  `test_outcome_archive_straddling`, keeping every module under 400 lines.

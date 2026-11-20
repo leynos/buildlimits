@@ -8,7 +8,6 @@ archive, heal, quarantine orphans, trim and finally delete.
 
 import dataclasses as dc
 import errno
-import stat
 import typing as typ
 
 from buildlimits import (
@@ -16,16 +15,14 @@ from buildlimits import (
     outcome_archive_quarantine,
     outcome_segment_inventory,
 )
-from buildlimits.outcome_archive_budget import ActiveHistory
+from buildlimits.outcome_archive_active import active_history
 from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
-from buildlimits.outcome_archive_encode import read_source_facts
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
 from buildlimits.outcome_archive_verify import OutputFaultError, SegmentFaultError
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
-    from pathlib import Path
 
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_archive_trim import Trim
@@ -37,6 +34,13 @@ __all__ = ["ArchiveRun", "RunOutcome", "active_history", "perform", "retain"]
 # free space once before the pass, so another writer can still fill it while
 # this run works; that is a temporary condition the next firing retries.
 _NO_SPACE_ERRNOS = frozenset({errno.ENOSPC, errno.EDQUOT})
+
+# Follow-up planning passes one run may make after its plan is performed. The
+# first settles the sources this run archived, the second decides a count trim
+# that had to wait for a time or byte trim to be applied, and the third
+# confirms the settled store plans no further eviction. Work a pass cannot
+# finish is left for the next timer firing rather than retried without bound.
+_MAX_RETAIN_PASSES = 3
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -104,82 +108,74 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
 
 
 def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
-    """Apply age and byte retention to history this run just archived.
+    """Apply age, byte and count retention to the history this run settled.
 
     The first plan saw the newly published archives as sealed sources, so it
-    could not evict them. Re-planning over the settled store keeps the byte
-    budget true after one successful run instead of leaving the excess for the
-    next timer firing. A run that only healed sidecars re-plans too, because
-    the first plan had to fall back to each archive's physical size where a
+    could not evict them. Re-planning over the settled store keeps the budgets
+    true after one successful run instead of leaving the excess for the next
+    timer firing. A run that only healed sidecars re-plans too, because the
+    first plan had to fall back to each archive's physical size where a
     sidecar was missing or corrupt, which understates the logical bytes.
+
+    A count trim is decided only after the time or byte trim it would compose
+    with has been applied and measured, so the passes continue while the
+    settled store still plans eviction. They stop at the first failed step or
+    after ``_MAX_RETAIN_PASSES``; a plan that proposes a trim this run already
+    applied is ignored, because repeating it would not change the store.
+
+    Parameters
+    ----------
+    run : ArchiveRun
+        The run whose performed plan and context the follow-up uses.
+    outcome : RunOutcome
+        The actions and failures accumulated so far.
     """
-    if not (run.plan.archive or run.plan.reconcile or run.plan.heal):
+    if not (run.plan.archive or run.plan.reconcile or run.plan.heal or run.plan.trims):
         return
     layout = run.context.layout
-    inventory = outcome_segment_inventory.read_inventory(layout)
-    follow_up = plan_run(
-        inventory,
-        run.context.policy,
-        now=run.context.now,
-        active=active_history(layout.active),
-    )
     # Only an archive this run removed is out of reach. A quarantined *source*
     # leaves its archive in place, and that archive is still eligible for the
     # budget the follow-up plan recomputed.
     settled = {
         action.sequence for action in outcome.actions if action.action == "deleted"
     }
-    trims = (
-        (entry, trim)
-        for entry, trim in follow_up.trims
-        if entry.sequence not in settled and entry.path.exists()
-    )
-    deletes = (
-        entry
-        for entry in follow_up.deletes
-        if entry.sequence not in settled and entry.path.exists()
-    )
-    _evict(run, outcome, trims, deletes)
-
-
-def active_history(path: Path) -> ActiveHistory:
-    """Read what the writer's active file holds at this moment.
-
-    The store is scanned without the archive lock, because the writer owns
-    that file and never holds the archiver's lock. A concurrent append can
-    therefore leave an unterminated final row, which the reader drops exactly
-    as the archiver drops a torn tail from a sealed source. An absent file has
-    nothing to count; one that cannot be read at all is reported by its size
-    alone, and the next run counts its rows again.
-
-    A path that is not a regular file is not the writer's store, so it counts
-    as nothing. Following a symlink would let a file outside the store decide
-    retention, and the link's own metadata is not a history size; the writer
-    and the bounded reader both refuse to open such a path at all.
-
-    Returns
-    -------
-    ActiveHistory
-        The file's size in bytes, the record rows it currently holds and the
-        span their observations cover.
-    """
-    try:
-        metadata = path.lstat()
-    except OSError:
-        return ActiveHistory()
-    if not stat.S_ISREG(metadata.st_mode):
-        return ActiveHistory()
-    size = metadata.st_size
-    try:
-        facts = read_source_facts(path)
-    except OSError, SegmentFaultError:
-        return ActiveHistory(bytes=size, has_metadata=False)
-    return ActiveHistory(
-        bytes=size,
-        records=facts.record_count,
-        first_observed_at=facts.first_observed_at,
-        last_observed_at=facts.last_observed_at,
-    )
+    # A trim the performed plan could not apply is not "already applied": it
+    # stays eligible for the follow-up plan, which is also how a repaired
+    # sidecar's new measurement reaches the budget.
+    trimmed = {
+        action.sequence for action in outcome.actions if action.action == "trimmed"
+    }
+    applied = {
+        (entry.sequence, trim)
+        for entry, trim in run.plan.trims
+        if entry.sequence in trimmed
+    }
+    for _pass in range(_MAX_RETAIN_PASSES):
+        inventory = outcome_segment_inventory.read_inventory(layout)
+        follow_up = plan_run(
+            inventory,
+            run.context.policy,
+            now=run.context.now,
+            active=active_history(layout.active),
+        )
+        trims = tuple(
+            (entry, trim)
+            for entry, trim in follow_up.trims
+            if entry.sequence not in settled
+            and entry.path.exists()
+            and (entry.sequence, trim) not in applied
+        )
+        deletes = tuple(
+            entry
+            for entry in follow_up.deletes
+            if entry.sequence not in settled and entry.path.exists()
+        )
+        if not (trims or deletes):
+            return
+        if not _evict(run, outcome, trims, deletes):
+            return
+        applied.update((entry.sequence, trim) for entry, trim in trims)
+        settled.update(entry.sequence for entry in deletes)
 
 
 def _evict(
@@ -187,7 +183,7 @@ def _evict(
     outcome: RunOutcome,
     trims: cabc.Iterable[tuple[SegmentEntry, Trim]],
     deletes: cabc.Iterable[SegmentEntry],
-) -> None:
+) -> bool:
     """Apply one plan's trims and deletions oldest-first, stopping at a failure.
 
     A trim discards rows from history that survives, and a deletion removes a
@@ -208,6 +204,13 @@ def _evict(
         Archives to rewrite with a prefix trim.
     deletes : Iterable[SegmentEntry]
         Archives and sealed sources to remove entirely.
+
+    Returns
+    -------
+    bool
+        Whether every step was applied. A caller that plans again uses this to
+        stop after a failure instead of planning over a store still holding
+        the entry it could not change.
     """
     steps: list[tuple[SegmentEntry, Trim | None]] = []
     steps.extend(trims)
@@ -219,7 +222,8 @@ def _evict(
             else _trim_one(run, entry, trim, outcome)
         )
         if not applied:
-            return
+            return False
+    return True
 
 
 def _reconcile_one(

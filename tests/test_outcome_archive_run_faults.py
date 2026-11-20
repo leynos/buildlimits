@@ -18,7 +18,6 @@ from pathlib import Path
 from outcome_archive_helpers import (
     NOW,
     archives,
-    document,
     layout,
     policy,
     records,
@@ -27,13 +26,9 @@ from outcome_archive_helpers import (
     write,
 )
 
-from buildlimits import (
-    outcome_archive_encode,
-    outcome_archive_files,
-    outcome_archive_run,
-)
+from buildlimits import outcome_archive_encode, outcome_archive_files
 from buildlimits.outcome_archive import EXIT_TEMPFAIL
-from buildlimits.outcome_archive_budget import ActiveHistory
+from buildlimits.outcome_archive_active import active_history
 from buildlimits.outcome_archive_verify import OutputFaultError, SegmentFaultError
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import archive_name, segment_name
@@ -182,51 +177,6 @@ def test_a_failed_source_delete_is_recorded_and_keeps_the_source(
     )
 
 
-def test_a_symlinked_active_file_is_not_writer_history(tmp_path: Path) -> None:
-    """A path that is not a regular file is never counted as active history.
-
-    The archiver reads the active file to count the rows the writer has not
-    sealed. A symlink there could name any file, so following it would let
-    that file's rows and bytes decide retention. The active path must be a
-    regular file before anything is counted.
-    """
-    target = tmp_path / "elsewhere.jsonl"
-    target.write_bytes(document(records(NOW, 3)))
-    target.chmod(0o600)
-    store = tmp_path / "cache-outcomes.jsonl"
-    store.symlink_to(target)
-
-    history = outcome_archive_run.active_history(store)
-
-    assert history == ActiveHistory(), "a symlink is not history to count"
-    assert target.read_bytes() == document(records(NOW, 3)), (
-        "the link target is left alone"
-    )
-
-
-def test_a_run_ignores_a_symlinked_active_file(tmp_path: Path) -> None:
-    """A run still archives sealed history and never follows the link."""
-    store = tmp_path / "cache-outcomes.jsonl"
-    write(store, records(NOW, 1), policy())
-    store_layout = layout(tmp_path)
-    target = tmp_path / "outside.jsonl"
-    target.write_bytes(document(records(NOW, 6)))
-    target.chmod(0o600)
-    store_layout.active.unlink(missing_ok=True)
-    store_layout.active.symlink_to(target)
-
-    report = run(tmp_path, policy())
-
-    assert report.status == "ok", "the substitution is not a run failure"
-    assert report.active_bytes == 0, "nothing at the active path is counted"
-    assert [action.action for action in report.actions] == ["archived"], (
-        "the sealed source is still archived"
-    )
-    assert target.read_bytes() == document(records(NOW, 6)), (
-        "the link target is never folded into the store's history"
-    )
-
-
 def test_a_failed_older_delete_stops_before_a_newer_trim(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -322,7 +272,7 @@ def test_a_record_cap_evicts_the_oldest_source_in_the_planning_run(
     store = tmp_path / "cache-outcomes.jsonl"
     base = policy(segment_bytes=2000)
     write(store, records(NOW, 12), base)
-    active = outcome_archive_run.active_history(layout(tmp_path).active)
+    active = active_history(layout(tmp_path).active)
 
     report = run(tmp_path, dc.replace(base, max_records=8))
 

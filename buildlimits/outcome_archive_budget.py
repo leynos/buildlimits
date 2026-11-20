@@ -11,6 +11,13 @@ is never trimmed: it is still uncompressed. A sealed source that straddles an
 allowance therefore ends the walk, and the follow-up plan trims the archive it
 becomes once this run has compressed it. Walking past it would delete newer
 history sooner than older history, which is not what a retention budget means.
+
+A count trim is only planned for an archive that no time or byte trim already
+rewrites. Those trims drop rows the planner never counted, at positions a
+prefix count cannot target: composing both would drop the count's leading rows
+in addition to the rows the other rule removes, discarding rows the policy
+allows. Such a straddler ends the count walk, and the follow-up plan applies
+the count to the measured document the other trim leaves behind.
 """
 
 import dataclasses as dc
@@ -28,11 +35,22 @@ if typ.TYPE_CHECKING:
 __all__ = [
     "ActiveHistory",
     "Budget",
+    "UnknownActiveHistoryError",
     "plan_byte_steps",
     "plan_record_steps",
     "planned_records",
     "planned_size",
 ]
+
+
+class UnknownActiveHistoryError(Exception):
+    """A record cap was configured but the active file's rows are unknown.
+
+    The cap counts the writer's unsealed rows, so a plan that cannot read them
+    cannot show that the retained store meets the cap. The run reports this as
+    an operational failure instead of counting the active file as empty, which
+    would make any store look capped.
+    """
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -128,10 +146,19 @@ def plan_record_steps(
     merely unknown would break oldest-first retention. The heal step repairs a
     missing sidecar and the follow-up plan then continues from the count it
     rebuilt.
+
+    Raises
+    ------
+    UnknownActiveHistoryError
+        If the cap is set and the active file's rows were not read. Its rows
+        count towards the cap, so no plan can show the store is within it.
     """
     max_records = budget.policy.max_records
     if max_records is None:
         return
+    if not budget.active.has_metadata:
+        msg = "the active history cannot be counted, so the record cap is unmeasurable"
+        raise UnknownActiveHistoryError(msg)
     walk = _BudgetWalk(candidates, deletes, trims)
     retained = budget.active.records
     retained += sum(
@@ -190,7 +217,7 @@ class _BudgetWalk:
         self,
         excess: int,
         keep: cabc.Callable[[SegmentEntry, Trim | None], int | None],
-        trim_straddler: cabc.Callable[[Trim, int, int], Trim],
+        trim_straddler: cabc.Callable[[Trim, int, int], Trim | None],
     ) -> None:
         """Delete whole entries oldest-first, then trim the one that straddles.
 
@@ -203,7 +230,9 @@ class _BudgetWalk:
         compressed it: the walk stops and the follow-up plan trims the archive
         it becomes. An entry whose value cannot be planned also ends the walk,
         because evicting newer history ahead of older history whose count is
-        merely unknown would break oldest-first retention.
+        merely unknown would break oldest-first retention. A trim callable may
+        likewise decline to compose with the entry's existing trim, which ends
+        the walk the same way and leaves the decision to the follow-up plan.
 
         Parameters
         ----------
@@ -211,8 +240,9 @@ class _BudgetWalk:
             The planned value that must be freed.
         keep : Callable[[SegmentEntry, Trim | None], int | None]
             The planned value of one entry, or None when it cannot be planned.
-        trim_straddler : Callable[[Trim, int, int], Trim]
-            The updated trim for the first entry that does not fit.
+        trim_straddler : Callable[[Trim, int, int], Trim | None]
+            The updated trim for the first entry that does not fit, or None
+            when this walk must leave the entry to a later plan.
         """
         if excess <= 0:
             return
@@ -227,9 +257,10 @@ class _BudgetWalk:
                 continue
             if entry.state == "sealed":
                 return
-            self.trims[entry.sequence] = trim_straddler(
-                self.trims.get(entry.sequence, Trim()), value, excess
-            )
+            trim = trim_straddler(self.trims.get(entry.sequence, Trim()), value, excess)
+            if trim is None:
+                return
+            self.trims[entry.sequence] = trim
             return
 
 
@@ -244,14 +275,26 @@ def _byte_trim(existing: Trim, size: int, excess: int) -> Trim:
     return dc.replace(existing, allowed_bytes=size - excess, source_bytes=size)
 
 
-def _record_trim(existing: Trim, _records: int, excess: int) -> Trim:
+def _record_trim(existing: Trim, _records: int, excess: int) -> Trim | None:
     """Cap one straddling archive at the row count that fits in the excess.
+
+    A trim that already drops rows by time or by bytes is left for the
+    follow-up plan instead. The count is a prefix over the document's row
+    positions, and the planner cannot know how many of that prefix the other
+    rule removes: a document ordered *at cutoff, expired, fresh*, capped at two
+    rows, needs no count trim at all once the expired row leaves, while a
+    composed trim would drop the cutoff row too. Once this run has applied the
+    other trim, the follow-up plan reads the surviving count from the sidecar
+    and applies the count to the document that remains.
 
     Returns
     -------
-    Trim
-        The previous trim with the leading row count raised to the excess.
+    Trim | None
+        The previous trim with the leading row count raised to the excess, or
+        None when another rule must be applied and measured first.
     """
+    if existing.before is not None or existing.allowed_bytes is not None:
+        return None
     return dc.replace(existing, records=max(existing.records, excess))
 
 

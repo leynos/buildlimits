@@ -161,11 +161,12 @@ the first time, unless the pinned version or digest changes.
 
    Then install the user service and timer described under
    [Archive cache-outcome history](users-guide.md#archive-cache-outcome-history).
-   A budget above the 12 MiB legacy bound turns on the segmented store: the
-   writer seals the active file at the segment bound instead of compacting it
-   in place, and the archiver turns each closed segment into a verified XZ
-   archive. Neither changes admission or token accounting, and a host that
-   writes none of the retention keys keeps its single-file store.
+   A budget above the 12 MiB legacy bound, or a budget of `0` that disables
+   the byte bound, turns on the segmented store: the writer seals the active
+   file at the segment bound instead of compacting it in place, and the
+   archiver turns each closed segment into a verified XZ archive. Neither
+   changes admission or token accounting, and a host that writes none of the
+   retention keys keeps its single-file store.
 
 ## What does not need to change
 
@@ -175,7 +176,7 @@ predictors read recorded outcomes and write report files of their own, so the
 prediction targets change nothing at all unless they are run. The journal
 change described above is the only change an operator sees without opting in;
 the segmented store and the archiver start only when the history budget is
-raised above its 12 MiB default.
+raised above its 12 MiB default or set to `0`, which disables the byte bound.
 
 Resetting recorded outcomes is unchanged while the store keeps its default
 shape: stop the supervisor and delete `cache-outcomes.jsonl`. Once archiving is

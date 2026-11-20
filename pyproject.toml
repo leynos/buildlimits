@@ -2275,6 +2275,20 @@ reason = "Matching import lists: each module names the archive helpers and fixtu
 
 [[tool.duplication_gate.allow]]
 members = [
+    "tests/test_outcome_archive_retention.py",
+    "tests/test_outcome_archive_active.py",
+]
+reason = "Matching import lists: both modules name the archive helpers and record builders their scenarios need, and a re-export module would hide which operations each suite actually exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_archive.py",
+    "tests/test_outcome_archive_active.py",
+]
+reason = "Recurring short test steps: both suites write one sealed source, arrange one injected fault and run the archiver. Each module states its own family of faults -- a run's output and quarantine behaviour, and the active file the budgets cannot read -- and extracting the arrangement would couple unrelated fault fixtures."
+
+[[tool.duplication_gate.allow]]
+members = [
     "tests/test_outcome_sealing_bounds.py",
     "tests/test_outcome_store_tail.py",
 ]
