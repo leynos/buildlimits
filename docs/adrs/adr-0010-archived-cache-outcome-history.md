@@ -472,8 +472,9 @@ either component's private counters.
 - `retained` names what the store holds now: total rows and logical bytes,
   the split across active, sealed and archived history, the archives' physical
   bytes, the closed-segment count, the observation span and a `complete` flag.
-  The flag is false when a segment's metadata is missing or the active file
-  could not be read, so a lower bound is never presented as exact.
+  The flag is false when a segment's metadata is missing, the active file could
+  not be read, or the writer replaced the active file while the run measured
+  it, so a lower bound is never presented as exact.
 - `evictions` counts trims and deletions under `age`, `bytes`, `records` and
   every combination of those bounds, and each action carries the same reason. A
   bound that is configured but did not cause an eviction is never named.

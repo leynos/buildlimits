@@ -43,8 +43,10 @@ __all__ = [
     "records",
     "refuse",
     "run",
+    "seal_store",
     "seeded_store",
     "store_with_archive",
+    "unsealed_store",
     "write",
 ]
 
@@ -112,6 +114,47 @@ def write(
         close_writer(writer)
 
 
+def unsealed_store(root: Path, count: int = 3) -> Path:
+    """Write ``count`` rows that stay in the active file.
+
+    A generous segment bound keeps every row out of the sealed directory, so a
+    test can inject the seal that moves them into closed history.
+
+    Returns
+    -------
+    Path
+        The active JSON Lines store the archiver will read.
+    """
+    store = root / "cache-outcomes.jsonl"
+    write(store, records(NOW, count), policy(segment_bytes=4000))
+    return store
+
+
+def seal_store(path: Path) -> None:
+    """Seal the active file's rows, as a writer starting up would.
+
+    A writer whose segment bound is one byte seals the file it loads before it
+    accepts an append, so opening and closing one is the smallest faithful
+    reproduction of a seal that races an archive run. The archive lock is not
+    part of that path: the writer never takes it, which is exactly why a seal
+    can happen while a run is measuring.
+    """
+    close_writer(segment_writer(path, policy(), NOW))
+
+
+def seeded_store(root: Path, rows: tuple[StoreRecord, ...]) -> Path:
+    """Write one default-policy store of ``rows`` and return its path.
+
+    Returns
+    -------
+    Path
+        The active JSON Lines store the archiver will read.
+    """
+    store = root / "cache-outcomes.jsonl"
+    write(store, rows, policy())
+    return store
+
+
 def store_with_archive(root: Path, rows: int) -> tuple[Path, SegmentLayout]:
     """Build a store whose sequence one is archived, with an empty active file.
 
@@ -134,19 +177,6 @@ def store_with_archive(root: Path, rows: int) -> tuple[Path, SegmentLayout]:
     if first.status != "ok":
         pytest.fail("the fixture archive is published untrimmed")
     return store, layout(root)
-
-
-def seeded_store(root: Path, rows: tuple[StoreRecord, ...]) -> Path:
-    """Write one default-policy store of ``rows`` and return its path.
-
-    Returns
-    -------
-    Path
-        The active JSON Lines store the archiver will read.
-    """
-    store = root / "cache-outcomes.jsonl"
-    write(store, rows, policy())
-    return store
 
 
 def run(
