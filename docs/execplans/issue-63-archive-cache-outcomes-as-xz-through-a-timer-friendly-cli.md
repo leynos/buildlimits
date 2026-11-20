@@ -642,6 +642,13 @@ verified archive is published, and leaves compile admission untouched.
   users' guide and the developers' guide state the unconditional deferral. All
   seven commit gates passed once each on the final tree (`make test`: 4568
   passed, 86 skipped, 76 snapshots).
+- [x] Whole-plan revision-23 remediation (2026-11-20): the revision-22
+  assessment's documentation finding is fixed. `docs/developers-guide.md` names
+  `predict.render_tables` in the package-module inventory, the only `predict`
+  module new relative to the accepted base; the assessment corrected an earlier
+  saved-check claim that all seven were new, because six already existed at
+  that base. The Markdown gates (`check-fmt`, `markdownlint`, `nixie`) pass on
+  the final tree.
 
 ## Surprises & discoveries
 
@@ -902,6 +909,12 @@ verified archive is published, and leaves compile admission untouched.
   fails. The scan-failure fallback therefore cannot stand in for a byte budget
   even when no cutoff applies, so the deferral is decided by whether a byte
   bound is configured rather than by the cutoff.
+- A module inventory row can lag a module split. `predict.render_tables` was
+  created by the report split and described in the plan's module structure, but
+  the developers' guide table listed only the other `predict` domain modules.
+  The whole-plan assessment caught the omission by comparing the directory
+  against the table, so that table is a checklist for every new module, not
+  only for modules whose behaviour changed.
 
 ## Decision log
 
@@ -1698,3 +1711,9 @@ Each mutation was reverted and the focused suite passed again.
   fails against the cutoff-conditional guard while the age-aware deferral test
   still passes. ADR 0010, the users' guide and the developers' guide state the
   unconditional deferral.
+- Revision 23 records the whole-plan revision-22 assessment's documentation
+  finding. `docs/developers-guide.md` now names `predict.render_tables` in the
+  package-module inventory. The assessment corrected an earlier saved-check
+  claim: only that module is new relative to the accepted base, because the
+  other six `predict` modules already existed there, so the plan does not carry
+  that claim forward.
