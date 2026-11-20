@@ -707,7 +707,10 @@ processed. `maintenance` reports whether `retention.json` and `last-run.json`
 were installed, with `state_write_failed` when they were not: archives and
 evictions already published stay in place, and the next firing rewrites the
 state from what is on disk. A dry run, a deferred run and a run that could not
-start install no state and report `state_written` as false.
+start install no state and report `state_written` as false. A run that
+published archives and then could not measure the result reports `retained` as
+`null` and `reason` as `unreadable`, and still lists the actions it performed,
+so the evictions it did are not hidden by the missing total.
 
 ### Compare offline hit predictors
 
