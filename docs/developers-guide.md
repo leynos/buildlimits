@@ -1147,16 +1147,20 @@ concurrent archive run can shorten what is returned.
 which is re-iterable and decodes one segment at a time as the caller reads, so
 a replay pass holds one segment's decoder state rather than every retained row.
 A pass that finds a pinned segment replaced fails closed as `unsettled` before
-yielding anything, and a domain the selection excludes is never decoded. H2
-needs two passes over the same rows, which is exactly what a re-iterable
-snapshot provides; H3 needs one pass and keeps a running tally. `read_history`
-collects the stream for the dataset snapshot, which holds every selected record
-by definition. `DecodedStore.salt_ids` names every domain an `all_salts` read
-covered, oldest first, which is what a report prints instead of attributing a
-spanning count to the newest header. `outcome_history_args` defines the shared
-`--history`, `--salt-id` and `--all-salts` options for the replay and dataset
-commands; `--salt-id` and `--all-salts` imply history mode, and no flag keeps
-the active-store-only behaviour.
+yielding anything, and a domain the selection excludes is never decoded. The
+frozen active bytes follow the store's committed-state rule rather than the
+sealed segment's: a final row without its newline is the writer's append in
+flight, which `read_store` never returns and the writer removes before its next
+append, so the history stream holds it back too. H2 needs two passes over the
+same rows, which is exactly what a re-iterable snapshot provides; H3 needs one
+pass and keeps a running tally. `read_history` collects the stream for the
+dataset snapshot, which holds every selected record by definition.
+`DecodedStore.salt_ids` names every domain an `all_salts` read covered, oldest
+first, which is what a report prints instead of attributing a spanning count to
+the newest header. `outcome_history_args` defines the shared `--history`,
+`--salt-id` and `--all-salts` options for the replay and dataset commands;
+`--salt-id` and `--all-salts` imply history mode, and no flag keeps the
+active-store-only behaviour.
 
 `outcome_archive_report` defines the closed report vocabulary. Statuses are
 `ok`, `failed`, `corrupt`, `busy`, `no_headroom` and `unsettled`; exit statuses

@@ -498,9 +498,12 @@ whole retained history. `--history` reads archived, sealed and active history
 for the newest salt domain; `--salt-id ID` reads one named domain; and
 `--all-salts` reads every domain in append order. Both `--salt-id` and
 `--all-salts` imply `--history`. With none of these flags, each command reads
-only the active store, exactly the rows an existing invocation read before.
-That is a statement about the input, not about the H2 classifier: the runtime
-window described above applies to every replay path.
+only the active store, exactly the rows an existing invocation read before. A
+history read returns the same committed rows as that active-store read: a final
+row whose newline has not been written is the writer's append in flight, and it
+is left out however the history is read. That is a statement about the input,
+not about the H2 classifier: the runtime window described above applies to
+every replay path.
 
 A report read across domains names every salt it counted, so a figure that
 spans a salt change is never attributed to the newest domain alone. The list is

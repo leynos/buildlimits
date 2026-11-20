@@ -23,7 +23,7 @@ from history_fixtures import (
 from outcome_archive_helpers import write as write_store
 from segment_test_helpers import history_policy
 
-from buildlimits import outcome_history, outcome_replay_cli
+from buildlimits import outcome_history, outcome_record_encode, outcome_replay_cli
 from buildlimits.outcome_archive import RunOptions, run_archive
 from buildlimits.outcome_segments import SegmentLayout, archive_name
 from buildlimits.outcome_store_io import read_store
@@ -157,6 +157,29 @@ def test_history_stream_repeats_the_same_snapshot(tmp_path: Path) -> None:
     expected = tuple(NOW - dt.timedelta(minutes=index) for index in range(4))
     assert observed(tuple(stream)) == expected, "the first pass covers the history"
     assert observed(tuple(stream)) == expected, "the second pass repeats it"
+
+
+def test_an_uncommitted_active_row_is_not_history(tmp_path: Path) -> None:
+    """An unterminated active row is the writer's append in flight.
+
+    An interrupted append can leave a complete row without its newline. The
+    writer removes that remainder before its next append and `read_store`
+    decodes only up to the last newline, so the row was never committed. A
+    history read that decoded the frozen bytes as they stand would hand
+    replay and dataset snapshots evidence the ordinary reader never returns.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    active_records(store, first=0, count=2)
+    in_flight = outcome_record_encode.encode_line(records(2, 1)[0])
+    with SegmentLayout.beside(store).active.open("ab") as handle:
+        handle.write(in_flight.encode())
+
+    stream = outcome_history.open_history_beside(store)
+
+    assert observed(tuple(stream)) == (
+        NOW,
+        NOW - dt.timedelta(minutes=1),
+    ), "the uncommitted row is not history"
 
 
 def test_a_pinned_archive_that_changed_fails_closed(tmp_path: Path) -> None:

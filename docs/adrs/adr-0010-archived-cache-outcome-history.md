@@ -425,12 +425,17 @@ the behaviour that existed before archiving. The snapshot is pinned before
 either pass: `outcome_history_pin.pin_history` fingerprints each effective
 segment and freezes the active file's bytes, and
 `outcome_history_stream.open_history` yields the selected rows one segment at a
-time, skipping a domain the selection excludes. A pass that finds a pinned
-segment replaced fails closed as `unsettled` before yielding anything; the
-replay command then takes a fresh pin, and H2's two passes always compare the
-same rows. Replay therefore holds one segment's decoder state rather than the
-whole retained history. The dataset snapshot still materializes the stream,
-because a snapshot holds every selected record by definition.
+time, skipping a domain the selection excludes. The frozen active bytes follow
+the store's committed-state rule: a final row without its newline is the
+writer's append in flight, which `read_store` never returns and the writer
+removes before its next append, so the stream holds it back; a sealed segment
+keeps a decodable final row, because a closed document's complete row must not
+be lost. A pass that finds a pinned segment replaced fails closed as
+`unsettled` before yielding anything; the replay command then takes a fresh
+pin, and H2's two passes always compare the same rows. Replay therefore holds
+one segment's decoder state rather than the whole retained history. The dataset
+snapshot still materializes the stream, because a snapshot holds every selected
+record by definition.
 
 ### D8: the record schema and salt identifier survive archiving
 

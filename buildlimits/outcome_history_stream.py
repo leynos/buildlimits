@@ -229,18 +229,40 @@ def _require_same_file(source: typ.BinaryIO, segment: _PinnedSegment) -> None:
 
 
 def _iter_active(active: _PinnedActive) -> cabc.Iterator[StoreRecord]:
-    """Yield the frozen active file's records.
+    """Yield the frozen active file's committed records.
+
+    The writer commits an append by writing its newline, and it removes any
+    unterminated remainder before its next append, so a final row without one
+    is the append in flight. ``read_store`` decodes only up to the last
+    newline, and this reader holds the final row back to match: yielding it
+    would hand replay and dataset snapshots a row the ordinary reader never
+    returns and the writer may still roll back. A closed segment keeps its
+    own rule, because a complete row whose newline never reached the disk is
+    history that must not be lost there.
 
     Yields
     ------
     StoreRecord
-        The file's rows in append order.
+        The file's committed rows in append order.
 
-    Notes
-    -----
-    A row that does not decode raises ``HistoryFaultError``.
+    Raises
+    ------
+    HistoryFaultError
+        If the header or a terminated row does not decode.
     """
-    yield from _records(LineStream(io.BytesIO(active.data)))
+    reader = DocumentReader(LineStream(io.BytesIO(active.data)))
+    pending: StoreRecord | None = None
+    try:
+        for row in reader:
+            if isinstance(row, HeaderRow):
+                continue
+            if pending is not None:
+                yield pending
+            pending = row.record
+    except (SegmentFaultError, StreamFaultError) as error:
+        raise HistoryFaultError(str(error.reason)) from error
+    if pending is not None and reader.last_record_terminated:
+        yield pending
 
 
 def _records(stream: LineStream) -> cabc.Iterator[StoreRecord]:

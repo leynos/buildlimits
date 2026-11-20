@@ -661,6 +661,14 @@ verified archive is published, and leaves compile admission untouched.
   defers the byte walk while an age trim is pending. The trim-suppression
   sentence now requires the same trim and the same archive measurement. The
   Markdown gates (`check-fmt`, `markdownlint`, `nixie`) pass on the final tree.
+- [x] Inline-review remediation (2026-11-20): `chatgpt-codex-connector`
+  reported that the history stream returned a decodable active row whose
+  newline was never written. `_iter_active` now holds the final row back unless
+  `last_record_terminated`, matching `read_store` and the writer's
+  `drop_torn_tail`; sealed segments keep their own rule. The regression
+  `test_an_uncommitted_active_row_is_not_history` appends a complete row
+  without its newline and asserts the stream omits it; it fails against the
+  previous reader. All seven commit gates pass on the final tree.
 
 ## Surprises & discoveries
 
@@ -1326,6 +1334,14 @@ verified archive is published, and leaves compile admission untouched.
   walk while an age trim on a straddler is pending, so the composed rewrite
   never decides a byte allowance from an untrimmed sidecar. The plan now says
   which statement is the encoder's contract and which is what a run does.
+- A history read follows the store's committed-state rule for the active file.
+  `DocumentReader` keeps a decodable unterminated final row because a sealed
+  segment's complete row must not be lost, but the active file is not sealed:
+  `read_store` decodes only up to the last newline and `drop_torn_tail` removes
+  any remainder before the next append. `_iter_active` therefore holds the
+  final row back unless the stream ended with a newline, so replay and dataset
+  snapshots cannot report a row the ordinary reader never returns and the
+  writer may still roll back.
 
 ## Outcomes & retrospective
 
@@ -1486,6 +1502,12 @@ Methods and evidence:
   fails on the deleted prefix or the trim set), and drop the active rows from
   the count (the active-row property fails on the cap). Every mutation was
   reverted and the properties pass again.
+- An active-tail regression in `tests/test_outcome_history.py`
+  (`test_an_uncommitted_active_row_is_not_history`) appends a complete row
+  without its newline and asserts the history stream omits it, matching
+  `read_store`. The previous reader returned three rows, so the test failed on
+  "the uncommitted row is not history" before the fix; sealed segments keep
+  their separate rule and their tests still pass.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
@@ -1775,3 +1797,14 @@ Each mutation was reverted and the focused suite passed again.
   `test_a_byte_trim_waits_until_the_age_trim_is_measured` checks. The
   trim-suppression sentence now names both the trim and the archive
   measurement, matching `_already_applied` and the decision log.
+- Revision 26 records the inline-review finding from
+  `chatgpt-codex-connector` on `buildlimits/outcome_history_stream.py`: the
+  frozen active bytes were decoded as they stood, so a decodable final row
+  whose newline was never written reached replay and dataset snapshots even
+  though `read_store` never returns it and the writer removes it before its
+  next append. `_iter_active` now holds the final row back unless
+  `last_record_terminated`, matching the archive's own active-file scan; sealed
+  segments keep their separate rule. The regression
+  `test_an_uncommitted_active_row_is_not_history` appends a complete row
+  without its newline and asserts the stream omits it, and the developers'
+  guide states the active-file rule beside the sealed-segment one.
