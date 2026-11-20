@@ -575,3 +575,7 @@ growth proves the traces observe rows; and disabling the publication gate makes
   segments, and added the publication-gate, process-level and two-size memory
   tests, the opt-in 320 MB process test, and the developers' guide note that
   explains how to run it.
+- The second gate remediation split the replay, pin, settlement and inventory
+  modules along their responsibility boundaries, recorded the merged
+  duplication families, and made the archive fixture retry a row the writer's
+  non-blocking queue refuses; the plan records the final all-green gate run.
