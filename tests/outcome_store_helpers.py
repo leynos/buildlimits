@@ -193,7 +193,7 @@ def ready_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
         wait_for_salt(writer)
         wait_for_results(writer, operation="compact", reason="none")
     except BaseException:
-        writer.close(1.0)
+        close_writer(writer, 1.0)
         raise
     return writer
 
@@ -217,7 +217,7 @@ def segment_writer(
         wait_for_salt(writer)
         wait_for_results(writer, operation="load")
     except BaseException:
-        writer.close(1.0)
+        close_writer(writer, 1.0)
         raise
     return writer
 
@@ -241,11 +241,12 @@ def running_writer(
     try:
         yield writer
     except BaseException:
-        # Never mask the test's own failure with a shutdown assertion.
+        # Never mask the test's own failure with a shutdown assertion, but
+        # still wait for the worker so a write cannot outlive the test.
         writer.close(1.0)
+        worker_exited(writer, 1.0)
         raise
-    else:
-        close_writer(writer, 1.0)
+    close_writer(writer, 1.0)
 
 
 def load_and_close(
