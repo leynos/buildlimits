@@ -148,16 +148,18 @@ def test_a_failed_delete_is_recorded_and_keeps_the_archive(
 def test_a_record_cap_trims_an_archive_in_the_planning_run(tmp_path: Path) -> None:
     """A cap inside one archive's rows trims that archive in the same run.
 
-    The trim is planned by the run's own plan, so this covers the run's trim
-    step rather than the retention re-plan a heal-only run performs. The cap
-    leaves the trimmed archive holding the rows the cap allows, so a rewrite
-    that dropped the whole archive would fail the count here.
+    The cap counts the active file's rows as well as the archives', so a cap of
+    ten leaves only seven closed rows beside the three the writer still holds.
+    The trim is planned by the archiving run's own retention pass, so this
+    covers the run's trim step rather than the retention re-plan a heal-only
+    run performs, and a rewrite that dropped the whole archive would fail the
+    count here.
     """
     store = tmp_path / "cache-outcomes.jsonl"
     base = policy(segment_bytes=2000)
     write(store, records(NOW, 12), base)
 
-    report = run(tmp_path, dc.replace(base, max_records=8))
+    report = run(tmp_path, dc.replace(base, max_records=10))
 
     assert report.status == "ok", "a trim is not a failure"
     expected = [("archived", sequence) for sequence in (1, 2, 3)]
@@ -166,6 +168,6 @@ def test_a_record_cap_trims_an_archive_in_the_planning_run(tmp_path: Path) -> No
         (action.action, action.sequence) for action in report.actions
     ] == expected, "the archive holding the excess rows is trimmed"
     kept = read_inventory(layout(tmp_path)).archived
-    assert [entry.record_count for entry in kept] == [2, 3, 3], (
-        "the trimmed archive keeps exactly the rows the cap allows"
+    assert [entry.record_count for entry in kept] == [1, 3, 3], (
+        "the trimmed archive keeps exactly the closed rows the cap allows"
     )

@@ -30,7 +30,7 @@ __all__ = [
 
 @dc.dataclass(frozen=True, slots=True)
 class Budget:
-    """The policy, cutoff and active bytes one plan is measured against.
+    """The policy, cutoff and active history one plan is measured against.
 
     Attributes
     ----------
@@ -40,11 +40,16 @@ class Budget:
         The age cutoff, or None when no age limit is configured.
     active_bytes : int
         Logical bytes in the writer's active file.
+    active_records : int
+        Rows the writer's active file retains. A file whose rows could not be
+        counted contributes zero, which over-retains rather than evicting
+        history on an unread figure.
     """
 
     policy: RetentionPolicy
     cutoff: dt.datetime | None
     active_bytes: int
+    active_records: int
 
 
 def plan_byte_steps(
@@ -87,28 +92,32 @@ def plan_byte_steps(
 
 def plan_record_steps(
     candidates: tuple[SegmentEntry, ...],
-    max_records: int | None,
+    budget: Budget,
     deletes: dict[int, SegmentEntry],
     trims: dict[int, Trim],
 ) -> None:
     """Evict the oldest archives until the retained record cap is met.
 
-    Only an explicitly configured cap applies, and only to closed history: the
-    writer owns the active file, so its rows become evictable once it seals
-    them. An archive with no trustworthy sidecar has no known count and is
-    skipped; the heal step runs before retention on the next pass.
+    The cap bounds the rows the store retains, exactly as the byte budget
+    bounds its bytes, so the active file's rows count towards it even though
+    only the writer can evict them. A cap below the active row count therefore
+    removes every closed archive and leaves the active file over the cap until
+    the writer next compacts or seals it; the archiver never rewrites the file
+    the writer owns.
 
-    ``deletes`` and ``trims`` are updated in place, exactly as the byte budget
-    does, and a whole archive is deleted while it fits inside the excess.
+    An archive with no trustworthy sidecar has no known count and is skipped;
+    the heal step runs before retention on the next pass. ``deletes`` and
+    ``trims`` are updated in place, exactly as the byte budget does, and a
+    whole archive is deleted while it fits inside the excess.
     """
-    if max_records is None:
+    if budget.policy.max_records is None:
         return
-    retained = sum(
+    retained = budget.active_records + sum(
         records
         for entry, records in _surviving(candidates, deletes, trims, planned_records)
         if records is not None
     )
-    excess = retained - max_records
+    excess = retained - budget.policy.max_records
     if excess <= 0:
         return
     for entry, records in _surviving(candidates, deletes, trims, planned_records):

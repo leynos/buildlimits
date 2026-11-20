@@ -10,6 +10,7 @@ import dataclasses as dc
 import typing as typ
 
 from buildlimits import (
+    outcome_archive_active,
     outcome_archive_files,
     outcome_archive_quarantine,
     outcome_segment_inventory,
@@ -25,12 +26,11 @@ from buildlimits.outcome_archive_verify import (
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
-    from pathlib import Path
 
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
-__all__ = ["ArchiveRun", "RunOutcome", "active_bytes", "perform", "retain"]
+__all__ = ["ArchiveRun", "RunOutcome", "perform", "retain"]
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -81,24 +81,28 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
 
 
 def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
-    """Apply age and byte retention to history this run just archived.
+    """Apply age, byte and record retention to history this run just archived.
 
     The first plan saw the newly published archives as sealed sources, so it
     could not evict them. Re-planning over the settled store keeps the byte
-    budget true after one successful run instead of leaving the excess for the
-    next timer firing. A run that only healed sidecars re-plans too, because
-    the first plan had to fall back to each archive's physical size where a
-    sidecar was missing or corrupt, which understates the logical bytes.
+    and record budgets true after one successful run instead of leaving the
+    excess for the next timer firing. A run that only healed sidecars re-plans
+    too, because the first plan had to fall back to each archive's physical
+    size where a sidecar was missing or corrupt, which understates the logical
+    bytes.
+
+    The active file is read once and passed to the follow-up plan as one
+    measurement. The writer may have appended while this run worked, so the
+    plan is measured against the rows the file holds now rather than the
+    snapshot the first plan saw.
     """
     if not (run.plan.archive or run.plan.reconcile or run.plan.heal):
         return
     layout = run.context.layout
     inventory = outcome_segment_inventory.read_inventory(layout)
+    active = outcome_archive_active.read_active_history(layout.active)
     follow_up = plan_run(
-        inventory,
-        run.context.policy,
-        now=run.context.now,
-        active_bytes=active_bytes(layout.active),
+        inventory, run.context.policy, now=run.context.now, active=active
     )
     # Only an archive this run removed is out of reach. A quarantined *source*
     # leaves its archive in place, and that archive is still eligible for the
@@ -113,21 +117,6 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
     for entry in follow_up.deletes:
         if entry.sequence not in settled and entry.path.exists():
             _delete_one(run, entry, causes[entry.sequence], outcome)
-
-
-def active_bytes(path: Path) -> int:
-    """Return the active file's logical size, or zero when it is absent.
-
-    Returns
-    -------
-    int
-        The regular file's size in bytes.
-    """
-    try:
-        metadata = path.lstat()
-    except FileNotFoundError:
-        return 0
-    return metadata.st_size
 
 
 def _reconcile_one(

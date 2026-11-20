@@ -85,15 +85,17 @@ def unfinished(
     RunReport
         The closed failure report. The effective limits are reported even when
         no run happened, so a caller that only reads the failure document still
-        learns the policy in force. No maintenance state was installed on any
-        of these paths, so the report says so rather than inheriting the
-        successful default.
+        learns the policy in force. The configured byte budget is reported too,
+        so a deferred run cannot read as a zero-byte budget. No maintenance
+        state was installed on any of these paths, so the report says so rather
+        than inheriting the successful default.
     """
     return RunReport(
         status=fault.status,
         started_at=started,
         finished_at=utc_now(),
         dry_run=dry_run,
+        budget_bytes=policy.max_bytes,
         limits=RetentionLimits.of(policy),
         maintenance=Maintenance(state_written=False, reason=fault.reason),
         reason=fault.reason,

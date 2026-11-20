@@ -365,7 +365,8 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_store_restart`                                                            | What a restart settles before the first append: a torn tail, an oversized segment, an expired file and a replaced salt domain                               |
 | `outcome_store_clock`                                                              | The wall and monotonic clock pair the writer reads together                                                                                                 |
 | `outcome_store_sealing`                                                            | The writer's sealing transition into a closed segment                                                                                                       |
-| `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes, atomic replacement and the seal rename                                                                   |
+| `outcome_store_io`                                                                 | Regular-file checks, append writes and rollback, atomic replacement and the seal rename                                                                     |
+| `outcome_store_read`                                                               | One bounded read of a store document, reporting its decoded rows beside the exact byte length                                                               |
 | `outcome_store_documents`                                                          | The sequence counter and segment metadata documents, each replaced atomically                                                                               |
 | `outcome_store_tail`                                                               | Backward-chunked removal of an unterminated final row a stopped writer left                                                                                 |
 | `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                                                                                |
@@ -1052,9 +1053,13 @@ executes one plan operation by operation. `outcome_archive_budget` owns the
 byte budget: it counts an archive's uncompressed size from its sidecar, deletes
 whole archives oldest first, and then trims the single archive that straddles
 the remaining allowance. `plan_record_steps` applies the configured record cap
-to segmented history in the same shape: whole oldest archives are deleted while
-they fit the excess, then the straddling archive is trimmed rather than left to
-break the cap.
+to segmented history in the same shape. `Budget` carries the active file's rows
+as well as its bytes, so the cap measures the same retained total the byte
+budget does: the active rows consume the cap even though only the writer can
+evict them. Whole oldest archives are deleted while they fit the excess, then
+the straddling archive is trimmed rather than left to break the cap; a cap
+below the active row count deletes every archive and leaves the rest of the
+excess to the writer's next compaction.
 
 The segment contract is defined by `outcome_segments`, which owns naming and
 layout only; `outcome_segment_sidecar` defines the record that describes one

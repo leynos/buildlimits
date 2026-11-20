@@ -1,12 +1,12 @@
 """Archive closed cache-outcome history into verified XZ segments.
 
-A run reads the closed-history inventory and the active file's size, takes the
-archive lock, compresses and verifies one sealed source at a time, then applies
-the age and logical byte budget by trimming or deleting the oldest closed
-history. The active file is never opened for writing: only the writer seals it.
-Its rows are read once, boundedly, to report the retained history. Every
-failure is reported as a closed reason and an exit status a systemd timer can
-act on.
+A run reads the closed-history inventory together with the active file's size
+and rows, takes the archive lock, compresses and verifies one sealed source at
+a time, then applies the age, logical byte and record bounds by trimming or
+deleting the oldest closed history. The active file is never opened for
+writing: only the writer seals it. Its rows are read once, boundedly, to
+measure both bounds and to report the retained history. Every failure is
+reported as a closed reason and an exit status a systemd timer can act on.
 """
 
 import dataclasses as dc
@@ -153,8 +153,9 @@ def _plan(
 ) -> tuple[Plan, _StoreView]:
     """Read the store as it is and plan one run from it.
 
-    The active file is read once, through a bounded reader, so its size drives
-    the plan and its rows describe the retained history without a second pass.
+    The active file is read once, through a bounded reader, so its size and
+    row count drive the plan and its rows describe the retained history
+    without a second pass.
     The inventory the plan was built from is returned as well, so a dry run
     reports the same history it planned against rather than a later scan that
     another process may already have changed.
@@ -173,9 +174,7 @@ def _plan(
     """
     floor = outcome_segment_state.read_retention_floor(layout)
     view = _read_store(layout, floor)
-    plan = plan_run(
-        view.inventory, policy, now=now, active_bytes=view.active.logical_bytes
-    )
+    plan = plan_run(view.inventory, policy, now=now, active=view.active)
     return plan, view
 
 

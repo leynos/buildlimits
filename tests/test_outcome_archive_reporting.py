@@ -94,12 +94,15 @@ def test_an_unreadable_store_fails_a_dry_run_without_writing_state(
 ) -> None:
     """A failed inspection keeps its dry-run flag and installs no state."""
     with mock.patch.object(outcome_segment_inventory, "read_inventory", archive.refuse):
-        report = archive.run(tmp_path, archive.policy(), dry_run=True)
+        report = archive.run(tmp_path, archive.policy(max_bytes=424_242), dry_run=True)
 
     assert report.status == "failed", "the run could not start"
     assert report.reason == "unreadable", "the reason is closed"
     assert report.dry_run, "the report keeps the caller's dry-run choice"
     assert not report.maintenance.state_written, "no state file was installed"
+    assert report.budget_bytes == 424_242, (
+        "a start failure still reports the configured byte budget"
+    )
 
 
 def test_a_busy_run_reports_that_it_wrote_no_state(tmp_path: Path) -> None:
@@ -108,10 +111,13 @@ def test_a_busy_run_reports_that_it_wrote_no_state(tmp_path: Path) -> None:
     archive.write(store, archive.records(archive.NOW, 1), archive.policy())
 
     with ArchiveLock(archive.layout(tmp_path).lock_file):
-        report = archive.run(tmp_path, archive.policy())
+        report = archive.run(tmp_path, archive.policy(max_bytes=987_654))
 
     assert report.status == "busy", "the run did not start"
     assert not report.maintenance.state_written, "a busy run installs no state"
+    assert report.budget_bytes == 987_654, (
+        "a deferred run still reports the configured byte budget"
+    )
 
 
 def test_a_failed_post_work_read_keeps_the_work_already_done(

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from buildlimits.outcome_archive_plan import Plan, plan_run
 from buildlimits.outcome_retention import RetentionPolicy
+from buildlimits.outcome_retention_report import ActiveHistory
 from buildlimits.outcome_segment_inventory import Inventory, SegmentEntry
 from buildlimits.outcome_segments import segment_name
 
@@ -119,12 +120,18 @@ def plan(
     retention: RetentionPolicy,
     *,
     active_bytes: int = 0,
+    active_records: int = 0,
 ) -> Plan:
     """Plan one run at a fixed wall time.
+
+    The figures stay separate here so a test names the one it is about, and
+    are joined into the single measurement a real read of the active file
+    produces.
 
     Returns
     -------
     Plan
         The planner's decision.
     """
-    return plan_run(inventory, retention, now=NOW, active_bytes=active_bytes)
+    active = ActiveHistory(logical_bytes=active_bytes, record_count=active_records)
+    return plan_run(inventory, retention, now=NOW, active=active)

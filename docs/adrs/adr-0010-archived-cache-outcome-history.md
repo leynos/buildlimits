@@ -144,9 +144,13 @@ disagree about a bound.
   bound, and is reported as a disabled bound rather than a zero-byte target.
 - The record cap is `cache_outcomes_max_records`. A positive value applies in
   either mode. When it is omitted, a segmented store has no count cap and a
-  legacy store keeps the historical 10,000-record cap. The planner evicts whole
-  oldest archives, then trims the archive that straddles the boundary; the
-  writer applies the same cap to the active file when it compacts.
+  legacy store keeps the historical 10,000-record cap. Like the byte budget,
+  the cap measures the retained total, so the planner counts the active file's
+  rows before it evicts whole oldest archives and trims the archive that
+  straddles the boundary; the writer applies the same cap to the active file
+  when it compacts. Only the writer can evict active rows, so a cap below the
+  active row count removes all closed history and leaves the excess to the
+  writer's next compaction.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
   segment, or a budget of zero, makes the writer seal closed segments. The
   default budget remains the legacy 12 MiB, so a deployment that writes none of
@@ -386,9 +390,12 @@ either component's private counters.
 - The supervisor's status document carries the same `limits` derivation and
   the writer's active snapshot, which the renderer prints as one line. The
   worker publishes each state's row count and byte size together, so a status
-  read never pairs one state's rows with another state's size. A snapshot the
-  writer cannot supply omits the section rather than failing the status read.
-  Closed history is reported by the archive command, which owns it.
+  read never pairs one state's rows with another state's size. A refused append
+  whose rollback cannot remove the partial line leaves bytes no row accounts
+  for; that snapshot reports `repair_pending` and stays incomplete until a
+  compaction or a fresh active file removes the fragment. A snapshot the writer
+  cannot supply omits the section rather than failing the status read. Closed
+  history is reported by the archive command, which owns it.
 
 None of these figures is a cumulative recorder counter or a journal-reader
 query cap: `record_count` counts rows retained on disk, not outcomes seen since

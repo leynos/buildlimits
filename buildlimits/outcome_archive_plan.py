@@ -24,6 +24,7 @@ if typ.TYPE_CHECKING:
     import datetime as dt
 
     from buildlimits.outcome_retention import RetentionPolicy
+    from buildlimits.outcome_retention_report import ActiveHistory
     from buildlimits.outcome_segment_inventory import Inventory, SegmentEntry
 
 __all__ = ["Plan", "PlanSummary", "plan_run"]
@@ -153,9 +154,15 @@ def plan_run(
     policy: RetentionPolicy,
     *,
     now: dt.datetime,
-    active_bytes: int,
+    active: ActiveHistory,
 ) -> Plan:
     """Decide every operation one archive run should perform.
+
+    The active file arrives as one measurement rather than as separate figures,
+    so a caller cannot pair a byte count from one read with a row count from
+    another. A read that could not count every row contributes the bytes it did
+    prove and no rows: the bounds then over-retain rather than evict history on
+    a figure that was never read.
 
     Parameters
     ----------
@@ -165,8 +172,8 @@ def plan_run(
         The effective retention policy.
     now : datetime
         The caller-supplied UTC wall time.
-    active_bytes : int
-        Logical bytes in the writer's active file.
+    active : ActiveHistory
+        The writer's active file as one bounded read measured it.
 
     Returns
     -------
@@ -178,9 +185,13 @@ def plan_run(
     An empty inventory plans nothing and retains only the active bytes.
     >>> import datetime as dt
     >>> from buildlimits.outcome_retention import RetentionPolicy
+    >>> from buildlimits.outcome_retention_report import ActiveHistory
     >>> from buildlimits.outcome_segment_inventory import Inventory
     >>> now = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
-    >>> plan_run(Inventory(), RetentionPolicy(), now=now, active_bytes=7).retained_bytes
+    >>> empty = Inventory()
+    >>> plan_run(
+    ...     empty, RetentionPolicy(), now=now, active=ActiveHistory(logical_bytes=7)
+    ... ).retained_bytes
     7
     """
     duplicates = tuple(
@@ -196,10 +207,15 @@ def plan_run(
         if entry.sequence not in duplicated_sequences
     )
     heal = _heal_steps(inventory, duplicated_sequences)
-    budget = Budget(policy=policy, cutoff=policy.cutoff(now), active_bytes=active_bytes)
+    budget = Budget(
+        policy=policy,
+        cutoff=policy.cutoff(now),
+        active_bytes=active.logical_bytes,
+        active_records=active.record_count,
+    )
     deletes, trims, causes = _retention_steps(inventory, budget, duplicated_sequences)
     retained = _retained_estimate(
-        inventory, active_bytes=active_bytes, deletes=deletes, trims=trims
+        inventory, active_bytes=active.logical_bytes, deletes=deletes, trims=trims
     )
     return Plan(
         reconcile=duplicates,
@@ -266,7 +282,7 @@ def _retention_steps(
     trims = _age_trims(candidates, budget.cutoff, deletes)
     plan_byte_steps(candidates, budget, deletes, trims)
     _attribute(deletes, causes, "bytes")
-    plan_record_steps(candidates, budget.policy.max_records, deletes, trims)
+    plan_record_steps(candidates, budget, deletes, trims)
     _attribute(deletes, causes, "records")
     # Byte planning runs after age planning and may delete an archive that also
     # carries an age trim. Rewriting a file that is about to be removed would
