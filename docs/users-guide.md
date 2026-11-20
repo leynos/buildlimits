@@ -384,13 +384,15 @@ history sealed since the last one. The run replans after archiving, so one
 successful run brings closed history within the budget unless a failure stops
 it. The archiver evicts closed history only and never rewrites the active file,
 so when the active file alone is over the budget the retained total stays above
-it until the writer next compacts or seals, which a reduced bound defers to its
-next start or clean shutdown.
+it until the writer next compacts or seals. A running writer keeps the policy
+it loaded at start, so a reduced bound reaches it at the next supervisor start.
 
-A changed bound takes effect where its owner next acts. Reducing the byte, age
-or record bound compacts the active file at the next supervisor start or clean
-shutdown, and evicts closed history at the next archive run. No running process
-rewrites history merely because the configuration changed.
+A changed bound takes effect where its owner next acts. A running supervisor
+keeps the policy it loaded when it started, so clean shutdown applies the
+bounds it started with rather than any edited ones. Reducing the byte, age or
+record bound therefore compacts the active file at the next supervisor start,
+and evicts closed history at the next archive run. No running process rewrites
+history merely because the configuration changed.
 
 A wall-clock jump of more than a day, in either direction, is treated as
 suspect. The writer then skips age eviction for that pass, reports `clock_skew`
