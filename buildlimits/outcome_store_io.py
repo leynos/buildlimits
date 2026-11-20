@@ -33,22 +33,29 @@ _TEMP_SUFFIX = ".tmp"
 def append_line(path: Path, line: bytes) -> None:
     """Append one encoded record and roll back a partial final write.
 
+    Whether the append succeeded is decided by the write alone. A close that
+    fails after the whole line reached the file must not turn a landed row
+    into a refused one: the caller would keep a row list shorter than the
+    file, and its next compaction would drop the row it never counted. The
+    same suppression keeps a close failure from replacing the error of a
+    write that did fail, which is the one the caller must act on.
+
     Raises
     ------
     OSError
-        If the file cannot be opened or the append cannot be completed.
+        If the file cannot be opened or the line cannot be written whole.
     """
     flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
     descriptor, metadata = open_private_regular(path, flags)
     try:
-        try:
-            write_all(descriptor, line + b"\n")
-        except OSError:
-            with contextlib.suppress(OSError):
-                os.ftruncate(descriptor, metadata.st_size)
-            raise
+        write_all(descriptor, line + b"\n")
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.ftruncate(descriptor, metadata.st_size)
+        raise
     finally:
-        os.close(descriptor)
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
 
 
 @dc.dataclass(frozen=True, slots=True)

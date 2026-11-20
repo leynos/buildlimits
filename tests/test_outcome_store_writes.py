@@ -369,6 +369,47 @@ def test_failed_append_rollback_is_repaired_before_the_next_append(
         )
 
 
+def test_a_close_error_after_a_complete_write_keeps_the_row(
+    tmp_path: Path,
+) -> None:
+    """A row whose bytes reached disk is counted when only the close fails.
+
+    The write finishes before the descriptor is closed, so a close error says
+    nothing about the row. Treating it as a refused append would leave a row
+    on disk that the writer's rows do not hold, and the next compaction would
+    silently drop it.
+    """
+    path = tmp_path / "cache-outcomes.jsonl"
+    original = window_summary()
+    appended = window_summary(server_version="0.15.0")
+    close = outcome_store_io.os.close
+    fail_close = False
+
+    def close_reporting_a_fault(descriptor: int) -> None:
+        """Close the descriptor, then report a fault when the flag is set."""
+        close(descriptor)
+        if fail_close:
+            raise OSError("close failed after the write")
+
+    with running_writer(path) as writer:
+        append_and_wait(writer, original)
+        fail_close = True
+        with mock.patch.object(outcome_store_io.os, "close", close_reporting_a_fault):
+            writer.append(appended)
+            results = wait_for_results(writer, operation="append", reason="none")
+        fail_close = False
+        snapshot = writer.retention()
+
+    assert StoreResult("append", "none", 1, 0) in results, (
+        "the row whose bytes reached disk is reported as appended"
+    )
+    assert stored_records(path) == (original, appended), "the row is readable on disk"
+    assert snapshot.record_count == 2, "the landed row is held in memory"
+    assert snapshot.logical_bytes == path.stat().st_size, (
+        "the published count and size describe the same state"
+    )
+
+
 def test_close_returns_within_its_bound_when_a_write_stalls(tmp_path: Path) -> None:
     """A stalled worker cannot extend the caller's one-second close bound."""
     path = tmp_path / "cache-outcomes.jsonl"
