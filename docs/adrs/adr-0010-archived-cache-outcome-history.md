@@ -261,9 +261,12 @@ The plain output is a bounded set of status lines: status and reason, retained
 logical bytes against the budget, active bytes, the age cutoff, the plan's
 counts, one line per action name, then only the non-empty integrity lines for
 gaps, missing, corrupt and orphan sidecars, and per-sequence failures. The JSON
-form is the same report with sorted keys. Neither form names a filesystem path
-or carries raw exception text; sequences and closed reasons identify what needs
-attention.
+form is the same report with sorted keys, and carries `gaps_truncated` so a
+consumer can tell a complete gap list from a pruned one. The gap list stops at
+4096 sequences and then says that more are missing, so even the integrity lines
+cannot grow with the number of lost segments. Neither form names a filesystem
+path or carries raw exception text; sequences and closed reasons identify what
+needs attention.
 
 Exit statuses are part of the contract, as Table 3 records.
 

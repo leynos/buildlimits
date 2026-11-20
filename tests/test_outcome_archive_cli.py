@@ -80,6 +80,9 @@ def _config(
         "\n".join([
             'cache_outcomes = "record"',
             'cache_mode = "sccache"',
+            # The fixtures are dated, so a real age window would start evicting
+            # them once the wall clock passed it. Zero disables age eviction.
+            "cache_outcomes_max_age_days = 0",
             f"cache_outcomes_max_bytes = {max_bytes}",
             f"cache_outcomes_archive_preset = {preset}",
             "",

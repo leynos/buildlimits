@@ -36,6 +36,10 @@ __all__ = [
     "read_history_beside",
 ]
 
+# A writer that seals while a read runs is detected by the re-scan. Three
+# attempts let a read settle across two seals without looping without bound.
+_HISTORY_ATTEMPTS = 3
+
 
 class HistoryFaultError(Exception):
     """A closed reason the retained history cannot be read.
@@ -199,8 +203,36 @@ def _records(documents: cabc.Iterable[_Document]) -> tuple[StoreRecord, ...]:
 def _documents(layout: SegmentLayout) -> cabc.Iterator[_Document]:
     """Iterate one decoded document per retained segment, oldest first.
 
+    The scan and the reads are not atomic. The writer can seal the active file
+    between the inventory and the active read, which moves rows the scan never
+    listed into a new sealed segment and leaves a header-only active file; a
+    single pass would then return a history that is silently short. Each pass
+    therefore re-scans after reading and repeats while the closed segments it
+    saw have changed.
+
     A corrupt or truncated segment surfaces as ``HistoryFaultError`` from the
-    per-document decoder.
+    per-document decoder. A path that vanished after the scan propagates
+    ``FileNotFoundError``, except for a sealed source whose archive stands in
+    for the removed name: only an already-archived path is re-raised.
+
+    Yields
+    ------
+    _Document
+        The segment's header and records.
+    """
+    documents: list[_Document] = []
+    for _attempt in range(_HISTORY_ATTEMPTS):
+        inventory = outcome_segment_inventory.read_inventory(layout)
+        documents = list(_decode_inventory(layout, inventory))
+        if _is_settled(layout, inventory):
+            break
+    yield from documents
+
+
+def _decode_inventory(
+    layout: SegmentLayout, inventory: outcome_segment_inventory.Inventory
+) -> cabc.Iterator[_Document]:
+    """Decode every closed segment one inventory lists, then the active file.
 
     Yields
     ------
@@ -211,10 +243,7 @@ def _documents(layout: SegmentLayout) -> cabc.Iterator[_Document]:
     ------
     FileNotFoundError
         When an entry the scan reported as archived has since disappeared.
-        A sealed source is different: its archive stands in for the removed
-        name, so only an already-archived path is re-raised.
     """
-    inventory = outcome_segment_inventory.read_inventory(layout)
     for entry in inventory.effective:
         try:
             yield _read_document(entry.path, is_compressed=entry.state == "archived")
@@ -231,6 +260,36 @@ def _documents(layout: SegmentLayout) -> cabc.Iterator[_Document]:
             )
     if layout.active.exists():
         yield _read_document(layout.active, is_compressed=False)
+
+
+def _is_settled(
+    layout: SegmentLayout, inventory: outcome_segment_inventory.Inventory
+) -> bool:
+    """Whether a fresh scan still lists the same closed segments.
+
+    Returns
+    -------
+    bool
+        True when the closed segment identities and states are unchanged.
+    """
+    try:
+        fresh = outcome_segment_inventory.read_inventory(layout)
+    except OSError:
+        return False
+    return _signature(fresh) == _signature(inventory)
+
+
+def _signature(
+    inventory: outcome_segment_inventory.Inventory,
+) -> tuple[tuple[int, str], ...]:
+    """Return the closed segment identities and states one scan reported.
+
+    Returns
+    -------
+    tuple[tuple[int, str], ...]
+        One ``(sequence, state)`` pair per effective entry, oldest first.
+    """
+    return tuple((entry.sequence, entry.state) for entry in inventory.effective)
 
 
 def _read_document(path: Path, *, is_compressed: bool) -> _Document:

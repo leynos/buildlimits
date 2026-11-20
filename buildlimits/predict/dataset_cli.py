@@ -6,33 +6,37 @@ snapshot, and says how much history the snapshot really represents.
 
 import argparse
 import dataclasses as dc
-import datetime as dt
 import os
 import sys
 import typing as typ
 from pathlib import Path
 
-from buildlimits import outcome_history, outcome_store_io
-from buildlimits.metrics_query import MAX_RECORDS, Window, window_seconds
-from buildlimits.metrics_query import query as read_journal
+from buildlimits import outcome_history, outcome_segment_inventory, outcome_store_io
 from buildlimits.outcome_history_args import add_history_arguments, selection_from
 from buildlimits.outcome_record_format import RecordFailure
+from buildlimits.outcome_segments import SegmentLayout
 from buildlimits.outcome_store_salt import store_path
 from buildlimits.predict.config_loader import load_config as _read_config
 from buildlimits.predict.dataset import Snapshot, build_snapshot
+from buildlimits.predict.dataset_journal import (
+    journal_note,
+    journal_span,
+    journal_window,
+)
 from buildlimits.predict.journal_provenance import (
     JournalProvenance,
     JournalUnavailable,
-    count_journal,
 )
 from buildlimits.predict.paths import same_file
 from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_store import save_snapshot
-from buildlimits.utc_text import utc_text
+from buildlimits.utc_text import utc_now, utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
+    from buildlimits.metrics_query import Window
     from buildlimits.outcome_history import HistorySelection
     from buildlimits.outcome_record_format import DecodedStore
     from buildlimits.predict.config import Config
@@ -75,7 +79,7 @@ def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
     )
     parser.add_argument(
         "--journal-span",
-        type=_journal_span,
+        type=journal_span,
         default=DEFAULT_JOURNAL_SPAN,
         help="journal lookback used only for the provenance note",
     )
@@ -89,6 +93,87 @@ def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
         options = parser.parse_args(argv)
     except SystemExit as error:
         return int(error.code) if isinstance(error.code, int) else 2
+    settings = _settings(options, chosen)
+    if isinstance(settings, int):
+        return settings
+    config, store = settings
+    selection = selection_from(options)
+    try:
+        inputs = _read_inputs(store, with_history=selection is not None)
+    except OSError as error:
+        print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
+        return 1
+    if any(same_file(path, options.output) for path in inputs):
+        print(
+            "build-limits-predict-dataset: --output must not name a file the "
+            f"command reads ({options.output}); choose another path",
+            file=sys.stderr,
+        )
+        return 2
+    decoded = (
+        chosen.read_store(store)
+        if selection is None
+        else chosen.read_history(store, selection)
+    )
+    if isinstance(decoded, int):
+        return decoded
+    snapshot = _snapshot(decoded, config, options, chosen)
+    return chosen.write_snapshot(snapshot, options.output)
+
+
+def _snapshot(
+    decoded: DecodedStore,
+    config: Config,
+    options: argparse.Namespace,
+    chosen: Edges,
+) -> Snapshot:
+    """Build the snapshot from the decoded history and its provenance.
+
+    Parameters
+    ----------
+    decoded : DecodedStore
+        The rows the command read.
+    config : Config
+        The parameters the gap threshold comes from.
+    options : argparse.Namespace
+        The parsed command line.
+    chosen : Edges
+        The journal and clock this run uses.
+
+    Returns
+    -------
+    Snapshot
+        The redacted snapshot, ready to write.
+    """
+    note: JournalProvenance = (
+        JournalUnavailable("journal query skipped")
+        if options.skip_journal
+        else journal_note(chosen.journal, options.journal_span)
+    )
+    return build_snapshot(
+        decode_history(decoded),
+        now=chosen.now(),
+        journal=note,
+        gap_threshold_seconds=config.gap_threshold_seconds,
+    )
+
+
+def _settings(options: argparse.Namespace, chosen: Edges) -> tuple[Config, Path] | int:
+    """Load the parameters and name the store, reporting a failure once.
+
+    Parameters
+    ----------
+    options : argparse.Namespace
+        The parsed command line.
+    chosen : Edges
+        The parameter loader and store resolver this run uses.
+
+    Returns
+    -------
+    tuple[Config, Path] or int
+        The parameters and store path, or the exit status after the failure
+        has already been printed.
+    """
     try:
         config = chosen.load_config()
     except (TypeError, ValueError, OSError) as error:
@@ -99,60 +184,30 @@ def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
     except (OSError, ValueError) as error:
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 1
-    if same_file(store, options.output):
-        print(
-            "build-limits-predict-dataset: --output must not be the store being "
-            f"read ({store}); choose another path",
-            file=sys.stderr,
-        )
-        return 2
-    selection = selection_from(options)
-    decoded = (
-        chosen.read_store(store)
-        if selection is None
-        else chosen.read_history(store, selection)
-    )
-    if isinstance(decoded, int):
-        return decoded
-    note: JournalProvenance = (
-        JournalUnavailable("journal query skipped")
-        if options.skip_journal
-        else _journal_note(chosen.journal, options.journal_span)
-    )
-    snapshot = build_snapshot(
-        decode_history(decoded),
-        now=chosen.now(),
-        journal=note,
-        gap_threshold_seconds=config.gap_threshold_seconds,
-    )
-    return chosen.write_snapshot(snapshot, options.output)
+    return config, store
 
 
-def _journal_span(text: str) -> str:
-    """Return a journal lookback once it parses as a positive duration.
+def _read_inputs(store: Path, *, with_history: bool) -> tuple[Path, ...]:
+    """Return every file the command reads, so the output can avoid them.
 
-    The provenance note is best effort, so an unparsable span would otherwise
-    be swallowed by the note's own failure handling: the command would write a
-    snapshot with a generic ``journal query failed`` note and still exit 0,
-    leaving the usage error invisible. Validating at parse time reports it the
-    way every other bad option is reported.
+    Parameters
+    ----------
+    store : Path
+        The configured active store path.
+    with_history : bool
+        Whether the command also reads closed segments.
 
     Returns
     -------
-    str
-        The span, unchanged.
-
-    Raises
-    ------
-    argparse.ArgumentTypeError
-        When the span is not a positive duration such as ``30m`` or ``1h``.
+    tuple[Path, ...]
+        The active store, plus every closed segment when history is read; a
+        listing failure propagates ``OSError``.
     """
-    try:
-        window_seconds(text)
-    except ValueError as error:
-        msg = "must be a positive duration such as 30m or 1h"
-        raise argparse.ArgumentTypeError(msg) from error
-    return text
+    if not with_history:
+        return (store,)
+    layout = SegmentLayout.beside(store)
+    inventory = outcome_segment_inventory.read_inventory(layout)
+    return (layout.active, *(entry.path for entry in inventory.effective))
 
 
 def _write(snapshot: Snapshot, output: Path) -> int:
@@ -238,40 +293,6 @@ def _read_history(store: Path, selection: HistorySelection) -> DecodedStore | in
         return 1
 
 
-def _journal_window(since: str) -> Window:
-    """Ask the user journal for its most recent records.
-
-    Returns
-    -------
-    Window
-        The records the journal served within the cap, and whether it hit it.
-    """
-    return read_journal(since=since, max_records=MAX_RECORDS, source="all")
-
-
-def _journal_note(
-    journal: cabc.Callable[[str], Window], span: str
-) -> JournalProvenance:
-    """Ask the journal what it can offer, tolerating any failure.
-
-    The reader reports its own failure rather than returning a placeholder, so
-    the conversion to an unavailable note happens here: the snapshot comes
-    from the store and must not be lost to a side query.
-
-    Returns
-    -------
-    JournalProvenance
-        The journal summary, or an explicit unavailable note.
-    """
-    try:
-        window = journal(span)
-    except Exception:  # ruff: ignore[blind-except] - provenance must never fail the snapshot.
-        return JournalUnavailable("journal query failed")
-    return count_journal(
-        window.records, since=span, cap=MAX_RECORDS, truncated=window.truncated
-    )
-
-
 def _report(snapshot: Snapshot, output: Path) -> None:
     """Print what the snapshot holds, including its gaps."""
     stats = snapshot.stats()
@@ -302,17 +323,6 @@ def _report(snapshot: Snapshot, output: Path) -> None:
             "insufficient admission times rather than use the label time",
             file=sys.stderr,
         )
-
-
-def _utc_now() -> dt.datetime:
-    """Return the current time in UTC.
-
-    Returns
-    -------
-    datetime
-        The host clock, in UTC.
-    """
-    return dt.datetime.now(dt.UTC)
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -346,8 +356,8 @@ class Edges:
         can refuse an unreadable file without patching the module.
     """
 
-    journal: cabc.Callable[[str], Window] = _journal_window
-    now: cabc.Callable[[], dt.datetime] = _utc_now
+    journal: cabc.Callable[[str], Window] = journal_window
+    now: cabc.Callable[[], dt.datetime] = utc_now
     read_store: cabc.Callable[[Path], DecodedStore | int] = _read
     read_history: cabc.Callable[[Path, HistorySelection], DecodedStore | int] = (
         _read_history

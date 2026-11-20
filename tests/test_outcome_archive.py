@@ -23,7 +23,7 @@ from buildlimits.outcome_archive import (
     inspect_store,
 )
 from buildlimits.outcome_archive_lock import ArchiveLock
-from buildlimits.outcome_segments import archive_name, sidecar_name
+from buildlimits.outcome_segments import archive_name, segment_name, sidecar_name
 
 if typ.TYPE_CHECKING:
     import pytest
@@ -181,6 +181,32 @@ def test_a_corrupt_source_is_quarantined_and_reported(tmp_path: Path) -> None:
     )
     assert not archives(tmp_path), "no archive is published"
     assert list(store_layout.quarantine_dir.iterdir()), "the source is preserved"
+
+
+def test_a_failed_source_quarantine_is_recorded_and_the_run_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed move of damaged evidence cannot abandon the rest of the plan."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 2), policy())
+    store_layout = layout(tmp_path)
+    damaged = store_layout.sealed_dir / segment_name(1)
+    damaged.write_bytes(b"not a header\n")
+    damaged.chmod(0o600)
+
+    def refuse(*_args: object, **_kwargs: object) -> object:
+        raise OSError("the source cannot be moved")
+
+    monkeypatch.setattr(outcome_archive_quarantine, "quarantine_source", refuse)
+
+    report = run(tmp_path, policy())
+
+    assert (1, "unreadable") in report.failures, "the failed move is reported"
+    assert [action.sequence for action in report.actions] == [2], (
+        "the healthy source is still archived"
+    )
+    assert damaged.exists(), "the damaged source stays until it can be moved"
+    assert report.status == "corrupt", "the run names the fault it met"
 
 
 def test_a_missing_sidecar_is_repaired(tmp_path: Path) -> None:

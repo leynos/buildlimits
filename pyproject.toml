@@ -1998,14 +1998,6 @@ reason = "Each reads a mapping the codec produced to describe one block of a rep
 
 [[tool.duplication_gate.allow]]
 members = [
-    "buildlimits/outcome_archive.py::_now",
-    "buildlimits/outcome_store_state.py::_utc_now",
-    "buildlimits/predict/dataset_cli.py::_utc_now",
-]
-reason = "Each module owns the default for its own injectable clock edge: the archiver takes a now option, the store takes a wall_clock callable and the dataset command takes a now callable. The shared body is one call to the standard-library UTC constructor, so a shared helper would add a module whose only contract is to be replaced in tests."
-
-[[tool.duplication_gate.allow]]
-members = [
     "buildlimits/predict/synthetic.py::_next",
     "tests/test_predict_bootstrap.py::_seeded",
 ]
@@ -2031,13 +2023,6 @@ members = [
     "modelcheck/adapters/configuration_values.py::_not_a_count",
 ]
 reason = "Both format one value into a fixed shape: the segment name pads a sequence to twelve digits, and the configuration value refuses a count that is not a positive integer. The detector matches their guard-and-format outline, while the value, the width and the outcome differ, and neither would gain from sharing a helper with the other."
-
-[[tool.duplication_gate.allow]]
-members = [
-    "buildlimits/outcome_archive_plan.py::_plan_byte_steps",
-    "buildlimits/outcome_archive_plan.py::_retained_from_candidates",
-]
-reason = "One estimates the bytes the plan retains; the other walks the same candidates oldest-first, evicting whole archives and trimming one partial archive until the budget is met. They share the candidate walk and the delete set on purpose, because the estimate must count exactly what the eviction then removes, but the second mutates as it walks and stops mid-loop."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -2216,3 +2201,89 @@ members = [
     "tests/test_outcome_archive.py::refuse",
 ]
 reason = "Two three-line fault stubs that raise the same error through different seams: one replaces `Path.replace` while a snapshot is written, the other replaces the archive's quarantine call. The signatures, the patched targets and the behaviour under test differ, so a shared helper would hide which seam each test forces to fail."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_recorder_types.py",
+    "buildlimits/outcome_recorder_outputs.py",
+    "tests/outcome_shell_test_support.py",
+    "tests/modelcheck_cases.py",
+    "buildlimits/server_watch.py",
+    "tests/modelcheck_service_cases.py",
+    "tests/outcome_store_helpers.py",
+    "buildlimits/cache_recovery.py",
+    "buildlimits/outcome_store.py",
+    "buildlimits/predict/ensemble_runs.py",
+    "buildlimits/predict/harness.py",
+    "buildlimits/supervisor_wiring.py",
+    "tests/test_group_drain_metrics.py",
+    "buildlimits/outcome_archive_run.py",
+    "buildlimits/outcome_store_state.py",
+    "buildlimits/predict/evaluation.py",
+    "buildlimits/predict/report.py",
+    "buildlimits/predict/scoring.py",
+    "buildlimits/predict/snapshot_codec.py",
+    "modelcheck/cli_outputs.py",
+    "modelcheck/expectations.py",
+    "modelcheck/records.py",
+    "modelcheck/report.py",
+    "tests/predict_test_helpers.py",
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "buildlimits/predict/report_codec.py",
+    "tests/differential_trace_test_helpers.py",
+    "modelcheck/cli.py",
+]
+reason = "Matching type-checking and import preambles: every module guards its own standard-library aliases and the annotation, port and value symbols it reads behind a TYPE_CHECKING block, so a re-export module would hide what each file depends on without sharing any behaviour. The near channel joins the group through that shared block shape, and the members come from unrelated production, model-check and test-support modules."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_sealing_bounds.py",
+    "tests/test_outcome_store_sealing.py",
+]
+reason = "Recurring short test steps: both tests open the same segmented writer, append a row and wait for its result before asserting different contracts -- a failed measurement keeps its rows, while a fresh store keeps its first row. Extracting the four-step arrangement would hide which writer state each case starts from."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_outcome_sealing_bounds.py"
+reason = "Recurring short test steps: the sequence tests prepare the same three paths and the same archived name before asserting different counter outcomes. The shared arrangement is the fixture idiom, and each assertion names the contract under test."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_archive_cli.py",
+    "tests/test_outcome_archive_retention.py",
+]
+reason = "Matching import lists: both modules name the same archive helpers and record builders their own scenarios need, and a re-export module would hide which operations each suite actually exercises."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_store_sealing.py",
+    "tests/test_outcome_store_tail.py",
+]
+reason = "Recurring short test steps: both open a segmented writer, append one row and wait for the result before asserting different contracts -- a fresh store keeps its row, while a torn fragment is repaired before the append. The shared paragraph is the repository's writer idiom, and each test's own state set-up is what distinguishes it."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/dataset_cli.py",
+    "tests/test_kache_detached_events.py",
+]
+reason = "Matching import lists: each module names the standard-library aliases and the domain types it reads, and a re-export module would hide each module's real dependencies without sharing behaviour."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_archive_retention.py",
+    "tests/test_outcome_archive.py",
+]
+reason = "Matching import lists: each module names the archive helpers and fixtures it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_sealing_bounds.py",
+    "tests/test_outcome_store_tail.py",
+]
+reason = "Recurring short test steps: both decode the store after a writer run and assert the observed timestamps survived. One asserts a failed seal kept both rows, the other that a torn fragment never joined a row, so each assertion names its own contract."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_outcome_store_tail.py"
+reason = "Recurring short test steps: the repair tests share the write-fixture, repair and compare outline while asserting distinct outcomes -- a tail removed, a whole file emptied, a complete store untouched. Extracting the outline would hide which damage each case pins."
+

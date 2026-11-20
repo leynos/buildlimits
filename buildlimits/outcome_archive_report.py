@@ -89,6 +89,8 @@ class RunReport:
         Sequences that could not be processed, with a closed reason.
     gaps : tuple[int, ...]
         Missing sequences at or above the retention floor.
+    gaps_truncated : bool
+        Whether more sequences are missing than ``gaps`` reports.
     missing_sidecars : tuple[int, ...]
         Archives with no sidecar.
     corrupt_sidecars : tuple[int, ...]
@@ -111,6 +113,7 @@ class RunReport:
     actions: tuple[ActionResult, ...] = ()
     failures: tuple[tuple[int, str], ...] = ()
     gaps: tuple[int, ...] = ()
+    gaps_truncated: bool = False
     missing_sidecars: tuple[int, ...] = ()
     corrupt_sidecars: tuple[int, ...] = ()
     orphan_sidecars: tuple[int, ...] = ()
@@ -159,6 +162,7 @@ class RunReport:
                 for sequence, reason in self.failures
             ],
             "gaps": list(self.gaps),
+            "gaps_truncated": self.gaps_truncated,
             "missing_sidecars": list(self.missing_sidecars),
             "corrupt_sidecars": list(self.corrupt_sidecars),
             "orphan_sidecars": list(self.orphan_sidecars),

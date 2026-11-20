@@ -223,6 +223,8 @@ def _write_actions(report: RunReport) -> None:
 def _write_diagnostics(report: RunReport) -> None:
     """Print the integrity flags an operator may need to act on."""
     _print_sequences("gaps", report.gaps)
+    if report.gaps_truncated:
+        print(f"gaps truncated: more than {len(report.gaps)} sequences are missing")
     _print_sequences("missing sidecar", report.missing_sidecars)
     _print_sequences("corrupt sidecar", report.corrupt_sidecars)
     _print_sequences("orphan sidecar", report.orphan_sidecars)

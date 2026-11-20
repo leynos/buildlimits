@@ -11,11 +11,11 @@ trim never frees more bytes than its sidecar proves.
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.outcome_archive_budget import Budget, plan_byte_steps, planned_size
 from buildlimits.outcome_archive_verify import Trim
 from buildlimits.utc_text import optional_utc_text
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     import datetime as dt
 
     from buildlimits.outcome_retention import RetentionPolicy
@@ -136,15 +136,6 @@ class PlanSummary:
         }
 
 
-@dc.dataclass(frozen=True, slots=True)
-class _Budget:
-    """The policy, cutoff and active bytes one plan is measured against."""
-
-    policy: RetentionPolicy
-    cutoff: dt.datetime | None
-    active_bytes: int
-
-
 def plan_run(
     inventory: Inventory,
     policy: RetentionPolicy,
@@ -193,9 +184,7 @@ def plan_run(
         if entry.sequence not in duplicated_sequences
     )
     heal = _heal_steps(inventory, duplicated_sequences)
-    budget = _Budget(
-        policy=policy, cutoff=policy.cutoff(now), active_bytes=active_bytes
-    )
+    budget = Budget(policy=policy, cutoff=policy.cutoff(now), active_bytes=active_bytes)
     deletes, trims = _retention_steps(inventory, budget, duplicated_sequences)
     retained = _retained_estimate(
         inventory, active_bytes=active_bytes, deletes=deletes, trims=trims
@@ -231,7 +220,7 @@ def _heal_steps(inventory: Inventory, duplicated: set[int]) -> tuple[SegmentEntr
 
 def _retention_steps(
     inventory: Inventory,
-    budget: _Budget,
+    budget: Budget,
     duplicated: set[int],
 ) -> tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...]]:
     """Decide age and byte eviction over closed archives, oldest first.
@@ -249,11 +238,14 @@ def _retention_steps(
         for entry in candidates:
             _plan_age_step(entry, budget.cutoff, deletes)
     trims = _age_trims(candidates, budget.cutoff, deletes)
-    _plan_byte_steps(candidates, budget, deletes, trims)
+    plan_byte_steps(candidates, budget, deletes, trims)
+    # Byte planning runs after age planning and may delete an archive that also
+    # carries an age trim. Rewriting a file that is about to be removed would
+    # only churn it, so a deleted sequence is never also planned as a trim.
     trimmed = tuple(
         (entry, trims[entry.sequence])
         for entry in candidates
-        if entry.sequence in trims
+        if entry.sequence in trims and entry.sequence not in deletes
     )
     return tuple(deletes[sequence] for sequence in sorted(deletes)), trimmed
 
@@ -292,88 +284,6 @@ def _age_trims(
     return trims
 
 
-def _plan_byte_steps(
-    candidates: tuple[SegmentEntry, ...],
-    budget: _Budget,
-    deletes: dict[int, SegmentEntry],
-    trims: dict[int, Trim],
-) -> None:
-    """Evict the oldest archives until the logical byte budget is met."""
-    if not budget.policy.has_byte_limit:
-        return
-    retained = _retained_from_candidates(candidates, budget, deletes, trims)
-    excess = retained - budget.policy.max_bytes
-    if excess <= 0:
-        return
-    for entry in _live(candidates, deletes):
-        if excess <= 0:
-            # A whole-archive deletion may have met the budget exactly. The
-            # next archive then needs no rewrite, and trimming it to its own
-            # size would churn the file without dropping a row.
-            return
-        size = _planned_size(entry, trims.get(entry.sequence))
-        if size <= excess:
-            deletes[entry.sequence] = entry
-            excess -= size
-            continue
-        existing = trims.get(entry.sequence, Trim())
-        trims[entry.sequence] = dc.replace(
-            existing, allowed_bytes=size - excess, source_bytes=size
-        )
-        return
-
-
-def _live(
-    candidates: tuple[SegmentEntry, ...], deletes: dict[int, SegmentEntry]
-) -> cabc.Iterator[SegmentEntry]:
-    """Yield the candidates no step has deleted yet.
-
-    The delete set is consulted as each entry is yielded, so a planner that
-    adds to it while walking still sees its own decisions.
-
-    Returns
-    -------
-    Iterator[SegmentEntry]
-        The candidates still planned to survive, in sequence order.
-    """
-    return (entry for entry in candidates if entry.sequence not in deletes)
-
-
-def _retained_from_candidates(
-    candidates: tuple[SegmentEntry, ...],
-    budget: _Budget,
-    deletes: dict[int, SegmentEntry],
-    trims: dict[int, Trim],
-) -> int:
-    """Estimate retained bytes from the closed archives and active file.
-
-    Returns
-    -------
-    int
-        Active bytes plus every candidate that is not deleted, with planned
-        trims applied.
-    """
-    return budget.active_bytes + sum(
-        _planned_size(entry, trims.get(entry.sequence))
-        for entry in _live(candidates, deletes)
-    )
-
-
-def _planned_size(entry: SegmentEntry, trim: Trim | None) -> int:
-    """Estimate the logical bytes one archive keeps after its trim.
-
-    Returns
-    -------
-    int
-        The sidecar's logical size, capped by an explicit byte allowance. A
-        time-based trim cannot be estimated without reading rows, so it is
-        treated as freeing nothing.
-    """
-    if trim is None or trim.allowed_bytes is None:
-        return entry.logical_bytes
-    return min(entry.logical_bytes, trim.allowed_bytes)
-
-
 def _retained_estimate(
     inventory: Inventory,
     *,
@@ -396,5 +306,5 @@ def _retained_estimate(
         if entry.state == "sealed":
             retained += entry.logical_bytes
         elif entry.sequence not in deleted:
-            retained += _planned_size(entry, trim_map.get(entry.sequence))
+            retained += planned_size(entry, trim_map.get(entry.sequence))
     return retained

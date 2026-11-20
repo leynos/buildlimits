@@ -185,6 +185,11 @@ def reconcile_duplicate(
             context, archived.path, archived.sequence, "mismatch"
         )
         return _rearchive(context, sealed)
+    if not archived.has_metadata:
+        # A heal step skips duplicated sequences, so this is the last point at
+        # which the verified archive's facts can be recorded before the source
+        # that could regenerate them is removed. The sidecar is authoritative.
+        write_sidecar(context, archived.sequence, existing)
     _remove_sealed_source(context, sealed.sequence)
     return ActionResult(
         "reconciled",

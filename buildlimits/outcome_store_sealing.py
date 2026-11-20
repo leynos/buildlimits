@@ -65,7 +65,10 @@ def seal(files: StoreFiles, *, salt_id: str | None = None) -> bool:
     try:
         now = files.observe_clock()
         ensure_directory(files.sealed_dir)
-        sequence = next_sequence(files.sequence_file, files.sealed_dir)
+        layout = outcome_segments.SegmentLayout.beside(files.path)
+        sequence = next_sequence(
+            files.sequence_file, files.sealed_dir, layout.archive_dir
+        )
         domain = salt.salt_id if salt_id is None else salt_id
         metadata = sealed_metadata(files.records, sequence, domain, now)
         destination = files.sealed_dir / outcome_segments.segment_name(sequence)
@@ -89,8 +92,23 @@ def seal(files: StoreFiles, *, salt_id: str | None = None) -> bool:
     return True
 
 
-def next_sequence(sequence_file: Path, sealed_dir: Path) -> int:
-    """Choose the next sealed sequence after the counter and directory.
+def next_sequence(sequence_file: Path, sealed_dir: Path, archived_dir: Path) -> int:
+    """Choose the next sealed sequence after the counter and both directories.
+
+    The counter is authoritative when it is readable, but a missing or damaged
+    counter falls back to the directory names. Archived names count too: a
+    store whose sealed sources were all archived and whose counter was lost
+    would otherwise restart at sequence one and collide with an existing
+    archive, leaving the new source permanently unarchived.
+
+    Parameters
+    ----------
+    sequence_file : Path
+        The next-sequence counter.
+    sealed_dir : Path
+        The directory holding sealed plain segments.
+    archived_dir : Path
+        The directory holding published XZ archives.
 
     Returns
     -------
@@ -102,20 +120,25 @@ def next_sequence(sequence_file: Path, sealed_dir: Path) -> int:
     except ValueError:
         recorded = None
     floor = 0 if recorded is None else recorded - 1
-    return max(floor, highest_sealed(sealed_dir)) + 1
+    highest = max(
+        floor,
+        highest_segment_name(sealed_dir),
+        highest_segment_name(archived_dir),
+    )
+    return highest + 1
 
 
-def highest_sealed(sealed_dir: Path) -> int:
-    """Return the highest sequence name already in the sealed directory.
+def highest_segment_name(directory: Path) -> int:
+    """Return the highest ``segment-*`` sequence name in one directory.
 
     Returns
     -------
     int
-        The highest sequence, or zero when the directory is empty.
+        The highest sequence, or zero when the directory is empty or unreadable.
     """
     highest = 0
     try:
-        iterator = sealed_dir.iterdir()
+        iterator = directory.iterdir()
     except OSError:
         return highest
     for path in iterator:
@@ -206,15 +229,16 @@ def _sync_sealed(files: StoreFiles) -> bool:
 def store_has_rows(path: Path) -> bool:
     """Whether the active file holds anything worth sealing.
 
+    An inspection failure propagates ``OSError`` rather than reading as "no
+    rows", which would let the caller replace a populated file with an empty
+    one.
+
     Returns
     -------
     bool
         True when the active file exists and is non-empty.
     """
-    try:
-        return store_size(path) > 0
-    except OSError:
-        return False
+    return store_size(path) > 0
 
 
 def restart_active(files: StoreFiles) -> bool:

@@ -86,8 +86,13 @@ def test_unusable_retention_state_is_ignored(tmp_path: Path, document: bytes) ->
 
 
 def test_an_oversized_retention_record_is_not_read(tmp_path: Path) -> None:
-    """A huge file in the state directory cannot be pulled into memory."""
+    """A huge file in the state directory cannot be pulled into memory.
+
+    The document is valid and only padded past the bound, so an unbounded read
+    would accept it and report its floor rather than fail to parse it.
+    """
     layout = store_layout(tmp_path)
-    write_private(layout.retention_file, b" " * (4096 + 1))
+    document = b'{"floor_sequence": 4}'
+    write_private(layout.retention_file, document + b" " * (4096 - len(document) + 1))
 
     assert read_retention_floor(layout) is None, "the record is refused unread"

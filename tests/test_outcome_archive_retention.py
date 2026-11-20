@@ -19,16 +19,21 @@ from outcome_archive_helpers import (
     archives,
     document,
     layout,
-    observed,
     policy,
     records,
     run,
     write,
 )
+from segment_test_helpers import write_private
 
 from buildlimits import outcome_history
 from buildlimits.outcome_segment_inventory import read_inventory
-from buildlimits.outcome_segments import SegmentLayout, archive_name, sidecar_name
+from buildlimits.outcome_segments import (
+    SegmentLayout,
+    archive_name,
+    segment_name,
+    sidecar_name,
+)
 
 
 def test_archiving_releases_every_sealed_source(tmp_path: Path) -> None:
@@ -98,6 +103,42 @@ def test_age_eviction_settles_in_the_same_run(tmp_path: Path) -> None:
     ), "the floor records an empty history"
 
 
+def test_a_heal_only_run_replans_retention_with_real_logical_bytes(
+    tmp_path: Path,
+) -> None:
+    """A repaired sidecar lets the same run see the bytes the archive holds.
+
+    The first plan had to fall back to the archive's physical size, which
+    understates what it represents, so the budget is only true after the
+    repaired inventory is planned again.
+    """
+    store_layout = layout(tmp_path)
+    store_layout.sealed_dir.mkdir(parents=True)
+    for sequence in (1, 2):
+        write_private(
+            store_layout.sealed_dir / segment_name(sequence),
+            document(records(NOW, 20)),
+        )
+    run(tmp_path, policy())
+    first, second = read_inventory(store_layout).archived
+    (store_layout.archive_dir / sidecar_name(first.sequence)).unlink()
+    # The physical-size plan fits this budget, so only the repaired inventory
+    # shows an excess; half of the first archive is then trimmed away.
+    budget = first.logical_bytes // 2 + second.logical_bytes
+    assert first.physical_bytes < budget < first.logical_bytes + second.logical_bytes, (
+        "the fixture needs a budget between the two estimates"
+    )
+
+    report = run(tmp_path, policy(max_bytes=budget))
+
+    actions = [(action.action, action.sequence) for action in report.actions]
+    assert ("repaired", first.sequence) in actions, "the sidecar is rebuilt"
+    assert ("trimmed", first.sequence) in actions, (
+        "the healed bytes change the plan in the same run"
+    )
+    assert report.retained_bytes <= budget, "the budget is met in one firing"
+
+
 def test_byte_eviction_deletes_the_oldest_archive_first(tmp_path: Path) -> None:
     """A byte budget smaller than the history removes whole oldest archives."""
     store = tmp_path / "cache-outcomes.jsonl"
@@ -138,8 +179,8 @@ def test_history_is_identical_before_and_after_archiving(tmp_path: Path) -> None
     after = outcome_history.read_history_beside(store)
 
     assert len(before.records) == 4, "the store holds four rows"
-    assert observed(before) == observed(after), "the order and rows are unchanged"
-    assert before.header.salt_id == after.header.salt_id, "the salt domain survives"
+    assert before.records == after.records, "every field and the order are unchanged"
+    assert before.header == after.header, "the salt domain and header survive"
 
 
 @given(

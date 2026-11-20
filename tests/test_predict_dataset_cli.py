@@ -12,6 +12,7 @@ from buildlimits import outcome_store_io
 from buildlimits.metrics_query import MetricsQueryError, Window
 from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
+from buildlimits.outcome_segments import SegmentLayout, archive_name, segment_name
 from buildlimits.predict import dataset_cli
 from buildlimits.predict.journal_provenance import (
     JournalCounts,
@@ -86,10 +87,43 @@ def test_dataset_command_refuses_to_write_over_its_store(
     ])
 
     assert status == 2, "a destructive output path is a usage failure"
-    assert "must not be the store being read" in capsys.readouterr().err, (
+    assert "must not name a file the command reads" in capsys.readouterr().err, (
         "the refusal names the reason"
     )
     assert store.read_bytes() == before, "the store is untouched"
+
+
+@pytest.mark.parametrize("closed", ["sealed", "archived"])
+def test_dataset_command_refuses_to_write_over_a_closed_segment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], closed: str
+) -> None:
+    """``--history`` reads closed segments, so the output may not replace one."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, 4)
+    layout = SegmentLayout.beside(store)
+    layout.sealed_dir.mkdir(parents=True)
+    if closed == "sealed":
+        input_path = layout.sealed_dir / segment_name(1)
+    else:
+        layout.archive_dir.mkdir(parents=True)
+        input_path = layout.archive_dir / archive_name(1)
+    input_path.write_bytes(b"closed rows")
+    before = input_path.read_bytes()
+
+    status = dataset_cli.main([
+        "--store",
+        str(store),
+        "--output",
+        str(input_path),
+        "--skip-journal",
+        "--history",
+    ])
+
+    assert status == 2, "a destructive output path is a usage failure"
+    assert "must not name a file the command reads" in capsys.readouterr().err, (
+        "the refusal names the reason"
+    )
+    assert input_path.read_bytes() == before, "the closed segment is untouched"
 
 
 def test_dataset_command_refuses_an_unparsable_journal_span(

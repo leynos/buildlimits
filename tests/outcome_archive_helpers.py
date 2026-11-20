@@ -8,7 +8,7 @@ states only the archive behaviour it observes.
 import datetime as dt
 import typing as typ
 
-from outcome_store_helpers import segment_writer
+from outcome_store_helpers import close_writer, segment_writer
 from outcome_test_helpers import attributed_record
 from segment_test_helpers import document
 from segment_test_helpers import store_layout as layout
@@ -78,13 +78,18 @@ def records(observed: dt.datetime, count: int) -> tuple[StoreRecord, ...]:
 def write(
     path: Path, rows: tuple[StoreRecord, ...], retention: RetentionPolicy
 ) -> None:
-    """Append records and close the writer, draining every append."""
+    """Append records and close the writer, requiring its worker to stop.
+
+    A plain ``close`` returns at its caller's bound whether or not the worker
+    has stopped, so an archiver run that follows could see a half-written
+    fixture.
+    """
     writer = segment_writer(path, retention, NOW)
     try:
         for row in rows:
             writer.append(row)
     finally:
-        writer.close(2.0)
+        close_writer(writer)
 
 
 def run(

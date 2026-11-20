@@ -9,6 +9,7 @@ under a name that records why and never replaces an earlier entry.
 import lzma
 import typing as typ
 
+import pytest
 from archive_files_helpers import (
     archived_entry,
     context,
@@ -24,6 +25,7 @@ from buildlimits.outcome_archive_files import (
     delete_archive,
     reconcile_duplicate,
 )
+from buildlimits.outcome_archive_fs import UnsafePathError
 from buildlimits.outcome_archive_quarantine import (
     quarantine_archive,
     remove_orphan_sidecar,
@@ -50,6 +52,54 @@ def test_a_matching_duplicate_is_reconciled(tmp_path: Path) -> None:
     assert not sealed.exists(), "the redundant source is removed"
     assert archived.path.exists(), "the verified archive stays"
     assert quarantined(tmp_path) == [], "a matching pair needs no quarantine"
+
+
+def test_a_reconciled_duplicate_records_the_sidecar_it_verified(
+    tmp_path: Path,
+) -> None:
+    """Settling a pair rebuilds a sidecar the archive lost before the source goes.
+
+    Reconciliation skips duplicated sequences in the heal plan, so this is the
+    last moment the verified archive's facts can be recorded.
+    """
+    data = document(records(2))
+    sealed = source(tmp_path, 1, data)
+    run = context(tmp_path)
+    archive_source(run, sealed_entry(sealed, 1))
+    (run.layout.archive_dir / sidecar_name(1)).unlink()
+    sealed.write_bytes(data)
+    sealed.chmod(0o600)
+    archived = archived_entry(tmp_path)
+
+    result = reconcile_duplicate(run, sealed_entry(sealed, 1), archived)
+
+    assert result.action == "reconciled", "the pair is settled"
+    assert not sealed.exists(), "the verified source is removed"
+    assert (run.layout.archive_dir / sidecar_name(1)).exists(), (
+        "the archived facts are kept"
+    )
+
+
+def test_a_symlinked_quarantine_directory_is_refused(tmp_path: Path) -> None:
+    """A link would move damaged evidence outside the archive tree.
+
+    The target is a private directory, so a move into it would otherwise
+    succeed; only validating the quarantine directory makes this test pass.
+    """
+    run = context(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    outside.chmod(0o700)
+    run.layout.quarantine_dir.symlink_to(outside, target_is_directory=True)
+    damaged = run.layout.archive_dir / archive_name(1)
+    damaged.write_bytes(b"junk")
+    damaged.chmod(0o600)
+
+    with pytest.raises(UnsafePathError):
+        quarantine_archive(run, sealed_entry(damaged, 1), "bad_xz")
+
+    assert not list(outside.iterdir()), "nothing is moved through the link"
+    assert damaged.exists(), "the file is still where it was"
 
 
 def test_a_mismatched_archive_is_replaced_from_its_source(tmp_path: Path) -> None:
@@ -160,9 +210,14 @@ def test_quarantine_never_replaces_an_earlier_entry(tmp_path: Path) -> None:
     quarantine_archive(run, sealed_entry(first, 1), "bad_xz")
     quarantine_archive(run, sealed_entry(second, 1), "bad_xz")
 
-    names = [path.name for path in quarantined(tmp_path)]
-    assert len(names) == 2, "both files survive"
-    assert len(set(names)) == 2, "the quarantine names never collide"
+    entries = quarantined(tmp_path)
+    assert len(entries) == 2, "both files survive"
+    assert len({path.name for path in entries}) == 2, (
+        "the quarantine names never collide"
+    )
+    assert sorted(path.read_bytes() for path in entries) == [b"one", b"two"], (
+        "each entry keeps the bytes of the file it moved"
+    )
 
 
 def test_quarantining_an_archive_drops_its_sidecar(tmp_path: Path) -> None:

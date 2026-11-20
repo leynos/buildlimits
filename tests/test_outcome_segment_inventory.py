@@ -13,11 +13,13 @@ import pytest
 from segment_test_helpers import (
     DIGEST,
     NOW,
+    sidecar_document,
     store_layout,
     write_private,
     write_sidecar,
 )
 
+from buildlimits.outcome_segment_gaps import MAX_GAP_SEQUENCES
 from buildlimits.outcome_segment_inventory import (
     Inventory,
     SegmentEntry,
@@ -163,20 +165,33 @@ def test_a_sidecar_behind_a_directory_is_corrupt(tmp_path: Path) -> None:
 
 
 def test_a_sidecar_symlink_is_corrupt(tmp_path: Path) -> None:
-    """A link out of the archive directory is never followed."""
+    """A link out of the archive directory is never followed.
+
+    The link target is a schema-valid sidecar, so accepting the link would
+    produce a trustworthy entry rather than a corruption flag; only refusing
+    the link itself makes this test pass.
+    """
     layout = store_layout(tmp_path)
     write_private(layout.archive_dir / archive_name(1), b"x" * 40)
-    target = write_private(tmp_path / "elsewhere.json", b"{}")
+    target = write_private(
+        tmp_path / "elsewhere.json", json.dumps(sidecar_document(1)).encode()
+    )
     (layout.archive_dir / sidecar_name(1)).symlink_to(target)
 
     assert read_inventory(layout).corrupt_sidecars == (1,), "the link is refused"
 
 
 def test_an_oversized_sidecar_is_corrupt(tmp_path: Path) -> None:
-    """A huge sidecar cannot be pulled into memory by an inventory scan."""
+    """A huge sidecar cannot be pulled into memory by an inventory scan.
+
+    The document is otherwise valid and padded past the bound, so removing the
+    size check would accept it rather than fail to parse it.
+    """
     layout = store_layout(tmp_path)
     write_private(layout.archive_dir / archive_name(1), b"x" * 40)
-    write_private(layout.archive_dir / sidecar_name(1), b" " * (64 * 1024 + 1))
+    document = json.dumps(sidecar_document(1)).encode()
+    padding = b" " * (64 * 1024 - len(document) + 1)
+    write_private(layout.archive_dir / sidecar_name(1), document + padding)
 
     assert read_inventory(layout).corrupt_sidecars == (1,), "the file is refused unread"
 
@@ -221,6 +236,34 @@ def test_gaps_start_at_the_retention_floor(tmp_path: Path) -> None:
     assert not read_inventory(layout, retention_floor=5).gaps, (
         "a floor above every sequence leaves nothing missing"
     )
+
+
+def test_gap_reporting_is_bounded(tmp_path: Path) -> None:
+    """A sparse sequence cannot make one report enumerate forever.
+
+    The two segments are exactly one more gap apart than the bound, so the
+    list is cut short and the flag says so.
+    """
+    layout = store_layout(tmp_path)
+    for sequence in (1, MAX_GAP_SEQUENCES + 3):
+        write_private(layout.sealed_dir / segment_name(sequence), b"rows")
+
+    inventory = read_inventory(layout)
+
+    assert len(inventory.gaps) == MAX_GAP_SEQUENCES, "the list stops at the bound"
+    assert inventory.gaps_truncated, "the report says more sequences are missing"
+
+
+def test_a_gap_list_at_the_bound_is_not_truncated(tmp_path: Path) -> None:
+    """Exactly the bound of missing sequences is reported in full."""
+    layout = store_layout(tmp_path)
+    for sequence in (1, MAX_GAP_SEQUENCES + 2):
+        write_private(layout.sealed_dir / segment_name(sequence), b"rows")
+
+    inventory = read_inventory(layout)
+
+    assert len(inventory.gaps) == MAX_GAP_SEQUENCES, "every gap is listed"
+    assert not inventory.gaps_truncated, "nothing is withheld at the bound"
 
 
 def test_inventory_byte_totals_follow_state(tmp_path: Path) -> None:

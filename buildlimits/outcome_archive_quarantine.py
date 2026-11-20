@@ -11,6 +11,7 @@ import typing as typ
 
 from buildlimits import outcome_segments
 from buildlimits.outcome_archive_context import ActionResult
+from buildlimits.outcome_archive_fs import ensure_private_directory
 from buildlimits.outcome_store_io import fsync_directory
 
 if typ.TYPE_CHECKING:
@@ -19,7 +20,6 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_context import ArchiveContext
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
-_DIRECTORY_MODE = 0o700
 _QUARANTINE_TOKEN_BYTES = 6
 
 __all__ = [
@@ -56,8 +56,10 @@ def quarantine_file(
         The quarantine file's name.
     """
     directory = context.layout.quarantine_dir
-    directory.mkdir(mode=_DIRECTORY_MODE, parents=True, exist_ok=True)
-    directory.chmod(_DIRECTORY_MODE)
+    # A symlinked quarantine directory would let the move place the file
+    # outside the archive tree and a chmod change an unrelated directory, so
+    # it is validated exactly as the archive directory is.
+    ensure_private_directory(directory)
     token = os.urandom(_QUARANTINE_TOKEN_BYTES).hex()
     destination = directory / f"{path.name}.{reason}.{token}"
     path.replace(destination)

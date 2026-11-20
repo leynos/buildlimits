@@ -90,6 +90,34 @@ def test_a_byte_trim_keeps_the_age_trim_it_composes_with() -> None:
     assert trim.source_bytes == 1000, "the allowance is measured against the source"
 
 
+def test_a_deleted_archive_is_never_also_trimmed() -> None:
+    """Byte planning may delete an archive the age plan already trimmed.
+
+    Rewriting a file that is about to be removed would only churn it, so the
+    deletion wins and the surviving archive keeps its own trim.
+    """
+    straddling = tuple(
+        archived(
+            sequence,
+            logical_bytes=100,
+            span=(NOW - dt.timedelta(days=2), NOW),
+        )
+        for sequence in (1, 2)
+    )
+
+    decision = plan(
+        Inventory(archived=straddling),
+        policy(max_age_days=1, max_bytes=100),
+    )
+
+    assert [item.sequence for item in decision.deletes] == [1], (
+        "the oldest archive is removed whole"
+    )
+    assert [(item.sequence, trim.before) for item, trim in decision.trims] == [
+        (2, NOW - dt.timedelta(days=1))
+    ], "only the surviving archive is rewritten"
+
+
 def test_no_byte_limit_disables_byte_eviction() -> None:
     """A zero budget means unlimited retention, not an immediate wipe."""
     entries = tuple(archived(sequence, logical_bytes=10**9) for sequence in range(1, 4))

@@ -20,6 +20,8 @@ from buildlimits.outcome_store_io import (
     store_size,
 )
 from buildlimits.outcome_store_sealing import restart_active, seal
+from buildlimits.outcome_store_tail import drop_torn_tail
+from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -46,17 +48,6 @@ class Publisher(typ.Protocol):
         """Record one outcome under its operation and reason."""
 
 
-def _utc_now() -> dt.datetime:
-    """Read the total system wall clock as an aware UTC value.
-
-    Returns
-    -------
-    datetime
-        The current aware UTC wall-clock value.
-    """
-    return dt.datetime.now(dt.UTC)
-
-
 class Clocks:
     """The wall and monotonic clocks the writer reads as a pair.
 
@@ -74,7 +65,7 @@ class Clocks:
         monotonic: cabc.Callable[[], float] | None = None,
     ) -> None:
         """Bind the clocks, falling back to the system's own."""
-        self.wall = _utc_now if wall is None else wall
+        self.wall = utc_now if wall is None else wall
         self.monotonic = time.monotonic if monotonic is None else monotonic
 
 
@@ -180,6 +171,14 @@ class StoreFiles:
         if not self.policy.is_segmented:
             self.compact()
             return
+        try:
+            drop_torn_tail(self.path)
+        except OSError:
+            # The decoder already ignores the fragment, but appending would
+            # join a new row to it, so a file that cannot be repaired must not
+            # be appended to at all.
+            self.publish("load", "save_failed")
+            return
         size = self.measure_active("load", "unreadable")
         if size is None:
             return
@@ -260,10 +259,12 @@ class StoreFiles:
             writer must not become ready: appending would mix the domains.
         """
         if not store.records:
-            # Only the old header is on disk, so replacing it is enough.
+            # Only the old header is on disk, so replacing it is enough, but it
+            # must actually be replaced: leaving it would key the new domain's
+            # rows under the previous salt.
             self.header = outcome_records.StoreHeader(salt.salt_id, now)
             self.records = []
-            return True
+            return restart_active(self)
         self.header = store.header
         self.records = list(store.records)
         # ``seal`` installs the active salt's header afterwards, so success

@@ -164,6 +164,39 @@ verified archive is published, and leaves compile admission untouched.
   the new boundaries. `tests/test_harness_ownership.py` now uses
   `resource.RLIM_INFINITY` instead of `-1`, so the Python 3.15 free-threaded
   failure recorded above is gone.
+- [x] Second review remediation (2026-11-20): the next CodeRabbit pass found
+  thirteen defects, each confirmed in the source before it was changed.
+  `ensure_private_directory` now creates missing components one at a time after
+  proving each ancestor is a real directory and applies the mode through an
+  `O_NOFOLLOW` descriptor, so a symlink cannot redirect creation or a `chmod`;
+  the quarantine directory is validated the same way. Reconciliation writes the
+  sidecar it verified before removing the only source that could regenerate it.
+  A byte plan no longer trims an archive it also deletes. A heal-only run
+  re-plans retention, so a repaired sidecar's real logical bytes are enforced
+  in the same firing. A failed quarantine move of a faulted artefact is
+  recorded and the run continues. History reading re-scans and repeats a
+  bounded number of times, so rows sealed mid-read are not silently missed. The
+  XZ decoder states a 128 MiB dictionary budget. Gap enumeration stops at 4096
+  sequences and reports `gaps_truncated`, in the report, the JSON document and
+  one plain status line. A lost sequence counter also reads the archive
+  directory, so an archived name is never reused; an unmeasurable active file
+  is reported rather than treated as empty. The writer drops a torn active tail
+  before appending and rewrites a header-only file on a salt change. The
+  dataset command refuses an `--output` that names any file it reads, including
+  a closed segment reached through `--history`, and the benchmark streams its
+  archive to a temporary file instead of its own memory. Every fix has a
+  regression test; the eleven focused modules pass (142 tests).
+- [x] Duplication-gate remediation (2026-11-20): the near channel merged several
+  previously separate import-preamble families into one 30-member family as
+  soon as a module gained the imports it reads, so the gate failed on families
+  no existing allow entry named. Genuine duplication was extracted instead:
+  `_now` was replaced by `utc_text.utc_now`, the archive filesystem path walk
+  became `_components` plus `_require_directory_component`, and the byte
+  planner's two candidate walks became one `_planned_entries` generator. The
+  remaining test-shape, import-list and type-checking-preamble families are
+  recorded as reasoned exceptions naming every member; the gate passes with 251
+  reasoned exceptions. The new modules and the shared clock are documented in
+  the developers' guide module inventory.
 
 ## Surprises & discoveries
 
@@ -202,6 +235,14 @@ verified archive is published, and leaves compile admission untouched.
   entry has to name that member by path alone. A family entirely inside one
   file is also rejected by `members` (it requires two or more entries) and
   needs the separate `[[tool.duplication_gate.unit]]` table.
+- The duplication detector's near channel clusters matching import and
+  `TYPE_CHECKING` preambles into one connected family. Adding two imports to a
+  single module can therefore merge two families that each had their own allow
+  entry, and the merged family matches neither entry, so the gate fails without
+  any new shared behaviour. The remediation added one entry naming all thirty
+  members; `nose query` does not reproduce the gate's families, so the cause
+  was isolated by bisecting a pristine HEAD worktree rather than by inspecting
+  the detector.
 
 ## Decision log
 
@@ -238,6 +279,19 @@ verified archive is published, and leaves compile admission untouched.
   while this build reports `resource.RLIM_INFINITY` as `18446744073709551615`.
   The test now uses the runtime constant, so the case passes on any supported
   interpreter. This is a test-portability fix, carried in its own commit.
+- The store reader and the segment reader disagree about a decodable final row
+  without a newline: `read_store` cuts at the last newline, while the archive
+  reader keeps a fragment that decodes. Both are deliberate. The active file is
+  still being appended to, so the writer repairs it to the decoder's view; a
+  sealed segment is closed, and a complete row whose newline was lost is
+  history that must not be dropped. The developers' guide states both rules.
+- Retention planning uses an archive's physical size when its sidecar is
+  untrustworthy. For XZ that figure is a lower bound, not a safe overestimate,
+  so any run that repaired a sidecar now re-plans from the repaired inventory
+  instead of relying on the first plan.
+- A byte trim and an age trim compose into one rewrite, but a sequence the byte
+  plan deletes is excluded from the trim list: rewriting a file that is about
+  to be removed cannot improve the retained bytes.
 
 ## Outcomes & retrospective
 
@@ -296,3 +350,8 @@ failure or an accumulating buffer both fail.
 - Review remediation added the CodeRabbit fixes, the new boundary tests and the
   `RLIM_INFINITY` portability fix for `tests/test_harness_ownership.py`; the
   decision log's "report rather than change" entry was replaced accordingly.
+- The second review remediation added thirteen fixes with one regression test
+  each, two new test modules for the tail repair and sealing bounds, the
+  `gaps_truncated` field documented in ADR 0010, and the two documentation
+  corrections: the timer unit's store path, and the torn-tail rule as the
+  readers actually implement it.

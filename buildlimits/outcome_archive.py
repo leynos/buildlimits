@@ -30,7 +30,7 @@ from buildlimits.outcome_archive_report import (
     RunReport,
     RunStatus,
 )
-from buildlimits.utc_text import optional_utc_text, utc_text
+from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_plan import Plan
@@ -180,7 +180,7 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
     report = RunReport(
         status="corrupt" if outcome.failures else "ok",
         started_at=run.started_at,
-        finished_at=_now(),
+        finished_at=utc_now(),
         active_bytes=active,
         retained_bytes=retained,
         budget_bytes=run.context.policy.max_bytes,
@@ -189,6 +189,7 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
         actions=tuple(outcome.actions),
         failures=tuple(outcome.failures),
         gaps=final.gaps,
+        gaps_truncated=final.gaps_truncated,
         missing_sidecars=final.missing_sidecars,
         corrupt_sidecars=final.corrupt_sidecars,
         orphan_sidecars=final.orphan_sidecars,
@@ -239,7 +240,7 @@ def _dry_report(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
     return RunReport(
         status="ok",
         started_at=run.started_at,
-        finished_at=_now(),
+        finished_at=utc_now(),
         dry_run=True,
         active_bytes=active,
         retained_bytes=run.plan.retained_bytes,
@@ -247,6 +248,7 @@ def _dry_report(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
         cutoff=run.plan.cutoff,
         plan=run.summary,
         gaps=inventory.gaps,
+        gaps_truncated=inventory.gaps_truncated,
         missing_sidecars=inventory.missing_sidecars,
         corrupt_sidecars=inventory.corrupt_sidecars,
         orphan_sidecars=inventory.orphan_sidecars,
@@ -264,17 +266,6 @@ def _unfinished(started: dt.datetime, status: RunStatus, reason: str) -> RunRepo
     return RunReport(
         status=status,
         started_at=started,
-        finished_at=_now(),
+        finished_at=utc_now(),
         reason=reason,
     )
-
-
-def _now() -> dt.datetime:
-    """Read the wall clock once for a report timestamp.
-
-    Returns
-    -------
-    datetime
-        The current UTC moment.
-    """
-    return dt.datetime.now(dt.UTC)

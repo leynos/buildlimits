@@ -35,6 +35,39 @@ def test_a_private_directory_is_created_and_enforced(tmp_path: Path) -> None:
     assert mode(path) == 0o700, "the directory is owner-only after the call"
 
 
+def test_missing_components_are_created_private(tmp_path: Path) -> None:
+    """A nested path is created one owner-only component at a time."""
+    path = tmp_path / "one" / "two" / "archive"
+
+    ensure_private_directory(path)
+
+    assert path.is_dir(), "the whole path exists"
+    assert {mode(path), mode(path.parent), mode(path.parent.parent)} == {0o700}, (
+        "every created component is private, whatever the umask"
+    )
+
+
+def test_a_symlinked_component_is_refused_before_any_mode_change(
+    tmp_path: Path,
+) -> None:
+    """A link is refused before anything is created through it or narrowed.
+
+    The target is a real directory with wider access, so accepting the link
+    would both place the new directory under it and change a mode outside the
+    archive chain.
+    """
+    real = tmp_path / "real"
+    real.mkdir(mode=0o755)
+    real.chmod(0o755)
+    (tmp_path / "link").symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(UnsafePathError):
+        ensure_private_directory(tmp_path / "link" / "archive")
+
+    assert mode(real) == 0o755, "the directory outside the chain is untouched"
+    assert not (real / "archive").exists(), "nothing is created through the link"
+
+
 def test_a_symlinked_component_is_refused(tmp_path: Path) -> None:
     """A symlink in the chain could redirect a write outside the store."""
     real = tmp_path / "real"

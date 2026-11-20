@@ -188,6 +188,24 @@ def attributed_record(
     )
 
 
+STORE_EPOCH = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
+
+
+def record_after(minute: int, *, now: dt.datetime = STORE_EPOCH) -> OutcomeRecord:
+    """Build one attributed record observed ``minute`` minutes after ``now``.
+
+    Returns
+    -------
+    OutcomeRecord
+        A cacheable record observed at the offset.
+
+    Examples
+    --------
+    ``record_after(0).observed_at`` is ``STORE_EPOCH``.
+    """
+    return attributed_record(observed_at=now + dt.timedelta(minutes=minute))
+
+
 def launch_payload(recorder: ModuleType, key: object) -> object:
     """Build the immutable metadata retained for one cached launch.
 

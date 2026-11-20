@@ -11,6 +11,7 @@ import re
 import stat
 import typing as typ
 
+from buildlimits.outcome_segment_gaps import retained_gaps
 from buildlimits.outcome_segment_sidecar import (
     Sidecar,
     metadata_fields,
@@ -89,7 +90,9 @@ class Inventory:
     archived : tuple[SegmentEntry, ...]
         Published XZ archives.
     gaps : tuple[int, ...]
-        Missing sequences at or above the retention floor.
+        Missing sequences at or above the retention floor, oldest first.
+    gaps_truncated : bool
+        Whether more sequences are missing than ``gaps`` reports.
     quarantined : tuple[int, ...]
         Sequences known to be corrupt or unsupported.
     missing_sidecars : tuple[int, ...]
@@ -105,6 +108,7 @@ class Inventory:
     sealed: tuple[SegmentEntry, ...] = ()
     archived: tuple[SegmentEntry, ...] = ()
     gaps: tuple[int, ...] = ()
+    gaps_truncated: bool = False
     quarantined: tuple[int, ...] = ()
     missing_sidecars: tuple[int, ...] = ()
     corrupt_sidecars: tuple[int, ...] = ()
@@ -194,13 +198,12 @@ def read_inventory(
         else entry
         for entry in entries
     )
-    sequences = {entry.sequence for entry in with_meta}
-    sequences.update(entry.sequence for entry in archived)
-    gaps = _gaps(sequences, retention_floor)
+    gaps, gaps_truncated = retained_gaps(with_meta, archived, retention_floor)
     return Inventory(
         sealed=with_meta,
         archived=tuple(sorted(archived, key=lambda entry: entry.sequence)),
         gaps=gaps,
+        gaps_truncated=gaps_truncated,
         missing_sidecars=missing,
         corrupt_sidecars=corrupt,
         orphan_sidecars=orphans,
@@ -293,8 +296,10 @@ def _archive_entry(
     """Describe one archive, trusting its sidecar only when one was validated.
 
     Without a trustworthy sidecar the archive's logical size falls back to its
-    physical size, so a damaged or missing sidecar never understates the bytes
-    an archive represents.
+    physical size. For a compressed archive that figure is a lower bound: it
+    cannot overstate the bytes the archive represents, but it can understate
+    them, so a run that heals sidecars plans retention again from the repaired
+    inventory before it evicts anything.
 
     Parameters
     ----------
@@ -366,27 +371,3 @@ def _regular_files(directory: Path) -> list[tuple[Path, int]]:
     finally:
         iterator.close()
     return found
-
-
-def _gaps(sequences: set[int], retention_floor: int | None) -> tuple[int, ...]:
-    """Return missing sequences at or above the retention floor.
-
-    Returns
-    -------
-    tuple[int, ...]
-        Missing sequences in ascending order.
-
-    Examples
-    --------
-    >>> _gaps({2, 4}, 2)
-    (3,)
-    >>> _gaps({3, 4}, 3)
-    ()
-    """
-    if not sequences:
-        return ()
-    lowest = 1 if retention_floor is None else max(1, retention_floor)
-    highest = max(sequences)
-    return tuple(
-        sequence for sequence in range(lowest, highest + 1) if sequence not in sequences
-    )

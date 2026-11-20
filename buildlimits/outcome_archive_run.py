@@ -81,9 +81,11 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
     The first plan saw the newly published archives as sealed sources, so it
     could not evict them. Re-planning over the settled store keeps the byte
     budget true after one successful run instead of leaving the excess for the
-    next timer firing.
+    next timer firing. A run that only healed sidecars re-plans too, because
+    the first plan had to fall back to each archive's physical size where a
+    sidecar was missing or corrupt, which understates the logical bytes.
     """
-    if not (run.plan.archive or run.plan.reconcile):
+    if not (run.plan.archive or run.plan.reconcile or run.plan.heal):
         return
     layout = run.context.layout
     inventory = outcome_segment_inventory.read_inventory(layout)
@@ -168,10 +170,29 @@ def _quarantining(
     try:
         outcome.actions.append(action())
     except SegmentFaultError as fault:
-        outcome.actions.append(quarantine(fault.reason))
-        outcome.failures.append((sequence, fault.reason))
+        _quarantine_fault(outcome, sequence, fault.reason, quarantine)
     except OSError:
         outcome.failures.append((sequence, "unreadable"))
+
+
+def _quarantine_fault(
+    outcome: RunOutcome,
+    sequence: int,
+    reason: str,
+    quarantine: cabc.Callable[[str], ActionResult],
+) -> None:
+    """Move the artefact one closed fault names, recording a failed move.
+
+    A quarantine move can fail for the same filesystem reasons any other
+    operation can. The run must record that and carry on with the remaining
+    segments rather than end on an unhandled ``OSError``.
+    """
+    try:
+        outcome.actions.append(quarantine(reason))
+    except OSError:
+        outcome.failures.append((sequence, "unreadable"))
+        return
+    outcome.failures.append((sequence, reason))
 
 
 def _archive_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:

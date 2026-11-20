@@ -13,7 +13,12 @@ import tracemalloc
 
 import pytest
 
-from buildlimits.outcome_record_stream import CHUNK_BYTES, LineStream, StreamFaultError
+from buildlimits.outcome_record_stream import (
+    CHUNK_BYTES,
+    DECODER_MEMORY_LIMIT,
+    LineStream,
+    StreamFaultError,
+)
 
 _DATA = b"one\ntwo\nthree\n"
 
@@ -185,6 +190,33 @@ def test_misaligned_padding_is_trailing_data(padding: bytes) -> None:
     stream = LineStream(io.BytesIO(_archive(_DATA) + padding), is_compressed=True)
 
     assert _row_reason(stream) == "trailing_data", "the format's unit is enforced"
+
+
+def test_the_decoder_is_bounded_to_a_dictionary_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crafted stream cannot reserve memory the archiver never wrote.
+
+    ``max_length`` bounds one call's output, not the decoder's own
+    allocation, so the budget has to reach the decoder itself.
+    """
+    seen: list[int | None] = []
+    real_decoder = lzma.LZMADecompressor
+
+    def recording_decoder(
+        *,
+        format: int = lzma.FORMAT_AUTO,  # ruff: ignore[builtin-argument-shadowing] - stdlib name.
+        memlimit: int | None = None,
+    ) -> lzma.LZMADecompressor:
+        """Record the caller's budget, then decode as the real decoder does."""
+        seen.append(memlimit)
+        return real_decoder(format=format, memlimit=memlimit)
+
+    monkeypatch.setattr(lzma, "LZMADecompressor", recording_decoder)
+    stream = LineStream(io.BytesIO(_archive(_DATA)), is_compressed=True)
+
+    assert list(stream) == [b"one", b"two", b"three"], "the stream still reads"
+    assert seen == [DECODER_MEMORY_LIMIT], "the budget is the documented one"
 
 
 def test_the_default_chunk_is_the_documented_bound() -> None:

@@ -12,9 +12,9 @@ segment; a caller with a real segment passes its path instead.
 
 import dataclasses as dc
 import datetime as dt
-import io
 import json
 import lzma
+import os
 import sys
 import tempfile
 import typing as typ
@@ -177,15 +177,19 @@ def _compress(raw: typ.BinaryIO, preset: int) -> tuple[int, int, int]:
     """
     rows = 0
     observer = _ChunkObserver(raw)
-    sink = io.BytesIO()
-    with lzma.LZMAFile(
-        sink, "wb", format=lzma.FORMAT_XZ, check=lzma.CHECK_CRC64, preset=preset
-    ) as archive:
-        for row in LineStream(observer):
-            archive.write(row)
-            archive.write(b"\n")
-            rows += 1
-    return max(rows - 1, 0), observer.peak, len(sink.getvalue())
+    # The archive is written to an unnamed temporary file rather than an
+    # in-memory buffer, so a large or poorly compressible segment cannot make
+    # the benchmark's own memory grow with the archive it measures.
+    with tempfile.TemporaryFile() as sink:
+        with lzma.LZMAFile(
+            sink, "wb", format=lzma.FORMAT_XZ, check=lzma.CHECK_CRC64, preset=preset
+        ) as archive:
+            for row in LineStream(observer):
+                archive.write(row)
+                archive.write(b"\n")
+                rows += 1
+        archive_bytes = sink.seek(0, os.SEEK_END)
+    return max(rows - 1, 0), observer.peak, archive_bytes
 
 
 def main(argv: cabc.Sequence[str] | None = None) -> int:

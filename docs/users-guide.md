@@ -300,6 +300,15 @@ your home directory. If the supervisor reads a different configuration file,
 pass `--config` with its absolute path in the unit; the retention keys come
 from that file, never from the unit's environment.
 
+The store path has the same caveat. The user manager resolves `XDG_STATE_HOME`
+from its own environment, which normally holds the value it was started with
+rather than the one in your current shell, so the timer can look in a different
+directory from the supervisor. If the supervisor writes under another
+`XDG_STATE_HOME`, pass `--store` with the store's absolute path in the unit. A
+unit that sets neither archives whatever the default resolves to, and an empty
+run is still a success, so check `last-run.json` in the archive directory after
+the first firing.
+
 Use `inspect` to see what a run would do without changing a file, or
 `run --dry-run` to take no lock and write no state. `run` performs the plan
 under its own lock:

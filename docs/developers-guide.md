@@ -216,8 +216,9 @@ The adapters are `config_loader` (reads and validates the packaged
 configuration), `snapshot_store` (parses and writes a snapshot document),
 `report_writer` (writes a report to a directory), `records` (decodes the
 outcome store into events), `provenance` (`git_revision`: the commit that
-tracks the module), `paths` (`same_file`: whether two paths name one file), and
-the two commands `dataset_cli` and `benchmark_cli`.
+tracks the module), `paths` (`same_file`: whether two paths name one file),
+`dataset_journal` (the journal lookback option and the provenance note) and the
+two commands `dataset_cli` and `benchmark_cli`.
 
 `tests/test_predict_boundaries.py` enforces the rule. It parses each listed
 domain module's imports, resolves relative forms against the module's package
@@ -329,8 +330,9 @@ Each module owns one decision. This table is the single module inventory.
 | `predict.predictors`                                                               | The `Predictor` protocol: predict at one admission moment, learn from a delivered label                                                                     |
 | `predict.paths`                                                                    | `same_file`: whether two paths name one file, including through a symbolic link                                                                             |
 | `predict.provenance`                                                               | `git_revision`: the commit that tracks the benchmark module, or `unknown` when none does                                                                    |
+| `predict.dataset_journal`                                                          | The dataset command's journal lookback option and its best-effort provenance note                                                                           |
 | `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                                                                      |
-| `utc_text`                                                                         | The canonical UTC ISO 8601 text with a trailing `Z`, and the parser that reads it back                                                                      |
+| `utc_text`                                                                         | The wall clock as aware UTC, the canonical ISO 8601 text with a trailing `Z`, and its parser                                                                |
 | `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper                                                                   |
 | `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar                                                            |
 | `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                                                                             |
@@ -359,17 +361,20 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_store_state`                                                              | The writer's file state machine: loading, compaction and bounded appends                                                                                    |
 | `outcome_store_sealing`                                                            | The writer's sealing transition into a closed segment                                                                                                       |
 | `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes, atomic replacement and the seal rename                                                                   |
+| `outcome_store_tail`                                                               | Backward-chunked removal of an unterminated final row a stopped writer left                                                                                 |
 | `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                                                                                |
 | `outcome_retention`                                                                | Validated age, byte, record and headroom policy shared by the writer and archiver                                                                           |
 | `outcome_segments`                                                                 | Segment naming and layout derivation only                                                                                                                   |
 | `outcome_segment_inventory`                                                        | Read-only, content-free inventory of sealed and archived segments                                                                                           |
 | `outcome_segment_sidecar`                                                          | One verified archive or sealed source's sidecar record, with strict validation                                                                              |
 | `outcome_segment_state`                                                            | Reading the advisory sequence counter and retention floor                                                                                                   |
+| `outcome_segment_gaps`                                                             | Bounded enumeration of the sequences missing from retained history                                                                                          |
 | `outcome_record_stream`                                                            | Bounded 64 KiB line streaming over plain and XZ sources                                                                                                     |
 | `outcome_history`, `outcome_history_args`                                          | Cross-state history reader and the shared replay and dataset options                                                                                        |
 | `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
 | `outcome_archive_context`                                                          | Shared context and result values for one archive run                                                                                                        |
 | `outcome_archive_plan`                                                             | Pure retention and repair plan from the inventory                                                                                                           |
+| `outcome_archive_budget`                                                           | Logical-byte budget: oldest-first archive deletion, then one straddling trim                                                                                |
 | `outcome_archive_run`                                                              | Executing one archive plan operation by operation                                                                                                           |
 | `outcome_archive_verify`                                                           | Streaming XZ write and verification, and the closed segment-fault reasons                                                                                   |
 | `outcome_archive_rows`                                                             | Decodes one segment's rows, tolerating a torn tail                                                                                                          |
@@ -996,18 +1001,27 @@ publication: the XZ stream must reach its end with only four-byte-multiple NUL
 padding, the record count, logical byte count and SHA-256 must equal the facts
 accumulated while compressing the source, and `outcome_archive_rows` decodes
 every row as a supported header or a valid record within the record byte bound.
-A terminated row that does not decode is a `corrupt` fault; only an
-unterminated final fragment is dropped as a torn tail, whether or not that
-fragment happens to decode on its own. `outcome_archive_encode` produces the
-verified temporary archives and their sidecars. Publication then uses a private
-`O_EXCL` temporary file, an `fsync`, a no-clobber hard link and a sidecar
-written after the archive; the sealed source is removed only after the archive
-and sidecar are durable. `outcome_archive_fs` owns the private filesystem
-primitives and atomic state writes. `outcome_archive_files` owns the
+A terminated row that does not decode is a `corrupt` fault. The final row of a
+segment is held back until its newline status is known: an unterminated
+fragment that does not decode is dropped as a torn tail and flagged
+`had_torn_tail`, while an unterminated fragment that does decode is kept, so a
+complete row whose newline never reached the disk is not lost. The active store
+is stricter: `read_store` decodes only up to the last newline and
+`outcome_store_tail.drop_torn_tail` removes any remainder before the next
+append, scanning backwards in fixed-size chunks so the bound holds however long
+the file is; a fragment that does decode is still discarded there, and the file
+on disk matches the rows the reader accepted. `outcome_archive_encode` produces
+the verified temporary archives and their sidecars. Publication then uses a
+private `O_EXCL` temporary file, an `fsync`, a no-clobber hard link and a
+sidecar written after the archive; the sealed source is removed only after the
+archive and sidecar are durable. `outcome_archive_fs` owns the private
+filesystem primitives and atomic state writes. `outcome_archive_files` owns the
 per-segment operations: archive, reconcile, heal, trim, delete and quarantine.
 `outcome_archive_quarantine` performs the quarantine moves for files a run
 cannot trust, and `outcome_archive_run` executes one plan operation by
-operation.
+operation. `outcome_archive_budget` owns the byte budget: it counts an
+archive's uncompressed size from its sidecar, deletes whole archives oldest
+first, and then trims the single archive that straddles the remaining allowance.
 
 The segment contract is defined by `outcome_segments`, which owns naming and
 layout only; `outcome_segment_sidecar` defines the record that describes one
@@ -1028,6 +1042,9 @@ sequence, because a crash can leave both and the source is authoritative until
 reconciliation removes it. `outcome_segment_state.read_retention_floor` reads
 `retention.json`; the floor is why evicting old history does not look like
 corruption, so the inventory reports a missing sequence only at or above it.
+`outcome_segment_gaps.retained_gaps` names those sequences for an operator; it
+stops at `MAX_GAP_SEQUENCES` and flags the list as truncated, because a
+restarted counter would otherwise leave no ceiling on one report.
 
 `outcome_history` is the read port over all three states. `read_history` walks
 archived and sealed segments in ascending sequence, then the active file; each
@@ -1061,7 +1078,8 @@ The archive tests are `tests/test_outcome_archive.py`,
 `test_outcome_archive_verify.py`, `test_outcome_archive_cli.py`,
 `test_outcome_history.py`, `test_outcome_segments.py`,
 `test_outcome_segment_inventory.py`, `test_outcome_segment_state.py`,
-`test_outcome_record_stream.py` and `test_outcome_store_sealing.py`.
+`test_outcome_record_stream.py`, `test_outcome_sealing_bounds.py`,
+`test_outcome_store_tail.py` and `test_outcome_store_sealing.py`.
 `tests/test_outcome_archive_bench.py` holds the traced-memory test that streams
 a multi-megabyte segment under one mebibyte. `make outcome-archive-bench` runs
 `buildlimits.outcome_archive_bench` and prints a JSON report with the source

@@ -171,6 +171,44 @@ def test_a_source_removed_after_the_scan_is_read_from_its_archive(
     ), "the vanished source's rows come from the archive that replaced it"
 
 
+def test_a_seal_landing_during_the_read_is_rechecked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scan that misses a segment sealed mid-read repeats instead of shortening.
+
+    The first scan is made to look as if it ran before the seal: it lists one
+    of two closed segments while the active file is already header-only. Only
+    the re-scan can recover the rows the seal moved.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, _records(0, 2), history_policy(1))
+    layout = SegmentLayout.beside(store)
+    complete = outcome_segment_inventory.read_inventory(layout)
+    assert len(complete.sealed) == 2, "the fixture seals two segments"
+    stale = outcome_segment_inventory.Inventory(sealed=complete.sealed[:1])
+    real_scan = outcome_segment_inventory.read_inventory
+    scans = 0
+
+    def scan_once_stale(
+        target: SegmentLayout, *, retention_floor: int | None = None
+    ) -> outcome_segment_inventory.Inventory:
+        """Report the pre-seal view first, then the store as it really is."""
+        nonlocal scans
+        scans += 1
+        if scans == 1:
+            return stale
+        return real_scan(target, retention_floor=retention_floor)
+
+    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", scan_once_stale)
+
+    history = outcome_history.read_history_beside(store)
+
+    assert _observed(history.records) == (
+        NOW,
+        NOW - dt.timedelta(minutes=1),
+    ), "the rows the first scan missed are read on the retry"
+
+
 def test_history_defaults_to_the_newest_salt_domain(tmp_path: Path) -> None:
     """A salt change starts a new domain; the default reads that domain."""
     store = tmp_path / "cache-outcomes.jsonl"

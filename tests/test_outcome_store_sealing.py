@@ -7,7 +7,6 @@ sequence, an empty seal claims nothing, the backlog is reported once per
 eight-entry step, and a failed seal is reported rather than hidden.
 """
 
-import datetime as dt
 import json
 import typing as typ
 from pathlib import Path
@@ -20,7 +19,8 @@ from outcome_store_helpers import (
     wait_for_results,
     wait_for_salt,
 )
-from outcome_test_helpers import attributed_record
+from outcome_test_helpers import STORE_EPOCH as NOW
+from outcome_test_helpers import record_after
 from segment_test_helpers import document, history_policy, write_private
 
 from buildlimits import outcome_record_encode, outcome_store_sealing
@@ -40,21 +40,7 @@ if typ.TYPE_CHECKING:
     import pytest
 
     from buildlimits.outcome_ports import StoreResult
-    from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_retention import RetentionPolicy
-
-NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
-
-
-def _record(minute: int) -> StoreRecord:
-    """Build one attributed record observed ``minute`` minutes after the epoch.
-
-    Returns
-    -------
-    StoreRecord
-        The record.
-    """
-    return attributed_record(observed_at=NOW + dt.timedelta(minutes=minute))
 
 
 def _layout(store: Path) -> SegmentLayout:
@@ -112,8 +98,8 @@ def test_a_seal_publishes_a_source_and_its_metadata(tmp_path: Path) -> None:
     store = tmp_path / "cache-outcomes.jsonl"
     writer = segment_writer(store, history_policy(), NOW)
     try:
-        writer.append(_record(0))
-        writer.append(_record(1))
+        writer.append(record_after(0))
+        writer.append(record_after(1))
         wait_for_results(writer, operation="seal", reason="none")
     finally:
         close_writer(writer)
@@ -142,8 +128,8 @@ def test_the_active_file_is_reset_to_its_header(tmp_path: Path) -> None:
     store = tmp_path / "cache-outcomes.jsonl"
     writer = segment_writer(store, history_policy(), NOW)
     try:
-        writer.append(_record(0))
-        writer.append(_record(1))
+        writer.append(record_after(0))
+        writer.append(record_after(1))
         wait_for_results(writer, operation="seal", reason="none")
     finally:
         close_writer(writer)
@@ -158,8 +144,8 @@ def test_the_writer_never_creates_an_archive(tmp_path: Path) -> None:
     store = tmp_path / "cache-outcomes.jsonl"
     writer = segment_writer(store, history_policy(), NOW)
     try:
-        writer.append(_record(0))
-        writer.append(_record(1))
+        writer.append(record_after(0))
+        writer.append(record_after(1))
         wait_for_results(writer, operation="seal", reason="none")
     finally:
         close_writer(writer)
@@ -172,7 +158,7 @@ def test_an_empty_seal_claims_no_sequence(tmp_path: Path) -> None:
     store = tmp_path / "cache-outcomes.jsonl"
     writer = segment_writer(store, history_policy(), NOW)
     try:
-        writer.append(_record(0))
+        writer.append(record_after(0))
         wait_for_results(writer, operation="append", reason="none")
 
         layout = _layout(store)
@@ -193,8 +179,8 @@ def test_the_counter_follows_the_highest_sealed_name(tmp_path: Path) -> None:
 
     writer = segment_writer(store, history_policy(), NOW)
     try:
-        writer.append(_record(0))
-        writer.append(_record(1))
+        writer.append(record_after(0))
+        writer.append(record_after(1))
         wait_for_results(writer, operation="seal", reason="none")
     finally:
         close_writer(writer)
@@ -212,7 +198,7 @@ def test_a_fresh_store_keeps_its_first_row(tmp_path: Path) -> None:
     store = tmp_path / "cache-outcomes.jsonl"
     writer = segment_writer(store, history_policy(segment_bytes=10**9), NOW)
     try:
-        writer.append(_record(0))
+        writer.append(record_after(0))
         wait_for_results(writer, operation="append", reason="none")
     finally:
         close_writer(writer)
@@ -227,10 +213,10 @@ def test_metadata_covers_every_row_sealed_together(tmp_path: Path) -> None:
     store = tmp_path / "cache-outcomes.jsonl"
     writer = segment_writer(store, history_policy(segment_bytes=10**9), NOW)
     try:
-        writer.append(_record(0))
+        writer.append(record_after(0))
     finally:
         close_writer(writer)
-    line_bytes = len(outcome_record_encode.encode_line(_record(0))) + 1
+    line_bytes = len(outcome_record_encode.encode_line(record_after(0))) + 1
     # Two rows fit the watermark and the third crosses it, so the seal closes
     # exactly two rows and the metadata must describe the whole span.
     policy = history_policy(
@@ -240,7 +226,7 @@ def test_metadata_covers_every_row_sealed_together(tmp_path: Path) -> None:
     writer = segment_writer(store, policy, NOW)
     try:
         for minute in (1, 2):
-            writer.append(_record(minute))
+            writer.append(record_after(minute))
         wait_for_results(writer, operation="seal", reason="none")
     finally:
         close_writer(writer)
@@ -261,13 +247,13 @@ def test_the_backlog_is_reported_at_eight_entries(tmp_path: Path) -> None:
     writer = segment_writer(store, history_policy(), NOW)
     try:
         for minute in range(4):
-            writer.append(_record(minute))
+            writer.append(record_after(minute))
         wait_for_results(writer, operation="seal", reason="none")
         assert not [
             result for result in writer.results() if result.reason == "archive_backlog"
         ], "six entries are below the step"
 
-        writer.append(_record(4))
+        writer.append(record_after(4))
         observed = wait_for_results(writer, operation="seal", reason="archive_backlog")
     finally:
         close_writer(writer)
@@ -290,7 +276,7 @@ def _load_previous_domain(
     """
     previous = file_salt(salt_path(store))
     assert isinstance(previous, Salt), "the fixture gets its first salt"
-    records = tuple(_record(minute) for minute in range(rows))
+    records = tuple(record_after(minute) for minute in range(rows))
     write_private(store, document(records, previous.salt_id))
     salt_path(store).write_bytes(b"n" * 32)
 
@@ -358,8 +344,8 @@ def test_a_failed_seal_is_reported(
         with mock.patch.object(
             outcome_store_sealing, "write_sequence", side_effect=failure
         ):
-            writer.append(_record(0))
-            writer.append(_record(1))
+            writer.append(record_after(0))
+            writer.append(record_after(1))
             wait_for_results(writer, operation="seal", reason="save_failed")
             assert _sealed_names(store) == [], "no partial source is published"
     finally:
@@ -374,8 +360,8 @@ def test_a_seal_that_cannot_sync_keeps_its_rows_closed(tmp_path: Path) -> None:
         with mock.patch.object(
             outcome_store_sealing, "sync_rename", side_effect=OSError("sync failed")
         ):
-            writer.append(_record(0))
-            writer.append(_record(1))
+            writer.append(record_after(0))
+            writer.append(record_after(1))
             results = wait_for_results(writer, operation="seal", reason="save_failed")
     finally:
         close_writer(writer)

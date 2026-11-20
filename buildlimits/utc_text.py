@@ -3,10 +3,23 @@
 Both the outcome-store reports and the prediction snapshot state observation
 times as ISO 8601 in UTC with a trailing ``Z``. Keeping one implementation
 means a stored report and a stored snapshot read the same way in a diff, and
-one parser reads either back into the moment it names.
+one parser reads either back into the moment it names. The same module reads
+the system wall clock as UTC, so a default clock and the text it produces
+cannot disagree about the time zone.
 """
 
 import datetime as dt
+
+
+def utc_now() -> dt.datetime:
+    """Read the system wall clock as an aware UTC value.
+
+    Returns
+    -------
+    datetime
+        The current aware UTC wall-clock value.
+    """
+    return dt.datetime.now(dt.UTC)
 
 
 def utc_text(value: dt.datetime) -> str:

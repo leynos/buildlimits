@@ -15,6 +15,10 @@ from buildlimits.outcome_record_format import MAX_RECORD_BYTES
 
 CHUNK_BYTES = 64 * 1024
 _XZ_PADDING = 4
+# Every preset the archiver writes (0-9) declares a dictionary of at most
+# 64 MiB, so this budget admits all of them and refuses a crafted stream that
+# tries to reserve more before its rows are ever produced.
+DECODER_MEMORY_LIMIT = 128 * 1024 * 1024
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -216,7 +220,11 @@ class LineStream:
         StreamFaultError
             If the stream is corrupt, truncated or followed by other data.
         """
-        decompressor = lzma.LZMADecompressor(format=lzma.FORMAT_XZ)
+        # ``max_length`` bounds the output a call returns, not the decoder's
+        # own allocation, so the dictionary budget is stated separately.
+        decompressor = lzma.LZMADecompressor(
+            format=lzma.FORMAT_XZ, memlimit=DECODER_MEMORY_LIMIT
+        )
         while True:
             chunk = self._source.read(self._chunk_bytes)
             if not chunk:

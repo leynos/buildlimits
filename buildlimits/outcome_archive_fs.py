@@ -18,12 +18,13 @@ import stat
 import typing as typ
 from pathlib import Path
 
-from buildlimits.outcome_store_io import ensure_directory, fsync_directory, write_all
+from buildlimits.outcome_store_io import fsync_directory, write_all
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 _FILE_MODE = 0o600
+_DIRECTORY_MODE = 0o700
 _TEMP_SUFFIX = ".tmp"
 
 __all__ = [
@@ -46,13 +47,84 @@ class UnsafePathError(OSError):
 def ensure_private_directory(path: Path) -> None:
     """Create a private directory and refuse a symlinked path.
 
+    Missing components are created one at a time after the component above
+    them has been proven to be a real directory, and the final mode is applied
+    through a descriptor opened with ``O_NOFOLLOW``. A symlink anywhere on the
+    path is therefore refused before a directory is created through it or an
+    existing directory outside the chain has its mode changed. A component that
+    is a symlink or not a directory raises `UnsafePathError`; a filesystem
+    failure propagates as `OSError`.
+
     Parameters
     ----------
     path : Path
         The directory to create or verify.
     """
-    ensure_directory(path)
+    _create_missing_components(path)
+    _make_private(path)
     require_private_chain(path)
+
+
+def _components(path: Path) -> cabc.Iterator[tuple[Path, str]]:
+    """Yield every component of an absolute path, refusing a relative one.
+
+    Yields
+    ------
+    tuple[Path, str]
+        The cumulative path and the component name that produced it.
+
+    Raises
+    ------
+    UnsafePathError
+        If ``path`` is not absolute.
+    """
+    if not path.is_absolute():
+        msg = "an archive path must be absolute"
+        raise UnsafePathError(msg)
+    current = Path(path.anchor)
+    for part in path.parts[1:]:
+        current /= part
+        yield current, part
+
+
+def _create_missing_components(path: Path) -> None:
+    """Create every component of ``path`` below the anchor that is missing."""
+    for current, part in _components(path):
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            current.mkdir(mode=_DIRECTORY_MODE)
+            # ``mkdir`` is masked by the umask, so a newly created component is
+            # narrowed through its own descriptor rather than assumed private.
+            _make_private(current)
+            continue
+        _require_directory_component(part, metadata)
+
+
+def _require_directory_component(part: str, metadata: os.stat_result) -> None:
+    """Refuse a path component that is a symlink or not a directory.
+
+    Raises
+    ------
+    UnsafePathError
+        If the component is a symlink or is not a directory.
+    """
+    if stat.S_ISLNK(metadata.st_mode):
+        msg = f"archive path component is a symlink: {part}"
+        raise UnsafePathError(msg)
+    if not stat.S_ISDIR(metadata.st_mode):
+        msg = f"archive path component is not a directory: {part}"
+        raise UnsafePathError(msg)
+
+
+def _make_private(path: Path) -> None:
+    """Set one directory's owner-only mode without following a link."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fchmod(descriptor, _DIRECTORY_MODE)
+    finally:
+        os.close(descriptor)
 
 
 def require_private_chain(path: Path) -> None:
@@ -75,23 +147,13 @@ def require_private_chain(path: Path) -> None:
         writable by another user, or the final component is not owned by this
         user.
     """
-    if not path.is_absolute():
-        msg = "an archive path must be absolute"
-        raise UnsafePathError(msg)
-    current = Path(path.anchor)
-    for part in path.parts[1:]:
-        current /= part
+    for current, part in _components(path):
         try:
             metadata = current.lstat()
         except FileNotFoundError as error:
             msg = f"archive path component is missing: {part}"
             raise UnsafePathError(msg) from error
-        if stat.S_ISLNK(metadata.st_mode):
-            msg = f"archive path component is a symlink: {part}"
-            raise UnsafePathError(msg)
-        if not stat.S_ISDIR(metadata.st_mode):
-            msg = f"archive path component is not a directory: {part}"
-            raise UnsafePathError(msg)
+        _require_directory_component(part, metadata)
         _require_private_directory(metadata, part)
     final = path.lstat()
     if final.st_uid != os.getuid():
