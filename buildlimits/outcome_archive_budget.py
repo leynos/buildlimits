@@ -44,10 +44,20 @@ class ActiveHistory:
         Logical bytes in the active file.
     records : int
         Record rows in the active file, excluding the header.
+    first_observed_at : datetime | None
+        Earliest row observation in the active file, when one was read.
+    last_observed_at : datetime | None
+        Latest row observation in the active file, when one was read.
+    has_metadata : bool
+        Whether the rows and span were read. A file that cannot be read at all
+        contributes its size alone, and is reported as unmeasured.
     """
 
     bytes: int = 0
     records: int = 0
+    first_observed_at: dt.datetime | None = None
+    last_observed_at: dt.datetime | None = None
+    has_metadata: bool = True
 
 
 @dc.dataclass(frozen=True, slots=True)

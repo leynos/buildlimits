@@ -143,8 +143,8 @@ disagree about a bound.
 - The record cap is `cache_outcomes_max_records`. A positive value applies in
   either mode. When it is omitted, a segmented store has no count cap and a
   legacy store keeps the historical 10,000-record cap. The cap bounds the whole
-  store, so the archiver counts the active file's rows and each sealed
-  source's recorded count as well as the surviving archives; only archives are
+  store, so the archiver counts the active file's rows and each sealed source's
+  recorded count as well as the surviving archives; only archives are
   evictable, because the writer owns the active file and a sealed source must
   be archived before it can be dropped.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
@@ -174,11 +174,11 @@ Ownership follows file state, not a shared lock.
   active file into the sealed directory and installs a fresh header-only active
   file. An empty store installs a header-only active file instead of claiming a
   sequence, so the sequence series has no artificial first gap. The age bound
-  is applied on ordinary appends as well: once the oldest retained row is
-  older than the cutoff, the writer compacts the active file, so a quiet store
-  cannot keep expired rows until the next restart. Compaction drops every row
-  observed before the cutoff, which makes the check self-limiting: it costs a
-  clock read per append and a rewrite only when the bound is crossed.
+  is applied on ordinary appends as well: once the oldest retained row is older
+  than the cutoff, the writer compacts the active file, so a quiet store cannot
+  keep expired rows until the next restart. Compaction drops every row observed
+  before the cutoff, which makes the check self-limiting: it costs a clock read
+  per append and a rewrite only when the bound is crossed.
 - The archiver never appends to the active file and never takes the writer's
   queue. It reads the file's size with `lstat` to include those bytes in the
   retained total, and streams its rows once per plan to count them against the
@@ -271,8 +271,8 @@ the redundant source, an unreadable or mismatched archive is quarantined and
 the source archived again, and a corrupt source is quarantined while the
 existing archive is kept. Quarantine moves a file into
 `cache-outcomes.archive/quarantine/` under a name carrying the closed reason
-and a random token, so no quarantined file is overwritten.
-Stale temporary files are removed at the start of a run, under the lock.
+and a random token, so no quarantined file is overwritten. Stale temporary
+files are removed at the start of a run, under the lock.
 
 ### D5: the timer-facing command has bounded output and closed exit statuses
 
@@ -354,9 +354,16 @@ A salt change partitions history, so a read selects a domain:
 The replay and dataset commands share these options through
 `outcome_history_args`. `--salt-id` and `--all-salts` imply history mode, and
 with no flag at all each command keeps reading only the active store, which is
-the behaviour that existed before archiving. History is returned as one decoded
-document, so the H2 and H3 hypothesis evaluations read the same records, H2 in
-two passes and H3 in one.
+the behaviour that existed before archiving. The snapshot is pinned before
+either pass: `outcome_history_pin.pin_history` fingerprints each effective
+segment and freezes the active file's bytes, and
+`outcome_history_stream.open_history` yields the selected rows one segment at a
+time, skipping a domain the selection excludes. A pass that finds a pinned
+segment replaced fails closed as `unsettled` before yielding anything; the
+replay command then takes a fresh pin, and H2's two passes always compare the
+same rows. Replay therefore holds one segment's decoder state rather than the
+whole retained history. The dataset snapshot still materializes the stream,
+because a snapshot holds every selected record by definition.
 
 ### D8: the record schema and salt identifier survive archiving
 

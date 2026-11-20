@@ -48,6 +48,72 @@ def test_an_empty_store_records_a_successful_run(tmp_path: Path) -> None:
     assert last_run["schema"] == 1, "the report schema is closed"
 
 
+def test_the_report_counts_the_rows_the_writer_still_holds(
+    tmp_path: Path,
+) -> None:
+    """Retained records include the active file, not only the closed history."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    wide = policy(segment_bytes=10_000_000)
+    write(store, records(NOW, 2), wide)
+
+    report = run(tmp_path, wide, dry_run=True)
+
+    assert report.retained_records == 2, "unsealed rows are retained history"
+    assert report.observed_from == NOW, "the span starts at the oldest row"
+    assert report.observed_until == NOW + dt.timedelta(minutes=1), (
+        "the span ends at the newest row"
+    )
+    assert report.unmeasured_entries == 0, "the active file was measured"
+
+
+def test_the_observed_span_reaches_into_the_active_file(tmp_path: Path) -> None:
+    """An archived row and a newer active row share one reported span."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 1), policy())
+    run(tmp_path, policy())
+    wide = policy(segment_bytes=10_000_000)
+    write(store, records(NOW + dt.timedelta(hours=1), 1), wide)
+
+    report = inspect_store(layout(tmp_path), wide)
+
+    assert report.retained_records == 2, "archived and active rows are both counted"
+    assert report.observed_from == NOW, "the archived row starts the span"
+    assert report.observed_until == NOW + dt.timedelta(hours=1), (
+        "the active row ends the span"
+    )
+    assert report.unmeasured_entries == 0, "both entries were measured"
+
+
+def test_an_archive_without_a_sidecar_is_reported_unmeasured(
+    tmp_path: Path,
+) -> None:
+    """An archive no metadata describes is unknown, not zero rows."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 1), policy())
+    run(tmp_path, policy())
+    store_layout = layout(tmp_path)
+    for sidecar in store_layout.archive_dir.glob("*.json"):
+        sidecar.unlink()
+
+    report = inspect_store(store_layout, policy())
+
+    assert report.retained_records == 0, "an undescribed archive adds no rows"
+    assert report.missing_sidecars == (1,), "the missing sidecar is named"
+    assert report.unmeasured_entries == 1, "the archive is counted as unknown"
+
+
+def test_an_unreadable_active_file_is_reported_unmeasured(tmp_path: Path) -> None:
+    """A file that cannot be decoded is unknown history, not empty history."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    store.write_text("not a header\n", encoding="utf-8")
+
+    report = inspect_store(layout(tmp_path), policy())
+
+    assert report.retained_records == 0, "no row was counted"
+    assert report.unmeasured_entries == 1, "the report never claims completeness"
+    assert report.observed_from is None, "an unread file contributes no span"
+
+
 def test_a_dry_run_changes_nothing(tmp_path: Path) -> None:
     """A plan may be inspected without taking the lock or writing a file."""
     store = tmp_path / "cache-outcomes.jsonl"

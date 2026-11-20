@@ -130,7 +130,7 @@ def test_an_unreadable_settle_check_never_settles(
         outcome_history.read_history(layout)
 
     assert raised.value.reason == "unsettled", "the fault is bounded"
-    assert calls == 2 * outcome_history._HISTORY_ATTEMPTS, (
+    assert calls == 2 * outcome_history.HISTORY_ATTEMPTS, (
         "every attempt both scanned and failed to settle"
     )
 

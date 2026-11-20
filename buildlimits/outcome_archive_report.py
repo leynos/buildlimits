@@ -78,12 +78,19 @@ class RunReport:
     retained_bytes : int
         Logical bytes retained after the run, or estimated for a dry run.
     retained_records : int
-        Records in the retained closed history, from sidecar and writer
-        metadata. Rows still in the writer's active file are not counted.
+        Records in the whole retained history: the closed rows sidecar
+        metadata describes plus the rows still in the writer's active file.
+        Entries whose metadata is missing contribute nothing here; they are
+        counted by ``unmeasured_entries`` instead.
     observed_from : datetime | None
         Earliest retained closed observation, when metadata describes one.
     observed_until : datetime | None
-        Latest retained closed observation, when metadata describes one.
+        Latest retained observation, from sidecar metadata or the active
+        file, when one was read.
+    unmeasured_entries : int
+        Effective entries whose record count and span could not be read: an
+        archive with no trustworthy sidecar, or an active file that could not
+        be decoded.
     budget_bytes : int
         The configured logical byte budget.
     cutoff : datetime | None
@@ -117,6 +124,7 @@ class RunReport:
     retained_records: int = 0
     observed_from: dt.datetime | None = None
     observed_until: dt.datetime | None = None
+    unmeasured_entries: int = 0
     budget_bytes: int = 0
     cutoff: dt.datetime | None = None
     plan: PlanSummary | None = None
@@ -166,6 +174,7 @@ class RunReport:
             "retained_records": self.retained_records,
             "observed_from": optional_utc_text(self.observed_from),
             "observed_until": optional_utc_text(self.observed_until),
+            "unmeasured_entries": self.unmeasured_entries,
             "budget_bytes": self.budget_bytes,
             "cutoff": optional_utc_text(self.cutoff),
             "plan": None if self.plan is None else self.plan.as_dict(),

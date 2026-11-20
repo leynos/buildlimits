@@ -2078,8 +2078,10 @@ reason = "Each decoder rejects a timestamp without a UTC offset in its own paylo
 members = [
     "buildlimits/outcome_segments.py::archive_name",
     "buildlimits/outcome_segments.py::sealed_meta_name",
+    "buildlimits/outcome_segments.py::sidecar_name",
+    "buildlimits/outcome_segments.py::replacing_name",
 ]
-reason = "Two file-name conventions in one module: the published archive appends a compression suffix, and the writer's metadata uses a different infix. Each is the single place its convention lives, and a shared formatter would take the whole name as an argument."
+reason = "File-name conventions in one module: the published archive appends a compression suffix, its sidecar adds the metadata suffix, the rewrite marker adds the replacing suffix, and the writer's metadata uses a different infix. Each is the single place its convention lives, and a shared formatter would take the whole name as an argument."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -2154,7 +2156,7 @@ reason = "Matching test fixtures: each suite builds the same attributed records 
 [[tool.duplication_gate.allow]]
 members = [
     "buildlimits/outcome_archive_rows.py",
-    "buildlimits/outcome_history.py",
+    "buildlimits/outcome_history_pin.py",
     "buildlimits/outcome_record_stream.py",
 ]
 reason = "Three faults each keep a closed reason as the exception message, because callers branch on that reason and never read raw exception text. Each names its own reason type, so a shared base would force a common type on three unrelated fault domains."
@@ -2178,8 +2180,9 @@ reason = "Each assembles a JSON-ready mapping for its own document: a sidecar's 
 members = [
     "tests/fizzbee_spike.py",
     "tests/test_outcome_archive_bench.py",
+    "tests/test_outcome_archive_memory.py",
 ]
-reason = "Each prepares a directory a child reads from, and one shared line creates it. The surrounding work differs: the model run copies a spec beside a captured binary, while the benchmark writes padded rows for a measurement."
+reason = "Each prepares a directory a child reads from, and one shared line creates it. The surrounding work differs: the model run copies a spec beside a captured binary, the benchmark writes padded rows for a measurement, and the memory test builds the two generated histories it traces."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -2199,8 +2202,10 @@ reason = "Repeated assertion pair: each checks that a refused command exits with
 members = [
     "tests/test_metrics_report.py",
     "tests/test_outcome_archive_lock.py",
+    "tests/outcome_archive_helpers.py",
+    "tests/test_outcome_archive_subprocess.py",
 ]
-reason = "Both fail the test if execution reaches the guarded call. One guards a transport that must not be reached by invalid options, the other a lock that must not be acquired twice; the call inside each differs, so the shared part is a single assertion."
+reason = "Each fails the test at a deadline the surrounding contract exists to meet. One guards a transport that must not be reached by invalid options, one a lock that must not be acquired twice, one a writer that must accept every fixture row, and one a running command that must publish an archive; the call inside each differs, so the shared part is a single assertion."
 
 [[tool.duplication_gate.allow]]
 unit = "tests/test_outcome_archive_fs.py"
@@ -2210,9 +2215,8 @@ reason = "Recurring short test steps: these fragments arrange or check the same 
 members = [
     "tests/test_predict_dataset.py::refuse",
     "tests/test_outcome_archive.py::refuse",
-    "tests/test_outcome_archive_files.py::refuse",
 ]
-reason = "Three-line fault stubs that raise through different seams: one replaces `Path.replace` while a snapshot is written, one replaces the archive's quarantine call, and one replaces the sidecar write a trim performs. The signatures, the patched targets and the behaviour under test differ, so a shared helper would hide which seam each test forces to fail."
+reason = "Three-line fault stubs that raise through different seams: one replaces `Path.replace` while a snapshot is written, and the archive tests replace the quarantine move for an orphan sidecar and for a damaged source. The signatures, the patched targets and the behaviour under test differ, so a shared helper would hide which seam each test forces to fail."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -2225,6 +2229,7 @@ members = [
     "tests/outcome_store_helpers.py",
     "buildlimits/cache_recovery.py",
     "buildlimits/outcome_store.py",
+    "buildlimits/predict/dataset_cli.py",
     "buildlimits/predict/ensemble_runs.py",
     "buildlimits/predict/harness.py",
     "buildlimits/supervisor_wiring.py",
@@ -2243,11 +2248,19 @@ members = [
     "tests/test_cache_recovery_telemetry.py",
     "tests/test_recovery_roots_deadline.py",
     "buildlimits/group_recovery.py",
+    "buildlimits/outcome_archive_files.py",
     "buildlimits/predict/report_codec.py",
     "tests/differential_trace_test_helpers.py",
+    "tests/test_outcome_archive_run_faults.py",
+    "tests/test_outcome_totality.py",
+    "tests/test_predict_evaluation.py",
+    "buildlimits/outcome_archive.py",
+    "buildlimits/outcome_history_pin.py",
     "modelcheck/cli.py",
+    "tests/outcome_archive_helpers.py",
+    "tests/test_kache_detached_events.py",
 ]
-reason = "Matching type-checking and import preambles: every module guards its own standard-library aliases and the annotation, port and value symbols it reads behind a TYPE_CHECKING block, so a re-export module would hide what each file depends on without sharing any behaviour. The near channel joins the group through that shared block shape, and the members come from unrelated production, model-check and test-support modules."
+reason = "Matching type-checking and import preambles: every module guards its own standard-library aliases and the annotation, port and value symbols it reads behind a TYPE_CHECKING block, so a re-export module would hide what each file depends on without sharing any behaviour. The archive modules join the group through that shared block shape, and the members come from unrelated production, model-check and test-support modules."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -2276,20 +2289,6 @@ reason = "Recurring short test steps: both open a segmented writer, append one r
 
 [[tool.duplication_gate.allow]]
 members = [
-    "buildlimits/outcome_recorder_types.py",
-    "buildlimits/outcome_recorder_outputs.py",
-    "tests/outcome_shell_test_support.py",
-    "buildlimits/server_watch.py",
-    "buildlimits/cache_recovery.py",
-    "buildlimits/predict/dataset_cli.py",
-    "tests/predict_test_helpers.py",
-    "buildlimits/outcome_archive_files.py",
-    "tests/test_kache_detached_events.py",
-]
-reason = "Matching import and type-checking preambles: every module names the standard-library aliases and the domain types it reads, so a re-export module would hide each module's real dependencies without sharing any behaviour."
-
-[[tool.duplication_gate.allow]]
-members = [
     "tests/test_outcome_archive_retention.py",
     "tests/test_outcome_archive.py",
 ]
@@ -2310,8 +2309,53 @@ reason = "Recurring short test steps: the repair tests share the write-fixture, 
 members = ["tests/outcome_archive_helpers.py::refuse", "tests/test_launch_pressure.py::fail", "tests/test_startup_descriptor_ownership.py::fail"]
 reason = "One injected-failure stand-in written three times for unrelated callers: the archive tests refuse a store operation, and each pressure test refuses a launch stage. The shared archive refusal is named once for both archive fault modules; sharing it with the pressure tests would couple their launch-pipeline fixture to archive test support, so each keeps its own three-line raiser."
 [[tool.duplication_gate.allow]]
-members = ["buildlimits/outcome_recorder_types.py", "buildlimits/outcome_recorder_outputs.py", "tests/outcome_shell_test_support.py", "buildlimits/server_watch.py", "buildlimits/cache_recovery.py", "buildlimits/predict/dataset_cli.py", "tests/predict_test_helpers.py", "buildlimits/outcome_archive_files.py", "tests/test_outcome_archive_run_faults.py", "tests/test_kache_detached_events.py"]
-reason = "Matching module preludes: each module names the record, sighting or archive symbols it uses, and several guard checker-only imports behind one TYPE_CHECKING block. Routing them through a shared re-export module would hide every module dependence behind one import and would make the checker blind to a module that stops using a symbol, so each keeps its own prelude."
+members = [
+    "tests/test_outcome_archive.py",
+    "tests/test_outcome_archive_run_faults.py",
+]
+reason = "Recurring short test steps: both suites write one sealed source, run the archiver and assert on the report it returned. Each module states one family of outcomes -- the store-wide report, and the faults a run records while continuing -- and extracting the arrangement would hide which files each case builds."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_outcome_archive_repair.py"
+reason = "Recurring short test steps: the trim tests publish the same four-row archive, trim it and then observe different states a failed sidecar write can leave behind. The shared set-up already lives in archive_files_helpers, and extracting the remaining trim call would hide which failure each case injects."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_archive_memory.py",
+    "tests/test_outcome_history.py",
+]
+reason = "Both trace the same H3 replay through tracemalloc around one command call, because each measures that path's peak from a differently sized history. One asserts the peak is fixed across two history sizes, the other that it stays below the materializing read's peak, so the surrounding assertions state the contract."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_outcome_store_writes.py"
+reason = "Recurring short test steps: two age-bound tests open the same segmented writer against a frozen clock and assert the same discard count and emptied store. One arranges the expiry at startup and the other on an ordinary append, and each docstring names the rule it pins, so extracting the shared outline would hide when the bound applies."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_outcome_archive_plan.py"
+reason = "Recurring short test steps: the record-cap tests build the same three archived sequences and assert on the plan's deletes. Each case varies one input -- the cap, the straddling archive's count or the active rows -- and its assertion names the rule under test."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_outcome_store_machine.py"
+reason = "Two one-line clock advances inside the model: one moves both clocks in step and one moves wall time against monotonic time. They are separate operations because a skew test must be able to produce a jump the writer would otherwise never see."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_predict_dataset_cli.py"
+reason = "Recurring short test steps: the dataset-command tests share the same invocation and captured-output assertions while varying the input store they build. Each case states one refusal or one snapshot contract, and the shared arrangement is the command's public call."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_archive_files.py::_refuse_scan",
+    "tests/test_outcome_archive_run_faults.py::refuse_scan",
+]
+reason = "One injected-failure stand-in written once per archive fault module: it makes the verification scan of a temporary archive raise a truncated-XZ fault. The two modules exercise publication in isolation and through a whole run, and neither may import the other's fixtures, so each keeps its own raiser."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_replay_cli.py",
+    "tests/test_outcome_history_commands.py",
+]
+reason = "One identical raise expression at two layers: the command reports that its retry bound ended without a settled snapshot, and the test's injected substitution reports a closed corruption. A shared helper would couple the command's retry loop to a test stub that must be able to raise the fault at a chosen pass."
+
 [[tool.duplication_gate.unit]]
 unit = "buildlimits/outcome_archive_verify.py"
 reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."

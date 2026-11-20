@@ -13,17 +13,13 @@ import typing as typ
 from pathlib import Path
 
 import pytest
+from archive_cli_helpers import command_arguments, sealed_source, write_config
 from outcome_test_helpers import attributed_record
 from segment_test_helpers import document as encode_document
 
 from buildlimits.outcome_archive_cli import main
 from buildlimits.outcome_archive_lock import ArchiveLock
-from buildlimits.outcome_segments import (
-    SegmentLayout,
-    archive_name,
-    segment_name,
-    sidecar_name,
-)
+from buildlimits.outcome_segments import SegmentLayout, archive_name, sidecar_name
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
@@ -47,70 +43,15 @@ def _records(count: int) -> tuple[StoreRecord, ...]:
     )
 
 
-def _sealed(store: Path, sequence: int, data: bytes) -> Path:
-    """Write one sealed source beside ``store``.
-
-    Returns
-    -------
-    Path
-        The source path.
-    """
-    directory = SegmentLayout.beside(store).sealed_dir
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / segment_name(sequence)
-    path.write_bytes(data)
-    path.chmod(0o600)
-    return path
-
-
-def _config(
-    path: Path,
-    *,
-    preset: int = 0,
-    max_bytes: int = 15_000_000_000,
-) -> Path:
-    """Write a configuration that enables recorded, archived outcomes.
-
-    Returns
-    -------
-    Path
-        The configuration path.
-    """
-    path.write_text(
-        "\n".join([
-            'cache_outcomes = "record"',
-            'cache_mode = "sccache"',
-            # The fixtures are dated, so a real age window would start evicting
-            # them once the wall clock passed it. Zero disables age eviction.
-            "cache_outcomes_max_age_days = 0",
-            f"cache_outcomes_max_bytes = {max_bytes}",
-            f"cache_outcomes_archive_preset = {preset}",
-            "",
-        ])
-    )
-    return path
-
-
-def _arguments(store: Path, config: Path) -> list[str]:
-    """Return the options every command shares.
-
-    Returns
-    -------
-    list[str]
-        The store and configuration arguments.
-    """
-    return ["--store", str(store), "--config", str(config)]
-
-
 def test_inspect_reports_the_plan_as_json(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Inspection is a dry run and its JSON is free of host detail."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, encode_document(_records(1)))
-    config = _config(tmp_path / "supervisor.toml")
+    sealed_source(store, 1, encode_document(_records(1)))
+    config = write_config(tmp_path / "supervisor.toml")
 
-    status = main(["inspect", *_arguments(store, config), "--json"])
+    status = main(["inspect", *command_arguments(store, config), "--json"])
     output = capsys.readouterr().out
 
     document = json.loads(output)
@@ -128,10 +69,10 @@ def test_inspect_prints_bounded_operator_lines(
 ) -> None:
     """The plain report carries the plan and the dry-run marker."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, encode_document(_records(1)))
-    config = _config(tmp_path / "supervisor.toml")
+    sealed_source(store, 1, encode_document(_records(1)))
+    config = write_config(tmp_path / "supervisor.toml")
 
-    status = main(["inspect", *_arguments(store, config)])
+    status = main(["inspect", *command_arguments(store, config)])
     output = capsys.readouterr().out
     # The command reads the system clock; the cutoff is the only field that
     # changes between runs, so redact it before snapshotting the contract.
@@ -146,10 +87,10 @@ def test_run_archives_and_reports_the_action(
 ) -> None:
     """A successful run publishes the archive and prints what it did."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, encode_document(_records(1)))
-    config = _config(tmp_path / "supervisor.toml")
+    sealed_source(store, 1, encode_document(_records(1)))
+    config = write_config(tmp_path / "supervisor.toml")
 
-    status = main(["run", *_arguments(store, config)])
+    status = main(["run", *command_arguments(store, config)])
     output = capsys.readouterr().out
 
     assert status == 0, "the run succeeds"
@@ -165,10 +106,10 @@ def test_the_configured_preset_is_used(
 ) -> None:
     """The command reads the archive preset from the supervisor config."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, encode_document(_records(1)))
-    config = _config(tmp_path / "supervisor.toml", preset=1)
+    sealed_source(store, 1, encode_document(_records(1)))
+    config = write_config(tmp_path / "supervisor.toml", preset=1)
 
-    main(["run", *_arguments(store, config)])
+    main(["run", *command_arguments(store, config)])
 
     sidecar = SegmentLayout.beside(store).archive_dir / sidecar_name(1)
     assert '"xz_preset":1' in sidecar.read_text(), "the configured preset is used"
@@ -179,10 +120,10 @@ def test_run_dry_run_changes_nothing(
 ) -> None:
     """``run --dry-run`` plans without taking the lock or writing state."""
     store = tmp_path / "cache-outcomes.jsonl"
-    source = _sealed(store, 1, encode_document(_records(1)))
-    config = _config(tmp_path / "supervisor.toml")
+    source = sealed_source(store, 1, encode_document(_records(1)))
+    config = write_config(tmp_path / "supervisor.toml")
 
-    status = main(["run", "--dry-run", *_arguments(store, config)])
+    status = main(["run", "--dry-run", *command_arguments(store, config)])
     output = capsys.readouterr().out
 
     assert status == 0, "a dry run succeeds"
@@ -198,10 +139,10 @@ def test_a_corrupt_source_exits_three(
 ) -> None:
     """A segment that cannot be decoded is an operator-actionable failure."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, b"not a header\n")
-    config = _config(tmp_path / "supervisor.toml")
+    sealed_source(store, 1, b"not a header\n")
+    config = write_config(tmp_path / "supervisor.toml")
 
-    status = main(["run", *_arguments(store, config)])
+    status = main(["run", *command_arguments(store, config)])
     output = capsys.readouterr().out
 
     assert status == 3, "corruption has its own exit status"
@@ -214,12 +155,12 @@ def test_a_held_lock_exits_seventy_five(
 ) -> None:
     """A concurrent run is retryable, never waited on."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, encode_document(_records(1)))
-    config = _config(tmp_path / "supervisor.toml")
+    sealed_source(store, 1, encode_document(_records(1)))
+    config = write_config(tmp_path / "supervisor.toml")
     layout = SegmentLayout.beside(store)
 
     with ArchiveLock(layout.lock_file):
-        status = main(["run", *_arguments(store, config)])
+        status = main(["run", *command_arguments(store, config)])
     output = capsys.readouterr().out
 
     assert status == 75, "the timer records a temporary failure"
@@ -230,7 +171,7 @@ def test_a_held_lock_exits_seventy_five(
 def test_a_missing_configuration_uses_defaults(tmp_path: Path) -> None:
     """An absent configuration file is not an error."""
     store = tmp_path / "cache-outcomes.jsonl"
-    _sealed(store, 1, encode_document(_records(1)))
+    sealed_source(store, 1, encode_document(_records(1)))
 
     status = main([
         "inspect",
@@ -251,7 +192,7 @@ def test_an_unusable_configuration_value_is_a_usage_error(
     config = tmp_path / "supervisor.toml"
     config.write_text("cache_outcomes_max_bytes = 1\n")
 
-    status = main(["inspect", *_arguments(store, config)])
+    status = main(["inspect", *command_arguments(store, config)])
     error = capsys.readouterr().err
 
     assert status == 2, "the configuration is unusable"
@@ -266,7 +207,7 @@ def test_an_unreadable_configuration_names_its_path(
     directory = tmp_path / "config-directory"
     directory.mkdir()
 
-    status = main(["inspect", *_arguments(store, directory)])
+    status = main(["inspect", *command_arguments(store, directory)])
     error = capsys.readouterr().err
 
     assert status == 2, "an unreadable configuration is a usage error"
@@ -281,7 +222,7 @@ def test_a_store_without_an_environment_is_a_usage_error(
     """With no ``--store`` and no usable environment there is nothing to read."""
     monkeypatch.delenv("XDG_STATE_HOME", raising=False)
     monkeypatch.delenv("HOME", raising=False)
-    config = _config(tmp_path / "supervisor.toml")
+    config = write_config(tmp_path / "supervisor.toml")
 
     status = main(["inspect", "--config", str(config)])
     error = capsys.readouterr().err

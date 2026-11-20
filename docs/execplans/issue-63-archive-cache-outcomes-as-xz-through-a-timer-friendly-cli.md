@@ -244,6 +244,24 @@ verified archive is published, and leaves compile admission untouched.
   one way, and the two remaining families the detector reported are recorded
   with their reasons. Measured over the whole suite, statement coverage rises
   from 91.43% to 91.92%, above the 91.31% ratchet floor.
+- [x] Whole-plan remediation (2026-11-20): the follow-up assessment's history
+  gaps are closed. The record cap counts rows still in the active file, and the
+  writer ages the active file on append as well as at restart, sharing the
+  clock-skew flag with compaction. History reads pin one snapshot
+  (`outcome_history_pin`) and stream it re-iterably and salt-filtered
+  (`outcome_history_stream`), so replay holds one segment's decoder state
+  rather than every retained row: H2's two passes read the same pinned rows and
+  H3 keeps a running tally. `read_history` materializes the stream only for the
+  dataset snapshot, which holds every row by definition. The archive report now
+  counts the whole retained history — closed rows plus active rows — reports
+  the observed span across both, and counts entries whose metadata is missing as
+  `unmeasured_entries`; the plain report prints a `history:` line with the
+  count, the span and that total. Regression tests cover a stream yielding
+  earlier rows before a later damaged one, two passes over one stream, a
+  segment replaced after the pin, an unselected domain never being decoded, the
+  replay command retrying an unsettled pass but not a closed fault, append-time
+  ageing against the writer's model, active rows in the report, and a missing
+  sidecar counted as unmeasured.
 - [x] Final gate run (2026-11-20): `make fmt` (nothing changed),
   `make check-fmt`, `make lint`, `make typecheck`, `make test`,
   `make markdownlint`, `make nixie` and `make audit` each ran once,
@@ -252,9 +270,74 @@ verified archive is published, and leaves compile admission untouched.
   Skylos 4.33.2, Vulture, the duplication gate at 253 reasoned exceptions, and
   `lint-actions`. `make test` reports 4462 passed, 85 skipped and 76 snapshots
   passed.
+- [x] Verification-gap closure (2026-11-20): the follow-up assessment's three
+  proof gaps are closed. The publication gate gained
+  `test_a_temporary_that_does_not_match_its_facts_is_not_published`: a narrow
+  seam over `read_archive_facts` reports a digest the written archive cannot
+  hold, and the test proves the temporary is discarded, the fault is
+  `truncated_xz`, nothing is published, the readable source survives, and an
+  already-published archive and sidecar stay byte-identical. Disabling the
+  `written.matches(scanned)` guard makes the test fail with "DID NOT RAISE", so
+  the check is not vacuous. `test_outcome_archive_subprocess.py` runs the
+  installed `build-limits-outcome-archive` script and the `python -m` form as a
+  timer would: inspect, `run --dry-run`, `run`, a corrupt source (exit 3), a
+  lock held by another process (exit 75), and two real runs overlapping — the
+  first publishes an archive while the second reports busy and the first then
+  completes. `test_outcome_archive_memory.py` traces the archiver, the
+  materializing read and the streaming replay separately at 4,000 and 16,000
+  rows: the archive peaks are 98.2 MB and 98.3 MB (128 MiB bound, less than 4
+  MiB growth), the replay peaks are 9.25 MB and 9.42 MB (16 MiB bound), and the
+  materializing read grows from 13.5 MB to 28.4 MB, which witnesses that the
+  traces observe rows. Its opt-in companion,
+  `BUILDLIMITS_ARCHIVE_LARGE_MEMORY=1`, generates a 320 MB history and measures
+  each real process through `RUSAGE_CHILDREN`: the archiver peaked at 47,100
+  KiB and the streaming replay at 47,096 KiB against a 150,000 KiB bound. It
+  was run once and is skipped by default.
+- [x] Gate remediation (2026-11-20): the first full gate run after the
+  verification-gap closure was red in three places, and each was fixed at its
+  cause. Five modules were over the 400-line limit — `outcome_replay.py` (472),
+  `outcome_segment_inventory.py` (457), `outcome_history_pin.py` (413),
+  `tests/test_outcome_archive_files.py` (475) and
+  `tests/test_outcome_history.py` (456) — so the H2 and H3 folds moved to
+  `outcome_replay_scoring`, the filesystem walk and `SegmentEntry` to
+  `outcome_segment_scan`, settlement detection to `outcome_history_settle`, and
+  the trim and repair tests to `test_outcome_archive_repair.py` and
+  `test_outcome_history_replacement.py`. Two test-only Pylint findings were
+  fixed locally, a `ty` `invalid-argument-type` diagnostic in a monkeypatched
+  double was fixed by typing it as `Iterable[StoreRecord] -> H3Report`, and the
+  traced memory test gained a 300-second timeout because tracing both sizes
+  takes about 13 seconds alone and exceeded the 30-second default under the
+  24-worker pool. A load-sensitive Hypothesis deadline in
+  `test_modelcheck_trace_redaction_properties.py` failed only under the pool;
+  it now disables the deadline, as the other substantive property modules do.
+  The focused suites covering every touched module pass (99 passed), the traced
+  memory test passes in 12.8 seconds, and the property module passes.
+- [x] Second gate remediation and final gate run (2026-11-20): the gate run
+  after the verification-gap closure was red in two places, and both were fixed
+  at their cause. The duplicated import preamble had grown to 39 members after
+  the module splits, so the three superseded entries became one entry naming
+  every member; the helper extractions that followed removed the shared code
+  the detector was matching, and the remaining near-duplicates are recorded as
+  reasoned entries in `pyproject.toml`. The archive helper that seeds a real
+  segmented store now retries a row the writer's non-blocking queue refuses:
+  under load the fixture had silently written a shorter history than the test
+  believed it wrote. After the remediation the eight gates ran once,
+  sequentially, and all pass: `make fmt` (nothing changed), `make check-fmt`,
+  `make lint` (ruff, interrogate at 100%, the base and DF12 Pylint sweeps at
+  10.00/10, Ambrleaks, Skylos, Vulture, the duplication gate at 255 reasoned
+  exceptions, and `lint-actions`), `make typecheck`, `make test` (4487 passed,
+  86 skipped and 76 snapshots passed), `make markdownlint`, `make nixie` and
+  `make audit` (no known vulnerabilities).
 
 ## Surprises & discoveries
 
+- A module split can leave a private helper behind. `outcome_history_stream`
+  imported `_fingerprint` from `outcome_history_pin`; moving that helper to
+  `outcome_history_settle` broke the import at collection time. The helper is
+  now shared through the settlement module instead. The same move showed that
+  the settlement re-scan must be reached through the inventory module's
+  attribute rather than imported by name, or a test that replaces
+  `read_inventory` no longer replaces the scan the pin actually runs.
 - `outcome_record_codec` already exists and houses the strict JSON Lines
   encoding; per-line decoding will be added there rather than duplicated.
 - The 400-line module limit counts physical lines, so a module can pass
@@ -310,6 +393,19 @@ verified archive is published, and leaves compile admission untouched.
   a 12 MiB segment, 143 MB for a 100 MiB one), not to the traced figure; the
   "under one mebibyte" traced bound holds for the reader alone. The benchmark's
   docstrings and the developers' guide now say so.
+- `StoreWriter.append` is deliberately non-blocking: a full queue refuses the
+  row and publishes it as `save_failed` with `discarded=1`. A fixture that
+  seeds thousands of rows through a real writer can therefore hand a test a
+  shorter history than the test believes it wrote, and it does so only when the
+  host is loaded enough for the worker to fall behind. The archive fixture now
+  retries a refused row and fails the test beyond its bound, so a lost row is
+  reported instead of silently changing what the test measures.
+- An in-process RSS reading also covers the fixture. The benchmark's figures
+  include the segment it generated, so they exceed what the archiver costs on
+  its own: the process test measured 47,100 KiB for a 320 MB history and 47,096
+  KiB for the streaming replay, well below the traced 98 MB because the
+  match-finder tables are allocated but not all touched. A unit's `MemoryMax`
+  must cover the process figure, not the traced one or the fixture's.
 - A realistic 12 MiB segment compresses to about 6% of its size in 3.5 s, so a
   15 GB backlog takes roughly 80 minutes. A oneshot unit's default
   `TimeoutStartSec` of 90 s would kill the first run, so the documented unit
@@ -373,6 +469,25 @@ verified archive is published, and leaves compile admission untouched.
 - A byte trim and an age trim compose into one rewrite, but a sequence the byte
   plan deletes is excluded from the trim list: rewriting a file that is about
   to be removed cannot improve the retained bytes.
+- A history read pins a snapshot rather than re-reading the store per pass:
+  device, inode and size fingerprints detect a replacement between passes, the
+  active file's bytes are frozen at the pin, and a pass whose pin changed fails
+  closed as `unsettled` rather than mixing two states. The replay command takes
+  a fresh pin after such a fault; a closed decode fault is never retried.
+- The report's record count covers the whole retained history, including the
+  writer's active rows, and `unmeasured_entries` counts segments no metadata
+  describes. An unknown part of the history is never reported as empty, and the
+  observed span is the union of the measured closed and active spans.
+
+- Sealed sources are not metadata-free: the writer writes
+  `segment-NNNNNNNNNNNN.jsonl.meta.json` when it seals, so a sealed entry's
+  record count and span are known to the inventory. An archive whose sidecar is
+  missing or corrupt, and an active file that cannot be decoded, are the only
+  entries the report has to call unmeasured.
+- Test fixtures that seed a real segmented store accept a row only when the
+  writer reports it, retrying a refused append. Treating `append` as
+  synchronous would hide the writer's documented loss policy and let a loaded
+  host shrink the fixture's history.
 
 ## Outcomes & retrospective
 
@@ -414,16 +529,26 @@ Methods and evidence:
   issue.
 - A property test that a generated history produces the same decoded record
   stream before and after archiving.
-- Fixed `tracemalloc` bounds at two history sizes, plus an opt-in subprocess
-  test with a several-hundred-megabyte history and a `ru_maxrss` bound.
+- A publication-gate regression test in `tests/test_outcome_archive_files.py`
+  that injects mismatched archive facts through a narrow seam and proves
+  nothing is published, and process-level tests in
+  `tests/test_outcome_archive_subprocess.py` that run the installed command and
+  two overlapping runs.
+- Fixed `tracemalloc` bounds at two history sizes
+  (`tests/test_outcome_archive_memory.py`, 4,000 and 16,000 rows), plus an
+  opt-in subprocess test (`BUILDLIMITS_ARCHIVE_LARGE_MEMORY=1`) with a
+  320,000,000-byte history and a 150,000 KiB `ru_maxrss` bound, with the
+  archiver and the replay consumer each measured in their own process.
 - Boundary tests at exactly 30 days and exactly the byte cap, including sparse
   history below both bounds and an explicit record cap.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
 Non-vacuity: every boundary test exhibits at least one record on each side of
-the threshold, and the memory tests compare two sizes so a constant-buffer
-failure or an accumulating buffer both fail.
+the threshold; the memory tests compare two sizes so a constant-buffer failure
+or an accumulating buffer both fail, while the materializing read's measured
+growth proves the traces observe rows; and disabling the publication gate makes
+`test_a_temporary_that_does_not_match_its_facts_is_not_published` fail.
 
 ## Revision note
 
@@ -445,3 +570,8 @@ failure or an accumulating buffer both fail.
 - The coverage lift added five focused test modules, one shared injected-failure
   helper, and two reasoned duplication exceptions, and records the final
   all-green gate run.
+- The whole-plan remediation streamed the retained history through a pinned
+  snapshot, made the archive report count the active file as well as the closed
+  segments, and added the publication-gate, process-level and two-size memory
+  tests, the opt-in 320 MB process test, and the developers' guide note that
+  explains how to run it.

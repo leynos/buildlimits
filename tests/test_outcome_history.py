@@ -5,9 +5,7 @@ active file. These tests build a real segmented store with the writer, archive
 it with the archiver, and then read it back through the history view.
 """
 
-import dataclasses as dc
 import datetime as dt
-import lzma
 import tracemalloc
 import typing as typ
 from pathlib import Path
@@ -25,7 +23,7 @@ from history_fixtures import (
 from outcome_archive_helpers import write as write_store
 from segment_test_helpers import history_policy
 
-from buildlimits import outcome_history, outcome_replay_cli, outcome_segment_inventory
+from buildlimits import outcome_history, outcome_replay_cli
 from buildlimits.outcome_archive import RunOptions, run_archive
 from buildlimits.outcome_segments import SegmentLayout, archive_name
 from buildlimits.outcome_store_io import read_store
@@ -74,7 +72,10 @@ def test_a_generated_history_archives_and_replays_in_order(
         f"archiving {source_bytes} bytes peaked at {peak} traced bytes"
     )
 
+    tracemalloc.start()
     history = outcome_history.read_history_beside(store)
+    _current, material_peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
     assert observed(history.records) == tuple(
         NOW - dt.timedelta(minutes=index) for index in range(6_000)
     ), "every row is read in append order"
@@ -91,6 +92,110 @@ def test_a_generated_history_archives_and_replays_in_order(
     assert '"attributed_outcomes": 6000' in capsys.readouterr().out, (
         "replay sees every archived row"
     )
+
+    tracemalloc.start()
+    try:
+        streamed = outcome_replay_cli.main([
+            "h3",
+            "--store",
+            str(store),
+            "--history",
+            "--json",
+        ])
+        _current, replay_peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert streamed == 0, "the streaming replay reads the archived history"
+    assert '"attributed_outcomes": 6000' in capsys.readouterr().out, (
+        "the streaming replay judges every row"
+    )
+    # H3 holds one segment's decoder state and one running tally, so it must
+    # cost less than the materializing read above, whose peak also covers six
+    # thousand decoded records. Both peaks include liblzma's decoder
+    # dictionary, which is the floor for either path.
+    assert replay_peak < material_peak, (
+        f"streaming replay peaked at {replay_peak} bytes, not below the "
+        f"materializing read's {material_peak}"
+    )
+
+
+def test_history_stream_yields_rows_before_a_later_fault(
+    tmp_path: Path,
+) -> None:
+    """A stream hands out earlier rows before a damaged row is reached.
+
+    A reader that buffered the whole history would raise before returning
+    anything, so taking one record first proves the stream decodes as the
+    caller reads.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, records(0, 3), history_policy(1))
+    layout = SegmentLayout.beside(store)
+    damaged = max(layout.sealed_dir.glob("*.jsonl"))
+    damaged.write_bytes(damaged.read_bytes() + b"not-json\n")
+
+    stream = outcome_history.open_history_beside(store)
+    iterator = iter(stream)
+
+    assert next(iterator).observed_at == NOW, (
+        "the oldest row arrives before the damaged segment is read"
+    )
+    with pytest.raises(outcome_history.HistoryFaultError):
+        for _row in iterator:
+            pass
+
+
+def test_history_stream_repeats_the_same_snapshot(tmp_path: Path) -> None:
+    """Two passes over one stream read the same rows in the same order."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    archived_segments(store, 2)
+    active_records(store, first=2, count=2)
+
+    stream = outcome_history.open_history_beside(store)
+
+    expected = tuple(NOW - dt.timedelta(minutes=index) for index in range(4))
+    assert observed(tuple(stream)) == expected, "the first pass covers the history"
+    assert observed(tuple(stream)) == expected, "the second pass repeats it"
+
+
+def test_a_pinned_archive_that_changed_fails_closed(tmp_path: Path) -> None:
+    """A segment replaced after the pin is refused rather than half-read."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    archived_segments(store, 1)
+    layout = SegmentLayout.beside(store)
+    stream = outcome_history.open_history_beside(store)
+    archive = layout.archive_dir / archive_name(1)
+    archive.write_bytes(archive.read_bytes() + b"x")
+
+    with pytest.raises(outcome_history.HistoryFaultError) as raised:
+        tuple(stream)
+
+    assert raised.value.reason == "unsettled", "the changed pin is a bounded fault"
+
+
+def test_an_unselected_domain_is_not_decoded(tmp_path: Path) -> None:
+    """A read of one domain does not decode another domain's segments.
+
+    The damaged trailer belongs to the retired domain, so the newest
+    domain's rows are still readable while an all-salts read reports it.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, (window(0, 1),), history_policy(1))
+    (tmp_path / SALT_NAME).unlink()
+    active_records(store, first=2, count=1)
+    layout = SegmentLayout.beside(store)
+    retired = sorted(layout.sealed_dir.glob("*.jsonl"))
+    assert len(retired) == 1, "the retired domain left one sealed segment"
+    retired[0].write_bytes(retired[0].read_bytes() + b"not-json\n")
+
+    newest = outcome_history.read_history_beside(store)
+
+    assert len(newest.records) == 1, "the newest domain remains readable"
+    with pytest.raises(outcome_history.HistoryFaultError):
+        outcome_history.read_history_beside(
+            store, outcome_history.HistorySelection(all_salts=True)
+        )
 
 
 def test_history_reads_archived_and_active_records_in_append_order(
@@ -110,169 +215,6 @@ def test_history_reads_archived_and_active_records_in_append_order(
     assert observed(history.records) == tuple(
         NOW - dt.timedelta(minutes=index) for index in range(5)
     ), "history reads archived rows before active rows without a gap"
-
-
-def _archived_store_with_source(
-    tmp_path: Path,
-) -> tuple[Path, SegmentLayout, Path]:
-    """Archive a store and rebuild the sealed source beside its archive.
-
-    The rebuild restores the state a crash can leave behind: an archive
-    published while its sealed source still exists, which the next scan lists
-    as a duplicate.
-
-    Returns
-    -------
-    tuple[Path, SegmentLayout, Path]
-        The store path, its layout, and the rebuilt sealed source.
-    """
-    store = tmp_path / "cache-outcomes.jsonl"
-    policy = history_policy(1)
-    write_store(store, records(0, 2), policy)
-    layout = SegmentLayout.beside(store)
-    run_archive(layout, policy, RunOptions(now=NOW))
-    archive = layout.archive_dir / archive_name(1)
-    source = layout.sealed_dir / archive.name.removesuffix(".xz")
-    source.write_bytes(lzma.decompress(archive.read_bytes()))
-    source.chmod(0o600)
-    return store, layout, source
-
-
-def test_history_reads_a_sealed_source_before_its_archive(
-    tmp_path: Path,
-) -> None:
-    """A sealed source that survived a crash is read instead of its archive."""
-    store, _layout, _source = _archived_store_with_source(tmp_path)
-
-    history = outcome_history.read_history_beside(store)
-
-    assert len(history.records) == 2, (
-        "reading the surviving sealed source does not duplicate its archived copy"
-    )
-
-
-def test_a_source_removed_after_the_scan_is_read_from_its_archive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A scan that lists a source the archiver then removes loses no rows."""
-    store, layout, source = _archived_store_with_source(tmp_path)
-    scanned = outcome_segment_inventory.read_inventory(layout)
-    source.unlink()
-    monkeypatch.setattr(
-        outcome_segment_inventory, "read_inventory", lambda _layout: scanned
-    )
-
-    history = outcome_history.read_history_beside(store)
-
-    assert observed(history.records) == _TWO_ROWS, (
-        "the vanished source's rows come from the archive that replaced it"
-    )
-
-
-def _sealed_pair(
-    tmp_path: Path,
-) -> tuple[Path, SegmentLayout, outcome_segment_inventory.Inventory]:
-    """Write two one-record segments and return them with their inventory.
-
-    Returns
-    -------
-    tuple[Path, SegmentLayout, Inventory]
-        The store path, its layout and the scan of the sealed pair.
-    """
-    store = tmp_path / "cache-outcomes.jsonl"
-    write_store(store, records(0, 2), history_policy(1))
-    layout = SegmentLayout.beside(store)
-    complete = outcome_segment_inventory.read_inventory(layout)
-    assert len(complete.sealed) == 2, "the fixture seals two segments"
-    return store, layout, complete
-
-
-def test_a_seal_landing_during_the_read_is_rechecked(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A scan that misses a segment sealed mid-read repeats instead of shortening.
-
-    The first scan is made to look as if it ran before the seal: it lists one
-    of two closed segments while the active file is already header-only. Only
-    the re-scan can recover the rows the seal moved.
-    """
-    store, _layout, complete = _sealed_pair(tmp_path)
-    stale = outcome_segment_inventory.Inventory(sealed=complete.sealed[:1])
-    real_scan = outcome_segment_inventory.read_inventory
-    scans = 0
-
-    def scan_once_stale(
-        target: SegmentLayout, *, retention_floor: int | None = None
-    ) -> outcome_segment_inventory.Inventory:
-        """Report the pre-seal view first, then the store as it really is."""
-        nonlocal scans
-        scans += 1
-        if scans == 1:
-            return stale
-        return real_scan(target, retention_floor=retention_floor)
-
-    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", scan_once_stale)
-
-    history = outcome_history.read_history_beside(store)
-
-    assert observed(history.records) == _TWO_ROWS, (
-        "the rows the first scan missed are read on the retry"
-    )
-
-
-def test_a_history_that_never_settles_fails_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A writer that keeps changing the store is reported, never truncated.
-
-    Two scans that disagree forever model a writer sealing faster than the
-    reader can confirm the store is still. No pass is complete, so the reader
-    must refuse rather than return the rows one partial pass happened to see.
-    """
-    store, _layout, complete = _sealed_pair(tmp_path)
-    partial = dc.replace(complete, sealed=complete.sealed[:1])
-    views = [partial, complete]
-    scans = 0
-
-    def alternating_scan(
-        _target: SegmentLayout, *, retention_floor: int | None = None
-    ) -> outcome_segment_inventory.Inventory:
-        """Report a different view on every scan so none ever settles."""
-        nonlocal scans
-        view = views[scans % len(views)]
-        scans += 1
-        return view
-
-    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", alternating_scan)
-
-    with pytest.raises(outcome_history.HistoryFaultError) as raised:
-        outcome_history.read_history_beside(store)
-
-    assert raised.value.reason == "unsettled", "the fault is bounded"
-
-
-def test_a_listed_archive_that_disappeared_fails_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A settled scan naming an archive that is gone is a fault, not history."""
-    store = tmp_path / "cache-outcomes.jsonl"
-    archived_segments(store, 2)
-    layout = SegmentLayout.beside(store)
-    scanned = outcome_segment_inventory.read_inventory(layout)
-    missing = dc.replace(
-        scanned.archived[0], path=scanned.archived[0].path.with_suffix(".gone")
-    )
-    doctored = dc.replace(scanned, archived=(missing, *scanned.archived[1:]))
-    monkeypatch.setattr(
-        outcome_segment_inventory,
-        "read_inventory",
-        lambda _target, **_kwargs: doctored,
-    )
-
-    with pytest.raises(outcome_history.HistoryFaultError) as raised:
-        outcome_history.read_history_beside(store)
-
-    assert raised.value.reason == "vanished", "the fault is bounded"
 
 
 def test_all_salts_names_every_domain_it_reads(tmp_path: Path) -> None:

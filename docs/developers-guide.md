@@ -325,7 +325,8 @@ Each module owns one decision. This table is the single module inventory.
 | `adapter_invocation`, `adapter_retry`                                              | Invocation state and deadline-preserving busy and restart retries                                                                                           |
 | `tracing`, `tracing_export`, `tracing_sdk_export`                                  | Bounded spans, the fixed journal schema and synchronous native-journal export                                                                               |
 | `outcome_telemetry`                                                                | Maps recorder effects to bounded metrics and spans                                                                                                          |
-| `outcome_replay`, `outcome_replay_cli`                                             | Read-only H2 and H3 evaluation over the local outcome store                                                                                                 |
+| `outcome_replay`, `outcome_replay_scoring`                                         | H2 and H3 report types with their threshold verdicts, and the streaming folds that count their evidence                                                     |
+| `outcome_replay_cli`                                                               | The replay command over the local outcome store                                                                                                             |
 | `predict`                                                                          | Snapshot, predictors, walk-forward harness and the cache-hit comparison report; its domain modules import no file-system, JSON or command module (see §2.3) |
 | `predict.predictors`                                                               | The `Predictor` protocol: predict at one admission moment, learn from a delivered label                                                                     |
 | `predict.paths`                                                                    | `same_file`: whether two paths name one file, including through a symbolic link                                                                             |
@@ -366,12 +367,14 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                                                                                |
 | `outcome_retention`                                                                | Validated age, byte, record and headroom policy shared by the writer and archiver                                                                           |
 | `outcome_segments`                                                                 | Segment naming and layout derivation only                                                                                                                   |
-| `outcome_segment_inventory`                                                        | Read-only, content-free inventory of sealed and archived segments                                                                                           |
+| `outcome_segment_inventory`, `outcome_segment_scan`                                | Read-only, content-free inventory of sealed and archived segments, and the filesystem walk that lists them                                                  |
 | `outcome_segment_sidecar`                                                          | One verified archive or sealed source's sidecar record, with strict validation                                                                              |
 | `outcome_segment_state`                                                            | Reading the advisory sequence counter and retention floor                                                                                                   |
 | `outcome_segment_gaps`                                                             | Bounded enumeration of the sequences missing from retained history                                                                                          |
 | `outcome_record_stream`                                                            | Bounded 64 KiB line streaming over plain and XZ sources                                                                                                     |
-| `outcome_history`, `outcome_history_args`                                          | Cross-state history reader and the shared replay and dataset options                                                                                        |
+| `outcome_history`, `outcome_history_pin`                                           | Cross-state history reader and the snapshot the streaming readers pin                                                                                       |
+| `outcome_history_settle`                                                           | File identity and a repeated scan, used to detect a store that moved under a pin                                                                            |
+| `outcome_history_stream`, `outcome_history_args`                                   | Re-iterable, salt-filtered stream over a pinned snapshot and the shared replay and dataset options                                                          |
 | `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
 | `outcome_archive_context`                                                          | Shared context and result values for one archive run                                                                                                        |
 | `outcome_archive_plan`                                                             | Pure retention and repair plan from the inventory                                                                                                           |
@@ -1069,22 +1072,36 @@ corruption, so the inventory reports a missing sequence only at or above it.
 stops at `MAX_GAP_SEQUENCES` and flags the list as truncated, because a
 restarted counter would otherwise leave no ceiling on one report.
 
-`outcome_history` is the read port over all three states. `read_history` walks
-archived and sealed segments in ascending sequence, then the active file; each
-document is streamed and verified in turn. The default selection is the newest
-salt domain, taken from the last document's header. `HistorySelection` also
-supports a named `salt_id` or `all_salts`, and a corrupt segment raises
+`outcome_history` is the read port over all three states.
+`outcome_history_pin.pin_history` takes one consistent snapshot: it walks the
+inventory's archived and sealed segments in ascending sequence, resolves each
+to the file that actually holds its rows, reads its header, fingerprints it,
+and freezes the active file's bytes. The default selection is the newest salt
+domain, taken from the last document's header. `HistorySelection` also supports
+a named `salt_id` or `all_salts`, and a corrupt segment raises
 `HistoryFaultError` with a closed reason rather than yielding a short history.
 A scan is repeated while it disagrees with the store it describes, up to
-`_HISTORY_ATTEMPTS`; a history that never settles raises `unsettled`, and an
-archive listed by a settled scan that has since vanished raises `vanished`, so
-neither a seal nor a concurrent archive run can shorten what is returned.
-`DecodedStore.salt_ids` names every domain an `all_salts` read covered, oldest
-first, which is what a report prints instead of attributing a spanning count to
-the newest header. `outcome_history_args` defines the shared `--history`,
-`--salt-id` and `--all-salts` options for the replay and dataset commands;
-`--salt-id` and `--all-salts` imply history mode, and no flag keeps the
-active-store-only behaviour.
+`HISTORY_ATTEMPTS`; `outcome_history_settle.is_settled` compares a fresh scan's
+closed-segment signature with the pinned one, and `fingerprint` names a file by
+device, inode and size, so a replacement is visible without reading content. A
+history that never settles raises `unsettled`, and an archive listed by a
+settled scan that has since vanished raises `vanished`, so neither a seal nor a
+concurrent archive run can shorten what is returned.
+
+`outcome_history_stream.open_history` wraps that snapshot in a `HistoryStream`,
+which is re-iterable and decodes one segment at a time as the caller reads, so
+a replay pass holds one segment's decoder state rather than every retained row.
+A pass that finds a pinned segment replaced fails closed as `unsettled` before
+yielding anything, and a domain the selection excludes is never decoded. H2
+needs two passes over the same rows, which is exactly what a re-iterable
+snapshot provides; H3 needs one pass and keeps a running tally. `read_history`
+collects the stream for the dataset snapshot, which holds every selected record
+by definition. `DecodedStore.salt_ids` names every domain an `all_salts` read
+covered, oldest first, which is what a report prints instead of attributing a
+spanning count to the newest header. `outcome_history_args` defines the shared
+`--history`, `--salt-id` and `--all-salts` options for the replay and dataset
+commands; `--salt-id` and `--all-salts` imply history mode, and no flag keeps
+the active-store-only behaviour.
 
 `outcome_archive_report` defines the closed report vocabulary. Statuses are
 `ok`, `failed`, `corrupt`, `busy` and `no_headroom`; exit statuses are 0 for
@@ -1100,23 +1117,35 @@ definition; `run --dry-run` plans without taking the lock or writing state; and
 `~/.config/buildlimits/supervisor.toml`) and `--json`.
 
 The archive tests are `tests/test_outcome_archive.py`,
-`test_outcome_archive_files.py`, `test_outcome_archive_fs.py`,
-`test_outcome_archive_lock.py`, `test_outcome_archive_plan.py`,
-`test_outcome_archive_plan_age.py`, `test_outcome_archive_plan_bytes.py`,
-`test_outcome_archive_reconcile.py`, `test_outcome_archive_retention.py`,
-`test_outcome_archive_verify.py`, `test_outcome_archive_cli.py`,
-`test_outcome_history.py`, `test_outcome_segments.py`,
-`test_outcome_segment_inventory.py`, `test_outcome_segment_state.py`,
-`test_outcome_record_stream.py`, `test_outcome_sealing_bounds.py`,
-`test_outcome_store_tail.py` and `test_outcome_store_sealing.py`.
-`tests/test_outcome_archive_bench.py` holds the reader's traced-memory test,
-which streams a multi-megabyte segment under one mebibyte, and the tests that
-pin the report's schema and its tracing ownership. `make outcome-archive-bench`
-runs `buildlimits.outcome_archive_bench` and prints a JSON report with the
-source size, record count, archive size, ratio, chunk size, peak buffered rows,
-elapsed time, peak resident set, temporary disk and peak traced allocation; it
-generates a representative segment when `SEGMENT=` names none and reads the
-named segment when it does.
+`test_outcome_archive_files.py`, `test_outcome_archive_repair.py`,
+`test_outcome_archive_fs.py`, `test_outcome_archive_lock.py`,
+`test_outcome_archive_plan.py`, `test_outcome_archive_plan_age.py`,
+`test_outcome_archive_plan_bytes.py`, `test_outcome_archive_reconcile.py`,
+`test_outcome_archive_retention.py`, `test_outcome_archive_verify.py`,
+`test_outcome_archive_cli.py`, `test_outcome_archive_subprocess.py`,
+`test_outcome_history.py`, `test_outcome_history_replacement.py`,
+`test_outcome_segments.py`, `test_outcome_segment_inventory.py`,
+`test_outcome_segment_state.py`, `test_outcome_record_stream.py`,
+`test_outcome_sealing_bounds.py`, `test_outcome_store_tail.py` and
+`test_outcome_store_sealing.py`. `test_outcome_archive_subprocess.py` runs the
+installed console script, and the `python -m` form, as separate processes,
+including two overlapping runs, and shares its launcher and configuration with
+`tests/archive_cli_helpers.py`. `tests/test_outcome_archive_bench.py` holds the
+reader's traced-memory test, which streams a multi-megabyte segment under one
+mebibyte, and the tests that pin the report's schema and its tracing ownership.
+`make outcome-archive-bench` runs `buildlimits.outcome_archive_bench` and
+prints a JSON report with the source size, record count, archive size, ratio,
+chunk size, peak buffered rows, elapsed time, peak resident set, temporary disk
+and peak traced allocation; it generates a representative segment when
+`SEGMENT=` names none and reads the named segment when it does.
+
+`tests/test_outcome_archive_memory.py` traces the archiver, the materializing
+read and the streaming replay separately at 4,000 and 16,000 rows, so a fixed
+cost that grows or an accumulating buffer both fail. Its second test generates
+a 320,000,000-byte history and measures each real process's peak resident set
+through `RUSAGE_CHILDREN`; it takes about two minutes, so it is skipped unless
+`BUILDLIMITS_ARCHIVE_LARGE_MEMORY=1` is set. Run it after a change to the
+encoder, the decoder, or the history stream.
 
 ## 10. Adapters
 

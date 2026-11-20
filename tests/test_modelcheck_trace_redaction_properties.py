@@ -33,7 +33,7 @@ import itertools
 from pathlib import Path
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from modelcheck.adapters.fizzbee_redaction import redaction_for
@@ -238,6 +238,11 @@ def _drawn_trace(data: st.DataObject, credential: str) -> Trace:
     )
 
 
+# The default 200 ms deadline measures host scheduling as much as this
+# property: under the xdist pool a correct case can exceed it while another
+# worker is compressing a fixture. The other substantive property modules
+# disable it for the same reason.
+@settings(deadline=None)
 @pytest.mark.parametrize("credential", _CREDENTIALS)
 @given(data=st.data())
 def test_every_state_key_keeps_one_distinct_name_across_a_trace(

@@ -1,16 +1,29 @@
-"""Read-only H2 and H3 checks over bounded cache-outcome store values."""
+"""Read-only H2 and H3 checks over bounded cache-outcome store values.
 
-import collections
+The report types and their fixed verdict thresholds live here; the folds that
+count the evidence as it streams past live in
+``buildlimits.outcome_replay_scoring``.
+"""
+
 import dataclasses as dc
-import statistics
 import typing as typ
+
+from buildlimits.outcome_evidence import (
+    H2_LIMITS,
+    H3_LIMITS,
+    Coverage,
+)
+from buildlimits.outcome_replay_scoring import (
+    H3Tally,
+    reiterable,
+    score_h2,
+    survey_h2,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
-    from buildlimits.outcome_key import CacheKey
-from buildlimits.outcome_evidence import H2_LIMITS, H3_LIMITS, Coverage, coverage_of
-from buildlimits.outcome_record_format import OutcomeRecord, StoreRecord, WindowSummary
+    from buildlimits.outcome_record_format import StoreRecord
 
 type Verdict = typ.Literal[
     "supported", "refuted", "inconclusive", "insufficient", "not_collected"
@@ -22,7 +35,6 @@ H2_MIN_EVALUABLE_RECORDS = 100
 H2_SUPPORTED_AGREEMENT_PERCENT = 95
 H2_REFUTED_BELOW_PERCENT = 90
 REPLAY_SCHEMA = 1
-H2_LABEL_COUNT = 2
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -61,42 +73,29 @@ def evaluate_h3(records: cabc.Iterable[StoreRecord]) -> H3Report:
     """Compare parser predictions with attributed rows and refusal counters.
 
     One counterexample refutes H3. A positive result requires the fixed 2,000
-    attributed-outcome minimum and at least one balanced window summary.
+    attributed-outcome minimum and at least one balanced window summary. The
+    input is read once, so a streaming history keeps memory bounded.
 
     Returns
     -------
     H3Report
         The threshold verdict and its bounded agreement counts.
     """
-    outcomes, summaries = _split_records(records)
-    attributed = sum(record.outcome != "unattributed" for record in outcomes)
-    row_checks = tuple(_row_agrees(record) for record in outcomes)
-    counterexamples = sum(check is False for check in row_checks)
-    counterexamples += sum(not _summary_agrees(summary) for summary in summaries)
+    tally = H3Tally()
+    for record in records:
+        tally.observe(record)
     return H3Report(
-        verdict=_h3_verdict(counterexamples, attributed, has_summaries=bool(summaries)),
-        attributed_outcomes=attributed,
-        evaluated_windows=len(summaries),
-        evaluated_rows=sum(check is not None for check in row_checks),
-        counterexamples=counterexamples,
-        coverage=coverage_of((*outcomes, *summaries)),
+        verdict=_h3_verdict(
+            tally.counterexamples,
+            tally.attributed,
+            has_summaries=bool(tally.summaries),
+        ),
+        attributed_outcomes=tally.attributed,
+        evaluated_windows=tally.summaries,
+        evaluated_rows=tally.evaluated,
+        counterexamples=tally.counterexamples,
+        coverage=tally.span.coverage(),
     )
-
-
-def _split_records(
-    records: cabc.Iterable[StoreRecord],
-) -> tuple[tuple[OutcomeRecord, ...], tuple[WindowSummary, ...]]:
-    """Separate outcome rows from window summaries, keeping store order.
-
-    Returns
-    -------
-    tuple[tuple[OutcomeRecord, ...], tuple[WindowSummary, ...]]
-        The outcome rows and window summaries, each in store order.
-    """
-    values = tuple(records)
-    outcomes = tuple(record for record in values if isinstance(record, OutcomeRecord))
-    summaries = tuple(record for record in values if isinstance(record, WindowSummary))
-    return outcomes, summaries
 
 
 def _h3_verdict(
@@ -236,19 +235,14 @@ def evaluate_h2(records: cabc.Iterable[StoreRecord]) -> H2Report:
     H2Report
         Agreement, sighting counts and the threshold verdict.
     """
-    values, summaries = _split_records(records)
-    attributed = sum(record.outcome != "unattributed" for record in values)
-    paired_keys = _paired_keys(values)
-    earlier_hits: dict[CacheKey, list[float]] = collections.defaultdict(list)
-    counters: collections.Counter[str] = collections.Counter()
-    for record in values:
-        _score_h2_record(record, paired_keys, earlier_hits, counters)
-
+    repeated = reiterable(records)
+    survey = survey_h2(repeated)
+    counters = score_h2(repeated, survey.paired_keys)
     evaluable = counters["evaluable"]
     correct = counters["combined_correct"]
     return H2Report(
-        verdict=_h2_verdict(attributed, evaluable, correct),
-        attributed_outcomes=attributed,
+        verdict=_h2_verdict(survey.attributed, evaluable, correct),
+        attributed_outcomes=survey.attributed,
         evaluable_records=evaluable,
         combined_correct=correct,
         runtime_correct=counters["runtime_correct"],
@@ -260,7 +254,7 @@ def evaluate_h2(records: cabc.Iterable[StoreRecord]) -> H2Report:
         unavailable_records=counters["unavailable"],
         misses_seen=counters["misses_seen"],
         misses_with_child_observation=counters["misses_with_child_observation"],
-        coverage=coverage_of((*values, *summaries)),
+        coverage=survey.coverage,
     )
 
 
@@ -281,78 +275,6 @@ def _h2_verdict(attributed: int, evaluable: int, correct: int) -> H2Verdict:
     return "inconclusive"
 
 
-def _paired_keys(records: tuple[OutcomeRecord, ...]) -> frozenset[CacheKey]:
-    """Find keys whose full store history includes both hit and miss labels.
-
-    Returns
-    -------
-    frozenset[CacheKey]
-        Keys with at least one hit and one miss in the full input.
-    """
-    outcomes: dict[CacheKey, set[str]] = collections.defaultdict(set)
-    for record in records:
-        if record.outcome in {"hit", "miss"}:
-            outcomes[record.key].add(record.outcome)
-    return frozenset(
-        key for key, labels in outcomes.items() if len(labels) == H2_LABEL_COUNT
-    )
-
-
-def _score_h2_record(
-    record: OutcomeRecord,
-    paired_keys: frozenset[CacheKey],
-    earlier_hits: dict[CacheKey, list[float]],
-    counters: collections.Counter[str],
-) -> None:
-    """Accumulate one row while preserving store-order runtime history."""
-    if record.outcome not in {"hit", "miss"}:
-        return
-    previous_hits = earlier_hits[record.key]
-    runtime_miss = bool(previous_hits) and record.runtime_seconds > max(
-        1.0, 3 * statistics.median(previous_hits)
-    )
-    if record.child_samples >= 1 and record.key in paired_keys:
-        _score_h2_sighting(
-            record,
-            runtime_miss=runtime_miss,
-            counters=counters,
-        )
-    if record.outcome == "hit":
-        previous_hits.append(record.runtime_seconds)
-
-
-def _score_h2_sighting(
-    record: OutcomeRecord,
-    *,
-    runtime_miss: bool,
-    counters: collections.Counter[str],
-) -> None:
-    """Count one sampled paired-key row and its applicable predictors."""
-    sighting = record.child_sighting
-    combined_miss = sighting == "seen" or runtime_miss
-    counters["evaluable"] += 1
-    counters[sighting] += 1
-    prediction = "miss" if combined_miss else "hit"
-    counters["combined_correct"] += prediction == record.outcome
-    counters["runtime_correct"] += ("miss" if runtime_miss else "hit") == record.outcome
-    if sighting in {"seen", "not_seen"}:
-        _score_child_sighting(record, sighting, counters)
-
-
-def _score_child_sighting(
-    record: OutcomeRecord,
-    sighting: str,
-    counters: collections.Counter[str],
-) -> None:
-    """Count a directly usable child sighting and its miss coverage."""
-    child_miss = sighting == "seen"
-    counters["child_evaluable"] += 1
-    counters["child_correct"] += ("miss" if child_miss else "hit") == record.outcome
-    if record.outcome == "miss":
-        counters["misses_with_child_observation"] += 1
-        counters["misses_seen"] += child_miss
-
-
 def _agreement(correct: int, total: int) -> float | None:
     """Return a rounded fraction, omitting rates with an empty denominator.
 
@@ -362,38 +284,3 @@ def _agreement(correct: int, total: int) -> float | None:
         Rounded agreement fraction, or None when there are no observations.
     """
     return round(correct / total, 6) if total else None
-
-
-def _row_agrees(record: OutcomeRecord) -> bool | None:
-    """Check one attributed row against its parser class.
-
-    ``declined`` and ``not_cacheable`` are separate refusal classes under ADR
-    005, and an ``unsupported`` row reports no parser result to evaluate.
-
-    Returns
-    -------
-    bool | None
-        Whether the row agrees with its parser class, or None when unevaluable.
-    """
-    if record.outcome in {"unattributed", "unsupported"}:
-        return None
-    refusals = {"declined", "not_compile"}
-    if record.parser_class == "cacheable":
-        return record.outcome not in refusals
-    if record.parser_class in refusals:
-        return record.outcome == record.parser_class
-    return None
-
-
-def _summary_agrees(summary: WindowSummary) -> bool:
-    """Compare refusal classes independently to their sccache counters.
-
-    Returns
-    -------
-    bool
-        Whether both refusal counters match their predicted counts.
-    """
-    return (
-        summary.predicted_not_compile == summary.requests_not_compile
-        and summary.predicted_declined == summary.requests_not_cacheable
-    )

@@ -11,12 +11,47 @@ from pathlib import Path
 
 from history_fixtures import active_records, archived_segments
 
-from buildlimits import outcome_replay_cli
+from buildlimits import outcome_history, outcome_replay, outcome_replay_cli
 from buildlimits.predict import dataset_cli
 from buildlimits.predict.snapshot_store import load_snapshot
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     import pytest
+
+    from buildlimits.outcome_record_format import StoreRecord
+    from buildlimits.outcome_replay import H3Report
+
+
+def _archived_store(tmp_path: Path) -> Path:
+    """Build a store holding one archived segment.
+
+    Returns
+    -------
+    Path
+        The store path the replay commands read.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    archived_segments(store, 1)
+    return store
+
+
+def _replay_archived_history(store: Path) -> int:
+    """Run the archived-history H3 report and return its exit status.
+
+    Returns
+    -------
+    int
+        The command's exit status.
+    """
+    return outcome_replay_cli.main([
+        "h3",
+        "--store",
+        str(store),
+        "--history",
+        "--json",
+    ])
 
 
 def test_replay_reads_archived_history_when_asked(
@@ -38,6 +73,61 @@ def test_replay_reads_archived_history_when_asked(
 
     assert status == 0, "a readable history produces a report"
     assert '"attributed_outcomes": 3' in output, "archived rows are replayed"
+
+
+def test_replay_retries_a_history_that_moved_mid_pass(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pass over a replaced snapshot is discarded and replayed.
+
+    The retry opens a fresh pin, so a report never mixes rows from two
+    snapshots of the store.
+    """
+    store = _archived_store(tmp_path)
+    real = outcome_replay.evaluate_h3
+    passes = 0
+
+    def move_once(rows: cabc.Iterable[StoreRecord]) -> H3Report:
+        """Fail the first pass as a replaced snapshot does."""
+        nonlocal passes
+        passes += 1
+        if passes == 1:
+            raise outcome_history.HistoryFaultError("unsettled")
+        return real(rows)
+
+    monkeypatch.setattr(outcome_replay, "evaluate_h3", move_once)
+
+    status = _replay_archived_history(store)
+
+    assert status == 0, "the retry produces a report"
+    assert '"attributed_outcomes": 1' in capsys.readouterr().out, "the retry reads it"
+    assert passes == 2, "exactly one pass was discarded"
+
+
+def test_replay_does_not_retry_a_corrupt_history(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A closed decode fault is reported at once, not retried."""
+    store = _archived_store(tmp_path)
+    passes = 0
+
+    def refuse(_rows: object) -> object:
+        """Fail the only pass as a damaged segment would."""
+        nonlocal passes
+        passes += 1
+        raise outcome_history.HistoryFaultError("corrupt")
+
+    monkeypatch.setattr(outcome_replay, "evaluate_h3", refuse)
+
+    status = _replay_archived_history(store)
+
+    assert status == 1, "a damaged history is a command failure"
+    assert "corrupt" in capsys.readouterr().out, "the reason is reported"
+    assert passes == 1, "a closed fault is never retried"
 
 
 def test_replay_rejects_an_unknown_salt(

@@ -335,6 +335,23 @@ with sorted keys. Neither form prints a filesystem path on a successful run.
 The one exception is an unreadable configuration file, which is reported on
 standard error before any report exists and does name the file.
 
+The plain report's `retained:` line gives the logical bytes against the budget,
+and its `history:` line gives the rows the store retains, the observed span
+they cover and, when any segment's metadata is missing, how many entries could
+not be measured:
+
+```text
+history: 1240 records, observed 2026-11-01T08:00:00+00:00..2026-11-19T17:30:00+00:00
+history: 1240 records, 2 unmeasured, observed 2026-11-01T08:00:00+00:00..2026-11-19T17:30:00+00:00
+```
+
+The count covers the closed rows that segment metadata describes and the rows
+still in the active file. An unmeasured entry, such as an archive whose sidecar
+was lost or a file that cannot be decoded, contributes no rows and no span, so
+a report never presents an unknown part of the history as empty. The JSON
+carries the same figures as `retained_records`, `observed_from`,
+`observed_until` and `unmeasured_entries`.
+
 The writer seals the active file when an append would take it past 12 MiB, so
 the archiver only ever touches closed segments. The archiver compresses each
 sealed segment to XZ, verifies the archive against its source, publishes it,
@@ -350,21 +367,21 @@ history view:
 - Eviction is oldest-first. A record whose observation time equals the age
   cutoff is retained; one older than the cutoff is not.
 - The record cap bounds the retained record count across active, sealed and
-  archived history. The archiver streams the active file once per plan to
-  count its rows, and counts each sealed source's recorded count, so a store
-  cannot hold the cap in archives while the writer fills another cap beside
-  it. It removes whole oldest archives while they fit inside the excess, then
-  trims the archive that straddles the boundary, so a segmented history is
-  capped rather than exempt. Only archives can be evicted: the writer owns the
-  active file and a sealed source must be archived before it can be dropped.
-  Zero leaves segmented history uncapped.
+  archived history. The archiver streams the active file once per plan to count
+  its rows, and counts each sealed source's recorded count, so a store cannot
+  hold the cap in archives while the writer fills another cap beside it. It
+  removes whole oldest archives while they fit inside the excess, then trims
+  the archive that straddles the boundary, so a segmented history is capped
+  rather than exempt. Only archives can be evicted: the writer owns the active
+  file and a sealed source must be archived before it can be dropped. Zero
+  leaves segmented history uncapped.
 
 The writer also enforces the age bound when it starts, and on every append: an
 active file whose oldest record predates the cutoff, and which is not also
 oversized, is compacted as the store loads, and a row that arrives already
-expired is dropped once it is appended. A host that was idle past the bound,
-or one that only receives old observations, therefore does not carry its
-expired rows forward indefinitely. An oversized file is sealed first, and the
+expired is dropped once it is appended. A host that was idle past the bound, or
+one that only receives old observations, therefore does not carry its expired
+rows forward indefinitely. An oversized file is sealed first, and the
 archiver's next run applies the age policy to that segment.
 
 The retention keys and their defaults are in [Table 2](#supervisor-settings).

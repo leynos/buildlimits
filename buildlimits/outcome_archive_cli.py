@@ -24,6 +24,7 @@ from buildlimits.outcome_archive import (
 from buildlimits.outcome_retention import RetentionPolicy, policy_from_settings
 from buildlimits.outcome_segments import SegmentLayout
 from buildlimits.outcome_store_salt import store_path
+from buildlimits.utc_text import utc_text
 
 _DEFAULT_CONFIG = Path.home() / ".config" / "buildlimits" / "supervisor.toml"
 
@@ -177,11 +178,25 @@ def _write_report(report: RunReport, *, as_json: bool) -> None:
     if report.reason is not None:
         print(f"reason: {report.reason}")
     print(f"retained: {report.retained_bytes} of {report.budget_bytes} logical bytes")
+    _write_history(report)
     print(f"active: {report.active_bytes} logical bytes")
     print(f"cutoff: {_cutoff_text(report)}")
     _write_plan(report)
     _write_actions(report)
     _write_diagnostics(report)
+
+
+def _write_history(report: RunReport) -> None:
+    """Print the retained rows and the span their observations cover."""
+    span = "unknown"
+    if report.observed_from is not None and report.observed_until is not None:
+        span = f"{utc_text(report.observed_from)}..{utc_text(report.observed_until)}"
+    unmeasured = (
+        ""
+        if report.unmeasured_entries == 0
+        else f", {report.unmeasured_entries} unmeasured"
+    )
+    print(f"history: {report.retained_records} records{unmeasured}, observed {span}")
 
 
 def _cutoff_text(report: RunReport) -> str:

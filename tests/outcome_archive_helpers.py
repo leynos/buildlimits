@@ -7,8 +7,10 @@ states only the archive behaviour it observes.
 
 import datetime as dt
 import errno
+import time
 import typing as typ
 
+import pytest
 from outcome_store_helpers import close_writer, segment_writer
 from outcome_test_helpers import attributed_record
 from segment_test_helpers import document
@@ -21,6 +23,16 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.outcome_record_format import DecodedStore, StoreRecord
+    from buildlimits.outcome_store import StoreWriter
+
+# ``StoreWriter.append`` never blocks: a full queue refuses the row and counts
+# it as discarded. Under a loaded host the writer's worker can fall behind a
+# fixture that appends thousands of rows, so a refused row is offered again
+# once the worker has had a moment to drain. The bound is generous for a
+# worker that is merely descheduled, and short enough that a row the writer
+# can never encode still fails the test promptly.
+_APPEND_ATTEMPTS = 200
+_APPEND_RETRY_SECONDS = 0.01
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
@@ -99,14 +111,35 @@ def write(
 
     A plain ``close`` returns at its caller's bound whether or not the worker
     has stopped, so an archiver run that follows could see a half-written
-    fixture.
+    fixture. Every row must also be accepted before the close: a full append
+    queue refuses a row rather than waiting, and a fixture that ignored the
+    refusal would silently hand the test a shorter history.
     """
     writer = segment_writer(path, retention, NOW)
     try:
         for row in rows:
-            writer.append(row)
+            _append_or_retry(writer, row)
     finally:
         close_writer(writer)
+
+
+def _append_or_retry(writer: StoreWriter, row: StoreRecord) -> None:
+    """Append one row, retrying while the writer reports a full queue.
+
+    A row the writer keeps refusing beyond the retry bound fails the current
+    test, because the history it believes it wrote would be missing that row.
+    """
+    for _attempt in range(_APPEND_ATTEMPTS):
+        writer.append(row)
+        if not any(
+            result.operation == "append" and result.discarded
+            for result in writer.results()
+        ):
+            return
+        # The worker owns the queue's head; let it drain before offering the
+        # row again.
+        time.sleep(_APPEND_RETRY_SECONDS)
+    pytest.fail("the writer refused a row beyond its retry bound")
 
 
 def run(

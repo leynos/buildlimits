@@ -11,20 +11,16 @@ import typing as typ
 
 import pytest
 from archive_files_helpers import (
-    archived_entry,
     context,
     document,
+    duplicate_pair,
+    published,
     quarantined,
     records,
     sealed_entry,
-    source,
 )
 
-from buildlimits.outcome_archive_files import (
-    archive_source,
-    delete_archive,
-    reconcile_duplicate,
-)
+from buildlimits.outcome_archive_files import delete_archive, reconcile_duplicate
 from buildlimits.outcome_archive_fs import UnsafePathError
 from buildlimits.outcome_archive_quarantine import (
     quarantine_archive,
@@ -38,13 +34,7 @@ if typ.TYPE_CHECKING:
 
 def test_a_matching_duplicate_is_reconciled(tmp_path: Path) -> None:
     """A source whose archive proves the same content is redundant."""
-    data = document(records(2))
-    sealed = source(tmp_path, 1, data)
-    run = context(tmp_path)
-    archive_source(run, sealed_entry(sealed, 1))
-    archived = archived_entry(tmp_path)
-    sealed.write_bytes(data)
-    sealed.chmod(0o600)
+    run, sealed, archived, _data = duplicate_pair(tmp_path)
 
     result = reconcile_duplicate(run, sealed_entry(sealed, 1), archived)
 
@@ -62,14 +52,7 @@ def test_a_reconciled_duplicate_records_the_sidecar_it_verified(
     Reconciliation skips duplicated sequences in the heal plan, so this is the
     last moment the verified archive's facts can be recorded.
     """
-    data = document(records(2))
-    sealed = source(tmp_path, 1, data)
-    run = context(tmp_path)
-    archive_source(run, sealed_entry(sealed, 1))
-    (run.layout.archive_dir / sidecar_name(1)).unlink()
-    sealed.write_bytes(data)
-    sealed.chmod(0o600)
-    archived = archived_entry(tmp_path)
+    run, sealed, archived, _data = duplicate_pair(tmp_path, drop_sidecar=True)
 
     result = reconcile_duplicate(run, sealed_entry(sealed, 1), archived)
 
@@ -104,12 +87,8 @@ def test_a_symlinked_quarantine_directory_is_refused(tmp_path: Path) -> None:
 
 def test_a_mismatched_archive_is_replaced_from_its_source(tmp_path: Path) -> None:
     """A stale archive is quarantined and the source archived again."""
+    run, sealed, archived, _older = duplicate_pair(tmp_path, count=1)
     source_data = document(records(2, first=1))
-    older = document(records(1, first=1))
-    sealed = source(tmp_path, 1, older)
-    run = context(tmp_path)
-    archive_source(run, sealed_entry(sealed, 1))
-    archived = archived_entry(tmp_path)
     sealed.write_bytes(source_data)
     sealed.chmod(0o600)
 
@@ -126,14 +105,8 @@ def test_a_mismatched_archive_is_replaced_from_its_source(tmp_path: Path) -> Non
 
 def test_an_unreadable_archive_is_replaced_from_its_source(tmp_path: Path) -> None:
     """An archive that will not verify is quarantined before re-archiving."""
-    data = document(records(1))
-    sealed = source(tmp_path, 1, data)
-    run = context(tmp_path)
-    archive_source(run, sealed_entry(sealed, 1))
-    archived = archived_entry(tmp_path)
+    run, sealed, archived, data = duplicate_pair(tmp_path, count=1)
     archived.path.write_bytes(b"not xz at all")
-    sealed.write_bytes(data)
-    sealed.chmod(0o600)
 
     result = reconcile_duplicate(run, sealed_entry(sealed, 1), archived)
 
@@ -146,11 +119,7 @@ def test_a_corrupt_source_is_quarantined_and_the_archive_kept(
     tmp_path: Path,
 ) -> None:
     """A damaged source cannot displace an archive that still verifies."""
-    data = document(records(1))
-    sealed = source(tmp_path, 1, data)
-    run = context(tmp_path)
-    archive_source(run, sealed_entry(sealed, 1))
-    archived = archived_entry(tmp_path)
+    run, sealed, archived, _data = duplicate_pair(tmp_path, count=1)
     sealed.write_bytes(b"not json")
     sealed.chmod(0o600)
 
@@ -168,10 +137,7 @@ def test_a_corrupt_source_is_quarantined_and_the_archive_kept(
 
 def test_deleting_an_archive_removes_its_sidecar(tmp_path: Path) -> None:
     """Expired history leaves no sidecar that would describe nothing."""
-    sealed = source(tmp_path, 1, document(records(1)))
-    run = context(tmp_path)
-    archive_source(run, sealed_entry(sealed, 1))
-    entry = archived_entry(tmp_path)
+    run, entry = published(tmp_path)
 
     delete_archive(run, entry)
 

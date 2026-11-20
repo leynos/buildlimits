@@ -128,7 +128,8 @@ def active_history(path: Path) -> ActiveHistory:
     Returns
     -------
     ActiveHistory
-        The file's size in bytes and the record rows it currently holds.
+        The file's size in bytes, the record rows it currently holds and the
+        span their observations cover.
     """
     try:
         size = path.lstat().st_size
@@ -139,8 +140,13 @@ def active_history(path: Path) -> ActiveHistory:
     try:
         facts = read_source_facts(path)
     except OSError, SegmentFaultError:
-        return ActiveHistory(bytes=size)
-    return ActiveHistory(bytes=size, records=facts.record_count)
+        return ActiveHistory(bytes=size, has_metadata=False)
+    return ActiveHistory(
+        bytes=size,
+        records=facts.record_count,
+        first_observed_at=facts.first_observed_at,
+        last_observed_at=facts.last_observed_at,
+    )
 
 
 def _reconcile_one(
