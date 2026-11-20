@@ -61,6 +61,9 @@
   records why supervisor-wide counters moved to a periodic `gauges` event, how
   the time-weighted queue mean and interval peaks work, and the
   reader-before-writer upgrade order.
+- [ADR 010: archived cache-outcome history](adrs/adr-0010-archived-cache-outcome-history.md)
+  records why closed history is sealed and verified, how logical-byte retention
+  and the timer-facing command work, and the schema and salt guarantees.
 
 ## Conventions
 
@@ -85,6 +88,10 @@
 - [Cache-hit prediction ExecPlan](execplans/cache-hit-prediction.md) records
   merged W1 evidence, the outstanding G1 gate and proposed observation-port and
   kache-trial milestones.
+
+- [Archive cache outcomes as XZ ExecPlan](execplans/issue-63-archive-cache-outcomes-as-xz-through-a-timer-friendly-cli.md)
+  records the issue #63 implementation phases, the writer and archiver split,
+  and the verification plan.
 
 - [Roadmap](roadmap.md) sequences the delivery of accepted RFCs as phases,
   steps and tasks with dependencies and success criteria.

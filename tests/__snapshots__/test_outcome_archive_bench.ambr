@@ -1,0 +1,16 @@
+# serializer version: 1
+# name: test_report_round_trips_as_closed_json
+  list([
+    'archive_bytes',
+    'chunk_bytes',
+    'elapsed_seconds',
+    'peak_python_bytes',
+    'peak_rows',
+    'peak_rss_bytes',
+    'ratio',
+    'record_count',
+    'schema',
+    'source_bytes',
+    'temp_bytes',
+  ])
+# ---

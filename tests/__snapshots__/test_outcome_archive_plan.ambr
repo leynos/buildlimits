@@ -1,0 +1,13 @@
+# serializer version: 1
+# name: test_the_summary_counts_every_operation
+  dict({
+    'archive': 1,
+    'cutoff': None,
+    'delete': 1,
+    'heal': 1,
+    'orphan': 1,
+    'reconcile': 1,
+    'retained_logical_bytes': 70,
+    'trim': 1,
+  })
+# ---

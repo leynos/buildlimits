@@ -16,7 +16,12 @@ import tomllib
 import typing as typ
 from pathlib import Path
 
-from buildlimits import cache_modes
+from buildlimits import cache_modes, config_retention, config_values
+from buildlimits.outcome_retention import (
+    DEFAULT_HEADROOM_BYTES,
+    DEFAULT_MAX_AGE_DAYS,
+    LEGACY_MAX_BYTES,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -128,6 +133,19 @@ class SupervisorConfig:
     cache_outcomes : str
         ``off`` to leave outcome recording disabled, or ``record`` to enable
         it when the build supports the recording integration.
+    cache_outcomes_max_age_days : int
+        Oldest retained outcome age in days; zero disables age eviction.
+    cache_outcomes_max_bytes : int
+        Logical uncompressed bytes retained across active, sealed and archived
+        history; zero disables the byte bound and requires segmentation.
+    cache_outcomes_max_records : int
+        Explicit retained-record cap; zero leaves the segmented policy
+        uncapped and keeps the legacy 10,000-row cap in legacy mode.
+    cache_outcomes_archive_headroom_bytes : int
+        Temporary disk space an archive run may use; it never counts against
+        the retained byte budget.
+    cache_outcomes_archive_preset : int
+        XZ compression preset from 0 (fastest) to 9 (smallest).
     recovery_marker : Path
         The restart barrier. The managed service refuses to start while this
         path exists, so recovery cannot leave the cache running with its
@@ -164,6 +182,11 @@ class SupervisorConfig:
     )
     cache_recovery: str = "starved"
     cache_outcomes: str = "off"
+    cache_outcomes_max_age_days: int = DEFAULT_MAX_AGE_DAYS
+    cache_outcomes_max_bytes: int = LEGACY_MAX_BYTES
+    cache_outcomes_max_records: int = 0
+    cache_outcomes_archive_headroom_bytes: int = DEFAULT_HEADROOM_BYTES
+    cache_outcomes_archive_preset: int = 6
     recovery_marker: Path = dc.field(
         default_factory=lambda: runtime_dir() / "cache-recovery"
     )
@@ -235,7 +258,11 @@ def from_mapping(raw: cabc.Mapping[str, object]) -> SupervisorConfig:
         if key not in fields:
             msg = f"unknown setting {key!r}"
             raise ConfigError(msg)
-        values[key] = _coerce(key, fields[key].type, value)
+        converted = config_values.coerce(fields[key].type, value)
+        if converted is None:
+            msg = f"setting {key!r} has the wrong type"
+            raise ConfigError(msg)
+        values[key] = converted
     _reject_foreign_keys(values)
     # _coerce has converted each value to its field's declared type.
     return SupervisorConfig(**typ.cast("dict[str, typ.Any]", values))
@@ -264,6 +291,9 @@ def _reject_foreign_keys(values: cabc.Mapping[str, object]) -> None:
         If one backend's setting was written while another backend is
         selected.
     """
+    retention_error = config_retention.reject_written_keys(values)
+    if retention_error is not None:
+        raise ConfigError(retention_error)
     mode = values.get("cache_mode", "sccache")
     if mode not in _MODE_KEYS:
         # ``validate`` owns an unknown mode's message, and ``direct`` owns no
@@ -325,6 +355,7 @@ _RANGE_RULES: tuple[tuple[cabc.Callable[[SupervisorConfig], bool], str], ...] = 
         ),
         'cache_outcomes="record" requires cache_mode="sccache"',
     ),
+    *config_retention.RETENTION_RULES,
     (
         lambda config: (
             min(config.cancel_grace_seconds, config.drain_timeout_seconds) > 0
@@ -336,51 +367,3 @@ _RANGE_RULES: tuple[tuple[cabc.Callable[[SupervisorConfig], bool], str], ...] = 
         "compilers_slice must name a slice unit",
     ),
 )
-
-
-def _coerce(key: str, annotation: object, value: object) -> object:
-    """Check and convert one TOML value to its field's type.
-
-    Returns
-    -------
-    object
-        The converted value.
-
-    Raises
-    ------
-    ConfigError
-        If the value does not have the field's type.
-    """
-    # Python 3.14 evaluates annotations lazily, so dataclass fields carry the
-    # field's type object rather than its source text. A ``X | None`` field
-    # carries a ``types.UnionType``, which is not a ``type``, so membership is
-    # asked of the table rather than gated on ``isinstance``.
-    converter = _CONVERTERS.get(annotation)
-    converted = converter(value) if converter is not None else None
-    if converted is None:
-        msg = f"setting {key!r} has the wrong type"
-        raise ConfigError(msg)
-    return converted
-
-
-def _is_number(value: object) -> bool:
-    """Report whether a TOML value is a number; TOML booleans are not.
-
-    Returns
-    -------
-    bool
-        Whether the value is an integer or a float.
-    """
-    return isinstance(value, int | float) and not isinstance(value, bool)
-
-
-# Each converter returns None for a value of the wrong type; no setting is
-# ever None, so None cannot be confused with a converted value. The key type is
-# ``object`` because a ``X | None`` field's annotation is a union object.
-_CONVERTERS: dict[object, cabc.Callable[[object], object]] = {
-    Path: lambda value: Path(value) if isinstance(value, str) else None,
-    Path | None: lambda value: Path(value) if isinstance(value, str) else None,
-    int: lambda value: value if _is_number(value) and isinstance(value, int) else None,
-    float: lambda value: float(typ.cast("float", value)) if _is_number(value) else None,
-    str: lambda value: value if isinstance(value, str) else None,
-}

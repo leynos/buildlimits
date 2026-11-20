@@ -2,6 +2,7 @@
 
 import contextlib
 import os
+import resource
 import subprocess
 import typing as typ
 
@@ -58,7 +59,11 @@ def test_harness_shutdown_is_idempotent_across_descriptor_reuse(
 
 
 @pytest.mark.parametrize(
-    ("hard", "expected"), [(65536, 65536), (524288, 524288), (-1, 524288)]
+    ("hard", "expected"),
+    # ``RLIM_INFINITY`` is ``-1`` on most builds but ``2**64 - 1`` on the
+    # free-threaded 3.15 interpreter, so the case must use the runtime value
+    # rather than a literal that only matches one build.
+    [(65536, 65536), (524288, 524288), (resource.RLIM_INFINITY, 524288)],
 )
 def test_pressure_limit_respects_user_manager_ceiling(
     monkeypatch: pytest.MonkeyPatch, hard: int, expected: int

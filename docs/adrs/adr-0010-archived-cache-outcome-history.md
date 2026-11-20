@@ -1,0 +1,458 @@
+# Architectural decision record (ADR) 010: archived cache-outcome history
+
+## Status
+
+Proposed. The decision is implemented on the issue #63 branch; accept this
+record when that work merges. It refines the outcome store in
+[ADR 005](adr-0005-cache-outcome-recording.md) and keeps the evidence boundary
+in [ADR 007](adr-0007-cache-outcome-observation-port.md).
+
+## Date
+
+2026-11-19.
+
+## Context and problem statement
+
+The cache-outcome recorder writes one JSON object per line to
+`$XDG_STATE_HOME/buildlimits/cache-outcomes.jsonl`, defaulting to
+`~/.local/state/buildlimits/`. ADR 005 D17 bounded that document at 12 MiB and
+10,000 rows, compacting it in place in the writer thread.
+
+Issue #63 asks for 30 days of retained history. At the measured load, about 6.8
+outcome rows per second at roughly 661 bytes per row, that is about 11.7 GB of
+uncompressed JSON Lines. No single JSON Lines document of that size can be
+compacted in place: every compaction rewrites the whole document, the writer's
+append path carries the cost, and the hard 16 MiB append bound would discard
+rows long before the requested span was reached.
+
+Two further forces shape the answer. The supervisor must not compress 11.7 GB
+on its event loop, because a multi-second XZ pass would delay admission and
+token accounting. And the active file cannot have a second writer: an
+out-of-process archiver that rewrote or truncated it would race the writer
+thread, whichever lock either side took.
+
+Reading has the matching gap. Replay and dataset export read only the active
+document, so any history moved out of it would become invisible to them, and a
+salt change already partitions history into domains that must not be compared
+across the boundary.
+
+The work therefore needs a retention policy that can bound a large history, a
+way to move closed history out of the active file without a second writer, and
+a reader that spans whatever states the history is in. Permanent timer
+provisioning belongs to
+[dev-env-rocky #424](https://github.com/leynos/dev-env-rocky/issues/424); this
+record covers the command and the storage contract it acts on.
+
+## Decision drivers
+
+- Keep one writer per file. The supervisor alone owns the active document, and
+  the archiver alone owns closed history, without a shared lock.
+- Bound retained history by logical uncompressed size, so the budget describes
+  how much history is kept rather than how well it happens to compress.
+- Keep archive cost off the supervisor's event loop and out of its memory
+  budget.
+- Make every published archive provable against its source, and leave no crash
+  state that a later run cannot settle.
+- Give a systemd timer a small, closed result vocabulary: statuses, reasons and
+  exit codes, with no host-specific detail in the journal.
+- Preserve the record schema, the salt identifier and the existing behaviour of
+  deployments that do not opt in.
+- Add no runtime dependency.
+
+## Requirements
+
+### Functional requirements
+
+- A retention policy bounds history by age and by logical bytes, with an
+  optional explicit record cap, and evicts the oldest closed history first.
+- A run archives each sealed source, verifies the archive, publishes it, and
+  removes the source only afterwards.
+- A run applies the age and byte bounds to archived history, including trims
+  that cut a partially expired segment.
+- Replay and dataset export can read archived, sealed and active history in
+  append order, for the newest salt domain, a named domain or every domain.
+- `inspect` and `run --dry-run` report the plan without changing a file.
+
+### Technical requirements
+
+- Only the writer thread appends to, truncates, replaces or renames the active
+  file.
+- Compression and verification stream in fixed-size chunks; peak memory must
+  not follow segment or history size.
+- XZ comes from the standard-library `lzma` module with an explicit preset and
+  CRC64 check.
+- Publication uses a private temporary file, an `fsync`, a no-clobber link and
+  a sidecar written after the archive.
+- Every failure maps to a closed reason and an exit status a timer can act on.
+- Every path the archiver touches is private to its owner and is validated
+  against symlinks.
+
+## Options considered
+
+### Option A: raise the bounds on one compacted document
+
+Keeping one JSON Lines document needs a compaction pass that rewrites the whole
+file. At 11.7 GB that pass cannot run in the writer thread without stalling
+appends, and it cannot run in another process without a second writer. The 16
+MiB append guard would also have to grow, which weakens the corrupt-store
+detection ADR 005 relies on. Rejected.
+
+### Option B: an archiver that rewrites the active file
+
+An out-of-process archiver could compress and truncate the active document,
+either by copy-truncate or under a lock shared with the writer. Both put two
+processes on one file: copy-truncate loses appends that land during the copy,
+and a shared lock makes admission wait on XZ compression. The approach also
+verifies nothing, so a bad archive would be discovered only when the source was
+already gone. Rejected.
+
+### Option C: writer-sealed segments, verified XZ archives, private archiver lock
+
+The writer seals the active document at a fixed high-water mark by atomic
+rename. A separate archiver compresses each sealed source to XZ, verifies the
+archive, publishes it without clobbering, then removes the source. It holds a
+private lock of its own and never opens the active file. Chosen.
+
+Table 1 compares the options on the properties the decision drivers name.
+
+| Property                   | A: one document | B: rewrite active | C: sealed and archived |
+| -------------------------- | --------------- | ----------------- | ---------------------- |
+| Writers of the active file | One             | Two               | One                    |
+| Compaction cost            | Writer thread   | Writer waits      | Separate timer process |
+| Peak memory                | Whole document  | Whole document    | One chunk and one row  |
+| Archive integrity checked  | Not applicable  | No                | Yes, before publishing |
+| Runtime dependency added   | None            | Compression tool  | None                   |
+
+_Table 1: Comparison of the retention storage options._
+
+## Decision outcome / proposed direction
+
+### D1: retention is bounded by age and by logical uncompressed bytes
+
+One policy object, `RetentionPolicy`, answers every retention question for the
+writer, the archiver and the read-only history view, so the three cannot
+disagree about a bound.
+
+- Age is `cache_outcomes_max_age_days`, 30 days by default; zero disables age
+  eviction. A record whose observation time equals the cutoff is retained, and
+  one older than the cutoff is not.
+- The byte budget is `cache_outcomes_max_bytes`. It counts logical uncompressed
+  bytes across active, sealed and archived history: active and sealed files by
+  `stat`, an archive by its sidecar's `logical_bytes`. Zero disables the byte
+  bound.
+- The record cap is `cache_outcomes_max_records`. A positive value applies in
+  either mode. When it is omitted, a segmented store has no count cap and a
+  legacy store keeps the historical 10,000-record cap.
+- Segmentation follows the byte budget: a budget larger than one 12 MiB
+  segment, or a budget of zero, makes the writer seal closed segments. The
+  default budget remains the legacy 12 MiB, so a deployment that writes none of
+  the retention keys keeps its current shape.
+- Headroom is `cache_outcomes_archive_headroom_bytes`, two segments by default
+  and at least one segment when configured. It is temporary disk space checked
+  with `statvfs`; it is never part of the retained budget and never appears as
+  retained bytes.
+
+The 15,000,000,000-byte history requested for this work is a configured policy
+value, not a built-in default. Below both bounds and without an explicit cap,
+history is retained with no hidden count limit. Physical XZ bytes are reported
+per action so an operator can see the compression actually achieved, but they
+do not move the retention boundary.
+
+### D2: the writer owns the active file and the archiver owns closed history
+
+Ownership follows file state, not a shared lock.
+
+- The writer is the only process that appends to, truncates, replaces or
+  renames the active file. In segmented mode it seals when the next append
+  would take the document past `segment_bytes` (12 MiB), and at startup and
+  shutdown when the settled file is larger than that bound. Sealing writes the
+  next sequence counter and the segment metadata durably, then renames the
+  active file into the sealed directory and installs a fresh header-only active
+  file. An empty store installs a header-only active file instead of claiming a
+  sequence, so the sequence series has no artificial first gap.
+- The archiver never opens the active file, never reads its content and never
+  takes the writer's queue. It reads the active file's size with `lstat` to
+  include those bytes in the retained total.
+- Every archiver mutation runs under a non-blocking exclusive `flock` on
+  `cache-outcomes.archive/archive.lock`. A second invocation reports `busy` and
+  exits 75 instead of waiting. The writer never takes that lock, so there is no
+  shared lock and no lock ordering to get wrong.
+
+A sealed source is immutable until its verified archive is published; after
+that the archiver owns the segment's lifecycle. Table 2 names the three states
+and how each is measured.
+
+| State    | Path                                          | Mutated by | Logical bytes from |
+| -------- | --------------------------------------------- | ---------- | ------------------ |
+| Active   | `cache-outcomes.jsonl`                        | Writer     | `stat` size        |
+| Sealed   | `cache-outcomes.sealed/segment-<n>.jsonl`     | Archiver   | `stat` size        |
+| Archived | `cache-outcomes.archive/segment-<n>.jsonl.xz` | Archiver   | Sidecar            |
+
+_Table 2: The retained history states and how each is measured._
+
+Sequence names are zero padded to twelve digits so a directory listing sorts in
+append order. The archive directory also holds the sidecars, `archive.lock`,
+`retention.json`, `last-run.json`, `quarantine/` and, while a rewrite is in
+flight, a `segment-<n>.jsonl.xz.replacing` marker.
+
+### D3: XZ comes from the standard library and every archive is verified
+
+Compression uses `lzma.LZMACompressor` with `FORMAT_XZ`, `CHECK_CRC64` and the
+configured preset, `cache_outcomes_archive_preset`. The preset defaults to 6
+and is validated in the range 0 to 9. No runtime dependency is added: `lzma`
+ships with CPython and the package's dependency set is unchanged.
+
+Reading and writing stream in `CHUNK_BYTES` (64 KiB) chunks with at most one
+row buffered, so peak memory follows the chunk size and preset rather than the
+segment or the retained history.
+
+Before any filesystem publication, the temporary archive is decompressed to its
+declared end and decoded as a document. Verification requires:
+
+- the XZ stream to reach its end, with only NUL padding whose length is a
+  multiple of four bytes after it, so a truncated file and trailing garbage are
+  both faults;
+- every row to decode as a supported header or a valid record, within the
+  record byte bound;
+- the decompressed content's record count, logical byte count and SHA-256 to
+  equal the facts accumulated while compressing the source.
+
+A mismatch discards the temporary file and raises a closed fault; nothing is
+published. The digest is over the uncompressed content, which is what the
+sidecar records and what reconciliation compares on a later run.
+
+### D4: publication is ordered so a crash leaves a readable state
+
+For a new archive the order is:
+
+1. Create a private temporary file in the archive directory with `O_EXCL` and
+   mode 0600, write the XZ stream through it and `fsync` the file.
+2. Verify the temporary as D3 describes.
+3. Publish it with a no-clobber hard link to `segment-<n>.jsonl.xz`, then
+   `fsync` the directory. An existing archive is never replaced.
+4. Write the sidecar by atomic JSON replacement, so it is either absent or
+   complete.
+5. Remove the sealed source and the writer's segment metadata, then `fsync` the
+   sealed directory.
+
+The uncompressed source is therefore present until a verified archive and its
+sidecar are durable. This is the invariant the retention planner and every
+recovery path rely on.
+
+A trim rewrites an archive by the same sequence and replaces it only by an
+atomic rename of a verified temporary file; a trim that keeps no records
+deletes the archive instead. The rename publishes bytes before the sidecar that
+describes them, so a process that stops between the two leaves a sidecar
+describing the previous archive. Compressed size cannot separate the pair,
+because two XZ streams of different content can occupy exactly the same number
+of bytes, so the rewrite records its intent first: it writes a durable
+`segment-<n>.jsonl.xz.replacing` marker before the rename, and removes it only
+once a sidecar describes the archive that is actually published. A scan that
+finds the marker refuses that sidecar and routes the archive to the repair
+path, which re-derives the facts from the archive itself; the same refusal
+covers a sidecar whose recorded physical size does not match the file beside
+it. Repair writes the sidecar and then clears the marker, so the marker's
+lifetime is exactly the window in which the pair may disagree. Reconciliation
+on each run settles the states a crash can leave: a matching archive removes
+the redundant source, an unreadable or mismatched archive is quarantined and
+the source archived again, and a corrupt source is quarantined while the
+existing archive is kept. Quarantine moves a file into
+`cache-outcomes.archive/quarantine/` under a name carrying the closed reason
+and a random token, so no quarantined file is overwritten.
+Stale temporary files are removed at the start of a run, under the lock.
+
+### D5: the timer-facing command has bounded output and closed exit statuses
+
+`build-limits-outcome-archive` has two subcommands. `run` applies the policy,
+and `--dry-run` plans without taking the lock or changing a file. `inspect`
+reports the same plan and is a dry run by definition. Both accept `--store`,
+`--config` and `--json`; the default configuration file is
+`~/.config/buildlimits/supervisor.toml`, as it is for the supervisor, and the
+default store path comes from the XDG state directory.
+
+The plain output is a bounded set of status lines: status and reason, retained
+logical bytes against the budget, active bytes, the age cutoff, the plan's
+counts, one line per action name, then only the non-empty integrity lines for
+gaps, missing, corrupt and orphan sidecars, and per-sequence failures. The JSON
+form is the same report with sorted keys, and carries `gaps_truncated` so a
+consumer can tell a complete gap list from a pruned one. The gap list stops at
+4096 sequences and then says that more are missing, so even the integrity lines
+cannot grow with the number of lost segments. Neither form names a filesystem
+path or carries raw exception text; sequences and closed reasons identify what
+needs attention.
+
+Exit statuses are part of the contract, as Table 3 records.
+
+| Status | Meaning                                                      |
+| ------ | ------------------------------------------------------------ |
+| 0      | Success                                                      |
+| 1      | Operational failure                                          |
+| 2      | Usage or configuration error                                 |
+| 3      | Corruption, or a segment that could not be processed         |
+| 75     | `EX_TEMPFAIL`: the lock is held, or headroom is insufficient |
+
+_Table 3: Exit statuses of `build-limits-outcome-archive`._
+
+Status 3 is the report's `corrupt` status, which also covers an unreadable
+segment, so a timer can distinguish a retryable condition (75) from one that
+needs an operator.
+
+There is one exception to the no-path rule. A configuration file that cannot be
+read is reported to standard error before any report exists, and that message
+names the file. The report itself never does.
+
+### D6: retention and diagnostic state live beside the archives
+
+Each completed run writes two documents into the archive directory:
+
+- `retention.json` records the schema, the lowest intentionally retained
+  sequence (the retention floor), retained logical bytes, the budget, the
+  cutoff and the update time.
+- `last-run.json` is the run's report document, carrying the fields `--json`
+  prints.
+
+Both are written by atomic replacement. The retention floor is why evicting old
+history does not look like corruption: the inventory reports a missing sequence
+as a gap only at or above the floor.
+
+After archiving and reconciliation, a run replans over the settled store and
+applies the trims and deletions the first plan could not see, skipping
+sequences it already deleted, quarantined or failed to process. One successful
+run therefore leaves the byte budget true, rather than leaving the excess for
+the next timer firing.
+
+### D7: history is read in append order and partitioned by salt
+
+`outcome_history.read_history` walks the inventory's effective entries -
+archived and sealed segments in ascending sequence, a sealed source taking
+precedence over an archive with the same sequence - and then the active file.
+Each document is streamed and verified in turn. A corrupt segment becomes a
+closed `HistoryFaultError` reason rather than a silently short history.
+
+A salt change partitions history, so a read selects a domain:
+
+- the default is the newest domain, taken from the last document's header,
+  which is the active file when one exists;
+- `--salt-id ID` reads that domain and reports `unknown_salt` when no retained
+  segment carries it;
+- `--all-salts` reads every domain in append order without implying that their
+  records are comparable.
+
+The replay and dataset commands share these options through
+`outcome_history_args`. `--salt-id` and `--all-salts` imply history mode, and
+with no flag at all each command keeps reading only the active store, which is
+the behaviour that existed before archiving. History is returned as one decoded
+document, so the H2 and H3 hypothesis evaluations read the same records, H2 in
+two passes and H3 in one.
+
+### D8: the record schema and salt identifier survive archiving
+
+The archiver writes each decoded row's original bytes and a newline into the XZ
+stream, and writes the header row unchanged. An archive therefore decompresses
+to the segment's JSON Lines content byte for byte, with one normalization: a
+source that does not end with a newline is repaired, so a decodable final row
+is kept and terminated while an undecodable one is dropped. Either case is
+recorded as `had_torn_tail`. The format version and `salt_id` in the header are
+preserved because the header is preserved. The sidecar repeats the salt
+identifier so an inventory can partition history without decompressing an
+archive.
+
+Compression is an encoding change, never a schema change. No record is
+re-encoded, reordered or re-timestamped.
+
+## Goals and non-goals
+
+### Goals
+
+- Retain about 30 days of cache-outcome history under an explicit age and byte
+  policy, without a hidden record cap.
+- Move closed history out of the active document without a second writer of
+  that document.
+- Prove every archive against its source before the source is released.
+- Keep replay and dataset export working across archived, sealed and active
+  history and across salt changes.
+- Give a systemd timer bounded output and actionable exit statuses.
+
+### Non-goals
+
+- Change admission, token accounting, recovery or the recorder's observation
+  rules.
+- Add a runtime dependency or a second compression format.
+- Provision the systemd timer in this repository; that belongs to
+  dev-env-rocky #424.
+- Compare records across salt domains, or migrate history to a new salt.
+- Make compression recover outcome labels that sparse observation did not
+  record.
+
+## Consequences
+
+### Positive
+
+- Retained history is bounded by one policy the writer, archiver and reader
+  share, so a large span can be configured without a silent count cap.
+- The supervisor never compresses, so archival cost cannot delay admission.
+- The writer and archiver cannot race: no shared lock, no copy-truncate and no
+  second writer on the active file.
+- Every published archive is verified and every crash state has a
+  reconciliation path.
+- Replay, dataset export and diagnostics keep working across segment states,
+  and no new dependency is introduced.
+
+### Negative
+
+- A timer becomes part of the operation. Until it runs, sealed sources
+  accumulate, and the writer reports `archive_backlog` at each eight-entry step
+  of the sealed directory.
+- Backups and cleanup must now include the sealed and archive directories and
+  their state files. Deleting only `cache-outcomes.jsonl` no longer resets the
+  retained history.
+- The archiver applies the effective policy from the same configuration, so
+  running it with the legacy 12 MiB default evicts archived history down to
+  that budget. The retention keys must be configured before the timer is
+  enabled.
+- A crash can still leave a duplicate source or a stray temporary file. The
+  next run reconciles or removes it, so the cost is deferred, not lost.
+- An archive's usefulness depends on the XZ encoder in `lzma`; a format change
+  would need a new sidecar schema rather than reuse of the existing one.
+
+## Known risks and limitations
+
+- Bounded memory depends on the streaming design. A high preset raises the
+  encoder's own working set, so the preset trades memory and CPU against size.
+- Verification proves the archive matches what was written, not that the source
+  rows were meaningful; a malformed row is caught only by the record codec.
+- A time-based trim cannot be planned in bytes without reading rows, so the
+  planner treats it as freeing nothing and the actual trim is applied under the
+  lock.
+- The report's physical byte figures are per action, not a disk-usage total;
+  sidecars, state files and quarantine also occupy the filesystem.
+- The archiver reads the active file's size but not its content, so a retained
+  total can be stale by whatever the writer appended after the inventory scan.
+
+## Architectural rationale
+
+The decision keeps one writer per file and one responsibility per process. The
+retention policy, the planner, the verification pass and the report are pure or
+streaming functions over values, so they are testable without a supervisor, a
+timer or a large file. `outcome_archive_fs`, `outcome_archive_encode`,
+`outcome_archive_quarantine`, `outcome_archive_files`, `outcome_archive_run`,
+`outcome_archive_lock` and `outcome_archive_cli` are the modules that touch the
+filesystem and the process boundary. That mirrors the repository's hexagonal
+boundary: an out-of-process maintenance task reorganizes files the supervisor
+produces, and never participates in admission. The same boundary is why the
+archive decision could be taken without changing ADR 005's recording rules.
+
+## References
+
+- [Issue #63](https://github.com/leynos/buildlimits/issues/63): "Archive
+  cache outcomes as XZ through a timer-friendly CLI".
+- [Issue #64](https://github.com/leynos/buildlimits/issues/64), the
+  retention-policy contract this decision implements.
+- [dev-env-rocky issue #424](https://github.com/leynos/dev-env-rocky/issues/424),
+  permanent host provisioning for the archive timer.
+- [ADR 005](adr-0005-cache-outcome-recording.md), the local outcome store, its
+  schema and its privacy boundary.
+- [ADR 007](adr-0007-cache-outcome-observation-port.md), the cache-outcome
+  evidence boundary.
+- [ExecPlan for issue #63](../execplans/issue-63-archive-cache-outcomes-as-xz-through-a-timer-friendly-cli.md)
+  records the implementation phases and verification plan.

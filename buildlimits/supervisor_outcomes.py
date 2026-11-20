@@ -33,6 +33,7 @@ from buildlimits.outcome_recorder_types import (
     SampleFailed,
     Stopping,
 )
+from buildlimits.outcome_retention import policy_from_settings
 from buildlimits.outcome_sampling import ChildSampler
 from buildlimits.outcome_sightings import request_metadata
 from buildlimits.outcome_store import StoreWriter
@@ -102,7 +103,9 @@ class OutcomeShell:
         reaper = ChildReaper() if dependencies.reaper is None else dependencies.reaper
         path = outcome_store_salt.store_path(env)
         writer = (
-            StoreWriter(path) if dependencies.writer is None else dependencies.writer
+            StoreWriter(path, policy=policy_from_settings(supervisor.settings))
+            if dependencies.writer is None
+            else dependencies.writer
         )
         self._resources = outcome_resources.OutcomeResources(
             reaper, writer, supervisor.clock

@@ -5,6 +5,8 @@ store writer and salt adapter, not a standalone public API.
 """
 
 import contextlib
+import errno
+import json
 import os
 import stat
 import typing as typ
@@ -12,11 +14,13 @@ import typing as typ
 from buildlimits import outcome_records
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
     from buildlimits.outcome_record_format import StoreRecord
 
 _FILE_MODE = 0o600
+_DIRECTORY_MODE = 0o700
 _TEMP_SUFFIX = ".tmp"
 
 
@@ -41,6 +45,10 @@ def append_line(path: Path, line: bytes) -> None:
         os.close(descriptor)
 
 
+class _OversizedError(OSError):
+    """A private file grew past the caller's read bound."""
+
+
 def read_store(
     path: Path,
 ) -> outcome_records.DecodedStore | outcome_records.RecordFailure:
@@ -52,14 +60,9 @@ def read_store(
         Validated store rows or the closed corruption/version result.
 
     """
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor, metadata = open_private_regular(path, flags, enforce_mode=False)
-    if metadata.st_size > outcome_records.MAX_STORE_BYTES:
-        os.close(descriptor)
-        return outcome_records.RecordFailure("corrupt")
-    with os.fdopen(descriptor, "rb") as source:
-        document = source.read(outcome_records.MAX_STORE_BYTES + 1)
-    if len(document) > outcome_records.MAX_STORE_BYTES:
+    try:
+        document = read_private_bytes(path, limit=outcome_records.MAX_STORE_BYTES)
+    except _OversizedError:
         return outcome_records.RecordFailure("corrupt")
     try:
         complete_document = document[: document.rfind(b"\n") + 1]
@@ -68,6 +71,43 @@ def read_store(
         return outcome_records.decode_lines(complete_document.decode("utf-8"))
     except UnicodeError:
         return outcome_records.RecordFailure("corrupt")
+
+
+def read_private_bytes(path: Path, *, limit: int) -> bytes:
+    """Read one private regular file entirely, refusing anything over ``limit``.
+
+    The file is opened without following links and its size is checked both
+    from the descriptor's metadata and from the bytes actually read, so a file
+    that grows while it is read cannot exceed the caller's bound either.
+    Filesystem failures other than an oversized file propagate as ``OSError``.
+
+    Parameters
+    ----------
+    path : Path
+        The private regular file to read.
+    limit : int
+        The largest permitted size in bytes.
+
+    Returns
+    -------
+    bytes
+        The file's contents.
+
+    Raises
+    ------
+    _OversizedError
+        If the file's size, measured either way, exceeds ``limit``.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor, metadata = open_private_regular(path, flags, enforce_mode=False)
+    if metadata.st_size > limit:
+        os.close(descriptor)
+        raise _OversizedError(errno.EFBIG, "file exceeds its read bound")
+    with os.fdopen(descriptor, "rb") as source:
+        data = source.read(limit + 1)
+    if len(data) > limit:
+        raise _OversizedError(errno.EFBIG, "file exceeds its read bound")
+    return data
 
 
 def store_size(path: Path) -> int:
@@ -105,12 +145,7 @@ def replace_store(
     if len(document) > outcome_records.MAX_COMPACT_BYTES:
         msg = "compacted document exceeds its byte bound"
         raise ValueError(msg)
-    temporary = path.with_name(f".{path.name}{_TEMP_SUFFIX}")
-    temporary.unlink(missing_ok=True)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(temporary, flags, _FILE_MODE)
-    write_private_temp(temporary, descriptor, document)
-    replace_temp(temporary, path)
+    replace_temp(write_private_temporary(path, document), path)
 
 
 def open_private_regular(
@@ -191,6 +226,133 @@ def replace_temp(temporary: Path, destination: Path) -> None:
     except OSError:
         temporary.unlink(missing_ok=True)
         raise
+
+
+def prepare_store(path: Path, header: outcome_records.StoreHeader) -> Path:
+    """Write a header-only store beside ``path`` without installing it.
+
+    Returns
+    -------
+    Path
+        The synced temporary file the caller may rename into place.
+    """
+    document = (outcome_records.encode_line(header) + "\n").encode("utf-8")
+    return write_private_temporary(path, document, suffix=".new")
+
+
+def move_aside(path: Path) -> bool:
+    """Move a rejected store to its ``.bad`` sibling without replacing one.
+
+    Parameters
+    ----------
+    path : Path
+        The unreadable store.
+
+    Returns
+    -------
+    bool
+        Whether the file was moved aside. ``False`` means a backup already
+        exists or the rename failed, so the rejected data must be reported
+        rather than silently overwritten.
+    """
+    backup = path.with_name(f"{path.name}.bad")
+    try:
+        backup.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        return False
+    try:
+        path.replace(backup)
+    except OSError:
+        return False
+    return True
+
+
+def sync_rename(first: Path, second: Path) -> None:
+    """Make a completed cross-directory rename durable in both directories.
+
+    Filesystem failures propagate as ``OSError``. The rename itself has
+    already happened, so the caller reports the durability fault without
+    pretending the rows are still active.
+    """
+    fsync_directory(first)
+    fsync_directory(second)
+
+
+def ensure_directory(path: Path) -> None:
+    """Create a private directory if it does not exist.
+
+    Filesystem failures propagate as ``OSError``.
+    """
+    path.mkdir(mode=_DIRECTORY_MODE, parents=True, exist_ok=True)
+    path.chmod(_DIRECTORY_MODE)
+
+
+def fsync_directory(path: Path) -> None:
+    """Make a directory's entries durable.
+
+    Filesystem failures propagate as ``OSError``.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def write_sequence(path: Path, value: int) -> None:
+    """Atomically store the next sealed sequence number.
+
+    The counter is written before a segment is moved, so a crash leaves a gap
+    the inventory reports rather than a sequence two segments can share.
+    Filesystem failures propagate as ``OSError``.
+    """
+    _replace_document(path, f"{value}\n".encode("ascii"))
+
+
+def write_metadata(path: Path, document: cabc.Mapping[str, object]) -> None:
+    """Atomically store one JSON metadata document beside a sealed source.
+
+    Filesystem failures propagate as ``OSError``.
+    """
+    encoded = json.dumps(
+        document, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    _replace_document(path, encoded + b"\n")
+
+
+def write_private_temporary(path: Path, data: bytes, *, suffix: str = "") -> Path:
+    """Write ``data`` into a new private temporary beside ``path``.
+
+    Parameters
+    ----------
+    path : Path
+        The destination the temporary will later replace.
+    data : bytes
+        The complete contents to write.
+    suffix : str
+        An extra infix before the temporary suffix, used when a caller needs a
+        name distinct from the one a replacement uses.
+
+    Returns
+    -------
+    Path
+        The synced temporary file; the caller installs or removes it.
+    """
+    temporary = path.with_name(f".{path.name}{suffix}{_TEMP_SUFFIX}")
+    temporary.unlink(missing_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(temporary, flags, _FILE_MODE)
+    write_private_temp(temporary, descriptor, data)
+    return temporary
+
+
+def _replace_document(path: Path, data: bytes) -> None:
+    """Write bytes through one private temporary file and replace ``path``."""
+    replace_temp(write_private_temporary(path, data), path)
+    fsync_directory(path.parent)
 
 
 def write_all(descriptor: int, data: bytes) -> None:
