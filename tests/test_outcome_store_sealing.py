@@ -380,3 +380,69 @@ def test_a_seal_that_cannot_sync_keeps_its_rows_closed(tmp_path: Path) -> None:
         "the row sealed before the sync fault is never counted as active again"
     )
     assert _active(store).records == (), "the active file holds only its header"
+
+
+def test_a_completed_rename_is_synced_though_no_fresh_file_is_installed(
+    tmp_path: Path,
+) -> None:
+    """A seal that cannot install a fresh active file still syncs its rename.
+
+    The rename has already moved the rows out of the active file. Skipping the
+    directory sync because the replacement file failed would leave the source's
+    name unsynced as well, so a crash could lose the only copy of the rows.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    writer = segment_writer(store, history_policy(), NOW)
+    synced: list[tuple[Path, Path]] = []
+    try:
+        with (
+            mock.patch.object(
+                outcome_store_sealing, "restart_active", return_value=False
+            ),
+            mock.patch.object(
+                outcome_store_sealing,
+                "sync_rename",
+                side_effect=lambda first, second: synced.append((first, second)),
+            ),
+        ):
+            writer.append(record_after(0))
+            writer.append(record_after(1))
+            wait_for_results(writer, operation="seal", reason="save_failed")
+    finally:
+        close_writer(writer)
+
+    layout = _layout(store)
+    assert synced == [(layout.sealed_dir, store.parent)], (
+        "the completed rename is synced in both directories"
+    )
+    assert _sealed_names(store) == [segment_name(1)], (
+        "the source the rename published is still recorded"
+    )
+
+
+def test_a_seal_that_cannot_sync_the_source_keeps_it_active(tmp_path: Path) -> None:
+    """A content sync failure leaves the rows in the active file to retry.
+
+    Renaming a file does not make its unsynced contents durable, so the seal
+    syncs the source first. A failure there must publish nothing: the source
+    stays the active file and the next append retries the seal.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    writer = segment_writer(store, history_policy(), NOW)
+    try:
+        with mock.patch.object(
+            outcome_store_sealing, "sync_file", side_effect=OSError("sync failed")
+        ):
+            writer.append(record_after(0))
+            writer.append(record_after(1))
+            wait_for_results(writer, operation="seal", reason="save_failed")
+            # Read the store before the closing flush, which would otherwise
+            # seal the rows this failure deliberately leaves active.
+            assert _sealed_names(store) == [], (
+                "no source is published with unsynced rows"
+            )
+            assert _active(store).records == (record_after(0), record_after(1)), (
+                "the rows the failed seal left behind are still active"
+            )
+    finally:
+        close_writer(writer)

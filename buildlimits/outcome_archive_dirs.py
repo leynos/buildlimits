@@ -35,8 +35,10 @@ def ensure_private_directory(path: Path) -> None:
     Every component is opened relative to the descriptor of the component
     above it, with ``O_NOFOLLOW`` and ``O_DIRECTORY``, and is validated before
     the walk continues. A missing component is created through its parent's
-    descriptor, so no step ever re-resolves a path an attacker could have
-    replaced between validation and use. Existing ancestors keep their mode;
+    descriptor and its parent is synced before the walk descends into it, so
+    no step ever re-resolves a path an attacker could have replaced between
+    validation and use and a created name is durable before anything is
+    written beneath it. Existing ancestors keep their mode;
     the components this call creates, and the final directory, are made
     owner-only. A component that is a symlink, not a directory, or shared with
     another account raises `UnsafePathError`; a filesystem failure propagates
@@ -120,10 +122,20 @@ def _descend(parent: int, part: str, *, create: bool) -> tuple[int, bool]:
         raise
     os.mkdir(part, _DIRECTORY_MODE, dir_fd=parent)
     try:
-        return os.open(part, _directory_flags(), dir_fd=parent), True
+        child = os.open(part, _directory_flags(), dir_fd=parent)
     except OSError as error:
         _refuse_non_directory(error, part)
         raise
+    try:
+        # A new name is durable only once the directory holding it is synced;
+        # syncing files inside the child would not preserve the child's own
+        # entry. A failure here is reported before anything is written under
+        # the new directory, so no published archive can depend on it.
+        os.fsync(parent)
+    except BaseException:
+        os.close(child)
+        raise
+    return child, True
 
 
 def _refuse_non_directory(error: OSError, part: str) -> None:

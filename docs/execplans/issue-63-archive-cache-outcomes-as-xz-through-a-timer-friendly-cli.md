@@ -670,6 +670,20 @@ verified archive is published, and leaves compile admission untouched.
   without its newline and asserts the stream omits it; it fails against the
   previous reader. All seven commit gates pass on the final tree.
 
+- [ ] CodeRabbit review 6000304047 remediation (2026-11-21), 26 inline
+  findings on head `db26169`. Group 1, sealing and directory durability
+  (findings 5, 16, 17): `_descend` now syncs the retained parent descriptor
+  after `os.mkdir`, before the walk descends into a directory it created, so a
+  published archive cannot depend on an unsynced name; `sync_file` was added
+  to `outcome_store_io` and `write_sealing_state` syncs the record-bearing
+  file before `Path.replace`, leaving the source in place when the sync fails;
+  and `seal` computes `_sync_sealed` from `moved` before calling
+  `restart_active`, so a completed rename is still synced when the fresh
+  active file cannot be installed. Two regressions cover the sync-before-
+  rename and the rename-despite-failed-install paths;
+  `tests/test_outcome_store_sealing.py` and the archive filesystem tests pass.
+  The remaining 23 findings are grouped for later commits.
+
 ## Surprises & discoveries
 
 - A module split can leave a private helper behind. `outcome_history_stream`

@@ -204,6 +204,32 @@ def sync_rename(first: Path, second: Path) -> None:
     fsync_directory(second)
 
 
+def sync_file(path: Path) -> None:
+    """Make one private file's contents durable.
+
+    An append leaves its bytes in the page cache, so a rename that publishes
+    the file does not make them survive a power failure on its own. Syncing
+    the file before its directory entry is what orders the contents ahead of
+    the name that refers to them. Filesystem failures propagate as ``OSError``.
+
+    Parameters
+    ----------
+    path : Path
+        The private regular file whose contents must reach the disk.
+
+    Examples
+    --------
+    ``sync_file(store)`` is what a seal calls before it renames the active
+    file into the sealed directory.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor, _metadata = open_private_regular(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def ensure_directory(path: Path) -> None:
     """Create a private directory if it does not exist.
 

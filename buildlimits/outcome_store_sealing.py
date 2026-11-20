@@ -16,6 +16,7 @@ from buildlimits.outcome_store_io import (
     prepare_store,
     replace_temp,
     store_size,
+    sync_file,
     sync_rename,
     write_metadata,
     write_sequence,
@@ -81,8 +82,12 @@ def seal(files: StoreFiles, *, salt_id: str | None = None) -> bool:
     released = len(files.records)
     files.set_records([])
     files.header = outcome_records.StoreHeader(salt.salt_id, now)
-    installed = restart_active(files)
-    if not (installed and (not moved or _sync_sealed(files))):
+    # The rename has already left the active file, so its two directory
+    # entries are synced whatever happens next: a fresh active file that
+    # cannot be installed must not also cost the store the source name that
+    # now holds the released rows.
+    synced = _sync_sealed(files) if moved else True
+    if not (restart_active(files) and synced):
         files.publish("seal", "save_failed", records=released)
         return False
     files.needs_compaction = False
@@ -192,15 +197,26 @@ def write_sealing_state(
     ------
     RuntimeError
         If no active header exists to write into the fresh file.
+
+    Notes
+    -----
+    The record-bearing file is synced before the rename, so the source's rows
+    are durable before the name that publishes them. The rename is kept
+    separate from the directory sync so the caller can reset its rows as soon
+    as they have left the active file.
     """
     write_sequence(files.sequence_file, sequence + 1)
     write_metadata(
         files.sealed_dir / outcome_segments.sealed_meta_name(sequence), metadata
     )
     if store_has_rows(files.path):
-        # The rename is kept separate from the directory sync so the caller can
-        # reset its rows as soon as they have left the active file. A rename
-        # failure propagates as ``OSError`` and leaves the source in place.
+        # Append never syncs, and a rename makes the name durable without
+        # making the bytes it points at durable. Ordering the content sync
+        # first means a power failure after a completed seal cannot leave
+        # durable metadata describing a source whose rows were never written.
+        # A sync or rename failure propagates as ``OSError`` and leaves the
+        # source in place, so the caller can retry it.
+        sync_file(files.path)
         files.path.replace(destination)
         return True
     header = files.header
