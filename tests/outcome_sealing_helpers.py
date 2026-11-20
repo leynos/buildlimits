@@ -19,7 +19,7 @@ from segment_test_helpers import history_policy
 
 from buildlimits.outcome_record_format import DecodedStore
 from buildlimits.outcome_segments import SegmentLayout, sealed_meta_name
-from buildlimits.outcome_store_io import read_store
+from buildlimits.outcome_store_read import read_store
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

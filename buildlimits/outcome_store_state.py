@@ -15,11 +15,12 @@ from buildlimits import outcome_records, outcome_segments, outcome_store_restart
 from buildlimits.outcome_archive_history import ActiveHistory, measured_history
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_store_io import (
+    TornTailError,
     append_line,
-    read_store,
     replace_store,
     store_size,
 )
+from buildlimits.outcome_store_read import read_store
 from buildlimits.outcome_store_sealing import seal
 from buildlimits.utc_text import utc_now
 
@@ -49,11 +50,15 @@ class _Published:
     logical_bytes : int | None
         The active file's size in that state, or None when it could not be
         measured.
+    reason : str | None
+        A closed reason the size and the count do not describe one state, or
+        None when they do.
     """
 
     rows: list[StoreRecord]
     count: int
     logical_bytes: int | None
+    reason: str | None = None
 
 
 class Publisher(typ.Protocol):
@@ -134,6 +139,7 @@ class StoreFiles:
         self.oldest_observed: dt.datetime | None = None
         self.needs_compaction = False
         self.clock_skew_pending = False
+        self.torn_tail = False
         self.ready = False
         self._published: _Published | None = None
         self._last_wall: dt.datetime | None = None
@@ -203,6 +209,27 @@ class StoreFiles:
         """Choose which validated rows can belong to the active salt."""
         outcome_store_restart.restore_loaded_store(self, decoded, salt, now)
 
+    def publish_snapshot(self) -> None:
+        """Publish the rows and byte size of one completed store state.
+
+        The worker owns every mutation and calls this after each transition it
+        completes, so one immutable pairing always describes one moment. A
+        status read can then report a coherent view without opening the file,
+        waiting for an append or seeing a row that reached disk but not the
+        writer's rows.
+
+        A failed rollback leaves a fragment on disk that belongs to no row, so
+        the measured size and the row count describe different states. The
+        snapshot names that instead of pairing them, and keeps naming it until
+        a compaction or a new active file removes the fragment.
+        """
+        try:
+            size: int | None = store_size(self.path)
+        except OSError:
+            size = None
+        reason = "repair_pending" if self.torn_tail else None
+        self._published = _Published(self.records, len(self.records), size, reason)
+
     def retention(self) -> ActiveHistory:
         """Describe the rows the writer currently holds in the active file.
 
@@ -224,6 +251,10 @@ class StoreFiles:
         size = published.logical_bytes
         if size is None:
             return ActiveHistory(has_metadata=False, reason="unreadable")
+        if published.reason is not None:
+            return ActiveHistory(
+                bytes=size, has_metadata=False, reason=published.reason
+            )
         if not self.ready:
             return ActiveHistory(bytes=size, has_metadata=False, reason="not_loaded")
         # A published list only grows until the worker replaces it, and a
@@ -232,21 +263,6 @@ class StoreFiles:
         # to, not whatever the list holds by the time it is read.
         rows = tuple(published.rows[: published.count])
         return measured_history(rows, logical_bytes=size)
-
-    def publish_snapshot(self) -> None:
-        """Publish the rows and byte size of one completed store state.
-
-        The worker owns every mutation and calls this after each transition it
-        completes, so one immutable pairing always describes one moment. A
-        status read can then report a coherent view without opening the file,
-        waiting for an append or seeing a row that reached disk but not the
-        writer's rows.
-        """
-        try:
-            size: int | None = store_size(self.path)
-        except OSError:
-            size = None
-        self._published = _Published(self.records, len(self.records), size)
 
     def set_records(self, records: list[StoreRecord]) -> None:
         """Replace the active rows and cache their oldest observation.
@@ -290,6 +306,14 @@ class StoreFiles:
                 self.publish("append", "save_failed", discarded=1)
                 return
             append_line(self.path, line)
+        except TornTailError:
+            # The rollback that removes a partial line failed, so the file now
+            # holds bytes this row list does not account for. Compaction
+            # repairs them; until then the snapshot must not pair the two.
+            self.needs_compaction = True
+            self.torn_tail = True
+            self.publish("append", "save_failed", discarded=1)
+            return
         except OSError:
             self.needs_compaction = True
             self.publish("append", "save_failed", discarded=1)
@@ -407,6 +431,7 @@ class StoreFiles:
         self.set_records(list(compacted.records))
         self.clock_skew_pending = False
         self.needs_compaction = False
+        self.torn_tail = False
         self.publish(
             "compact",
             compacted.store_reason,

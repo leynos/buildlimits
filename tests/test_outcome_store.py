@@ -30,6 +30,7 @@ from outcome_test_helpers import window_summary as _window_summary
 from buildlimits import (
     outcome_records,
     outcome_store_io,
+    outcome_store_read,
     outcome_store_state,
 )
 from buildlimits.outcome_key import Salt
@@ -91,7 +92,7 @@ def test_store_reader_rejects_a_fifo_without_blocking(
 
     monkeypatch.setattr(outcome_store_io.os, "open", open_nonblocking)
     with pytest.raises(OSError, match="not a regular file"):
-        outcome_store_io.read_store(path)
+        outcome_store_read.read_store(path)
 
 
 def test_store_temp_close_failure_does_not_close_the_descriptor_twice(
@@ -216,7 +217,7 @@ def test_reader_keeps_complete_rows_before_a_utf8_torn_tail(
     torn_record = _window_summary(server_version="partial-é")
     _append_torn_utf8_tail(path, torn_record)
 
-    result = outcome_store_io.read_store(path)
+    result = outcome_store_read.read_store(path)
 
     assert isinstance(result, outcome_records.DecodedStore), (
         "the incomplete UTF-8 bytes are confined to the final row"
@@ -230,7 +231,7 @@ def test_reader_preserves_store_permissions(tmp_path: Path) -> None:
     _seed_one_record_store(path)
     path.chmod(0o640)
 
-    result = outcome_store_io.read_store(path)
+    result = outcome_store_read.read_store(path)
 
     assert isinstance(result, outcome_records.DecodedStore), "the store is readable"
     assert stat.S_IMODE(path.stat().st_mode) == 0o640, (
@@ -246,7 +247,7 @@ def test_reader_rejects_invalid_utf8_in_a_complete_line(tmp_path: Path) -> None:
     malformed = original.replace("é".encode(), b"\xff\xa9", 1)
     _write_private_file(path, malformed)
 
-    result = outcome_store_io.read_store(path)
+    result = outcome_store_read.read_store(path)
 
     assert result == outcome_records.RecordFailure("corrupt"), (
         "a complete line still undergoes strict UTF-8 validation"

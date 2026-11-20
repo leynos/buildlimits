@@ -1,23 +1,21 @@
-"""Internal store-document operations for cache-outcome storage.
+"""Write-side and durable file operations for cache-outcome storage.
 
-These operations write and replace whole store documents and their sidecars.
-The private-file primitives they build on, including the bounded reader, live
-in :mod:`buildlimits.outcome_store_files`. Both are package implementation
-support for the store writer and salt adapter, not a standalone public API.
+Appending a row, replacing the active document, installing a temporary file and
+keeping a rename durable all live here. The private-file primitives these
+operations build on, including the bounded reader the read side uses, live in
+:mod:`buildlimits.outcome_store_files`, and the store's bounded reads live in
+``outcome_store_read``. These are package implementation support for the store
+writer and salt adapter, not a standalone public API.
 """
 
 import contextlib
-import dataclasses as dc
-import errno
 import os
 import typing as typ
 
 from buildlimits import outcome_records
 from buildlimits.outcome_store_files import (
     FILE_MODE,
-    OversizedFileError,
     open_private_regular,
-    read_private_bytes,
     require_regular,
 )
 
@@ -28,6 +26,16 @@ if typ.TYPE_CHECKING:
 
 _DIRECTORY_MODE = 0o700
 _TEMP_SUFFIX = ".tmp"
+
+
+class TornTailError(OSError):
+    """A refused append left bytes on disk that the caller must repair.
+
+    Raised when a partial line reached the file and the rollback that should
+    have removed it failed. The caller's rows no longer account for the file's
+    bytes, so it must not report the measured size beside its row count as one
+    state until a compaction rewrites the file.
+    """
 
 
 def append_line(path: Path, line: bytes) -> None:
@@ -42,6 +50,9 @@ def append_line(path: Path, line: bytes) -> None:
 
     Raises
     ------
+    TornTailError
+        If the line could not be written whole and the rollback that removes
+        the fragment also failed.
     OSError
         If the file cannot be opened or the line cannot be written whole.
     """
@@ -49,76 +60,29 @@ def append_line(path: Path, line: bytes) -> None:
     descriptor, metadata = open_private_regular(path, flags)
     try:
         write_all(descriptor, line + b"\n")
-    except OSError:
-        with contextlib.suppress(OSError):
-            os.ftruncate(descriptor, metadata.st_size)
+    except OSError as fault:
+        if not _roll_back(descriptor, metadata.st_size):
+            msg = "a refused append left a partial line on disk"
+            raise TornTailError(msg) from fault
         raise
     finally:
         with contextlib.suppress(OSError):
             os.close(descriptor)
 
 
-@dc.dataclass(frozen=True, slots=True)
-class StoreSnapshot:
-    """One bounded read of a store, with the size of the bytes it decoded.
-
-    Attributes
-    ----------
-    logical_bytes : int
-        Bytes read from the file, header and every terminating newline
-        included. A torn final fragment is part of the file's size even though
-        it contributes no row.
-    decoded : DecodedStore or RecordFailure
-        Validated rows, or the closed reason the bytes could not be decoded.
-    """
-
-    logical_bytes: int
-    decoded: outcome_records.DecodedStore | outcome_records.RecordFailure
-
-
-def read_store(
-    path: Path,
-) -> outcome_records.DecodedStore | outcome_records.RecordFailure:
-    """Read a private JSON Lines file; filesystem failures propagate as OSError.
+def _roll_back(descriptor: int, size: int) -> bool:
+    """Truncate a refused append back to the size the file had before it.
 
     Returns
     -------
-    DecodedStore or RecordFailure
-        Validated store rows or the closed corruption/version result.
-
-    """
-    return read_store_snapshot(path).decoded
-
-
-def read_store_snapshot(path: Path) -> StoreSnapshot:
-    """Read a private JSON Lines file once, returning its bytes and its rows.
-
-    Measuring the size separately would let a concurrent append land between
-    the two calls, reporting the old size beside the new row count. One read
-    keeps both figures describing the same document, which is what a
-    diagnostic that compares them needs.
-
-    Returns
-    -------
-    StoreSnapshot
-        The decoded rows or closed failure, with the exact byte length read.
-        A filesystem failure propagates as ``OSError`` rather than becoming a
-        snapshot: an unreadable store is not an empty one.
+    bool
+        Whether the partial line was removed.
     """
     try:
-        document = read_private_bytes(path, limit=outcome_records.MAX_STORE_BYTES)
-    except OversizedFileError:
-        # The rows are untrusted, but the file's size is still a fact. Only a
-        # failing ``lstat`` here would be an unreadable store.
-        return StoreSnapshot(store_size(path), outcome_records.RecordFailure("corrupt"))
-    try:
-        complete_document = document[: document.rfind(b"\n") + 1]
-        # An interrupted append can end inside a multibyte character. Discard
-        # that unterminated byte sequence before strict UTF-8 decoding.
-        decoded = outcome_records.decode_lines(complete_document.decode("utf-8"))
-    except UnicodeError:
-        decoded = outcome_records.RecordFailure("corrupt")
-    return StoreSnapshot(len(document), decoded)
+        os.ftruncate(descriptor, size)
+    except OSError:
+        return False
+    return True
 
 
 def store_size(path: Path) -> int:

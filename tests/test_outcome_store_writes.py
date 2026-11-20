@@ -8,12 +8,12 @@ from unittest import mock
 import outcome_store_helpers as store_helpers
 import pytest
 from outcome_store_clock import FIXED_NOW
+from outcome_store_fault_helpers import partial_append, stalled_append
 from outcome_store_helpers import (
     append_and_wait,
     assert_failed_append,
     running_writer,
     salt_path,
-    stalled_append,
     start_writer,
     stored_records,
     wait_for_results,
@@ -25,14 +25,17 @@ from outcome_test_helpers import window_summary
 from segment_test_helpers import document, history_policy, write_private
 
 from buildlimits import (
+    outcome_records,
     outcome_store,
     outcome_store_io,
+    outcome_store_read,
     outcome_store_restart,
     outcome_store_state,
 )
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_record_format import DecodedStore
+from buildlimits.outcome_store_clock import Clocks
 from buildlimits.outcome_store_salt import file_salt
 
 
@@ -209,7 +212,7 @@ def test_an_expired_active_file_is_compacted_at_startup(tmp_path: Path) -> None:
     assert any(result.discarded == 1 for result in results), (
         "the expired row is counted as discarded"
     )
-    decoded = outcome_store_io.read_store(store)
+    decoded = outcome_store_read.read_store(store)
     assert isinstance(decoded, DecodedStore), "the compacted store decodes"
     assert decoded.records == (), "only the replacement header remains"
 
@@ -232,7 +235,7 @@ def test_a_row_that_arrives_expired_is_dropped_by_its_own_append(
         wait_for_results(writer, operation="load")
         append_and_wait(writer, expired)
         compacted = wait_for_results(writer, operation="compact", reason="expired")
-        decoded = outcome_store_io.read_store(store)
+        decoded = outcome_store_read.read_store(store)
     finally:
         writer.close(1.0)
 
@@ -262,7 +265,7 @@ def test_an_older_row_appended_later_is_dropped_by_its_own_append(
         expired = window_summary(observed_at=NOW - dt.timedelta(days=40))
         append_and_wait(writer, expired)
         compacted = wait_for_results(writer, operation="compact", reason="expired")
-        decoded = outcome_store_io.read_store(store)
+        decoded = outcome_store_read.read_store(store)
     finally:
         writer.close(1.0)
 
@@ -302,7 +305,7 @@ def test_an_idle_writer_expires_aged_rows(tmp_path: Path) -> None:
         append_and_wait(writer, window_summary(observed_at=NOW))
         now[0] = NOW + dt.timedelta(days=40)
         compacted = wait_for_results(writer, operation="compact", reason="expired")
-        decoded = outcome_store_io.read_store(store)
+        decoded = outcome_store_read.read_store(store)
     finally:
         writer.close(1.0)
 
@@ -339,17 +342,8 @@ def test_failed_append_rollback_is_repaired_before_the_next_append(
 
     with running_writer(path) as writer:
         append_and_wait(writer, previous)
-        write = outcome_store_io.os.write
-
-        def write_part_then_fail(descriptor: int, data: bytes) -> int:
-            """Leave half a record on disk, then fail its append."""
-            write(descriptor, data[: len(data) // 2])
-            raise OSError("disk full")
-
         with (
-            mock.patch.object(
-                outcome_store_io.os, "write", side_effect=write_part_then_fail
-            ),
+            partial_append(),
             mock.patch.object(
                 outcome_store_io.os,
                 "ftruncate",
@@ -404,10 +398,82 @@ def test_a_close_error_after_a_complete_write_keeps_the_row(
         "the row whose bytes reached disk is reported as appended"
     )
     assert stored_records(path) == (original, appended), "the row is readable on disk"
-    assert snapshot.record_count == 2, "the landed row is held in memory"
-    assert snapshot.logical_bytes == path.stat().st_size, (
+    assert snapshot.records == 2, "the landed row is held in memory"
+    assert snapshot.bytes == path.stat().st_size, (
         "the published count and size describe the same state"
     )
+
+
+def test_a_refused_rollback_names_the_fragment_it_left(tmp_path: Path) -> None:
+    """A rollback that cannot truncate reports bytes the caller must repair.
+
+    The writer has to tell this apart from an ordinary refused append: the
+    file's size no longer matches the rows it holds, so nothing may report the
+    two as one state until a compaction rewrites the file.
+    """
+    path = write_private(tmp_path / "cache-outcomes.jsonl", b"")
+
+    with (
+        partial_append(),
+        mock.patch.object(
+            outcome_store_io.os, "ftruncate", side_effect=OSError("truncate refused")
+        ),
+        pytest.raises(outcome_store_io.TornTailError),
+    ):
+        outcome_store_io.append_line(path, b'{"format": "torn"}')
+
+    assert path.stat().st_size > 0, "the fragment stayed on disk"
+
+
+def test_a_failed_rollback_is_never_paired_with_the_row_count(
+    tmp_path: Path,
+) -> None:
+    """The status snapshot reports a fragment as an unpaired measurement.
+
+    The writer cannot remove a fragment its rollback could not truncate until
+    its next compaction, so the status read must mark the size incomplete
+    rather than present it beside a row count it does not describe.
+    """
+    path = tmp_path / "cache-outcomes.jsonl"
+    salted = file_salt(salt_path(path))
+    assert isinstance(salted, Salt), "the fixture installs its own salt"
+    files = outcome_store_state.StoreFiles(
+        path,
+        mock.Mock(),
+        Clocks(wall=lambda: NOW),
+        policy=history_policy(1 << 20),
+    )
+    files.salt = salted
+    files.load_and_settle(salted, NOW)
+    record = window_summary()
+    line = outcome_records.encode_line(record).encode("utf-8")
+
+    def tear(target: Path, _line: bytes) -> None:
+        """Leave half a line behind, then report the failed rollback."""
+        with target.open("ab") as handle:
+            handle.write(b'{"format":')
+        raise outcome_store_io.TornTailError("rollback refused")
+
+    with mock.patch.object(outcome_store_state, "append_line", tear):
+        files.append(line, record)
+    files.publish_snapshot()
+    unrepaired = files.retention()
+
+    assert unrepaired.has_metadata is False, "the fragment is not one measured state"
+    assert unrepaired.reason == "repair_pending", "the reason names the repair"
+    assert unrepaired.records == 0, "the refused row is not counted"
+    assert unrepaired.bytes == path.stat().st_size, (
+        "the fragment is still part of the file's measured size"
+    )
+
+    assert files.compact() is True, "the next compaction repairs the file"
+    files.publish_snapshot()
+    repaired = files.retention()
+
+    assert repaired.has_metadata is True, "the repaired file is one state again"
+    assert repaired.records == 0, "the refused row was never retained"
+    assert repaired.bytes == path.stat().st_size, "the size is the new file's"
+    assert repaired.bytes < unrepaired.bytes, "the fragment is gone"
 
 
 def test_close_returns_within_its_bound_when_a_write_stalls(tmp_path: Path) -> None:

@@ -17,7 +17,7 @@ from segment_test_helpers import history_policy, write_private
 from buildlimits import outcome_store_sealing
 from buildlimits.outcome_record_format import DecodedStore
 from buildlimits.outcome_segments import archive_name, segment_name
-from buildlimits.outcome_store_io import read_store
+from buildlimits.outcome_store_read import read_store
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 

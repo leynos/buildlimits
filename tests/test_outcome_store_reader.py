@@ -23,7 +23,7 @@ from outcome_store_fixture_helpers import (
 from outcome_store_fixture_helpers import write_private_file as _write_private_file
 from outcome_store_helpers import window_summary as _window_summary
 
-from buildlimits import outcome_records, outcome_store_io
+from buildlimits import outcome_records, outcome_store_files, outcome_store_read
 from buildlimits.outcome_store_files import open_private_regular
 
 
@@ -36,7 +36,7 @@ def test_reader_keeps_complete_rows_before_a_utf8_torn_tail(
     torn_record = _window_summary(server_version="partial-é")
     _append_torn_utf8_tail(path, torn_record)
 
-    result = outcome_store_io.read_store(path)
+    result = outcome_store_read.read_store(path)
 
     assert isinstance(result, outcome_records.DecodedStore), (
         "the incomplete UTF-8 bytes are confined to the final row"
@@ -50,7 +50,7 @@ def test_reader_preserves_store_permissions(tmp_path: Path) -> None:
     _seed_one_record_store(path)
     path.chmod(0o640)
 
-    result = outcome_store_io.read_store(path)
+    result = outcome_store_read.read_store(path)
 
     assert isinstance(result, outcome_records.DecodedStore), "the store is readable"
     assert stat.S_IMODE(path.stat().st_mode) == 0o640, (
@@ -88,7 +88,7 @@ def test_reader_rejects_invalid_utf8_in_a_complete_line(tmp_path: Path) -> None:
     malformed = original.replace("é".encode(), b"\xff\xa9", 1)
     _write_private_file(path, malformed)
 
-    result = outcome_store_io.read_store(path)
+    result = outcome_store_read.read_store(path)
 
     assert result == outcome_records.RecordFailure("corrupt"), (
         "a complete line still undergoes strict UTF-8 validation"
@@ -132,11 +132,11 @@ def test_reader_follows_a_store_that_grew_after_its_size_check(
         sink.write(appended)
 
     with mock.patch.object(
-        outcome_store_io.os,
+        outcome_store_files.os,
         "fstat",
         _fstat_reporting(path.stat().st_size - len(appended)),
     ):
-        result = outcome_store_io.read_store(path)
+        result = outcome_store_read.read_store(path)
 
     assert isinstance(result, outcome_records.DecodedStore), "the grown store reads"
     assert result.records == (first, second), "the concurrently appended row is kept"
@@ -152,9 +152,9 @@ def test_reader_refuses_growth_beyond_the_store_bound(tmp_path: Path) -> None:
     # rather than from a decode failure.
     with (
         mock.patch.object(outcome_records, "MAX_STORE_BYTES", size - 20),
-        mock.patch.object(outcome_store_io.os, "fstat", _fstat_reporting(size - 40)),
+        mock.patch.object(outcome_store_files.os, "fstat", _fstat_reporting(size - 40)),
     ):
-        result = outcome_store_io.read_store(path)
+        result = outcome_store_read.read_store(path)
 
     assert result == outcome_records.RecordFailure("corrupt"), (
         "growth beyond the read bound is refused even though the store is valid"

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from buildlimits import outcome_history, outcome_records, outcome_replay
 from buildlimits.outcome_history_args import add_history_arguments, selection_from
-from buildlimits.outcome_store_io import read_store
+from buildlimits.outcome_store_read import read_store
 from buildlimits.outcome_store_salt import store_path
 from buildlimits.retry_notice import report_retry
 
