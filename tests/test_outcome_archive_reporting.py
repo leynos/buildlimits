@@ -12,7 +12,7 @@ from unittest import mock
 
 import outcome_archive_helpers as archive
 
-from buildlimits import outcome_segment_inventory
+from buildlimits import outcome_archive_retain, outcome_archive_run, outcome_segment_inventory
 from buildlimits.outcome_archive_exit import EXIT_CORRUPT, EXIT_FAILED, exit_status
 from buildlimits.outcome_archive_lock import ArchiveLock
 
@@ -88,6 +88,7 @@ def test_a_dry_run_reports_the_inventory_it_planned_from(tmp_path: Path) -> None
     assert calls == 2, "the settled reader confirms its inventory once"
     assert report.retained is not None, "the report describes the planned history"
     assert report.retained.closed_segments == 2, "both planned segments are described"
+    assert report.retained.complete, "an undisturbed active file is still measured"
 
 
 def test_an_unreadable_store_fails_a_dry_run_without_writing_state(
@@ -154,3 +155,101 @@ def test_a_failed_post_work_read_keeps_the_work_already_done(
     assert not store_layout.retention_file.exists(), "no floor is recorded"
     assert not store_layout.last_run_file.exists(), "no report is installed"
     assert not report.maintenance.state_written, "the report says so"
+
+
+def test_a_seal_during_the_run_is_not_counted_twice(tmp_path: Path) -> None:
+    """Rows sealed mid-run are counted once, in the segment they moved into.
+
+    The writer never takes the archive lock, so it can seal the file the plan
+    read while the run works. Reporting that pre-run snapshot beside the final
+    inventory would count the sealed rows in both places.
+    """
+    store = archive.unsealed_store(tmp_path)
+    retain = outcome_archive_retain.retain
+
+    def retain_then_seal(
+        run: outcome_archive_run.ArchiveRun,
+        outcome: outcome_archive_run.RunOutcome,
+    ) -> bool:
+        """Seal the active file just after the retention pass."""
+        settled = retain(run, outcome)
+        archive.seal_store(store)
+        return settled
+
+    with mock.patch.object(outcome_archive_retain, "retain", retain_then_seal):
+        report = archive.run(tmp_path, archive.policy(max_bytes=0, segment_bytes=4000))
+
+    retained = report.retained
+    assert retained is not None, "the run measures what it retains"
+    assert (retained.record_count, retained.complete) == (3, True), (
+        "each row is counted once and both reads describe the same file"
+    )
+
+
+def test_a_writer_that_never_settles_reports_an_unsettled_run(
+    tmp_path: Path,
+) -> None:
+    """A seal on every reading leaves no pair describing one store version.
+
+    The settled reader scans the closed history either side of the active-file
+    read, so one seal is detected and retried. A writer that seals across every
+    attempt never yields a pair, and the run reports the store as unsettled
+    rather than presenting a torn pair as an exact total.
+    """
+    store = archive.unsealed_store(tmp_path)
+    read_inventory = outcome_segment_inventory.read_inventory
+
+    def seal_then_read(
+        inventory_layout: SegmentLayout, *, retention_floor: int | None = None
+    ) -> outcome_segment_inventory.Inventory:
+        """Grow and seal the active file as every settled scan begins."""
+        if retention_floor is not None:
+            archive.write(store, archive.records(archive.NOW, 1), archive.policy())
+            archive.seal_store(store)
+        return read_inventory(inventory_layout, retention_floor=retention_floor)
+
+    with mock.patch.object(outcome_segment_inventory, "read_inventory", seal_then_read):
+        report = archive.run(tmp_path, archive.policy(max_bytes=0, segment_bytes=4000))
+
+
+
+
+def test_a_seal_during_planning_is_retried_to_one_exact_reading(
+    tmp_path: Path,
+) -> None:
+    """A seal between the planning reads is settled, not reported as a gap.
+
+    The settled reader scans the closed history either side of the active-file
+    read. A writer that seals between the two is detected, and the plan and
+    report are rebuilt from a fresh pair, so the rows are counted once in the
+    segment they moved into rather than in neither observation.
+    """
+    store = archive.unsealed_store(tmp_path)
+    read_inventory = outcome_segment_inventory.read_inventory
+    sealed = False
+
+    def seal_once_after_read(
+        inventory_layout: SegmentLayout, *, retention_floor: int | None = None
+    ) -> outcome_segment_inventory.Inventory:
+        """Read the inventory, then seal once before the next read."""
+        nonlocal sealed
+        inventory = read_inventory(inventory_layout, retention_floor=retention_floor)
+        if not sealed:
+            sealed = True
+            archive.seal_store(store)
+        return inventory
+
+    with mock.patch.object(
+        outcome_segment_inventory, "read_inventory", seal_once_after_read
+    ):
+        report = archive.run(
+            tmp_path,
+            archive.policy(max_bytes=0, segment_bytes=4000),
+            dry_run=True,
+        )
+
+    assert report.retained is not None, "the inspection still reports what it saw"
+    assert report.retained.record_count == 3, "every row is counted once"
+    assert report.retained.complete is True, (
+        "the retried readings describe one version of the store"
+    )

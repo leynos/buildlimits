@@ -217,8 +217,14 @@ class StoreWriter(OutcomeStorePort):
         self._thread.join(wait)
 
     def _run(self) -> None:
-        """Initialize once, then serialize every queued operation."""
+        """Initialize once, then serialize every queued operation.
+
+        The worker publishes a status snapshot after each transition it
+        completes, so a diagnostic read never pairs one state's rows with
+        another state's byte size.
+        """
         self._initialize()
+        self._files.publish_snapshot()
         while True:
             try:
                 item = self._work.get(timeout=self._idle_tick)
@@ -232,12 +238,14 @@ class StoreWriter(OutcomeStorePort):
             if item is _STOP:
                 if self._files.ready:
                     self._files.final_flush()
+                    self._files.publish_snapshot()
                 return
             if not self._files.ready:
                 self._publish("append", "save_failed", discarded=1)
                 continue
             line, record = item
             self._files.append(line, record)
+            self._files.publish_snapshot()
 
     def _initialize(self) -> None:
         """Acquire the salt, load bounded state and settle it before appending."""
