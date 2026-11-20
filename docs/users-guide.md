@@ -352,12 +352,15 @@ history: 1240 records, observed 2026-11-01T08:00:00+00:00..2026-11-19T17:30:00+0
 history: 1240 records, 2 unmeasured, observed 2026-11-01T08:00:00+00:00..2026-11-19T17:30:00+00:00
 ```
 
-The count covers the closed rows that segment metadata describes and the rows
-still in the active file. An unmeasured entry, such as an archive whose sidecar
-was lost or a file that cannot be decoded, contributes no rows and no span, so
-a report never presents an unknown part of the history as empty. The JSON
-carries the same figures as `retained_records`, `observed_from`,
-`observed_until` and `unmeasured_entries`.
+The count covers the closed rows that segment metadata describes and every row
+still in the active file, including rows the age rule has already expired and
+the writer has not yet compacted. Those rows are not retained history, so the
+budgets described below do not count them; the report describes what the store
+physically holds until the writer's next compaction. An unmeasured entry, such
+as an archive whose sidecar was lost or a file that cannot be decoded,
+contributes no rows and no span, so a report never presents an unknown part of
+the history as empty. The JSON carries the same figures as `retained_records`,
+`observed_from`, `observed_until` and `unmeasured_entries`.
 
 The writer seals the active file when an append would take it past 12 MiB, so
 the archiver only ever rewrites closed segments. The archiver compresses each
@@ -368,27 +371,32 @@ compressed, so a run never spends its scratch space archiving history the same
 plan deletes. It holds a private lock of its own and never writes or replaces
 the active file. It does read the active file, once per plan, to measure the
 rows and span the writer currently holds; the read is bounded and refuses a
-path that is not a regular file.
+path that is not a regular file. The size and the rows come from the same
+opened version, so a writer that replaces the path mid-read cannot pair one
+version's bytes with another's rows.
 
 Retention is one policy shared by the writer, the archiver and the read-only
 history view:
 
 - The byte budget counts logical uncompressed bytes across active, sealed and
   archived history. An archive's contribution is its sidecar's `logical_bytes`,
-  so compression does not move the boundary.
+  so compression does not move the boundary. The active file contributes only
+  the bytes of the rows the age rule keeps, because a row the writer will
+  compact away is not retained history; counting it would evict closed history
+  to make room for bytes retention has already released.
 - Eviction is oldest-first. A record whose observation time equals the age
   cutoff is retained; one older than the cutoff is not.
 - The record cap bounds the retained record count across active, sealed and
   archived history. The archiver streams the active file once per plan to count
-  its rows, and counts each sealed source's recorded count, so a store cannot
-  hold the cap in archives while the writer fills another cap beside it. It
-  removes whole oldest archives while they fit inside the excess, then trims
-  the archive that straddles the boundary, so a segmented history is capped
-  rather than exempt. A sealed source is closed history too and is evicted
-  whole when the cap reaches it before the run has compressed it; a source that
-  straddles the boundary is archived first, and the next plan trims its
-  archive. Only the writer's active file is never trimmed, because the writer
-  owns it. A cap of zero leaves segmented history uncapped.
+  the rows the age rule keeps, and counts each sealed source's recorded count,
+  so a store cannot hold the cap in archives while the writer fills another cap
+  beside it. It removes whole oldest archives while they fit inside the excess,
+  then trims the archive that straddles the boundary, so a segmented history is
+  capped rather than exempt. A sealed source is closed history too and is
+  evicted whole when the cap reaches it before the run has compressed it; a
+  source that straddles the boundary is archived first, and the next plan trims
+  its archive. Only the writer's active file is never trimmed, because the
+  writer owns it. A cap of zero leaves segmented history uncapped.
 
 A single firing may apply retention over more than one pass. The byte and
 record walks act on the rows that survive the age rule, so while an age trim is
@@ -408,7 +416,11 @@ the rows it removed were part of the total the budget was planned over; the
 next firing decides retention from what remains, and the run still reports the
 corruption at exit 3. The passes are bounded: if new seals keep arriving and
 work remains, the run reports `status: unsettled` and exits 75, and the next
-timer firing continues.
+timer firing continues. The final report is read the same way: the inventory is
+scanned on both sides of the active-file read and the reading is retried when
+they disagree, so a seal cannot leave either copy out of the count. A writer
+that seals on every reading leaves the report unsettled too, rather than
+recording one partial reading as the run's result.
 
 A plan that leaves a configured budget to a later pass reports
 `retention: deferred` on its plain output and `"retention_deferred": true` under

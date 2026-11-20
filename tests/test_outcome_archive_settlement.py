@@ -7,6 +7,8 @@ quarantine that removes an entry the budget counted. They also pin that the
 last permitted pass is confirmed settled rather than assumed.
 """
 
+import datetime as dt
+import itertools
 import typing as typ
 from pathlib import Path
 
@@ -25,14 +27,15 @@ from outcome_archive_helpers import (
 from segment_test_helpers import document, write_private
 
 from buildlimits import outcome_archive_files, outcome_archive_retain
+from buildlimits.outcome_archive_report import EXIT_TEMPFAIL
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import sidecar_name
 
 if typ.TYPE_CHECKING:
     import pytest
 
-    from buildlimits.outcome_archive_budget import ActiveHistory
     from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
+    from buildlimits.outcome_archive_history import ActiveHistory
     from buildlimits.outcome_archive_trim import Trim
     from buildlimits.outcome_segment_inventory import SegmentEntry
     from buildlimits.outcome_segments import SegmentLayout
@@ -93,7 +96,9 @@ def test_a_seal_between_the_inventory_and_active_reads_is_replanned(
     real = outcome_archive_retain.active_history
     sealed = False
 
-    def seal_then_read(path: Path) -> ActiveHistory:
+    def seal_then_read(
+        path: Path, *, cutoff: dt.datetime | None = None
+    ) -> ActiveHistory:
         """Seal five rows once, between the inventory and active reads."""
         nonlocal sealed
         if not sealed:
@@ -102,7 +107,7 @@ def test_a_seal_between_the_inventory_and_active_reads_is_replanned(
             write_private(store_layout.active, document(rows))
             seal_active(store_layout, rows, 2)
             write_private(store_layout.active, document(records(NOW, 4)))
-        return real(path)
+        return real(path, cutoff=cutoff)
 
     monkeypatch.setattr(outcome_archive_retain, "active_history", seal_then_read)
 
@@ -155,3 +160,75 @@ def test_the_last_permitted_pass_is_confirmed_settled(
     assert len(archives(tmp_path)) == 4, "each seal becomes its own archive"
     assert report.status == "ok", "a store settled by the last pass is not retryable"
     assert report.exit_status == 0, "the timer records a successful firing"
+
+
+def test_the_final_report_retries_a_seal_at_its_active_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seal during the report's active read is counted, not undercounted.
+
+    A seal between the report's inventory scan and its active read moves rows
+    out of the active file into a source that scan does not list, so the pair
+    would count neither copy. The report re-reads the store and describes one
+    version, so the sealed rows appear in the count and the span.
+    """
+    _, store_layout = _store_with_archive(tmp_path, 1)
+    real = outcome_archive_retain.active_history
+    sealed = False
+
+    def seal_at_report_read(
+        path: Path, *, cutoff: dt.datetime | None = None
+    ) -> ActiveHistory:
+        """Seal five rows once, at the report's whole-file read."""
+        nonlocal sealed
+        if cutoff is None and not sealed:
+            sealed = True
+            rows = records(NOW, 5)
+            write_private(store_layout.active, document(rows))
+            seal_active(store_layout, rows, 2)
+            write_private(store_layout.active, document(records(NOW, 2)))
+        return real(path, cutoff=cutoff)
+
+    monkeypatch.setattr(outcome_archive_retain, "active_history", seal_at_report_read)
+
+    report = run(tmp_path, policy(segment_bytes=1_000_000, max_age_days=30))
+
+    assert report.status == "ok", "the retried reading describes one version"
+    assert report.retained_records == 8, (
+        "the archive, the sealed source and the new active rows all count"
+    )
+    assert report.observed_until == NOW + dt.timedelta(minutes=4), (
+        "the span reaches the newest row in the sealed source"
+    )
+
+
+def test_a_writer_that_keeps_sealing_leaves_the_report_unsettled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A report that cannot bind rows to one version is retryable.
+
+    A writer that seals on every reading never lets the report settle. The run
+    must report that as retryable rather than recording one of the partial
+    readings as a complete report.
+    """
+    _, store_layout = _store_with_archive(tmp_path, 1)
+    real = outcome_archive_retain.active_history
+    sequences = itertools.count(2)
+
+    def seal_on_every_read(
+        path: Path, *, cutoff: dt.datetime | None = None
+    ) -> ActiveHistory:
+        """Seal one fresh source at every whole-file read."""
+        if cutoff is None:
+            sequence = next(sequences)
+            rows = records(NOW, 1)
+            write_private(store_layout.active, document(rows))
+            seal_active(store_layout, rows, sequence)
+        return real(path, cutoff=cutoff)
+
+    monkeypatch.setattr(outcome_archive_retain, "active_history", seal_on_every_read)
+
+    report = run(tmp_path, policy(segment_bytes=1_000_000, max_age_days=30))
+
+    assert report.status == "unsettled", "no reading describes the whole store"
+    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"

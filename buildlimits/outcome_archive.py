@@ -7,7 +7,6 @@ is never opened for writing: only the writer seals it. Every failure is
 reported as a closed reason and an exit status a systemd timer can act on.
 """
 
-import dataclasses as dc
 import datetime as dt
 import typing as typ
 
@@ -22,6 +21,7 @@ from buildlimits import (
 )
 from buildlimits.outcome_archive_budget import UnknownActiveHistoryError
 from buildlimits.outcome_archive_context import ArchiveContext
+from buildlimits.outcome_archive_history import ActiveHistory, observed_history
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
 from buildlimits.outcome_archive_report import (
     ARCHIVE_SCHEMA,
@@ -37,7 +37,6 @@ from buildlimits.outcome_archive_report import (
 from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
 
 if typ.TYPE_CHECKING:
-    from buildlimits.outcome_archive_budget import ActiveHistory
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_segments import SegmentLayout
@@ -151,7 +150,9 @@ def _plan(
     """
     floor = outcome_segment_state.read_retention_floor(layout)
     inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    active = outcome_archive_active.active_history(layout.active)
+    active = outcome_archive_active.active_history(
+        layout.active, cutoff=policy.cutoff(now)
+    )
     return plan_run(inventory, policy, now=now, active=active), active
 
 
@@ -193,10 +194,16 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
         outcome_segment_state.read_retention_floor(layout),
         outcome,
     )
-    final = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    final_active = outcome_archive_active.active_history(layout.active)
+    final, final_active, snapshot_settled = outcome_archive_retain.final_snapshot(
+        layout, floor
+    )
+    if not snapshot_settled:
+        # The writer kept sealing across every reading, so the report cannot
+        # bind rows to one version of the store. Report it as retryable rather
+        # than recording an undercount as success.
+        outcome.retention_unsettled = True
     retained = final_active.bytes + final.sealed_bytes + final.archived_logical_bytes
-    observed = _observed(final, final_active)
+    observed = observed_history(final, final_active)
     report = RunReport(
         status=_run_status(outcome),
         started_at=run.started_at,
@@ -304,50 +311,6 @@ def _retention_floor(
     return floor
 
 
-@dc.dataclass(frozen=True, slots=True)
-class _Observed:
-    """What closed metadata and the active file say about the retained rows."""
-
-    records: int
-    observed_from: dt.datetime | None
-    observed_until: dt.datetime | None
-    unmeasured: int
-
-
-def _observed(
-    inventory: outcome_segment_inventory.Inventory,
-    active: ActiveHistory,
-) -> _Observed:
-    """Summarize every retained row the metadata and the active file describe.
-
-    Returns
-    -------
-    _Observed
-        Retained record count, earliest and latest observation, and the number
-        of effective entries whose metadata was missing. An entry without
-        trustworthy metadata contributes no rows and no span rather than
-        guessing, but it is counted so a report never claims completeness.
-    """
-    described = [
-        entry for entry in inventory.effective if entry.record_count is not None
-    ]
-    records = sum(entry.record_count or 0 for entry in described) + active.records
-    unmeasured = sum(1 for entry in inventory.effective if entry.record_count is None)
-    unmeasured += 0 if active.has_metadata else 1
-    first = [entry.first_observed_at for entry in described if entry.first_observed_at]
-    last = [entry.last_observed_at for entry in described if entry.last_observed_at]
-    if active.first_observed_at is not None:
-        first.append(active.first_observed_at)
-    if active.last_observed_at is not None:
-        last.append(active.last_observed_at)
-    return _Observed(
-        records=records,
-        observed_from=min(first, default=None),
-        observed_until=max(last, default=None),
-        unmeasured=unmeasured,
-    )
-
-
 def _dry_report(
     run: outcome_archive_run.ArchiveRun, active: ActiveHistory
 ) -> RunReport:
@@ -361,7 +324,7 @@ def _dry_report(
     layout = run.context.layout
     floor = outcome_segment_state.read_retention_floor(layout)
     inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    observed = _observed(inventory, active)
+    observed = observed_history(inventory, active)
     return RunReport(
         status="ok",
         started_at=run.started_at,

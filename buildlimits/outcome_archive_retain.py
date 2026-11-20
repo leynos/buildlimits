@@ -13,6 +13,7 @@ import typing as typ
 
 from buildlimits import outcome_segment_inventory
 from buildlimits.outcome_archive_active import active_history
+from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
 from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome, perform
 
@@ -21,13 +22,14 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_archive_trim import Trim
-    from buildlimits.outcome_segment_inventory import SegmentEntry
+    from buildlimits.outcome_segment_inventory import Inventory, SegmentEntry
+    from buildlimits.outcome_segments import SegmentLayout
 
     # A trim is only meaningful against the archive version it was planned
     # for, so each applied trim carries that version's measurement.
     type AppliedTrims = dict[int, tuple[Trim, int, int | None]]
 
-__all__ = ["retain"]
+__all__ = ["final_snapshot", "retain"]
 
 # Follow-up planning passes one run may make after its plan is performed. The
 # first settles the sources this run archived, including a source the writer
@@ -41,6 +43,11 @@ __all__ = ["retain"]
 # scan and the active-file read: the plan would count neither copy, so it is
 # abandoned and rebuilt from a fresh pair of reads.
 _MAX_RETAIN_PASSES = 3
+
+# Final-report readings retried when the writer moves a source out of the
+# active file between the inventory and active scans. Three readings cover a
+# seal on each attempt without making the report wait indefinitely.
+_SNAPSHOT_ATTEMPTS = 3
 
 
 class _InventoryChangedError(Exception):
@@ -245,11 +252,43 @@ def _replan(run: ArchiveRun) -> Plan:
     """
     layout = run.context.layout
     inventory = outcome_segment_inventory.read_inventory(layout)
-    active = active_history(layout.active)
+    active = active_history(
+        layout.active, cutoff=run.context.policy.cutoff(run.context.now)
+    )
     if outcome_segment_inventory.read_inventory(layout) != inventory:
         msg = "a source was sealed while the follow-up plan read the store"
         raise _InventoryChangedError(msg)
     return plan_run(inventory, run.context.policy, now=run.context.now, active=active)
+
+
+def final_snapshot(
+    layout: SegmentLayout, floor: int
+) -> tuple[Inventory, ActiveHistory, bool]:
+    """Read the store the report describes, retrying one the writer moved.
+
+    A seal between the inventory scan and the active-file read moves rows out
+    of the active file into a source the scan does not list, so the pair would
+    describe neither copy. Reading the inventory again after the active file
+    detects that move; the snapshot is accepted only when the two scans agree.
+    A seal after the second scan is harmless, because the active read and the
+    inventory then describe the store as it stood at that read.
+
+    Returns
+    -------
+    tuple[Inventory, ActiveHistory, bool]
+        The last inventory and active readings, and whether they describe one
+        version of the store. A writer that keeps sealing across every attempt
+        leaves the report unsettled so the timer retries.
+    """
+    inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
+    active = ActiveHistory()
+    for _attempt in range(_SNAPSHOT_ATTEMPTS):
+        active = active_history(layout.active)
+        after = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
+        if after == inventory:
+            return inventory, active, True
+        inventory = after
+    return inventory, active, False
 
 
 def _follow_up_run(run: ArchiveRun, plan: Plan) -> ArchiveRun:

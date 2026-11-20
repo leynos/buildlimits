@@ -7,12 +7,14 @@ rows cannot be decoded must not make the store look smaller than it is to the
 byte budget or the record cap.
 """
 
+import datetime as dt
 import errno
 import typing as typ
 from pathlib import Path
 
 import pytest
 from outcome_archive_helpers import NOW, document, layout, policy, records, run, write
+from segment_test_helpers import write_private
 
 from buildlimits import outcome_archive_active
 from buildlimits.outcome_archive import EXIT_FAILED
@@ -108,40 +110,101 @@ def test_an_inaccessible_active_path_fails_the_run(
     store = tmp_path / "cache-outcomes.jsonl"
     write(store, records(NOW, 1), policy())
     store_layout = layout(tmp_path)
-    real_lstat = Path.lstat
+    real = outcome_archive_active.open_private_regular
 
-    def refuse_active(self: Path) -> os.stat_result:
+    def refuse_active(
+        target: Path, flags: int, *, enforce_mode: bool = True
+    ) -> tuple[int, os.stat_result]:
         """Fail the inspection of the active path alone."""
-        if self == store_layout.active:
+        if target == store_layout.active:
             raise PermissionError(errno.EACCES, "permission denied")
-        return real_lstat(self)
+        return real(target, flags, enforce_mode=enforce_mode)
 
-    monkeypatch.setattr(Path, "lstat", refuse_active)
+    monkeypatch.setattr(outcome_archive_active, "open_private_regular", refuse_active)
 
     report = run(tmp_path, policy())
 
     _assert_refused(report, store_layout)
 
 
-def test_an_unreadable_active_file_fails_a_record_cap_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_an_undecodable_active_file_fails_a_record_cap_run(tmp_path: Path) -> None:
     """A cap cannot be planned when the active file's rows cannot be read.
 
     The cap bounds the whole retained store, including the rows the writer has
-    not sealed. A run that counted an unreadable active file as zero rows would
+    not sealed. A run that counted an undecodable active file as zero rows would
     claim to meet the cap without knowing the history it holds.
     """
     store = tmp_path / "cache-outcomes.jsonl"
     write(store, records(NOW, 1), policy())
     store_layout = layout(tmp_path)
-
-    def refuse(*_args: object, **_kwargs: object) -> object:
-        """Fail the active file's row scan, as an unreadable file would."""
-        raise PermissionError(errno.EACCES, "permission denied")
-
-    monkeypatch.setattr(outcome_archive_active, "read_source_facts", refuse)
+    write_private(store_layout.active, b"not a cache outcome document\n")
 
     report = run(tmp_path, policy(max_records=4))
 
     _assert_refused(report, store_layout)
+
+
+def test_the_age_rule_separates_the_rows_the_writer_will_drop(
+    tmp_path: Path,
+) -> None:
+    """A cutoff reports the retained rows beside the whole file's figures.
+
+    The writer compacts expired rows on its next idle tick, so they are not
+    retained history and a budget must not evict closed history for them. The
+    scan still reports the whole file, because the report describes what the
+    active file holds until that compaction runs.
+    """
+    path = tmp_path / "cache-outcomes.jsonl"
+    expired = records(NOW - dt.timedelta(days=10), 2)
+    kept = records(NOW, 3)
+    write_private(path, document((*expired, *kept)))
+
+    history = active_history(path, cutoff=NOW - dt.timedelta(days=1))
+
+    assert history.records == 5, "the whole file is still counted"
+    assert history.bytes == len(document((*expired, *kept))), (
+        "the whole file's bytes are still reported"
+    )
+    assert history.budget_records == 3, "only the rows the age rule keeps count"
+    assert history.budget_bytes == len(document(kept)), (
+        "the header and the kept rows are the retained bytes"
+    )
+    assert history.first_observed_at == NOW - dt.timedelta(days=10), (
+        "the span still describes the whole file"
+    )
+
+
+def test_a_replaced_active_path_is_measured_from_one_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replacement between the open and the scan mixes no two versions.
+
+    The size and the rows come from the descriptor that was opened, so a writer
+    that moves a compacted file over the path mid-read cannot pair one
+    version's bytes with another's rows. Both figures must describe the file
+    the scan actually read.
+    """
+    path = tmp_path / "cache-outcomes.jsonl"
+    opened = document(records(NOW, 2))
+    write_private(path, opened)
+    real = outcome_archive_active.open_private_regular
+
+    def open_then_replace(
+        target: Path, flags: int, *, enforce_mode: bool = True
+    ) -> tuple[int, os.stat_result]:
+        """Open one version, then move a different one over the path."""
+        descriptor, metadata = real(target, flags, enforce_mode=enforce_mode)
+        if target == path:
+            replacement = tmp_path / "replacement.jsonl"
+            write_private(replacement, document(records(NOW, 7)))
+            replacement.replace(target)
+        return descriptor, metadata
+
+    monkeypatch.setattr(
+        outcome_archive_active, "open_private_regular", open_then_replace
+    )
+
+    history = active_history(path)
+
+    assert history.bytes == len(opened), "the size belongs to the opened version"
+    assert history.records == 2, "the rows belong to the same version as the size"

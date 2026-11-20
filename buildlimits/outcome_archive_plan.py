@@ -13,8 +13,8 @@ is conservative: a planned trim never frees more bytes than its sidecar proves.
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.outcome_archive_age import age_trims, plan_age_step
 from buildlimits.outcome_archive_budget import (
-    ActiveHistory,
     Budget,
     budget_totals_are_unsettled,
     plan_byte_steps,
@@ -22,13 +22,14 @@ from buildlimits.outcome_archive_budget import (
     planned_size,
     require_measurable_active,
 )
-from buildlimits.outcome_archive_trim import Trim
 from buildlimits.utc_text import optional_utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
 
+    from buildlimits.outcome_archive_history import ActiveHistory
+    from buildlimits.outcome_archive_trim import Trim
     from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_segment_inventory import Inventory, SegmentEntry
 
@@ -175,7 +176,8 @@ def plan_run(
     now : datetime
         The caller-supplied UTC wall time.
     active : ActiveHistory
-        What the writer's active file holds.
+        What the writer's active file holds, measured against the age cutoff
+        when one applies so only the rows retention keeps count.
 
     Returns
     -------
@@ -186,7 +188,7 @@ def plan_run(
     --------
     An empty inventory plans nothing and retains only the active bytes.
     >>> import datetime as dt
-    >>> from buildlimits.outcome_archive_budget import ActiveHistory
+    >>> from buildlimits.outcome_archive_history import ActiveHistory
     >>> from buildlimits.outcome_retention import RetentionPolicy
     >>> from buildlimits.outcome_segment_inventory import Inventory
     >>> now = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
@@ -214,7 +216,7 @@ def plan_run(
         if entry.sequence not in duplicated_sequences and entry.sequence not in evicted
     )
     retained = _retained_estimate(
-        inventory, active_bytes=active.bytes, deletes=deletes, trims=trims
+        inventory, active_bytes=active.budget_bytes, deletes=deletes, trims=trims
     )
     return Plan(
         reconcile=duplicates,
@@ -277,8 +279,8 @@ def _retention_steps(
     deletes: dict[int, SegmentEntry] = {}
     if budget.cutoff is not None:
         for entry in candidates:
-            _plan_age_step(entry, budget.cutoff, deletes)
-    trims = _age_trims(candidates, budget.cutoff, deletes)
+            plan_age_step(entry, budget.cutoff, deletes)
+    trims = age_trims(candidates, budget.cutoff, deletes)
     measurable = _budgets_are_measurable(candidates, budget.cutoff, deletes, duplicated)
     settled = True
     if measurable:
@@ -325,51 +327,6 @@ def _budgets_are_measurable(
     if duplicated:
         return False
     return not budget_totals_are_unsettled(candidates, cutoff, deletes)
-
-
-def _plan_age_step(
-    entry: SegmentEntry, cutoff: dt.datetime, deletes: dict[int, SegmentEntry]
-) -> None:
-    """Record a whole-segment age deletion when every row is older.
-
-    An entry without a trustworthy sidecar has neither a count nor a span, so
-    no age decision can be made from it. The heal step repairs the sidecar,
-    and the next firing plans from the span it rebuilt.
-    """
-    if not entry.has_metadata or entry.last_observed_at is None:
-        return
-    if entry.last_observed_at < cutoff:
-        deletes[entry.sequence] = entry
-
-
-def _age_trims(
-    candidates: tuple[SegmentEntry, ...],
-    cutoff: dt.datetime | None,
-    deletes: dict[int, SegmentEntry],
-) -> dict[int, Trim]:
-    """Record the prefix trim a straddling archive needs.
-
-    A sealed source that straddles the cutoff is left untrimmed here. This run
-    archives it, and the follow-up plan applies the trim to the archive it
-    becomes, which is the first point at which it can be rewritten.
-
-    Returns
-    -------
-    dict[int, Trim]
-        A trim keyed by sequence for every archive that straddles the cutoff.
-    """
-    if cutoff is None:
-        return {}
-    trims: dict[int, Trim] = {}
-    for entry in candidates:
-        if entry.sequence in deletes or not entry.has_metadata:
-            continue
-        if entry.state != "archived":
-            continue
-        first = entry.first_observed_at
-        if first is not None and first < cutoff:
-            trims[entry.sequence] = Trim(before=cutoff)
-    return trims
 
 
 def _retained_estimate(

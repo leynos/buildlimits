@@ -378,8 +378,10 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
 | `outcome_archive_context`                                                          | Shared context and result values for one archive run                                                                                                        |
 | `outcome_archive_plan`                                                             | Pure retention and repair plan from the inventory                                                                                                           |
-| `outcome_archive_active`                                                           | Lock-free bounded read of the writer's active file, and the non-regular path it refuses                                                                     |
-| `outcome_archive_budget`                                                           | Logical-byte budget: oldest-first archive deletion, then one straddling trim                                                                                |
+| `outcome_archive_active`                                                           | Lock-free bounded read of the writer's active file through one descriptor, and the non-regular path it refuses                                              |
+| `outcome_archive_age`                                                              | Which closed history the age rule evicts whole, and which straddling archive it trims                                                                       |
+| `outcome_archive_history`                                                          | The active-file snapshot and the retained-history summary the run report carries                                                                            |
+| `outcome_archive_budget`                                                           | Logical-byte and record budgets: oldest-first archive deletion, then one straddling trim                                                                    |
 | `outcome_archive_run`                                                              | Executing one archive plan operation by operation                                                                                                           |
 | `outcome_archive_retain`                                                           | Bounded follow-up passes that settle a store the writer may change mid-run                                                                                  |
 | `outcome_archive_verify`                                                           | Streaming XZ write and verification, and the closed segment-fault reasons                                                                                   |
@@ -1055,12 +1057,22 @@ finds, and plans the budget over the settled inventory, narrowing the pass to
 work the run has not already applied. It detects a seal between its inventory
 and active-file reads by scanning the inventory a second time, suppresses a
 trim only against the archive measurement it was planned for, and confirms
-settlement with a final plan that mutates nothing. `outcome_archive_active`
-reads the writer's active file as a snapshot without the archive lock, and
-refuses any existing path that is not a regular file; only an absent file is
-empty history. `outcome_archive_budget` owns the byte budget: it counts an
-archive's uncompressed size from its sidecar, deletes whole archives oldest
-first, and then trims the single archive that straddles the remaining allowance.
+settlement with a final plan that mutates nothing. The same module owns
+`final_snapshot`, the report's reading of the store: the inventory is scanned
+on both sides of the active-file read and the reading is retried while the two
+disagree, so a seal cannot leave either copy out of the reported count.
+`outcome_archive_active` reads the writer's active file as a snapshot without
+the archive lock, through one opened descriptor, so its size and rows describe
+the same version even when the writer replaces the path mid-scan. It refuses
+any existing path that is not a regular file; only an absent file is empty
+history. Its scan also reports the rows and bytes the age rule keeps when it is
+given a cutoff, and `outcome_archive_history` carries that snapshot plus the
+summary of retained rows the report describes. `outcome_archive_age` owns the
+age decisions themselves: which entries are wholly older than the cutoff and
+which archive straddles it and is trimmed. `outcome_archive_budget` owns the
+byte budget: it counts an archive's uncompressed size from its sidecar plus the
+active rows the age rule keeps, deletes whole archives oldest first, and then
+trims the single archive that straddles the remaining allowance.
 `plan_record_steps` applies the configured record cap to segmented history in
 the same shape: whole oldest archives are deleted while they fit the excess,
 then the straddling archive is trimmed rather than left to break the cap.
@@ -1133,27 +1145,29 @@ definition; `run --dry-run` plans without taking the lock or writing state; and
 `~/.config/buildlimits/supervisor.toml`) and `--json`.
 
 The archive tests are `tests/test_outcome_archive.py`,
+`test_outcome_archive_active.py`, `test_outcome_archive_active_budget.py`,
 `test_outcome_archive_files.py`, `test_outcome_archive_repair.py`,
 `test_outcome_archive_fs.py`, `test_outcome_archive_lock.py`,
 `test_outcome_archive_plan.py`, `test_outcome_archive_plan_age.py`,
 `test_outcome_archive_plan_bytes.py`, `test_outcome_archive_reconcile.py`,
-`test_outcome_archive_retention.py`, `test_outcome_archive_verify.py`,
-`test_outcome_archive_cli.py`, `test_outcome_archive_subprocess.py`,
-`test_outcome_history.py`, `test_outcome_history_replacement.py`,
-`test_outcome_segments.py`, `test_outcome_segment_inventory.py`,
-`test_outcome_segment_state.py`, `test_outcome_record_stream.py`,
-`test_outcome_sealing_bounds.py`, `test_outcome_store_tail.py` and
-`test_outcome_store_sealing.py`. `test_outcome_archive_subprocess.py` runs the
-installed console script, and the `python -m` form, as separate processes,
-including two overlapping runs, and shares its launcher and configuration with
-`tests/archive_cli_helpers.py`. `tests/test_outcome_archive_bench.py` holds the
-reader's traced-memory test, which streams a multi-megabyte segment under one
-mebibyte, and the tests that pin the report's schema and its tracing ownership.
-`make outcome-archive-bench` runs `buildlimits.outcome_archive_bench` and
-prints a JSON report with the source size, record count, archive size, ratio,
-chunk size, peak buffered rows, elapsed time, peak resident set, temporary disk
-and peak traced allocation; it generates a representative segment when
-`SEGMENT=` names none and reads the named segment when it does.
+`test_outcome_archive_retention.py`, `test_outcome_archive_settlement.py`,
+`test_outcome_archive_verify.py`, `test_outcome_archive_cli.py`,
+`test_outcome_archive_subprocess.py`, `test_outcome_history.py`,
+`test_outcome_history_replacement.py`, `test_outcome_segments.py`,
+`test_outcome_segment_inventory.py`, `test_outcome_segment_state.py`,
+`test_outcome_record_stream.py`, `test_outcome_sealing_bounds.py`,
+`test_outcome_store_tail.py` and `test_outcome_store_sealing.py`.
+`test_outcome_archive_subprocess.py` runs the installed console script, and the
+`python -m` form, as separate processes, including two overlapping runs, and
+shares its launcher and configuration with `tests/archive_cli_helpers.py`.
+`tests/test_outcome_archive_bench.py` holds the reader's traced-memory test,
+which streams a multi-megabyte segment under one mebibyte, and the tests that
+pin the report's schema and its tracing ownership. `make outcome-archive-bench`
+runs `buildlimits.outcome_archive_bench` and prints a JSON report with the
+source size, record count, archive size, ratio, chunk size, peak buffered rows,
+elapsed time, peak resident set, temporary disk and peak traced allocation; it
+generates a representative segment when `SEGMENT=` names none and reads the
+named segment when it does.
 
 `tests/test_outcome_archive_memory.py` traces the archiver, the materializing
 read and the streaming replay separately at 4,000 and 16,000 rows, so a fixed

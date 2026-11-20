@@ -7,7 +7,11 @@ estimate is conservative, never freeing more bytes than a sidecar proves.
 
 A sealed source counts towards both budgets and can be evicted whole, but it
 is never trimmed: it is still uncompressed, so a straddler ends the walk and
-the follow-up plan trims the archive it becomes.
+the follow-up plan trims the archive it becomes. The writer's active rows
+count too, but only those the age rule keeps: a row the writer will compact
+away on its next idle tick is not retained history, and counting it would
+evict eligible closed history to make room for bytes retention has already
+expired.
 
 A count trim is only planned for an archive that no time or byte trim already
 rewrites. Those trims drop rows the planner never counted, at positions a
@@ -28,6 +32,7 @@ the follow-up plan runs them after the trim, rebuild and archival.
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_archive_trim import Trim
 
 if typ.TYPE_CHECKING:
@@ -38,7 +43,6 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
 __all__ = [
-    "ActiveHistory",
     "Budget",
     "UnknownActiveHistoryError",
     "budget_totals_are_unsettled",
@@ -58,36 +62,6 @@ class UnknownActiveHistoryError(Exception):
     operational failure instead of counting the file as empty, which would
     make any store look capped.
     """
-
-
-@dc.dataclass(frozen=True, slots=True)
-class ActiveHistory:
-    """What the writer's active file holds at the moment a run plans.
-
-    Both bounds measure the whole retained store, so the rows the writer has
-    not sealed count exactly as closed archives do. This is a snapshot, only
-    as current as the scan that produced it.
-
-    Attributes
-    ----------
-    bytes : int
-        Logical bytes in the active file.
-    records : int
-        Record rows in the active file, excluding the header.
-    first_observed_at : datetime | None
-        Earliest row observation in the active file, when one was read.
-    last_observed_at : datetime | None
-        Latest row observation in the active file, when one was read.
-    has_metadata : bool
-        Whether the rows and span were read. A file that cannot be read at all
-        contributes its size alone, and is reported as unmeasured.
-    """
-
-    bytes: int = 0
-    records: int = 0
-    first_observed_at: dt.datetime | None = None
-    last_observed_at: dt.datetime | None = None
-    has_metadata: bool = True
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -130,7 +104,7 @@ def plan_byte_steps(
     if not budget.policy.has_byte_limit:
         return True
     walk = _BudgetWalk(candidates, deletes, trims)
-    retained = budget.active.bytes + sum(
+    retained = budget.active.budget_bytes + sum(
         size for _, size in walk.surviving(planned_size)
     )
     return walk.evict(retained - budget.policy.max_bytes, planned_size, _byte_trim)
@@ -163,11 +137,12 @@ def plan_record_steps(
     """Evict the oldest entries until the retained record cap is met.
 
     Only an explicitly configured cap applies, and it bounds the whole
-    retained store: the active file's rows and every closed entry's rows count
-    towards it. A sealed source is closed history and is evicted whole like an
-    archive. ``deletes`` and ``trims`` are updated in place, as the byte budget
-    does. ``require_measurable_active`` raises when the active rows were not
-    read: no plan can show the store is within a cap it cannot count against.
+    retained store: the active rows the age rule keeps and every closed
+    entry's rows count towards it. A sealed source is closed history and is
+    evicted whole like an archive. ``deletes`` and ``trims`` are updated in
+    place, as the byte budget does. ``require_measurable_active`` raises when
+    the active rows were not read: no plan can show the store is within a cap
+    it cannot count against.
 
     Returns
     -------
@@ -179,7 +154,7 @@ def plan_record_steps(
     if max_records is None:
         return True
     walk = _BudgetWalk(candidates, deletes, trims)
-    retained = budget.active.records
+    retained = budget.active.budget_records
     retained += sum(
         records
         for _entry, records in walk.surviving(planned_records)

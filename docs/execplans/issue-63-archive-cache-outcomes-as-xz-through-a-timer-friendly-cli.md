@@ -530,6 +530,25 @@ verified archive is published, and leaves compile admission untouched.
   control. All seven commit gates pass once each on the final tree, with
   `make test` reporting 4538 passed and 86 skipped, 76 snapshots, and the
   duplication gate allowing 272 reasoned exceptions.
+- [x] Whole-plan revision-18 remediation (2026-11-20): three active-history
+  defects are fixed. Both budgets now count the active rows the age rule keeps
+  rather than the whole file: a row the writer will compact away is not
+  retained history, and counting it evicted an archive that fitted its bound
+  while leaving the eligible archive byte-identical only when the expired rows
+  were excluded. The active file is opened once and measured through that
+  descriptor, so its size and rows cannot come from two versions when the
+  writer replaces the path mid-scan, and the cutoff scan reports the surviving
+  bytes and rows beside the whole-file figures. The final report reads the
+  inventory on both sides of the active read and retries until they agree, so a
+  seal cannot leave either copy out of the reported count and span; a writer
+  that seals on every reading reports `unsettled` at exit 75. Four complete-run
+  regressions live in the new `test_outcome_archive_active_budget`, two in
+  `test_outcome_archive_active`, and two in `test_outcome_archive_settlement`.
+  Each fix was mutated back to its pre-fix behaviour and the matching
+  regressions failed for the intended reason before the mutation was reverted.
+  The 400-line module ceiling forced two structural extractions:
+  `outcome_archive_age` owns the age decisions, and `outcome_archive_history`
+  owns the active snapshot and the retained-history summary.
 
 ## Surprises & discoveries
 
@@ -716,6 +735,22 @@ verified archive is published, and leaves compile admission untouched.
   rows, so the plan counts neither copy. Reading the inventory again after the
   active file is what makes the move visible; a seal after the second read is
   consistent with the active snapshot and needs no retry.
+- Measuring the active file with two calls is a mixed-version bug even without
+  the age rule. A `stat` for the size followed by an open for the rows can
+  describe a writer that replaced the path between them as one enormous file
+  with another's rows, or as a small file whose rows belong to the larger
+  version. Opening once and reading both figures from that descriptor is the
+  only pairing that cannot be split by a writer the archiver does not lock out.
+  The regression test moves a seven-row file over a two-row path inside the
+  open seam, and a fresh `stat` mutation reports the replacement's size beside
+  the opened version's rows.
+- Writing the three fixes pushed two modules past the 400-line ceiling. The age
+  decisions are now `outcome_archive_age`, and the active snapshot and the
+  retained-history summary are `outcome_archive_history`; the budget module and
+  the planner tests import `ActiveHistory` from the history module, and the
+  planner imports the two age helpers. The split is by responsibility rather
+  than by line count: the planner now reads as planning, not as age arithmetic
+  or snapshot bookkeeping.
 
 ## Decision log
 
@@ -972,6 +1007,26 @@ verified archive is published, and leaves compile admission untouched.
   archive counts and an active-row count and asserts the cap counts both. Both
   were checked with executable negative controls: disabling the age step fails
   the first, and dropping the active rows from the count fails the second.
+- The active file's contribution is measured with a cutoff, not from its
+  whole-file figures. `active_history` opens the path once and derives the size
+  and the rows from that descriptor; when a cutoff is given it also counts the
+  bytes and rows at or after the cutoff, and `ActiveHistory.budget_bytes` and
+  `budget_records` are what both budget walks consume. The report keeps the
+  whole-file figures, because it describes what the store physically holds
+  until the writer compacts. The final report is read through
+  `outcome_archive_retain.final_snapshot`, which scans the inventory before and
+  after the active read and accepts only a pair of scans that agree.
+- The three active-history defects are pinned by complete-run regressions in
+  `test_outcome_archive_active_budget` (expired active bytes and rows leave an
+  eligible archive byte-identical under both bounds, while kept active rows
+  still meet the bound and evict it), by a cutoff-scan test and a
+  replacement-during-open test in `test_outcome_archive_active`, and by a
+  report-retry and a persistent-seal test in `test_outcome_archive_settlement`.
+  Each was checked against a mutation that restores the pre-fix behaviour:
+  returning whole-file figures from `budget_bytes`/`budget_records` fails both
+  expired-row tests, re-statting the path for the size fails the replacement
+  test, and replacing the retrying snapshot with a single read fails both
+  report tests.
 
 ## Outcomes & retrospective
 
@@ -1010,7 +1065,12 @@ Invariants:
    that still remains reports the retryable `unsettled` status instead. A pass
    that quarantines counted history, or finds the store changed between its two
    reads, does not evict; it leaves the budget to a fresh pass or the next
-   firing.
+   firing. Both budgets count only the active rows the age rule keeps, measured
+   with the file's size through one opened version, so a row the writer will
+   compact away cannot evict closed history and no reading pairs one version's
+   bytes with another's rows. The report's own reading is retried until the
+   inventory and the active file describe one version, and reports `unsettled`
+   when the writer never lets them.
 5. Eviction is oldest-first; records at the cutoff survive.
 6. Iterating history yields records in sequence order: archived or sealed
    segments ascending, then the active file.
@@ -1117,7 +1177,16 @@ the active-row property's generator reaches an excess the active rows alone
 cause, and dropping them from the count makes it fail on the cap. The
 settlement regressions assert the observable outcome before the status - the
 second trim, the archived source, the untouched archive and sidecar, and the
-four archives - so a seam that never fired cannot make any of them pass.
+four archives - so a seam that never fired cannot make any of them pass. The
+active-history regressions were each checked against a mutation that restores
+the defect: returning the whole-file figures from `budget_bytes` and
+`budget_records` makes both expired-row tests fail (the archive stops being
+byte-identical, and the reported count drops to the post-eviction 5), reading
+the size with a fresh `stat` makes the replacement test report 4349 bytes
+beside the two rows of the 1319-byte opened version, and replacing the retrying
+snapshot with a single read makes both report tests fail (the sealed source is
+undercounted, and the persistent seal reports `ok` instead of `unsettled`).
+Each mutation was reverted and the focused suite passed again.
 
 ## Revision note
 
@@ -1266,3 +1335,16 @@ four archives - so a seam that never fired cannot make any of them pass.
   `tests/outcome_archive_helpers.py` so both interleaving suites share them,
   and the duplication gate's prelude and import families are recorded as
   reasoned exceptions.
+- Revision 18 records the whole-plan revision-17 assessment's three findings.
+  The budgets now count the active rows the age rule keeps, so expired rows
+  cannot evict eligible closed history; the archive they would have evicted is
+  asserted byte-identical for both bounds. The active file is measured through
+  one descriptor, so a writer that replaces the path mid-read cannot pair one
+  version's bytes with another's rows. The final report reads the inventory
+  before and after the active read and retries until they agree, reporting
+  `unsettled` at exit 75 when the writer never lets it settle. The extra
+  content pushed two modules past the 400-line ceiling, so the age decisions
+  moved to `outcome_archive_age` and the active snapshot and retained-history
+  summary to `outcome_archive_history`. The users' guide, the developers' guide
+  and ADR 0010 describe the surviving-row measurement, the one-descriptor read
+  and the retried report.

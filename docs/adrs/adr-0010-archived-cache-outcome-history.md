@@ -140,35 +140,47 @@ disagree about a bound.
   eviction. A record whose observation time equals the cutoff is retained, and
   one older than the cutoff is not.
 - The byte budget is `cache_outcomes_max_bytes`. It counts logical uncompressed
-  bytes across active, sealed and archived history: active and sealed files by
-  `stat`, an archive by its sidecar's `logical_bytes`. Zero disables the byte
-  bound.
+  bytes across active, sealed and archived history: a sealed file by its
+  `stat`, an archive by its sidecar's `logical_bytes`. The active file
+  contributes only the bytes of the rows the age rule keeps, measured in the
+  same scan that counts them: a row the writer will compact away is not
+  retained history, and counting it would evict closed history to make room for
+  bytes retention has already released. Zero disables the byte bound.
 - The record cap is `cache_outcomes_max_records`. A positive value applies in
   either mode. When it is omitted, a segmented store has no count cap and a
   legacy store keeps the historical 10,000-record cap. The cap bounds the whole
-  store, so the archiver counts the active file's rows and each sealed source's
-  recorded count as well as the surviving archives. Oldest-first eviction
-  considers archives and sealed sources together: a sealed source outside the
-  budget is deleted whole rather than compressed into an archive the same run
-  would remove, while the writer's active file stays outside the archiver's
-  reach, and a sealed source that straddles the age or byte cutoff is archived
-  untrimmed and trimmed by the run's follow-up plan. The walks act only on
-  measured history: while a surviving sealed source has no writer metadata, or
-  an archive has no trustworthy sidecar, the plan cannot tell which rows will
-  survive and leaves the whole budget to its follow-up pass rather than choose
-  a deletion from a partial total. A source the writer seals during the run is
-  discovered by that follow-up pass and archived before the budget is planned
-  over it, so a cap can still be met in one firing. A pass does not repeat a
-  trim against the archive version it already rewrote, but the same allowance
-  proposed for a re-measured archive is a new decision, because the active file
-  can re-grow the store past the cap after a rewrite. A pass that quarantines
-  an archive or a source also stops before eviction: the quarantined rows were
-  part of the total the budget was planned over, so eviction waits for a fresh
-  plan. A seal that lands between a pass's inventory and active-file reads is
-  detected by reading the inventory again, and the pass is replanned rather
-  than counting neither copy. If new seals keep the bounded follow-up passes
-  from settling the store, the run reports `unsettled` and exits 75 rather than
+  store, so the archiver counts the active rows the age rule keeps and each
+  sealed source's recorded count as well as the surviving archives.
+  Oldest-first eviction considers archives and sealed sources together: a
+  sealed source outside the budget is deleted whole rather than compressed into
+  an archive the same run would remove, while the writer's active file stays
+  outside the archiver's reach, and a sealed source that straddles the age or
+  byte cutoff is archived untrimmed and trimmed by the run's follow-up plan.
+  The walks act only on measured history: while a surviving sealed source has
+  no writer metadata, or an archive has no trustworthy sidecar, the plan cannot
+  tell which rows will survive and leaves the whole budget to its follow-up
+  pass rather than choose a deletion from a partial total. A source the writer
+  seals during the run is discovered by that follow-up pass and archived before
+  the budget is planned over it, so a cap can still be met in one firing. A
+  pass does not repeat a trim against the archive version it already rewrote,
+  but the same allowance proposed for a re-measured archive is a new decision,
+  because the active file can re-grow the store past the cap after a rewrite. A
+  pass that quarantines an archive or a source also stops before eviction: the
+  quarantined rows were part of the total the budget was planned over, so
+  eviction waits for a fresh plan. A seal that lands between a pass's inventory
+  and active-file reads is detected by reading the inventory again, and the
+  pass is replanned rather than counting neither copy. The final report is
+  bounded the same way: the inventory is scanned on both sides of the
+  active-file read and the reading is retried until the two scans agree, so a
+  seal cannot leave either copy out of the reported count and span. If new
+  seals keep the bounded follow-up passes, or the report's readings, from
+  settling the store, the run reports `unsettled` and exits 75 rather than
   claiming success; the next firing retries.
+- The active file is measured through one opened descriptor, so its size and
+  its rows describe the same version even when the writer replaces the path
+  with a compacted or sealed file mid-scan. A path that is not a regular file
+  is refused rather than counted, because following a link would let a file
+  outside the store decide retention.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
   segment, or a budget of zero, makes the writer seal closed segments. The
   default budget remains the legacy 12 MiB, so a deployment that writes none of
