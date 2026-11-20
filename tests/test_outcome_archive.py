@@ -24,9 +24,14 @@ from outcome_archive_helpers import (
 )
 from segment_test_helpers import sidecar_document, write_private
 
-from buildlimits import outcome_archive_files, outcome_archive_quarantine
+from buildlimits import (
+    outcome_archive_files,
+    outcome_archive_quarantine,
+    outcome_segment_inventory,
+)
 from buildlimits.outcome_archive import (
     EXIT_CORRUPT,
+    EXIT_FAILED,
     EXIT_OK,
     EXIT_TEMPFAIL,
     inspect_store,
@@ -35,18 +40,6 @@ from buildlimits.outcome_archive_lock import ArchiveLock
 from buildlimits.outcome_archive_verify import OutputFaultError
 from buildlimits.outcome_segments import archive_name, segment_name, sidecar_name
 
-if typ.TYPE_CHECKING:
-    import pytest
-
-
-
-"""End-to-end archive runs: statuses, dry runs and damaged stores.
-The archiver plans, compresses, verifies and reports in one timer firing.
-These tests build real segments with the writer and assert the observable
-contract a timer depends on: closed exit statuses, a dry run that changes
-nothing, a lock that reports busy, and damaged files that are quarantined
-rather than silently trusted.
-"""
 if typ.TYPE_CHECKING:
     import pytest
 
@@ -110,6 +103,7 @@ def test_a_held_lock_reports_a_retryable_status(tmp_path: Path) -> None:
     assert report.status == "busy", "the run did not start"
     assert report.exit_status == EXIT_TEMPFAIL, "a retry may succeed"
     assert report.reason == "busy", "the reason is closed"
+    assert report.maintenance.reason == "busy", "the state reason is closed too"
     assert not archives(tmp_path), "a busy run publishes nothing"
 
 
@@ -128,7 +122,13 @@ def test_a_run_plans_the_store_it_finds_under_its_lock(
     def enter_after_sealing(lock: ArchiveLock) -> ArchiveLock:
         """Acquire the lock, then seal a new segment before the run plans."""
         held = enter(lock)
-        write(store, records(NOW, 1), policy())
+        try:
+            write(store, records(NOW, 1), policy())
+        except BaseException:
+            # A failure here happens inside ``__enter__``, so the ``with``
+            # statement will never call ``__exit__`` and must not leak the lock.
+            lock.__exit__(None, None, None)
+            raise
         return held
 
     monkeypatch.setattr(ArchiveLock, "__enter__", enter_after_sealing)
@@ -309,3 +309,145 @@ def test_an_orphan_sidecar_is_quarantined(tmp_path: Path) -> None:
         "the orphan is moved aside"
     )
     assert not orphan.exists(), "nothing describes a missing archive"
+
+
+def test_a_corrupt_active_file_makes_the_retained_total_a_lower_bound(
+    tmp_path: Path,
+) -> None:
+    """Closed history is still archived, but the run cannot claim success.
+
+    The active file's size is measurable while its rows are not, so a timer
+    that recorded ``ok`` would present an undercount as the exact retained
+    history.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 2), policy())
+    damaged = b'{"format":"buildlimits-cache-outcomes"}\n'
+    store.write_bytes(damaged)
+    store.chmod(0o600)
+
+    report = run(tmp_path, policy())
+
+    assert len(archives(tmp_path)) == 2, "readable closed history is archived"
+    assert report.status == "corrupt", "the run names the active-file fault"
+    assert report.exit_status == EXIT_CORRUPT, "an operator must look"
+    assert report.active_bytes == len(damaged), "the file's size is still reported"
+    assert report.retained is not None and not report.retained.complete, (
+        "the retained totals are marked incomplete"
+    )
+
+
+def test_a_corrupt_active_file_fails_a_dry_run_without_writing_state(
+    tmp_path: Path,
+) -> None:
+    """An inspection reports the same fault while changing nothing."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    store.write_bytes(b"not a header\n")
+    store.chmod(0o600)
+
+    report = run(tmp_path, policy(), dry_run=True)
+
+    assert report.dry_run, "the report still says no file changed"
+    assert report.status == "corrupt", "inspection names the same fault"
+    assert report.exit_status == EXIT_CORRUPT, "a caller can act on it"
+    assert not report.maintenance.state_written, "a dry run installs no state"
+
+
+def test_a_dry_run_reports_the_inventory_it_planned_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dry run must not rescan a directory another process may change.
+
+    Re-reading after planning could describe a segment the plan never saw, so
+    the reported history would not match the reported plan.
+    """
+    seeded_store(tmp_path, records(NOW, 2))
+    read_inventory = outcome_segment_inventory.read_inventory
+    calls = 0
+
+    def counted_read(*args: object, **kwargs: object) -> object:
+        """Count inventory reads without changing their result."""
+        nonlocal calls
+        calls += 1
+        return read_inventory(*args, **kwargs)
+
+    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", counted_read)
+
+    report = run(tmp_path, policy(), dry_run=True)
+
+    assert calls == 1, "the dry run plans and reports from one inventory scan"
+    assert report.retained is not None, "the report describes the planned history"
+    assert report.retained.closed_segments == 2, "both planned segments are described"
+
+
+def test_an_unreadable_store_fails_a_dry_run_without_writing_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed inspection keeps its dry-run flag and installs no state."""
+
+    def refuse(*_args: object, **_kwargs: object) -> object:
+        """Refuse the inventory scan the run needs."""
+        raise OSError("the store cannot be read")
+
+    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", refuse)
+
+    report = run(tmp_path, policy(), dry_run=True)
+
+    assert report.status == "failed", "the run could not start"
+    assert report.reason == "unreadable", "the reason is closed"
+    assert report.dry_run, "the report keeps the caller's dry-run choice"
+    assert not report.maintenance.state_written, "no state file was installed"
+
+
+def test_a_busy_run_reports_that_it_wrote_no_state(tmp_path: Path) -> None:
+    """A deferred run must not claim maintenance it never performed."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 1), policy())
+
+    with ArchiveLock(layout(tmp_path).lock_file):
+        report = run(tmp_path, policy())
+
+    assert report.status == "busy", "the run did not start"
+    assert not report.maintenance.state_written, "a busy run installs no state"
+
+
+def test_a_failed_post_work_read_keeps_the_work_already_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Archives published before a read failure must stay in the report.
+
+    The retention pass and the later scans read the store this run has just
+    published. Returning a pre-run failure would erase real published work
+    from the record, so the report names the work and says only that it could
+    not be measured.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 2), policy())
+    read_inventory = outcome_segment_inventory.read_inventory
+    calls = 0
+
+    def fail_after_planning(*args: object, **kwargs: object) -> object:
+        """Let the plan read succeed, then refuse every later scan."""
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise OSError("the store cannot be read")
+        return read_inventory(*args, **kwargs)
+
+    monkeypatch.setattr(
+        outcome_segment_inventory, "read_inventory", fail_after_planning
+    )
+
+    report = run(tmp_path, policy())
+
+    assert report.status == "failed", "the result could not be measured"
+    assert report.exit_status == EXIT_FAILED, "a retry may recompute it"
+    assert report.reason == "unreadable", "the reason is closed"
+    assert [action.sequence for action in report.actions] == [1, 2], (
+        "both published archives are still reported"
+    )
+    assert len(archives(tmp_path)) == 2, "the archives are real on disk"
+    store_layout = layout(tmp_path)
+    assert not store_layout.retention_file.exists(), "no floor is recorded"
+    assert not store_layout.last_run_file.exists(), "no report is installed"
+    assert not report.maintenance.state_written, "the report says so"

@@ -995,8 +995,10 @@ appending above the fragment, an oversized active file is sealed, and an active
 file whose oldest record predates the age cutoff is compacted, so a store that
 stayed small is not exempt from the age bound.
 
-The archiver in `outcome_archive` only reads the active file's size. It never
-opens its content and never takes its queue. `outcome_archive_lock` takes a
+The archiver in `outcome_archive` never writes the active file and never takes
+its queue. It reads the file's size for every retention decision and, once per
+run, reads its content through the same bounded reader the writer uses, only to
+report the retained rows. `outcome_archive_lock` takes a
 non-blocking exclusive `flock` on `cache-outcomes.archive/archive.lock` for the
 whole run, and its headroom guard refuses a run whose temporary files cannot
 fit; a second invocation reports `busy` and exits 75 rather than waiting. There

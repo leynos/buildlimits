@@ -241,9 +241,14 @@ def _write_evictions(report: RunReport) -> None:
 
 
 def _write_maintenance(report: RunReport) -> None:
-    """Print a state-persistence failure an operator may need to act on."""
-    if not report.maintenance.state_written:
-        print(f"state: not written ({report.maintenance.reason})")
+    """Print a state-persistence failure an operator may need to act on.
+
+    A run that never expected to install state, such as a dry run, carries no
+    maintenance reason and is already labelled above; only a fault is printed.
+    """
+    reason = report.maintenance.reason
+    if not report.maintenance.state_written and reason is not None:
+        print(f"state: not written ({reason})")
 
 
 def _cutoff_text(report: RunReport) -> str:

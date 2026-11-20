@@ -114,40 +114,48 @@ def run_archive(
     try:
         if selected.dry_run:
             # A dry run mutates nothing, so it may plan without the lock.
-            plan, active = _plan(layout, policy, started)
-            return _dry_report(_archive_run(context, plan), active)
+            plan, active, inventory = _plan(layout, policy, started)
+            return _dry_report(_archive_run(context, plan), active, inventory)
         with outcome_archive_lock.ArchiveLock(layout.lock_file):
             # Another archiver may have changed the store while this process
             # waited for the lock, so the plan is built from what is on disk
             # now rather than from a pre-lock inventory.
-            plan, active = _plan(layout, policy, started)
+            plan, active, _ = _plan(layout, policy, started)
             return _execute(_archive_run(context, plan), active)
     except outcome_archive_lock.ArchiveBusyError:
-        return _unfinished(started, "busy", "busy", policy)
+        return _unfinished(started, "busy", "busy", policy, dry_run=selected.dry_run)
     except outcome_archive_lock.NoHeadroomError:
-        return _unfinished(started, "no_headroom", "no_headroom", policy)
+        return _unfinished(
+            started, "no_headroom", "no_headroom", policy, dry_run=selected.dry_run
+        )
     except OSError:
-        return _unfinished(started, "failed", "unreadable", policy)
+        return _unfinished(
+            started, "failed", "unreadable", policy, dry_run=selected.dry_run
+        )
 
 
 def _plan(
     layout: SegmentLayout, policy: RetentionPolicy, now: dt.datetime
-) -> tuple[Plan, ActiveHistory]:
+) -> tuple[Plan, ActiveHistory, outcome_segment_inventory.Inventory]:
     """Read the store as it is and plan one run from it.
 
     The active file is read once, through a bounded reader, so its size drives
     the plan and its rows describe the retained history without a second pass.
+    The inventory the plan was built from is returned as well, so a dry run
+    reports the same history it planned against rather than a later scan that
+    another process may already have changed.
 
     Returns
     -------
-    tuple[Plan, ActiveHistory]
-        The operations to perform and the active file's measured state.
+    tuple[Plan, ActiveHistory, Inventory]
+        The operations to perform, the active file's measured state and the
+        closed-history inventory the plan was derived from.
     """
     floor = outcome_segment_state.read_retention_floor(layout)
     inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
     active = outcome_archive_active.read_active_history(layout.active)
     plan = plan_run(inventory, policy, now=now, active_bytes=active.logical_bytes)
-    return plan, active
+    return plan, active, inventory
 
 
 def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.ArchiveRun:
@@ -169,6 +177,10 @@ def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.Arc
 def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunReport:
     """Take the archive directories, perform the plan and write state.
 
+    A run whose active file cannot be counted is reported as ``corrupt`` even
+    when every closed segment succeeded: the retained total is then a lower
+    bound, and a timer that recorded ``ok`` would hide history it cannot see.
+
     A state write that fails does not discard the report of work already done:
     the archive and its evictions are real even when ``retention.json`` could
     not be replaced. The run then reports ``failed`` with
@@ -188,17 +200,25 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
     )
     outcome = outcome_archive_run.RunOutcome()
     outcome_archive_run.perform(run, outcome)
-    outcome_archive_run.retain(run, outcome)
-    floor = _retention_floor(
-        outcome_segment_inventory.read_inventory(layout),
-        outcome_segment_state.read_retention_floor(layout),
-        outcome,
-    )
-    final = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
+    try:
+        # The retention pass re-plans from the store this run has just
+        # published, so it can fail to read what ``perform`` already wrote.
+        outcome_archive_run.retain(run, outcome)
+        floor = _retention_floor(
+            outcome_segment_inventory.read_inventory(layout),
+            outcome_segment_state.read_retention_floor(layout),
+            outcome,
+        )
+        final = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
+    except OSError:
+        # The archives and evictions are already published. Returning the
+        # pre-run failure report would erase them from the record, so keep
+        # what the run did and say only that the result could not be measured.
+        return _after_work_failure(run, active, outcome, "unreadable")
     measured = retained_history(final, active)
     records, observed_from, observed_until = _observed(final)
     report = RunReport(
-        status="corrupt" if outcome.failures else "ok",
+        status="corrupt" if outcome.failures or not active.complete else "ok",
         started_at=run.started_at,
         finished_at=utc_now(),
         active_bytes=active.logical_bytes,
@@ -306,25 +326,35 @@ def _observed(
 
 
 def _dry_report(
-    run: outcome_archive_run.ArchiveRun, active: ActiveHistory
+    run: outcome_archive_run.ArchiveRun,
+    active: ActiveHistory,
+    inventory: outcome_segment_inventory.Inventory,
 ) -> RunReport:
     """Build the report a dry run returns without changing any file.
 
     ``retained_bytes`` is the plan's conservative estimate, because a dry run
     is asked what the bound would be after the work. ``retained`` describes
-    the state on disk now, which a caller needs to tell the two apart.
+    the same inventory the plan was built from, which a caller needs to tell
+    the two apart: re-reading the directory here could report a segment that
+    the plan never saw. No state file is installed, so the report says so.
+
+    Parameters
+    ----------
+    run : ArchiveRun
+        The plan and context this inspection describes.
+    active : ActiveHistory
+        The active file's measured state.
+    inventory : Inventory
+        The closed-history inventory the plan was derived from.
 
     Returns
     -------
     RunReport
-        A successful dry-run report carrying the plan and current history.
+        A dry-run report carrying the plan and the history it planned against.
     """
-    layout = run.context.layout
-    floor = outcome_segment_state.read_retention_floor(layout)
-    inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
     records, observed_from, observed_until = _observed(inventory)
     return RunReport(
-        status="ok",
+        status="ok" if active.complete else "corrupt",
         started_at=run.started_at,
         finished_at=utc_now(),
         dry_run=True,
@@ -343,6 +373,40 @@ def _dry_report(
         orphan_sidecars=inventory.orphan_sidecars,
         limits=RetentionLimits.of(run.context.policy),
         retained=retained_history(inventory, active),
+        maintenance=Maintenance(state_written=False),
+    )
+
+
+def _after_work_failure(
+    run: outcome_archive_run.ArchiveRun,
+    active: ActiveHistory,
+    outcome: outcome_archive_run.RunOutcome,
+    reason: str,
+) -> RunReport:
+    """Report a run whose result could not be measured after it did the work.
+
+    The archives and evictions are already published, so the actions and
+    failures are reported as they happened. The retained totals are unknown,
+    and no state file was installed; a retry recomputes both from the disk.
+
+    Returns
+    -------
+    RunReport
+        A failed report that still records the work the run completed.
+    """
+    return RunReport(
+        status="failed",
+        started_at=run.started_at,
+        finished_at=utc_now(),
+        active_bytes=active.logical_bytes,
+        budget_bytes=run.context.policy.max_bytes,
+        cutoff=run.plan.cutoff,
+        plan=run.summary,
+        actions=tuple(outcome.actions),
+        failures=tuple(outcome.failures),
+        limits=RetentionLimits.of(run.context.policy),
+        maintenance=Maintenance(state_written=False, reason=reason),
+        reason=reason,
     )
 
 
@@ -351,11 +415,15 @@ def _unfinished(
     status: RunStatus,
     reason: str,
     policy: RetentionPolicy,
+    *,
+    dry_run: bool,
 ) -> RunReport:
     """Build a report for a run that could not start or complete.
 
     The effective limits are reported even when no run happened, so a caller
-    that only reads the failure document still learns the policy in force.
+    that only reads the failure document still learns the policy in force. No
+    maintenance state was installed on any of these paths, so the report says
+    so rather than inheriting the successful default.
 
     Returns
     -------
@@ -366,7 +434,8 @@ def _unfinished(
         status=status,
         started_at=started,
         finished_at=utc_now(),
+        dry_run=dry_run,
         limits=RetentionLimits.of(policy),
+        maintenance=Maintenance(state_written=False, reason=reason),
         reason=reason,
     )
-# weave: run 'weave explain buildlimits/outcome_archive.py' for per-hunk detail, 'weave check' to verify your resolution

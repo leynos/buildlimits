@@ -548,7 +548,8 @@ names its reason, and `failures`, `gaps`, `missing_sidecars`,
 processed. `maintenance` reports whether `retention.json` and `last-run.json`
 were installed, with `state_write_failed` when they were not: archives and
 evictions already published stay in place, and the next firing rewrites the
-state from what is on disk.
+state from what is on disk. A dry run, a deferred run and a run that could not
+start install no state and report `state_written` as false.
 
 ### Compare offline hit predictors
 

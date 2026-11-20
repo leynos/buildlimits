@@ -240,8 +240,12 @@ def running_writer(
     writer = ready_writer(path, queue_capacity=queue_capacity)
     try:
         yield writer
-    finally:
+    except BaseException:
+        # Never mask the test's own failure with a shutdown assertion.
         writer.close(1.0)
+        raise
+    else:
+        close_writer(writer, 1.0)
 
 
 def load_and_close(
