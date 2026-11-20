@@ -11,6 +11,7 @@ import typing as typ
 
 from buildlimits import outcome_records, outcome_segments, outcome_store_restart
 from buildlimits.outcome_retention import RetentionPolicy
+from buildlimits.outcome_retention_report import ActiveHistory, measured_history
 from buildlimits.outcome_store_io import (
     append_line,
     read_store,
@@ -20,31 +21,14 @@ from buildlimits.outcome_store_io import (
 from buildlimits.outcome_store_sealing import seal
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     from pathlib import Path
 
-    from buildlimits.outcome_key import Salt
-    from buildlimits.outcome_record_format import StoreRecord
-    from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
-
-_CLOCK_SKEW_SECONDS = 24 * 60 * 60
-
-
-from buildlimits.outcome_retention_report import ActiveHistory, measured_history
-from buildlimits.outcome_store_tail import drop_torn_tail
-
-"""The writer's file state machine for the cache-outcome store.
-compaction and bounded-append rules here, apart from the queue plumbing in
-``outcome_store``, lets the transition logic be read and tested without
-starting a thread. Sealing lives in ``outcome_store_sealing``.
-"""
-if typ.TYPE_CHECKING:
-    from pathlib import Path
     from buildlimits.outcome_key import Salt
     from buildlimits.outcome_ports import StorePublisher
     from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_store_clock import Clocks
     from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
+
 _CLOCK_SKEW_SECONDS = 24 * 60 * 60
 
 

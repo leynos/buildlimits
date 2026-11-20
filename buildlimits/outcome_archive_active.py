@@ -53,9 +53,7 @@ def read_active_history(path: Path) -> ActiveHistory:
         return ActiveHistory()
     match snapshot.decoded:
         case outcome_records.DecodedStore() as store:
-            return measured_history(
-                store.records, logical_bytes=snapshot.logical_bytes
-            )
+            return measured_history(store.records, logical_bytes=snapshot.logical_bytes)
         case outcome_records.RecordFailure() as failure:
             # The size is still a fact, but no row or time can be trusted.
             return ActiveHistory(

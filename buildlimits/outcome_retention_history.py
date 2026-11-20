@@ -54,9 +54,7 @@ def retained_history(
     False
     """
     measured = (
-        ActiveHistory(complete=False, reason="unmeasured")
-        if active is None
-        else active
+        ActiveHistory(complete=False, reason="unmeasured") if active is None else active
     )
     entries = inventory.effective
     sealed_bytes = _logical_bytes(entries, "sealed")

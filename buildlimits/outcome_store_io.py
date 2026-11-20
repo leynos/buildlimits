@@ -7,7 +7,6 @@ store writer and salt adapter, not a standalone public API.
 import contextlib
 import dataclasses as dc
 import errno
-import json
 import os
 import stat
 import typing as typ
@@ -15,7 +14,6 @@ import typing as typ
 from buildlimits import outcome_records
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     from pathlib import Path
 
     from buildlimits.outcome_record_format import StoreRecord
@@ -94,20 +92,15 @@ def read_store_snapshot(path: Path) -> StoreSnapshot:
     -------
     StoreSnapshot
         The decoded rows or closed failure, with the exact byte length read.
-
-    Raises
-    ------
-    OSError
-        If the file cannot be opened or read.
+        A filesystem failure propagates as ``OSError`` rather than becoming a
+        snapshot: an unreadable store is not an empty one.
     """
     try:
         document = read_private_bytes(path, limit=outcome_records.MAX_STORE_BYTES)
     except _OversizedError:
         # The rows are untrusted, but the file's size is still a fact. Only a
         # failing ``lstat`` here would be an unreadable store.
-        return StoreSnapshot(
-            store_size(path), outcome_records.RecordFailure("corrupt")
-        )
+        return StoreSnapshot(store_size(path), outcome_records.RecordFailure("corrupt"))
     try:
         complete_document = document[: document.rfind(b"\n") + 1]
         # An interrupted append can end inside a multibyte character. Discard
@@ -347,27 +340,6 @@ def fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def write_sequence(path: Path, value: int) -> None:
-    """Atomically store the next sealed sequence number.
-
-    The counter is written before a segment is moved, so a crash leaves a gap
-    the inventory reports rather than a sequence two segments can share.
-    Filesystem failures propagate as ``OSError``.
-    """
-    _replace_document(path, f"{value}\n".encode("ascii"))
-
-
-def write_metadata(path: Path, document: cabc.Mapping[str, object]) -> None:
-    """Atomically store one JSON metadata document beside a sealed source.
-
-    Filesystem failures propagate as ``OSError``.
-    """
-    encoded = json.dumps(
-        document, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
-    _replace_document(path, encoded + b"\n")
-
-
 def write_private_temporary(path: Path, data: bytes, *, suffix: str = "") -> Path:
     """Write ``data`` into a new private temporary beside ``path``.
 
@@ -392,12 +364,6 @@ def write_private_temporary(path: Path, data: bytes, *, suffix: str = "") -> Pat
     descriptor = os.open(temporary, flags, _FILE_MODE)
     write_private_temp(temporary, descriptor, data)
     return temporary
-
-
-def _replace_document(path: Path, data: bytes) -> None:
-    """Write bytes through one private temporary file and replace ``path``."""
-    replace_temp(write_private_temporary(path, data), path)
-    fsync_directory(path.parent)
 
 
 def write_all(descriptor: int, data: bytes) -> None:

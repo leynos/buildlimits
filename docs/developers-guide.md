@@ -366,6 +366,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_store_clock`                                                              | The wall and monotonic clock pair the writer reads together                                                                                                 |
 | `outcome_store_sealing`                                                            | The writer's sealing transition into a closed segment                                                                                                       |
 | `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes, atomic replacement and the seal rename                                                                   |
+| `outcome_store_documents`                                                          | The sequence counter and segment metadata documents, each replaced atomically                                                                               |
 | `outcome_store_tail`                                                               | Backward-chunked removal of an unterminated final row a stopped writer left                                                                                 |
 | `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                                                                                |
 | `outcome_retention`                                                                | Validated age, byte, record and headroom policy shared by the writer and archiver                                                                           |
@@ -393,6 +394,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication and atomic state writes                                             |
 | `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates and validates each private path component                                                                   |
 | `outcome_archive_report`                                                           | Bounded run report, status vocabulary and exit statuses                                                                                                     |
+| `outcome_archive_reports`                                                          | Assembling a run's report from what it measured, and writing the state beside the archives                                                                  |
 | `outcome_archive_cli`                                                              | The `build-limits-outcome-archive` timer-facing command                                                                                                     |
 | `outcome_archive_bench`                                                            | Bounded-memory archive benchmark behind `make outcome-archive-bench`                                                                                        |
 | `nonblocking_child`                                                                | Non-blocking helper-process pipes and bounded child reaping for supervisor-loop work                                                                        |
@@ -998,12 +1000,11 @@ stayed small is not exempt from the age bound.
 The archiver in `outcome_archive` never writes the active file and never takes
 its queue. It reads the file's size for every retention decision and, once per
 run, reads its content through the same bounded reader the writer uses, only to
-report the retained rows. `outcome_archive_lock` takes a
-non-blocking exclusive `flock` on `cache-outcomes.archive/archive.lock` for the
-whole run, and its headroom guard refuses a run whose temporary files cannot
-fit; a second invocation reports `busy` and exits 75 rather than waiting. There
-is no shared lock between writer and archiver, so there is no lock ordering to
-get wrong.
+report the retained rows. `outcome_archive_lock` takes a non-blocking exclusive
+`flock` on `cache-outcomes.archive/archive.lock` for the whole run, and its
+headroom guard refuses a run whose temporary files cannot fit; a second
+invocation reports `busy` and exits 75 rather than waiting. There is no shared
+lock between writer and archiver, so there is no lock ordering to get wrong.
 
 Compression and verification stream in `outcome_record_stream`'s 64 KiB chunks
 with at most one row buffered (`CHUNK_BYTES`). Peak memory therefore follows
@@ -1124,26 +1125,28 @@ definition; `run --dry-run` plans without taking the lock or writing state; and
 `~/.config/buildlimits/supervisor.toml`) and `--json`.
 
 The archive tests are `tests/test_outcome_archive.py`,
-`test_outcome_archive_files.py`, `test_outcome_archive_fs.py`,
-`test_outcome_archive_lock.py`, `test_outcome_archive_plan.py`,
-`test_outcome_archive_plan_age.py`, `test_outcome_archive_plan_bytes.py`,
-`test_outcome_archive_reconcile.py`, `test_outcome_archive_retention.py`,
-`test_outcome_archive_verify.py`, `test_outcome_archive_cli.py`,
-`test_outcome_history.py`, `test_outcome_segments.py`,
-`test_outcome_segment_inventory.py`, `test_outcome_segment_state.py`,
-`test_outcome_record_stream.py`, `test_outcome_sealing_bounds.py`,
-`test_outcome_store_tail.py`, `test_outcome_store_sealing.py`,
+`test_outcome_archive_reporting.py`, `test_outcome_archive_files.py`,
+`test_outcome_archive_fs.py`, `test_outcome_archive_lock.py`,
+`test_outcome_archive_plan.py`, `test_outcome_archive_plan_age.py`,
+`test_outcome_archive_plan_bytes.py`, `test_outcome_archive_reconcile.py`,
+`test_outcome_archive_retention.py`, `test_outcome_archive_verify.py`,
+`test_outcome_archive_cli.py`, `test_outcome_history.py`,
+`test_outcome_segments.py`, `test_outcome_segment_inventory.py`,
+`test_outcome_segment_state.py`, `test_outcome_record_stream.py`,
+`test_outcome_sealing_bounds.py`, `test_outcome_store_tail.py`,
+`test_outcome_store_sealing.py`, `test_outcome_store_snapshot.py`,
 `test_outcome_retention_config.py`, `test_outcome_retention_compaction.py`,
 `test_outcome_retention_report.py` and `test_outcome_retention_diagnostics.py`;
 the store and startup fixtures they share live in
 `tests/outcome_retention_helpers.py`. `tests/test_outcome_archive_bench.py`
 holds the reader's traced-memory test, which streams a multi-megabyte segment
 under one mebibyte, and the tests that pin the report's schema and its tracing
-ownership. `make outcome-archive-bench` runs `buildlimits.outcome_archive_bench`
-and prints a JSON report with the source size, record count, archive size,
-ratio, chunk size, peak buffered rows, elapsed time, peak resident set,
-temporary disk and peak traced allocation; it generates a representative
-segment when `SEGMENT=` names none and reads the named segment when it does.
+ownership. `make outcome-archive-bench` runs
+`buildlimits.outcome_archive_bench` and prints a JSON report with the source
+size, record count, archive size, ratio, chunk size, peak buffered rows,
+elapsed time, peak resident set, temporary disk and peak traced allocation; it
+generates a representative segment when `SEGMENT=` names none and reads the
+named segment when it does.
 
 ## 10. Adapters
 
