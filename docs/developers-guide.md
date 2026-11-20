@@ -395,7 +395,8 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication and atomic state writes                                             |
 | `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates and validates each private path component                                                                   |
 | `outcome_archive_report`                                                           | Bounded run report, status vocabulary and exit statuses                                                                                                     |
-| `outcome_archive_reports`                                                          | Assembling a run's report from what it measured, and writing the state beside the archives                                                                  |
+| `outcome_archive_reports`                                                          | Assembling a run's report from what it measured                                                                                                             |
+| `outcome_archive_state`                                                            | The retention-floor rule and the state writers, including the pending fallback record                                                                       |
 | `outcome_archive_cli`                                                              | The `build-limits-outcome-archive` timer-facing command                                                                                                     |
 | `outcome_archive_bench`                                                            | Bounded-memory archive benchmark behind `make outcome-archive-bench`                                                                                        |
 | `nonblocking_child`                                                                | Non-blocking helper-process pipes and bounded child reaping for supervisor-loop work                                                                        |
@@ -1080,11 +1081,13 @@ trusts a validated sidecar rather than decompressing an archive.
 `Inventory.effective` prefers a sealed source over an archive with the same
 sequence, because a crash can leave both and the source is authoritative until
 reconciliation removes it. `outcome_segment_state.read_retention_floor` reads
-`retention.json`; the floor is why evicting old history does not look like
-corruption, so the inventory reports a missing sequence only at or above it.
-`outcome_segment_gaps.retained_gaps` names those sequences for an operator; it
-stops at `MAX_GAP_SEQUENCES` and flags the list as truncated, because a
-restarted counter would otherwise leave no ceiling on one report.
+`retention.json` and, when a run could not replace it,
+`retention-pending.json`, returning the higher valid floor; the floor is why
+evicting old history does not look like corruption, so the inventory reports a
+missing sequence only at or above it. `outcome_segment_gaps.retained_gaps`
+names those sequences for an operator; it stops at `MAX_GAP_SEQUENCES` and
+flags the list as truncated, because a restarted counter would otherwise leave
+no ceiling on one report.
 
 `outcome_history` is the read port over all three states. `read_history` walks
 archived and sealed segments in ascending sequence, then the active file; each

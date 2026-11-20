@@ -80,18 +80,44 @@ def read_sequence(path: Path) -> int | None:
 def read_retention_floor(layout: SegmentLayout) -> int | None:
     """Read the retention floor recorded by the last successful run.
 
+    ``retention.json`` is the record every run installs. When a run cannot
+    replace it, that run leaves ``retention-pending.json`` instead, so both
+    files are read and the higher valid floor wins. The floor is evidence
+    that a sequence was removed on purpose, and the fallback record is only
+    ever written for a floor the run has already computed, so preferring the
+    higher value cannot excuse a hole the run did not remove.
+
     Parameters
     ----------
     layout : SegmentLayout
-        The layout whose ``retention.json`` is read.
+        The layout whose retention records are read.
 
     Returns
     -------
     int | None
         The lowest retained sequence, or None when no valid state exists.
     """
+    floors = [
+        floor
+        for floor in (
+            _floor_in(layout.retention_file),
+            _floor_in(layout.pending_retention_file),
+        )
+        if floor is not None
+    ]
+    return max(floors, default=None)
+
+
+def _floor_in(path: Path) -> int | None:
+    """Read one retention record's floor, treating damage as absent.
+
+    Returns
+    -------
+    int | None
+        The recorded floor, or None when the file is missing or unusable.
+    """
     try:
-        raw = read_private_bytes(layout.retention_file, limit=_MAX_STATE_BYTES)
+        raw = read_private_bytes(path, limit=_MAX_STATE_BYTES)
     except OSError:
         return None
     try:

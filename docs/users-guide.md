@@ -449,8 +449,8 @@ The writer and archiver keep their state beside the store:
   `segment-NNNNNNNNNNNN.jsonl`, with `segment-NNNNNNNNNNNN.jsonl.meta.json`
   sidecars.
 - `cache-outcomes.archive/` holds `segment-NNNNNNNNNNNN.jsonl.xz` archives
-  with `.jsonl.xz.json` sidecars, plus `retention.json`, `last-run.json`,
-  `archive.lock` and `quarantine/`.
+  with `.jsonl.xz.json` sidecars, plus `retention.json`,
+  `retention-pending.json`, `last-run.json`, `archive.lock` and `quarantine/`.
 
 The archiver refuses a store whose directories, or any directory above them,
 are symlinks, are not directories, or are writable by another user; such a run
@@ -537,7 +537,11 @@ force, and what history it currently retains.
   the budget, the cutoff, and the `limits` and `retained` documents. The floor
   advances only across a contiguous run of deletions from its recorded value,
   so an archive removed beyond a sequence that is already missing does not
-  excuse that missing sequence: it keeps being reported as a gap.
+  excuse that missing sequence: it keeps being reported as a gap. A run that
+  cannot replace this file writes its floor to `retention-pending.json`
+  instead; every later read merges the two records and uses the higher valid
+  floor, so a fault local to one file does not turn a completed deletion into a
+  reported gap.
 - `last-run.json` is the full run report. Its `limits`, `retained`,
   `evictions` and `maintenance` sections are the documents the `--json` form
   prints.
@@ -570,14 +574,16 @@ reports whether `retention.json` and `last-run.json` were installed, with
 published stay in place, and the next firing rewrites the state from what is on
 disk. A failed write still gives the retention floor its own attempt, so a
 deletion the run completed is not later reported as a missing sequence when the
-fault was transient; if that write fails too, the run still reports
-`state_write_failed` and the next firing tries again. A dry run, a deferred run
-and a run that could not start install no state and report `state_written` as
-false. A run that published archives and then could not measure the result
-reports `retained` as `null` and `reason` as `unreadable`, and still lists the
-actions it performed, so the evictions it did are not hidden by the missing
-total. Its completed deletions are recorded in the floor as well, so a failed
-measurement does not leave permanent gaps.
+fault was transient. A retry that still cannot replace `retention.json` falls
+back to `retention-pending.json`, which every later read merges with the
+primary record; only when both records refuse the write is the completed
+deletion later reported as a gap. A dry run, a deferred run and a run that
+could not start install no state and report `state_written` as false. A run
+that published archives and then could not measure the result reports
+`retained` as `null` and `reason` as `unreadable`, and still lists the actions
+it performed, so the evictions it did are not hidden by the missing total. Its
+completed deletions are recorded in the floor as well, so a failed measurement
+does not leave permanent gaps unless no state record can be written.
 
 ### Compare offline hit predictors
 

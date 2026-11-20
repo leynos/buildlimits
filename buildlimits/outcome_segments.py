@@ -16,6 +16,7 @@ SEALED_DIR_NAME = "cache-outcomes.sealed"
 ARCHIVE_DIR_NAME = "cache-outcomes.archive"
 SEQUENCE_NAME = "cache-outcomes.seq"
 RETENTION_NAME = "retention.json"
+PENDING_RETENTION_NAME = "retention-pending.json"
 LAST_RUN_NAME = "last-run.json"
 QUARANTINE_DIR_NAME = "quarantine"
 LOCK_NAME = "archive.lock"
@@ -25,6 +26,7 @@ __all__ = [
     "ARCHIVE_DIR_NAME",
     "LAST_RUN_NAME",
     "LOCK_NAME",
+    "PENDING_RETENTION_NAME",
     "QUARANTINE_DIR_NAME",
     "RETENTION_NAME",
     "SEALED_DIR_NAME",
@@ -102,6 +104,8 @@ class SegmentLayout:
         The writer's next-sequence counter.
     retention_file : Path
         The archiver's record of the retention floor.
+    pending_retention_file : Path
+        A floor that could not replace ``retention_file``, read until it can.
     last_run_file : Path
         The archiver's most recent run report.
     lock_file : Path
@@ -119,6 +123,7 @@ class SegmentLayout:
     archive_dir: Path
     sequence_file: Path
     retention_file: Path
+    pending_retention_file: Path
     last_run_file: Path
     lock_file: Path
 
@@ -156,6 +161,7 @@ class SegmentLayout:
             archive_dir=archive,
             sequence_file=root / SEQUENCE_NAME,
             retention_file=archive / RETENTION_NAME,
+            pending_retention_file=archive / PENDING_RETENTION_NAME,
             last_run_file=archive / LAST_RUN_NAME,
             lock_file=archive / LOCK_NAME,
         )

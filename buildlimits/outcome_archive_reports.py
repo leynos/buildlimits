@@ -1,30 +1,26 @@
-"""Build the report and state documents one archive run returns.
+"""Build the report documents one archive run returns.
 
 Report construction is kept apart from the run's file operations so the
 archive module reads as the sequence of steps a run takes. Every field a
-caller, a timer or a later inspection reads is assembled here, including the
-documents written beside the archives.
+caller, a timer or a later inspection reads is assembled here;
+`outcome_archive_state` installs the documents that describe it.
 """
 
-import contextlib
 import dataclasses as dc
 import typing as typ
 
-from buildlimits import outcome_archive_fs
 from buildlimits.outcome_archive_report import Maintenance, RunReport, RunStatus
 from buildlimits.outcome_retention_history import retained_history
 from buildlimits.outcome_retention_report import RetentionLimits
-from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
+from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     import datetime as dt
 
     from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome
     from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_retention_report import ActiveHistory
     from buildlimits.outcome_segment_inventory import Inventory
-    from buildlimits.outcome_segments import SegmentLayout
 
 __all__ = [
     "BUSY",
@@ -32,17 +28,10 @@ __all__ = [
     "UNREADABLE",
     "Unfinished",
     "after_work_failure",
-    "contiguous_floor",
     "dry_report",
     "observed",
     "unfinished",
-    "write_deleted_floor",
-    "write_floor",
-    "write_floor_after_failure",
-    "write_state",
 ]
-
-_STATE_SCHEMA = 1
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -237,158 +226,3 @@ def observed(
     first = [entry.first_observed_at for entry in described if entry.first_observed_at]
     last = [entry.last_observed_at for entry in described if entry.last_observed_at]
     return records, min(first, default=None), max(last, default=None)
-
-
-def write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:
-    """Persist the retention floor and the run report durably.
-
-    Parameters
-    ----------
-    layout : SegmentLayout
-        The store's segment layout.
-    floor : int
-        The retention floor to record.
-    report : RunReport
-        The completed run's report. A filesystem failure propagates as
-        ``OSError`` so the caller can report that no state was installed.
-    """
-    write_floor(layout, floor, report)
-    outcome_archive_fs.atomic_write_json(layout.last_run_file, report.as_dict())
-
-
-def write_floor(layout: SegmentLayout, floor: int, report: RunReport) -> None:
-    """Persist the retention floor and the history measured beside it.
-
-    The floor is the only record that a sequence was deleted rather than
-    lost, so it is written on its own. A caller whose full state write fails
-    can then give this document a second attempt without pretending the run
-    report was installed.
-
-    Parameters
-    ----------
-    layout : SegmentLayout
-        The store's segment layout.
-    floor : int
-        The retention floor to record.
-    report : RunReport
-        The measurements the floor document describes. A filesystem failure
-        propagates as ``OSError``.
-    """
-    outcome_archive_fs.atomic_write_json(
-        layout.retention_file,
-        {
-            "schema": _STATE_SCHEMA,
-            "floor_sequence": floor,
-            "retained_logical_bytes": report.retained_bytes,
-            "budget_bytes": report.budget_bytes,
-            "cutoff": optional_utc_text(report.cutoff),
-            "limits": None if report.limits is None else report.limits.as_dict(),
-            "retained": None if report.retained is None else report.retained.as_dict(),
-            "updated_at": utc_text(report.finished_at),
-        },
-    )
-
-
-def write_floor_after_failure(
-    layout: SegmentLayout, floor: int, report: RunReport
-) -> None:
-    """Give the retention floor a second attempt after the state write failed.
-
-    The retention pass has already deleted every sequence the floor advances
-    past, and a later run that performs no deletion derives its floor from
-    this document alone. A failure of the full state write therefore gets one
-    more attempt at the floor, so a transient fault does not turn completed
-    deletions into reported gaps. A second failure is not raised: the caller
-    already returns a failed report, and there is nothing else to record.
-
-    Parameters
-    ----------
-    layout : SegmentLayout
-        The store's segment layout.
-    floor : int
-        The retention floor to record.
-    report : RunReport
-        The measurements the floor document describes.
-    """
-    with contextlib.suppress(OSError):
-        write_floor(layout, floor, report)
-
-
-def contiguous_floor(start: int, deleted: cabc.Iterable[int]) -> int:
-    """Advance a floor across a contiguous run of intentional deletions.
-
-    A single floor number can only say that every sequence below it was
-    removed on purpose. Advancing past a deletion that lies beyond a hole
-    would excuse the hole as well, so the walk stops at the first sequence
-    the run did not remove. A deletion beyond that stop is reported as a gap
-    rather than allowed to hide a sequence that may have been lost.
-
-    Parameters
-    ----------
-    start : int
-        The lowest sequence the floor may report as missing.
-    deleted : Iterable[int]
-        The sequences the run removed from the archive directory.
-
-    Returns
-    -------
-    int
-        The advanced floor.
-
-    Examples
-    --------
-    >>> contiguous_floor(1, (1, 2, 3))
-    4
-    >>> contiguous_floor(1, (1, 3))
-    2
-    >>> contiguous_floor(2, (3,))
-    2
-    """
-    removed = set(deleted)
-    floor = start
-    while floor in removed:
-        floor += 1
-    return floor
-
-
-def write_deleted_floor(
-    layout: SegmentLayout, previous: int | None, deleted: tuple[int, ...]
-) -> None:
-    """Persist the floor implied by deletions from an unmeasurable run.
-
-    The post-run read can fail after the retention pass removed archives. A
-    later run that deletes nothing derives its floor from ``retention.json``
-    alone, so the floor is written from the completed deletions and the floor
-    the last successful run recorded; no further inventory read is needed.
-    The floor advances only across a contiguous run of deletions from the
-    recorded floor, so a deletion beyond a hole cannot excuse that hole, and
-    nothing is written when the run did not advance it. Only the floor and
-    its time are recorded. The failed run has no measurement to describe, and
-    the previous document's diagnostics describe a state it never observed. A
-    write failure is suppressed because the caller already reports the run as
-    failed.
-
-    Parameters
-    ----------
-    layout : SegmentLayout
-        The store's segment layout.
-    previous : int | None
-        The floor the last successful run recorded, if any.
-    deleted : tuple[int, ...]
-        The sequences this run removed.
-    """
-    if not deleted:
-        return
-    start = 1 if previous is None else max(previous, 1)
-    floor = contiguous_floor(start, deleted)
-    if floor <= start:
-        return
-    with contextlib.suppress(OSError):
-        outcome_archive_fs.atomic_write_json(
-            layout.retention_file,
-            {
-                "schema": _STATE_SCHEMA,
-                "floor_sequence": floor,
-                "updated_at": utc_text(utc_now()),
-            },
-        )

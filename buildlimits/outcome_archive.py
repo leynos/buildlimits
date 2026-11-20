@@ -19,6 +19,7 @@ from buildlimits import (
     outcome_archive_lock,
     outcome_archive_reports,
     outcome_archive_run,
+    outcome_archive_state,
     outcome_segment_inventory,
     outcome_segment_state,
 )
@@ -213,8 +214,10 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
     the recorded floor, so a transient failure of the full write must not
     turn them into permanent gaps. A post-run read that fails takes the same
     path: the deletions are already real, so the floor is written from their
-    actions without needing another inventory read. If that write fails as
-    well, the run still reports ``failed`` and the loss is not silent.
+    actions without needing another inventory read. A retry that still cannot
+    replace ``retention.json`` falls back to ``retention-pending.json``, which
+    every reader merges with the primary record; only when both records refuse
+    the write is the loss reported as a gap.
 
     The retained totals come from ``_measure``, which reads each side of the
     store once and detects a seal racing those reads. A replacement in the
@@ -243,7 +246,7 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
         # The archives and evictions are already published. Returning the
         # pre-run failure report would erase them from the record, so keep
         # what the run did and say only that the result could not be measured.
-        outcome_archive_reports.write_deleted_floor(
+        outcome_archive_state.write_deleted_floor(
             layout,
             outcome_segment_state.read_retention_floor(layout),
             outcome_archive_run.deleted_sequences(outcome.actions),
@@ -284,9 +287,9 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
         retained=measured,
     )
     try:
-        outcome_archive_reports.write_state(layout, floor, report)
+        outcome_archive_state.write_state(layout, floor, report)
     except OSError:
-        outcome_archive_reports.write_floor_after_failure(layout, floor, report)
+        outcome_archive_state.write_floor_after_failure(layout, floor, report)
         return dc.replace(
             report,
             status="failed",
@@ -391,4 +394,4 @@ def _retention_floor(
     deleted = outcome_archive_run.deleted_sequences(outcome.actions)
     if not deleted:
         return baseline
-    return outcome_archive_reports.contiguous_floor(max(baseline, 1), deleted)
+    return outcome_archive_state.contiguous_floor(max(baseline, 1), deleted)
