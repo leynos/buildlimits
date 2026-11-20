@@ -258,6 +258,7 @@ token accounting.
 Run it from a systemd user timer as the same user that runs the supervisor. A
 oneshot service and a daily timer are enough:
 
+<!-- tested-example: buildlimits-outcome-archive-service -->
 ```ini
 # ~/.config/systemd/user/buildlimits-outcome-archive.service
 [Unit]
@@ -266,8 +267,11 @@ Description=Archive closed buildlimits cache-outcome history
 [Service]
 Type=oneshot
 ExecStart=%h/.local/bin/build-limits-outcome-archive run
+MemoryMax=512M
+TimeoutStartSec=2h
 ```
 
+<!-- tested-example: buildlimits-outcome-archive-timer -->
 ```ini
 # ~/.config/systemd/user/buildlimits-outcome-archive.timer
 [Unit]
@@ -283,6 +287,7 @@ WantedBy=timers.target
 
 Enable the timer with:
 
+<!-- tested-example: buildlimits-outcome-archive-enable -->
 ```bash
 systemctl --user enable --now buildlimits-outcome-archive.timer
 ```
@@ -313,6 +318,7 @@ Use `inspect` to see what a run would do without changing a file, or
 `run --dry-run` to take no lock and write no state. `run` performs the plan
 under its own lock:
 
+<!-- tested-example: buildlimits-outcome-archive-commands -->
 ```bash
 build-limits-outcome-archive inspect
 build-limits-outcome-archive run --dry-run
@@ -343,13 +349,29 @@ history view:
   so compression does not move the boundary.
 - Eviction is oldest-first. A record whose observation time equals the age
   cutoff is retained; one older than the cutoff is not.
-- The record cap bounds the retained record count but never evicts an archive.
+- The record cap bounds the retained record count across active, sealed and
+  archived history. It removes whole oldest archives while they fit inside the
+  excess, then trims the archive that straddles the boundary, so a segmented
+  history is capped rather than exempt. Zero leaves segmented history uncapped.
+
+The writer also enforces the age bound when it starts: an active file whose
+oldest record predates the cutoff, and which is not also oversized, is
+compacted as the store loads. A host that was idle past the bound therefore
+does not carry its expired rows forward indefinitely. An oversized file is
+sealed first, and the archiver's next run applies the age policy to that
+segment.
 
 The retention keys and their defaults are in [Table 2](#supervisor-settings).
 The 12 MiB default is the legacy bound, so a host that writes none of the keys
 keeps its current store shape. Set `cache_outcomes_max_bytes` to a larger
 logical budget to retain more history. Every retention key requires
 `cache_outcomes = "record"`.
+
+The 15,000,000,000-byte budget this design targets is not the default. Write
+`cache_outcomes_max_bytes = 15000000000` in `supervisor.toml` before enabling
+the timer, or the run retains only the legacy 12 MiB. Provisioning that key,
+and the timer itself, on a managed host is outside this release; configure them
+on the host that runs the archiver.
 
 The writer and archiver keep their state beside the store:
 
@@ -381,6 +403,11 @@ for the newest salt domain; `--salt-id ID` reads one named domain; and
 `--all-salts` imply `--history`. With none of these flags, each command reads
 only the active store, so existing invocations are unchanged.
 
+A report read across domains names every salt it counted, so a figure that
+spans a salt change is never attributed to the newest domain alone. The list is
+bounded: at most three identifiers are printed before it says that more exist,
+so a damaged store cannot make the provenance line unbounded.
+
 To reset history completely, stop the supervisor before removing the store.
 Deleting only `cache-outcomes.jsonl` no longer clears retained history once
 segments exist: also remove `cache-outcomes.seq`, `cache-outcomes.sealed/` and
@@ -398,6 +425,31 @@ The command maps every outcome to a closed exit status a timer can act on:
   decoded, a damaged archive, or a sidecar that cannot be repaired.
 - `75`: a temporary condition, such as another run holding the lock or
   insufficient temporary headroom. The next timer firing should retry.
+
+### Size the archive timer unit
+
+`make outcome-archive-bench` measures one segment and prints its sizes, the
+elapsed time, the peak resident memory and the scratch disk the pass used. Set
+`SEGMENT=/path/to/segment.jsonl` to measure a real segment instead of a
+generated one. At the default preset, on the development host:
+
+| Source  | Records | Archive | Elapsed | Peak RSS | Scratch |
+| ------- | ------- | ------- | ------- | -------- | ------- |
+| 12 MiB  | 62,830  | 746 KB  | 3.5 s   | 140 MB   | 746 KB  |
+| 100 MiB | 523,588 | 6.2 MB  | 33 s    | 143 MB   | 6.2 MB  |
+
+The peak does not follow the segment: eight times the rows moved the peak
+resident set by 3 MB. What dominates it is the compressor's dictionary, which
+the report also gives as a traced peak of about 98 MB; that figure tracks the
+XZ preset, not the history. Compare `peak_rss_bytes` with a unit's limit, and
+leave headroom for the interpreter: `MemoryMax=512M` is ample for preset 6.
+
+Throughput is about 3 MB/s of logical input, so a first run over a 15 GB
+backlog takes roughly 80 minutes, while a daily run over one day's segments
+takes seconds. Set `TimeoutStartSec` to cover the backlog rather than the
+steady state, for example `TimeoutStartSec=2h`. Scratch use is bounded by the
+archive the pass writes, which the `cache_outcomes_archive_headroom_bytes`
+setting reserves.
 
 ### Compare offline hit predictors
 

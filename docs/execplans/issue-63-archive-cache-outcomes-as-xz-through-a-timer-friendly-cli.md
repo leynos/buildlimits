@@ -197,11 +197,48 @@ verified archive is published, and leaves compile admission untouched.
   recorded as reasoned exceptions naming every member; the gate passes with 251
   reasoned exceptions. The new modules and the shared clock are documented in
   the developers' guide module inventory.
+- [x] Assessment remediation (2026-11-20): the review's eight correctness gaps
+  and its scale items are implemented, each with a regression test. Active-file
+  age is enforced at restart; a torn tail that cannot be removed stops every
+  append; a failed temporary archive leaves its readable source in place; a
+  trim whose sidecar write fails is repaired by the next run, which reports the
+  trimmed facts; the plan is built under the lock; history reads retry a
+  bounded number of times and fail closed as `unsettled` or `vanished`; and the
+  record cap now deletes whole oldest archives and trims the one that straddles
+  it. Salt-domain retirement, the multi-domain provenance and the sidecar size
+  check each have their own test. A generated 6,000-row, multi-segment history
+  archives and replays under a traced peak below 128 MiB. The benchmark reports
+  elapsed time, peak RSS and temporary disk, and `SEGMENT=` selects the file it
+  measures. The users' guide documents the measured figures, `MemoryMax=512M`,
+  `TimeoutStartSec=2h`, the explicit 15,000,000,000-byte policy and the four
+  timer examples, which `tests/test_users_guide_examples.py` pins to the
+  archiver's own parser.
+- [x] Module-size remediation (2026-11-20): the commit gate's `C0302`
+  `too-many-lines` finding is cleared by splitting six modules along the
+  boundaries their responsibilities already had. `outcome_archive_dirs` takes
+  the descriptor-relative directory walk out of `outcome_archive_fs`;
+  `outcome_store_restart` takes the restart transitions out of
+  `outcome_store_state`; `predict/render_tables` takes the four table builders
+  out of `predict/render`; and the three over-size test modules each gained a
+  support module (`render_helpers`, `history_fixtures`) or a sibling suite
+  (`test_predict_render_provenance`, `test_predict_dataset_cli_journal`,
+  `test_outcome_history_commands`). Two genuine duplications the detector found
+  in the moved code were removed rather than allowed: the two identical
+  surviving-plan generators in `outcome_archive_budget` are now one generic
+  `_surviving`, and the directory walk's repeated `ELOOP`/`ENOTDIR` translation
+  is one `_refuse_non_directory`. Every remaining new family is a recorded
+  exception with its reason in `pyproject.toml`.
 
 ## Surprises & discoveries
 
 - `outcome_record_codec` already exists and houses the strict JSON Lines
   encoding; per-line decoding will be added there rather than duplicated.
+- The 400-line module limit counts physical lines, so a module can pass
+  `ruff` and still fail `C0302` after its docstrings and helpers grow. The fix
+  is a split along an existing responsibility boundary, not a shorter
+  docstring. Splitting also moves duplication families, because the detector
+  compares whole units: an allow entry that named the old single module goes
+  stale and the new sibling pair needs its own reasoned entry.
 - ADR 008 is already taken by the model-check decision, so the archive decision
   becomes ADR 0010.
 - The users' guide and migration guide still say six console scripts while the
@@ -243,6 +280,18 @@ verified archive is published, and leaves compile admission untouched.
   members; `nose query` does not reproduce the gate's families, so the cause
   was isolated by bisecting a pristine HEAD worktree rather than by inspecting
   the detector.
+- liblzma allocates its encoder dictionary through Python's allocator, so the
+  benchmark's traced peak is about 98 MB at preset 6 whether it reads 500 rows
+  or 523,588. The bounded-memory claim belongs to `peak_rss_bytes` (140 MB for
+  a 12 MiB segment, 143 MB for a 100 MiB one), not to the traced figure; the
+  "under one mebibyte" traced bound holds for the reader alone. The benchmark's
+  docstrings and the developers' guide now say so.
+- A realistic 12 MiB segment compresses to about 6% of its size in 3.5 s, so a
+  15 GB backlog takes roughly 80 minutes. A oneshot unit's default
+  `TimeoutStartSec` of 90 s would kill the first run, so the documented unit
+  sets two hours.
+- `pytest-mock` is not installed and no test uses `mocker`, so converting the
+  patch-based tests for uniformity would add a dependency; `monkeypatch` stays.
 
 ## Decision log
 
@@ -255,6 +304,14 @@ verified archive is published, and leaves compile admission untouched.
 - A record cap is disabled by default in segmented mode and remains 10,000 in
   legacy mode, preserving deployed behaviour while removing the silent cap from
   large policies.
+- When a record cap is set, it is enforced across segmented history rather than
+  documented as archive-exempt: whole oldest archives are deleted while they
+  fit the excess, then the straddling archive is trimmed. The default policy
+  leaves the cap unset, so the 15,000,000,000-byte policy is unaffected.
+- The 15,000,000,000-byte budget and the timer are not provisioned on the
+  managed host by this change. The guide names
+  `cache_outcomes_max_bytes = 15000000000` and says that permanent provisioning
+  is outside this release.
 - XZ uses Python's standard-library `lzma` with an explicit preset, CRC64
   integrity check and streamed chunks; no new runtime dependency is added.
 - Segments are verified by decompressing the published temporary archive to
@@ -355,3 +412,9 @@ failure or an accumulating buffer both fail.
   `gaps_truncated` field documented in ADR 0010, and the two documentation
   corrections: the timer unit's store path, and the torn-tail rule as the
   readers actually implement it.
+- The assessment remediation added the eight correctness fixes, the generated
+  archive-and-replay test, the benchmark's time, RSS and scratch fields, the
+  timer unit's resource limits, and the guide's sizing table. The benchmark
+  figures come from a 12 MiB and a 100 MiB generated segment measured on the
+  development host at preset 6; the docstrings and developers' guide were
+  corrected to attribute the traced peak to the encoder dictionary.

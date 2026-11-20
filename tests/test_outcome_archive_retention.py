@@ -99,8 +99,8 @@ def test_age_eviction_settles_in_the_same_run(tmp_path: Path) -> None:
         json.loads(layout(tmp_path).retention_file.read_text(encoding="utf-8"))[
             "floor_sequence"
         ]
-        == 0
-    ), "the floor records an empty history"
+        == 3
+    ), "the floor starts past the sequences retention removed"
 
 
 def test_a_heal_only_run_replans_retention_with_real_logical_bytes(

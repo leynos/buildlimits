@@ -60,6 +60,10 @@ def quarantine_file(
     # outside the archive tree and a chmod change an unrelated directory, so
     # it is validated exactly as the archive directory is.
     ensure_private_directory(directory)
+    # The quarantine directory's own entry must be durable before the file's
+    # source entry is removed, or a crash can persist the removal while losing
+    # the directory that held the quarantined file.
+    fsync_directory(directory.parent)
     token = os.urandom(_QUARANTINE_TOKEN_BYTES).hex()
     destination = directory / f"{path.name}.{reason}.{token}"
     path.replace(destination)

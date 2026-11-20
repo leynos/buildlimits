@@ -10,17 +10,15 @@ import datetime as dt
 import time
 import typing as typ
 
-from buildlimits import outcome_records, outcome_segments
+from buildlimits import outcome_records, outcome_segments, outcome_store_restart
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_store_io import (
     append_line,
-    move_aside,
     read_store,
     replace_store,
     store_size,
 )
-from buildlimits.outcome_store_sealing import restart_active, seal
-from buildlimits.outcome_store_tail import drop_torn_tail
+from buildlimits.outcome_store_sealing import seal
 from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
@@ -168,29 +166,7 @@ class StoreFiles:
 
     def settle_loaded_store(self) -> None:
         """Install the header, compact, or seal an oversized segment."""
-        if not self.policy.is_segmented:
-            self.compact()
-            return
-        try:
-            drop_torn_tail(self.path)
-        except OSError:
-            # The decoder already ignores the fragment, but appending would
-            # join a new row to it, so a file that cannot be repaired must not
-            # be appended to at all.
-            self.publish("load", "save_failed")
-            return
-        size = self.measure_active("load", "unreadable")
-        if size is None:
-            return
-        if size > self.policy.segment_bytes:
-            seal(self)
-            return
-        # Appends never create the active file, so a fresh or emptied store
-        # must be given its header at startup. Otherwise the first record
-        # fails with ``save_failed`` and is lost, and only the second row,
-        # whose retry seals an empty segment, opens the file.
-        if size == 0 and not restart_active(self):
-            self.publish("load", "save_failed")
+        outcome_store_restart.settle_loaded_store(self)
 
     def restore_loaded_store(
         self,
@@ -199,77 +175,7 @@ class StoreFiles:
         now: dt.datetime,
     ) -> None:
         """Choose which validated rows can belong to the active salt."""
-        match decoded:
-            case outcome_records.RecordFailure() as failure:
-                if not move_aside(self.path):
-                    self.publish("load", failure.reason)
-                    return
-                self.publish("load", failure.reason)
-                self.header = outcome_records.StoreHeader(salt.salt_id, now)
-                self.records = []
-            case None:
-                self.publish("load", "none")
-                self.header = outcome_records.StoreHeader(salt.salt_id, now)
-                self.records = []
-            case outcome_records.DecodedStore() as store if (
-                store.header.salt_id != salt.salt_id
-            ):
-                if self.policy.is_segmented:
-                    if not self._retire_previous_domain(store, salt, now):
-                        return
-                    self.publish("load", "salt_changed", records=len(store.records))
-                else:
-                    # A legacy store has one file and no sealed directory, so
-                    # rows keyed under the old salt cannot be kept apart from
-                    # the new domain and are dropped, as they always were.
-                    self.publish("load", "salt_changed", discarded=len(store.records))
-                    self.header = outcome_records.StoreHeader(salt.salt_id, now)
-                    self.records = []
-            case outcome_records.DecodedStore() as store:
-                self.publish("load", "none", records=len(store.records))
-                self.header = store.header
-                self.records = list(store.records)
-        self.ready = True
-
-    def _retire_previous_domain(
-        self,
-        store: outcome_records.DecodedStore,
-        salt: Salt,
-        now: dt.datetime,
-    ) -> bool:
-        """Preserve rows keyed under a previous salt as a closed segment.
-
-        Appending the new domain's rows to the file that still holds the old
-        domain's rows would produce a segment mixing two salts. Sealing first
-        keeps the old rows readable under the salt that keyed them.
-
-        Parameters
-        ----------
-        store : DecodedStore
-            The active file's decoded rows and their own header.
-        salt : Salt
-            The newly activated salt.
-        now : datetime
-            The moment used for a replacement header when no rows exist.
-
-        Returns
-        -------
-        bool
-            Whether the old domain is out of the active file. On ``False`` the
-            writer must not become ready: appending would mix the domains.
-        """
-        if not store.records:
-            # Only the old header is on disk, so replacing it is enough, but it
-            # must actually be replaced: leaving it would key the new domain's
-            # rows under the previous salt.
-            self.header = outcome_records.StoreHeader(salt.salt_id, now)
-            self.records = []
-            return restart_active(self)
-        self.header = store.header
-        self.records = list(store.records)
-        # ``seal`` installs the active salt's header afterwards, so success
-        # leaves the writer holding the new domain and no rows.
-        return seal(self, salt_id=store.header.salt_id)
+        outcome_store_restart.restore_loaded_store(self, decoded, salt, now)
 
     def append(self, line: bytes, record: StoreRecord) -> None:
         """Compact at high water, preserve the hard bound and append one row."""

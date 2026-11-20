@@ -2,11 +2,14 @@
 
 Archived XZ segments, sealed plain segments and the writer's active file are
 read in append order and decoded into one record stream. Each segment is
-streamed and verified in turn, so memory follows one segment rather than the
-whole retained history. A salt change partitions history: the default reads
-the newest salt domain, an explicit identifier reads that domain, and
-``--all-salts`` reads every domain in append order without implying that their
-records are comparable.
+streamed and verified in turn, so decoding a segment never holds more than one
+segment's rows; the returned ``DecodedStore`` then holds every selected record,
+because callers such as replay and the dataset snapshot need the whole
+history. Memory therefore follows the selected domain rather than the largest
+segment. A salt change partitions history: the default reads the newest salt
+domain, an explicit identifier reads that domain, and ``--all-salts`` reads
+every domain in append order without implying that their records are
+comparable.
 """
 
 import dataclasses as dc
@@ -118,7 +121,7 @@ def read_history(
         raise FileNotFoundError(layout.active)
     newest = documents[-1].header
     if chosen.all_salts:
-        return DecodedStore(newest, _records(documents))
+        return DecodedStore(newest, _records(documents), _domains(documents))
     if chosen.salt_id is not None:
         return _one_salt(documents, chosen.salt_id)
     return DecodedStore(newest, _same_salt(documents, newest.salt_id))
@@ -189,6 +192,17 @@ def _same_salt(
     ])
 
 
+def _domains(documents: cabc.Iterable[_Document]) -> tuple[str, ...]:
+    """Return every salt domain the documents carry, oldest first.
+
+    Returns
+    -------
+    tuple[str, ...]
+        Distinct salt identifiers in the order the writer used them.
+    """
+    return tuple(dict.fromkeys(document.header.salt_id for document in documents))
+
+
 def _records(documents: cabc.Iterable[_Document]) -> tuple[StoreRecord, ...]:
     """Flatten the records of several segments in append order.
 
@@ -210,23 +224,41 @@ def _documents(layout: SegmentLayout) -> cabc.Iterator[_Document]:
     therefore re-scans after reading and repeats while the closed segments it
     saw have changed.
 
+    A pass that neither settles nor finds the files its scan listed is never
+    returned: after the bounded attempts the read fails closed, so a caller
+    cannot mistake a history the writer was changing for a complete one.
+
     A corrupt or truncated segment surfaces as ``HistoryFaultError`` from the
-    per-document decoder. A path that vanished after the scan propagates
-    ``FileNotFoundError``, except for a sealed source whose archive stands in
-    for the removed name: only an already-archived path is re-raised.
+    per-document decoder. A path that vanished after the scan is retried, and
+    then reported as ``vanished`` rather than as an empty store; a sealed
+    source whose archive stands in for the removed name is read from that
+    archive instead.
 
     Yields
     ------
     _Document
         The segment's header and records.
+
+    Raises
+    ------
+    HistoryFaultError
+        If no pass settled, or a listed segment disappeared.
     """
-    documents: list[_Document] = []
     for _attempt in range(_HISTORY_ATTEMPTS):
         inventory = outcome_segment_inventory.read_inventory(layout)
-        documents = list(_decode_inventory(layout, inventory))
+        try:
+            documents = list(_decode_inventory(layout, inventory))
+        except FileNotFoundError as error:
+            # The archiver removed a segment between the scan and the read.
+            # A retry sees the archive it was replaced by; a store that never
+            # settles is a fault, not empty history.
+            if not _is_settled(layout, inventory):
+                continue
+            raise HistoryFaultError("vanished") from error
         if _is_settled(layout, inventory):
-            break
-    yield from documents
+            yield from documents
+            return
+    raise HistoryFaultError("unsettled")
 
 
 def _decode_inventory(

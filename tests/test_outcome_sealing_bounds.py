@@ -102,6 +102,7 @@ def test_a_seal_that_cannot_measure_the_active_file_keeps_its_rows(
             writer.append(attributed_record(observed_at=NOW + dt.timedelta(minutes=1)))
             results = wait_for_results(writer, operation="seal", reason="save_failed")
             assert results, "the failed seal is reported"
+            wait_for_results(writer, operation="append", reason="none")
             decoded = read_store(store)
             assert isinstance(decoded, DecodedStore), "the active file still decodes"
             assert [record.observed_at for record in decoded.records] == [

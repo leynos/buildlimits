@@ -19,7 +19,13 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
-__all__ = ["Budget", "plan_byte_steps", "planned_size"]
+__all__ = [
+    "Budget",
+    "plan_byte_steps",
+    "plan_record_steps",
+    "planned_records",
+    "planned_size",
+]
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -57,12 +63,12 @@ def plan_byte_steps(
     if not budget.policy.has_byte_limit:
         return
     retained = budget.active_bytes + sum(
-        size for _, size in _planned_entries(candidates, deletes, trims)
+        size for _, size in _surviving(candidates, deletes, trims, planned_size)
     )
     excess = retained - budget.policy.max_bytes
     if excess <= 0:
         return
-    for entry, size in _planned_entries(candidates, deletes, trims):
+    for entry, size in _surviving(candidates, deletes, trims, planned_size):
         if excess <= 0:
             # A whole-archive deletion may have met the budget exactly. The
             # next archive then needs no rewrite, and trimming it to its own
@@ -79,23 +85,98 @@ def plan_byte_steps(
         return
 
 
-def _planned_entries(
+def plan_record_steps(
     candidates: tuple[SegmentEntry, ...],
+    max_records: int | None,
     deletes: dict[int, SegmentEntry],
     trims: dict[int, Trim],
-) -> cabc.Iterator[tuple[SegmentEntry, int]]:
-    """Yield each surviving candidate with the logical bytes it keeps.
+) -> None:
+    """Evict the oldest archives until the retained record cap is met.
+
+    Only an explicitly configured cap applies, and only to closed history: the
+    writer owns the active file, so its rows become evictable once it seals
+    them. An archive with no trustworthy sidecar has no known count and is
+    skipped; the heal step runs before retention on the next pass.
+
+    ``deletes`` and ``trims`` are updated in place, exactly as the byte budget
+    does, and a whole archive is deleted while it fits inside the excess.
+    """
+    if max_records is None:
+        return
+    retained = sum(
+        records
+        for entry, records in _surviving(candidates, deletes, trims, planned_records)
+        if records is not None
+    )
+    excess = retained - max_records
+    if excess <= 0:
+        return
+    for entry, records in _surviving(candidates, deletes, trims, planned_records):
+        if excess <= 0:
+            return
+        if records is None:
+            # Without a sidecar the count cannot be planned, and guessing
+            # would either overstate or understate the cap. The sidecar is
+            # repaired before the next retention pass.
+            continue
+        if records <= excess:
+            deletes[entry.sequence] = entry
+            excess -= records
+            continue
+        existing = trims.get(entry.sequence, Trim())
+        trims[entry.sequence] = dc.replace(
+            existing, records=max(existing.records, excess)
+        )
+        return
+
+
+def planned_records(entry: SegmentEntry, trim: Trim | None) -> int | None:
+    """Estimate the records one archive keeps after its trim.
+
+    Returns
+    -------
+    int | None
+        The sidecar's count less a leading count trim, or None when no
+        trustworthy sidecar describes the archive. A time or byte trim cannot
+        be estimated without reading rows, so it is treated as freeing no
+        records.
+    """
+    if entry.record_count is None:
+        return None
+    if trim is None:
+        return entry.record_count
+    return max(entry.record_count - trim.records, 0)
+
+
+def _surviving[Kept](
+    candidates: tuple[SegmentEntry, ...],
+    deletes: cabc.Mapping[int, SegmentEntry],
+    trims: cabc.Mapping[int, Trim],
+    keep: cabc.Callable[[SegmentEntry, Trim | None], Kept],
+) -> cabc.Iterator[tuple[SegmentEntry, Kept]]:
+    """Yield each surviving candidate with the value ``keep`` estimates.
 
     The delete set and the trims are read as each entry is yielded, so a
     planner that changes them while walking still sees its own decisions.
 
+    Parameters
+    ----------
+    candidates : tuple[SegmentEntry, ...]
+        The archives the scan found, oldest first.
+    deletes : Mapping[int, SegmentEntry]
+        The archives already planned for deletion.
+    trims : Mapping[int, Trim]
+        The trims already planned, by sequence.
+    keep : Callable[[SegmentEntry, Trim | None], _Kept]
+        The estimate to report for one surviving archive.
+
     Returns
     -------
-    Iterator[tuple[SegmentEntry, int]]
-        The archive no step has deleted yet, with its planned size.
+    Iterator[tuple[SegmentEntry, Kept]]
+        Each archive no step has deleted yet, with its planned value.
     """
     return (
-        (entry, planned_size(entry, trims.get(entry.sequence)))
+        (entry, keep(entry, trims.get(entry.sequence)))
         for entry in candidates
         if entry.sequence not in deletes
     )

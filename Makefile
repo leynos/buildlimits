@@ -216,7 +216,7 @@ predict-benchmark: build $(PREDICT_SNAPSHOT) ## Compare cache-hit predictors on 
 SEGMENT ?=
 
 outcome-archive-bench: build ## Measure archiving one segment in bounded memory
-	$(UV_ENV) $(UV) run python -m buildlimits.outcome_archive_bench $(SEGMENT)
+	$(UV_ENV) $(UV) run python -m buildlimits.outcome_archive_bench $${SEGMENT:+"$${SEGMENT}"}
 
 # The model-check opt-in is cleared here so an opt-in left in the calling
 # shell cannot make `make test` depend on the pinned checker being installed.

@@ -109,6 +109,42 @@ def test_a_component_writable_by_others_is_refused(
         require_private_chain(shared)
 
 
+def _open_descriptors() -> int:
+    """Return how many descriptors this process currently holds.
+
+    Returns
+    -------
+    int
+        The number of entries in ``/proc/self/fd``.
+    """
+    return len(list(Path("/proc/self/fd").iterdir()))
+
+
+def test_a_created_chain_leaks_no_descriptor(tmp_path: Path) -> None:
+    """Every component descriptor is closed as the walk descends."""
+    path = tmp_path / "one" / "two" / "three" / "archive"
+    before = _open_descriptors()
+
+    ensure_private_directory(path)
+
+    assert _open_descriptors() <= before, "the walk closes each parent descriptor"
+
+
+def test_a_refused_chain_leaks_no_descriptor(tmp_path: Path) -> None:
+    """A walk that stops at a link still closes every descriptor it opened."""
+    real = tmp_path / "real"
+    real.mkdir()
+    nested = tmp_path / "one" / "two"
+    nested.mkdir(parents=True)
+    (nested / "link").symlink_to(real, target_is_directory=True)
+    before = _open_descriptors()
+
+    with pytest.raises(UnsafePathError):
+        ensure_private_directory(nested / "link" / "archive")
+
+    assert _open_descriptors() <= before, "the refused walk closes what it opened"
+
+
 def test_a_relative_path_is_refused() -> None:
     """A relative path cannot be proven to stay inside the store."""
     with pytest.raises(UnsafePathError):

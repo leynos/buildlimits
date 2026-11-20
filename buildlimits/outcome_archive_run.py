@@ -16,7 +16,11 @@ from buildlimits import (
 )
 from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
-from buildlimits.outcome_archive_verify import SegmentFaultError, Trim
+from buildlimits.outcome_archive_verify import (
+    OutputFaultError,
+    SegmentFaultError,
+    Trim,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -95,17 +99,17 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
         now=run.context.now,
         active_bytes=active_bytes(layout.active),
     )
+    # Only an archive this run removed is out of reach. A quarantined *source*
+    # leaves its archive in place, and that archive is still eligible for the
+    # budget the follow-up plan recomputed.
     settled = {
-        action.sequence
-        for action in outcome.actions
-        if action.action in {"deleted", "quarantined"}
+        action.sequence for action in outcome.actions if action.action == "deleted"
     }
-    settled.update(sequence for sequence, _reason in outcome.failures)
     for entry, trim in follow_up.trims:
-        if entry.sequence not in settled:
+        if entry.sequence not in settled and entry.path.exists():
             _trim_one(run, entry, trim, outcome)
     for entry in follow_up.deletes:
-        if entry.sequence not in settled:
+        if entry.sequence not in settled and entry.path.exists():
             _delete_one(run, entry, outcome)
 
 
@@ -135,6 +139,11 @@ def _reconcile_one(
         outcome.actions.append(
             outcome_archive_files.reconcile_duplicate(run.context, sealed, archived)
         )
+    except (OutputFaultError, SegmentFaultError) as fault:
+        # Re-archiving a quarantined duplicate can meet the same closed faults
+        # any other archive pass can. The pair is left for the next run rather
+        # than ending this one.
+        outcome.failures.append((sealed.sequence, fault.reason))
     except OSError:
         outcome.failures.append((sealed.sequence, "unreadable"))
 
@@ -169,6 +178,10 @@ def _quarantining(
     """
     try:
         outcome.actions.append(action())
+    except OutputFaultError as fault:
+        # The source was readable and the fault is in this run's own output,
+        # so the artefact must survive for the next attempt.
+        outcome.failures.append((sequence, fault.reason))
     except SegmentFaultError as fault:
         _quarantine_fault(outcome, sequence, fault.reason, quarantine)
     except OSError:

@@ -30,7 +30,7 @@ from buildlimits.outcome_archive_quarantine import (
     quarantine_and_remove_sidecar,
     quarantine_source,
 )
-from buildlimits.outcome_archive_verify import SegmentFaultError, Trim
+from buildlimits.outcome_archive_verify import ArchiveFacts, SegmentFaultError, Trim
 from buildlimits.outcome_store_io import fsync_directory
 
 if typ.TYPE_CHECKING:
@@ -38,6 +38,7 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.outcome_archive_context import ArchiveContext
     from buildlimits.outcome_segment_inventory import SegmentEntry
+    from buildlimits.outcome_segment_sidecar import Sidecar
 
 __all__ = [
     "archive_source",
@@ -109,12 +110,40 @@ def recompress_archive(
             return ActionResult("deleted", entry.sequence)
         temporary.replace(entry.path)
         fsync_directory(entry.path.parent)
+        sidecar = _replace_sidecar(context, entry.sequence, facts)
     finally:
         discard(temporary)
-    sidecar = write_sidecar(context, entry.sequence, facts)
     return ActionResult(
         "trimmed", entry.sequence, sidecar.logical_bytes, sidecar.physical_bytes
     )
+
+
+def _replace_sidecar(
+    context: ArchiveContext, sequence: int, facts: ArchiveFacts
+) -> Sidecar:
+    """Replace one rewritten archive's sidecar, leaving no stale pair behind.
+
+    The archive is already in place. If its sidecar cannot be written, the old
+    sidecar describes bytes that no longer exist; removing it leaves the
+    archive with no metadata, which the inventory reports as a missing sidecar
+    and the next run repairs from the archive itself.
+
+    Returns
+    -------
+    Sidecar
+        The sidecar that was written.
+
+    Raises
+    ------
+    OSError
+        If the sidecar cannot be written and the stale one cannot be removed.
+    """
+    try:
+        return write_sidecar(context, sequence, facts)
+    except OSError:
+        _unlink(context.layout.archive_dir / outcome_segments.sidecar_name(sequence))
+        fsync_directory(context.layout.archive_dir)
+        raise
 
 
 def repair_sidecar(context: ArchiveContext, entry: SegmentEntry) -> ActionResult:

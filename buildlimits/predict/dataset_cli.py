@@ -207,7 +207,15 @@ def _read_inputs(store: Path, *, with_history: bool) -> tuple[Path, ...]:
         return (store,)
     layout = SegmentLayout.beside(store)
     inventory = outcome_segment_inventory.read_inventory(layout)
-    return (layout.active, *(entry.path for entry in inventory.effective))
+    # Every archive is protected, not only the ones an effective read would
+    # choose: a sealed source shadows its archive for reading, but the
+    # snapshot must never replace an archive either copy of which exists.
+    paths = (
+        layout.active,
+        *(entry.path for entry in inventory.effective),
+        *(entry.path for entry in inventory.archived),
+    )
+    return tuple(dict.fromkeys(paths))
 
 
 def _write(snapshot: Snapshot, output: Path) -> int:

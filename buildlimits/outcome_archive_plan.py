@@ -11,7 +11,12 @@ trim never frees more bytes than its sidecar proves.
 import dataclasses as dc
 import typing as typ
 
-from buildlimits.outcome_archive_budget import Budget, plan_byte_steps, planned_size
+from buildlimits.outcome_archive_budget import (
+    Budget,
+    plan_byte_steps,
+    plan_record_steps,
+    planned_size,
+)
 from buildlimits.outcome_archive_verify import Trim
 from buildlimits.utc_text import optional_utc_text
 
@@ -239,6 +244,7 @@ def _retention_steps(
             _plan_age_step(entry, budget.cutoff, deletes)
     trims = _age_trims(candidates, budget.cutoff, deletes)
     plan_byte_steps(candidates, budget, deletes, trims)
+    plan_record_steps(candidates, budget.policy.max_records, deletes, trims)
     # Byte planning runs after age planning and may delete an archive that also
     # carries an age trim. Rewriting a file that is about to be removed would
     # only churn it, so a deleted sequence is never also planned as a trim.

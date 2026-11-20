@@ -97,7 +97,7 @@ def source_to_dict(source: Source) -> dict[str, object]:
     dict[str, object]
         The provenance under stable keys.
     """
-    return {
+    document: dict[str, object] = {
         "kind": "cache-outcomes",
         "salt_id": source.salt_id,
         "written_at": utc_text(source.written_at),
@@ -105,6 +105,11 @@ def source_to_dict(source: Source) -> dict[str, object]:
         "outcome_records": source.outcome_records,
         "summary_records": source.summary_records,
     }
+    # Only a history that spans several domains needs the extra field, so a
+    # single-domain snapshot keeps exactly the document earlier versions wrote.
+    if len(source.salt_ids) > 1:
+        document["salt_ids"] = list(source.salt_ids)
+    return document
 
 
 def stats_to_dict(stats: SnapshotStats) -> dict[str, object]:

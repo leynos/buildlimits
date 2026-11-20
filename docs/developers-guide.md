@@ -358,7 +358,8 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_record_codec`                                                             | Strict JSON Lines decoding for cache-outcome store values                                                                                                   |
 | `outcome_records`                                                                  | Public record API and pure age, count and byte compaction                                                                                                   |
 | `outcome_store`                                                                    | Queue and worker plumbing for the non-blocking writer; bounded result reporting                                                                             |
-| `outcome_store_state`                                                              | The writer's file state machine: loading, compaction and bounded appends                                                                                    |
+| `outcome_store_state`                                                              | The writer's file state machine: compaction and bounded appends                                                                                             |
+| `outcome_store_restart`                                                            | What a restart settles before the first append: a torn tail, an oversized segment, an expired file and a replaced salt domain                               |
 | `outcome_store_sealing`                                                            | The writer's sealing transition into a closed segment                                                                                                       |
 | `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes, atomic replacement and the seal rename                                                                   |
 | `outcome_store_tail`                                                               | Backward-chunked removal of an unterminated final row a stopped writer left                                                                                 |
@@ -382,7 +383,8 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_quarantine`                                                       | Quarantine moves for files an archive run cannot trust                                                                                                      |
 | `outcome_archive_files`                                                            | Per-segment archive, reconcile, heal, trim, delete and quarantine operations                                                                                |
 | `outcome_archive_lock`                                                             | The archive lock and the disk-headroom guard for one run                                                                                                    |
-| `outcome_archive_fs`                                                               | Private filesystem primitives and atomic state writes                                                                                                       |
+| `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication and atomic state writes                                             |
+| `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates and validates each private path component                                                                   |
 | `outcome_archive_report`                                                           | Bounded run report, status vocabulary and exit statuses                                                                                                     |
 | `outcome_archive_cli`                                                              | The `build-limits-outcome-archive` timer-facing command                                                                                                     |
 | `outcome_archive_bench`                                                            | Bounded-memory archive benchmark behind `make outcome-archive-bench`                                                                                        |
@@ -980,6 +982,11 @@ sequence and the segment metadata, renames the active file into
 empty store installs the header without claiming a sequence, so the sequence
 series has no artificial first gap. `outcome_store_sealing` reports
 `archive_backlog` each time the sealed directory reaches eight entries.
+`settle_loaded_store` is where a restart enforces what an append cannot: a torn
+tail it cannot remove clears readiness and publishes `save_failed` rather than
+appending above the fragment, an oversized active file is sealed, and an active
+file whose oldest record predates the age cutoff is compacted, so a store that
+stayed small is not exempt from the age bound.
 
 The archiver in `outcome_archive` only reads the active file's size. It never
 opens its content and never takes its queue. `outcome_archive_lock` takes a
@@ -994,7 +1001,12 @@ with at most one row buffered (`CHUNK_BYTES`). Peak memory therefore follows
 the chunk size and the XZ preset, not the segment or the retained history.
 `lzma` from the standard library supplies `FORMAT_XZ`, `CHECK_CRC64` and the
 configured preset; `cache_outcomes_archive_preset` defaults to 6 and is
-validated in the range 0 to 9.
+validated in the range 0 to 9. liblzma allocates its encoder dictionary through
+Python's allocator, so the traced peak is about 98 MB at preset 6 and does not
+move with the source; `BenchmarkReport.peak_rss_bytes` is the figure an
+operator compares with a unit's `MemoryMax`. Measured on the development host,
+a 12 MiB segment took 3.5 s at a 140 MB peak resident set, and a 100 MiB
+segment took 33 s at 143 MB.
 
 `outcome_archive_verify` writes and verifies a temporary archive before
 publication: the XZ stream must reach its end with only four-byte-multiple NUL
@@ -1011,17 +1023,28 @@ is stricter: `read_store` decodes only up to the last newline and
 append, scanning backwards in fixed-size chunks so the bound holds however long
 the file is; a fragment that does decode is still discarded there, and the file
 on disk matches the rows the reader accepted. `outcome_archive_encode` produces
-the verified temporary archives and their sidecars. Publication then uses a
-private `O_EXCL` temporary file, an `fsync`, a no-clobber hard link and a
-sidecar written after the archive; the sealed source is removed only after the
-archive and sidecar are durable. `outcome_archive_fs` owns the private
-filesystem primitives and atomic state writes. `outcome_archive_files` owns the
-per-segment operations: archive, reconcile, heal, trim, delete and quarantine.
-`outcome_archive_quarantine` performs the quarantine moves for files a run
-cannot trust, and `outcome_archive_run` executes one plan operation by
-operation. `outcome_archive_budget` owns the byte budget: it counts an
-archive's uncompressed size from its sidecar, deletes whole archives oldest
-first, and then trims the single archive that straddles the remaining allowance.
+the verified temporary archives and their sidecars. A fault in those bytes is an
+`OutputFaultError`, a `SegmentFaultError` subclass that keeps the same closed
+reason: the runner quarantines a segment fault but never an output fault, so a
+readable source stays in place when the archiver's own temporary archive comes
+out wrong, and the next run retries it. Publication then uses a private
+`O_EXCL` temporary file, an `fsync`, a no-clobber hard link and a sidecar
+written after the archive; the sealed source is removed only after the archive
+and sidecar are durable. `outcome_archive_fs` owns the private filesystem
+primitives and atomic state writes, descending a directory chain through
+descriptors opened with `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC`; a symlink, a
+non-directory or a failed descriptor operation raises `UnsafePathError`, and
+neither the successful nor the refused walk leaks a descriptor.
+`outcome_archive_files` owns the per-segment operations: archive, reconcile,
+heal, trim, delete and quarantine. `outcome_archive_quarantine` performs the
+quarantine moves for files a run cannot trust, and `outcome_archive_run`
+executes one plan operation by operation. `outcome_archive_budget` owns the
+byte budget: it counts an archive's uncompressed size from its sidecar, deletes
+whole archives oldest first, and then trims the single archive that straddles
+the remaining allowance. `plan_record_steps` applies the configured record cap
+to segmented history in the same shape: whole oldest archives are deleted while
+they fit the excess, then the straddling archive is trimmed rather than left to
+break the cap.
 
 The segment contract is defined by `outcome_segments`, which owns naming and
 layout only; `outcome_segment_sidecar` defines the record that describes one
@@ -1052,10 +1075,16 @@ document is streamed and verified in turn. The default selection is the newest
 salt domain, taken from the last document's header. `HistorySelection` also
 supports a named `salt_id` or `all_salts`, and a corrupt segment raises
 `HistoryFaultError` with a closed reason rather than yielding a short history.
-`outcome_history_args` defines the shared `--history`, `--salt-id` and
-`--all-salts` options for the replay and dataset commands; `--salt-id` and
-`--all-salts` imply history mode, and no flag keeps the active-store-only
-behaviour.
+A scan is repeated while it disagrees with the store it describes, up to
+`_HISTORY_ATTEMPTS`; a history that never settles raises `unsettled`, and an
+archive listed by a settled scan that has since vanished raises `vanished`, so
+neither a seal nor a concurrent archive run can shorten what is returned.
+`DecodedStore.salt_ids` names every domain an `all_salts` read covered, oldest
+first, which is what a report prints instead of attributing a spanning count to
+the newest header. `outcome_history_args` defines the shared `--history`,
+`--salt-id` and `--all-salts` options for the replay and dataset commands;
+`--salt-id` and `--all-salts` imply history mode, and no flag keeps the
+active-store-only behaviour.
 
 `outcome_archive_report` defines the closed report vocabulary. Statuses are
 `ok`, `failed`, `corrupt`, `busy` and `no_headroom`; exit statuses are 0 for
@@ -1080,12 +1109,14 @@ The archive tests are `tests/test_outcome_archive.py`,
 `test_outcome_segment_inventory.py`, `test_outcome_segment_state.py`,
 `test_outcome_record_stream.py`, `test_outcome_sealing_bounds.py`,
 `test_outcome_store_tail.py` and `test_outcome_store_sealing.py`.
-`tests/test_outcome_archive_bench.py` holds the traced-memory test that streams
-a multi-megabyte segment under one mebibyte. `make outcome-archive-bench` runs
-`buildlimits.outcome_archive_bench` and prints a JSON report with the source
-size, record count, archive size, ratio, chunk size and peak buffered rows; it
-generates a representative segment when `SEGMENT=` names none and reads a real
-sealed segment when it does.
+`tests/test_outcome_archive_bench.py` holds the reader's traced-memory test,
+which streams a multi-megabyte segment under one mebibyte, and the tests that
+pin the report's schema and its tracing ownership. `make outcome-archive-bench`
+runs `buildlimits.outcome_archive_bench` and prints a JSON report with the
+source size, record count, archive size, ratio, chunk size, peak buffered rows,
+elapsed time, peak resident set, temporary disk and peak traced allocation; it
+generates a representative segment when `SEGMENT=` names none and reads the
+named segment when it does.
 
 ## 10. Adapters
 

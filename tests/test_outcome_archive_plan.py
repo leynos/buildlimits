@@ -6,6 +6,7 @@ sequence. These tests pin those decisions; the age and byte boundaries live in
 the sibling age and byte modules.
 """
 
+import dataclasses as dc
 import datetime as dt
 import typing as typ
 
@@ -90,14 +91,32 @@ def test_a_sealed_source_does_not_hide_a_duplicate_from_the_estimate() -> None:
     assert decision.retained_bytes == 100, "the sequence is counted once"
 
 
-def test_a_record_cap_never_evicts_a_segment() -> None:
-    """The explicit record cap bounds the writer, not archived history."""
+def test_a_record_cap_evicts_the_oldest_archive_first() -> None:
+    """An explicit record cap bounds retained history, not only the writer."""
     entries = tuple(archived(sequence) for sequence in range(1, 4))
 
     decision = plan(Inventory(archived=entries), policy(max_bytes=0, max_records=1))
 
-    assert not decision.deletes, "a record cap cannot pick a row to drop"
-    assert decision.retained_bytes == 300, "every segment stays retained"
+    assert [item.sequence for item in decision.deletes] == [1, 2], (
+        "whole archives are deleted oldest first"
+    )
+    assert not decision.trims, "the survivor already fits the cap"
+
+
+def test_a_record_cap_trims_the_archive_it_straddles() -> None:
+    """An archive larger than the remaining excess keeps its newest rows."""
+    entries = tuple(
+        dc.replace(archived(sequence), record_count=3) for sequence in range(1, 4)
+    )
+
+    decision = plan(Inventory(archived=entries), policy(max_bytes=0, max_records=4))
+
+    assert [item.sequence for item in decision.deletes] == [1], (
+        "the oldest archive fits inside the excess"
+    )
+    assert [(item.sequence, trim.records) for item, trim in decision.trims] == [
+        (2, 2)
+    ], "the straddling archive drops its oldest rows"
 
 
 def test_the_summary_counts_every_operation(snapshot: SnapshotAssertion) -> None:

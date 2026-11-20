@@ -11,6 +11,7 @@ from outcome_store_helpers import (
     append_and_wait,
     assert_failed_append,
     running_writer,
+    salt_path,
     stalled_append,
     start_writer,
     stored_records,
@@ -18,9 +19,19 @@ from outcome_store_helpers import (
     window_summary,
     worker_exited,
 )
+from outcome_test_helpers import STORE_EPOCH as NOW
+from segment_test_helpers import document, history_policy, write_private
 
-from buildlimits import outcome_store, outcome_store_io, outcome_store_state
+from buildlimits import (
+    outcome_store,
+    outcome_store_io,
+    outcome_store_restart,
+    outcome_store_state,
+)
+from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreResult
+from buildlimits.outcome_record_format import DecodedStore
+from buildlimits.outcome_store_salt import file_salt
 
 
 def test_writer_reports_queue_overflow_without_waiting_for_the_worker(
@@ -108,6 +119,55 @@ def test_worker_survives_clock_overflow_during_startup_compaction(
         writer.close(1.0)
 
     assert stored_records(path) == (record,), "the retried append remains readable"
+
+
+def test_a_tail_that_cannot_be_repaired_stops_every_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A writer that cannot repair its tail never appends above the fragment."""
+    path = tmp_path / "cache-outcomes.jsonl"
+    monkeypatch.setattr(
+        outcome_store_restart,
+        "drop_torn_tail",
+        mock.Mock(side_effect=OSError("read-only file system")),
+    )
+
+    writer = outcome_store.StoreWriter(path, policy=history_policy(1 << 20))
+    try:
+        wait_for_results(writer, operation="load", reason="save_failed")
+        writer.append(window_summary())
+        refused = wait_for_results(writer, operation="append", reason="save_failed")
+    finally:
+        writer.close(1.0)
+
+    assert StoreResult("append", "save_failed", 0, 1) in refused, (
+        "the row is refused rather than joined to the fragment"
+    )
+    assert not path.exists(), "nothing is written above an unrepairable fragment"
+
+
+def test_an_expired_active_file_is_compacted_at_startup(tmp_path: Path) -> None:
+    """A restart applies the age bound to rows that never crossed the size."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    salt = file_salt(salt_path(store))
+    assert isinstance(salt, Salt), "the fixture installs its own salt"
+    expired = window_summary(observed_at=NOW - dt.timedelta(days=40))
+    write_private(store, document((expired,), salt.salt_id))
+
+    writer = outcome_store.StoreWriter(
+        store, policy=history_policy(1 << 20), wall_clock=lambda: NOW
+    )
+    try:
+        results = wait_for_results(writer, operation="compact", reason="expired")
+    finally:
+        writer.close(1.0)
+
+    assert any(result.discarded == 1 for result in results), (
+        "the expired row is counted as discarded"
+    )
+    decoded = outcome_store_io.read_store(store)
+    assert isinstance(decoded, DecodedStore), "the compacted store decodes"
+    assert decoded.records == (), "only the replacement header remains"
 
 
 def test_failed_append_keeps_the_previous_store_readable(tmp_path: Path) -> None:

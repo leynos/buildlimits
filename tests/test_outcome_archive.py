@@ -15,7 +15,7 @@ from pathlib import Path
 from outcome_archive_helpers import NOW, archives, layout, policy, records, run, write
 from segment_test_helpers import sidecar_document, write_private
 
-from buildlimits import outcome_archive_quarantine
+from buildlimits import outcome_archive_files, outcome_archive_quarantine
 from buildlimits.outcome_archive import (
     EXIT_CORRUPT,
     EXIT_OK,
@@ -23,6 +23,7 @@ from buildlimits.outcome_archive import (
     inspect_store,
 )
 from buildlimits.outcome_archive_lock import ArchiveLock
+from buildlimits.outcome_archive_verify import OutputFaultError
 from buildlimits.outcome_segments import archive_name, segment_name, sidecar_name
 
 if typ.TYPE_CHECKING:
@@ -106,6 +107,7 @@ def test_a_run_plans_the_store_it_finds_under_its_lock(
     enter = ArchiveLock.__enter__
 
     def enter_after_sealing(lock: ArchiveLock) -> ArchiveLock:
+        """Acquire the lock, then seal a new segment before the run plans."""
         held = enter(lock)
         write(store, records(NOW, 1), policy())
         return held
@@ -137,6 +139,7 @@ def test_a_failed_orphan_quarantine_does_not_stop_eviction(
     )
 
     def refuse(*_args: object, **_kwargs: object) -> str:
+        """Refuse the quarantine move the run attempts."""
         raise OSError("the orphan cannot be moved")
 
     monkeypatch.setattr(outcome_archive_quarantine, "quarantine_file", refuse)
@@ -183,6 +186,34 @@ def test_a_corrupt_source_is_quarantined_and_reported(tmp_path: Path) -> None:
     assert list(store_layout.quarantine_dir.iterdir()), "the source is preserved"
 
 
+def test_an_output_fault_leaves_a_readable_source_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fault in this run's own output must not quarantine the source.
+
+    The source decoded cleanly; only the temporary archive this run wrote
+    failed to verify. Moving the source aside would destroy readable history
+    to punish a transient output fault the next firing can retry.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 1), policy())
+    store_layout = layout(tmp_path)
+    source = store_layout.sealed_dir / segment_name(1)
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        """Fail as the archiver's own temporary archive would."""
+        raise OutputFaultError("truncated_xz")
+
+    monkeypatch.setattr(outcome_archive_files, "build_temp", fail)
+
+    report = run(tmp_path, policy())
+
+    assert report.failures == ((1, "truncated_xz"),), "the fault is recorded"
+    assert source.exists(), "the readable source survives for the next attempt"
+    assert not store_layout.quarantine_dir.exists(), "nothing is moved aside"
+    assert not archives(tmp_path), "nothing is published from a failed write"
+
+
 def test_a_failed_source_quarantine_is_recorded_and_the_run_continues(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -195,6 +226,7 @@ def test_a_failed_source_quarantine_is_recorded_and_the_run_continues(
     damaged.chmod(0o600)
 
     def refuse(*_args: object, **_kwargs: object) -> object:
+        """Refuse the source quarantine move the run attempts."""
         raise OSError("the source cannot be moved")
 
     monkeypatch.setattr(outcome_archive_quarantine, "quarantine_source", refuse)

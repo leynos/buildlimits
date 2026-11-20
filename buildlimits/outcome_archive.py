@@ -173,16 +173,24 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
     outcome = outcome_archive_run.RunOutcome()
     outcome_archive_run.perform(run, outcome)
     outcome_archive_run.retain(run, outcome)
-    floor = _retention_floor(outcome_segment_inventory.read_inventory(layout))
+    floor = _retention_floor(
+        outcome_segment_inventory.read_inventory(layout),
+        outcome_segment_state.read_retention_floor(layout),
+        outcome,
+    )
     final = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
     retained = outcome_archive_run.active_bytes(layout.active) + final.sealed_bytes
     retained += final.archived_logical_bytes
+    records, observed_from, observed_until = _observed(final)
     report = RunReport(
         status="corrupt" if outcome.failures else "ok",
         started_at=run.started_at,
         finished_at=utc_now(),
         active_bytes=active,
         retained_bytes=retained,
+        retained_records=records,
+        observed_from=observed_from,
+        observed_until=observed_until,
         budget_bytes=run.context.policy.max_bytes,
         cutoff=run.plan.cutoff,
         plan=run.summary,
@@ -214,16 +222,60 @@ def _write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:
     outcome_archive_fs.atomic_write_json(layout.last_run_file, report.as_dict())
 
 
-def _retention_floor(inventory: outcome_segment_inventory.Inventory) -> int:
-    """Return the lowest retained closed sequence for the retention state.
+def _retention_floor(
+    inventory: outcome_segment_inventory.Inventory,
+    previous: int | None,
+    outcome: outcome_archive_run.RunOutcome,
+) -> int:
+    """Return the lowest sequence this history intentionally starts at.
+
+    The floor records what retention removed, not what happens to be absent.
+    Deriving it from the surviving sequences would raise it past a sequence
+    that went missing for another reason, and the next scan would then stop
+    reporting that sequence as a gap. It therefore advances only past a
+    deleted prefix, and never falls below the first sequence this store ever
+    had, so an empty prefix is not reported as missing history.
+
+    Parameters
+    ----------
+    inventory : Inventory
+        The store as it stands after the run.
+    previous : int | None
+        The floor the last successful run recorded.
+    outcome : RunOutcome
+        The actions this run performed.
 
     Returns
     -------
     int
-        The lowest effective sequence, or zero when no closed history remains.
+        The retention floor to persist.
     """
-    sequences = [entry.sequence for entry in inventory.effective]
-    return min(sequences, default=0)
+    present = [entry.sequence for entry in inventory.effective]
+    baseline = min(present, default=0) if previous is None else previous
+    deleted = [
+        action.sequence for action in outcome.actions if action.action == "deleted"
+    ]
+    return max([baseline, *(sequence + 1 for sequence in deleted)])
+
+
+def _observed(
+    inventory: outcome_segment_inventory.Inventory,
+) -> tuple[int, dt.datetime | None, dt.datetime | None]:
+    """Summarize the closed history metadata describes.
+
+    Returns
+    -------
+    tuple[int, datetime | None, datetime | None]
+        Retained record count, earliest and latest observation. Entries
+        without trustworthy metadata contribute nothing rather than guessing.
+    """
+    described = [
+        entry for entry in inventory.effective if entry.record_count is not None
+    ]
+    records = sum(entry.record_count or 0 for entry in described)
+    first = [entry.first_observed_at for entry in described if entry.first_observed_at]
+    last = [entry.last_observed_at for entry in described if entry.last_observed_at]
+    return records, min(first, default=None), max(last, default=None)
 
 
 def _dry_report(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
@@ -237,6 +289,7 @@ def _dry_report(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
     layout = run.context.layout
     floor = outcome_segment_state.read_retention_floor(layout)
     inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
+    records, observed_from, observed_until = _observed(inventory)
     return RunReport(
         status="ok",
         started_at=run.started_at,
@@ -244,6 +297,9 @@ def _dry_report(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
         dry_run=True,
         active_bytes=active,
         retained_bytes=run.plan.retained_bytes,
+        retained_records=records,
+        observed_from=observed_from,
+        observed_until=observed_until,
         budget_bytes=run.context.policy.max_bytes,
         cutoff=run.plan.cutoff,
         plan=run.summary,

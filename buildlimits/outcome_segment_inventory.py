@@ -270,11 +270,19 @@ def _scan_archived(
                 case None:
                     missing.append(sequence)
                     entries.append(_archive_entry(path, size, sequence))
-                case Sidecar() as sidecar:
+                case Sidecar() as sidecar if sidecar.physical_bytes == size:
                     sidecar_sequences.add(sequence)
                     entries.append(
                         _archive_entry(path, size, sequence, sidecar=sidecar)
                     )
+                case Sidecar():
+                    # A sidecar written for different bytes than the archive
+                    # now holds describes a rewrite that stopped before its
+                    # metadata was replaced. Trusting it would report the old
+                    # counts beside the new file, so the archive is routed to
+                    # the repair path exactly as a corrupt sidecar is.
+                    corrupt.append(sequence)
+                    entries.append(_archive_entry(path, size, sequence))
                 case _:
                     corrupt.append(sequence)
                     entries.append(_archive_entry(path, size, sequence))

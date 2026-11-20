@@ -8,6 +8,7 @@ reader must hold one chunk rather than one segment.
 
 import json
 import tracemalloc
+import typing as typ
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,9 @@ import pytest
 from buildlimits import outcome_archive_bench
 from buildlimits.outcome_archive_bench import CHUNK_BYTES, measure, peak_rows
 from buildlimits.outcome_record_stream import LineStream
+
+if typ.TYPE_CHECKING:
+    from syrupy.assertion import SnapshotAssertion
 
 _ROW_BYTES = 800
 _STREAM_CHUNK = 4096
@@ -109,7 +113,9 @@ def test_the_generated_segment_counts_only_its_records(
     assert report["record_count"] == 5_000, "the generated header is not a record"
 
 
-def test_report_round_trips_as_closed_json(tmp_path: Path) -> None:
+def test_report_round_trips_as_closed_json(
+    tmp_path: Path, snapshot: SnapshotAssertion
+) -> None:
     """A report renders as stable JSON a reviewer can diff between runs."""
     source = _segment(tmp_path, 5)
 
@@ -118,15 +124,44 @@ def test_report_round_trips_as_closed_json(tmp_path: Path) -> None:
     assert json.loads(json.dumps(rendered, sort_keys=True)) == rendered, (
         "the report is plain JSON"
     )
-    assert set(rendered) == {
-        "schema",
-        "chunk_bytes",
-        "source_bytes",
-        "record_count",
-        "archive_bytes",
-        "ratio",
-        "peak_rows",
-    }, "the schema is closed"
+    assert sorted(rendered) == snapshot, "the schema is closed"
+
+
+def test_measure_states_the_time_and_scratch_it_used(tmp_path: Path) -> None:
+    """The report carries the figures a timer unit's limits are sized from."""
+    source = _segment(tmp_path, 50)
+
+    report = measure(source, preset=1)
+
+    assert report.elapsed_seconds >= 0.0, "the pass is timed"
+    assert report.temp_bytes == report.archive_bytes, (
+        "the scratch disk is the temporary archive's own size"
+    )
+    assert report.peak_rss_bytes > 0, "the resident peak is read from the kernel"
+    assert report.peak_python_bytes > 0, "the Python peak is measured"
+
+
+def test_measure_leaves_a_callers_tracing_running(tmp_path: Path) -> None:
+    """The benchmark stops only the tracer it started itself."""
+    source = _segment(tmp_path, 5)
+    tracemalloc.start()
+    try:
+        measure(source, preset=1)
+        assert tracemalloc.is_tracing(), "the caller's tracing is not stopped"
+    finally:
+        tracemalloc.stop()
+
+
+def test_measure_leaves_an_untraced_process_untraced(tmp_path: Path) -> None:
+    """A plain measurement closes the tracer instead of leaking it."""
+    source = _segment(tmp_path, 5)
+    was_tracing = tracemalloc.is_tracing()
+
+    measure(source, preset=1)
+
+    assert tracemalloc.is_tracing() == was_tracing, (
+        "the tracer's state is exactly what the caller left"
+    )
 
 
 def test_an_incomplete_tail_is_not_a_buffered_row() -> None:

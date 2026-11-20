@@ -2,12 +2,17 @@
 
 from pathlib import Path
 
+from buildlimits import outcome_archive_cli
 from buildlimits.journal_policy import ROUTINE_LINES_VARIABLE
 from buildlimits.predict import benchmark_cli, dataset_cli
 
 GUIDE = Path(__file__).parents[1] / "docs" / "users-guide.md"
 DROP_IN = "buildlimits-routine-lines-drop-in"
 PREDICT_EXAMPLE = "buildlimits-predict-commands"
+ARCHIVE_SERVICE = "buildlimits-outcome-archive-service"
+ARCHIVE_TIMER = "buildlimits-outcome-archive-timer"
+ARCHIVE_ENABLE = "buildlimits-outcome-archive-enable"
+ARCHIVE_COMMANDS = "buildlimits-outcome-archive-commands"
 
 
 def _marked_example(identifier: str, language: str) -> str:
@@ -94,3 +99,78 @@ def test_the_predict_example_names_the_default_paths_the_commands_use() -> None:
         "--output",
         str(benchmark_cli.DEFAULT_OUTPUT_DIR),
     ), "the benchmark example reads the snapshot and writes the report defaults"
+
+
+def _ini_values(body: str) -> dict[str, tuple[str, ...]]:
+    """Return every ``Key=Value`` pair in an INI example, grouped by key.
+
+    Returns
+    -------
+    dict[str, tuple[str, ...]]
+        Each key's values in the order written, so a duplicated key is visible
+        rather than silently collapsed.
+    """
+    values: dict[str, list[str]] = {}
+    for line in body.splitlines():
+        key, equals, value = line.partition("=")
+        if equals and not line.lstrip().startswith(("#", ";")):
+            values.setdefault(key.strip(), []).append(value.strip())
+    return {key: tuple(items) for key, items in values.items()}
+
+
+def test_the_archive_service_runs_a_subcommand_the_command_accepts() -> None:
+    """The unit's ExecStart is a command line this package's parser accepts."""
+    values = _ini_values(_marked_example(ARCHIVE_SERVICE, "ini"))
+    (exec_start,) = values["ExecStart"]
+    program, *arguments = exec_start.split()
+
+    assert program.endswith("/build-limits-outcome-archive"), (
+        "the unit runs the archiver this guide documents"
+    )
+    outcome_archive_cli._build_parser().parse_args(arguments)
+    assert values["Type"] == ("oneshot",), "a oneshot unit exits with the run"
+    assert values["MemoryMax"] == ("512M",), "the unit bounds the peak it was sized for"
+    assert values["TimeoutStartSec"] == ("2h",), "the unit allows for a backlog run"
+
+
+def test_the_archive_timer_is_daily_and_persistent() -> None:
+    """A missed daily firing is caught up at the next start."""
+    values = _ini_values(_marked_example(ARCHIVE_TIMER, "ini"))
+
+    assert values["OnCalendar"] == ("daily",), "the guide schedules a daily run"
+    assert values["Persistent"] == ("true",), "a missed firing still runs"
+    assert values["WantedBy"] == ("timers.target",), "enabling the timer starts it"
+
+
+def test_the_archive_enable_example_names_the_timer_it_defines() -> None:
+    """The enable command is the timer unit the guide installs."""
+    commands = _example_commands(_marked_example(ARCHIVE_ENABLE, "bash"))
+    timer = _ini_values(_marked_example(ARCHIVE_TIMER, "ini"))
+
+    assert timer["WantedBy"] == ("timers.target",), "the timer is installable"
+    assert commands["systemctl"] == (
+        "--user",
+        "enable",
+        "--now",
+        "buildlimits-outcome-archive.timer",
+    ), "the unit enabled is the one the previous example writes"
+
+
+def test_the_archive_command_example_uses_subcommands_the_parser_accepts() -> None:
+    """Every documented invocation is one the command actually accepts."""
+    lines = [
+        line.split()
+        for line in _marked_example(ARCHIVE_COMMANDS, "bash").splitlines()
+        if line.strip()
+    ]
+    parser = outcome_archive_cli._build_parser()
+    invocations = [tuple(line[1:]) for line in lines]
+
+    assert {line[0] for line in lines} == {"build-limits-outcome-archive"}, (
+        "every line runs the documented command"
+    )
+    for arguments in invocations:
+        parser.parse_args(list(arguments))
+    assert invocations == [("inspect",), ("run", "--dry-run"), ("run",)], (
+        "the guide shows the plan, a dry run and the real run"
+    )

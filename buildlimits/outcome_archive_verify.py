@@ -27,12 +27,24 @@ __all__ = [
     "ArchiveFacts",
     "DocumentReader",
     "HeaderRow",
+    "OutputFaultError",
     "RecordRow",
     "SegmentFaultError",
     "Trim",
     "scan_archive",
     "write_archive",
 ]
+
+
+class OutputFaultError(SegmentFaultError):
+    """The archiver's own output failed verification.
+
+    A source that decodes cleanly but whose archive does not decompress to the
+    bytes written names a fault in the temporary file or the compressor, not a
+    defect in the source. The closed reason is ``truncated_xz`` for the report,
+    but the separate type lets the runner refuse to quarantine a source that is
+    still perfectly readable.
+    """
 
 
 @dc.dataclass(frozen=True, slots=True)

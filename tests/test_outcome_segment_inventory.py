@@ -99,6 +99,24 @@ def test_a_sidecar_supplies_the_logical_size(tmp_path: Path) -> None:
     assert inventory.archived_logical_bytes == 100, "the budget sees logical bytes"
 
 
+def test_a_sidecar_for_other_bytes_is_not_trusted(tmp_path: Path) -> None:
+    """A sidecar whose recorded size disagrees with the archive is stale.
+
+    A rewrite replaces the archive before its metadata. If the process stops
+    between those steps the old sidecar still describes the previous bytes, and
+    reporting its counts beside the new file would misstate the history.
+    """
+    layout = store_layout(tmp_path)
+    write_private(layout.archive_dir / archive_name(1), b"x" * 40)
+    write_sidecar(tmp_path, 1, physical_bytes=41)
+
+    inventory = read_inventory(layout)
+
+    assert inventory.corrupt_sidecars == (1,), "the stale sidecar is named"
+    assert not inventory.archived[0].has_metadata, "its counts are withheld"
+    assert inventory.archived[0].logical_bytes == 40, "physical bytes stand in"
+
+
 def test_an_archive_without_a_sidecar_is_flagged(tmp_path: Path) -> None:
     """A missing sidecar is reported, not silently treated as zero bytes."""
     layout = store_layout(tmp_path)

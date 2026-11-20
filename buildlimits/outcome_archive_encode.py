@@ -19,7 +19,7 @@ from buildlimits.outcome_archive_fs import (
 )
 from buildlimits.outcome_archive_verify import (
     ArchiveFacts,
-    SegmentFaultError,
+    OutputFaultError,
     Trim,
     scan_archive,
     write_archive,
@@ -87,7 +87,7 @@ def build_temp(
 
     Raises
     ------
-    SegmentFaultError
+    OutputFaultError
         If the temporary archive does not decompress to the bytes written.
     """
     descriptor, temporary = open_private_temp(
@@ -100,8 +100,10 @@ def build_temp(
         discard(temporary)
         raise
     if not written.matches(scanned):
+        # The source decoded cleanly, so the mismatch is this process's own
+        # output. The caller must retry rather than quarantine the source.
         discard(temporary)
-        raise SegmentFaultError("truncated_xz")
+        raise OutputFaultError("truncated_xz")
     # The temporary is a complete archive, so scanning it can never see the
     # source's unterminated final row. Only the writing pass knows the source
     # was torn, and the sidecar is the run's only record of that repair.

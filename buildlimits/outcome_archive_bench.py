@@ -2,9 +2,17 @@
 
 The archiver's promise is that a 15 GB retained history is handled in bounded
 memory. This benchmark states the size of each input it reads, the physical and
-logical size of the result, and the largest number of rows the streaming reader
-ever buffers, so a regression in memory behaviour is visible in a report rather
-than inferred from a stopwatch.
+logical size of the result, the largest number of rows the streaming reader
+ever buffers, the peak traced allocation during the pass, the elapsed time,
+the process's peak resident memory and the scratch disk the pass used. A
+regression in memory behaviour is therefore visible in the report rather than
+inferred from a stopwatch, and the figures an operator needs to size a timer
+unit's ``MemoryMax`` and ``TimeoutStartSec`` come from the same run.
+
+The traced peak covers allocations made through Python's allocator, which
+includes liblzma's encoder dictionary; it therefore tracks the XZ preset, not
+the segment's length, and ``peak_rss_bytes`` is the figure to compare with a
+unit's ``MemoryMax``.
 
 Run ``make outcome-archive-bench`` to print one report for a generated
 segment; a caller with a real segment passes its path instead.
@@ -15,8 +23,11 @@ import datetime as dt
 import json
 import lzma
 import os
+import resource
 import sys
 import tempfile
+import time
+import tracemalloc
 import typing as typ
 from pathlib import Path
 
@@ -83,6 +94,18 @@ class BenchmarkReport:
         Archive bytes divided by source bytes; lower is better.
     peak_rows : int
         Largest number of rows buffered at one moment.
+    elapsed_seconds : float
+        Wall time the compression pass took.
+    peak_rss_bytes : int
+        The process's peak resident set size after the pass.
+    temp_bytes : int
+        Scratch disk the pass used: the temporary archive's own size.
+    peak_python_bytes : int
+        Peak allocation Python's allocator served while the pass ran. liblzma
+        allocates through that allocator, so this figure is dominated by the
+        preset's encoder dictionary; it rises with the preset but not with the
+        rows read. Unlike ``peak_rows``, it also detects a reader that starts
+        retaining rows.
     """
 
     chunk_bytes: int
@@ -91,6 +114,10 @@ class BenchmarkReport:
     archive_bytes: int
     ratio: float
     peak_rows: int
+    elapsed_seconds: float = 0.0
+    peak_rss_bytes: int = 0
+    temp_bytes: int = 0
+    peak_python_bytes: int = 0
 
     def as_dict(self) -> dict[str, object]:
         """Return the stable JSON fields of the report.
@@ -108,6 +135,10 @@ class BenchmarkReport:
             "archive_bytes": self.archive_bytes,
             "ratio": round(self.ratio, 6),
             "peak_rows": self.peak_rows,
+            "elapsed_seconds": round(self.elapsed_seconds, 6),
+            "peak_rss_bytes": self.peak_rss_bytes,
+            "temp_bytes": self.temp_bytes,
+            "peak_python_bytes": self.peak_python_bytes,
         }
 
 
@@ -127,8 +158,22 @@ def measure(source: Path, *, preset: int = _PRESET) -> BenchmarkReport:
         The measured sizes, record count, ratio and peak buffering.
     """
     source_bytes = source.stat().st_size
-    with source.open("rb") as raw:
-        rows, peak, archive_bytes = _compress(raw, preset)
+    # This pass owns its trace only when it starts one: a caller running under
+    # PYTHONTRACEMALLOC must not have its session cleared by the benchmark.
+    owns_trace = not tracemalloc.is_tracing()
+    if owns_trace:
+        tracemalloc.start()
+    else:
+        tracemalloc.reset_peak()
+    started = time.perf_counter()
+    try:
+        with source.open("rb") as raw:
+            rows, peak, archive_bytes = _compress(raw, preset)
+        _, peak_python = tracemalloc.get_traced_memory()
+    finally:
+        if owns_trace:
+            tracemalloc.stop()
+    elapsed = time.perf_counter() - started
     ratio = archive_bytes / source_bytes if source_bytes else 0.0
     return BenchmarkReport(
         chunk_bytes=CHUNK_BYTES,
@@ -137,6 +182,10 @@ def measure(source: Path, *, preset: int = _PRESET) -> BenchmarkReport:
         archive_bytes=archive_bytes,
         ratio=ratio,
         peak_rows=peak,
+        elapsed_seconds=elapsed,
+        peak_rss_bytes=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
+        temp_bytes=archive_bytes,
+        peak_python_bytes=peak_python,
     )
 
 

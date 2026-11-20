@@ -1936,8 +1936,22 @@ members = ["tests/outcome_test_helpers.py::attributed_record", "tests/outcome_te
 reason = "Two independent fixture builders: cache_key constructs the fixed CacheKey, and attributed_record wraps one in an OutcomeRecord. Their overlap is the docstring shape and one constructor call, not logic, and a shared builder would have to take the object being built as a parameter."
 
 [[tool.duplication_gate.allow]]
-unit = "tests/test_predict_render.py"
-reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
+members = [
+    "tests/test_predict_render.py",
+    "tests/test_predict_render_provenance.py",
+]
+reason = "Recurring short test steps: each test renders one document and asserts the sentence or row it is about, so the shared shape is the render-then-assert idiom. The document builders already live in `tests/render_helpers.py`, and extracting the remaining step would hide which field each test amends."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/render_helpers.py::empty_document",
+    "tests/render_helpers.py::scored_document",
+]
+reason = "A builder layered on its base: `scored_document` starts from `empty_document` and changes only the fields a scored run sets. That delegation is the sharing, and inlining the base document into the second builder would duplicate the whole fixture."
+
+[[tool.duplication_gate.allow]]
+unit = "tests/test_outcome_retention.py"
+reason = "Recurring short test steps: each parameter case builds the same policy with one budget and asks whether it is usable, so the shared shape is the constructor call under test. A table with the expected outcome per case is the contract, and a shared helper would hide which budget each case proves."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -1993,8 +2007,9 @@ reason = "Matching type-checking preambles: each module guards the same standard
 members = [
     "buildlimits/predict/render.py::_predictors",
     "tests/test_predict_snapshot_store.py::_journal",
+    "tests/render_helpers.py::data_section",
 ]
-reason = "Each reads a mapping the codec produced to describe one block of a report: the renderer lists predictor names, the test helper pulls the journal note out of a snapshot document. The detector matches their shared lookups, not shared logic, and a helper would have to know which document shape it was handed."
+reason = "Each reads a mapping produced to describe one block of a report: the renderer lists predictor names, and the two test helpers pull the journal note or the `data` section out of a report document. The detector matches their shared lookups, not shared logic, and a helper would have to know which document shape it was handed."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -2199,8 +2214,9 @@ reason = "Recurring short test steps: these fragments arrange or check the same 
 members = [
     "tests/test_predict_dataset.py::refuse",
     "tests/test_outcome_archive.py::refuse",
+    "tests/test_outcome_archive_files.py::refuse",
 ]
-reason = "Two three-line fault stubs that raise the same error through different seams: one replaces `Path.replace` while a snapshot is written, the other replaces the archive's quarantine call. The signatures, the patched targets and the behaviour under test differ, so a shared helper would hide which seam each test forces to fail."
+reason = "Three-line fault stubs that raise through different seams: one replaces `Path.replace` while a snapshot is written, one replaces the archive's quarantine call, and one replaces the sidecar write a trim performs. The signatures, the patched targets and the behaviour under test differ, so a shared helper would hide which seam each test forces to fail."
 
 [[tool.duplication_gate.allow]]
 members = [
@@ -2264,10 +2280,17 @@ reason = "Recurring short test steps: both open a segmented writer, append one r
 
 [[tool.duplication_gate.allow]]
 members = [
+    "buildlimits/outcome_recorder_types.py",
+    "buildlimits/outcome_recorder_outputs.py",
+    "tests/outcome_shell_test_support.py",
+    "buildlimits/server_watch.py",
+    "buildlimits/cache_recovery.py",
     "buildlimits/predict/dataset_cli.py",
+    "tests/predict_test_helpers.py",
+    "buildlimits/outcome_archive_files.py",
     "tests/test_kache_detached_events.py",
 ]
-reason = "Matching import lists: each module names the standard-library aliases and the domain types it reads, and a re-export module would hide each module's real dependencies without sharing behaviour."
+reason = "Matching import and type-checking preambles: every module names the standard-library aliases and the domain types it reads, so a re-export module would hide each module's real dependencies without sharing any behaviour."
 
 [[tool.duplication_gate.allow]]
 members = [

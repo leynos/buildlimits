@@ -16,7 +16,8 @@ import dataclasses as dc
 import datetime as dt
 import typing as typ
 
-from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
+from buildlimits.outcome_record_encode import encode_line
+from buildlimits.outcome_record_format import MAX_COMPACT_BYTES, StoreHeader
 
 SEGMENT_BYTES = 12 * 1024 * 1024
 """The active file's high-water mark before the writer seals it."""
@@ -267,6 +268,12 @@ def validate_policy(policy: RetentionPolicy) -> None:
     if policy.headroom_bytes < policy.segment_bytes:
         msg = "headroom_bytes must hold at least one segment"
         raise ValueError(msg)
+    if 0 < policy.max_bytes < _header_floor_bytes():
+        # Compaction discards records but always writes a replacement header.
+        # A budget smaller than that header can never be met, and accepting it
+        # would make every compacted result over budget.
+        msg = "max_bytes cannot hold the replacement store header"
+        raise ValueError(msg)
     if policy.max_records is not None:
         _require_range("max_records", policy.max_records)
     if policy.max_age < dt.timedelta(0):
@@ -275,6 +282,19 @@ def validate_policy(policy: RetentionPolicy) -> None:
     if policy.max_age > dt.timedelta(days=MAX_AGE_DAYS):
         msg = "max_age is too large"
         raise ValueError(msg)
+
+
+def _header_floor_bytes() -> int:
+    """Return the smallest possible compacted document: one maximal header.
+
+    Returns
+    -------
+    int
+        The encoded size of a header with the longest salt identifier, plus
+        its newline. A positive byte budget below this cannot be honoured.
+    """
+    header = StoreHeader("0" * 64, dt.datetime(1970, 1, 1, tzinfo=dt.UTC))
+    return len(encode_line(header).encode("utf-8")) + 1
 
 
 def _require_range(name: str, value: int) -> None:

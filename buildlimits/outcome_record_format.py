@@ -80,10 +80,22 @@ class RecordFailure:
 
 @dc.dataclass(frozen=True, slots=True)
 class DecodedStore:
-    """A validated header and records in append order."""
+    """A validated header and records in append order.
+
+    Attributes
+    ----------
+    header : StoreHeader
+        The newest header represented.
+    records : tuple[StoreRecord, ...]
+        Every record, in append order.
+    salt_ids : tuple[str, ...]
+        Every record domain the history spans, oldest first. Empty for a store
+        read from a single file, where ``header.salt_id`` is the only domain.
+    """
 
     header: StoreHeader
     records: tuple[StoreRecord, ...]
+    salt_ids: tuple[str, ...] = ()
 
 
 _KEY_FIELDS = {field.name for field in dc.fields(CacheKey)}

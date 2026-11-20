@@ -23,6 +23,7 @@ from archive_files_helpers import (
     source,
 )
 
+from buildlimits import outcome_archive_files
 from buildlimits.outcome_archive_encode import read_archive_facts, read_source_facts
 from buildlimits.outcome_archive_files import (
     archive_source,
@@ -200,6 +201,71 @@ def test_a_trim_that_keeps_no_records_deletes_the_archive(tmp_path: Path) -> Non
     assert not entry.path.exists(), "the archive is gone"
     assert not (run.layout.archive_dir / sidecar_name(1)).exists(), (
         "the sidecar is gone with it"
+    )
+
+
+def test_a_trim_without_its_sidecar_leaves_the_archive_for_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed metadata write removes the old sidecar instead of misdescribing.
+
+    The replacement archive is already published when the sidecar is written.
+    Keeping the previous sidecar would report the old counts beside the new
+    bytes; removing it routes the archive to the heal path on the next run.
+    """
+    sealed = source(tmp_path, 1, document(records(4)))
+    run = context(tmp_path)
+    archive_source(run, sealed_entry(sealed, 1))
+    entry = archived_entry(tmp_path)
+    cutoff = NOW - dt.timedelta(minutes=1)
+
+    def refuse(*_args: object, **_kwargs: object) -> object:
+        """Fail the sidecar write so the trim keeps its archive for repair."""
+        raise OSError("the sidecar cannot be written")
+
+    monkeypatch.setattr(outcome_archive_files, "write_sidecar", refuse)
+
+    with pytest.raises(OSError, match="cannot be written"):
+        recompress_archive(run, entry, Trim(before=cutoff))
+
+    assert lzma.decompress(entry.path.read_bytes()).count(b"\n") == 3, (
+        "the trimmed archive is the one that stays published"
+    )
+    assert not (run.layout.archive_dir / sidecar_name(1)).exists(), (
+        "no stale sidecar describes the previous bytes"
+    )
+    assert read_inventory(run.layout).missing_sidecars == (1,), (
+        "the next scan heals the archive from its own content"
+    )
+
+
+def test_repairing_after_a_failed_sidecar_write_reports_the_trimmed_facts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The heal path re-derives the counts the lost write would have recorded."""
+    sealed = source(tmp_path, 1, document(records(4)))
+    run = context(tmp_path)
+    archive_source(run, sealed_entry(sealed, 1))
+    entry = archived_entry(tmp_path)
+    cutoff = NOW - dt.timedelta(minutes=1)
+
+    def refuse(*_args: object, **_kwargs: object) -> object:
+        """Fail the sidecar write the trim performs after its rename."""
+        raise OSError("the sidecar cannot be written")
+
+    monkeypatch.setattr(outcome_archive_files, "write_sidecar", refuse)
+    with pytest.raises(OSError, match="the sidecar cannot be written"):
+        recompress_archive(run, entry, Trim(before=cutoff))
+    monkeypatch.undo()
+
+    result = repair_sidecar(run, entry)
+
+    assert result.action == "repaired", "the sidecar is rebuilt"
+    assert read_archive_facts(entry.path).record_count == 2, (
+        "the rebuilt sidecar counts only the retained rows"
+    )
+    assert read_archive_facts(entry.path).first_observed_at == cutoff, (
+        "the retained history starts at the cutoff"
     )
 
 

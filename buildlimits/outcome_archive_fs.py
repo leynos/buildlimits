@@ -1,12 +1,12 @@
-"""Filesystem primitives for the out-of-process outcome archiver.
+"""File primitives for the out-of-process outcome archiver.
 
-Every path the archiver touches is private to its owner. Directories are
-validated one component at a time so a symlinked parent cannot redirect a
-write, files are opened without following links, temporary files are created
-exclusively, and publication uses a no-clobber hard link followed by a
-directory fsync. The run's non-blocking ``flock`` lives in
-`outcome_archive_lock`; the supervisor writer never takes it and never calls
-into this module's writers.
+Every path the archiver touches is private to its owner. Files are opened
+without following links, temporary files are created exclusively, and
+publication uses a no-clobber hard link followed by a directory fsync. The
+directory walk that proves every parent is private lives in
+`outcome_archive_dirs` and is re-exported here, so callers keep one import.
+The run's non-blocking ``flock`` lives in `outcome_archive_lock`; the
+supervisor writer never takes it and never calls into this module's writers.
 """
 
 import contextlib
@@ -18,13 +18,17 @@ import stat
 import typing as typ
 from pathlib import Path
 
+from buildlimits.outcome_archive_dirs import (
+    UnsafePathError,
+    ensure_private_directory,
+    require_private_chain,
+)
 from buildlimits.outcome_store_io import fsync_directory, write_all
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 _FILE_MODE = 0o600
-_DIRECTORY_MODE = 0o700
 _TEMP_SUFFIX = ".tmp"
 
 __all__ = [
@@ -38,156 +42,6 @@ __all__ = [
     "require_private_chain",
     "require_private_regular",
 ]
-
-
-class UnsafePathError(OSError):
-    """A path is a symlink, a non-directory, or not owned by this user."""
-
-
-def ensure_private_directory(path: Path) -> None:
-    """Create a private directory and refuse a symlinked path.
-
-    Missing components are created one at a time after the component above
-    them has been proven to be a real directory, and the final mode is applied
-    through a descriptor opened with ``O_NOFOLLOW``. A symlink anywhere on the
-    path is therefore refused before a directory is created through it or an
-    existing directory outside the chain has its mode changed. A component that
-    is a symlink or not a directory raises `UnsafePathError`; a filesystem
-    failure propagates as `OSError`.
-
-    Parameters
-    ----------
-    path : Path
-        The directory to create or verify.
-    """
-    _create_missing_components(path)
-    _make_private(path)
-    require_private_chain(path)
-
-
-def _components(path: Path) -> cabc.Iterator[tuple[Path, str]]:
-    """Yield every component of an absolute path, refusing a relative one.
-
-    Yields
-    ------
-    tuple[Path, str]
-        The cumulative path and the component name that produced it.
-
-    Raises
-    ------
-    UnsafePathError
-        If ``path`` is not absolute.
-    """
-    if not path.is_absolute():
-        msg = "an archive path must be absolute"
-        raise UnsafePathError(msg)
-    current = Path(path.anchor)
-    for part in path.parts[1:]:
-        current /= part
-        yield current, part
-
-
-def _create_missing_components(path: Path) -> None:
-    """Create every component of ``path`` below the anchor that is missing."""
-    for current, part in _components(path):
-        try:
-            metadata = current.lstat()
-        except FileNotFoundError:
-            current.mkdir(mode=_DIRECTORY_MODE)
-            # ``mkdir`` is masked by the umask, so a newly created component is
-            # narrowed through its own descriptor rather than assumed private.
-            _make_private(current)
-            continue
-        _require_directory_component(part, metadata)
-
-
-def _require_directory_component(part: str, metadata: os.stat_result) -> None:
-    """Refuse a path component that is a symlink or not a directory.
-
-    Raises
-    ------
-    UnsafePathError
-        If the component is a symlink or is not a directory.
-    """
-    if stat.S_ISLNK(metadata.st_mode):
-        msg = f"archive path component is a symlink: {part}"
-        raise UnsafePathError(msg)
-    if not stat.S_ISDIR(metadata.st_mode):
-        msg = f"archive path component is not a directory: {part}"
-        raise UnsafePathError(msg)
-
-
-def _make_private(path: Path) -> None:
-    """Set one directory's owner-only mode without following a link."""
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
-    try:
-        os.fchmod(descriptor, _DIRECTORY_MODE)
-    finally:
-        os.close(descriptor)
-
-
-def require_private_chain(path: Path) -> None:
-    """Reject a path whose components are symlinks or shared with others.
-
-    A symlinked or non-directory component could redirect a write outside the
-    store. So could a directory another user may rename entries in, which is
-    why every component must also be private to this user: after this check an
-    attacker cannot swap a checked component for a link before it is used.
-
-    Parameters
-    ----------
-    path : Path
-        An absolute directory path.
-
-    Raises
-    ------
-    UnsafePathError
-        If a component is not a directory reachable without a symlink, is
-        writable by another user, or the final component is not owned by this
-        user.
-    """
-    for current, part in _components(path):
-        try:
-            metadata = current.lstat()
-        except FileNotFoundError as error:
-            msg = f"archive path component is missing: {part}"
-            raise UnsafePathError(msg) from error
-        _require_directory_component(part, metadata)
-        _require_private_directory(metadata, part)
-    final = path.lstat()
-    if final.st_uid != os.getuid():
-        msg = "an archive directory must be owned by this user"
-        raise UnsafePathError(msg)
-
-
-def _require_private_directory(metadata: os.stat_result, part: str) -> None:
-    """Reject a directory another user could replace entries in.
-
-    A root-owned directory with the sticky bit set is the one accepted
-    exception. The sticky bit stops another user removing or renaming an entry
-    this account owns, which is what makes a shared system temporary directory
-    safe to place a private store under.
-
-    Parameters
-    ----------
-    metadata : os.stat_result
-        The result of ``lstat`` on one path component.
-    part : str
-        The component name, used in the error message.
-
-    Raises
-    ------
-    UnsafePathError
-        If the directory is writable by its group or by every user and is not
-        a trusted root-owned sticky directory.
-    """
-    if not metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        return
-    is_trusted_shared = metadata.st_uid == 0 and metadata.st_mode & stat.S_ISVTX
-    if not is_trusted_shared:
-        msg = f"archive path component is writable by another user: {part}"
-        raise UnsafePathError(msg)
 
 
 def open_private_regular(

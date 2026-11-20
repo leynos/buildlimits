@@ -28,3 +28,25 @@ def test_a_segment_larger_than_the_compaction_bound_is_refused() -> None:
 
     with pytest.raises(ValueError, match="largest compactable"):
         validate_policy(policy)
+
+
+def test_a_byte_budget_below_one_header_is_refused() -> None:
+    """Compaction always writes a header, so a smaller budget is unreachable."""
+    policy = RetentionPolicy(max_bytes=1, segment_bytes=1, headroom_bytes=1)
+
+    with pytest.raises(ValueError, match="replacement store header"):
+        validate_policy(policy)
+
+
+def test_a_byte_budget_that_holds_a_header_is_accepted() -> None:
+    """A budget above the header floor is a policy compaction can satisfy."""
+    policy = RetentionPolicy(max_bytes=4096, segment_bytes=1, headroom_bytes=1)
+
+    validate_policy(policy)
+
+
+def test_a_zero_byte_budget_means_unlimited() -> None:
+    """Zero is the documented "no byte bound", not an impossible budget."""
+    policy = RetentionPolicy(max_bytes=0, segment_bytes=1, headroom_bytes=1)
+
+    validate_policy(policy)
