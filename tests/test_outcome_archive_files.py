@@ -23,14 +23,18 @@ from archive_files_helpers import (
     source,
 )
 
-from buildlimits import outcome_archive_files
+from buildlimits import outcome_archive_encode, outcome_archive_files
 from buildlimits.outcome_archive_encode import read_archive_facts, read_source_facts
 from buildlimits.outcome_archive_files import (
     archive_source,
     recompress_archive,
     repair_sidecar,
 )
-from buildlimits.outcome_archive_verify import SegmentFaultError, Trim
+from buildlimits.outcome_archive_verify import (
+    OutputFaultError,
+    SegmentFaultError,
+    Trim,
+)
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import archive_name, sealed_meta_name, sidecar_name
 
@@ -330,3 +334,48 @@ def test_recompressing_an_unreadable_archive_reports_its_reason(
         recompress_archive(run, entry, Trim(records=1))
 
     assert raised.value.reason == "truncated_xz", "the stream end is enforced"
+
+
+def _refuse_scan(*_args: object, **_kwargs: object) -> object:
+    """Fail the verification pass over the temporary archive."""
+    raise SegmentFaultError("truncated_xz")
+
+
+def test_a_temporary_that_will_not_decode_is_not_blamed_on_the_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The source is readable, so a bad temporary must not quarantine it."""
+    sealed = source(tmp_path, 1, document(records(2)))
+    run = context(tmp_path)
+    monkeypatch.setattr(outcome_archive_encode, "read_archive_facts", _refuse_scan)
+
+    with pytest.raises(OutputFaultError) as raised:
+        archive_source(run, sealed_entry(sealed, 1))
+
+    assert raised.value.reason == "truncated_xz", "the fault names the output"
+    assert sealed.exists(), "the readable source survives for the next attempt"
+    assert not (run.layout.archive_dir / archive_name(1)).exists(), (
+        "nothing unverified is published"
+    )
+    assert not list(run.layout.archive_dir.iterdir()), "the temporary is discarded"
+
+
+def test_a_trim_whose_temporary_will_not_decode_keeps_the_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rewrite that cannot verify its own output leaves the archive intact."""
+    sealed = source(tmp_path, 1, document(records(2)))
+    run = context(tmp_path)
+    archive_source(run, sealed_entry(sealed, 1))
+    entry = archived_entry(tmp_path)
+    before = entry.path.read_bytes()
+    monkeypatch.setattr(outcome_archive_encode, "read_archive_facts", _refuse_scan)
+
+    with pytest.raises(OutputFaultError) as raised:
+        recompress_archive(run, entry, Trim(records=1))
+
+    assert raised.value.reason == "truncated_xz", "the fault names the output"
+    assert entry.path.read_bytes() == before, "the previous archive is untouched"
+    assert read_inventory(run.layout).archived[0].has_metadata, (
+        "its sidecar still describes the file that is published"
+    )

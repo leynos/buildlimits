@@ -25,8 +25,8 @@ from outcome_archive_helpers import (
     write,
 )
 
-from buildlimits import outcome_archive_files
-from buildlimits.outcome_archive_verify import OutputFaultError
+from buildlimits import outcome_archive_encode, outcome_archive_files
+from buildlimits.outcome_archive_verify import OutputFaultError, SegmentFaultError
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import archive_name, segment_name
 
@@ -108,6 +108,28 @@ def test_a_failed_reconcile_is_recorded_and_the_run_continues(
         "the pair after the failure is still settled"
     )
     assert report.status == "corrupt", "the run names the fault it met"
+
+
+def test_a_temporary_that_will_not_decode_is_not_quarantined(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fault in the run's own output leaves the readable source for retry."""
+
+    def refuse_scan(*_args: object, **_kwargs: object) -> object:
+        """Fail the verification pass over the temporary archive."""
+        raise SegmentFaultError("truncated_xz")
+
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 1), policy())
+    monkeypatch.setattr(outcome_archive_encode, "read_archive_facts", refuse_scan)
+
+    report = run(tmp_path, policy())
+
+    assert report.failures == ((1, "truncated_xz"),), "the output fault is reported"
+    assert layout(tmp_path).sealed_dir.joinpath(segment_name(1)).exists(), (
+        "the source is not quarantined"
+    )
+    assert not layout(tmp_path).quarantine_dir.exists(), "nothing is quarantined"
 
 
 def test_an_unreadable_source_is_recorded_as_unreadable(

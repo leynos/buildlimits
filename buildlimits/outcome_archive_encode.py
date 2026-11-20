@@ -20,6 +20,7 @@ from buildlimits.outcome_archive_fs import (
 from buildlimits.outcome_archive_verify import (
     ArchiveFacts,
     OutputFaultError,
+    SegmentFaultError,
     Trim,
     scan_archive,
     write_archive,
@@ -88,14 +89,26 @@ def build_temp(
     Raises
     ------
     OutputFaultError
-        If the temporary archive does not decompress to the bytes written.
+        If the temporary archive cannot be decoded or does not decompress to
+        the bytes written. The source was readable in both cases, so the fault
+        names this run's output rather than the history it read.
     """
     descriptor, temporary = open_private_temp(
         context.layout.archive_dir, prefix=outcome_segments.segment_name(sequence)
     )
     try:
         written = _write_temp(source_path, descriptor, options)
+    except BaseException:
+        discard(temporary)
+        raise
+    try:
         scanned = read_archive_facts(temporary)
+    except SegmentFaultError as fault:
+        # The source was read to its end to write this temporary, so a
+        # temporary that will not decompress is this process's own output.
+        # Reporting it as a source fault would quarantine readable history.
+        discard(temporary)
+        raise OutputFaultError("truncated_xz") from fault
     except BaseException:
         discard(temporary)
         raise
