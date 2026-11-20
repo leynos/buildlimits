@@ -366,9 +366,11 @@ def _retention_floor(
     The floor records what retention removed, not what happens to be absent.
     Deriving it from the surviving sequences would raise it past a sequence
     that went missing for another reason, and the next scan would then stop
-    reporting that sequence as a gap. It therefore advances only past a
-    deleted prefix, and never falls below the first sequence this store ever
-    had, so an empty prefix is not reported as missing history.
+    reporting that sequence as a gap. It therefore advances only across a
+    contiguous run of deletions from the previous floor: a deletion beyond a
+    sequence this run did not remove stops the walk, so the hole stays
+    reported. It never falls below the first sequence this store ever had,
+    so an empty prefix is not reported as missing history.
 
     Parameters
     ----------
@@ -387,4 +389,6 @@ def _retention_floor(
     present = [entry.sequence for entry in inventory.effective]
     baseline = min(present, default=0) if previous is None else previous
     deleted = outcome_archive_run.deleted_sequences(outcome.actions)
-    return max([baseline, *(sequence + 1 for sequence in deleted)])
+    if not deleted:
+        return baseline
+    return outcome_archive_reports.contiguous_floor(max(baseline, 1), deleted)

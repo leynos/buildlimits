@@ -17,6 +17,7 @@ import outcome_archive_helpers as archive
 
 from buildlimits import outcome_archive, outcome_archive_fs
 from buildlimits.outcome_archive_run import deleted_sequences
+from buildlimits.outcome_segments import archive_name, sidecar_name
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_report import RunReport
@@ -67,6 +68,13 @@ def assert_floor_survives(root: Path, recovered: RunReport, floor: int) -> None:
     assert recovered.status == "ok", "the next firing completes normally"
     assert persisted_floor(root) == floor, "the floor advances past the deletions"
     assert not recovered.gaps, "the deletions are not reported as lost history"
+
+
+def lose_archive(root: Path, sequence: int) -> None:
+    """Remove one archive and its sidecar without recording a deletion."""
+    directory = archive.layout(root).archive_dir
+    for name in (archive_name(sequence), sidecar_name(sequence)):
+        (directory / name).unlink()
 
 
 def test_a_failed_state_write_still_records_the_deletions_it_completed(
@@ -130,3 +138,46 @@ def test_an_unmeasurable_run_still_records_the_deletions_it_completed(
         "both deletions were performed before the read failed"
     )
     assert_floor_survives(tmp_path, recovered, 3)
+
+
+def test_a_hole_below_a_deletion_stays_reportable(tmp_path: Path) -> None:
+    """A deletion beyond a missing sequence must not excuse that sequence.
+
+    Retention deletes the oldest archives, so a hole makes the run's deleted
+    set non-contiguous. Raising the floor past the hole would let the next
+    scan treat the missing sequence as intentionally evicted, so the floor
+    stops at the hole and a later sealed source proves it is still reported.
+    """
+    store = archive.seeded_store(tmp_path, archive.records(archive.NOW, 3))
+    unlimited = archive.policy(max_bytes=0)
+    archive.run(tmp_path, unlimited)
+    lose_archive(tmp_path, 2)
+
+    archive.run(tmp_path, dc.replace(unlimited, max_records=0))
+
+    assert persisted_floor(tmp_path) == 2, "the floor stops at the hole"
+    archive.write(store, archive.records(archive.NOW, 1), unlimited)
+    observed = archive.run(tmp_path, unlimited, dry_run=True)
+    assert 2 in observed.gaps, "the missing sequence is still a reported gap"
+
+
+def test_the_failure_floor_does_not_pass_a_hole(tmp_path: Path) -> None:
+    """An unmeasurable run advances only across a contiguous run of deletions.
+
+    The same hole and deletion set reach ``write_deleted_floor`` without a
+    post-run inventory, so the stop must be derived from the recorded floor
+    and the deletions alone.
+    """
+    archive.seeded_store(tmp_path, archive.records(archive.NOW, 3))
+    unlimited = archive.policy(max_bytes=0)
+    archive.run(tmp_path, unlimited)
+    lose_archive(tmp_path, 2)
+
+    with mock.patch.object(outcome_archive, "_measure", archive.refuse):
+        failed = archive.run(tmp_path, dc.replace(unlimited, max_records=0))
+
+    assert failed.status == "failed", "the result could not be measured"
+    assert deleted_sequences(failed.actions) == (1, 3), (
+        "retention removed the archives either side of the hole"
+    )
+    assert persisted_floor(tmp_path) == 2, "the floor stops at the hole"
