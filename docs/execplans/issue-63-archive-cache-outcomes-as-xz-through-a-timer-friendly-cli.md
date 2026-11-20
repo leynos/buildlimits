@@ -644,11 +644,17 @@ verified archive is published, and leaves compile admission untouched.
   passed, 86 skipped, 76 snapshots).
 - [x] Whole-plan revision-23 remediation (2026-11-20): the revision-22
   assessment's documentation finding is fixed. `docs/developers-guide.md` names
-  `predict.render_tables` in the package-module inventory, the only `predict`
-  module new relative to the accepted base; the assessment corrected an earlier
-  saved-check claim that all seven were new, because six already existed at
-  that base. The Markdown gates (`check-fmt`, `markdownlint`, `nixie`) pass on
-  the final tree.
+  `predict.render_tables` in the package-module inventory. Two `predict`
+  modules are new relative to the accepted base, `predict.dataset_journal` and
+  `predict.render_tables`; both now have inventory rows, and the earlier
+  saved-check claim that all seven were new is not carried forward. The
+  Markdown gates (`check-fmt`, `markdownlint`, `nixie`) pass on the final tree.
+- [x] Whole-plan revision-24 remediation (2026-11-20): the revision-23
+  assessment's two plan-text findings are fixed. The active-file paragraph no
+  longer says a byte-only run can proceed from the `stat` size; it states the
+  unconditional deferral at exit 75 and marks the older rule superseded. The
+  revision-23 bullet now names both new `predict` modules. The Markdown gates
+  (`check-fmt`, `markdownlint`, `nixie`) pass on the final tree.
 
 ## Surprises & discoveries
 
@@ -859,6 +865,12 @@ verified archive is published, and leaves compile admission untouched.
   the run reports `unsettled` at exit 75. `_active_is_measurable` keeps the two
   apart, and `_pending_work` returns an empty deferred plan so `retain` cannot
   mistake "nothing to do" for a settled pass.
+- A section can outlive the code it describes without any edit touching it. The
+  active-file paragraph still described a byte-only run measuring the file by
+  `stat` after revision 22 made that unsafe, because the revision changed the
+  guard and the ADR, the guides and the Progress log, but not that paragraph. A
+  review that reads the plan against the code, rather than against the
+  assessment it answers, is what found it.
 - The retained-history check a `stat` performs is not a substitute for a
   second size reading around the scan. A descriptor's size at open time says
   nothing about rows appended while the scan reads, so the only pairing that
@@ -1074,8 +1086,15 @@ verified archive is published, and leaves compile admission untouched.
   empty to either budget. A file that exists but cannot be decoded is reported
   by size with `has_metadata=False`; if a record cap is configured, planning
   raises `UnknownActiveHistoryError` because the cap cannot be shown to hold,
-  and the run reports `failed` with exit 1. A byte-only run may still proceed,
-  because it measures the active file by `stat`.
+  and the run reports `failed` with exit 1. A byte-only run does not proceed
+  either: the whole-file size includes any append the writer has not committed
+  and may roll back, so it is an upper bound rather than a measurement. The
+  byte walk is deferred and the run reports `unsettled` at exit 75, which
+  supersedes the earlier statement here that a byte-only run could measure the
+  file by `stat`. The deferral was first narrowed to age-aware budgets and
+  revision 22 made it unconditional, because the whole-file size never measures
+  committed bytes; revision 24 corrects this paragraph, which still described
+  the narrowed rule.
 - Constraint 2 and invariant 3 now state the sealed-source eviction the
   planner already implements: a segment wholly outside the bounds is removed
   without being compressed, while a partially expired segment is archived first
@@ -1281,6 +1300,13 @@ verified archive is published, and leaves compile admission untouched.
   dismiss; the next successful run records the floor the store actually has. A
   store that never recorded a floor is still treated as fresh, because it has
   no earlier statement to contradict.
+- A superseded rule is rewritten where it stands, and the supersession is
+  named. The active-file paragraph said a byte-only run could proceed from the
+  `stat` size; revision 22 had already made that unsafe, but the paragraph was
+  not part of that revision. A plan that carried both the stale rule and the
+  corrected one would let a later reader implement the one the code rejects, so
+  the paragraph now states the unconditional deferral and records what it
+  replaced.
 
 ## Outcomes & retrospective
 
@@ -1713,7 +1739,13 @@ Each mutation was reverted and the focused suite passed again.
   unconditional deferral.
 - Revision 23 records the whole-plan revision-22 assessment's documentation
   finding. `docs/developers-guide.md` now names `predict.render_tables` in the
-  package-module inventory. The assessment corrected an earlier saved-check
-  claim: only that module is new relative to the accepted base, because the
-  other six `predict` modules already existed there, so the plan does not carry
-  that claim forward.
+  package-module inventory. The plan does not carry forward the earlier
+  saved-check claim that seven `predict` modules were new.
+- Revision 24 records the whole-plan revision-23 assessment's two plan-text
+  findings, both of which the implementation already contradicted. The
+  active-file paragraph had kept the pre-revision-22 rule that a byte-only run
+  measures the file by `stat`; it now states the unconditional deferral and
+  records that the earlier rule is superseded. Two `predict` modules are new
+  relative to the accepted base, `predict.dataset_journal` and
+  `predict.render_tables`, and the revision-23 bullet says so instead of naming
+  only one.
