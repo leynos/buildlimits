@@ -85,7 +85,12 @@ class DocumentReader:
     header : StoreHeader | None
         Set once the first row is read.
     had_torn_tail : bool
-        Whether an unusable final fragment was dropped.
+        Whether the stream ended without a newline, so its final fragment is
+        not committed history.
+    last_record_terminated : bool
+        Whether the last record row yielded ended with a newline. A dropped
+        undecodable fragment leaves this true: the row before it was committed,
+        and only the fragment was torn.
     """
 
     def __init__(self, stream: LineStream) -> None:
@@ -93,6 +98,7 @@ class DocumentReader:
         self._stream = stream
         self.header: StoreHeader | None = None
         self.had_torn_tail = False
+        self.last_record_terminated = True
 
     def __iter__(self) -> cabc.Iterator[DocumentRow]:
         """Iterate the header then typed rows in document order.
@@ -123,6 +129,13 @@ class DocumentReader:
     def _finish(self, pending: bytes | None) -> cabc.Iterator[DocumentRow]:
         """Emit or drop the final row according to stream termination.
 
+        An unterminated final row that decodes is still yielded, because its
+        bytes are readable history; whether it was committed is reported
+        separately through ``last_record_terminated``. An unterminated final
+        fragment that does not decode is dropped as the torn tail it is, and
+        the row before it keeps its termination status: only the fragment was
+        torn.
+
         Parameters
         ----------
         pending : bytes | None
@@ -131,7 +144,7 @@ class DocumentReader:
         Yields
         ------
         DocumentRow
-            The final row when it decodes and the stream is terminated.
+            The final row when it decodes.
 
         Raises
         ------
@@ -151,6 +164,7 @@ class DocumentReader:
         yield RecordRow(pending, decoded)
         if not self._stream.is_terminated:
             self.had_torn_tail = True
+            self.last_record_terminated = False
 
 
 def iter_records(reader: DocumentReader) -> cabc.Iterator[RecordRow]:

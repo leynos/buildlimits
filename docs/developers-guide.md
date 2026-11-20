@@ -1112,15 +1112,17 @@ reconciliation removes it. `outcome_segment_state.read_retention_floor` reads
 `retention.json` into a `RetentionFloor` whose `state` names how the record was
 read: `recorded` for a sequence this code wrote, `missing` when the store never
 recorded one, `unreadable` for an I/O fault, and `invalid` for content that is
-not the bounded integer document. Only a recorded sequence is reused as a run's
-baseline, so a damaged record cannot silently raise the floor and hide a gap.
-`outcome_archive_state.retention_floor` derives the floor a run records: it
-advances only past a contiguous deleted prefix, and its `write_state` replaces
-`retention.json` and the run report together once the final snapshot is read.
-The floor is why evicting old history does not look like corruption, so the
-inventory reports a missing sequence only at or above it.
-`outcome_segment_gaps.retained_gaps` names those sequences for an operator; it
-stops at `MAX_GAP_SEQUENCES` and flags the list as truncated, because a
+not the bounded integer document. A recorded sequence is reused as the run's
+baseline; a missing record lets the baseline come from the history the store
+has, while a damaged record keeps the lowest sequence any store can start at,
+so a gap below the first survivor is still reported instead of being silently
+raised over. `outcome_archive_state.retention_floor` derives the floor a run
+records: it advances only past a contiguous deleted prefix, and its
+`write_state` replaces `retention.json` and the run report together once the
+final snapshot is read. The floor is why evicting old history does not look
+like corruption, so the inventory reports a missing sequence only at or above
+it. `outcome_segment_gaps.retained_gaps` names those sequences for an operator;
+it stops at `MAX_GAP_SEQUENCES` and flags the list as truncated, because a
 restarted counter would otherwise leave no ceiling on one report.
 
 `outcome_history` is the read port over all three states.

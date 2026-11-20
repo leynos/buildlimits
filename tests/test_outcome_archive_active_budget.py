@@ -10,54 +10,25 @@ plan.
 """
 
 import datetime as dt
-import errno
 import typing as typ
 from pathlib import Path
 
-import pytest
-from archive_cli_helpers import sealed_measured_source
-from outcome_archive_helpers import NOW, archives, layout, policy, records, run, write
+from outcome_append_helpers import archived_store, run_during_paused_append
+from outcome_archive_helpers import NOW, archives, policy, records, run
 from segment_test_helpers import document, write_private
 
-from buildlimits import outcome_archive_active, outcome_record_encode, outcome_store_io
+from buildlimits import outcome_archive_active, outcome_record_encode
 from buildlimits.outcome_archive_report import EXIT_TEMPFAIL
 from buildlimits.outcome_retention import RetentionPolicy
 
 if typ.TYPE_CHECKING:
+    import pytest
+
     from buildlimits.outcome_archive_report import RunReport
-    from buildlimits.outcome_record_format import StoreRecord
-    from buildlimits.outcome_segments import SegmentLayout
 
 _HEADER_BYTES = len(document(()))
 _ARCHIVE_BYTES = len(document(records(NOW, 5)))
 _EXPIRED = NOW - dt.timedelta(days=10)
-
-
-def _archived_store(
-    root: Path,
-    *,
-    retained: int = 5,
-    active: tuple[StoreRecord, ...] = (),
-) -> SegmentLayout:
-    """Build a store with one published archive and the given active rows.
-
-    The active file is written directly so the fixture can hold rows the
-    writer's own compaction would have dropped. A real run sees exactly that
-    state while it plans, because the writer may not have ticked yet.
-
-    Returns
-    -------
-    SegmentLayout
-        The layout of the store the run should use.
-    """
-    store = root / "cache-outcomes.jsonl"
-    write(store, (), policy(segment_bytes=1_000_000))
-    sealed_measured_source(store, 1, records(NOW, retained))
-    first = run(root, policy(segment_bytes=1_000_000, max_age_days=30))
-    assert first.status == "ok", "the fixture archive is published untrimmed"
-    store_layout = layout(root)
-    write_private(store_layout.active, document(active))
-    return store_layout
 
 
 def _run_over_expired_active(root: Path, run_policy: RetentionPolicy) -> RunReport:
@@ -80,7 +51,7 @@ def _run_over_expired_active(root: Path, run_policy: RetentionPolicy) -> RunRepo
     RunReport
         The report of the run.
     """
-    _archived_store(root, active=records(_EXPIRED, 4))
+    archived_store(root, active=records(_EXPIRED, 4))
     archive = archives(root)[0]
     before = archive.read_bytes()
 
@@ -145,7 +116,7 @@ def test_active_rows_the_age_rule_keeps_still_count(tmp_path: Path) -> None:
     after the cutoff share the budget with closed history, so an active file
     that fills it leaves no room for the archive.
     """
-    _archived_store(tmp_path, retained=2, active=records(NOW, 4))
+    archived_store(tmp_path, retained=2, active=records(NOW, 4))
     active_bytes = len(document(records(NOW, 4)))
 
     report = run(
@@ -166,7 +137,7 @@ def test_kept_active_rows_count_towards_a_record_cap(tmp_path: Path) -> None:
     The cap is met by the rows the age rule keeps, so the older archive must be
     removed rather than left to exceed the bound the run reports.
     """
-    _archived_store(tmp_path, retained=2, active=records(NOW, 4))
+    archived_store(tmp_path, retained=2, active=records(NOW, 4))
 
     report = run(
         tmp_path, policy(segment_bytes=1_000_000, max_age_days=1, max_records=4)
@@ -190,7 +161,7 @@ def test_an_append_during_planning_is_budgeted_from_its_version(
     checks the decision is applied and that the report describes the version
     its row count came from.
     """
-    store_layout = _archived_store(tmp_path, retained=5, active=records(NOW, 2))
+    store_layout = archived_store(tmp_path, retained=5, active=records(NOW, 2))
     budget = _ARCHIVE_BYTES + len(document(records(NOW, 2))) + 1
     real = outcome_archive_active._size_of
     appended = iter((records(NOW, 3)[2], records(NOW, 4)[3]))
@@ -238,62 +209,6 @@ def test_an_append_during_planning_is_budgeted_from_its_version(
     assert report.status == "ok", "the settled store meets the byte budget"
 
 
-def _run_during_uncommitted_append(
-    root: Path,
-    run_policy: RetentionPolicy,
-    monkeypatch: pytest.MonkeyPatch,
-) -> RunReport:
-    """Run once while an append is paused before its newline, then fail it.
-
-    The append writes every byte of one complete row except its newline, runs
-    the archiver against that half-written file, then raises so the writer's
-    own rollback removes the row. A run therefore observes exactly the state a
-    concurrent writer exposes between its row bytes and its commit.
-
-    Parameters
-    ----------
-    root : Path
-        The store root to build and run against.
-    run_policy : RetentionPolicy
-        The bounds to run with.
-    monkeypatch : pytest.MonkeyPatch
-        The fixture that injects the paused write.
-
-    Returns
-    -------
-    RunReport
-        The report the run produced while the row was in flight.
-    """
-    reports: list[RunReport] = []
-    real_write_all = outcome_store_io.write_all
-    in_window = False
-
-    def pause_before_newline(descriptor: int, data: bytes) -> None:
-        """Write the row, let the run observe it, then fail its newline."""
-        nonlocal in_window
-        if in_window:
-            real_write_all(descriptor, data)
-            return
-        in_window = True
-        try:
-            real_write_all(descriptor, data[:-1])
-            reports.append(run(root, run_policy))
-        finally:
-            in_window = False
-        raise OSError(errno.EIO, "injected newline failure")
-
-    monkeypatch.setattr(outcome_store_io, "write_all", pause_before_newline)
-    row = records(NOW, 5)[4]
-
-    with pytest.raises(OSError, match="injected newline failure"):
-        outcome_store_io.append_line(
-            layout(root).active, outcome_record_encode.encode_line(row).encode()
-        )
-
-    assert len(reports) == 1, "the run observed the append before its newline"
-    return reports[0]
-
-
 def test_an_uncommitted_append_does_not_evict_an_eligible_archive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -304,12 +219,12 @@ def test_an_uncommitted_append_does_not_evict_an_eligible_archive(
     count it towards a budget: doing so evicts an archive the committed rows
     fit beside.
     """
-    store_layout = _archived_store(tmp_path, retained=2, active=records(NOW, 4))
+    store_layout = archived_store(tmp_path, retained=2, active=records(NOW, 4))
     archive = archives(tmp_path)[0]
     before = archive.read_bytes()
     committed = document(records(NOW, 4))
 
-    report = _run_during_uncommitted_append(
+    report = run_during_paused_append(
         tmp_path,
         policy(segment_bytes=1_000_000, max_age_days=1, max_records=6),
         monkeypatch,
@@ -333,7 +248,7 @@ def test_an_uncommitted_append_does_not_evict_under_a_byte_budget(
     and trimmed an archive the committed rows fit beside. The budget now
     counts the header and committed rows whether or not a cutoff applies.
     """
-    _archived_store(tmp_path, retained=2, active=records(NOW, 4))
+    archived_store(tmp_path, retained=2, active=records(NOW, 4))
     archive = archives(tmp_path)[0]
     before = archive.read_bytes()
     committed = len(document(records(NOW, 4)))
@@ -345,7 +260,7 @@ def test_an_uncommitted_append_does_not_evict_under_a_byte_budget(
         segment_bytes=1_000_000,
     )
 
-    report = _run_during_uncommitted_append(tmp_path, run_policy, monkeypatch)
+    report = run_during_paused_append(tmp_path, run_policy, monkeypatch)
 
     assert report.retained_records == 6, "the uncommitted row is not counted"
     assert archive.read_bytes() == before, "the eligible archive is byte-identical"
@@ -364,7 +279,7 @@ def test_an_unmeasurable_active_file_defers_an_age_aware_byte_budget(
     retry. A record cap configured beside it remains an operational failure,
     which the active-file tests cover.
     """
-    store_layout = _archived_store(tmp_path, retained=5, active=records(_EXPIRED, 4))
+    store_layout = archived_store(tmp_path, retained=5, active=records(_EXPIRED, 4))
     archive = archives(tmp_path)[0]
     before = archive.read_bytes()
     # Large enough that the whole file, read as retained bytes, would push the

@@ -8,9 +8,11 @@ runs, so the size is read immediately before the scan and confirmed immediately
 after it; a scan whose version changed is retried, and one that never settles
 is unknown history. An append is committed by its newline, so an unterminated
 final row is the writer's in-flight append, which an interrupted write rolls
-back; it is excluded from the rows a budget counts. Only an absent file means
-there is no active history; a path that exists but cannot be inspected is
-unknown history, not an empty file.
+back; it is excluded from the rows a budget counts. A crash can also leave an
+undecodable fragment instead, and the row before that fragment was terminated:
+only the fragment is uncommitted, so the row still counts. Only an absent file
+means there is no active history; a path that exists but cannot be inspected
+is unknown history, not an empty file.
 """
 
 import dataclasses as dc
@@ -163,7 +165,9 @@ def _measure(
 
     The reader holds back the final row until it knows whether the stream
     ended with a newline, because that row may still be an append in flight.
-    Every earlier row is followed by another and is therefore committed.
+    Every earlier row is followed by another and is therefore committed. A
+    fragment the reader dropped as undecodable is not the row before it: that
+    row was terminated, and only the fragment is excluded.
 
     Returns
     -------
@@ -193,10 +197,11 @@ def _measure(
         raise SegmentFaultError(fault.reason) from fault
     if not tally.saw_header:
         raise SegmentFaultError("corrupt")
-    # ``had_torn_tail`` is settled only once iteration ends. A final row
-    # without its newline is the writer's append in flight; an interrupted
-    # write truncates it back out, so it must not decide a budget.
-    if pending is not None and not reader.had_torn_tail:
+    # Termination is settled only once iteration ends. A final row without its
+    # newline is the writer's append in flight, and an interrupted write
+    # truncates it back out, so it must not decide a budget. A row before a
+    # dropped fragment is different: it was terminated and is committed.
+    if pending is not None and reader.last_record_terminated:
         tally.record(pending)
     return tally.as_history(size)
 

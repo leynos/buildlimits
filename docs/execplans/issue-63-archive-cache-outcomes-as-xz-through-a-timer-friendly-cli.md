@@ -614,6 +614,23 @@ verified archive is published, and leaves compile admission untouched.
   tree: `check-fmt`, `lint` (269 reasoned duplication exceptions), `typecheck`,
   `test` (4564 passed, 86 skipped, 76 snapshots), `markdownlint` (43 files, 0
   issues), `nixie` and `audit`.
+- [x] Whole-plan revision-21 remediation (2026-11-20): the revision-20
+  assessment's two retention findings are fixed. `DocumentReader` reports
+  `last_record_terminated` separately from `had_torn_tail`, so the active scan
+  counts the committed row before an undecodable fragment instead of dropping
+  it with the fragment. The paused-append regressions in
+  `tests/test_outcome_archive_active_torn_append.py` assert the committed
+  count, the byte budget and the final status, and each was checked against a
+  reader that withholds the held-back row. `retention_floor` no longer treats a
+  damaged record as a fresh store: a recorded sequence is reused, a missing
+  record derives its baseline from the history, and an unreadable or invalid
+  record keeps the lowest sequence any store can start at, so the gap below the
+  first survivor is still reported and the floor is not raised over it
+  (`tests/test_outcome_archive_damaged_floor.py`). The shared append fixtures
+  moved to `tests/outcome_append_helpers.py`, which keeps
+  `test_outcome_archive_active_budget.py` under the 400-line ceiling, and ADR
+  0010 D6 and the developers' guide describe the damaged-record baseline. All
+  seven commit gates passed once each on the final tree.
 
 ## Surprises & discoveries
 
@@ -854,6 +871,20 @@ verified archive is published, and leaves compile admission untouched.
   `OSError`, so mapping every `OSError` to `unreadable` would report a file
   this code never writes as a filesystem problem. The specific error is caught
   first and reported as `invalid`.
+- An unterminated decodable row and an undecodable fragment mean opposite
+  things for the row before them. The first is the writer's append in flight,
+  so the row it would become is not history; the fragment sits after a finished
+  row, so that row was committed and the fragment alone is torn. The reader
+  therefore reports the termination of the last row it yielded, separately from
+  `had_torn_tail`, and the active scan counts that row when it was terminated
+  even though the fragment after it is dropped.
+- A record cap met by one row of excess trims the straddling archive instead
+  of deleting it. The first draft of the paused-append regression expected the
+  whole two-row archive to disappear under a cap of five, but the excess fits
+  inside the archive's row count, so the planner correctly rewrites it to four
+  rows. Making the excess equal to the archive's whole count, a cap of four, is
+  what makes the regression distinguish the committed count: the pre-fix reader
+  plans a one-row trim and leaves the archive in place.
 
 ## Decision log
 
@@ -1197,6 +1228,16 @@ verified archive is published, and leaves compile admission untouched.
   environment to `_store`, which resolves the store path from it only when
   `--store` is absent. A timer started under another account therefore reads
   that account's configuration and store.
+- A damaged retention record keeps the lowest sequence rather than stopping
+  the run or reseeding it from the survivors. Both state files are advisory and
+  rewritten every run, so refusing to run would let one bad byte halt retention
+  indefinitely, while deriving the baseline from the survivors would overwrite
+  the damage with a higher floor and hide the gap the damage may have
+  concealed. Keeping the lowest sequence any store can start at reports every
+  absent sequence below the first survivor, which an operator can read and
+  dismiss; the next successful run records the floor the store actually has. A
+  store that never recorded a floor is still treated as fresh, because it has
+  no earlier statement to contradict.
 
 ## Outcomes & retrospective
 
@@ -1328,6 +1369,20 @@ Methods and evidence:
   held-back row fails the paused-append test, removing the measurability check
   evicts the archive, a single scan fails the append and report tests, and a
   single inventory/active pair fails all three inspection/dry-run tests.
+- Revision-21 retention regressions: a paused append that leaves an
+  undecodable fragment (`tests/test_outcome_archive_active_torn_append.py`)
+  proves the committed row before it still counts. Under a cap of four the
+  two-row archive is evicted whole
+  (`test_a_dropped_fragment_does_not_hide_the_row_before_it`); a reader that
+  withholds the held-back row plans a one-row trim and leaves the archive, so
+  the test fails on the empty archive it expects. A byte budget one byte below
+  the committed total trims the archive's oldest row
+  (`test_a_dropped_fragment_does_not_release_bytes_from_the_budget`), which a
+  dropped row would leave within budget. An invalid retention record with the
+  first sequence missing (`tests/test_outcome_archive_damaged_floor.py`) still
+  reports the gap and writes `floor_sequence` as one; the fresh-baseline
+  expression reports no gap and records two. Both mutations were observed
+  before the fixes and reverted afterwards.
 - Planner retention properties in
   `tests/test_outcome_archive_plan_properties.py`: four properties over 50
   generated histories each assert that whole deletions form an oldest-first
@@ -1588,3 +1643,17 @@ Each mutation was reverted and the focused suite passed again.
   mutation that restores the old behaviour. The users' guide, the developers'
   guide and ADR 0010 describe the re-planned final report and the floor's named
   states.
+- Revision 21 records the whole-plan revision-20 assessment's two retention
+  findings. `DocumentReader.last_record_terminated` separates a decodable row
+  the writer has not committed from an undecodable fragment that follows a
+  committed row, so the active scan counts the row before a fragment and
+  neither budget releases its bytes or its row. The paused-append regressions
+  assert the committed count, the byte budget and the final status, and each
+  fails against a reader that withholds the held-back row. A damaged retention
+  record no longer reseeds the floor from the survivors: a recorded sequence is
+  reused, a missing record derives its baseline from the history, and an
+  unreadable or invalid record keeps the lowest sequence a store can start at,
+  so a gap below the first survivor is still reported. ADR 0010 D6 and the
+  developers' guide now state that rule, and the shared append fixtures moved to
+  `tests/outcome_append_helpers.py` to keep the budget suite within the
+  400-line ceiling. All seven commit gates passed once each on the final tree.

@@ -384,9 +384,13 @@ Each completed run writes two documents into the archive directory:
 Both are written by atomic replacement. The retention floor is why evicting old
 history does not look like corruption: the inventory reports a missing sequence
 as a gap only at or above the floor. A record that is missing, unreadable or
-invalid is reported as that state rather than as a floor, and a run derives a
-fresh baseline instead of trusting it, so damaged state cannot silently raise
-the floor and hide a gap.
+invalid is reported as that state rather than as a floor. A store that never
+recorded one is fresh, so its baseline comes from the history it has. A damaged
+record is different: the store can no longer prove which absent sequences
+retention removed, so the baseline stays at the lowest sequence any store can
+start at. Every absent sequence below the first survivor therefore keeps being
+reported, rather than the run deriving a higher baseline from the survivors and
+silently raising the floor over a gap.
 
 After archiving and reconciliation, a run replans over the settled store and
 applies the trims and deletions the first plan could not see, skipping
