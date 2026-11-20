@@ -65,6 +65,10 @@ class ActiveHistory:
     def budget_bytes(self) -> int:
         """The bytes the byte budget counts.
 
+        The whole-file fallback is only ever a report estimate. It includes an
+        append the writer may roll back, so a planner with a byte bound defers
+        that bound until a later scan reads the committed bytes.
+
         Returns
         -------
         int

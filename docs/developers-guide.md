@@ -1079,12 +1079,13 @@ back out, so an uncommitted row is not retained history. It refuses any
 existing path that is not a regular file; only an absent file is empty history.
 Its scan also reports the rows and bytes the age rule keeps when it is given a
 cutoff, and `outcome_archive_history` carries that snapshot plus the summary of
-retained rows the report describes. An unmeasured active file leaves an
-age-aware byte budget without the surviving bytes it must count, so `plan_run`
-defers that walk rather than evicting closed history against the whole file.
-`outcome_archive_age` owns the age decisions themselves: which entries are
-wholly older than the cutoff and which archive straddles it and is trimmed.
-`outcome_archive_budget` owns the byte budget: it counts an archive's
+retained rows the report describes. An unmeasured active file leaves a
+configured byte budget without the committed bytes it must count, with or
+without an age cutoff, so `plan_run` defers that walk rather than evicting
+closed history against a whole-file size that includes an append the writer may
+roll back. `outcome_archive_age` owns the age decisions themselves: which
+entries are wholly older than the cutoff and which archive straddles it and is
+trimmed. `outcome_archive_budget` owns the byte budget: it counts an archive's
 uncompressed size from its sidecar plus the active rows the age rule keeps,
 deletes whole archives oldest first, and then trims the single archive that
 straddles the remaining allowance. `plan_record_steps` applies the configured

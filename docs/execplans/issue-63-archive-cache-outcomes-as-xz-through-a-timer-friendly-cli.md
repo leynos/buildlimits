@@ -631,6 +631,17 @@ verified archive is published, and leaves compile admission untouched.
   `test_outcome_archive_active_budget.py` under the 400-line ceiling, and ADR
   0010 D6 and the developers' guide describe the damaged-record baseline. All
   seven commit gates passed once each on the final tree.
+- [x] Whole-plan revision-22 remediation (2026-11-20): the revision-21
+  assessment's byte-budget finding is fixed. `_active_is_measurable` now defers
+  any configured byte bound while the active file's committed bytes are
+  unknown, with or without an age cutoff, because the whole-file fallback
+  includes an append the writer may roll back. The complete-run regression
+  `test_a_failed_scan_of_a_paused_append_defers_the_byte_budget` pauses an
+  append, fails the active scan, and asserts the older archive is
+  byte-identical and the run reports `unsettled` at exit 75. ADR 0010, the
+  users' guide and the developers' guide state the unconditional deferral. All
+  seven commit gates passed once each on the final tree (`make test`: 4568
+  passed, 86 skipped, 76 snapshots).
 
 ## Surprises & discoveries
 
@@ -885,6 +896,12 @@ verified archive is published, and leaves compile admission untouched.
   rows. Making the excess equal to the archive's whole count, a cap of four, is
   what makes the regression distinguish the committed count: the pre-fix reader
   plans a one-row trim and leaves the archive in place.
+- A whole-file size is an upper bound, not a measurement. Without an age cutoff
+  the active file's committed bytes equal its size only when no append is in
+  flight; a paused append adds bytes the writer rolls back when its write
+  fails. The scan-failure fallback therefore cannot stand in for a byte budget
+  even when no cutoff applies, so the deferral is decided by whether a byte
+  bound is configured rather than by the cutoff.
 
 ## Decision log
 
@@ -1162,6 +1179,13 @@ verified archive is published, and leaves compile admission untouched.
   expired-row tests, re-statting the path for the size fails the replacement
   test, and replacing the retrying snapshot with a single read fails both
   report tests.
+- An unmeasured active file defers any configured byte bound. The complete-run
+  regression `test_a_failed_scan_of_a_paused_append_defers_the_byte_budget`
+  pauses an append, injects a scan failure and asserts the older archive stays
+  byte-identical while the run reports `unsettled` at exit 75. Restoring the
+  cutoff-conditional guard rewrites the archive and fails the regression on its
+  first assertion, while the age-aware deferral test still passes, so the test
+  distinguishes the unconditional rule rather than restating the cutoff case.
 - An append is committed by its newline, so the reader's held-back final row is
   counted only when the stream ended with one. The writer's own rollback
   truncates an interrupted append back out, and counting the row before that
@@ -1208,7 +1232,13 @@ verified archive is published, and leaves compile admission untouched.
   or every committed row when there is no cutoff, and
   `ActiveHistory.budget_bytes`/`budget_records` always consume those figures.
   The whole-file figures remain for the report, which describes what the store
-  physically holds until the writer compacts.
+  physically holds until the writer compacts. A scan that cannot read the file
+  leaves those figures unknown, and the whole-file fallback is not a
+  measurement: it includes any append whose newline the writer has not written.
+  Any configured byte bound is therefore deferred until a later scan reads the
+  committed bytes, with or without an age cutoff. The record cap is still
+  refused outright, because no plan can show an uncountable store meets a count
+  bound.
 - The retention floor is a closed state rather than an optional integer.
   `RetentionFloor.state` names `recorded`, `missing`, `unreadable` and
   `invalid`, so "never recorded" is distinguishable from "recorded and
@@ -1280,11 +1310,12 @@ Invariants:
    with the file's size through one opened version, so a row the writer will
    compact away cannot evict closed history and no reading pairs one version's
    bytes with another's rows; a final row without its newline is an uncommitted
-   append and is excluded, and an unmeasured active file defers an age-aware
-   byte budget instead of evicting against bytes the age rule may have
-   released. The plan's, inspection's and report's readings are each retried
-   until the inventory and the active file describe one version, and a reading
-   the writer never lets settle is reported as `unsettled` with no plan.
+   append and is excluded, and an unmeasured active file defers any configured
+   byte budget instead of evicting against the whole file, whose size includes
+   an append the writer may roll back. The plan's, inspection's and report's
+   readings are each retried until the inventory and the active file describe
+   one version, and a reading the writer never lets settle is reported as
+   `unsettled` with no plan.
 5. Eviction is oldest-first; records at the cutoff survive.
 6. Iterating history yields records in sequence order: archived or sealed
    segments ascending, then the active file.
@@ -1657,3 +1688,13 @@ Each mutation was reverted and the focused suite passed again.
   developers' guide now state that rule, and the shared append fixtures moved to
   `tests/outcome_append_helpers.py` to keep the budget suite within the
   400-line ceiling. All seven commit gates passed once each on the final tree.
+- Revision 22 records the whole-plan revision-21 assessment's byte-budget
+  finding. `_active_is_measurable` now defers a configured byte bound whenever
+  the active file's committed bytes are unknown, with or without an age cutoff:
+  the whole-file fallback includes an append the writer has not committed and
+  may roll back, so acting on it could trim an archive the settled store keeps.
+  A complete-run regression pauses an append, fails the scan, and asserts the
+  archive is byte-identical and the run reports `unsettled` at exit 75; it
+  fails against the cutoff-conditional guard while the age-aware deferral test
+  still passes. ADR 0010, the users' guide and the developers' guide state the
+  unconditional deferral.

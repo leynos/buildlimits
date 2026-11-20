@@ -145,10 +145,12 @@ disagree about a bound.
   contributes only the bytes of the rows the age rule keeps, measured in the
   same scan that counts them: a row the writer will compact away is not
   retained history, and counting it would evict closed history to make room for
-  bytes retention has already released. When an age cutoff applies and the
-  active file cannot be decoded, those surviving bytes are unknown, so the byte
-  walk is deferred rather than decided from the whole file, which could evict
-  an archive the settled store keeps. Zero disables the byte bound.
+  bytes retention has already released. When the active file cannot be decoded,
+  the committed bytes are unknown, so the byte walk is deferred rather than
+  decided from the whole file, whether or not an age cutoff applies: the whole
+  file includes any append the writer has not committed and may roll back, so
+  evicting against it could discard an archive the settled store keeps. Zero
+  disables the byte bound.
 - The record cap is `cache_outcomes_max_records`. A positive value applies in
   either mode. When it is omitted, a segmented store has no count cap and a
   legacy store keeps the historical 10,000-record cap. The cap bounds the whole
@@ -231,8 +233,9 @@ Ownership follows file state, not a shared lock.
   retained total, and streams its rows once per plan to count them against the
   record cap. Because the writer may be mid-append, an unterminated final row
   is dropped exactly as a torn tail is dropped from a sealed source; a file
-  that cannot be read at all contributes its size alone, and the next firing
-  counts its rows again.
+  that cannot be read at all contributes its size alone to the diagnostic
+  totals, a configured byte budget is deferred until the next firing can read
+  its committed bytes, and that firing counts its rows again.
 - Every archiver mutation runs under a non-blocking exclusive `flock` on
   `cache-outcomes.archive/archive.lock`. A second invocation reports `busy` and
   exits 75 instead of waiting. The writer never takes that lock, so there is no

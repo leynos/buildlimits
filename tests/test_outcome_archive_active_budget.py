@@ -14,7 +14,7 @@ import typing as typ
 from pathlib import Path
 
 from outcome_append_helpers import archived_store, run_during_paused_append
-from outcome_archive_helpers import NOW, archives, policy, records, run
+from outcome_archive_helpers import NOW, archives, policy, records, refuse, run
 from segment_test_helpers import document, write_private
 
 from buildlimits import outcome_archive_active, outcome_record_encode
@@ -296,6 +296,40 @@ def test_an_unmeasurable_active_file_defers_an_age_aware_byte_budget(
     )
 
     assert archive.read_bytes() == before, "no eviction without a measurement"
+    assert report.status == "unsettled", "the deferred budget is retryable"
+    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    evictions = [action for action in report.actions if action.action != "archived"]
+    assert not evictions, "nothing is evicted against an unread active file"
+
+
+def test_a_failed_scan_of_a_paused_append_defers_the_byte_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unreadable active file defers a byte budget with no age cutoff.
+
+    The paused append leaves bytes the writer will roll back, and the injected
+    scan failure leaves the committed bytes unknown. The budget is exactly what
+    the committed rows beside the archive occupy, so deciding it from the whole
+    file would trim the archive for bytes the failed append never committed.
+    The run instead leaves the archive byte-identical and reports that the
+    timer should retry.
+    """
+    archived_store(tmp_path, retained=2, active=records(NOW, 4))
+    archive = archives(tmp_path)[0]
+    before = archive.read_bytes()
+    committed = len(document(records(NOW, 4)))
+    run_policy = RetentionPolicy(
+        max_age=dt.timedelta(0),
+        max_bytes=len(document(records(NOW, 2))) + committed,
+        max_records=None,
+        headroom_bytes=4_000_000,
+        segment_bytes=1_000_000,
+    )
+    monkeypatch.setattr(outcome_archive_active, "_measure", refuse)
+
+    report = run_during_paused_append(tmp_path, run_policy, monkeypatch)
+
+    assert archive.read_bytes() == before, "no eviction against an unread active file"
     assert report.status == "unsettled", "the deferred budget is retryable"
     assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
     evictions = [action for action in report.actions if action.action != "archived"]

@@ -316,8 +316,9 @@ def _budgets_are_measurable(
 
     A duplicated sequence is left out of the candidates while reconciliation
     settles it, so its rows would be missing from the total the walk acts on.
-    An active file whose rows could not be read leaves an age-aware byte
-    budget without the surviving bytes it must count. ``_active_is_measurable``
+    An active file whose rows could not be read leaves a byte budget without
+    the committed bytes it must count; its whole-file size includes an append
+    the writer may roll back, so it cannot stand in. ``_active_is_measurable``
     and ``budget_totals_are_unsettled`` report the other conditions: an entry
     whose span crosses the cutoff, or one with no trustworthy measurement. A
     later pass re-plans from the reconciled and measured history.
@@ -335,23 +336,24 @@ def _budgets_are_measurable(
 
 
 def _active_is_measurable(budget: Budget) -> bool:
-    """Whether an unmeasured active file still lets both bounds be decided.
+    """Whether an unmeasured active file still lets the budgets be decided.
 
-    An unmeasured file contributes only its whole size. With no cutoff that
-    size is exactly the retained bytes, and without a byte limit the rows are
-    only needed by the record cap, which ``require_measurable_active`` refuses
-    on its own. An age-aware byte budget cannot tell which of those bytes
-    survive, so its walk is deferred: evicting closed history against the whole
-    file would discard history the settled store keeps.
+    An unmeasured file contributes only its whole size, and that size includes
+    every byte of an append the writer has not committed; a failed append is
+    truncated back out. Evicting closed history against those bytes would
+    discard history the settled store keeps, so a configured byte bound is
+    deferred until a later scan reads the file, whether or not a cutoff
+    applies. The record cap needs no deferral here: a configured cap is
+    refused outright by ``require_measurable_active``.
 
     Returns
     -------
     bool
-        True when the active figures the configured bounds need were read.
+        True when the active figures the configured byte bound needs were read.
     """
     if budget.active.has_metadata:
         return True
-    return budget.cutoff is None or not budget.policy.has_byte_limit
+    return not budget.policy.has_byte_limit
 
 
 def _retained_estimate(
