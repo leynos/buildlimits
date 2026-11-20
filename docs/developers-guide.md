@@ -1115,7 +1115,9 @@ records: it advances only past a contiguous deleted prefix, and its
 `write_state` replaces `retention.json` and the run report together once the
 final snapshot is read. A run that could not replace `retention.json` leaves
 `retention-pending.json` instead, and every read merges the two records and
-uses the higher valid floor. The floor is why evicting old history does not look
+uses the higher valid floor, so a fault local to one file does not turn
+completed deletions into reported gaps. The floor is why evicting old history
+does not look
 like corruption, so the inventory reports a missing sequence only at or above
 it. `outcome_segment_gaps.retained_gaps` names those sequences for an operator;
 it stops at `MAX_GAP_SEQUENCES` and flags the list as truncated, because a

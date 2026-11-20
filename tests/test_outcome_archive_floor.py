@@ -21,6 +21,7 @@ from buildlimits.outcome_segments import archive_name, sidecar_name
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_report import RunReport
+    from buildlimits.outcome_retention import RetentionPolicy
 
 
 def persisted_floor(root: Path) -> int:
@@ -75,6 +76,40 @@ def lose_archive(root: Path, sequence: int) -> None:
     directory = archive.layout(root).archive_dir
     for name in (archive_name(sequence), sidecar_name(sequence)):
         (directory / name).unlink()
+
+
+def lose_floor(root: Path) -> None:
+    """Remove the recorded floor, as a store that never wrote one would."""
+    archive.layout(root).retention_file.unlink()
+
+
+def seed_a_store_with_a_hole(
+    root: Path, count: int, *, is_floor_lost: bool = False
+) -> tuple[Path, RetentionPolicy]:
+    """Seed and archive a store, then lose one archive without recording it.
+
+    A hole beside the oldest archive is what the floor-walk tests need:
+    retention deletes the archive either side of it, so the recorded floor
+    must stop at the hole rather than excuse the missing sequence.
+
+    Returns
+    -------
+    tuple[Path, RetentionPolicy]
+        The active store path and the unlimited policy it was archived under.
+    """
+    store = archive.seeded_store(root, archive.records(archive.NOW, count))
+    unlimited = archive.policy(max_bytes=0)
+    archive.run(root, unlimited)
+    lose_archive(root, 2)
+    if is_floor_lost:
+        lose_floor(root)
+    return store, unlimited
+
+
+def assert_the_hole_stays_a_gap(root: Path, retention: RetentionPolicy) -> None:
+    """Inspect the store and require the missing sequence to be reported."""
+    observed = archive.run(root, retention, dry_run=True)
+    assert 2 in observed.gaps, "the missing sequence is still a reported gap"
 
 
 def test_a_failed_state_write_still_records_the_deletions_it_completed(
@@ -188,17 +223,31 @@ def test_a_hole_below_a_deletion_stays_reportable(tmp_path: Path) -> None:
     scan treat the missing sequence as intentionally evicted, so the floor
     stops at the hole and a later sealed source proves it is still reported.
     """
-    store = archive.seeded_store(tmp_path, archive.records(archive.NOW, 3))
-    unlimited = archive.policy(max_bytes=0)
-    archive.run(tmp_path, unlimited)
-    lose_archive(tmp_path, 2)
+    store, unlimited = seed_a_store_with_a_hole(tmp_path, 3)
 
     archive.run(tmp_path, dc.replace(unlimited, max_records=0))
 
     assert persisted_floor(tmp_path) == 2, "the floor stops at the hole"
     archive.write(store, archive.records(archive.NOW, 1), unlimited)
-    observed = archive.run(tmp_path, unlimited, dry_run=True)
-    assert 2 in observed.gaps, "the missing sequence is still a reported gap"
+    assert_the_hole_stays_a_gap(tmp_path, unlimited)
+
+
+def test_a_lost_floor_still_starts_the_walk_at_this_runs_deletions(
+    tmp_path: Path,
+) -> None:
+    """Without a recorded floor, a run must account for its own deletions.
+
+    Taking the baseline from the surviving history alone would start the walk
+    above a sequence this run deleted, so a hole below that deletion would be
+    excused for ever. The deleted sequence is part of the history this run can
+    prove, so the walk starts there and stops at the hole.
+    """
+    _, unlimited = seed_a_store_with_a_hole(tmp_path, 4, is_floor_lost=True)
+
+    archive.run(tmp_path, dc.replace(unlimited, max_records=2))
+
+    assert persisted_floor(tmp_path) == 2, "the walk starts at the deleted sequence"
+    assert_the_hole_stays_a_gap(tmp_path, unlimited)
 
 
 def test_the_failure_floor_does_not_pass_a_hole(tmp_path: Path) -> None:
@@ -208,10 +257,7 @@ def test_the_failure_floor_does_not_pass_a_hole(tmp_path: Path) -> None:
     post-run inventory, so the stop must be derived from the recorded floor
     and the deletions alone.
     """
-    archive.seeded_store(tmp_path, archive.records(archive.NOW, 3))
-    unlimited = archive.policy(max_bytes=0)
-    archive.run(tmp_path, unlimited)
-    lose_archive(tmp_path, 2)
+    _, unlimited = seed_a_store_with_a_hole(tmp_path, 3)
 
     with mock.patch.object(outcome_archive_state, "retention_floor", archive.refuse):
         failed = archive.run(tmp_path, dc.replace(unlimited, max_records=0))
