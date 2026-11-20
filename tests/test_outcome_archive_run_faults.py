@@ -10,7 +10,9 @@ intact.
 
 import dataclasses as dc
 import datetime as dt
+import errno
 import lzma
+import os
 import typing as typ
 from pathlib import Path
 
@@ -144,6 +146,68 @@ def test_a_failed_delete_is_recorded_and_keeps_the_archive(
         "the archive is published even though eviction failed"
     )
     assert archives(tmp_path), "the unremovable archive stays"
+
+
+def test_an_unreadable_lookup_is_not_a_completed_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lookup that failed for another reason proves nothing about the archive.
+
+    ``Path.exists`` answers ``False`` for every ``OSError``, so an archive that
+    is present but cannot be inspected reads as absent. Recording a deletion
+    from that answer would advance the floor over a sequence still in the
+    store. Only a confirmed absence may stand as evidence the removal
+    completed; any other lookup failure leaves the failure reported and the
+    floor where it was.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    old = NOW - dt.timedelta(days=40)
+    write(store, records(old, 1), policy())
+    archive = layout(tmp_path).archive_dir / archive_name(1)
+    stat = os.stat
+    is_hidden = False
+
+    def refuse_to_inspect(
+        path: os.PathLike[str] | str, *, follow_symlinks: bool = True
+    ) -> os.stat_result:
+        """Fail the archive's own lookup while the injected fault is in force.
+
+        Every other path is inspected normally, so the denial stands in for an
+        archive the process may no longer read rather than for a broken run.
+
+        Returns
+        -------
+        os.stat_result
+            The status of a path the fault does not hide.
+
+        Raises
+        ------
+        PermissionError
+            For the hidden archive only.
+        """
+        if is_hidden and os.fspath(path) == os.fspath(archive):
+            raise PermissionError(errno.EACCES, "the archive cannot be inspected")
+        return stat(path, follow_symlinks=follow_symlinks)
+
+    def refuse_and_hide(*_args: object, **_kwargs: object) -> typ.NoReturn:
+        """Refuse the removal, then hide the archive from path lookups."""
+        nonlocal is_hidden
+        is_hidden = True
+        refuse()
+
+    monkeypatch.setattr(os, "stat", refuse_to_inspect)
+    monkeypatch.setattr(outcome_archive_files, "delete_archive", refuse_and_hide)
+
+    report = run(tmp_path, policy(max_age_days=30))
+    is_hidden = False
+
+    assert (1, "unreadable") in report.failures, "the failed removal is reported"
+    assert [action.action for action in report.actions] == ["archived"], (
+        "a lookup that failed is not evidence the archive is gone"
+    )
+    assert read_retention_floor(layout(tmp_path)) == 1, (
+        "the floor does not advance over an archive the run still holds"
+    )
 
 
 def test_a_sync_fault_after_removal_still_records_the_deletion(

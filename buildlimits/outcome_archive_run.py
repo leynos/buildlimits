@@ -26,6 +26,7 @@ from buildlimits.outcome_archive_verify import (
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
+    from pathlib import Path
 
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_segment_inventory import SegmentEntry
@@ -280,23 +281,47 @@ def _trim_one(
     )
 
 
+def _is_proven_gone(path: Path) -> bool:
+    """Return whether a lookup proves an archive has left the store.
+
+    ``Path.exists`` answers ``False`` for every ``OSError`` on Python 3.14 and
+    later, so it cannot tell a removed archive from one the process may not
+    inspect. Only a failed lookup that names the file as absent is evidence
+    the removal completed; any other failure leaves the question open.
+
+    Returns
+    -------
+    bool
+        Whether the path is confirmed absent.
+    """
+    try:
+        path.stat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def _delete_one(
     run: ArchiveRun, entry: SegmentEntry, cause: str, outcome: RunOutcome
 ) -> None:
     """Remove one planned archive, naming the bound that made it eligible.
 
-    The removal is only refused when the archive itself survives. A fault that
-    follows its removal, such as a sidecar cleanup or a directory sync, leaves
-    the sequence gone from the store, and the floor is the only record that it
-    was deleted on purpose. The failure is still reported, but the completed
-    deletion is recorded as well, rather than leaving the sequence to be
-    reported as lost history for ever.
+    The removal is only refused when the archive itself is proven to survive.
+    A fault that follows its removal, such as a sidecar cleanup or a directory
+    sync, leaves the sequence gone from the store, and the floor is the only
+    record that it was deleted on purpose. The failure is still reported, but
+    the completed deletion is recorded as well, rather than leaving the
+    sequence to be reported as lost history for ever. An archive the run
+    cannot inspect is not evidence of either outcome, so it keeps the failure
+    without advancing the floor over a sequence the store may still hold.
     """
     try:
         outcome_archive_files.delete_archive(run.context, entry)
     except OSError:
         outcome.failures.append((entry.sequence, "unreadable"))
-        if entry.path.exists():
+        if not _is_proven_gone(entry.path):
             return
     outcome.actions.append(ActionResult("deleted", entry.sequence, reason=cause))
 
