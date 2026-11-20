@@ -16,6 +16,7 @@ from archive_plan_helpers import NOW, archived, plan, policy
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_segment_inventory import Inventory, SegmentEntry
 
 if typ.TYPE_CHECKING:
@@ -109,7 +110,7 @@ def _cap_plan(entries: tuple[SegmentEntry, ...], cap: int, active: int = 0) -> P
     return plan(
         Inventory(archived=entries),
         policy(max_age_days=0, max_bytes=0, max_records=cap),
-        active_records=active,
+        active=ActiveHistory(records=active),
     )
 
 

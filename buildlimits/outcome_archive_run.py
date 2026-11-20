@@ -22,7 +22,13 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_trim import Trim
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
-__all__ = ["ArchiveRun", "RunOutcome", "perform", "quarantined_history"]
+__all__ = [
+    "ArchiveRun",
+    "RunOutcome",
+    "deleted_sequences",
+    "perform",
+    "quarantined_history",
+]
 
 # A filesystem that cannot hold this run's output. The headroom check reads
 # free space once before the pass, so another writer can still fill it while

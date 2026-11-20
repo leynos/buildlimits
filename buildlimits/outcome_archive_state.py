@@ -11,7 +11,7 @@ import contextlib
 import typing as typ
 
 from buildlimits import outcome_archive_codec, outcome_archive_fs, outcome_segment_state
-from buildlimits.utc_text import optional_utc_text, utc_text
+from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

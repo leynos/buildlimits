@@ -700,7 +700,8 @@ and a run that could not start install no state and report `state_written` as
 false. A run that published archives and then could not measure the result
 reports `retained` as `null` and `reason` as `unreadable`, and still lists the
 actions it performed, so the evictions it did are not hidden by the missing
-total.
+total. Its completed deletions are recorded in the floor as well, so a failed
+measurement does not leave permanent gaps.
 
 ### Compare offline hit predictors
 

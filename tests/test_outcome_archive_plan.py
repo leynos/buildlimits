@@ -14,6 +14,8 @@ import pytest
 from archive_plan_helpers import NOW, archived, plan, policy, sealed
 
 from buildlimits.outcome_archive_plan import Plan, PlanSummary
+from buildlimits.outcome_archive_history import ActiveHistory
+from buildlimits.outcome_archive_budget import UnknownActiveHistoryError
 from buildlimits.outcome_archive_trim import Trim
 from buildlimits.outcome_segment_inventory import Inventory
 
@@ -23,7 +25,7 @@ if typ.TYPE_CHECKING:
 
 def test_an_empty_inventory_retains_only_active_bytes() -> None:
     """With no closed history, the active file is the whole estimate."""
-    decision = plan(Inventory(), policy(), active_bytes=7)
+    decision = plan(Inventory(), policy(), active=ActiveHistory(bytes=7))
 
     assert not decision.archive, "nothing is sealed"
     assert decision.retained_bytes == 7, "the estimate is the active size"
@@ -34,7 +36,7 @@ def test_every_sealed_source_is_archived() -> None:
     """Sealed sources with no archive are the run's compression work."""
     inventory = Inventory(sealed=(sealed(2, 20), sealed(1, 10)))
 
-    decision = plan(inventory, policy(), active_bytes=5)
+    decision = plan(inventory, policy(), active=ActiveHistory(bytes=5))
 
     assert [item.sequence for item in decision.archive] == [2, 1], (
         "the inventory's own order is preserved"
@@ -195,7 +197,7 @@ def test_a_record_cap_bounds_retained_history(case: _CapCase) -> None:
     decision = plan(
         Inventory(archived=entries),
         policy(max_bytes=0, max_records=case.cap),
-        active_records=case.active_records,
+        active=ActiveHistory(records=case.active_records),
     )
 
     assert tuple(item.sequence for item in decision.deletes) == case.deletes, (
@@ -207,57 +209,23 @@ def test_a_record_cap_bounds_retained_history(case: _CapCase) -> None:
     ), "the archive straddling the cap keeps only its newest rows"
 
 
-def test_a_record_cap_counts_the_writers_unsealed_rows() -> None:
-    """The cap bounds the whole store, so the active file's rows count too.
+def test_an_incomplete_active_measurement_refuses_a_record_cap() -> None:
+    """A cap cannot be met against rows the run could not count.
 
-    Counting only archives would let a store hold the cap in archived history
-    and another cap in the file the writer is still filling.
+    An incomplete read reports its row count as a lower bound, so no plan can
+    show the store is within the cap. The planner refuses the cap rather than
+    either evicting on a partial count or treating the unread rows as zero.
     """
-    entries = tuple(archived(sequence) for sequence in range(1, 4))
-
-    decision = plan(
-        Inventory(archived=entries),
-        policy(max_bytes=0, max_records=4),
-        active_records=2,
+    entries = tuple(
+        dc.replace(archived(sequence), record_count=1) for sequence in (1, 2, 3)
     )
 
-    assert [item.sequence for item in decision.deletes] == [1], (
-        "the active rows are part of the excess the plan must remove"
-    )
-
-
-def test_a_record_cap_evicts_the_oldest_sealed_source_first() -> None:
-    """A sealed row counts towards the cap and is evictable like an archive.
-
-    Counting the sealed row but evicting only archives would delete the newer
-    archive and keep the older row, which is the reverse of oldest-first
-    retention.
-    """
-    source = sealed(1)
-    archive = archived(2)
-
-    decision = plan(
-        Inventory(sealed=(source,), archived=(archive,)),
-        policy(max_bytes=0, max_records=1),
-    )
-
-    assert [(item.sequence, item.state) for item in decision.deletes] == [
-        (1, "sealed")
-    ], "the oldest entry is evicted whole"
-    assert not decision.archive, "an evicted source is not compressed first"
-    assert decision.retained_bytes == 100, "the newer archive alone remains"
-
-
-def test_a_record_cap_stops_at_an_entry_with_no_known_count() -> None:
-    """An unknown count ends the walk instead of evicting newer history."""
-    unknown = dc.replace(sealed(1), record_count=None)
-
-    decision = plan(
-        Inventory(sealed=(unknown,), archived=(archived(2), archived(3))),
-        policy(max_bytes=0, max_records=1),
-    )
-
-    assert not decision.deletes, "no newer entry is evicted ahead of the unknown one"
+    with pytest.raises(UnknownActiveHistoryError):
+        plan(
+            Inventory(archived=entries),
+            policy(max_bytes=0, max_records=6),
+            active=ActiveHistory(records=6, has_metadata=False, reason="corrupt"),
+        )
 
 
 def test_the_summary_counts_every_operation(snapshot: SnapshotAssertion) -> None:
