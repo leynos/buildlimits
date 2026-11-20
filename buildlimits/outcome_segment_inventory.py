@@ -28,6 +28,7 @@ _ARCHIVE_RE = re.compile(r"^segment-(\d{12})\.jsonl\.xz$")
 _SIDECAR_RE = re.compile(r"^segment-(\d{12})\.jsonl\.xz\.json$")
 _SEALED_RE = re.compile(r"^segment-(\d{12})\.jsonl$")
 _SEALED_META_RE = re.compile(r"^segment-(\d{12})\.jsonl\.meta\.json$")
+_REPLACING_RE = re.compile(r"^segment-(\d{12})\.jsonl\.xz\.replacing$")
 
 __all__ = [
     "Inventory",
@@ -256,42 +257,117 @@ def _scan_archived(
         Entries, sequences with missing sidecars, sequences with corrupt
         sidecars, and sequences whose sidecar has no archive.
     """
-    entries: list[SegmentEntry] = []
-    archive_sequences: set[int] = set()
-    sidecar_sequences: set[int] = set()
-    missing: list[int] = []
-    corrupt: list[int] = []
-    for path, size in _regular_files(directory):
-        matched = _ARCHIVE_RE.fullmatch(path.name)
-        if matched is not None:
-            sequence = int(matched.group(1))
-            archive_sequences.add(sequence)
-            match read_sidecar(directory / sidecar_name(sequence), sequence):
-                case None:
-                    missing.append(sequence)
-                    entries.append(_archive_entry(path, size, sequence))
-                case Sidecar() as sidecar if sidecar.physical_bytes == size:
-                    sidecar_sequences.add(sequence)
-                    entries.append(
-                        _archive_entry(path, size, sequence, sidecar=sidecar)
-                    )
-                case Sidecar():
-                    # A sidecar written for different bytes than the archive
-                    # now holds describes a rewrite that stopped before its
-                    # metadata was replaced. Trusting it would report the old
-                    # counts beside the new file, so the archive is routed to
-                    # the repair path exactly as a corrupt sidecar is.
-                    corrupt.append(sequence)
-                    entries.append(_archive_entry(path, size, sequence))
-                case _:
-                    corrupt.append(sequence)
-                    entries.append(_archive_entry(path, size, sequence))
-            continue
-        side_match = _SIDECAR_RE.fullmatch(path.name)
-        if side_match is not None:
-            sidecar_sequences.add(int(side_match.group(1)))
-    orphans = tuple(sorted(sidecar_sequences - archive_sequences))
-    return entries, tuple(sorted(missing)), tuple(sorted(corrupt)), orphans
+    files = _regular_files(directory)
+    archives = {
+        int(archive.group(1)): (path, size)
+        for path, size in files
+        if (archive := _ARCHIVE_RE.fullmatch(path.name)) is not None
+    }
+    named_sidecars = _sidecar_sequences(files)
+    entries, missing, corrupt = _classify_archives(
+        directory, archives, _replacing_sequences(files)
+    )
+    orphans = tuple(sorted(named_sidecars - archives.keys()))
+    return entries, missing, corrupt, orphans
+
+
+def _sidecar_sequences(files: list[tuple[Path, int]]) -> set[int]:
+    """Return every sequence a sidecar file in this listing names.
+
+    Returns
+    -------
+    set[int]
+        Sequences with a sidecar entry, whether or not its archive exists.
+    """
+    return {
+        int(match.group(1))
+        for path, _size in files
+        if (match := _SIDECAR_RE.fullmatch(path.name)) is not None
+    }
+
+
+def _replacing_sequences(files: list[tuple[Path, int]]) -> set[int]:
+    """Return every sequence whose rewrite has not finished.
+
+    A marker is read from the whole listing before any sidecar is, because a
+    scan that trusted the sidecar the rewrite has already made stale would
+    report the previous archive's counts beside the new bytes.
+
+    Returns
+    -------
+    set[int]
+        Sequences a rewrite is still replacing.
+    """
+    return {
+        int(match.group(1))
+        for path, _size in files
+        if (match := _REPLACING_RE.fullmatch(path.name)) is not None
+    }
+
+
+def _classify_archives(
+    directory: Path,
+    archives: dict[int, tuple[Path, int]],
+    replacing: set[int],
+) -> tuple[list[SegmentEntry], tuple[int, ...], tuple[int, ...]]:
+    """Describe each archive and separate its trustworthy sidecars.
+
+    Returns
+    -------
+    tuple[list[SegmentEntry], tuple[int, ...], tuple[int, ...]]
+        Entries in sequence order, sequences with a missing sidecar, and
+        sequences whose sidecar cannot be trusted.
+    """
+    classified = [
+        (
+            sequence,
+            _classify_archive(
+                directory, sequence, (path, size), is_replacing=sequence in replacing
+            ),
+        )
+        for sequence, (path, size) in sorted(archives.items())
+    ]
+    entries = [entry for _sequence, (entry, _verdict) in classified]
+    missing = tuple(
+        sequence for sequence, (_entry, verdict) in classified if verdict == "missing"
+    )
+    corrupt = tuple(
+        sequence for sequence, (_entry, verdict) in classified if verdict == "corrupt"
+    )
+    return entries, missing, corrupt
+
+
+def _classify_archive(
+    directory: Path,
+    sequence: int,
+    archive: tuple[Path, int],
+    *,
+    is_replacing: bool,
+) -> tuple[SegmentEntry, typ.Literal["trusted", "missing", "corrupt"]]:
+    """Describe one archive and decide whether its sidecar may be believed.
+
+    Returns
+    -------
+    tuple[SegmentEntry, Literal["trusted", "missing", "corrupt"]]
+        The entry and whether its sidecar was trusted, absent or refused.
+    """
+    path, size = archive
+    if is_replacing:
+        # A rewrite that has not recorded its new sidecar may already have
+        # published bytes the old sidecar cannot describe. Only the archive
+        # itself can say what it holds.
+        return _archive_entry(path, size, sequence), "corrupt"
+    match read_sidecar(directory / sidecar_name(sequence), sequence):
+        case None:
+            return _archive_entry(path, size, sequence), "missing"
+        case Sidecar() as sidecar if sidecar.physical_bytes == size:
+            return _archive_entry(path, size, sequence, sidecar=sidecar), "trusted"
+        case _:
+            # A sidecar written for different bytes than the archive now holds
+            # describes a rewrite that stopped before its metadata was
+            # replaced. Trusting it would report the old counts beside the new
+            # file, so the archive is routed to the repair path.
+            return _archive_entry(path, size, sequence), "corrupt"
 
 
 def _archive_entry(

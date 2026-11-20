@@ -31,6 +31,7 @@ __all__ = [
     "SEQUENCE_NAME",
     "SegmentLayout",
     "archive_name",
+    "replacing_name",
     "sealed_meta_name",
     "segment_name",
     "sidecar_name",
@@ -73,6 +74,22 @@ def sidecar_name(sequence: int) -> str:
         A zero-padded ``segment-<sequence>.jsonl.xz.json`` name.
     """
     return f"{archive_name(sequence)}.json"
+
+
+def replacing_name(sequence: int) -> str:
+    """Return the marker name a rewrite leaves until its sidecar is durable.
+
+    Returns
+    -------
+    str
+        A zero-padded ``segment-<sequence>.jsonl.xz.replacing`` name.
+
+    Examples
+    --------
+    >>> replacing_name(7)
+    'segment-000000000007.jsonl.xz.replacing'
+    """
+    return f"{archive_name(sequence)}.replacing"
 
 
 def sealed_meta_name(sequence: int) -> str:

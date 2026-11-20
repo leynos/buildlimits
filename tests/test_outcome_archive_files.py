@@ -36,7 +36,12 @@ from buildlimits.outcome_archive_verify import (
     Trim,
 )
 from buildlimits.outcome_segment_inventory import read_inventory
-from buildlimits.outcome_segments import archive_name, sealed_meta_name, sidecar_name
+from buildlimits.outcome_segments import (
+    archive_name,
+    replacing_name,
+    sealed_meta_name,
+    sidecar_name,
+)
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -238,9 +243,51 @@ def test_a_trim_without_its_sidecar_leaves_the_archive_for_repair(
     assert not (run.layout.archive_dir / sidecar_name(1)).exists(), (
         "no stale sidecar describes the previous bytes"
     )
-    assert read_inventory(run.layout).missing_sidecars == (1,), (
+    assert (run.layout.archive_dir / replacing_name(1)).exists(), (
+        "the marker stays until a sidecar describes the new bytes"
+    )
+    assert read_inventory(run.layout).corrupt_sidecars == (1,), (
         "the next scan heals the archive from its own content"
     )
+
+
+def test_a_rewrite_that_stops_before_its_sidecar_is_repaired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash between the rename and the sidecar is detected, not trusted.
+
+    Equal compressed sizes cannot distinguish the old archive from its
+    replacement, so the old sidecar is accepted by size alone. The marker left
+    by the rewrite is what keeps that document from being believed.
+    """
+    sealed = source(tmp_path, 1, document(records(3)))
+    run = context(tmp_path)
+    archive_source(run, sealed_entry(sealed, 1))
+    entry = archived_entry(tmp_path)
+
+    def stop(*_args: object, **_kwargs: object) -> object:
+        """Model a process that dies while writing the new sidecar."""
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(outcome_archive_files, "write_sidecar", stop)
+    with pytest.raises(KeyboardInterrupt):
+        recompress_archive(run, entry, Trim(records=1))
+    monkeypatch.undo()
+
+    damaged = read_inventory(run.layout)
+    assert damaged.corrupt_sidecars == (1,), "the stale sidecar is not trusted"
+    assert not damaged.archived[0].has_metadata, "no old count is reported"
+    assert read_archive_facts(entry.path).record_count == 2, (
+        "the published archive is the trimmed one"
+    )
+
+    archived = read_inventory(run.layout).archived[0]
+    result = repair_sidecar(run, archived)
+
+    assert result.action == "repaired", "the heal path rebuilds the sidecar"
+    healed = read_inventory(run.layout)
+    assert healed.corrupt_sidecars == (), "the archive is trusted again"
+    assert healed.archived[0].record_count == 2, "the rebuilt count is the real one"
 
 
 def test_repairing_after_a_failed_sidecar_write_reports_the_trimmed_facts(

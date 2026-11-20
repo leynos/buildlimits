@@ -30,6 +30,7 @@ from buildlimits.outcome_archive_quarantine import (
     quarantine_and_remove_sidecar,
     quarantine_source,
 )
+from buildlimits.outcome_archive_replace import begin_replacement, end_replacement
 from buildlimits.outcome_archive_verify import ArchiveFacts, SegmentFaultError, Trim
 from buildlimits.outcome_store_io import fsync_directory
 
@@ -104,6 +105,7 @@ def recompress_archive(
     """
     options = EncodeOptions(preset=context.preset, trim=trim, is_compressed=True)
     temporary, facts = build_temp(context, entry.path, entry.sequence, options)
+    begin_replacement(context.layout.archive_dir, entry.sequence)
     try:
         if facts.record_count == 0:
             delete_archive(context, entry)
@@ -113,6 +115,10 @@ def recompress_archive(
         sidecar = _replace_sidecar(context, entry.sequence, facts)
     finally:
         discard(temporary)
+    # Only now does the sidecar describe the archive that is published. Until
+    # this point the marker keeps the old sidecar untrusted, so a process that
+    # stops anywhere above is repaired from the archive rather than believed.
+    end_replacement(context.layout.archive_dir, entry.sequence)
     return ActionResult(
         "trimmed", entry.sequence, sidecar.logical_bytes, sidecar.physical_bytes
     )
@@ -163,6 +169,7 @@ def repair_sidecar(context: ArchiveContext, entry: SegmentEntry) -> ActionResult
     """
     facts = read_archive_facts(entry.path)
     sidecar = write_sidecar(context, entry.sequence, facts)
+    end_replacement(context.layout.archive_dir, entry.sequence)
     return ActionResult(
         "repaired", entry.sequence, sidecar.logical_bytes, sidecar.physical_bytes
     )
@@ -240,7 +247,7 @@ def delete_archive(context: ArchiveContext, entry: SegmentEntry) -> None:
     """
     _unlink(entry.path)
     _unlink(context.layout.archive_dir / outcome_segments.sidecar_name(entry.sequence))
-    fsync_directory(context.layout.archive_dir)
+    end_replacement(context.layout.archive_dir, entry.sequence)
 
 
 def _rearchive(context: ArchiveContext, sealed: SegmentEntry) -> ActionResult:

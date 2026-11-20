@@ -192,7 +192,8 @@ _Table 2: The retained history states and how each is measured._
 
 Sequence names are zero padded to twelve digits so a directory listing sorts in
 append order. The archive directory also holds the sidecars, `archive.lock`,
-`retention.json`, `last-run.json` and `quarantine/`.
+`retention.json`, `last-run.json`, `quarantine/` and, while a rewrite is in
+flight, a `segment-<n>.jsonl.xz.replacing` marker.
 
 ### D3: XZ comes from the standard library and every archive is verified
 
@@ -240,12 +241,24 @@ recovery path rely on.
 
 A trim rewrites an archive by the same sequence and replaces it only by an
 atomic rename of a verified temporary file; a trim that keeps no records
-deletes the archive instead. Reconciliation on each run settles the states a
-crash can leave: a matching archive removes the redundant source, an unreadable
-or mismatched archive is quarantined and the source archived again, and a
-corrupt source is quarantined while the existing archive is kept. Quarantine
-moves a file into `cache-outcomes.archive/quarantine/` under a name carrying
-the closed reason and a random token, so no quarantined file is overwritten.
+deletes the archive instead. The rename publishes bytes before the sidecar that
+describes them, so a process that stops between the two leaves a sidecar
+describing the previous archive. Compressed size cannot separate the pair,
+because two XZ streams of different content can occupy exactly the same number
+of bytes, so the rewrite records its intent first: it writes a durable
+`segment-<n>.jsonl.xz.replacing` marker before the rename, and removes it only
+once a sidecar describes the archive that is actually published. A scan that
+finds the marker refuses that sidecar and routes the archive to the repair
+path, which re-derives the facts from the archive itself; the same refusal
+covers a sidecar whose recorded physical size does not match the file beside
+it. Repair writes the sidecar and then clears the marker, so the marker's
+lifetime is exactly the window in which the pair may disagree. Reconciliation
+on each run settles the states a crash can leave: a matching archive removes
+the redundant source, an unreadable or mismatched archive is quarantined and
+the source archived again, and a corrupt source is quarantined while the
+existing archive is kept. Quarantine moves a file into
+`cache-outcomes.archive/quarantine/` under a name carrying the closed reason
+and a random token, so no quarantined file is overwritten.
 Stale temporary files are removed at the start of a run, under the lock.
 
 ### D5: the timer-facing command has bounded output and closed exit statuses
