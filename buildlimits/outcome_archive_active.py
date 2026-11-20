@@ -1,11 +1,11 @@
-"""Bounded, read-only measurement of the active file for diagnostics.
+"""Bounded, read-only measurement of the active file for retention and reports.
 
-Retention decisions never need the active file's rows: its size from ``lstat``
-is the whole contribution to the budget. Reporting what that budget actually
-retains does need a row count and an observation span, so this adapter reads
-the active file once through the same bounded reader the writer uses. It only
-reads: the writer remains the only component that appends, truncates or
-replaces the file.
+The active file's size from ``lstat`` is the whole contribution to the byte
+budget, while the record cap also needs its row count. Reporting what the
+store retains needs that count and an observation span as well, so this
+adapter reads the active file once through the same bounded reader the writer
+uses. It only reads: the writer remains the only component that appends,
+truncates or replaces the file.
 
 One read supplies both the byte length and the rows, so an append that races
 the read cannot put the new row count beside the old file size. The read is
@@ -17,7 +17,7 @@ import typing as typ
 
 from buildlimits import outcome_records
 from buildlimits.outcome_retention_report import ActiveHistory, measured_history
-from buildlimits.outcome_store_io import read_store_snapshot
+from buildlimits.outcome_store_read import read_store_snapshot
 
 if typ.TYPE_CHECKING:
     from pathlib import Path

@@ -33,7 +33,7 @@ from buildlimits.outcome_segments import (
     segment_name,
 )
 from buildlimits.outcome_store import StoreWriter
-from buildlimits.outcome_store_io import read_store
+from buildlimits.outcome_store_read import read_store
 from buildlimits.outcome_store_salt import file_salt
 
 if typ.TYPE_CHECKING:

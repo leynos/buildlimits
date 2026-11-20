@@ -215,11 +215,11 @@ class CacheOutcomeHarnessMixin:
         dict[str, object] | None
             Decoded store rows, a bounded failure reason, or None before setup.
         """
-        from buildlimits import outcome_records, outcome_store_io
+        from buildlimits import outcome_records, outcome_store_read
 
         path = self.state_home / "buildlimits" / "cache-outcomes.jsonl"
         try:
-            decoded = outcome_store_io.read_store(path)
+            decoded = outcome_store_read.read_store(path)
         except FileNotFoundError:
             return None
         if isinstance(decoded, outcome_records.RecordFailure):

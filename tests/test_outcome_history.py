@@ -28,7 +28,7 @@ from segment_test_helpers import history_policy
 from buildlimits import outcome_history, outcome_replay_cli, outcome_segment_inventory
 from buildlimits.outcome_archive import RunOptions, run_archive
 from buildlimits.outcome_segments import SegmentLayout, archive_name
-from buildlimits.outcome_store_io import read_store
+from buildlimits.outcome_store_read import read_store
 
 # The first two rows of every two-record fixture, so a fault test states only
 # the reason its own injection is expected to produce.

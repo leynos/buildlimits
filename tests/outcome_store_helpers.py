@@ -5,11 +5,10 @@ import threading
 import time
 import typing as typ
 import weakref
-from unittest import mock
 
 import pytest
 
-from buildlimits import outcome_records, outcome_store_state
+from buildlimits import outcome_records
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_store import StoreWriter
 
@@ -360,30 +359,3 @@ def assert_load_result(
     """
     if StoreResult("load", reason, 0, discarded) not in results:
         pytest.fail(f"load reason {reason!r} reports {discarded} discarded rows")
-
-
-@contextlib.contextmanager
-def stalled_append() -> cabc.Generator[tuple[threading.Event, threading.Event]]:
-    """Pause the first writer append until the test releases it.
-
-    Yields
-    ------
-    tuple[Event, Event]
-        An entered signal and a release signal for deterministic queue tests.
-    """
-    entered = threading.Event()
-    release = threading.Event()
-    append_line = outcome_store_state.append_line
-
-    def stall(store: Path, line: bytes) -> None:
-        """Delay the first append before calling the underlying writer."""
-        if not entered.is_set():
-            entered.set()
-            release.wait(5.0)
-        append_line(store, line)
-
-    try:
-        with mock.patch.object(outcome_store_state, "append_line", side_effect=stall):
-            yield entered, release
-    finally:
-        release.set()

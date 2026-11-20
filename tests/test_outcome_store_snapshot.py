@@ -11,7 +11,7 @@ from outcome_store_fixture_helpers import (
 from outcome_store_fixture_helpers import write_private_file as _write_private_file
 from outcome_test_helpers import window_summary as _window_summary
 
-from buildlimits import outcome_records, outcome_store_io
+from buildlimits import outcome_records, outcome_store_read
 
 
 def test_snapshot_reports_bytes_and_rows_from_one_read(tmp_path: Path) -> None:
@@ -21,7 +21,7 @@ def test_snapshot_reports_bytes_and_rows_from_one_read(tmp_path: Path) -> None:
     _append_torn_utf8_tail(path, _window_summary(server_version="torn-é"))
     document = path.read_bytes()
 
-    snapshot = outcome_store_io.read_store_snapshot(path)
+    snapshot = outcome_store_read.read_store_snapshot(path)
 
     assert snapshot.logical_bytes == len(document), (
         "the byte count includes the header, its newline and the torn tail"
@@ -40,7 +40,7 @@ def test_snapshot_reports_an_oversized_store_at_its_full_size(
     oversized = b"x" * (outcome_records.MAX_STORE_BYTES + 1)
     _write_private_file(path, oversized)
 
-    snapshot = outcome_store_io.read_store_snapshot(path)
+    snapshot = outcome_store_read.read_store_snapshot(path)
 
     assert snapshot.decoded == outcome_records.RecordFailure("corrupt"), (
         "bytes past the read bound are never decoded"
