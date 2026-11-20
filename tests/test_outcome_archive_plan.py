@@ -10,6 +10,7 @@ import dataclasses as dc
 import datetime as dt
 import typing as typ
 
+import pytest
 from archive_plan_helpers import NOW, archived, plan, policy, sealed
 
 from buildlimits.outcome_archive_plan import Plan, PlanSummary
@@ -125,32 +126,85 @@ def test_a_sealed_source_does_not_hide_a_duplicate_from_the_estimate() -> None:
     assert decision.retained_bytes == 100, "the sequence is counted once"
 
 
-def test_a_record_cap_evicts_the_oldest_archive_first() -> None:
-    """An explicit record cap bounds retained history, not only the writer."""
-    entries = tuple(archived(sequence) for sequence in range(1, 4))
+@dc.dataclass(frozen=True, slots=True)
+class _CapCase:
+    """One record-cap scenario and the plan it must produce.
 
-    decision = plan(Inventory(archived=entries), policy(max_bytes=0, max_records=1))
+    Attributes
+    ----------
+    cap : int
+        The policy's record bound.
+    archives : int
+        How many archived entries the inventory holds.
+    rows : int
+        How many rows each archive holds.
+    active_records : int
+        How many rows the writer's active file still holds.
+    deletes : tuple[int, ...]
+        The sequences of the archives the plan must delete, oldest first.
+    trims : tuple[tuple[int, int], ...]
+        The archive sequence and the number of rows it must trim.
+    """
 
-    assert [item.sequence for item in decision.deletes] == [1, 2], (
+    cap: int
+    archives: int
+    rows: int
+    active_records: int
+    deletes: tuple[int, ...]
+    trims: tuple[tuple[int, int], ...]
+
+
+_CAP_CASES = [
+    pytest.param(
+        _CapCase(cap=1, archives=3, rows=1, active_records=0, deletes=(1, 2), trims=()),
+        id="whole-archives-oldest-first",
+    ),
+    pytest.param(
+        _CapCase(
+            cap=4, archives=3, rows=3, active_records=0, deletes=(1,), trims=((2, 2),)
+        ),
+        id="straddling-archive-trimmed",
+    ),
+    pytest.param(
+        _CapCase(
+            cap=10, archives=4, rows=2, active_records=6, deletes=(1, 2), trims=()
+        ),
+        id="active-rows-consume-the-cap",
+    ),
+    pytest.param(
+        _CapCase(cap=5, archives=2, rows=1, active_records=6, deletes=(1, 2), trims=()),
+        id="active-rows-exceed-the-cap",
+    ),
+]
+
+
+@pytest.mark.parametrize("case", _CAP_CASES)
+def test_a_record_cap_bounds_retained_history(case: _CapCase) -> None:
+    """The cap counts the rows the writer still holds as well as closed rows.
+
+    Whole archives are deleted oldest first. An archive that straddles the
+    remaining excess keeps only its newest rows, while a cap the active rows
+    already exceed empties the closed history: the archiver refuses to rewrite
+    the writer's file, so the excess waits for the writer's next compaction.
+    """
+    entries = tuple(
+        dc.replace(archived(sequence), record_count=case.rows)
+        for sequence in range(1, case.archives + 1)
+    )
+
+    decision = plan(
+        Inventory(archived=entries),
+        policy(max_bytes=0, max_records=case.cap),
+        active_records=case.active_records,
+    )
+
+    assert tuple(item.sequence for item in decision.deletes) == case.deletes, (
         "whole archives are deleted oldest first"
     )
-    assert not decision.trims, "the survivor already fits the cap"
-
-
-def test_a_record_cap_trims_the_archive_it_straddles() -> None:
-    """An archive larger than the remaining excess keeps its newest rows."""
-    entries = tuple(
-        dc.replace(archived(sequence), record_count=3) for sequence in range(1, 4)
-    )
-
-    decision = plan(Inventory(archived=entries), policy(max_bytes=0, max_records=4))
-
-    assert [item.sequence for item in decision.deletes] == [1], (
-        "the oldest archive fits inside the excess"
-    )
-    assert [(item.sequence, trim.records) for item, trim in decision.trims] == [
-        (2, 2)
-    ], "the straddling archive drops its oldest rows"
+    assert (
+        tuple((item.sequence, trim.records) for item, trim in decision.trims)
+        == case.trims
+    ), "the archive straddling the cap keeps only its newest rows"
 
 
 def test_a_record_cap_counts_the_writers_unsealed_rows() -> None:

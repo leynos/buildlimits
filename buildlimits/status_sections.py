@@ -6,10 +6,7 @@ Keeping that one rule here means the retention renderer and the main renderer
 cannot disagree about what a section is.
 """
 
-import typing as typ
-
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
+import collections.abc as cabc
 
 __all__ = ["section_of"]
 
@@ -33,8 +30,4 @@ def section_of(
     True
     """
     section = state.get(key)
-    return (
-        typ.cast("cabc.Mapping[str, object]", section)
-        if isinstance(section, dict)
-        else None
-    )
+    return section if isinstance(section, cabc.Mapping) else None

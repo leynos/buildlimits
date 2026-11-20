@@ -155,47 +155,6 @@ disagree about a bound.
   bound, and is reported as a disabled bound rather than a zero-byte target.
 - The record cap is `cache_outcomes_max_records`. A positive value applies in
   either mode. When it is omitted, a segmented store has no count cap and a
-  legacy store keeps the historical 10,000-record cap. The cap bounds the whole
-  store, so the archiver counts the active rows the age rule keeps and each
-  sealed source's recorded count as well as the surviving archives.
-  Oldest-first eviction considers archives and sealed sources together: a
-  sealed source outside the budget is deleted whole rather than compressed into
-  an archive the same run would remove, while the writer's active file stays
-  outside the archiver's reach, and a sealed source that straddles the age or
-  byte cutoff is archived untrimmed and trimmed by the run's follow-up plan.
-  The walks act only on measured history: while a surviving sealed source has
-  no writer metadata, or an archive has no trustworthy sidecar, the plan cannot
-  tell which rows will survive and leaves the whole budget to its follow-up
-  pass rather than choose a deletion from a partial total. A source the writer
-  seals during the run is discovered by that follow-up pass and archived before
-  the budget is planned over it, so a cap can still be met in one firing. A
-  pass does not repeat a trim against the archive version it already rewrote,
-  but the same allowance proposed for a re-measured archive is a new decision,
-  because the active file can re-grow the store past the cap after a rewrite. A
-  pass that quarantines an archive or a source also stops before eviction: the
-  quarantined rows were part of the total the budget was planned over, so
-  eviction waits for a fresh plan. A seal that lands between a pass's inventory
-  and active-file reads is detected by reading the inventory again, and the
-  pass is replanned rather than counting neither copy. The final report is
-  bounded the same way: the inventory is scanned on both sides of the
-  active-file read and the reading is retried until the two scans agree, so a
-  seal cannot leave either copy out of the reported count and span. `inspect`
-  and `run --dry-run` plan and report from that same settled reading, so a plan
-  and its figures describe one version of the store, and its `active_bytes`
-  comes from the reading its row count came from. If new seals keep the bounded
-  follow-up passes, or the plan's or report's readings, from settling the
-  store, the run reports `unsettled` and exits 75 rather than claiming success;
-  the next firing retries.
-- The active file is measured through one opened descriptor, so its size and
-  its rows describe the same version even when the writer replaces the path
-  with a compacted or sealed file mid-scan. The size is read immediately before
-  the scan and confirmed immediately after it, and a scan whose version changed
-  is retried, so an append during the scan cannot pair the longer file's rows
-  with the earlier size. An append is committed by its newline, so a final row
-  without one is the writer's append in flight, which a failed write truncates
-  back out; it is excluded from the rows a budget counts. A path that is not a
-  regular file is refused rather than counted, because following a link would
-  let a file outside the store decide retention.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
   segment, or a budget of zero, makes the writer seal closed segments. The
   default budget remains the legacy 12 MiB, so a deployment that writes none of
@@ -486,9 +445,12 @@ either component's private counters.
 - The supervisor's status document carries the same `limits` derivation and
   the writer's active snapshot, which the renderer prints as one line. The
   worker publishes each state's row count and byte size together, so a status
-  read never pairs one state's rows with another state's size. A snapshot the
-  writer cannot supply omits the section rather than failing the status read.
-  Closed history is reported by the archive command, which owns it.
+  read never pairs one state's rows with another state's size. A refused append
+  whose rollback cannot remove the partial line leaves bytes no row accounts
+  for; that snapshot reports `repair_pending` and stays incomplete until a
+  compaction or a fresh active file removes the fragment. A snapshot the writer
+  cannot supply omits the section rather than failing the status read. Closed
+  history is reported by the archive command, which owns it.
 
 None of these figures is a cumulative recorder counter or a journal-reader
 query cap: `record_count` counts rows retained on disk, not outcomes seen since

@@ -370,8 +370,6 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_store_restart`                                                            | What a restart settles before the first append: a torn tail, an oversized segment, an expired file and a replaced salt domain                               |
 | `outcome_store_clock`                                                              | The wall and monotonic clock pair the writer reads together                                                                                                 |
 | `outcome_store_sealing`                                                            | The writer's sealing transition into a closed segment                                                                                                       |
-| `outcome_store_files`                                                              | Private regular-file primitives shared by the store, the sidecars and the history pin: no-follow opens, mode checks and bounded reads                       |
-| `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes, atomic replacement and the seal rename                                                                   |
 | `outcome_store_documents`                                                          | The sequence counter and segment metadata documents, each replaced atomically                                                                               |
 | `outcome_store_tail`                                                               | Backward-chunked removal of an unterminated final row a stopped writer left                                                                                 |
 | `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                                                                                |
@@ -1089,47 +1087,6 @@ redirect the listing or the removal to another directory.
 `outcome_archive_files` owns the per-segment operations: archive, reconcile,
 heal, trim, delete and quarantine. `outcome_archive_quarantine` performs the
 quarantine moves for files a run cannot trust, and `outcome_archive_run`
-executes one plan operation by operation. `outcome_archive_retain` makes the
-bounded follow-up passes: each re-reads the store, performs the archive,
-reconcile, heal and orphan work it finds, and plans the budget over the settled
-inventory, narrowing the pass to work the run has not already applied. It
-detects a seal between its inventory and active-file reads by scanning the
-inventory a second time, suppresses a trim only against the archive measurement
-it was planned for, and confirms settlement with a final plan that mutates
-nothing. The same module owns `settled_snapshot`, the reading a plan and a
-report share: the inventory is scanned on both sides of the active-file read
-and the reading is retried while the two disagree, so a seal cannot leave
-either copy out of a count. `outcome_archive` builds its plan, its dry-run
-report and its run report from that reading, and reports `unsettled` rather
-than a plan when none settles. A run's final report also re-plans retention
-from its own settled reading: the writer can append or seal after the last
-retention pass, and a report that claimed `ok` would tell the timer the store
-is within its bounds while the next firing still has to evict. The re-plan
-ignores archival work, which the next firing picks up as normal, and only
-`trims`, `deletes` or a deferred budget make the run unsettled.
-`outcome_archive_active` reads the writer's active file as a snapshot without
-the archive lock, through one opened descriptor, so its size and rows describe
-the same version even when the writer replaces the path mid-scan. It reads the
-size immediately before the rows and confirms it immediately after them,
-retrying a version the writer appended to, and excludes a final row whose
-newline was not written: the writer truncates a failed append back out, so an
-uncommitted row is not retained history. It refuses any existing path that is
-not a regular file; only an absent file is empty history. Its scan also reports
-the rows and bytes the age rule keeps when it is given a cutoff, and
-`outcome_archive_history` carries that snapshot plus the summary of retained
-rows the report describes. An unmeasured active file leaves a configured byte
-budget without the committed bytes it must count, with or without an age
-cutoff, so `plan_run` defers that walk rather than evicting closed history
-against a whole-file size that includes an append the writer may roll back.
-`outcome_archive_age` owns the age decisions themselves: which entries are
-wholly older than the cutoff and which archive straddles it and is trimmed.
-`outcome_archive_budget` owns the byte budget: it counts an archive's
-uncompressed size from its sidecar plus the active rows the age rule keeps,
-deletes whole archives oldest first, and then trims the single archive that
-straddles the remaining allowance. `plan_record_steps` applies the configured
-record cap to segmented history in the same shape: whole oldest archives are
-deleted while they fit the excess, then the straddling archive is trimmed
-rather than left to break the cap.
 
 The segment contract is defined by `outcome_segments`, which owns naming and
 layout only; `outcome_segment_sidecar` defines the record that describes one
