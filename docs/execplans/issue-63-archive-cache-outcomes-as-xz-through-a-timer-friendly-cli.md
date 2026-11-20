@@ -754,6 +754,16 @@ verified archive is published, and leaves compile admission untouched.
   `_pinned_or_retry`, which keeps the loop inside the complexity bound.
   Regressions seal the active rows after the empty scan and seal domain B
   during the pin; both fail against the previous module.
+- [ ] CodeRabbit review 6000304047 remediation, group 8 (2026-11-21): a
+  non-repeatable replay input (finding 12). `reiterable` passed any object that
+  was not its own iterator straight to H2's two passes, so a wrapper whose
+  `__iter__` hands back one shared internal iterator was drained by the survey
+  and scored as an empty history. The identity check is replaced by an
+  explicit `HistoryStream` test: the pin-backed stream re-streams its snapshot
+  and stays unbuffered on the hot replay path, and every other input is
+  collected once. The regression wraps a full history in such a wrapper and
+  asserts the report still counts every evaluable row; it fails against the
+  previous body with `evaluable_records == 0`.
 
 ## Surprises & discoveries
 

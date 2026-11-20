@@ -19,6 +19,7 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.outcome_key import CacheKey
 from buildlimits.outcome_evidence import Coverage, CoverageBuilder
+from buildlimits.outcome_history_stream import HistoryStream
 from buildlimits.outcome_record_format import (
     OutcomeRecord,
     StoreRecord,
@@ -108,15 +109,19 @@ def summary_agrees(summary: WindowSummary) -> bool:
 def reiterable(records: cabc.Iterable[StoreRecord]) -> cabc.Iterable[StoreRecord]:
     """Return an input H2 can survey and then score.
 
-    A one-shot iterator would be exhausted by the survey, so it is collected
-    once; a re-iterable history stream is passed through untouched.
+    H2 reads its history twice. ``HistoryStream`` re-streams its pinned
+    snapshot on each pass, so it is passed through untouched rather than
+    buffered on the hot replay path. Any other input is collected once: an
+    iterator would be exhausted by the survey, and a wrapper's ``__iter__``
+    can return the same internal iterator on every call, which an identity
+    check cannot see and which the survey would empty before scoring.
 
     Returns
     -------
     cabc.Iterable[StoreRecord]
         A value whose two passes see the same rows.
     """
-    return tuple(records) if iter(records) is records else records
+    return records if isinstance(records, HistoryStream) else tuple(records)
 
 
 @dc.dataclass(frozen=True, slots=True)

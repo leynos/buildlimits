@@ -1,5 +1,6 @@
 """H2 replay classification, fixed thresholds and CLI reports."""
 
+import collections.abc as cabc
 import datetime as dt
 import json
 import typing as typ
@@ -22,13 +23,36 @@ from buildlimits import (
     outcome_replay_cli,
     outcome_store_io,
 )
-from buildlimits.outcome_record_format import StoreHeader
+from buildlimits.outcome_record_format import StoreHeader, StoreRecord
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
 
 _ADR = Path(__file__).parents[1] / "docs/adrs/adr-0005-cache-outcome-recording.md"
+
+
+class _SharedIterator:
+    """An iterable whose every pass returns one shared internal iterator.
+
+    A wrapper can hide a one-shot iterator behind ``__iter__``, handing out the
+    same object each time. An identity check against the wrapper itself cannot
+    see that, so a survey would drain the rows before scoring read any.
+    """
+
+    def __init__(self, rows: cabc.Iterable[StoreRecord]) -> None:
+        """Keep one iterator over ``rows`` for every pass to share."""
+        self._rows = iter(rows)
+
+    def __iter__(self) -> cabc.Iterator[StoreRecord]:
+        """Return the single iterator this wrapper owns.
+
+        Yields
+        ------
+        StoreRecord
+            The next row of the shared iterator, until exhausted.
+        """
+        yield from self._rows
 
 
 @pytest.mark.parametrize(
@@ -171,6 +195,19 @@ def test_a_verdict_states_the_history_it_rests_on() -> None:
     assert report["caveats"] == list(outcome_evidence.H2_LIMITS), (
         "the report repeats the limits outcome_evidence defines"
     )
+
+
+def test_a_wrapper_sharing_one_iterator_is_buffered() -> None:
+    """A non-repeatable input is collected so scoring still sees every row.
+
+    ``_SharedIterator`` is not its own iterator, so the old identity check
+    passed it through; the survey then consumed the only iterator it had and
+    scoring saw an empty history, reporting ``insufficient``.
+    """
+    report = outcome_replay.evaluate_h2(_SharedIterator(_rows(100, 95, 2_000)))
+
+    assert report.evaluable_records == 100, "scoring reads the rows the survey saw"
+    assert report.verdict == "supported", "the buffered rows still support H2"
 
 
 def test_store_cli_text_and_json_snapshots_include_semantic_sample_sizes(
