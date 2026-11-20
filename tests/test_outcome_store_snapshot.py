@@ -1,6 +1,8 @@
 """One bounded read returns a store's size and its rows together."""
 
+import stat
 from pathlib import Path
+from unittest import mock
 
 from outcome_store_fixture_helpers import (
     append_torn_utf8_tail as _append_torn_utf8_tail,
@@ -47,4 +49,27 @@ def test_snapshot_reports_an_oversized_store_at_its_full_size(
     )
     assert snapshot.logical_bytes == len(oversized), (
         "the report keeps the file's real size rather than the truncated read"
+    )
+
+
+def test_an_oversized_store_reports_the_size_of_the_file_it_refused(
+    tmp_path: Path,
+) -> None:
+    """A replacement at the path cannot supply the refused file's size.
+
+    The refusal is a fact about the file the read opened. Measuring the
+    pathname again after the refusal could report a compaction's replacement,
+    pairing the new file's size with the old file's corruption result.
+    """
+    path = tmp_path / "cache-outcomes.jsonl"
+    oversized = b"x" * (outcome_records.MAX_STORE_BYTES + 1)
+    _write_private_file(path, oversized)
+    replacement = mock.Mock(st_size=7, st_mode=stat.S_IFREG | 0o600)
+
+    with mock.patch.object(Path, "lstat", return_value=replacement) as lstat:
+        snapshot = outcome_store_read.read_store_snapshot(path)
+
+    assert not lstat.called, "the refused file's size came from its descriptor"
+    assert snapshot.logical_bytes == len(oversized), (
+        "the report keeps the refused file's size rather than a replacement's"
     )

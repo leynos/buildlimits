@@ -120,7 +120,8 @@ def dry_report(
     A writer seal racing the planning reads moves rows into a segment the
     inventory never saw. When the caller detected that replacement, the active
     contribution is left unmeasured, so the totals are a lower bound rather
-    than a complete zero-row history.
+    than a complete zero-row history, and the inspection reports ``corrupt``
+    rather than success.
 
     Parameters
     ----------
@@ -140,7 +141,7 @@ def dry_report(
     """
     records, observed_from, observed_until = observed(inventory)
     return RunReport(
-        status="ok" if active.complete else "corrupt",
+        status="ok" if active.complete and not is_replaced else "corrupt",
         started_at=run.started_at,
         finished_at=utc_now(),
         dry_run=True,

@@ -17,7 +17,30 @@ from buildlimits.outcome_archive import EXIT_CORRUPT, EXIT_FAILED
 from buildlimits.outcome_archive_lock import ArchiveLock
 
 if typ.TYPE_CHECKING:
+    from buildlimits.outcome_archive import RunReport
     from buildlimits.outcome_segments import SegmentLayout
+
+
+def assert_replaced_history_is_a_lower_bound(report: RunReport, surface: str) -> None:
+    """Require a report to refuse a complete history after a replacement.
+
+    Parameters
+    ----------
+    report : RunReport
+        The report assembled from reads a seal raced.
+    surface : str
+        The reporting surface's name, such as ``run`` or ``inspection``.
+    """
+    retained = report.retained
+    assert retained is not None, f"the {surface} still reports what it saw"
+    assert retained.record_count == 0, (
+        f"neither read of the {surface} holds the sealed rows"
+    )
+    assert retained.complete is False, (
+        f"rows the {surface} could not see are a lower bound"
+    )
+    assert report.status == "corrupt", f"a replaced active file fails the {surface}"
+    assert report.exit_status == EXIT_CORRUPT, "the timer sees a failed measurement"
 
 
 def seal_on_final_scan(store: Path, retention_floor: int | None) -> None:
@@ -258,15 +281,7 @@ def test_a_seal_after_the_final_inventory_read_is_a_lower_bound(
     with mock.patch.object(outcome_segment_inventory, "read_inventory", read_then_seal):
         report = archive.run(tmp_path, archive.policy(max_bytes=0, segment_bytes=4000))
 
-    assert report.retained is not None, "the run still reports what it saw"
-    assert report.retained.record_count == 0, (
-        "neither the saved inventory nor the replaced file holds the rows"
-    )
-    assert report.retained.complete is False, (
-        "history the final reads could not see is a lower bound"
-    )
-    assert report.status == "corrupt", "a replaced active file is not a clean run"
-    assert report.exit_status == EXIT_CORRUPT, "the timer sees a failed measurement"
+    assert_replaced_history_is_a_lower_bound(report, "run")
 
 
 def test_a_seal_during_planning_makes_a_dry_run_a_lower_bound(
@@ -299,8 +314,4 @@ def test_a_seal_during_planning_makes_a_dry_run_a_lower_bound(
             dry_run=True,
         )
 
-    assert report.retained is not None, "the inspection still reports what it saw"
-    assert report.retained.record_count == 0, "the replaced file holds only a header"
-    assert report.retained.complete is False, (
-        "history the planning reads could not see is a lower bound"
-    )
+    assert_replaced_history_is_a_lower_bound(report, "inspection")
