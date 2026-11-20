@@ -775,6 +775,18 @@ verified archive is published, and leaves compile admission untouched.
   rejects as `corrupt`; `generate_segment` is public, and a regression reads
   the generated file with `read_store` and asserts every row decodes. Both
   regressions fail against the previous module.
+- [ ] CodeRabbit review 6000304047 remediation, group 10 (2026-11-21): the
+  dataset command's future archive path and the migration example (findings 18,
+  19). `_read_inputs` now protects `archive_dir / archive_name(sequence)` for
+  every effective sealed segment as well as every existing archive, so an
+  `--output` naming the archive a sealed source is about to become is refused
+  with status 2 before any history is read; otherwise the archiver could
+  publish and release the source mid-read and `save_snapshot` would replace the
+  new archive with a snapshot. The regression names that absent path and fails
+  against the previous guard with status 1 (`corrupt` history). The migration
+  guide's archiving step now sets `cache_outcomes = "record"`, which the
+  configuration validator requires before any `cache_outcomes_*` key is
+  accepted.
 
 ## Surprises & discoveries
 

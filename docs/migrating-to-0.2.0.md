@@ -151,11 +151,15 @@ the first time, unless the pinned version or digest changes.
    token-accounting behaviour, and no operator action is required. See
    [Compare offline hit predictors](users-guide.md#compare-offline-hit-predictors).
 
-8. Optionally provision the outcome archiver and its timer. Set the history
-   budget it should retain before enabling the timer:
+8. Optionally provision the outcome archiver and its timer. Recording must
+   already be enabled: every `cache_outcomes_*` retention key requires
+   `cache_outcomes = "record"`, and validation rejects one written while
+   recording is off. Set the recording setting and the history budget the
+   archiver should retain before enabling the timer:
 
    ```toml
    # ~/.config/buildlimits/supervisor.toml
+   cache_outcomes = "record"
    cache_outcomes_max_bytes = 15000000000
    ```
 

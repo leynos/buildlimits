@@ -14,7 +14,7 @@ from pathlib import Path
 from buildlimits import outcome_history, outcome_segment_inventory, outcome_store_io
 from buildlimits.outcome_history_args import add_history_arguments, selection_from
 from buildlimits.outcome_record_format import RecordFailure
-from buildlimits.outcome_segments import SegmentLayout
+from buildlimits.outcome_segments import SegmentLayout, archive_name
 from buildlimits.outcome_store_salt import store_path
 from buildlimits.predict.config_loader import load_config as _read_config
 from buildlimits.predict.dataset import Snapshot, build_snapshot
@@ -210,10 +210,19 @@ def _read_inputs(store: Path, *, with_history: bool) -> tuple[Path, ...]:
     # Every archive is protected, not only the ones an effective read would
     # choose: a sealed source shadows its archive for reading, but the
     # snapshot must never replace an archive either copy of which exists.
+    #
+    # The archive a sealed source will become is protected too. The archiver
+    # may publish it and remove the source while the history is being read,
+    # and writing the snapshot to that path would then replace the freshly
+    # published archive with a document the store cannot read back.
     paths = (
         layout.active,
         *(entry.path for entry in inventory.effective),
         *(entry.path for entry in inventory.archived),
+        *(
+            layout.archive_dir / archive_name(entry.sequence)
+            for entry in inventory.effective
+        ),
     )
     return tuple(dict.fromkeys(paths))
 

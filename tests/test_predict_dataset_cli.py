@@ -139,6 +139,40 @@ def test_dataset_command_refuses_to_write_over_a_shadowed_archive(
     assert archive.read_bytes() == before, "the shadowed archive is untouched"
 
 
+def test_dataset_command_refuses_a_sealed_segments_future_archive(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The archive a sealed source becomes is an input, though it is absent.
+
+    Only the sealed source exists when the guard runs. The archiver may
+    publish the archive and remove the source while the history is read, so a
+    snapshot written to that path would replace the published archive with a
+    document the store cannot read back.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, 4)
+    layout = SegmentLayout.beside(store)
+    layout.sealed_dir.mkdir(parents=True)
+    (layout.sealed_dir / segment_name(1)).write_bytes(b"sealed rows")
+    future_archive = layout.archive_dir / archive_name(1)
+    assert not future_archive.exists(), "the archive is not published yet"
+
+    status = dataset_cli.main([
+        "--store",
+        str(store),
+        "--output",
+        str(future_archive),
+        "--skip-journal",
+        "--history",
+    ])
+
+    assert status == 2, "a destructive output path is a usage failure"
+    assert "must not name a file the command reads" in capsys.readouterr().err, (
+        "the refusal names the reason"
+    )
+    assert not future_archive.exists(), "nothing is written to the future archive"
+
+
 def test_dataset_command_refuses_an_unparsable_journal_span(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

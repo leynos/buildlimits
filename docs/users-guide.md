@@ -594,13 +594,19 @@ build-limits-predict-benchmark --snapshot build/predict/history.jsonl \
 
 `build-limits-predict-dataset` reads this host's store unless `--store` names
 another one, and `--journal-span` or `--skip-journal` control the journal note
-recorded with the snapshot. `build-limits-predict-benchmark` accepts
-`--snapshot`, `--output` and `--config`; without `--config` it uses the pinned
-parameters in `buildlimits/predict/config.json`. No file the benchmark writes
-may name the snapshot, so a destination that reaches it under another spelling
-— a relative path, a symbolic link or a hard link — is refused before the run
-starts: writing over the history it was read from would make the run impossible
-to repeat. The report directory may otherwise hold the snapshot, as the example
+recorded with the snapshot. Its `--output` may not name any file it reads: the
+active store, a sealed source, a published archive, and the archive a sealed
+source will become. That last path need not exist yet. The archiver may publish
+it and remove the sealed source while the history is being read, and a snapshot
+written there would replace the archive with a document the store cannot read
+back. Such an output is refused with status 2 before any history is read.
+`build-limits-predict-benchmark` accepts `--snapshot`, `--output` and
+`--config`; without `--config` it uses the pinned parameters in
+`buildlimits/predict/config.json`. No file the benchmark writes may name the
+snapshot, so a destination that reaches it under another spelling — a relative
+path, a symbolic link or a hard link — is refused before the run starts:
+writing over the history it was read from would make the run impossible to
+repeat. The report directory may otherwise hold the snapshot, as the example
 above does.
 
 A snapshot with fewer than 2,000 labelled events produces the status
