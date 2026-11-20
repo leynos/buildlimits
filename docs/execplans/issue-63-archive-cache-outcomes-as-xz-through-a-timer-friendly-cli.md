@@ -655,6 +655,12 @@ verified archive is published, and leaves compile admission untouched.
   unconditional deferral at exit 75 and marks the older rule superseded. The
   revision-23 bullet now names both new `predict` modules. The Markdown gates
   (`check-fmt`, `markdownlint`, `nixie`) pass on the final tree.
+- [x] Whole-plan revision-25 remediation (2026-11-20): the revision-24
+  assessment's two plan-text findings are fixed. The composed-trim paragraph
+  now distinguishes the encoder's contract from a firing's planning, which
+  defers the byte walk while an age trim is pending. The trim-suppression
+  sentence now requires the same trim and the same archive measurement. The
+  Markdown gates (`check-fmt`, `markdownlint`, `nixie`) pass on the final tree.
 
 ## Surprises & discoveries
 
@@ -996,7 +1002,12 @@ verified archive is published, and leaves compile admission untouched.
   plan.
 - A byte trim and an age trim compose into one rewrite, but a sequence the byte
   plan deletes is excluded from the trim list: rewriting a file that is about
-  to be removed cannot improve the retained bytes.
+  to be removed cannot improve the retained bytes. The composition is the
+  encoder's contract — a `Trim` carries a cutoff and a byte allowance together
+  — while a firing does not reach it that way: the planner defers the byte walk
+  while an age trim on a straddler is pending, so the age trim is planned alone
+  and the follow-up plan measures the archive it leaves behind
+  (`test_a_byte_trim_waits_until_the_age_trim_is_measured`).
 - A history read pins a snapshot rather than re-reading the store per pass:
   device, inode and size fingerprints detect a replacement between passes, the
   active file's bytes are frozen at the pin, and a pass whose pin changed fails
@@ -1078,8 +1089,11 @@ verified archive is published, and leaves compile admission untouched.
   composed trim would drop the row at the cutoff too. The walk therefore stops
   at such a straddler, and `retain()` plans again over the rewritten document
   so the count is decided from the sidecar's measured row count. The follow-up
-  loop is bounded at three passes, and a plan proposing a trim this run already
-  applied is ignored rather than repeated.
+  loop is bounded at three passes, and a plan proposing the same trim against
+  the same archive measurement this run already applied is ignored rather than
+  repeated; the same trim proposed for a re-measured archive is a new decision,
+  because a count trim and a byte allowance are relative to the document they
+  rewrite.
 - Only an absent active file is empty history. A path that exists but is not a
   regular file raises `UnsafePathError`, and any other failure to inspect it
   propagates, so a substituted or uninspectable path cannot make the store look
@@ -1307,6 +1321,11 @@ verified archive is published, and leaves compile admission untouched.
   corrected one would let a later reader implement the one the code rejects, so
   the paragraph now states the unconditional deferral and records what it
   replaced.
+- A capability and a firing are described separately. A `Trim` can carry an age
+  cutoff and a byte allowance in one rewrite, but the planner defers the byte
+  walk while an age trim on a straddler is pending, so the composed rewrite
+  never decides a byte allowance from an untrimmed sidecar. The plan now says
+  which statement is the encoder's contract and which is what a run does.
 
 ## Outcomes & retrospective
 
@@ -1749,3 +1768,10 @@ Each mutation was reverted and the focused suite passed again.
   relative to the accepted base, `predict.dataset_journal` and
   `predict.render_tables`, and the revision-23 bullet says so instead of naming
   only one.
+- Revision 25 records the whole-plan revision-24 assessment's two plan-text
+  findings. The composed-trim paragraph now says that composition is the
+  encoder's contract and that a firing defers the byte walk while an age trim
+  on a straddler is pending, which
+  `test_a_byte_trim_waits_until_the_age_trim_is_measured` checks. The
+  trim-suppression sentence now names both the trim and the archive
+  measurement, matching `_already_applied` and the decision log.
