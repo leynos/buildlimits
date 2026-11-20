@@ -475,12 +475,11 @@ either component's private counters.
   The flag is false when a segment's metadata is missing or the active file
   could not be read, so a lower bound is never presented as exact.
 - `evictions` counts trims and deletions under `age`, `bytes`, `records` and
-  every combination of those bounds, and each action carries the same reason.
-  A bound that is configured but did not cause an eviction is never named.
-  `maintenance`
-  reports whether the state documents were installed, so a failed write is a
-  retryable `failed` status rather than silent success. A dry run, a deferred
-  run and a run that could not start install no state and report
+  every combination of those bounds, and each action carries the same reason. A
+  bound that is configured but did not cause an eviction is never named.
+  `maintenance` reports whether the state documents were installed, so a failed
+  write is a retryable `failed` status rather than silent success. A dry run, a
+  deferred run and a run that could not start install no state and report
   `state_written` false.
 - The supervisor's status document carries the same `limits` derivation and
   the writer's active snapshot, which the renderer prints as one line. Closed
