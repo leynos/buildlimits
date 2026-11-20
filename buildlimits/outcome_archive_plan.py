@@ -47,6 +47,12 @@ class Plan:
         Archives to rewrite with a prefix trim.
     deletes : tuple[SegmentEntry, ...]
         Archives to remove entirely.
+    eviction_causes : tuple[tuple[int, str], ...]
+        The closed bound (``age``, ``bytes`` or ``records``) that made each
+        planned deletion eligible, sorted by sequence. The cause is recorded
+        as the planner applies each bound, so a report never attributes an
+        eviction to a bound that is disabled. A trim names its own bounds
+        through the fields it carries.
     retained_bytes : int
         Conservative logical bytes that will remain after the plan runs.
     cutoff : datetime | None
@@ -59,6 +65,7 @@ class Plan:
     orphans: tuple[int, ...] = ()
     trims: tuple[tuple[SegmentEntry, Trim], ...] = ()
     deletes: tuple[SegmentEntry, ...] = ()
+    eviction_causes: tuple[tuple[int, str], ...] = ()
     retained_bytes: int = 0
     cutoff: dt.datetime | None = None
 
@@ -190,7 +197,7 @@ def plan_run(
     )
     heal = _heal_steps(inventory, duplicated_sequences)
     budget = Budget(policy=policy, cutoff=policy.cutoff(now), active_bytes=active_bytes)
-    deletes, trims = _retention_steps(inventory, budget, duplicated_sequences)
+    deletes, trims, causes = _retention_steps(inventory, budget, duplicated_sequences)
     retained = _retained_estimate(
         inventory, active_bytes=active_bytes, deletes=deletes, trims=trims
     )
@@ -201,6 +208,7 @@ def plan_run(
         orphans=inventory.orphan_sidecars,
         trims=trims,
         deletes=deletes,
+        eviction_causes=causes,
         retained_bytes=retained,
         cutoff=budget.cutoff,
     )
@@ -227,24 +235,39 @@ def _retention_steps(
     inventory: Inventory,
     budget: Budget,
     duplicated: set[int],
-) -> tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...]]:
-    """Decide age and byte eviction over closed archives, oldest first.
+) -> tuple[
+    tuple[SegmentEntry, ...],
+    tuple[tuple[SegmentEntry, Trim], ...],
+    tuple[tuple[int, str], ...],
+]:
+    """Decide age, byte and record eviction over closed archives, oldest first.
+
+    Each bound is applied in turn and the deletions it plans are attributed to
+    it, so the report names the bound that actually removed an archive. Age
+    runs first, then bytes, then the record cap: an archive the age plan
+    already removed keeps ``age`` even if a later bound would also have
+    removed it.
 
     Returns
     -------
-    tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...]]
-        Archives to delete and archives to rewrite with a trim.
+    tuple
+        Archives to delete, archives to rewrite with a trim, and the closed
+        cause of each deletion as ``(sequence, cause)`` pairs.
     """
     candidates = tuple(
         entry for entry in inventory.archived if entry.sequence not in duplicated
     )
     deletes: dict[int, SegmentEntry] = {}
+    causes: dict[int, str] = {}
     if budget.cutoff is not None:
         for entry in candidates:
             _plan_age_step(entry, budget.cutoff, deletes)
+    _attribute(deletes, causes, "age")
     trims = _age_trims(candidates, budget.cutoff, deletes)
     plan_byte_steps(candidates, budget, deletes, trims)
+    _attribute(deletes, causes, "bytes")
     plan_record_steps(candidates, budget.policy.max_records, deletes, trims)
+    _attribute(deletes, causes, "records")
     # Byte planning runs after age planning and may delete an archive that also
     # carries an age trim. Rewriting a file that is about to be removed would
     # only churn it, so a deleted sequence is never also planned as a trim.
@@ -253,7 +276,19 @@ def _retention_steps(
         for entry in candidates
         if entry.sequence in trims and entry.sequence not in deletes
     )
-    return tuple(deletes[sequence] for sequence in sorted(deletes)), trimmed
+    return (
+        tuple(deletes[sequence] for sequence in sorted(deletes)),
+        trimmed,
+        tuple(sorted(causes.items())),
+    )
+
+
+def _attribute(
+    deletes: dict[int, SegmentEntry], causes: dict[int, str], cause: str
+) -> None:
+    """Attribute every deletion not yet explained to the bound just applied."""
+    for sequence in deletes:
+        causes.setdefault(sequence, cause)
 
 
 def _plan_age_step(

@@ -75,8 +75,9 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
         _quarantine_orphan(run, sequence, outcome)
     for entry, trim in run.plan.trims:
         _trim_one(run, entry, trim, outcome)
+    causes = dict(run.plan.eviction_causes)
     for entry in run.plan.deletes:
-        _delete_one(run, entry, outcome)
+        _delete_one(run, entry, causes[entry.sequence], outcome)
 
 
 def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
@@ -108,9 +109,10 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
     for entry, trim in follow_up.trims:
         if entry.sequence not in settled and entry.path.exists():
             _trim_one(run, entry, trim, outcome)
+    causes = dict(follow_up.eviction_causes)
     for entry in follow_up.deletes:
         if entry.sequence not in settled and entry.path.exists():
-            _delete_one(run, entry, outcome)
+            _delete_one(run, entry, causes[entry.sequence], outcome)
 
 
 def active_bytes(path: Path) -> int:
@@ -240,8 +242,9 @@ def _trim_one(
 ) -> None:
     """Apply one planned trim, quarantining an archive that will not verify.
 
-    The recorded action names the bound that caused the rewrite, so a report
-    reader can tell age eviction from a byte allowance without re-planning.
+    The recorded action names the bounds that caused the rewrite, so a report
+    reader can tell an age eviction, a byte allowance and a record cap apart
+    without re-planning.
     """
     _quarantining(
         outcome,
@@ -256,58 +259,40 @@ def _trim_one(
     )
 
 
-def _delete_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
-    """Remove one expired archive, naming the bound that caused it."""
+def _delete_one(
+    run: ArchiveRun, entry: SegmentEntry, cause: str, outcome: RunOutcome
+) -> None:
+    """Remove one planned archive, naming the bound that made it eligible."""
     try:
         outcome_archive_files.delete_archive(run.context, entry)
     except OSError:
         outcome.failures.append((entry.sequence, "unreadable"))
         return
-    outcome.actions.append(
-        ActionResult("deleted", entry.sequence, reason=_delete_reason(run, entry))
-    )
-
-
-def _delete_reason(run: ArchiveRun, entry: SegmentEntry) -> str:
-    """Return the bound that made one archive eligible for deletion.
-
-    Age is checked first because the age plan runs before byte planning: an
-    archive whose newest row is older than the cutoff would have been deleted
-    even if the byte budget had room for it.
-
-    Returns
-    -------
-    str
-        ``age`` when the archive's newest row is older than the cutoff,
-        otherwise ``bytes``.
-    """
-    cutoff = run.context.policy.cutoff(run.context.now)
-    return "age" if _is_expired(entry, cutoff) else "bytes"
-
-
-def _is_expired(entry: SegmentEntry, cutoff: dt.datetime | None) -> bool:
-    """Report whether an archive's newest row is older than the cutoff.
-
-    Returns
-    -------
-    bool
-        Whether every row in the archive is past the age bound.
-    """
-    if cutoff is None or entry.last_observed_at is None:
-        return False
-    return entry.last_observed_at < cutoff
+    outcome.actions.append(ActionResult("deleted", entry.sequence, reason=cause))
 
 
 def _trim_reason(trim: Trim) -> str:
     """Return the bounds one planned trim applies.
 
+    Each bound a trim serves is visible in the field it acts on, so the cause
+    is read from the trim rather than inferred from the policy. A count-driven
+    rewrite therefore names ``records`` even when no byte budget is set, and
+    an age or byte bound that did not cause the rewrite is never named.
+
     Returns
     -------
     str
-        ``age``, ``bytes`` or ``age_and_bytes`` for a composed rewrite.
+        The closed names of the bounds, joined in a fixed order: ``age``,
+        ``bytes``, ``records``, ``age_and_bytes``, ``age_and_records``,
+        ``bytes_and_records`` or ``age_and_bytes_and_records``.
     """
-    by_age = trim.before is not None or trim.records > 0
-    by_bytes = trim.allowed_bytes is not None
-    if by_age and by_bytes:
-        return "age_and_bytes"
-    return "age" if by_age else "bytes"
+    bounds = [
+        name
+        for name, is_applied in (
+            ("age", trim.before is not None),
+            ("bytes", trim.allowed_bytes is not None),
+            ("records", trim.records > 0),
+        )
+        if is_applied
+    ]
+    return "_and_".join(bounds)

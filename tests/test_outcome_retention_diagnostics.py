@@ -7,6 +7,7 @@ cause, the state files' agreement with the report, and the recovery a later
 run performs after a state write fails.
 """
 
+import dataclasses as dc
 import datetime as dt
 import json
 from pathlib import Path
@@ -30,12 +31,20 @@ from segment_test_helpers import document, write_private
 
 from buildlimits import config, outcome_archive_cli
 from buildlimits.outcome_archive import EXIT_OK
-from buildlimits.outcome_archive_report import Maintenance, RunReport
+from buildlimits.outcome_archive_report import (
+    EVICTION_CAUSES,
+    Maintenance,
+    RunReport,
+)
 from buildlimits.outcome_retention import policy_from_settings
 from buildlimits.outcome_retention_report import ActiveHistory, RetentionLimits
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import segment_name
 from buildlimits.status_render import render
+
+# Every cause is always reported, so an expectation only states the one that
+# acted and leaves the rest at zero however the vocabulary grows.
+NO_EVICTIONS = dict.fromkeys(EVICTION_CAUSES, 0)
 
 
 def _rohga_settings(tmp_path: Path) -> config.SupervisorConfig:
@@ -114,7 +123,7 @@ def test_a_run_reports_limits_history_and_maintenance(tmp_path: Path) -> None:
     assert rendered["retained"] == report.retained.as_dict(), (
         "the document carries the same retained view"
     )
-    assert rendered["evictions"] == {"age": 0, "bytes": 0, "age_and_bytes": 0}, (
+    assert rendered["evictions"] == NO_EVICTIONS, (
         "nothing was evicted under a permissive policy"
     )
     assert rendered["maintenance"] == {"state_written": True, "reason": None}, (
@@ -165,11 +174,9 @@ def test_an_age_eviction_names_its_cause(tmp_path: Path) -> None:
 
     report = run(tmp_path, policy(max_age_days=30))
 
-    assert report.as_dict()["evictions"] == {
-        "age": 2,
-        "bytes": 0,
-        "age_and_bytes": 0,
-    }, "both rows are attributed to their age alone"
+    assert report.as_dict()["evictions"] == {**NO_EVICTIONS, "age": 2}, (
+        "both rows are attributed to their age alone"
+    )
     assert [
         action.reason for action in report.actions if action.action == "deleted"
     ] == ["age", "age"], "each deleted row names the age bound"
@@ -185,14 +192,28 @@ def test_a_byte_eviction_names_its_cause(tmp_path: Path) -> None:
 
     report = run(tmp_path, policy(max_age_days=30, max_bytes=one_segment * 2 + active))
 
-    assert report.as_dict()["evictions"] == {
-        "age": 0,
-        "bytes": 1,
-        "age_and_bytes": 0,
-    }, "the byte bound alone caused the deletion"
+    assert report.as_dict()["evictions"] == {**NO_EVICTIONS, "bytes": 1}, (
+        "the byte bound alone caused the deletion"
+    )
     assert [
         action.sequence for action in report.actions if action.action == "deleted"
     ] == [1], "the oldest archive is the one evicted"
+
+
+def test_a_record_cap_eviction_names_its_cause(tmp_path: Path) -> None:
+    """A count-driven deletion names ``records``, not a disabled byte bound."""
+    seeded_store(tmp_path, records(NOW, 3))
+    unlimited = policy(max_bytes=0)
+    run(tmp_path, unlimited)
+
+    report = run(tmp_path, dc.replace(unlimited, max_records=2))
+
+    assert report.as_dict()["evictions"] == {**NO_EVICTIONS, "records": 1}, (
+        "the cap alone caused the deletion"
+    )
+    assert [
+        action.reason for action in report.actions if action.action == "deleted"
+    ] == ["records"], "the deletion names the bound that removed it"
 
 
 def test_a_trim_that_serves_both_bounds_says_so(tmp_path: Path) -> None:
@@ -210,11 +231,9 @@ def test_a_trim_that_serves_both_bounds_says_so(tmp_path: Path) -> None:
         policy(max_age_days=30, max_bytes=active + archived // 2),
     )
 
-    assert report.as_dict()["evictions"] == {
-        "age": 0,
-        "bytes": 0,
-        "age_and_bytes": 1,
-    }, "one rewrite is counted once, under both causes"
+    assert report.as_dict()["evictions"] == {**NO_EVICTIONS, "age_and_bytes": 1}, (
+        "one rewrite is counted once, under both causes"
+    )
     trim = next(action for action in report.actions if action.action == "trimmed")
     assert trim.reason == "age_and_bytes", "the rewrite names both bounds"
 

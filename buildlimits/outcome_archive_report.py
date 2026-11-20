@@ -28,10 +28,23 @@ EXIT_USAGE = 2
 EXIT_CORRUPT = 3
 EXIT_TEMPFAIL = 75
 
+# The closed vocabulary a report counts evictions under. A trim that serves
+# more than one bound names each of them, so every combination is listed.
+EVICTION_CAUSES = (
+    "age",
+    "bytes",
+    "records",
+    "age_and_bytes",
+    "age_and_records",
+    "bytes_and_records",
+    "age_and_bytes_and_records",
+)
+
 type RunStatus = typ.Literal["ok", "failed", "corrupt", "busy", "no_headroom"]
 
 __all__ = [
     "ARCHIVE_SCHEMA",
+    "EVICTION_CAUSES",
     "EXIT_CORRUPT",
     "EXIT_FAILED",
     "EXIT_OK",
@@ -240,8 +253,9 @@ def action_dict(action: ActionResult) -> dict[str, object]:
     -------
     dict[str, object]
         The action's closed name, sequence, sizes and optional reason. For an
-        eviction the reason names its cause (``age``, ``bytes`` or
-        ``age_and_bytes``); for a quarantine it names the closed fault.
+        eviction the reason names every bound that caused it, from ``age``,
+        ``bytes`` and ``records`` (joined by ``_and_`` when one rewrite serves
+        more than one); for a quarantine it names the closed fault.
     """
     return {
         "action": action.action,
@@ -268,10 +282,13 @@ def eviction_counts(actions: tuple[ActionResult, ...]) -> dict[str, int]:
 
     Examples
     --------
-    >>> eviction_counts(())
-    {'age': 0, 'bytes': 0, 'age_and_bytes': 0}
+    >>> counts = eviction_counts(())
+    >>> {cause: count for cause, count in counts.items() if count}
+    {}
+    >>> list(counts) == list(EVICTION_CAUSES)
+    True
     """
-    counts = {"age": 0, "bytes": 0, "age_and_bytes": 0}
+    counts = dict.fromkeys(EVICTION_CAUSES, 0)
     for action in actions:
         reason = _eviction_cause(action)
         if reason is not None and reason in counts:
