@@ -228,6 +228,30 @@ verified archive is published, and leaves compile admission untouched.
   `_surviving`, and the directory walk's repeated `ELOOP`/`ENOTDIR` translation
   is one `_refuse_non_directory`. Every remaining new family is a recorded
   exception with its reason in `pyproject.toml`.
+- [x] Coverage lift (2026-11-20): five new modules close the uncovered fault
+  boundaries the review named. `test_outcome_history_settling` drives the
+  reader's retry, the settle check that can never re-scan, and a header-less
+  segment; `test_outcome_archive_fs_faults` forces each primitive's cleanup (a
+  refused temporary, a publication whose directory sync fails, a failed state
+  write or sync, a stale temporary that cannot be unlinked, an unreadable
+  directory entry, and each ownership and component refusal);
+  `test_outcome_archive_run_faults` drives a reconciliation, a failed
+  reconcile, an unreadable source, a failed delete, and a record-cap trim
+  through a whole run; `test_outcome_retention_bounds` covers the settings to
+  policy mapping and every refused bound; and `test_predict_snapshot_domains`
+  covers a snapshot spanning two salt domains. The injected-failure stand-in
+  moved into `tests/outcome_archive_helpers.py::refuse` so the fault tests fail
+  one way, and the two remaining families the detector reported are recorded
+  with their reasons. Measured over the whole suite, statement coverage rises
+  from 91.43% to 91.92%, above the 91.31% ratchet floor.
+- [x] Final gate run (2026-11-20): `make fmt` (nothing changed),
+  `make check-fmt`, `make lint`, `make typecheck`, `make test`,
+  `make markdownlint`, `make nixie` and `make audit` each ran once,
+  sequentially, and all pass. `make lint` now executes every sub-target — ruff,
+  interrogate at 100%, the base and DF12 Pylint sweeps at 10.00/10, Ambrleaks,
+  Skylos 4.33.2, Vulture, the duplication gate at 253 reasoned exceptions, and
+  `lint-actions`. `make test` reports 4462 passed, 85 skipped and 76 snapshots
+  passed.
 
 ## Surprises & discoveries
 
@@ -418,3 +442,6 @@ failure or an accumulating buffer both fail.
   figures come from a 12 MiB and a 100 MiB generated segment measured on the
   development host at preset 6; the docstrings and developers' guide were
   corrected to attribute the traced peak to the encoder dictionary.
+- The coverage lift added five focused test modules, one shared injected-failure
+  helper, and two reasoned duplication exceptions, and records the final
+  all-green gate run.

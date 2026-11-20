@@ -6,6 +6,7 @@ states only the archive behaviour it observes.
 """
 
 import datetime as dt
+import errno
 import typing as typ
 
 from outcome_store_helpers import close_writer, segment_writer
@@ -31,6 +32,7 @@ __all__ = [
     "observed",
     "policy",
     "records",
+    "refuse",
     "run",
     "write",
 ]
@@ -59,6 +61,21 @@ def policy(
         ),
         segment_bytes=segment_bytes,
     )
+
+
+def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
+    """Raise the error an injected filesystem failure reports.
+
+    A test that patches a store operation to fail needs the failure to look
+    like the real call's would: an ``OSError`` carrying an errno. Every archive
+    fault test shares this one refusal so they fail the same way.
+
+    Raises
+    ------
+    OSError
+        Always, with ``EIO``.
+    """
+    raise OSError(errno.EIO, "injected failure")
 
 
 def records(observed: dt.datetime, count: int) -> tuple[StoreRecord, ...]:

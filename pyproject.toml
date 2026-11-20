@@ -2202,10 +2202,6 @@ members = [
 ]
 reason = "Both fail the test if execution reaches the guarded call. One guards a transport that must not be reached by invalid options, the other a lock that must not be acquired twice; the call inside each differs, so the shared part is a single assertion."
 
-[[tool.duplication_gate.unit]]
-unit = "buildlimits/outcome_archive_verify.py"
-reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."
-
 [[tool.duplication_gate.allow]]
 unit = "tests/test_outcome_archive_fs.py"
 reason = "Recurring short test steps: these fragments arrange or check the same subject across different cases, and each belongs to a test with its own contract and explanation. The shared set-up already lives in helpers; extracting what remains would hide what each test exercises."
@@ -2309,4 +2305,14 @@ reason = "Recurring short test steps: both decode the store after a writer run a
 [[tool.duplication_gate.allow]]
 unit = "tests/test_outcome_store_tail.py"
 reason = "Recurring short test steps: the repair tests share the write-fixture, repair and compare outline while asserting distinct outcomes -- a tail removed, a whole file emptied, a complete store untouched. Extracting the outline would hide which damage each case pins."
+
+[[tool.duplication_gate.allow]]
+members = ["tests/outcome_archive_helpers.py::refuse", "tests/test_launch_pressure.py::fail", "tests/test_startup_descriptor_ownership.py::fail"]
+reason = "One injected-failure stand-in written three times for unrelated callers: the archive tests refuse a store operation, and each pressure test refuses a launch stage. The shared archive refusal is named once for both archive fault modules; sharing it with the pressure tests would couple their launch-pipeline fixture to archive test support, so each keeps its own three-line raiser."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_recorder_types.py", "buildlimits/outcome_recorder_outputs.py", "tests/outcome_shell_test_support.py", "buildlimits/server_watch.py", "buildlimits/cache_recovery.py", "buildlimits/predict/dataset_cli.py", "tests/predict_test_helpers.py", "buildlimits/outcome_archive_files.py", "tests/test_outcome_archive_run_faults.py", "tests/test_kache_detached_events.py"]
+reason = "Matching module preludes: each module names the record, sighting or archive symbols it uses, and several guard checker-only imports behind one TYPE_CHECKING block. Routing them through a shared re-export module would hide every module dependence behind one import and would make the checker blind to a module that stops using a symbol, so each keeps its own prelude."
+[[tool.duplication_gate.unit]]
+unit = "buildlimits/outcome_archive_verify.py"
+reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."
 
