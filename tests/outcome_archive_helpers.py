@@ -16,10 +16,10 @@ import pytest
 from archive_cli_helpers import sealed_measured_source
 from outcome_store_helpers import close_writer, segment_writer
 from outcome_test_helpers import attributed_record
-from segment_test_helpers import document
+from segment_test_helpers import document, write_private
 from segment_test_helpers import store_layout as layout
 
-from buildlimits import outcome_archive_files
+from buildlimits import outcome_archive_files, outcome_archive_retain
 from buildlimits.outcome_archive import RunOptions, RunReport, run_archive
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segments import sealed_meta_name, segment_name
@@ -29,6 +29,7 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
+    from buildlimits.outcome_archive_history import ActiveHistory
     from buildlimits.outcome_record_format import DecodedStore, StoreRecord
     from buildlimits.outcome_segment_inventory import SegmentEntry
     from buildlimits.outcome_segments import SegmentLayout
@@ -56,6 +57,7 @@ __all__ = [
     "refuse",
     "run",
     "seal_active",
+    "seal_five_rows_once",
     "seal_on_each_archive",
     "write",
 ]
@@ -202,6 +204,48 @@ def seal_on_each_archive(
         return result
 
     monkeypatch.setattr(outcome_archive_files, "archive_source", archive_and_seal)
+
+
+def seal_five_rows_once(
+    store_layout: SegmentLayout, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Seal five rows at the first active read of an archive run.
+
+    The seal moves rows out of the active file into a source the inventory
+    read before it does not list, exactly as the writer can while a plan or
+    its report reads the store. Replacing the read keeps the interleaving
+    point deterministic.
+
+    Parameters
+    ----------
+    store_layout : SegmentLayout
+        The store whose active file is sealed.
+    monkeypatch : pytest.MonkeyPatch
+        The test's patcher, which owns undoing the replacement.
+    """
+    real = outcome_archive_retain.active_history
+    sealed = False
+
+    def seal_then_read(
+        path: Path, *, cutoff: dt.datetime | None = None
+    ) -> ActiveHistory:
+        """Seal five rows once, then read the active file.
+
+        Returns
+        -------
+        ActiveHistory
+            The active file's history after the seal.
+        """
+        nonlocal sealed
+        if not sealed:
+            sealed = True
+            rows = records(NOW, 5)
+            write_private(store_layout.active, document(rows))
+            seal_active(store_layout, rows, 2)
+            write_private(store_layout.active, document(records(NOW, 2)))
+        return real(path, cutoff=cutoff)
+
+    monkeypatch.setattr(outcome_archive_retain, "active_history", seal_then_read)
 
 
 def _append_or_retry(writer: StoreWriter, row: StoreRecord) -> None:

@@ -10,12 +10,17 @@ plan.
 """
 
 import datetime as dt
+import errno
 import typing as typ
 from pathlib import Path
 
+import pytest
 from archive_cli_helpers import sealed_measured_source
 from outcome_archive_helpers import NOW, archives, layout, policy, records, run, write
 from segment_test_helpers import document, write_private
+
+from buildlimits import outcome_archive_active, outcome_record_encode, outcome_store_io
+from buildlimits.outcome_archive_report import EXIT_TEMPFAIL
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_report import RunReport
@@ -170,3 +175,151 @@ def test_kept_active_rows_count_towards_a_record_cap(tmp_path: Path) -> None:
     assert report.retained_records == 4, "only the kept active rows remain"
     assert archives(tmp_path) == [], "the archive is evicted whole"
     assert report.status == "ok", "the evicted store meets the record cap"
+
+
+def test_an_append_during_planning_is_budgeted_from_its_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A complete row appended during planning decides the byte budget.
+
+    The writer never takes the archive lock, so it can append between the size
+    reading and the scan. A single scan would pair the earlier size with the
+    later rows, count less history than the file holds, and plan no eviction
+    for an archive the settled store cannot afford. An inspection reports that
+    plan directly, so it shows the mismeasurement; the run that follows then
+    checks the decision is applied and that the report describes the version
+    its row count came from.
+    """
+    store_layout = _archived_store(tmp_path, retained=5, active=records(NOW, 2))
+    budget = _ARCHIVE_BYTES + len(document(records(NOW, 2))) + 1
+    real = outcome_archive_active._size_of
+    appended = iter((records(NOW, 3)[2], records(NOW, 4)[3]))
+    grew = False
+
+    def grow_after_size(source: typ.BinaryIO, *, fallback: int = 0) -> int:
+        """Append one complete row after the next size reading."""
+        nonlocal grew
+        size = real(source, fallback=fallback)
+        if not grew:
+            grew = True
+            line = outcome_record_encode.encode_line(next(appended))
+            with store_layout.active.open("ab") as handle:
+                handle.write((line + "\n").encode())
+        return size
+
+    monkeypatch.setattr(outcome_archive_active, "_size_of", grow_after_size)
+    run_policy = policy(segment_bytes=1_000_000, max_age_days=0, max_bytes=budget)
+
+    inspection = run(tmp_path, run_policy, dry_run=True)
+
+    assert inspection.active_bytes == len(document(records(NOW, 3))), (
+        "the inspection measures the version its rows were read from"
+    )
+    assert inspection.plan is not None and inspection.plan.trim, (
+        "the appended row is counted before the budget decides"
+    )
+    assert inspection.retained_bytes <= inspection.budget_bytes, (
+        "the planned store meets the byte budget"
+    )
+
+    grew = False
+    report = run(tmp_path, run_policy)
+
+    assert report.active_bytes == len(document(records(NOW, 4))), (
+        "the report measures the version its rows were read from"
+    )
+    evictions = [
+        action for action in report.actions if action.action in {"trimmed", "deleted"}
+    ]
+    assert evictions, "the appended row decides the applied eviction"
+    assert report.retained_bytes <= report.budget_bytes, (
+        "the surviving store meets the byte budget"
+    )
+    assert report.status == "ok", "the settled store meets the byte budget"
+
+
+def test_an_uncommitted_append_does_not_evict_an_eligible_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row whose newline is not written is not retained history.
+
+    The writer commits an append by writing its newline and truncates a failed
+    append back out. A scan that catches the row before its newline must not
+    count it towards a budget: doing so evicts an archive the committed rows
+    fit beside. This test pauses the append inside ``write_all``, runs the
+    archiver against the half-written row, then fails the write so the writer's
+    own rollback removes it.
+    """
+    store_layout = _archived_store(tmp_path, retained=2, active=records(NOW, 4))
+    archive = archives(tmp_path)[0]
+    before = archive.read_bytes()
+    committed = document(records(NOW, 4))
+    reports: list[RunReport] = []
+    real_write_all = outcome_store_io.write_all
+    in_window = False
+    run_policy = policy(segment_bytes=1_000_000, max_age_days=1, max_records=6)
+
+    def pause_before_newline(descriptor: int, data: bytes) -> None:
+        """Write the row, let the run observe it, then fail its newline."""
+        nonlocal in_window
+        if in_window:
+            real_write_all(descriptor, data)
+            return
+        in_window = True
+        try:
+            real_write_all(descriptor, data[:-1])
+            reports.append(run(tmp_path, run_policy))
+        finally:
+            in_window = False
+        raise OSError(errno.EIO, "injected newline failure")
+
+    monkeypatch.setattr(outcome_store_io, "write_all", pause_before_newline)
+    row = records(NOW, 5)[4]
+
+    with pytest.raises(OSError, match="injected newline failure"):
+        outcome_store_io.append_line(
+            store_layout.active, outcome_record_encode.encode_line(row).encode()
+        )
+
+    assert len(reports) == 1, "the run observed the append before its newline"
+    report = reports[0]
+    assert report.retained_records == 6, "the uncommitted row is not counted"
+    assert archive.read_bytes() == before, "the eligible archive is byte-identical"
+    assert store_layout.active.read_bytes() == committed, (
+        "the failed append is rolled back to the committed rows"
+    )
+
+
+def test_an_unmeasurable_active_file_defers_an_age_aware_byte_budget(
+    tmp_path: Path,
+) -> None:
+    """A byte budget never evicts against a file whose survivors are unknown.
+
+    With an age cutoff the budget counts only the active bytes retention
+    keeps, and those cannot be read from an undecodable file. Evicting closed
+    history against the whole file could discard an archive the settled store
+    keeps, so the budget is deferred and the run reports that the timer should
+    retry. A record cap configured beside it remains an operational failure,
+    which the active-file tests cover.
+    """
+    store_layout = _archived_store(tmp_path, retained=5, active=records(_EXPIRED, 4))
+    archive = archives(tmp_path)[0]
+    before = archive.read_bytes()
+    # Large enough that the whole file, read as retained bytes, would push the
+    # archive past the budget and force a trim of history it cannot measure.
+    write_private(store_layout.active, b"not a cache outcome document\n" * 100)
+
+    report = run(
+        tmp_path,
+        policy(
+            segment_bytes=1_000_000,
+            max_age_days=1,
+            max_bytes=_HEADER_BYTES + _ARCHIVE_BYTES,
+        ),
+    )
+
+    assert archive.read_bytes() == before, "no eviction without a measurement"
+    assert report.status == "unsettled", "the deferred budget is retryable"
+    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    evictions = [action for action in report.actions if action.action != "archived"]
+    assert not evictions, "nothing is evicted against an unread active file"

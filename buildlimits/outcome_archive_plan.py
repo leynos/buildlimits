@@ -260,12 +260,13 @@ def _retention_steps(
     whole, and the follow-up plan trims it once this run has archived it.
 
     The byte and record walks run only when every surviving entry has been
-    measured and no duplicated sequence is excluded from the candidates;
-    otherwise their totals misstate what the store retains, and a whole
-    deletion chosen against them could remove an older entry the settled
-    store keeps. Age eviction is decided from the cutoff alone, so it is
-    planned either way and the follow-up pass re-plans the budgets. A walk
-    that stops at an entry it cannot yet settle defers its budget the same way.
+    measured, the active file's surviving rows were read, and no duplicated
+    sequence is excluded from the candidates; otherwise their totals misstate
+    what the store retains, and a whole deletion chosen against them could
+    remove an older entry the settled store keeps. Age eviction is decided from
+    the cutoff alone, so it is planned either way and the follow-up pass
+    re-plans the budgets. A walk that stops at an entry it cannot yet settle
+    defers its budget the same way.
 
     Returns
     -------
@@ -281,7 +282,7 @@ def _retention_steps(
         for entry in candidates:
             plan_age_step(entry, budget.cutoff, deletes)
     trims = age_trims(candidates, budget.cutoff, deletes)
-    measurable = _budgets_are_measurable(candidates, budget.cutoff, deletes, duplicated)
+    measurable = _budgets_are_measurable(candidates, budget, deletes, duplicated)
     settled = True
     if measurable:
         # Both walks always run: the record walk composes with the byte walk's
@@ -307,7 +308,7 @@ def _retention_steps(
 
 def _budgets_are_measurable(
     candidates: tuple[SegmentEntry, ...],
-    cutoff: dt.datetime | None,
+    budget: Budget,
     deletes: cabc.Mapping[int, SegmentEntry],
     duplicated: set[int],
 ) -> bool:
@@ -315,9 +316,11 @@ def _budgets_are_measurable(
 
     A duplicated sequence is left out of the candidates while reconciliation
     settles it, so its rows would be missing from the total the walk acts on.
-    ``budget_totals_are_unsettled`` reports the other conditions: an entry
+    An active file whose rows could not be read leaves an age-aware byte
+    budget without the surviving bytes it must count. ``_active_is_measurable``
+    and ``budget_totals_are_unsettled`` report the other conditions: an entry
     whose span crosses the cutoff, or one with no trustworthy measurement. A
-    later pass re-plans from the reconciled and measured inventory.
+    later pass re-plans from the reconciled and measured history.
 
     Returns
     -------
@@ -326,7 +329,29 @@ def _budgets_are_measurable(
     """
     if duplicated:
         return False
-    return not budget_totals_are_unsettled(candidates, cutoff, deletes)
+    if not _active_is_measurable(budget):
+        return False
+    return not budget_totals_are_unsettled(candidates, budget.cutoff, deletes)
+
+
+def _active_is_measurable(budget: Budget) -> bool:
+    """Whether an unmeasured active file still lets both bounds be decided.
+
+    An unmeasured file contributes only its whole size. With no cutoff that
+    size is exactly the retained bytes, and without a byte limit the rows are
+    only needed by the record cap, which ``require_measurable_active`` refuses
+    on its own. An age-aware byte budget cannot tell which of those bytes
+    survive, so its walk is deferred: evicting closed history against the whole
+    file would discard history the settled store keeps.
+
+    Returns
+    -------
+    bool
+        True when the active figures the configured bounds need were read.
+    """
+    if budget.active.has_metadata:
+        return True
+    return budget.cutoff is None or not budget.policy.has_byte_limit
 
 
 def _retained_estimate(

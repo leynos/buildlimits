@@ -9,13 +9,16 @@ operator can compare a run against the retention record without reading code.
 import dataclasses as dc
 import typing as typ
 
-from buildlimits.utc_text import optional_utc_text, utc_text
+from buildlimits.outcome_archive_history import ActiveHistory, observed_history
+from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
 
 if typ.TYPE_CHECKING:
     import datetime as dt
 
     from buildlimits.outcome_archive_context import ActionResult
     from buildlimits.outcome_archive_plan import PlanSummary
+    from buildlimits.outcome_archive_run import ArchiveRun
+    from buildlimits.outcome_segment_inventory import Inventory
 
 ARCHIVE_SCHEMA = 1
 EXIT_OK = 0
@@ -39,6 +42,9 @@ __all__ = [
     "RunReport",
     "RunStatus",
     "action_dict",
+    "dry_report",
+    "unfinished_report",
+    "unsettled_report",
 ]
 
 
@@ -214,3 +220,79 @@ def action_dict(action: ActionResult) -> dict[str, object]:
         "physical_bytes": action.physical_bytes,
         "reason": action.reason,
     }
+
+
+def dry_report(
+    run: ArchiveRun, active: ActiveHistory, inventory: Inventory
+) -> RunReport:
+    """Build the report a dry run returns without changing any file.
+
+    The inventory and the active history are the settled pair the plan was
+    built from, so the report and the plan describe one version of the store;
+    reading the inventory again could count a seal between the two.
+
+    Returns
+    -------
+    RunReport
+        A successful dry-run report carrying the plan.
+    """
+    observed = observed_history(inventory, active)
+    return RunReport(
+        status="ok",
+        started_at=run.started_at,
+        finished_at=utc_now(),
+        dry_run=True,
+        active_bytes=active.bytes,
+        retained_bytes=run.plan.retained_bytes,
+        retained_records=observed.records,
+        observed_from=observed.observed_from,
+        observed_until=observed.observed_until,
+        unmeasured_entries=observed.unmeasured,
+        budget_bytes=run.context.policy.max_bytes,
+        cutoff=run.plan.cutoff,
+        plan=run.summary,
+        gaps=inventory.gaps,
+        gaps_truncated=inventory.gaps_truncated,
+        missing_sidecars=inventory.missing_sidecars,
+        corrupt_sidecars=inventory.corrupt_sidecars,
+        orphan_sidecars=inventory.orphan_sidecars,
+    )
+
+
+def unsettled_report(started_at: dt.datetime, *, dry_run: bool = False) -> RunReport:
+    """Build a retryable report for a store that never held still.
+
+    The writer can keep sealing across every bounded reading, so no inventory
+    and active file describe one version of the store. Reporting a plan or a
+    count from any of those pairs would undercount history, so nothing is
+    planned, nothing is changed, and the timer retries.
+
+    Returns
+    -------
+    RunReport
+        An ``unsettled`` report with no plan.
+    """
+    return RunReport(
+        status="unsettled",
+        started_at=started_at,
+        finished_at=utc_now(),
+        dry_run=dry_run,
+    )
+
+
+def unfinished_report(
+    started_at: dt.datetime, status: RunStatus, reason: str
+) -> RunReport:
+    """Build a report for a run that could not start or complete.
+
+    Returns
+    -------
+    RunReport
+        The closed failure report.
+    """
+    return RunReport(
+        status=status,
+        started_at=started_at,
+        finished_at=utc_now(),
+        reason=reason,
+    )

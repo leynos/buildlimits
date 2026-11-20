@@ -16,7 +16,7 @@ import pytest
 from outcome_archive_helpers import NOW, document, layout, policy, records, run, write
 from segment_test_helpers import write_private
 
-from buildlimits import outcome_archive_active
+from buildlimits import outcome_archive_active, outcome_record_encode
 from buildlimits.outcome_archive import EXIT_FAILED
 from buildlimits.outcome_archive_active import active_history
 from buildlimits.outcome_archive_dirs import UnsafePathError
@@ -172,6 +172,46 @@ def test_the_age_rule_separates_the_rows_the_writer_will_drop(
     assert history.first_observed_at == NOW - dt.timedelta(days=10), (
         "the span still describes the whole file"
     )
+
+
+def test_an_append_during_the_scan_is_measured_as_one_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A complete row appended after the size reading shares its version.
+
+    The writer never takes the archive lock, so it can append between the size
+    reading and the end of the scan. The scan then sees the row but holds the
+    earlier size; pairing the two would report a byte figure no version of the
+    file ever had. The scan is retried against the longer version, so both
+    figures describe the same file.
+    """
+    path = tmp_path / "cache-outcomes.jsonl"
+    opened = records(NOW, 2)
+    appended = records(NOW, 3)[2]
+    write_private(path, document(opened))
+    real = outcome_archive_active._size_of
+    grew = False
+
+    def grow_after_size(source: typ.BinaryIO, *, fallback: int = 0) -> int:
+        """Append one complete row after the first size reading."""
+        nonlocal grew
+        size = real(source, fallback=fallback)
+        if not grew:
+            grew = True
+            with path.open("ab") as handle:
+                handle.write(
+                    (outcome_record_encode.encode_line(appended) + "\n").encode()
+                )
+        return size
+
+    monkeypatch.setattr(outcome_archive_active, "_size_of", grow_after_size)
+
+    history = active_history(path)
+
+    assert history.bytes == len(document(records(NOW, 3))), (
+        "the size belongs to the version the rows were read from"
+    )
+    assert history.records == 3, "the appended row is part of the same version"
 
 
 def test_a_replaced_active_path_is_measured_from_one_version(

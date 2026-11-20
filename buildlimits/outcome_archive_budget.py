@@ -26,7 +26,9 @@ compressed file's size, and a sealed source with no writer metadata has its
 bytes counted but not its span; neither describes the history it holds. A
 whole deletion chosen against such a total could discard history the settled
 store keeps, so the walks run only once every surviving entry is measured;
-the follow-up plan runs them after the trim, rebuild and archival.
+the follow-up plan runs them after the trim, rebuild and archival. The writer's
+active file is part of the same total: when its surviving rows cannot be read,
+an age-aware byte budget is deferred rather than decided from the whole file.
 """
 
 import dataclasses as dc

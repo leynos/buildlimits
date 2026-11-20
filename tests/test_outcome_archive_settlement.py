@@ -21,12 +21,18 @@ from outcome_archive_helpers import (
     records,
     run,
     seal_active,
+    seal_five_rows_once,
     seal_on_each_archive,
     write,
 )
 from segment_test_helpers import document, write_private
 
-from buildlimits import outcome_archive_files, outcome_archive_retain
+from buildlimits import (
+    outcome_archive_files,
+    outcome_archive_retain,
+    outcome_record_encode,
+)
+from buildlimits.outcome_archive import inspect_store
 from buildlimits.outcome_archive_report import EXIT_TEMPFAIL
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import sidecar_name
@@ -232,3 +238,132 @@ def test_a_writer_that_keeps_sealing_leaves_the_report_unsettled(
 
     assert report.status == "unsettled", "no reading describes the whole store"
     assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+
+
+def test_inspection_retries_a_seal_at_its_active_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inspection counts the sealed rows instead of a torn inventory pair.
+
+    A seal between inspection's inventory scan and its active read would leave
+    the pair counting neither the sealed copy nor the rows that left the active
+    file. The retried reading describes one version, so the report and the plan
+    agree with the store the inspector was shown.
+    """
+    _, store_layout = _store_with_archive(tmp_path, 1)
+    seal_five_rows_once(store_layout, monkeypatch)
+
+    report = inspect_store(
+        layout(tmp_path), policy(segment_bytes=1_000_000, max_age_days=30)
+    )
+
+    assert report.dry_run, "inspection never changes the store"
+    assert report.status == "ok", "the retried reading describes one version"
+    assert report.retained_records == 8, (
+        "the archive, the sealed source and the active rows all count"
+    )
+    assert report.observed_until == NOW + dt.timedelta(minutes=4), (
+        "the span reaches the newest row in the sealed source"
+    )
+    assert report.plan is not None, "inspection reports the plan it would run"
+    assert report.plan.archive == 1, "the sealed source discovered by the retry"
+    assert len(archives(tmp_path)) == 1, "inspection publishes nothing"
+
+
+def test_a_dry_run_retries_a_seal_at_its_active_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dry run reports the same settled version inspection reports.
+
+    The report is built from the inventory and active file the plan was
+    planned against, so a seal between them cannot make the plan and its
+    figures describe different versions of the store.
+    """
+    _, store_layout = _store_with_archive(tmp_path, 1)
+    seal_five_rows_once(store_layout, monkeypatch)
+
+    report = run(
+        tmp_path, policy(segment_bytes=1_000_000, max_age_days=30), dry_run=True
+    )
+
+    assert report.dry_run, "no file was changed"
+    assert report.status == "ok", "the retried reading describes one version"
+    assert report.retained_records == 8, (
+        "the archive, the sealed source and the active rows all count"
+    )
+    assert report.plan is not None, "a dry run reports the plan it would run"
+    assert report.plan.archive == 1, "the sealed source discovered by the retry"
+
+
+def test_inspection_reports_unsettled_when_no_snapshot_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inspection never reports a plan from a store that keeps moving.
+
+    A writer that seals on every bounded reading leaves no inventory and
+    active pair describing one version. Reporting the last pair as a complete
+    inspection would undercount history, so inspection reports a retryable
+    result and no plan instead.
+    """
+    _, store_layout = _store_with_archive(tmp_path, 1)
+    real = outcome_archive_retain.active_history
+    sequences = itertools.count(2)
+
+    def seal_on_every_read(
+        path: Path, *, cutoff: dt.datetime | None = None
+    ) -> ActiveHistory:
+        """Seal one fresh source at every active read."""
+        sequence = next(sequences)
+        rows = records(NOW, 1)
+        write_private(store_layout.active, document(rows))
+        seal_active(store_layout, rows, sequence)
+        return real(path, cutoff=cutoff)
+
+    monkeypatch.setattr(outcome_archive_retain, "active_history", seal_on_every_read)
+
+    report = inspect_store(
+        layout(tmp_path), policy(segment_bytes=1_000_000, max_age_days=30)
+    )
+
+    assert report.status == "unsettled", "no reading describes the whole store"
+    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    assert report.dry_run, "inspection is still a dry run"
+    assert report.plan is None, "no torn pair is reported as a plan"
+
+
+def test_the_report_measures_the_active_version_it_describes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reported active bytes come from the final snapshot, not the plan.
+
+    The writer can append after the plan measured the active file and before
+    the final report reads it. The report already takes its row count from the
+    final reading, so its byte figure must come from that reading too; pairing
+    the new count with the plan's older size describes no version of the file.
+    """
+    _, store_layout = _store_with_archive(tmp_path, 2)
+    write_private(store_layout.active, document(records(NOW, 3)))
+    real = outcome_archive_retain.active_history
+    grew = False
+
+    def grow_then_read(
+        path: Path, *, cutoff: dt.datetime | None = None
+    ) -> ActiveHistory:
+        """Append one complete row before the report's whole-file read."""
+        nonlocal grew
+        if cutoff is None and not grew:
+            grew = True
+            row = records(NOW, 4)[3]
+            with store_layout.active.open("ab") as handle:
+                handle.write((outcome_record_encode.encode_line(row) + "\n").encode())
+        return real(path, cutoff=cutoff)
+
+    monkeypatch.setattr(outcome_archive_retain, "active_history", grow_then_read)
+
+    report = run(tmp_path, policy(segment_bytes=1_000_000, max_age_days=30))
+
+    assert report.active_bytes == len(document(records(NOW, 4))), (
+        "the bytes belong to the version the rows were counted from"
+    )
+    assert report.retained_records == 6, "two archived rows and four active rows"
+    assert report.status == "ok", "the settled report describes one version"

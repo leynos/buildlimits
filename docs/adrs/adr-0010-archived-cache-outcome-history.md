@@ -145,7 +145,10 @@ disagree about a bound.
   contributes only the bytes of the rows the age rule keeps, measured in the
   same scan that counts them: a row the writer will compact away is not
   retained history, and counting it would evict closed history to make room for
-  bytes retention has already released. Zero disables the byte bound.
+  bytes retention has already released. When an age cutoff applies and the
+  active file cannot be decoded, those surviving bytes are unknown, so the byte
+  walk is deferred rather than decided from the whole file, which could evict
+  an archive the settled store keeps. Zero disables the byte bound.
 - The record cap is `cache_outcomes_max_records`. A positive value applies in
   either mode. When it is omitted, a segmented store has no count cap and a
   legacy store keeps the historical 10,000-record cap. The cap bounds the whole
@@ -172,15 +175,23 @@ disagree about a bound.
   pass is replanned rather than counting neither copy. The final report is
   bounded the same way: the inventory is scanned on both sides of the
   active-file read and the reading is retried until the two scans agree, so a
-  seal cannot leave either copy out of the reported count and span. If new
-  seals keep the bounded follow-up passes, or the report's readings, from
-  settling the store, the run reports `unsettled` and exits 75 rather than
-  claiming success; the next firing retries.
+  seal cannot leave either copy out of the reported count and span. `inspect`
+  and `run --dry-run` plan and report from that same settled reading, so a plan
+  and its figures describe one version of the store, and its `active_bytes`
+  comes from the reading its row count came from. If new seals keep the bounded
+  follow-up passes, or the plan's or report's readings, from settling the
+  store, the run reports `unsettled` and exits 75 rather than claiming success;
+  the next firing retries.
 - The active file is measured through one opened descriptor, so its size and
   its rows describe the same version even when the writer replaces the path
-  with a compacted or sealed file mid-scan. A path that is not a regular file
-  is refused rather than counted, because following a link would let a file
-  outside the store decide retention.
+  with a compacted or sealed file mid-scan. The size is read immediately before
+  the scan and confirmed immediately after it, and a scan whose version changed
+  is retried, so an append during the scan cannot pair the longer file's rows
+  with the earlier size. An append is committed by its newline, so a final row
+  without one is the writer's append in flight, which a failed write truncates
+  back out; it is excluded from the rows a budget counts. A path that is not a
+  regular file is refused rather than counted, because following a link would
+  let a file outside the store decide retention.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
   segment, or a budget of zero, makes the writer seal closed segments. The
   default budget remains the legacy 12 MiB, so a deployment that writes none of
@@ -495,10 +506,10 @@ re-encoded, reordered or re-timestamped.
   lock.
 - The report's physical byte figures are per action, not a disk-usage total;
   sidecars, state files and quarantine also occupy the filesystem.
-- The archiver reads the active file once per plan, through the bounded
-  no-follow reader, to count the rows and span the writer currently holds; it
-  never writes or replaces the file. A retained total can still be stale by
-  whatever the writer appended after that read.
+- The archiver reads the active file through the bounded no-follow reader to
+  count the rows and span the writer currently holds, retrying a scan the
+  writer appended to; it never writes or replaces the file. A retained total
+  can still be stale by whatever the writer appended after that read.
 
 ## Architectural rationale
 

@@ -369,11 +369,15 @@ and only then removes the plain source. A segment that retention has placed
 wholly outside the bounds is the exception: it is removed without being
 compressed, so a run never spends its scratch space archiving history the same
 plan deletes. It holds a private lock of its own and never writes or replaces
-the active file. It does read the active file, once per plan, to measure the
-rows and span the writer currently holds; the read is bounded and refuses a
-path that is not a regular file. The size and the rows come from the same
-opened version, so a writer that replaces the path mid-read cannot pair one
-version's bytes with another's rows.
+the active file. It does read the active file to measure the rows and span the
+writer currently holds; the read is bounded and refuses a path that is not a
+regular file. The size and the rows come from the same opened version, so a
+writer that replaces the path mid-read cannot pair one version's bytes with
+another's rows. A writer that appends while the scan runs is detected by
+comparing the size immediately before and after it, and the scan is retried so
+both figures describe the same version; a final row whose newline has not been
+written is the writer's append in flight, which a failed write truncates back
+out, so it is not counted.
 
 Retention is one policy shared by the writer, the archiver and the read-only
 history view:
@@ -383,7 +387,10 @@ history view:
   so compression does not move the boundary. The active file contributes only
   the bytes of the rows the age rule keeps, because a row the writer will
   compact away is not retained history; counting it would evict closed history
-  to make room for bytes retention has already released.
+  to make room for bytes retention has already released. When an age cutoff
+  applies and the active file cannot be decoded, those surviving bytes are
+  unknown, so the byte budget is deferred rather than decided from the whole
+  file; the run reports `unsettled` and exits 75, and the next firing retries.
 - Eviction is oldest-first. A record whose observation time equals the age
   cutoff is retained; one older than the cutoff is not.
 - The record cap bounds the retained record count across active, sealed and
@@ -420,7 +427,11 @@ timer firing continues. The final report is read the same way: the inventory is
 scanned on both sides of the active-file read and the reading is retried when
 they disagree, so a seal cannot leave either copy out of the count. A writer
 that seals on every reading leaves the report unsettled too, rather than
-recording one partial reading as the run's result.
+recording one partial reading as the run's result. `inspect` and
+`run --dry-run` plan and report from that same settled reading, so the plan and
+its figures describe one version of the store; a store that never holds still
+makes them report `unsettled` with no plan and exit 75. The report's
+`active_bytes` comes from the reading its row count came from.
 
 A plan that leaves a configured budget to a later pass reports
 `retention: deferred` on its plain output and `"retention_deferred": true` under
@@ -506,9 +517,9 @@ The command maps every outcome to a closed exit status a timer can act on:
 - `3`: corruption that needs an operator, such as a segment that cannot be
   decoded, a damaged archive, or a sidecar that cannot be repaired.
 - `75`: a temporary condition, such as another run holding the lock,
-  insufficient temporary headroom, or retention that could not settle within
-  the run's bounded follow-up passes because the writer kept sealing new
-  sources. The next timer firing should retry.
+  insufficient temporary headroom, or history whose retention or report could
+  not be settled from a stable reading because the writer kept changing the
+  store. The next timer firing should retry.
 
 ### Size the archive timer unit
 

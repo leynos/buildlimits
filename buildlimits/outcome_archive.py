@@ -11,7 +11,6 @@ import datetime as dt
 import typing as typ
 
 from buildlimits import (
-    outcome_archive_active,
     outcome_archive_fs,
     outcome_archive_lock,
     outcome_archive_retain,
@@ -33,12 +32,16 @@ from buildlimits.outcome_archive_report import (
     RunOptions,
     RunReport,
     RunStatus,
+    dry_report,
+    unfinished_report,
+    unsettled_report,
 )
 from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_retention import RetentionPolicy
+    from buildlimits.outcome_segment_inventory import Inventory
     from buildlimits.outcome_segments import SegmentLayout
 
 _STATE_SCHEMA = 1
@@ -112,48 +115,97 @@ def run_archive(
     try:
         if selected.dry_run:
             # A dry run mutates nothing, so it may plan without the lock.
-            plan, active = _plan(layout, policy, started)
-            return _dry_report(_archive_run(context, plan), active)
+            return _inspect(context, policy, started)
         with outcome_archive_lock.ArchiveLock(layout.lock_file):
-            # Another archiver may have changed the store while this process
-            # waited for the lock, so the plan is built from what is on disk
-            # now rather than from a pre-lock inventory.
-            plan, active = _plan(layout, policy, started)
-            return _execute(_archive_run(context, plan), active)
+            return _execute_locked(context, policy, started)
     except outcome_archive_lock.ArchiveBusyError:
-        return _unfinished(started, "busy", "busy")
+        return unfinished_report(started, "busy", "busy")
     except outcome_archive_lock.NoHeadroomError:
-        return _unfinished(started, "no_headroom", "no_headroom")
+        return unfinished_report(started, "no_headroom", "no_headroom")
     except UnknownActiveHistoryError:
         # The record cap counts the writer's unsealed rows. A run that cannot
         # read them cannot show the store is within the cap, so it reports an
         # operational failure rather than counting the active file as empty.
-        return _unfinished(started, "failed", "unreadable")
+        return unfinished_report(started, "failed", "unreadable")
     except OSError as error:
         # The headroom check reads free space once, before the pass, so the
         # filesystem can still fill while this run works. A full filesystem is
         # retryable; anything else needs an operator.
         reason = outcome_archive_run.failure_reason(error)
         status: RunStatus = "no_headroom" if reason == "no_headroom" else "failed"
-        return _unfinished(started, status, reason)
+        return unfinished_report(started, status, reason)
+
+
+def _inspect(
+    context: ArchiveContext, policy: RetentionPolicy, started: dt.datetime
+) -> RunReport:
+    """Plan and report one dry run without changing any file.
+
+    Returns
+    -------
+    RunReport
+        The settled dry-run report, or a retryable result when the writer kept
+        moving across every reading.
+    """
+    plan, active, inventory, settled = _plan(context.layout, policy, started)
+    if not settled:
+        return unsettled_report(started, dry_run=True)
+    return dry_report(_archive_run(context, plan), active, inventory)
+
+
+def _execute_locked(
+    context: ArchiveContext, policy: RetentionPolicy, started: dt.datetime
+) -> RunReport:
+    """Plan and execute one run while its lock is held.
+
+    Another archiver may have changed the store while this process waited for
+    the lock, so the plan is built from what is on disk now rather than from a
+    pre-lock inventory. A plan built from a torn pair would count neither the
+    sealed copy nor its active rows, so nothing is changed and the run reports
+    a retryable result instead.
+
+    Returns
+    -------
+    RunReport
+        The completed run's report.
+    """
+    plan, _active, _inventory, settled = _plan(context.layout, policy, started)
+    if not settled:
+        return unsettled_report(started)
+    return _execute(_archive_run(context, plan))
 
 
 def _plan(
     layout: SegmentLayout, policy: RetentionPolicy, now: dt.datetime
-) -> tuple[Plan, ActiveHistory]:
-    """Read the store as it is and plan one run from it.
+) -> tuple[Plan, ActiveHistory, Inventory, bool]:
+    """Read one consistent store version and plan one run from it.
+
+    The inventory and the active file are read together, retrying a seal that
+    lands between them. A plan built from a torn pair would count neither the
+    sealed copy nor its active rows, and the same reading supplies a dry-run
+    report, so both describe one version. The active file is measured against
+    the cutoff so the plan's budgets count only the rows retention keeps, while
+    its whole-file figures still describe what the writer holds.
 
     Returns
     -------
-    tuple[Plan, ActiveHistory]
-        The operations to perform and what the active file holds.
+    tuple[Plan, ActiveHistory, Inventory, bool]
+        The operations to perform, what the active file held, the inventory
+        they were read with, and whether the readings describe one version of
+        the store. False means no snapshot settled within the bounded
+        attempts, so the caller must report an unsettled result rather than
+        act on the plan.
     """
     floor = outcome_segment_state.read_retention_floor(layout)
-    inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    active = outcome_archive_active.active_history(
-        layout.active, cutoff=policy.cutoff(now)
+    inventory, active, settled = outcome_archive_retain.settled_snapshot(
+        layout, floor, cutoff=policy.cutoff(now)
     )
-    return plan_run(inventory, policy, now=now, active=active), active
+    return (
+        plan_run(inventory, policy, now=now, active=active),
+        active,
+        inventory,
+        settled,
+    )
 
 
 def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.ArchiveRun:
@@ -172,7 +224,7 @@ def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.Arc
     )
 
 
-def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunReport:
+def _execute(run: outcome_archive_run.ArchiveRun) -> RunReport:
     """Take the archive directories, perform the plan and write state.
 
     Returns
@@ -194,7 +246,7 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
         outcome_segment_state.read_retention_floor(layout),
         outcome,
     )
-    final, final_active, snapshot_settled = outcome_archive_retain.final_snapshot(
+    final, final_active, snapshot_settled = outcome_archive_retain.settled_snapshot(
         layout, floor
     )
     if not snapshot_settled:
@@ -208,7 +260,7 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
         status=_run_status(outcome),
         started_at=run.started_at,
         finished_at=utc_now(),
-        active_bytes=active.bytes,
+        active_bytes=final_active.bytes,
         retained_bytes=retained,
         retained_records=observed.records,
         observed_from=observed.observed_from,
@@ -309,55 +361,3 @@ def _retention_floor(
     while floor in deleted:
         floor += 1
     return floor
-
-
-def _dry_report(
-    run: outcome_archive_run.ArchiveRun, active: ActiveHistory
-) -> RunReport:
-    """Build the report a dry run returns without changing any file.
-
-    Returns
-    -------
-    RunReport
-        A successful dry-run report carrying the plan.
-    """
-    layout = run.context.layout
-    floor = outcome_segment_state.read_retention_floor(layout)
-    inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    observed = observed_history(inventory, active)
-    return RunReport(
-        status="ok",
-        started_at=run.started_at,
-        finished_at=utc_now(),
-        dry_run=True,
-        active_bytes=active.bytes,
-        retained_bytes=run.plan.retained_bytes,
-        retained_records=observed.records,
-        observed_from=observed.observed_from,
-        observed_until=observed.observed_until,
-        unmeasured_entries=observed.unmeasured,
-        budget_bytes=run.context.policy.max_bytes,
-        cutoff=run.plan.cutoff,
-        plan=run.summary,
-        gaps=inventory.gaps,
-        gaps_truncated=inventory.gaps_truncated,
-        missing_sidecars=inventory.missing_sidecars,
-        corrupt_sidecars=inventory.corrupt_sidecars,
-        orphan_sidecars=inventory.orphan_sidecars,
-    )
-
-
-def _unfinished(started: dt.datetime, status: RunStatus, reason: str) -> RunReport:
-    """Build a report for a run that could not start or complete.
-
-    Returns
-    -------
-    RunReport
-        The closed failure report.
-    """
-    return RunReport(
-        status=status,
-        started_at=started,
-        finished_at=utc_now(),
-        reason=reason,
-    )

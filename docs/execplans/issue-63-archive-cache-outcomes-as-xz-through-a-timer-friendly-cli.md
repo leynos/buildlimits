@@ -549,6 +549,31 @@ verified archive is published, and leaves compile admission untouched.
   The 400-line module ceiling forced two structural extractions:
   `outcome_archive_age` owns the age decisions, and `outcome_archive_history`
   owns the active snapshot and the retained-history summary.
+- [x] Whole-plan revision-19 remediation (2026-11-20): four measurement defects
+  are fixed. A final row whose newline is not written is the writer's append in
+  flight, which a failed write truncates back out, so it is excluded from both
+  the whole-file and the surviving counts instead of evicting an archive the
+  committed rows fit beside. An active file that cannot be decoded no longer
+  lets an age-aware byte budget evict against bytes retention may have already
+  released: the walk is deferred and the run reports `unsettled` at exit 75.
+  The active scan reads the size immediately before the rows and confirms it
+  immediately after, retrying a version the writer appended to, so a growing
+  file cannot pair its later rows with the earlier size; a complete-run
+  regression appends a row between the size reading and the scan, then checks
+  the inspection's planned eviction and the run's applied eviction and
+  `active_bytes`. `inspect` and `run --dry-run` plan and report from the same
+  settled reading, so a seal between the reads cannot make the plan and its
+  figures describe different versions, and a store that never settles makes
+  them report `unsettled` with no plan; the report's `active_bytes` comes from
+  the final snapshot its row count came from. Five complete-run regressions and
+  two scan regressions pin the fixes, and each was checked against a mutation
+  that restores the pre-fix behaviour. The report builders moved to
+  `outcome_archive_report` and the seal-once test seam to
+  `outcome_archive_helpers`, keeping every module under the 400-line ceiling,
+  and `settled_snapshot` accepts the absent retention floor the planner can
+  read. All seven commit gates passed once each on the final tree: `check-fmt`,
+  `lint` (272 reasoned duplication exceptions), `typecheck`, `test` (4554
+  passed, 86 skipped, 76 snapshots), `markdownlint`, `nixie` and `audit`.
 
 ## Surprises & discoveries
 
@@ -751,6 +776,31 @@ verified archive is published, and leaves compile admission untouched.
   planner imports the two age helpers. The split is by responsibility rather
   than by line count: the planner now reads as planning, not as age arithmetic
   or snapshot bookkeeping.
+- A budget can be deferred by two unrelated reasons that need different
+  reporting. A configured record cap is an operational invariant: a run that
+  cannot count the unsealed rows fails with `unreadable` at exit 1. An
+  age-aware byte budget is a planning decision: the surviving bytes are needed
+  only to choose an eviction, so an unmeasured active file defers the walk and
+  the run reports `unsettled` at exit 75. `_active_is_measurable` keeps the two
+  apart, and `_pending_work` returns an empty deferred plan so `retain` cannot
+  mistake "nothing to do" for a settled pass.
+- The retained-history check a `stat` performs is not a substitute for a
+  second size reading around the scan. A descriptor's size at open time says
+  nothing about rows appended while the scan reads, so the only pairing that
+  holds is the size before the scan and the size after it; a changed size makes
+  the scan a version no other figure describes, and the retry is what lets a
+  writer that appends once still be measured in the same pass.
+- `inspect` is not a separate reading path. Building a dry run's plan from one
+  snapshot and its report from another lets a seal between them show a figure
+  no plan was ever made against, so the settled pair is read once and shared.
+  `_plan` therefore returns the pair and the caller decides whether to report a
+  plan or an `unsettled` result without one.
+- A shared syntax shape is a duplication family even across production and
+  test modules. The repository-wide `TYPE_CHECKING` prelude is allowed as one
+  family whose entry must name every member, so the two modules that gained the
+  prelude in this revision (`outcome_archive.py` and
+  `outcome_archive_report.py`) were added to that entry; the duplication gate
+  then reported 272 allowed reasoned exceptions.
 
 ## Decision log
 
@@ -1013,9 +1063,10 @@ verified archive is published, and leaves compile admission untouched.
   bytes and rows at or after the cutoff, and `ActiveHistory.budget_bytes` and
   `budget_records` are what both budget walks consume. The report keeps the
   whole-file figures, because it describes what the store physically holds
-  until the writer compacts. The final report is read through
-  `outcome_archive_retain.final_snapshot`, which scans the inventory before and
-  after the active read and accepts only a pair of scans that agree.
+  until the writer compacts. The final report, and the plan a dry run reports,
+  are read through `outcome_archive_retain.settled_snapshot`, which scans the
+  inventory before and after the active read and accepts only a pair of scans
+  that agree.
 - The three active-history defects are pinned by complete-run regressions in
   `test_outcome_archive_active_budget` (expired active bytes and rows leave an
   eligible archive byte-identical under both bounds, while kept active rows
@@ -1027,6 +1078,35 @@ verified archive is published, and leaves compile admission untouched.
   expired-row tests, re-statting the path for the size fails the replacement
   test, and replacing the retrying snapshot with a single read fails both
   report tests.
+- An append is committed by its newline, so the reader's held-back final row is
+  counted only when the stream ended with one. The writer's own rollback
+  truncates an interrupted append back out, and counting the row before that
+  happens evicted an archive the committed rows fitted beside. `_measure` asks
+  `DocumentReader.had_torn_tail` rather than the unsealed readers' broader
+  torn-tail rule.
+- The scan's size reading is repeated around the row loop instead of the whole
+  file being hashed. A descriptor's size is enough to detect an append, and
+  re-reading it costs one `fstat`; hashing would make each retry proportional
+  to the file. Three attempts cover an append during each scan, and a file that
+  never holds still is reported by its size alone so a record cap knows the
+  count is unknown.
+- A dry run's plan and report share one settled pair. `_plan` returns the
+  inventory and active snapshot `settled_snapshot` accepted, and both
+  `_inspect` and `_execute_locked` branch on it; a pair that never settles is
+  reported as `unsettled` without a plan, never as a plan with figures from a
+  different version.
+- The run report's `active_bytes` comes from the final snapshot. Its row count
+  already did, and pairing the newer count with the plan's older size described
+  no version of the file; the executed run's `active` parameter was therefore
+  removed from `_execute`.
+- Report construction belongs with the report vocabulary. The four findings
+  added a dry-run builder and two retryable builders to `outcome_archive`,
+  which pushed it past the 400-line ceiling, so `dry_report`,
+  `unsettled_report` and `unfinished_report` now live in
+  `outcome_archive_report` beside `RunReport`; the orchestrator keeps only the
+  decisions about which report to build. The seal-once test seam moved to
+  `outcome_archive_helpers` for the same reason, leaving the settlement suite
+  focused on its assertions.
 
 ## Outcomes & retrospective
 
@@ -1068,9 +1148,12 @@ Invariants:
    firing. Both budgets count only the active rows the age rule keeps, measured
    with the file's size through one opened version, so a row the writer will
    compact away cannot evict closed history and no reading pairs one version's
-   bytes with another's rows. The report's own reading is retried until the
-   inventory and the active file describe one version, and reports `unsettled`
-   when the writer never lets them.
+   bytes with another's rows; a final row without its newline is an uncommitted
+   append and is excluded, and an unmeasured active file defers an age-aware
+   byte budget instead of evicting against bytes the age rule may have
+   released. The plan's, inspection's and report's readings are each retried
+   until the inventory and the active file describe one version, and a reading
+   the writer never lets settle is reported as `unsettled` with no plan.
 5. Eviction is oldest-first; records at the cutoff survive.
 6. Iterating history yields records in sequence order: archived or sealed
    segments ascending, then the active file.
@@ -1135,6 +1218,26 @@ Methods and evidence:
   their bytes while the run reports `corrupt`; and one seals on each archive
   step up to the fourth source and proves the store the third pass settles
   reports `ok` at exit 0.
+- Revision-19 measurement regressions: a paused append whose newline is never
+  written leaves the eligible archive byte-identical and is rolled back by the
+  writer's own failure path
+  (`test_an_uncommitted_append_does_not_evict_an_eligible_archive`); an
+  undecodable active file under an age-aware byte budget reports `unsettled` at
+  exit 75 with no eviction
+  (`test_an_unmeasurable_active_file_defers_an_age_aware_byte_budget`); a scan
+  whose size changes across the rows is retried and measured as one version
+  (`test_an_append_during_the_scan_is_measured_as_one_version`); inspection and
+  a dry run each retry a seal at their active read
+  (`test_inspection_retries_a_seal_at_its_active_read`,
+  `test_a_dry_run_retries_a_seal_at_its_active_read`); a store that never
+  settles reports `unsettled` with no plan
+  (`test_inspection_reports_unsettled_when_no_snapshot_holds`); and the report's
+  `active_bytes` belongs to the version its row count came from
+  (`test_the_report_measures_the_active_version_it_describes`). Each was
+  checked against a mutation restoring the pre-fix behaviour: counting the
+  held-back row fails the paused-append test, removing the measurability check
+  evicts the archive, a single scan fails the append and report tests, and a
+  single inventory/active pair fails all three inspection/dry-run tests.
 - Planner retention properties in
   `tests/test_outcome_archive_plan_properties.py`: four properties over 50
   generated histories each assert that whole deletions form an oldest-first
@@ -1348,3 +1451,25 @@ Each mutation was reverted and the focused suite passed again.
   summary to `outcome_archive_history`. The users' guide, the developers' guide
   and ADR 0010 describe the surviving-row measurement, the one-descriptor read
   and the retried report.
+- Revision 19 records the whole-plan revision-18 assessment's four findings.
+  A final row without its newline is now excluded from every active-file count,
+  because it is the writer's append in flight and its failure path truncates it
+  back out; an archive the committed rows fit beside stays byte-identical. An
+  active file that cannot be decoded defers an age-aware byte budget instead of
+  evicting against bytes the age rule may have released, and the run reports
+  `unsettled` at exit 75. The active scan reads the size immediately before the
+  rows and confirms it immediately after, retrying a version the writer
+  appended to; a complete-run regression appends a row in that window and
+  checks the inspection's planned eviction, the run's applied eviction and the
+  reported `active_bytes`. `inspect` and `run --dry-run` build their plan and
+  report from the same settled reading, report `unsettled` with no plan when no
+  reading holds, and the run report takes `active_bytes` from its final
+  snapshot. `final_snapshot` is renamed `settled_snapshot` because it now
+  serves the plan as well as the report. The users' guide, the developers'
+  guide and ADR 0010 describe the uncommitted row, the deferred byte budget and
+  the shared settled reading, and `run_archive`'s new branches were extracted
+  into `_inspect` and `_execute_locked` to keep its lint limits. The 400-line
+  ceiling also forced the report builders into `outcome_archive_report`
+  (`dry_report`, `unsettled_report` and `unfinished_report`) and the seal-once
+  test seam into `outcome_archive_helpers`; `settled_snapshot` now accepts the
+  absent retention floor the planner's reading can return.

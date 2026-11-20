@@ -19,6 +19,7 @@ from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome, perform
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_archive_trim import Trim
@@ -29,7 +30,7 @@ if typ.TYPE_CHECKING:
     # for, so each applied trim carries that version's measurement.
     type AppliedTrims = dict[int, tuple[Trim, int, int | None]]
 
-__all__ = ["final_snapshot", "retain"]
+__all__ = ["retain", "settled_snapshot"]
 
 # Follow-up planning passes one run may make after its plan is performed. The
 # first settles the sources this run archived, including a source the writer
@@ -166,9 +167,7 @@ def _pending_work(
         for entry in follow_up.deletes
         if _evictable(entry.sequence, removed, blocked) and entry.path.exists()
     )
-    if not any((archive, reconcile, heal, orphans, trims, deletes)):
-        return None
-    return dc.replace(
+    narrowed = dc.replace(
         follow_up,
         archive=archive,
         reconcile=reconcile,
@@ -177,6 +176,13 @@ def _pending_work(
         trims=trims,
         deletes=deletes,
     )
+    if any((archive, reconcile, heal, orphans, trims, deletes)):
+        return narrowed
+    # A deferred budget with nothing left to perform cannot settle in this
+    # run: no action repairs it. Returning the empty plan keeps the run
+    # retryable instead of claiming success over a budget it could not
+    # measure, while a store with nothing pending reports settled.
+    return narrowed if follow_up.retention_deferred else None
 
 
 def _already_applied(entry: SegmentEntry, trim: Trim, applied: AppliedTrims) -> bool:
@@ -261,10 +267,10 @@ def _replan(run: ArchiveRun) -> Plan:
     return plan_run(inventory, run.context.policy, now=run.context.now, active=active)
 
 
-def final_snapshot(
-    layout: SegmentLayout, floor: int
+def settled_snapshot(
+    layout: SegmentLayout, floor: int | None, *, cutoff: dt.datetime | None = None
 ) -> tuple[Inventory, ActiveHistory, bool]:
-    """Read the store the report describes, retrying one the writer moved.
+    """Read one inventory and active version for a plan or a report.
 
     A seal between the inventory scan and the active-file read moves rows out
     of the active file into a source the scan does not list, so the pair would
@@ -273,17 +279,28 @@ def final_snapshot(
     A seal after the second scan is harmless, because the active read and the
     inventory then describe the store as it stood at that read.
 
+    Parameters
+    ----------
+    layout : SegmentLayout
+        The store's segment layout.
+    floor : int | None
+        The retention floor the inventory scan reports gaps from, or None when
+        the store has recorded none.
+    cutoff : datetime | None
+        The age cutoff to measure the active rows against, or None to count
+        the whole file. The returned history carries both figures either way.
+
     Returns
     -------
     tuple[Inventory, ActiveHistory, bool]
         The last inventory and active readings, and whether they describe one
         version of the store. A writer that keeps sealing across every attempt
-        leaves the report unsettled so the timer retries.
+        leaves the caller to report an unsettled result so the timer retries.
     """
     inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
     active = ActiveHistory()
     for _attempt in range(_SNAPSHOT_ATTEMPTS):
-        active = active_history(layout.active)
+        active = active_history(layout.active, cutoff=cutoff)
         after = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
         if after == inventory:
             return inventory, active, True

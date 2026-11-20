@@ -1058,24 +1058,33 @@ work the run has not already applied. It detects a seal between its inventory
 and active-file reads by scanning the inventory a second time, suppresses a
 trim only against the archive measurement it was planned for, and confirms
 settlement with a final plan that mutates nothing. The same module owns
-`final_snapshot`, the report's reading of the store: the inventory is scanned
-on both sides of the active-file read and the reading is retried while the two
-disagree, so a seal cannot leave either copy out of the reported count.
+`settled_snapshot`, the reading a plan and a report share: the inventory is
+scanned on both sides of the active-file read and the reading is retried while
+the two disagree, so a seal cannot leave either copy out of a count.
+`outcome_archive` builds its plan, its dry-run report and its run report from
+that reading, and reports `unsettled` rather than a plan when none settles.
 `outcome_archive_active` reads the writer's active file as a snapshot without
 the archive lock, through one opened descriptor, so its size and rows describe
-the same version even when the writer replaces the path mid-scan. It refuses
-any existing path that is not a regular file; only an absent file is empty
-history. Its scan also reports the rows and bytes the age rule keeps when it is
-given a cutoff, and `outcome_archive_history` carries that snapshot plus the
-summary of retained rows the report describes. `outcome_archive_age` owns the
-age decisions themselves: which entries are wholly older than the cutoff and
-which archive straddles it and is trimmed. `outcome_archive_budget` owns the
-byte budget: it counts an archive's uncompressed size from its sidecar plus the
-active rows the age rule keeps, deletes whole archives oldest first, and then
-trims the single archive that straddles the remaining allowance.
-`plan_record_steps` applies the configured record cap to segmented history in
-the same shape: whole oldest archives are deleted while they fit the excess,
-then the straddling archive is trimmed rather than left to break the cap.
+the same version even when the writer replaces the path mid-scan. It reads the
+size immediately before the rows and confirms it immediately after them,
+retrying a version the writer appended to, and excludes a final row whose
+newline was not written: the writer truncates a failed append back out, so an
+uncommitted row is not retained history. It refuses any existing path that is
+not a regular file; only an absent file is empty history. Its scan also reports
+the rows and bytes the age rule keeps when it is given a cutoff, and
+`outcome_archive_history` carries that snapshot plus the summary of retained
+rows the report describes. An unmeasured active file leaves an age-aware byte
+budget without the surviving bytes it must count, so `plan_run` defers that
+walk rather than evicting closed history against the whole file.
+`outcome_archive_age` owns the age decisions themselves: which entries are
+wholly older than the cutoff and which archive straddles it and is trimmed.
+`outcome_archive_budget` owns the byte budget: it counts an archive's
+uncompressed size from its sidecar plus the active rows the age rule keeps,
+deletes whole archives oldest first, and then trims the single archive that
+straddles the remaining allowance. `plan_record_steps` applies the configured
+record cap to segmented history in the same shape: whole oldest archives are
+deleted while they fit the excess, then the straddling archive is trimmed
+rather than left to break the cap.
 
 The segment contract is defined by `outcome_segments`, which owns naming and
 layout only; `outcome_segment_sidecar` defines the record that describes one
@@ -1132,12 +1141,15 @@ commands; `--salt-id` and `--all-salts` imply history mode, and no flag keeps
 the active-store-only behaviour.
 
 `outcome_archive_report` defines the closed report vocabulary. Statuses are
-`ok`, `failed`, `corrupt`, `busy` and `no_headroom`; exit statuses are 0 for
-success, 1 for an operational failure, 2 for usage or configuration, 3 for
-corruption that needs an operator, and 75 for a temporary condition a timer
-should retry. The report names no path and carries no raw exception text; the
-only path a run prints is an unreadable configuration file, on standard error
-before the report exists.
+`ok`, `failed`, `corrupt`, `busy`, `no_headroom` and `unsettled`; exit statuses
+are 0 for success, 1 for an operational failure, 2 for usage or configuration,
+3 for corruption that needs an operator, and 75 for a temporary condition a
+timer should retry. The module also owns the three report builders the runner
+uses: `dry_report` from a settled inventory and active snapshot, and
+`unsettled_report` and `unfinished_report` for a store that never held still or
+a run that could not start. The report names no path and carries no raw
+exception text; the only path a run prints is an unreadable configuration file,
+on standard error before the report exists.
 
 `outcome_archive_cli` is the timer-facing surface. `inspect` is a dry run by
 definition; `run --dry-run` plans without taking the lock or writing state; and
