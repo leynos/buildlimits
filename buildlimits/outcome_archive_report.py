@@ -13,6 +13,7 @@ from buildlimits.outcome_archive_history import ActiveHistory, observed_history
 from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     import datetime as dt
 
     from buildlimits.outcome_archive_context import ActionResult
@@ -60,11 +61,15 @@ class RunOptions:
         The UTC wall time to use, or None to read the clock once.
     dry_run : bool
         Whether to plan without changing any file.
+    clock : Callable[[], datetime]
+        The UTC clock the run reads: for its start when ``now`` is None, and
+        for the finish time every report carries.
     """
 
     preset: int = 6
     now: dt.datetime | None = None
     dry_run: bool = False
+    clock: cabc.Callable[[], dt.datetime] = utc_now
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -240,7 +245,7 @@ def dry_report(
     return RunReport(
         status="ok",
         started_at=run.started_at,
-        finished_at=utc_now(),
+        finished_at=run.context.clock(),
         dry_run=True,
         active_bytes=active.bytes,
         retained_bytes=run.plan.retained_bytes,
@@ -259,7 +264,12 @@ def dry_report(
     )
 
 
-def unsettled_report(started_at: dt.datetime, *, dry_run: bool = False) -> RunReport:
+def unsettled_report(
+    started_at: dt.datetime,
+    *,
+    dry_run: bool = False,
+    clock: cabc.Callable[[], dt.datetime] = utc_now,
+) -> RunReport:
     """Build a retryable report for a store that never held still.
 
     The writer can keep sealing across every bounded reading, so no inventory
@@ -275,13 +285,17 @@ def unsettled_report(started_at: dt.datetime, *, dry_run: bool = False) -> RunRe
     return RunReport(
         status="unsettled",
         started_at=started_at,
-        finished_at=utc_now(),
+        finished_at=clock(),
         dry_run=dry_run,
     )
 
 
 def unfinished_report(
-    started_at: dt.datetime, status: RunStatus, reason: str
+    started_at: dt.datetime,
+    status: RunStatus,
+    reason: str,
+    *,
+    clock: cabc.Callable[[], dt.datetime] = utc_now,
 ) -> RunReport:
     """Build a report for a run that could not start or complete.
 
@@ -293,6 +307,6 @@ def unfinished_report(
     return RunReport(
         status=status,
         started_at=started_at,
-        finished_at=utc_now(),
+        finished_at=clock(),
         reason=reason,
     )

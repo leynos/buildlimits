@@ -20,7 +20,7 @@ from archive_cli_helpers import (
     sealed_source,
     write_config,
 )
-from outcome_test_helpers import attributed_record
+from outcome_test_helpers import records_at
 from segment_test_helpers import document as encode_document
 
 from buildlimits.outcome_archive_cli import main
@@ -30,23 +30,7 @@ from buildlimits.outcome_segments import SegmentLayout, archive_name, sidecar_na
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
-    from buildlimits.outcome_record_format import StoreRecord
-
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
-
-
-def _records(count: int) -> tuple[StoreRecord, ...]:
-    """Build ``count`` records one minute apart.
-
-    Returns
-    -------
-    tuple[StoreRecord, ...]
-        The records, oldest first.
-    """
-    return tuple(
-        attributed_record(observed_at=NOW + dt.timedelta(minutes=index))
-        for index in range(count)
-    )
 
 
 def test_inspect_reports_the_plan_as_json(
@@ -54,7 +38,7 @@ def test_inspect_reports_the_plan_as_json(
 ) -> None:
     """Inspection is a dry run and its JSON is free of host detail."""
     store = tmp_path / "cache-outcomes.jsonl"
-    sealed_source(store, 1, encode_document(_records(1)))
+    sealed_source(store, 1, encode_document(records_at(NOW, 1)))
     config = write_config(tmp_path / "supervisor.toml")
 
     status = main(["inspect", *command_arguments(store, config), "--json"])
@@ -75,7 +59,7 @@ def test_inspect_prints_bounded_operator_lines(
 ) -> None:
     """The plain report carries the plan and the dry-run marker."""
     store = tmp_path / "cache-outcomes.jsonl"
-    sealed_source(store, 1, encode_document(_records(1)))
+    sealed_source(store, 1, encode_document(records_at(NOW, 1)))
     config = write_config(tmp_path / "supervisor.toml")
 
     status = main(["inspect", *command_arguments(store, config)])
@@ -93,7 +77,7 @@ def test_run_archives_and_reports_the_action(
 ) -> None:
     """A successful run publishes the archive and prints what it did."""
     store = tmp_path / "cache-outcomes.jsonl"
-    sealed_source(store, 1, encode_document(_records(1)))
+    sealed_source(store, 1, encode_document(records_at(NOW, 1)))
     config = write_config(tmp_path / "supervisor.toml")
 
     status = main(["run", *command_arguments(store, config)])
@@ -112,7 +96,7 @@ def test_the_configured_preset_is_used(
 ) -> None:
     """The command reads the archive preset from the supervisor config."""
     store = tmp_path / "cache-outcomes.jsonl"
-    sealed_source(store, 1, encode_document(_records(1)))
+    sealed_source(store, 1, encode_document(records_at(NOW, 1)))
     config = write_config(tmp_path / "supervisor.toml", preset=1)
 
     main(["run", *command_arguments(store, config)])
@@ -126,7 +110,7 @@ def test_run_dry_run_changes_nothing(
 ) -> None:
     """``run --dry-run`` plans without taking the lock or writing state."""
     store = tmp_path / "cache-outcomes.jsonl"
-    source = sealed_source(store, 1, encode_document(_records(1)))
+    source = sealed_source(store, 1, encode_document(records_at(NOW, 1)))
     config = write_config(tmp_path / "supervisor.toml")
 
     status = main(["run", "--dry-run", *command_arguments(store, config)])
@@ -151,8 +135,8 @@ def test_inspect_and_dry_run_name_the_retention_they_defer(
     provisional, and both inspection and a dry run must say so.
     """
     store = tmp_path / "cache-outcomes.jsonl"
-    sealed_source(store, 1, encode_document(_records(10)))
-    sealed_source(store, 2, encode_document(_records(10)))
+    sealed_source(store, 1, encode_document(records_at(NOW, 10)))
+    sealed_source(store, 2, encode_document(records_at(NOW, 10)))
     publish = write_config(tmp_path / "publish.toml")
     assert main(["run", *command_arguments(store, publish)]) == 0, "the store publishes"
     capsys.readouterr()
@@ -205,7 +189,7 @@ def test_a_sealed_source_straddling_a_budget_defers_it(
     deferred; the run then archives the source and trims the archive it became.
     """
     store = tmp_path / "cache-outcomes.jsonl"
-    rows = _records(20)
+    rows = records_at(NOW, 20)
     source = sealed_measured_source(store, 1, rows)
     # One byte over the budget: the source is the entry that must shrink, and
     # only compressing it lets the follow-up plan trim it.
@@ -264,7 +248,7 @@ def test_a_held_lock_exits_seventy_five(
 ) -> None:
     """A concurrent run is retryable, never waited on."""
     store = tmp_path / "cache-outcomes.jsonl"
-    sealed_source(store, 1, encode_document(_records(1)))
+    sealed_source(store, 1, encode_document(records_at(NOW, 1)))
     config = write_config(tmp_path / "supervisor.toml")
     layout = SegmentLayout.beside(store)
 
@@ -280,7 +264,7 @@ def test_a_held_lock_exits_seventy_five(
 def test_a_missing_configuration_uses_defaults(tmp_path: Path) -> None:
     """An absent configuration file is not an error."""
     store = tmp_path / "cache-outcomes.jsonl"
-    sealed_source(store, 1, encode_document(_records(1)))
+    sealed_source(store, 1, encode_document(records_at(NOW, 1)))
 
     status = main([
         "inspect",

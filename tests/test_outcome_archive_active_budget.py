@@ -21,11 +21,11 @@ from segment_test_helpers import document, write_private
 
 from buildlimits import outcome_archive_active, outcome_record_encode, outcome_store_io
 from buildlimits.outcome_archive_report import EXIT_TEMPFAIL
+from buildlimits.outcome_retention import RetentionPolicy
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_report import RunReport
     from buildlimits.outcome_record_format import StoreRecord
-    from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_segments import SegmentLayout
 
 _HEADER_BYTES = len(document(()))
@@ -238,26 +238,35 @@ def test_an_append_during_planning_is_budgeted_from_its_version(
     assert report.status == "ok", "the settled store meets the byte budget"
 
 
-def test_an_uncommitted_append_does_not_evict_an_eligible_archive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A row whose newline is not written is not retained history.
+def _run_during_uncommitted_append(
+    root: Path,
+    run_policy: RetentionPolicy,
+    monkeypatch: pytest.MonkeyPatch,
+) -> RunReport:
+    """Run once while an append is paused before its newline, then fail it.
 
-    The writer commits an append by writing its newline and truncates a failed
-    append back out. A scan that catches the row before its newline must not
-    count it towards a budget: doing so evicts an archive the committed rows
-    fit beside. This test pauses the append inside ``write_all``, runs the
-    archiver against the half-written row, then fails the write so the writer's
-    own rollback removes it.
+    The append writes every byte of one complete row except its newline, runs
+    the archiver against that half-written file, then raises so the writer's
+    own rollback removes the row. A run therefore observes exactly the state a
+    concurrent writer exposes between its row bytes and its commit.
+
+    Parameters
+    ----------
+    root : Path
+        The store root to build and run against.
+    run_policy : RetentionPolicy
+        The bounds to run with.
+    monkeypatch : pytest.MonkeyPatch
+        The fixture that injects the paused write.
+
+    Returns
+    -------
+    RunReport
+        The report the run produced while the row was in flight.
     """
-    store_layout = _archived_store(tmp_path, retained=2, active=records(NOW, 4))
-    archive = archives(tmp_path)[0]
-    before = archive.read_bytes()
-    committed = document(records(NOW, 4))
     reports: list[RunReport] = []
     real_write_all = outcome_store_io.write_all
     in_window = False
-    run_policy = policy(segment_bytes=1_000_000, max_age_days=1, max_records=6)
 
     def pause_before_newline(descriptor: int, data: bytes) -> None:
         """Write the row, let the run observe it, then fail its newline."""
@@ -268,7 +277,7 @@ def test_an_uncommitted_append_does_not_evict_an_eligible_archive(
         in_window = True
         try:
             real_write_all(descriptor, data[:-1])
-            reports.append(run(tmp_path, run_policy))
+            reports.append(run(root, run_policy))
         finally:
             in_window = False
         raise OSError(errno.EIO, "injected newline failure")
@@ -278,16 +287,69 @@ def test_an_uncommitted_append_does_not_evict_an_eligible_archive(
 
     with pytest.raises(OSError, match="injected newline failure"):
         outcome_store_io.append_line(
-            store_layout.active, outcome_record_encode.encode_line(row).encode()
+            layout(root).active, outcome_record_encode.encode_line(row).encode()
         )
 
     assert len(reports) == 1, "the run observed the append before its newline"
-    report = reports[0]
+    return reports[0]
+
+
+def test_an_uncommitted_append_does_not_evict_an_eligible_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A row whose newline is not written is not retained history.
+
+    The writer commits an append by writing its newline and truncates a failed
+    append back out. A scan that catches the row before its newline must not
+    count it towards a budget: doing so evicts an archive the committed rows
+    fit beside.
+    """
+    store_layout = _archived_store(tmp_path, retained=2, active=records(NOW, 4))
+    archive = archives(tmp_path)[0]
+    before = archive.read_bytes()
+    committed = document(records(NOW, 4))
+
+    report = _run_during_uncommitted_append(
+        tmp_path,
+        policy(segment_bytes=1_000_000, max_age_days=1, max_records=6),
+        monkeypatch,
+    )
+
     assert report.retained_records == 6, "the uncommitted row is not counted"
     assert archive.read_bytes() == before, "the eligible archive is byte-identical"
     assert store_layout.active.read_bytes() == committed, (
         "the failed append is rolled back to the committed rows"
     )
+
+
+def test_an_uncommitted_append_does_not_evict_under_a_byte_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A byte budget without an age cutoff counts only committed bytes.
+
+    With age eviction disabled there is no cutoff for the scan to apply, so a
+    budget that fell back to the descriptor size counted the row the writer
+    had not committed. The paused append then pushed the store past the budget
+    and trimmed an archive the committed rows fit beside. The budget now
+    counts the header and committed rows whether or not a cutoff applies.
+    """
+    _archived_store(tmp_path, retained=2, active=records(NOW, 4))
+    archive = archives(tmp_path)[0]
+    before = archive.read_bytes()
+    committed = len(document(records(NOW, 4)))
+    run_policy = RetentionPolicy(
+        max_age=dt.timedelta(0),
+        max_bytes=len(document(records(NOW, 2))) + committed,
+        max_records=None,
+        headroom_bytes=4_000_000,
+        segment_bytes=1_000_000,
+    )
+
+    report = _run_during_uncommitted_append(tmp_path, run_policy, monkeypatch)
+
+    assert report.retained_records == 6, "the uncommitted row is not counted"
+    assert archive.read_bytes() == before, "the eligible archive is byte-identical"
+    assert report.status == "ok", "the committed rows meet the byte budget"
 
 
 def test_an_unmeasurable_active_file_defers_an_age_aware_byte_budget(

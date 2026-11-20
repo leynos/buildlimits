@@ -15,7 +15,10 @@ import typing as typ
 import pytest
 from archive_cli_helpers import sealed_measured_source
 from outcome_store_helpers import close_writer, segment_writer
-from outcome_test_helpers import attributed_record
+
+# The archive fixtures build their rows with the shared record builder; the
+# shorter name keeps the dozens of fixture call sites readable.
+from outcome_test_helpers import records_at as records
 from segment_test_helpers import document, write_private
 from segment_test_helpers import store_layout as layout
 
@@ -57,8 +60,11 @@ __all__ = [
     "refuse",
     "run",
     "seal_active",
+    "seal_five_rows",
     "seal_five_rows_once",
     "seal_on_each_archive",
+    "seal_one_row",
+    "store_with_archive",
     "write",
 ]
 
@@ -104,20 +110,6 @@ def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
     raise OSError(errno.EIO, "injected failure")
 
 
-def records(observed: dt.datetime, count: int) -> tuple[StoreRecord, ...]:
-    """Build ``count`` records one minute apart from ``observed``.
-
-    Returns
-    -------
-    tuple[StoreRecord, ...]
-        The records, oldest first.
-    """
-    return tuple(
-        attributed_record(observed_at=observed + dt.timedelta(minutes=index))
-        for index in range(count)
-    )
-
-
 def write(
     path: Path, rows: tuple[StoreRecord, ...], retention: RetentionPolicy
 ) -> None:
@@ -135,6 +127,30 @@ def write(
             _append_or_retry(writer, row)
     finally:
         close_writer(writer)
+
+
+def store_with_archive(root: Path, rows: int) -> tuple[Path, SegmentLayout]:
+    """Build a store whose sequence one is archived, with an empty active file.
+
+    Parameters
+    ----------
+    root : Path
+        The directory the store's files live under.
+    rows : int
+        The number of rows the archived source holds.
+
+    Returns
+    -------
+    tuple[Path, SegmentLayout]
+        The store path and the layout the archiver uses.
+    """
+    store = root / "cache-outcomes.jsonl"
+    write(store, (), policy(segment_bytes=1_000_000))
+    sealed_measured_source(store, 1, records(NOW, rows))
+    first = run(root, policy(max_age_days=0, max_records=100))
+    if first.status != "ok":
+        pytest.fail("the fixture archive is published untrimmed")
+    return store, layout(root)
 
 
 def seal_active(
@@ -206,6 +222,40 @@ def seal_on_each_archive(
     monkeypatch.setattr(outcome_archive_files, "archive_source", archive_and_seal)
 
 
+def seal_five_rows(store_layout: SegmentLayout) -> None:
+    """Seal five rows into source two and leave two newer rows active.
+
+    The seal moves the five rows out of the active file into a source, then
+    the active file is refilled with two rows the seal did not see. A test can
+    therefore seal at a chosen point inside an archive run and leave the store
+    in the state the writer leaves it.
+
+    Parameters
+    ----------
+    store_layout : SegmentLayout
+        The store whose active file is sealed and refilled.
+    """
+    rows = records(NOW, 5)
+    write_private(store_layout.active, document(rows))
+    seal_active(store_layout, rows, 2)
+    write_private(store_layout.active, document(records(NOW, 2)))
+
+
+def seal_one_row(store_layout: SegmentLayout, sequence: int) -> None:
+    """Seal the single row in the active file as source ``sequence``.
+
+    Parameters
+    ----------
+    store_layout : SegmentLayout
+        The store whose active file is sealed.
+    sequence : int
+        The sequence the new source takes.
+    """
+    rows = records(NOW, 1)
+    write_private(store_layout.active, document(rows))
+    seal_active(store_layout, rows, sequence)
+
+
 def seal_five_rows_once(
     store_layout: SegmentLayout, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -239,10 +289,7 @@ def seal_five_rows_once(
         nonlocal sealed
         if not sealed:
             sealed = True
-            rows = records(NOW, 5)
-            write_private(store_layout.active, document(rows))
-            seal_active(store_layout, rows, 2)
-            write_private(store_layout.active, document(records(NOW, 2)))
+            seal_five_rows(store_layout)
         return real(path, cutoff=cutoff)
 
     monkeypatch.setattr(outcome_archive_retain, "active_history", seal_then_read)

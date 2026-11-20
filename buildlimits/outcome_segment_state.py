@@ -2,27 +2,52 @@
 
 Both files are advisory: a missing or damaged counter or retention record is
 reported as unknown rather than trusted, so a scan or a run still works after a
-crash halfway through publishing one of them.
+crash halfway through publishing one of them. The retention record's unknown
+states are named separately, because "never recorded" is a fresh store while
+"recorded and damaged" is state the archiver must stop trusting.
 """
 
+import dataclasses as dc
 import json
 import os
 import stat
 import typing as typ
 
-from buildlimits.outcome_store_files import read_private_bytes
+from buildlimits.outcome_store_files import OversizedFileError, read_private_bytes
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.outcome_segments import SegmentLayout
 
+# Why the retention record carries no usable floor.
+type FloorState = typ.Literal["recorded", "missing", "unreadable", "invalid"]
+
 _MAX_SEQUENCE_TEXT = 32
 # The retention record is a handful of JSON fields; anything larger is not
 # state this code wrote and must not be read into memory.
 _MAX_STATE_BYTES = 4096
 
-__all__ = ["read_retention_floor", "read_sequence"]
+__all__ = ["FloorState", "RetentionFloor", "read_retention_floor", "read_sequence"]
+
+
+@dc.dataclass(frozen=True, slots=True)
+class RetentionFloor:
+    """The floor the last successful run recorded, or why none was read.
+
+    Attributes
+    ----------
+    sequence : int | None
+        The lowest retained sequence, or None when no floor could be read.
+    state : FloorState
+        ``recorded`` for a floor this store's archiver wrote; ``missing`` when
+        no retention record exists; ``unreadable`` when the record could not
+        be opened or read; ``invalid`` when its content is not the bounded
+        integer document this code writes.
+    """
+
+    sequence: int | None = None
+    state: FloorState = "missing"
 
 
 def read_sequence(path: Path) -> int | None:
@@ -77,8 +102,13 @@ def read_sequence(path: Path) -> int | None:
     return int(text)
 
 
-def read_retention_floor(layout: SegmentLayout) -> int | None:
+def read_retention_floor(layout: SegmentLayout) -> RetentionFloor:
     """Read the retention floor recorded by the last successful run.
+
+    A missing record is not the same fact as a damaged one, so the two are
+    reported separately rather than both collapsing into "no floor": a fresh
+    store has never recorded one, while an unreadable or invalid record is
+    state the archiver wrote and can no longer trust.
 
     Parameters
     ----------
@@ -87,22 +117,46 @@ def read_retention_floor(layout: SegmentLayout) -> int | None:
 
     Returns
     -------
-    int | None
-        The lowest retained sequence, or None when no valid state exists.
+    RetentionFloor
+        The lowest retained sequence and how it was read, or the state that
+        kept it from being read.
     """
     try:
         raw = read_private_bytes(layout.retention_file, limit=_MAX_STATE_BYTES)
+    except FileNotFoundError:
+        return RetentionFloor(state="missing")
+    except OversizedFileError:
+        # The file is readable but larger than this code ever writes, so its
+        # content is refused as invalid rather than reported as an I/O fault.
+        return RetentionFloor(state="invalid")
     except OSError:
-        return None
+        return RetentionFloor(state="unreadable")
+    return _parse_retention_floor(raw)
+
+
+def _parse_retention_floor(raw: bytes) -> RetentionFloor:
+    """Decode the bounded retention record this code writes.
+
+    Parameters
+    ----------
+    raw : bytes
+        The record's content, already read within the size bound.
+
+    Returns
+    -------
+    RetentionFloor
+        The recorded sequence, or an ``invalid`` state when the content is not
+        the integer document this code writes.
+    """
     try:
         document = json.loads(raw)
     except ValueError, TypeError, RecursionError:
-        return None
+        return RetentionFloor(state="invalid")
     if not isinstance(document, dict):
-        return None
+        return RetentionFloor(state="invalid")
     floor = document.get("floor_sequence")
     if not isinstance(floor, int) or isinstance(floor, bool):
-        return None
+        return RetentionFloor(state="invalid")
     if floor < 0:
-        return None
-    return floor
+        return RetentionFloor(state="invalid")
+    return RetentionFloor(sequence=floor, state="recorded")

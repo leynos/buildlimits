@@ -6,7 +6,6 @@ clobbers the earlier evidence. Everything here runs under the archive lock.
 """
 
 import contextlib
-import os
 import typing as typ
 
 from buildlimits import outcome_segments
@@ -19,8 +18,6 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.outcome_archive_context import ArchiveContext
     from buildlimits.outcome_segment_inventory import SegmentEntry
-
-_QUARANTINE_TOKEN_BYTES = 6
 
 __all__ = [
     "quarantine_archive",
@@ -37,9 +34,9 @@ def quarantine_file(
 ) -> str:
     """Move one unusable file into the quarantine directory without clobbering.
 
-    The destination is named from the file's own name, the fault reason and a
-    random token, so the sequence is not part of it; a sidecar's sequence is
-    handled by the caller that knows one exists.
+    The destination is named from the file's own name, the fault reason and the
+    run context's random token, so the sequence is not part of it; a sidecar's
+    sequence is handled by the caller that knows one exists.
 
     Parameters
     ----------
@@ -64,8 +61,7 @@ def quarantine_file(
     # source entry is removed, or a crash can persist the removal while losing
     # the directory that held the quarantined file.
     fsync_directory(directory.parent)
-    token = os.urandom(_QUARANTINE_TOKEN_BYTES).hex()
-    destination = directory / f"{path.name}.{reason}.{token}"
+    destination = directory / f"{path.name}.{reason}.{context.quarantine_token()}"
     path.replace(destination)
     fsync_directory(directory)
     fsync_directory(path.parent)

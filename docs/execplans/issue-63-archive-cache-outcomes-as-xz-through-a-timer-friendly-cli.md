@@ -578,6 +578,42 @@ verified archive is published, and leaves compile admission untouched.
   tree: `check-fmt`, `lint` (272 reasoned duplication exceptions), `typecheck`,
   `test` (4554 passed, 86 skipped, 76 snapshots), `markdownlint`, `nixie` and
   `audit`.
+- [x] Whole-plan revision-20 remediation (2026-11-20): the revision-19
+  assessment's two retention findings are fixed. The active scan now always
+  reports the committed bytes and rows it measures, so both budget walks count
+  the header and the committed rows even without an age cutoff; an uncommitted
+  append no longer evicts an archive the committed rows fit beside, pinned by a
+  byte-budget regression that was mutated back to the pre-fix behaviour. The
+  final report re-plans retention from its own settled reading, so a writer
+  append or seal after the last pass reports `unsettled` at exit 75 instead of
+  claiming the store is within its bounds, pinned by a settlement regression
+  that was mutated likewise. The saved error-mode gate's five items are
+  addressed: every report builder reads its finish time through
+  `ArchiveContext.clock`, which `RunOptions.clock` supplies; `os.urandom` moved
+  behind `ArchiveContext.quarantine_token`; the default configuration path and
+  the environment-derived store are resolved when the command runs;
+  `read_retention_floor` returns a typed `RetentionFloor` whose `state` names
+  `recorded`, `missing`, `unreadable` and `invalid`; and `settled_snapshot`
+  receives the typed floor's sequence. New tests pin the injected finish clock
+  for an executed, an unsettled and a busy run, the injected quarantine token,
+  and both run-time defaults, and each was checked against a mutation that
+  restores the old behaviour. The first lint gate after those changes reported
+  four `C0302 too-many-lines` violations, so the tree splits them without a
+  behaviour change: `outcome_archive_state` derives the retention floor and
+  persists the floor and report, while the clock, CLI-default and
+  report-settlement tests moved into their own modules, every file now under
+  the 400-line rule. The split moved duplication families: the record builder
+  the CLI and verify suites each repeated is now
+  `outcome_test_helpers.records_at`, the seal fixtures are
+  `outcome_archive_helpers.seal_five_rows` and `seal_one_row`, the two
+  append-after-retention report tests share `_report_after_an_append`, and the
+  composed-trim pair shares `outcome_test_helpers.records_around_a_cutoff`; the
+  TYPE_CHECKING-prelude allow entry names the modules the split produced, and
+  the composed-trim exception is retired because the shared fixture removed the
+  family it excused. All seven commit gates then passed once each on the final
+  tree: `check-fmt`, `lint` (269 reasoned duplication exceptions), `typecheck`,
+  `test` (4564 passed, 86 skipped, 76 snapshots), `markdownlint` (43 files, 0
+  issues), `nixie` and `audit`.
 
 ## Surprises & discoveries
 
@@ -805,6 +841,19 @@ verified archive is published, and leaves compile admission untouched.
   prelude in this revision (`outcome_archive.py` and
   `outcome_archive_report.py`) were added to that entry; the duplication gate
   then reported 272 allowed reasoned exceptions.
+- The settlement suite's hook moved with the plan's reading. It identified the
+  final report snapshot by "no cutoff", because only the report read the active
+  file without one; giving the final snapshot the policy cutoff, so its budgets
+  count the surviving rows, invalidated that marker. The hook now counts
+  `settled_snapshot` calls and arms on the second: an executed run calls it
+  exactly twice, once to plan and once for the report, so the injected writer
+  change lands after the last retention pass however many attempts the report
+  needs to settle.
+- An oversized retention record is not an I/O fault. The private reader raises
+  `OversizedFileError` for a readable file past the bound, and that class is an
+  `OSError`, so mapping every `OSError` to `unreadable` would report a file
+  this code never writes as a filesystem problem. The specific error is caught
+  first and reported as `invalid`.
 
 ## Decision log
 
@@ -1111,6 +1160,43 @@ verified archive is published, and leaves compile admission untouched.
   decisions about which report to build. The seal-once test seam moved to
   `outcome_archive_helpers` for the same reason, leaving the settlement suite
   focused on its assertions.
+- The final report re-plans retention from its settled reading. The writer
+  never takes the archive lock, so it can append or seal after the last
+  retention pass and before the report measures the store; a report that claimed
+  `ok` would tell the timer the budget is met while the next firing still has
+  to trim or delete. Only `trims`, `deletes` and a deferred budget make the run
+  unsettled: a source sealed just before the read is archival work the next
+  firing picks up, and the report already counts its bytes. The re-plan runs on
+  the same settled pair the report describes, so it cannot itself report a torn
+  store as owing work.
+- The retained active history always carries its surviving figures. The
+  descriptor size includes an append whose newline the writer has not yet
+  written, and a failed write truncates it back out, so a budget that counted
+  those bytes would evict closed history for a row that never existed. The scan
+  therefore reports the header plus every committed row at or after the cutoff,
+  or every committed row when there is no cutoff, and
+  `ActiveHistory.budget_bytes`/`budget_records` always consume those figures.
+  The whole-file figures remain for the report, which describes what the store
+  physically holds until the writer compacts.
+- The retention floor is a closed state rather than an optional integer.
+  `RetentionFloor.state` names `recorded`, `missing`, `unreadable` and
+  `invalid`, so "never recorded" is distinguishable from "recorded and
+  damaged", and `_retention_floor` reuses only a `recorded` sequence as its
+  baseline. `OversizedFileError` is an `OSError` but a readable file with
+  oversized content is `invalid`, not an I/O fault; the private reader's other
+  failures are `unreadable`.
+- The finish time and the quarantine tag are injected ports. Every report
+  builder takes its finish from `ArchiveContext.clock`, which `run_archive`
+  fills from `RunOptions.clock`, and `quarantine_file` names its destination
+  with `ArchiveContext.quarantine_token`. Tests substitute both to pin the
+  exact timestamp and destination rather than tolerating whatever the system
+  clock or `os.urandom` supplies.
+- The command resolves both of its defaults at run time. `_default_config`
+  reads the home in effect when the command runs rather than importing
+  `Path.home()` into a module constant, and `main` passes the process
+  environment to `_store`, which resolves the store path from it only when
+  `--store` is absent. A timer started under another account therefore reads
+  that account's configuration and store.
 
 ## Outcomes & retrospective
 
@@ -1483,3 +1569,22 @@ Each mutation was reverted and the focused suite passed again.
   `run_archive`, the composition root, because busy and no-headroom are
   exercised against the real lock rather than a substituted one, and an
   injected factory would add a port with no second implementation.
+- Revision 20 records the whole-plan revision-19 assessment's two retention
+  findings and the saved error-mode gate's remaining items. The active scan
+  always reports the committed bytes and rows it measures, so both budget walks
+  count the header and committed rows even without an age cutoff and an
+  uncommitted append cannot evict an archive the committed rows fit beside. The
+  final report re-plans retention from its own settled reading, so a writer
+  append or seal after the last pass reports `unsettled` at exit 75 instead of
+  claiming the store is within its bounds while the next firing still has to
+  evict. Every report builder now takes its finish time from
+  `ArchiveContext.clock`, injected from `RunOptions.clock`; `os.urandom` moved
+  behind `ArchiveContext.quarantine_token`; the default configuration path and
+  the environment-derived store are resolved when the command runs; and
+  `read_retention_floor` returns a typed `RetentionFloor` naming `recorded`,
+  `missing`, `unreadable` and `invalid` states, whose sequence alone
+  `settled_snapshot` and `_retention_floor` consume. New tests pin both
+  retention fixes and each injected port, and every one was checked against a
+  mutation that restores the old behaviour. The users' guide, the developers'
+  guide and ADR 0010 describe the re-planned final report and the floor's named
+  states.

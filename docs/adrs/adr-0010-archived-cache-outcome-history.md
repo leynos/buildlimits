@@ -383,7 +383,10 @@ Each completed run writes two documents into the archive directory:
 
 Both are written by atomic replacement. The retention floor is why evicting old
 history does not look like corruption: the inventory reports a missing sequence
-as a gap only at or above the floor.
+as a gap only at or above the floor. A record that is missing, unreadable or
+invalid is reported as that state rather than as a floor, and a run derives a
+fresh baseline instead of trusting it, so damaged state cannot silently raise
+the floor and hide a gap.
 
 After archiving and reconciliation, a run replans over the settled store and
 applies the trims and deletions the first plan could not see, skipping

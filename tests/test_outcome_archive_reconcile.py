@@ -6,6 +6,7 @@ deleted whole, and anything the run cannot trust is moved into quarantine
 under a name that records why and never replaces an earlier entry.
 """
 
+import dataclasses
 import lzma
 import typing as typ
 
@@ -184,6 +185,28 @@ def test_quarantine_never_replaces_an_earlier_entry(tmp_path: Path) -> None:
     assert sorted(path.read_bytes() for path in entries) == [b"one", b"two"], (
         "each entry keeps the bytes of the file it moved"
     )
+
+
+def test_a_quarantine_name_carries_the_injected_token(tmp_path: Path) -> None:
+    """The quarantine tag comes from the run context, not a hidden random read.
+
+    The tag is what keeps a repeated fault from overwriting its earlier
+    evidence, so a test that pins the exact destination proves the move reads
+    the context's token rather than drawing one of its own.
+    """
+    run = dataclasses.replace(
+        context(tmp_path), quarantine_token=lambda: "0123456789ab"
+    )
+    damaged = run.layout.archive_dir / archive_name(1)
+    damaged.write_bytes(b"junk")
+    damaged.chmod(0o600)
+
+    result = quarantine_archive(run, sealed_entry(damaged, 1), "bad_xz")
+
+    assert result.action == "quarantined", "the archive is moved aside"
+    assert [path.name for path in quarantined(tmp_path)] == [
+        f"{archive_name(1)}.bad_xz.0123456789ab"
+    ], "the destination names the fault and the context's token"
 
 
 def test_quarantining_an_archive_drops_its_sidecar(tmp_path: Path) -> None:

@@ -376,6 +376,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_history_settle`                                                           | File identity and a repeated scan, used to detect a store that moved under a pin                                                                            |
 | `outcome_history_stream`, `outcome_history_args`                                   | Re-iterable, salt-filtered stream over a pinned snapshot and the shared replay and dataset options                                                          |
 | `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
+| `outcome_archive_state`                                                            | Deriving the retention floor and persisting the floor and run report                                                                                        |
 | `outcome_archive_context`                                                          | Shared context and result values for one archive run                                                                                                        |
 | `outcome_archive_plan`                                                             | Pure retention and repair plan from the inventory                                                                                                           |
 | `outcome_archive_active`                                                           | Lock-free bounded read of the writer's active file through one descriptor, and the non-regular path it refuses                                              |
@@ -1062,20 +1063,25 @@ settlement with a final plan that mutates nothing. The same module owns
 scanned on both sides of the active-file read and the reading is retried while
 the two disagree, so a seal cannot leave either copy out of a count.
 `outcome_archive` builds its plan, its dry-run report and its run report from
-that reading, and reports `unsettled` rather than a plan when none settles.
-`outcome_archive_active` reads the writer's active file as a snapshot without
-the archive lock, through one opened descriptor, so its size and rows describe
-the same version even when the writer replaces the path mid-scan. It reads the
-size immediately before the rows and confirms it immediately after them,
-retrying a version the writer appended to, and excludes a final row whose
-newline was not written: the writer truncates a failed append back out, so an
-uncommitted row is not retained history. It refuses any existing path that is
-not a regular file; only an absent file is empty history. Its scan also reports
-the rows and bytes the age rule keeps when it is given a cutoff, and
-`outcome_archive_history` carries that snapshot plus the summary of retained
-rows the report describes. An unmeasured active file leaves an age-aware byte
-budget without the surviving bytes it must count, so `plan_run` defers that
-walk rather than evicting closed history against the whole file.
+that reading, and reports `unsettled` rather than a plan when none settles. A
+run's final report also re-plans retention from its own settled reading: the
+writer can append or seal after the last retention pass, and a report that
+claimed `ok` would tell the timer the store is within its bounds while the next
+firing still has to evict. The re-plan ignores archival work, which the next
+firing picks up as normal, and only `trims`, `deletes` or a deferred budget
+make the run unsettled. `outcome_archive_active` reads the writer's active file
+as a snapshot without the archive lock, through one opened descriptor, so its
+size and rows describe the same version even when the writer replaces the path
+mid-scan. It reads the size immediately before the rows and confirms it
+immediately after them, retrying a version the writer appended to, and excludes
+a final row whose newline was not written: the writer truncates a failed append
+back out, so an uncommitted row is not retained history. It refuses any
+existing path that is not a regular file; only an absent file is empty history.
+Its scan also reports the rows and bytes the age rule keeps when it is given a
+cutoff, and `outcome_archive_history` carries that snapshot plus the summary of
+retained rows the report describes. An unmeasured active file leaves an
+age-aware byte budget without the surviving bytes it must count, so `plan_run`
+defers that walk rather than evicting closed history against the whole file.
 `outcome_archive_age` owns the age decisions themselves: which entries are
 wholly older than the cutoff and which archive straddles it and is trimmed.
 `outcome_archive_budget` owns the byte budget: it counts an archive's
@@ -1103,8 +1109,16 @@ trusts a validated sidecar rather than decompressing an archive.
 `Inventory.effective` prefers a sealed source over an archive with the same
 sequence, because a crash can leave both and the source is authoritative until
 reconciliation removes it. `outcome_segment_state.read_retention_floor` reads
-`retention.json`; the floor is why evicting old history does not look like
-corruption, so the inventory reports a missing sequence only at or above it.
+`retention.json` into a `RetentionFloor` whose `state` names how the record was
+read: `recorded` for a sequence this code wrote, `missing` when the store never
+recorded one, `unreadable` for an I/O fault, and `invalid` for content that is
+not the bounded integer document. Only a recorded sequence is reused as a run's
+baseline, so a damaged record cannot silently raise the floor and hide a gap.
+`outcome_archive_state.retention_floor` derives the floor a run records: it
+advances only past a contiguous deleted prefix, and its `write_state` replaces
+`retention.json` and the run report together once the final snapshot is read.
+The floor is why evicting old history does not look like corruption, so the
+inventory reports a missing sequence only at or above it.
 `outcome_segment_gaps.retained_gaps` names those sequences for an operator; it
 stops at `MAX_GAP_SEQUENCES` and flags the list as truncated, because a
 restarted counter would otherwise leave no ceiling on one report.
@@ -1147,14 +1161,21 @@ are 0 for success, 1 for an operational failure, 2 for usage or configuration,
 timer should retry. The module also owns the three report builders the runner
 uses: `dry_report` from a settled inventory and active snapshot, and
 `unsettled_report` and `unfinished_report` for a store that never held still or
-a run that could not start. The report names no path and carries no raw
-exception text; the only path a run prints is an unreadable configuration file,
-on standard error before the report exists.
+a run that could not start. Every builder takes its finish time from the same
+injected clock, which `RunOptions.clock` carries into `ArchiveContext.clock`;
+`ArchiveContext.quarantine_token` likewise supplies the random tag a quarantine
+name records, so both the report's timing and the evidence naming are ports a
+test can substitute. The report names no path and carries no raw exception
+text; the only path a run prints is an unreadable configuration file, on
+standard error before the report exists.
 
 `outcome_archive_cli` is the timer-facing surface. `inspect` is a dry run by
 definition; `run --dry-run` plans without taking the lock or writing state; and
 `run` executes. All three accept `--store`, `--config` (default
-`~/.config/buildlimits/supervisor.toml`) and `--json`.
+`~/.config/buildlimits/supervisor.toml`) and `--json`. Both defaults are
+resolved when the command runs: the configuration under the home in effect at
+that moment, and, when `--store` is absent, the store the process environment
+names through `store_path`.
 
 The archive tests are `tests/test_outcome_archive.py`,
 `test_outcome_archive_active.py`, `test_outcome_archive_active_budget.py`,
@@ -1163,23 +1184,24 @@ The archive tests are `tests/test_outcome_archive.py`,
 `test_outcome_archive_plan.py`, `test_outcome_archive_plan_age.py`,
 `test_outcome_archive_plan_bytes.py`, `test_outcome_archive_reconcile.py`,
 `test_outcome_archive_retention.py`, `test_outcome_archive_settlement.py`,
+`test_outcome_archive_report_settlement.py`, `test_outcome_archive_clock.py`,
 `test_outcome_archive_verify.py`, `test_outcome_archive_cli.py`,
-`test_outcome_archive_subprocess.py`, `test_outcome_history.py`,
-`test_outcome_history_replacement.py`, `test_outcome_segments.py`,
-`test_outcome_segment_inventory.py`, `test_outcome_segment_state.py`,
-`test_outcome_record_stream.py`, `test_outcome_sealing_bounds.py`,
-`test_outcome_store_tail.py` and `test_outcome_store_sealing.py`.
-`test_outcome_archive_subprocess.py` runs the installed console script, and the
-`python -m` form, as separate processes, including two overlapping runs, and
-shares its launcher and configuration with `tests/archive_cli_helpers.py`.
-`tests/test_outcome_archive_bench.py` holds the reader's traced-memory test,
-which streams a multi-megabyte segment under one mebibyte, and the tests that
-pin the report's schema and its tracing ownership. `make outcome-archive-bench`
-runs `buildlimits.outcome_archive_bench` and prints a JSON report with the
-source size, record count, archive size, ratio, chunk size, peak buffered rows,
-elapsed time, peak resident set, temporary disk and peak traced allocation; it
-generates a representative segment when `SEGMENT=` names none and reads the
-named segment when it does.
+`test_outcome_archive_cli_defaults.py`, `test_outcome_archive_subprocess.py`,
+`test_outcome_history.py`, `test_outcome_history_replacement.py`,
+`test_outcome_segments.py`, `test_outcome_segment_inventory.py`,
+`test_outcome_segment_state.py`, `test_outcome_record_stream.py`,
+`test_outcome_sealing_bounds.py`, `test_outcome_store_tail.py` and
+`test_outcome_store_sealing.py`. `test_outcome_archive_subprocess.py` runs the
+installed console script, and the `python -m` form, as separate processes,
+including two overlapping runs, and shares its launcher and configuration with
+`tests/archive_cli_helpers.py`. `tests/test_outcome_archive_bench.py` holds the
+reader's traced-memory test, which streams a multi-megabyte segment under one
+mebibyte, and the tests that pin the report's schema and its tracing ownership.
+`make outcome-archive-bench` runs `buildlimits.outcome_archive_bench` and
+prints a JSON report with the source size, record count, archive size, ratio,
+chunk size, peak buffered rows, elapsed time, peak resident set, temporary disk
+and peak traced allocation; it generates a representative segment when
+`SEGMENT=` names none and reads the named segment when it does.
 
 `tests/test_outcome_archive_memory.py` traces the archiver, the materializing
 read and the streaming replay separately at 4,000 and 16,000 rows, so a fixed

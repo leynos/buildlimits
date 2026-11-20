@@ -427,11 +427,15 @@ timer firing continues. The final report is read the same way: the inventory is
 scanned on both sides of the active-file read and the reading is retried when
 they disagree, so a seal cannot leave either copy out of the count. A writer
 that seals on every reading leaves the report unsettled too, rather than
-recording one partial reading as the run's result. `inspect` and
-`run --dry-run` plan and report from that same settled reading, so the plan and
-its figures describe one version of the store; a store that never holds still
-makes them report `unsettled` with no plan and exit 75. The report's
-`active_bytes` comes from the reading its row count came from.
+recording one partial reading as the run's result. The final report also
+re-plans retention from that reading: when the writer appends or seals past a
+bound after the last retention pass, the run reports `unsettled` at exit 75
+rather than telling the timer the store is within its bounds while the next
+firing still has to evict. `inspect` and `run --dry-run` plan and report from
+that same settled reading, so the plan and its figures describe one version of
+the store; a store that never holds still makes them report `unsettled` with no
+plan and exit 75. The report's `active_bytes` comes from the reading its row
+count came from.
 
 A plan that leaves a configured budget to a later pass reports
 `retention: deferred` on its plain output and `"retention_deferred": true` under

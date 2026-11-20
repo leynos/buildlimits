@@ -21,7 +21,7 @@ from archive_files_helpers import (
     sealed_entry,
     source,
 )
-from outcome_test_helpers import attributed_record
+from outcome_test_helpers import records_around_a_cutoff
 
 from buildlimits import outcome_archive_files
 from buildlimits.outcome_archive_encode import read_archive_facts
@@ -85,16 +85,13 @@ def test_a_composed_trim_measures_policy_drops_before_the_byte_suffix(
     eligible rows once that row is gone; a rewrite that judged each row
     against the whole source would drop the cutoff row too.
     """
-    at_cutoff = attributed_record(observed_at=NOW + dt.timedelta(minutes=1))
-    expired = attributed_record(observed_at=NOW)
-    fresh = attributed_record(observed_at=NOW + dt.timedelta(minutes=2))
-    data = document((at_cutoff, expired, fresh))
+    entries, cutoff = records_around_a_cutoff(NOW)
+    data = document(entries)
     sealed = source(tmp_path, 1, data)
     run = context(tmp_path)
     outcome_archive_files.archive_source(run, sealed_entry(sealed, 1))
     entry = archived_entry(tmp_path)
     rows = data.splitlines(keepends=True)
-    cutoff = NOW + dt.timedelta(minutes=1)
     allowance = len(data) - len(rows[2])
 
     result = recompress_archive(

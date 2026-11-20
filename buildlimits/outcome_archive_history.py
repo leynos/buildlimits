@@ -42,12 +42,15 @@ class ActiveHistory:
         Whether the rows and span were read. A file that cannot be read at all
         contributes its size alone, and is reported as unmeasured.
     surviving_bytes : int | None
-        Logical bytes the age rule keeps when a cutoff was applied to the
-        scan, or None when the file was read whole. The writer drops expired
-        rows on its next compaction, so only these bytes are retained history.
+        Logical bytes the writer's next compaction keeps: the header plus
+        every committed row observed at or after the cutoff, or every
+        committed row when none was applied. None when the file could not be
+        read, because then neither figure is known. The writer drops expired
+        rows and rolls back an unterminated append, so only these bytes are
+        retained history.
     surviving_records : int | None
-        Record rows observed at or after that cutoff, or None when no cutoff
-        was applied.
+        Record rows observed at or after that cutoff, or every committed row
+        when no cutoff was applied; None when the file could not be read.
     """
 
     bytes: int = 0
@@ -65,8 +68,8 @@ class ActiveHistory:
         Returns
         -------
         int
-            The rows the age rule keeps when a cutoff was applied, else the
-            whole file's size.
+            The header and committed rows the writer keeps, or the whole
+            file's size when it could not be read and neither figure is known.
         """
         return self.bytes if self.surviving_bytes is None else self.surviving_bytes
 
@@ -77,8 +80,9 @@ class ActiveHistory:
         Returns
         -------
         int
-            The rows observed at or after the cutoff when one was applied,
-            else every row the file holds.
+            The committed rows the writer keeps, or zero when the file could
+            not be read. A cap configured beside an unread file is refused
+            before a plan is built, so the zero is never taken as a count.
         """
         if self.surviving_records is None:
             return self.records

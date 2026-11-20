@@ -71,20 +71,21 @@ def active_history(path: Path, *, cutoff: dt.datetime | None = None) -> ActiveHi
     path : Path
         The active file the writer owns.
     cutoff : datetime | None
-        The age cutoff the plan measures against, or None to count every row.
-        With a cutoff, the scan also reports the rows and bytes the writer's
-        own compaction keeps, so a budget never evicts closed history to make
-        room for rows retention has already expired.
+        The age cutoff the plan measures against, or None to count every
+        committed row. Either way the scan also reports the bytes and rows the
+        writer's own compaction keeps, so a budget never evicts closed history
+        to make room for an append the writer has not committed or for rows
+        retention has already expired.
 
     Returns
     -------
     ActiveHistory
         The file's size in bytes, the committed record rows it currently
-        holds and the span their observations cover. When a cutoff is given,
-        the surviving figures describe the committed rows observed at or
-        after it. A file that cannot be decoded, or one the writer changes on
-        every scan, is reported by its size alone, with no rows and no
-        metadata, so a record cap knows its count is unknown.
+        holds and the span their observations cover, together with the bytes
+        and rows the writer keeps: the header and every committed row, less
+        those a cutoff has expired. A file that cannot be decoded, or one the
+        writer changes on every scan, is reported by its size alone, with no
+        rows and no metadata, so a record cap knows its count is unknown.
 
     Raises
     ------
@@ -167,8 +168,9 @@ def _measure(
     Returns
     -------
     ActiveHistory
-        The file's size, every committed row it holds, and — when a cutoff is
-        given — the bytes and rows the writer's own compaction would retain.
+        The file's size, every committed row it holds, and the bytes and rows
+        the writer's own compaction keeps: the header plus committed rows,
+        less those a cutoff has expired.
 
     Raises
     ------
@@ -211,9 +213,10 @@ class _Tally:
     records : int
         Committed record rows read, excluding the header.
     surviving_records : int
-        Committed rows observed at or after the cutoff.
+        Committed rows the writer keeps: those observed at or after the
+        cutoff, or every committed row when there is none.
     surviving_bytes : int
-        Header and committed-row bytes the cutoff keeps.
+        Header and committed-row bytes the writer keeps.
     first_observed_at : datetime | None
         Earliest committed row observation, when one was read.
     last_observed_at : datetime | None
@@ -256,22 +259,22 @@ class _Tally:
     def as_history(self, size: int) -> ActiveHistory:
         """Return the measured version as an immutable snapshot.
 
+        The surviving figures are always reported, even without a cutoff: the
+        descriptor size includes an append whose newline the writer has not
+        written, and a budget that counted those bytes would evict closed
+        history for a row the writer rolls back.
+
         Returns
         -------
         ActiveHistory
-            The whole-file figures, with the surviving figures added when a
-            cutoff was applied.
+            The whole-file figures beside the header and committed rows the
+            writer keeps.
         """
-        history = ActiveHistory(
+        return ActiveHistory(
             bytes=size,
             records=self.records,
             first_observed_at=self.first_observed_at,
             last_observed_at=self.last_observed_at,
-        )
-        if self.cutoff is None:
-            return history
-        return dc.replace(
-            history,
             surviving_bytes=self.surviving_bytes,
             surviving_records=self.surviving_records,
         )

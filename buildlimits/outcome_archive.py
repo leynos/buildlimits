@@ -7,7 +7,6 @@ is never opened for writing: only the writer seals it. Every failure is
 reported as a closed reason and an exit status a systemd timer can act on.
 """
 
-import datetime as dt
 import typing as typ
 
 from buildlimits import (
@@ -15,6 +14,7 @@ from buildlimits import (
     outcome_archive_lock,
     outcome_archive_retain,
     outcome_archive_run,
+    outcome_archive_state,
     outcome_segment_inventory,
     outcome_segment_state,
 )
@@ -36,15 +36,14 @@ from buildlimits.outcome_archive_report import (
     unfinished_report,
     unsettled_report,
 )
-from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
 
 if typ.TYPE_CHECKING:
+    import datetime as dt
+
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_segment_inventory import Inventory
     from buildlimits.outcome_segments import SegmentLayout
-
-_STATE_SCHEMA = 1
 
 __all__ = [
     "ARCHIVE_SCHEMA",
@@ -108,9 +107,13 @@ def run_archive(
         What the run did, or would do, and its bounded exit status.
     """
     selected = RunOptions() if options is None else options
-    started = dt.datetime.now(dt.UTC) if selected.now is None else selected.now
+    started = selected.clock() if selected.now is None else selected.now
     context = ArchiveContext(
-        layout=layout, policy=policy, preset=selected.preset, now=started
+        layout=layout,
+        policy=policy,
+        preset=selected.preset,
+        now=started,
+        clock=selected.clock,
     )
     try:
         if selected.dry_run:
@@ -119,21 +122,23 @@ def run_archive(
         with outcome_archive_lock.ArchiveLock(layout.lock_file):
             return _execute_locked(context, policy, started)
     except outcome_archive_lock.ArchiveBusyError:
-        return unfinished_report(started, "busy", "busy")
+        return unfinished_report(started, "busy", "busy", clock=context.clock)
     except outcome_archive_lock.NoHeadroomError:
-        return unfinished_report(started, "no_headroom", "no_headroom")
+        return unfinished_report(
+            started, "no_headroom", "no_headroom", clock=context.clock
+        )
     except UnknownActiveHistoryError:
         # The record cap counts the writer's unsealed rows. A run that cannot
         # read them cannot show the store is within the cap, so it reports an
         # operational failure rather than counting the active file as empty.
-        return unfinished_report(started, "failed", "unreadable")
+        return unfinished_report(started, "failed", "unreadable", clock=context.clock)
     except OSError as error:
         # The headroom check reads free space once, before the pass, so the
         # filesystem can still fill while this run works. A full filesystem is
         # retryable; anything else needs an operator.
         reason = outcome_archive_run.failure_reason(error)
         status: RunStatus = "no_headroom" if reason == "no_headroom" else "failed"
-        return unfinished_report(started, status, reason)
+        return unfinished_report(started, status, reason, clock=context.clock)
 
 
 def _inspect(
@@ -149,7 +154,7 @@ def _inspect(
     """
     plan, active, inventory, settled = _plan(context.layout, policy, started)
     if not settled:
-        return unsettled_report(started, dry_run=True)
+        return unsettled_report(started, dry_run=True, clock=context.clock)
     return dry_report(_archive_run(context, plan), active, inventory)
 
 
@@ -171,7 +176,7 @@ def _execute_locked(
     """
     plan, _active, _inventory, settled = _plan(context.layout, policy, started)
     if not settled:
-        return unsettled_report(started)
+        return unsettled_report(started, clock=context.clock)
     return _execute(_archive_run(context, plan))
 
 
@@ -198,7 +203,7 @@ def _plan(
     """
     floor = outcome_segment_state.read_retention_floor(layout)
     inventory, active, settled = outcome_archive_retain.settled_snapshot(
-        layout, floor, cutoff=policy.cutoff(now)
+        layout, floor.sequence, cutoff=policy.cutoff(now)
     )
     return (
         plan_run(inventory, policy, now=now, active=active),
@@ -241,25 +246,30 @@ def _execute(run: outcome_archive_run.ArchiveRun) -> RunReport:
     outcome = outcome_archive_run.RunOutcome()
     outcome_archive_run.perform(run, outcome)
     outcome.retention_unsettled = not outcome_archive_retain.retain(run, outcome)
-    floor = _retention_floor(
+    floor = outcome_archive_state.retention_floor(
         outcome_segment_inventory.read_inventory(layout),
         outcome_segment_state.read_retention_floor(layout),
         outcome,
     )
     final, final_active, snapshot_settled = outcome_archive_retain.settled_snapshot(
-        layout, floor
+        layout, floor, cutoff=run.context.policy.cutoff(run.started_at)
     )
     if not snapshot_settled:
         # The writer kept sealing across every reading, so the report cannot
         # bind rows to one version of the store. Report it as retryable rather
         # than recording an undercount as success.
         outcome.retention_unsettled = True
+    elif _retention_owes_work(final, final_active, run):
+        # The writer can append or seal between the last retention pass and
+        # this read. The report must not claim the store is within its bounds
+        # when the next firing still has history to evict.
+        outcome.retention_unsettled = True
     retained = final_active.bytes + final.sealed_bytes + final.archived_logical_bytes
     observed = observed_history(final, final_active)
     report = RunReport(
         status=_run_status(outcome),
         started_at=run.started_at,
-        finished_at=utc_now(),
+        finished_at=run.context.clock(),
         active_bytes=final_active.bytes,
         retained_bytes=retained,
         retained_records=observed.records,
@@ -277,8 +287,39 @@ def _execute(run: outcome_archive_run.ArchiveRun) -> RunReport:
         corrupt_sidecars=final.corrupt_sidecars,
         orphan_sidecars=final.orphan_sidecars,
     )
-    _write_state(layout, floor, report)
+    outcome_archive_state.write_state(layout, floor, report)
     return report
+
+
+def _retention_owes_work(
+    inventory: Inventory, active: ActiveHistory, run: outcome_archive_run.ArchiveRun
+) -> bool:
+    """Whether the final snapshot still calls for retention work.
+
+    The writer never takes the archive lock, so it can append or seal between
+    the last retention pass and this read. A report that claimed success over
+    that store would tell the timer the budget is met while the next firing
+    still has to trim or delete. Only retention decides this: a source sealed
+    just before the read is archival work the next firing picks up, and the
+    report already counts its bytes.
+
+    Parameters
+    ----------
+    inventory : Inventory
+        The store as the final snapshot read it.
+    active : ActiveHistory
+        The active file from the same settled reading, measured against the
+        run's cutoff so the plan counts the rows retention keeps.
+    run : ArchiveRun
+        The run whose policy and start time the plan is built with.
+
+    Returns
+    -------
+    bool
+        True when the plan still evicts history or defers a budget.
+    """
+    pending = plan_run(inventory, run.context.policy, now=run.started_at, active=active)
+    return bool(pending.trims or pending.deletes or pending.retention_deferred)
 
 
 def _run_status(outcome: outcome_archive_run.RunOutcome) -> RunStatus:
@@ -298,66 +339,3 @@ def _run_status(outcome: outcome_archive_run.RunOutcome) -> RunStatus:
     if all(reason == "no_headroom" for _sequence, reason in outcome.failures):
         return "no_headroom"
     return "corrupt"
-
-
-def _write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:
-    """Persist the retention floor and the run report durably."""
-    outcome_archive_fs.atomic_write_json(
-        layout.retention_file,
-        {
-            "schema": _STATE_SCHEMA,
-            "floor_sequence": floor,
-            "retained_logical_bytes": report.retained_bytes,
-            "budget_bytes": report.budget_bytes,
-            "cutoff": optional_utc_text(report.cutoff),
-            "updated_at": utc_text(report.finished_at),
-        },
-    )
-    outcome_archive_fs.atomic_write_json(layout.last_run_file, report.as_dict())
-
-
-def _retention_floor(
-    inventory: outcome_segment_inventory.Inventory,
-    previous: int | None,
-    outcome: outcome_archive_run.RunOutcome,
-) -> int:
-    """Return the lowest sequence this history intentionally starts at.
-
-    The floor records what retention removed, not what happens to be absent.
-    Deriving it from the surviving sequences would raise it past a sequence
-    that went missing for another reason, and the next scan would then stop
-    reporting that sequence as a gap. It therefore advances only past a
-    deleted prefix, and never falls below the first sequence this store ever
-    had, so an empty prefix is not reported as missing history.
-
-    Parameters
-    ----------
-    inventory : Inventory
-        The store as it stands after the run.
-    previous : int | None
-        The floor the last successful run recorded.
-    outcome : RunOutcome
-        The actions this run performed.
-
-    Returns
-    -------
-    int
-        The retention floor to persist.
-    """
-    present = [entry.sequence for entry in inventory.effective]
-    deleted = {
-        action.sequence for action in outcome.actions if action.action == "deleted"
-    }
-    # A fresh store starts at the lowest sequence it is known to have had:
-    # either one that survives, or one this run deleted. Later runs keep the
-    # floor they recorded.
-    baseline = (
-        previous if previous is not None else min([*present, *deleted], default=0)
-    )
-    # Only a contiguous deleted prefix advances the floor. A sequence that is
-    # missing without a deletion may be a gap retention did not create, and
-    # stepping past it would stop the next scan reporting it.
-    floor = baseline
-    while floor in deleted:
-        floor += 1
-    return floor

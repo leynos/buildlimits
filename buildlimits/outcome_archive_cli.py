@@ -26,8 +26,6 @@ from buildlimits.outcome_segments import SegmentLayout
 from buildlimits.outcome_store_salt import store_path
 from buildlimits.utc_text import utc_text
 
-_DEFAULT_CONFIG = Path.home() / ".config" / "buildlimits" / "supervisor.toml"
-
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
@@ -55,9 +53,10 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         options = parser.parse_args(argv)
     except SystemExit as error:
         return int(error.code) if isinstance(error.code, int) else EXIT_USAGE
+    config_path = _default_config() if options.config is None else options.config
     try:
-        settings = config.load(options.config)
-        layout = SegmentLayout.beside(_store(options.store))
+        settings = config.load(config_path)
+        layout = SegmentLayout.beside(_store(options.store, os.environ))
         policy = policy_from_settings(settings)
     except config.ConfigError as error:
         # An unreadable configuration is the one documented path exception: the
@@ -82,6 +81,21 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
     return report.exit_status
 
 
+def _default_config() -> Path:
+    """Return the per-user supervisor configuration read when none is named.
+
+    The home directory is resolved when the command runs rather than when this
+    module is imported, so a caller's environment decides which account's
+    configuration is read.
+
+    Returns
+    -------
+    Path
+        ``~/.config/buildlimits/supervisor.toml`` under the current home.
+    """
+    return Path.home() / ".config" / "buildlimits" / "supervisor.toml"
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser and its two subcommands.
 
@@ -95,8 +109,8 @@ def _build_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--config",
         type=Path,
-        default=_DEFAULT_CONFIG,
-        help="the supervisor configuration file",
+        help="the supervisor configuration file "
+        "(default: ~/.config/buildlimits/supervisor.toml)",
     )
     common.add_argument("--json", action="store_true", help="print the report as JSON")
     parser = argparse.ArgumentParser(
@@ -120,8 +134,16 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _store(explicit: Path | None) -> Path:
+def _store(explicit: Path | None, environ: cabc.Mapping[str, str]) -> Path:
     """Resolve the active store path from the option or the environment.
+
+    Parameters
+    ----------
+    explicit : Path | None
+        The ``--store`` value, or None to derive the path from ``environ``.
+    environ : Mapping[str, str]
+        The process environment the caller supplied, read only when no store
+        is named.
 
     Returns
     -------
@@ -133,7 +155,7 @@ def _store(explicit: Path | None) -> Path:
     """
     if explicit is not None:
         return explicit.absolute()
-    return store_path(os.environ)
+    return store_path(environ)
 
 
 def _report(

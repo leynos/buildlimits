@@ -62,7 +62,30 @@ def test_retention_floor_is_read_from_state(tmp_path: Path) -> None:
     layout = store_layout(tmp_path)
     write_private(layout.retention_file, b'{"floor_sequence": 4}')
 
-    assert read_retention_floor(layout) == 4, "the recorded floor is reported"
+    floor = read_retention_floor(layout)
+
+    assert floor.sequence == 4, "the recorded floor is reported"
+    assert floor.state == "recorded", "a floor this archiver wrote is trusted"
+
+
+def test_an_absent_retention_record_is_missing_not_damaged(tmp_path: Path) -> None:
+    """A store that never recorded a floor is not a store with damaged state."""
+    floor = read_retention_floor(store_layout(tmp_path))
+
+    assert floor.sequence is None, "nothing is recorded"
+    assert floor.state == "missing", "absence is distinguished from damage"
+
+
+def test_an_unreadable_retention_record_is_named_unreadable(tmp_path: Path) -> None:
+    """A record that cannot be opened is reported as an I/O fault, not ignored."""
+    layout = store_layout(tmp_path)
+    layout.retention_file.parent.mkdir(parents=True)
+    layout.retention_file.mkdir()
+
+    floor = read_retention_floor(layout)
+
+    assert floor.sequence is None, "no floor is trusted from an unread file"
+    assert floor.state == "unreadable", "the read fault keeps its own name"
 
 
 @pytest.mark.parametrize(
@@ -77,12 +100,15 @@ def test_retention_floor_is_read_from_state(tmp_path: Path) -> None:
     ],
     ids=["negative", "boolean", "text", "missing", "malformed", "sequence"],
 )
-def test_unusable_retention_state_is_ignored(tmp_path: Path, document: bytes) -> None:
+def test_unusable_retention_state_is_invalid(tmp_path: Path, document: bytes) -> None:
     """A damaged floor never suppresses real gap diagnostics."""
     layout = store_layout(tmp_path)
     write_private(layout.retention_file, document)
 
-    assert read_retention_floor(layout) is None, "no floor is trusted from damage"
+    floor = read_retention_floor(layout)
+
+    assert floor.sequence is None, "no floor is trusted from damage"
+    assert floor.state == "invalid", "damaged content is named as invalid"
 
 
 def test_an_oversized_retention_record_is_not_read(tmp_path: Path) -> None:
@@ -95,4 +121,7 @@ def test_an_oversized_retention_record_is_not_read(tmp_path: Path) -> None:
     document = b'{"floor_sequence": 4}'
     write_private(layout.retention_file, document + b" " * (4096 - len(document) + 1))
 
-    assert read_retention_floor(layout) is None, "the record is refused unread"
+    floor = read_retention_floor(layout)
+
+    assert floor.sequence is None, "the record is refused unread"
+    assert floor.state == "invalid", "an oversized record is not this code's state"
