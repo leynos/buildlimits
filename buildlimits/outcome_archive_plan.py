@@ -16,14 +16,17 @@ import typing as typ
 from buildlimits.outcome_archive_budget import (
     ActiveHistory,
     Budget,
+    age_trims_are_unsettled,
     plan_byte_steps,
     plan_record_steps,
     planned_size,
+    require_measurable_active,
 )
 from buildlimits.outcome_archive_trim import Trim
 from buildlimits.utc_text import optional_utc_text
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     import datetime as dt
 
     from buildlimits.outcome_retention import RetentionPolicy
@@ -245,6 +248,14 @@ def _retention_steps(
     ever removed whole: it cannot be trimmed before it is compressed, and the
     follow-up plan trims it once this run has archived it.
 
+    The byte and record walks run only when the store's age outcome is settled
+    and no duplicated sequence is excluded from the candidates. In either case
+    the totals those walks act on would be missing rows that are still
+    retained, and a whole deletion chosen against such a total could remove an
+    older entry the settled store keeps. Age eviction itself is decided from
+    the cutoff alone, so it is planned either way; the follow-up pass re-plans
+    the budgets from the reconciled and measured inventory.
+
     Returns
     -------
     tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...]]
@@ -258,17 +269,47 @@ def _retention_steps(
         for entry in candidates:
             _plan_age_step(entry, budget.cutoff, deletes)
     trims = _age_trims(candidates, budget.cutoff, deletes)
-    plan_byte_steps(candidates, budget, deletes, trims)
-    plan_record_steps(candidates, budget, deletes, trims)
-    # Byte planning runs after age planning and may delete an archive that also
-    # carries an age trim. Rewriting a file that is about to be removed would
-    # only churn it, so a deleted sequence is never also planned as a trim.
+    if _budgets_are_measurable(candidates, budget.cutoff, deletes, duplicated):
+        plan_byte_steps(candidates, budget, deletes, trims)
+        plan_record_steps(candidates, budget, deletes, trims)
+    else:
+        # An unmeasurable cap is a run invariant rather than a planning
+        # decision: even a pass that defers its walk has to report it.
+        require_measurable_active(budget)
+    # A later walk may delete an archive an earlier one already planned to trim;
+    # rewriting a file that is about to be removed would only churn it, so a
+    # deleted sequence is never also planned as a trim.
     trimmed = tuple(
         (entry, trims[entry.sequence])
         for entry in candidates
         if entry.sequence in trims and entry.sequence not in deletes
     )
     return tuple(deletes[sequence] for sequence in sorted(deletes)), trimmed
+
+
+def _budgets_are_measurable(
+    candidates: tuple[SegmentEntry, ...],
+    cutoff: dt.datetime | None,
+    deletes: cabc.Mapping[int, SegmentEntry],
+    duplicated: set[int],
+) -> bool:
+    """Whether a budget walk can safely choose whole deletions this pass.
+
+    Two kinds of history make this pass's totals untrustworthy. A duplicated
+    sequence is left out of the candidates while reconciliation is expected to
+    settle it, so its retained rows would be missing from the total the walk
+    acts on. An entry whose span crosses the cutoff keeps rows a time trim is
+    about to remove, so the walk would count rows that will not survive. A
+    later pass re-plans from the reconciled and measured inventory.
+
+    Returns
+    -------
+    bool
+        True when neither condition applies.
+    """
+    if duplicated:
+        return False
+    return not age_trims_are_unsettled(candidates, cutoff, deletes)
 
 
 def _plan_age_step(

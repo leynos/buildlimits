@@ -18,6 +18,14 @@ prefix count cannot target: composing both would drop the count's leading rows
 in addition to the rows the other rule removes, discarding rows the policy
 allows. Such a straddler ends the count walk, and the follow-up plan applies
 the count to the measured document the other trim leaves behind.
+
+The walks are only sound over a store whose age trims are settled. A time trim
+removes rows no planner can count, so a total that still includes them
+overstates what the store will retain, and deleting a whole older entry
+against that total would discard history the settled store keeps. The caller
+therefore plans the byte and record walks only when no surviving entry
+straddles the cutoff, and the follow-up plan runs them once the trim's sidecar
+has measured the result.
 """
 
 import dataclasses as dc
@@ -36,10 +44,12 @@ __all__ = [
     "ActiveHistory",
     "Budget",
     "UnknownActiveHistoryError",
+    "age_trims_are_unsettled",
     "plan_byte_steps",
     "plan_record_steps",
     "planned_records",
     "planned_size",
+    "require_measurable_active",
 ]
 
 
@@ -126,6 +136,25 @@ def plan_byte_steps(
     walk.evict(retained - budget.policy.max_bytes, planned_size, _byte_trim)
 
 
+def require_measurable_active(budget: Budget) -> None:
+    """Refuse a configured record cap whose active rows are unknown.
+
+    The cap counts the writer's unsealed rows. A plan that cannot read them
+    cannot show the retained store meets the cap, whether or not this pass
+    decides to evict anything, so the check is separate from the walk: a pass
+    that defers its budget planning still has to report the unmeasurable cap.
+
+    Raises
+    ------
+    UnknownActiveHistoryError
+        If a cap is configured and the active file's rows were not read.
+    """
+    if budget.policy.max_records is None or budget.active.has_metadata:
+        return
+    msg = "the active history cannot be counted, so the record cap is unmeasurable"
+    raise UnknownActiveHistoryError(msg)
+
+
 def plan_record_steps(
     candidates: tuple[SegmentEntry, ...],
     budget: Budget,
@@ -147,18 +176,14 @@ def plan_record_steps(
     missing sidecar and the follow-up plan then continues from the count it
     rebuilt.
 
-    Raises
-    ------
-    UnknownActiveHistoryError
-        If the cap is set and the active file's rows were not read. Its rows
-        count towards the cap, so no plan can show the store is within it.
+    The cap's precondition is checked by ``require_measurable_active``, which
+    raises when the active file's rows were not read: they count towards the
+    cap, so no plan can show the store is within it.
     """
+    require_measurable_active(budget)
     max_records = budget.policy.max_records
     if max_records is None:
         return
-    if not budget.active.has_metadata:
-        msg = "the active history cannot be counted, so the record cap is unmeasurable"
-        raise UnknownActiveHistoryError(msg)
     walk = _BudgetWalk(candidates, deletes, trims)
     retained = budget.active.records
     retained += sum(
@@ -167,6 +192,47 @@ def plan_record_steps(
         if records is not None
     )
     walk.evict(retained - max_records, planned_records, _record_trim)
+
+
+def age_trims_are_unsettled(
+    candidates: tuple[SegmentEntry, ...],
+    cutoff: dt.datetime | None,
+    deletes: cabc.Mapping[int, SegmentEntry],
+) -> bool:
+    """Whether a surviving entry's row count still depends on an age trim.
+
+    The walks act on the counts their sidecars describe, so an entry a time
+    trim is about to shorten makes their totals overstate what will be kept. An
+    entry with no trustworthy sidecar is unsettled for the same reason: the
+    heal step rebuilds it, and the next pass measures what it recorded.
+
+    Parameters
+    ----------
+    candidates : tuple[SegmentEntry, ...]
+        The closed entries the pass may retain, oldest first.
+    cutoff : datetime | None
+        The age cutoff, or None when no age limit is configured.
+    deletes : Mapping[int, SegmentEntry]
+        The entries already planned for deletion.
+
+    Returns
+    -------
+    bool
+        True when the pass cannot know how many rows a surviving entry keeps:
+        its span crosses the cutoff, or no trustworthy sidecar describes it.
+    """
+    if cutoff is None:
+        return False
+    return any(
+        entry.sequence not in deletes
+        and (
+            not entry.has_metadata
+            or (
+                entry.first_observed_at is not None and entry.first_observed_at < cutoff
+            )
+        )
+        for entry in candidates
+    )
 
 
 @dc.dataclass(slots=True)

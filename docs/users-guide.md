@@ -390,6 +390,12 @@ history view:
   archive. Only the writer's active file is never trimmed, because the writer
   owns it. A cap of zero leaves segmented history uncapped.
 
+A single firing may apply retention over more than one pass. The byte and
+record walks act on the rows that survive the age rule, so while an age trim is
+still pending the run plans no whole deletion and no byte or record trim; it
+applies the age trim first and re-plans from the measured history. The same
+applies after a duplicated source is reconciled.
+
 The writer also enforces the age bound when it starts, and on every append: an
 active file whose oldest record predates the cutoff, and which is not also
 oversized, is compacted as the store loads, and a row that arrives already

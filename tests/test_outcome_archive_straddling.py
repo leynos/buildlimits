@@ -65,6 +65,49 @@ def _write_straddling_store(root: Path) -> tuple[dt.datetime, tuple[StoreRecord,
     return cutoff, rows
 
 
+def _write_segments(root: Path, segments: tuple[tuple[StoreRecord, ...], ...]) -> None:
+    """Seed one sealed source per document, in sequence order.
+
+    The sources are written directly because the writer drops a row that
+    arrives already expired; the archiver applies the run's shorter bound to
+    the segments it finds.
+    """
+    sealed = layout(root).sealed_dir
+    sealed.mkdir(parents=True)
+    for sequence, rows in enumerate(segments, start=1):
+        write_private(sealed / segment_name(sequence), document(rows))
+
+
+def _write_eviction_fixture(
+    root: Path, expired_rows: int
+) -> tuple[tuple[StoreRecord, ...], StoreRecord]:
+    """Seed an eligible segment beside one that straddles the cutoff.
+
+    The first segment holds two eligible rows. The second holds ``expired_rows``
+    rows older than the cutoff and one fresh row, so an age trim frees most of
+    its rows while both segments keep eligible history.
+
+    Returns
+    -------
+    tuple[tuple[StoreRecord, ...], StoreRecord]
+        The first segment's rows and the second segment's fresh row.
+    """
+    cutoff = NOW - dt.timedelta(days=30)
+    first = (
+        attributed_record(observed_at=NOW - dt.timedelta(hours=2)),
+        attributed_record(observed_at=NOW - dt.timedelta(hours=1)),
+    )
+    expired = tuple(
+        attributed_record(
+            observed_at=cutoff - dt.timedelta(minutes=expired_rows - index)
+        )
+        for index in range(expired_rows)
+    )
+    fresh = attributed_record(observed_at=NOW)
+    _write_segments(root, (first, (*expired, fresh)))
+    return first, fresh
+
+
 def _archived_document(root: Path, sequence: int) -> bytes:
     """Return the decompressed document one archive holds.
 
@@ -124,3 +167,61 @@ def test_a_record_cap_after_an_age_trim_drops_only_the_oldest_eligible_row(
         ("trimmed", 1),
         ("trimmed", 1),
     ], "the age trim and the count trim each rewrite the archive"
+
+
+def test_a_record_cap_waits_for_age_eviction_across_segments(tmp_path: Path) -> None:
+    """A cap deletes nothing whole while an age trim still owns older rows.
+
+    Sequence 1 holds two eligible rows and sequence 2 holds two expired rows
+    and one eligible row, so age eviction alone leaves three rows, exactly the
+    cap. A walk that counted the expired rows as retained would delete sequence
+    1 whole and keep only the fresh row of sequence 2.
+    """
+    first, fresh = _write_eviction_fixture(tmp_path, 2)
+
+    report = run(tmp_path, policy(1_000_000, max_age_days=30, max_records=3))
+
+    assert report.status == "ok", "the deferred cap is not a failure"
+    assert _archived_document(tmp_path, 1) == document(first), (
+        "the older eligible segment survives whole"
+    )
+    assert _archived_document(tmp_path, 2) == document((fresh,)), (
+        "the newer segment keeps only its eligible row"
+    )
+    assert [(action.action, action.sequence) for action in report.actions] == [
+        ("archived", 1),
+        ("archived", 2),
+        ("trimmed", 2),
+    ], "no whole deletion is chosen before the age trim is measured"
+    assert report.retained_records == 3, "the cap is met by age eviction alone"
+
+
+def test_a_byte_budget_waits_for_age_eviction_across_segments(tmp_path: Path) -> None:
+    """A byte budget deletes nothing whole while an age trim is unmeasured.
+
+    Sequence 2 holds forty expired rows and one fresh row, so its age trim
+    frees far more bytes than sequence 1 occupies. A byte walk that counted
+    the expired bytes as retained would delete sequence 1 whole, even though
+    the settled store fits the budget exactly.
+    """
+    first, fresh = _write_eviction_fixture(tmp_path, 40)
+    run(tmp_path, policy(1_000_000, max_age_days=3650))
+    published = {
+        entry.sequence: entry.logical_bytes
+        for entry in read_inventory(layout(tmp_path)).archived
+    }
+    budget = published[1] + len(document((fresh,)))
+
+    report = run(tmp_path, policy(1_000_000, max_age_days=30, max_bytes=budget))
+
+    assert report.status == "ok", "the deferred byte budget is not a failure"
+    assert _archived_document(tmp_path, 1) == document(first), (
+        "the older eligible segment survives whole"
+    )
+    assert _archived_document(tmp_path, 2) == document((fresh,)), (
+        "the newer segment keeps only its eligible row"
+    )
+    assert not [action for action in report.actions if action.action == "deleted"], (
+        "no whole deletion is chosen before the age trim is measured"
+    )
+    assert report.retained_bytes == budget, "the settled store fits the budget"

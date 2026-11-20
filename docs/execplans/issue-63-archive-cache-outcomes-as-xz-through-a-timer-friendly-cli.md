@@ -445,6 +445,26 @@ verified archive is published, and leaves compile admission untouched.
   `_assert_refused` helper, and the import-list and fixture-shape overlaps with
   the existing archive suites are recorded as reasoned `df12-duplication`
   exceptions.
+- [x] Whole-plan revision-13 remediation (2026-11-20): whole-segment budget
+  deletion, and every byte or record trim, now wait until the age outcome is
+  settled and no duplicated sequence is excluded from the candidates, because
+  both walks act on totals that still include rows a pending age trim removes;
+  age eviction is still planned from the cutoff alone, and the bounded
+  follow-up pass re-plans from the reconciled and measured inventory. A pass
+  that defers the walk still reports a configured but unmeasurable record cap.
+  `age_trims_are_unsettled` moved beside the walk it guards, keeping
+  `outcome_archive_plan` and `outcome_archive_budget` under 400 lines. Three
+  complete-run regressions pin the behaviour: a record cap and a byte budget
+  across two segments with a straddling age trim, and a duplicate pair whose
+  older deletion fails while the newer archive stays byte-identical. The two
+  planner tests that pinned same-pass age-and-byte composition now pin the
+  deferral, and the users' guide states that one firing may apply retention
+  over more than one pass. The focused duplication gate then found the two new
+  segment tests sharing one fixture outline and two import-prelude families
+  changed by the new imports: the fixture became one `_write_eviction_fixture`
+  helper, and the prelude families are recorded as reasoned `df12-duplication`
+  exceptions, including the plan module's typing-only prelude in the
+  repository-wide entry.
 
 ## Surprises & discoveries
 
@@ -758,6 +778,15 @@ verified archive is published, and leaves compile admission untouched.
   and its archive trimmed. The users' guide and the 0.2.0 migration guide say
   the same, and the migration guide now names `max_bytes = 0` as the other way
   to turn on the segmented store.
+- The byte and record walks are deferred whenever this pass's totals are
+  untrustworthy: a duplicated sequence is excluded from the candidates while
+  reconciliation settles it, or a surviving entry's span crosses the age
+  cutoff. A whole deletion chosen against such a total can remove an older
+  archive the settled store keeps, because `planned_size` and `planned_records`
+  still count the rows an age trim is about to drop. Age eviction is decided
+  from the cutoff alone and is planned either way; `retain()` re-plans from the
+  reconciled and measured inventory, and a pass that defers its walk still
+  reports a configured but unmeasurable record cap.
 
 ## Outcomes & retrospective
 
@@ -914,3 +943,15 @@ growth proves the traces observe rows; and disabling the publication gate makes
   active-file read moved to `outcome_archive_active`, and the new regression
   suites split into `test_outcome_archive_active` and
   `test_outcome_archive_straddling`, keeping every module under 400 lines.
+- Revision 13 records the whole-plan revision-12 assessment's two findings.
+  The byte and record walks no longer choose whole deletions, or any trim,
+  while a surviving entry straddles the age cutoff or a duplicated sequence is
+  excluded from the candidates: their totals would omit rows that are still
+  retained. Age eviction is planned from the cutoff alone, and the bounded
+  follow-up pass re-plans the budgets from the reconciled and measured
+  inventory; a pass that defers the walk still reports an unmeasurable record
+  cap. `age_trims_are_unsettled` now lives with the walk it guards in
+  `outcome_archive_budget`. New complete-run regressions cover a record cap
+  across two segments, a byte budget across two segments, and a duplicate pair
+  whose failed older deletion leaves the newer archive byte-identical; the
+  planner tests now pin the deferral rather than same-pass composition.

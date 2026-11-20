@@ -18,6 +18,7 @@ from pathlib import Path
 from outcome_archive_helpers import (
     NOW,
     archives,
+    document,
     layout,
     policy,
     records,
@@ -25,6 +26,7 @@ from outcome_archive_helpers import (
     run,
     write,
 )
+from segment_test_helpers import write_private
 
 from buildlimits import outcome_archive_encode, outcome_archive_files
 from buildlimits.outcome_archive import EXIT_TEMPFAIL
@@ -208,6 +210,55 @@ def test_a_failed_older_delete_stops_before_a_newer_trim(
     assert kept[0].sequence == 2, "the newer archive survives"
     assert kept[0].record_count == before[2], (
         "the straddler still holds every row it was archived with"
+    )
+
+
+def test_a_duplicate_pair_settles_before_the_cap_evicts_newer_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A budget never discards newer rows while an older pair is unsettled.
+
+    The initial plan excluded the duplicated sequence from the record cap, so
+    its eviction was planned over the newer archive alone. Re-planning from
+    the reconciled inventory counts both archives, and the older one is then
+    deleted first. When that deletion fails, the newer archive must still hold
+    every row it was published with.
+    """
+    older_rows = records(NOW - dt.timedelta(hours=2), 10)
+    newer_rows = records(NOW - dt.timedelta(hours=1), 10)
+    sealed = layout(tmp_path).sealed_dir
+    sealed.mkdir(parents=True)
+    write_private(sealed / segment_name(1), document(older_rows))
+    write_private(sealed / segment_name(2), document(newer_rows))
+    publish = policy(1_000_000, max_age_days=3650)
+    run(tmp_path, publish)
+    assert len(archives(tmp_path)) == 2, "the fixture publishes two archives"
+    store_layout = layout(tmp_path)
+    source = _restore_source(store_layout, 1)
+    newer = store_layout.archive_dir / archive_name(2)
+    before = newer.read_bytes()
+    real = outcome_archive_files.delete_archive
+
+    def refuse_older(context: ArchiveContext, entry: SegmentEntry) -> None:
+        """Refuse only the older archive's deletion."""
+        if entry.sequence == 1:
+            raise OSError(errno.EIO, "injected failure")
+        real(context, entry)
+
+    monkeypatch.setattr(outcome_archive_files, "delete_archive", refuse_older)
+
+    report = run(tmp_path, dc.replace(publish, max_records=5))
+
+    assert report.status == "corrupt", "the failed older deletion needs an operator"
+    assert report.failures == ((1, "unreadable"),), (
+        "only the older deletion is reported as failed"
+    )
+    assert not source.exists(), "reconciliation settles the duplicate first"
+    assert store_layout.archive_dir.joinpath(archive_name(1)).exists(), (
+        "the older archive survives its failed deletion"
+    )
+    assert newer.read_bytes() == before, (
+        "the newer archive is not rewritten while the older entry survives"
     )
 
 

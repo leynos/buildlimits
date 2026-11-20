@@ -1,8 +1,9 @@
 """Logical-byte boundaries in the archive planner.
 
 The budget counts logical uncompressed bytes, and the planner removes whole
-archives oldest-first before it trims a partial one. A trim composes with an
-age cutoff so one rewrite can apply both bounds.
+archives oldest-first before it trims a partial one. A byte trim is deferred
+until an age trim has been measured, because the allowance only fits the bytes
+that survive the age rule.
 """
 
 import datetime as dt
@@ -69,8 +70,14 @@ def test_a_partial_archive_is_trimmed_to_the_excess() -> None:
     assert decision.retained_bytes == 150, "the estimate is the exact budget"
 
 
-def test_a_byte_trim_keeps_the_age_trim_it_composes_with() -> None:
-    """One rewrite can apply both an age cutoff and a byte allowance."""
+def test_a_byte_trim_waits_until_the_age_trim_is_measured() -> None:
+    """A byte allowance is not planned from an untrimmed straddler.
+
+    The allowance fits the bytes that survive the age rule, so planning it
+    from the source the age trim has not yet rewritten would overstate the
+    excess and drop rows the policy allows. The age trim is planned alone and
+    the follow-up plan measures the archive it leaves behind.
+    """
     straddling = archived(
         1,
         logical_bytes=1000,
@@ -82,40 +89,35 @@ def test_a_byte_trim_keeps_the_age_trim_it_composes_with() -> None:
         policy(max_age_days=1, max_bytes=400),
     )
 
-    ((item, trim),) = decision.trims
-
-    assert item is straddling, "the same archive is rewritten once"
-    assert trim.before == NOW - dt.timedelta(days=1), "the age cutoff survives"
-    assert trim.allowed_bytes == 400, "the byte allowance is added"
-    assert trim.source_bytes == 1000, "the allowance is measured against the source"
+    assert decision.trims == ((straddling, Trim(before=NOW - dt.timedelta(days=1))),), (
+        "the age trim is planned without a byte allowance"
+    )
+    assert decision.retained_bytes == 1000, (
+        "the estimate keeps the bytes the untrimmed sidecar proves"
+    )
 
 
 def test_a_deleted_archive_is_never_also_trimmed() -> None:
-    """Byte planning may delete an archive the age plan already trimmed.
+    """A record cap may delete an archive the byte plan already trimmed.
 
-    Rewriting a file that is about to be removed would only churn it, so the
-    deletion wins and the surviving archive keeps its own trim.
+    The byte walk trims the oldest archive to half the budget, and the record
+    walk then finds that archive fits the record excess whole. Rewriting a
+    file that is about to be removed would only churn it, so the deletion wins
+    and no trim is published.
     """
-    straddling = tuple(
-        archived(
-            sequence,
-            logical_bytes=100,
-            span=(NOW - dt.timedelta(days=2), NOW),
-        )
-        for sequence in (1, 2)
-    )
+    first = archived(1, logical_bytes=100)
+    second = archived(2, logical_bytes=100)
 
     decision = plan(
-        Inventory(archived=straddling),
-        policy(max_age_days=1, max_bytes=100),
+        Inventory(archived=(first, second)),
+        policy(max_bytes=150, max_records=1),
     )
 
     assert [item.sequence for item in decision.deletes] == [1], (
-        "the oldest archive is removed whole"
+        "the byte-trimmed archive is removed whole"
     )
-    assert [(item.sequence, trim.before) for item, trim in decision.trims] == [
-        (2, NOW - dt.timedelta(days=1))
-    ], "only the surviving archive is rewritten"
+    assert not decision.trims, "a deleted archive is never also rewritten"
+    assert decision.retained_bytes == 100, "only the newer archive remains"
 
 
 def test_a_byte_budget_evicts_a_sealed_source_before_a_newer_archive() -> None:
