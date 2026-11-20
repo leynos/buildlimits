@@ -1,9 +1,13 @@
 """The user's guide's tested examples must name what the code reads."""
 
+import datetime as dt
 from pathlib import Path
 
-from buildlimits import outcome_archive_cli
+from outcome_retention_helpers import ROHGA_MAX_BYTES
+
+from buildlimits import config, outcome_archive_cli
 from buildlimits.journal_policy import ROUTINE_LINES_VARIABLE
+from buildlimits.outcome_retention import policy_from_settings
 from buildlimits.predict import benchmark_cli, dataset_cli
 
 GUIDE = Path(__file__).parents[1] / "docs" / "users-guide.md"
@@ -13,6 +17,7 @@ ARCHIVE_SERVICE = "buildlimits-outcome-archive-service"
 ARCHIVE_TIMER = "buildlimits-outcome-archive-timer"
 ARCHIVE_ENABLE = "buildlimits-outcome-archive-enable"
 ARCHIVE_COMMANDS = "buildlimits-outcome-archive-commands"
+RETENTION_EXAMPLE = "buildlimits-cache-outcomes-retention"
 
 
 def _marked_example(identifier: str, language: str) -> str:
@@ -116,6 +121,27 @@ def _ini_values(body: str) -> dict[str, tuple[str, ...]]:
         if equals and not line.lstrip().startswith(("#", ";")):
             values.setdefault(key.strip(), []).append(value.strip())
     return {key: tuple(items) for key, items in values.items()}
+
+
+def test_the_retention_example_states_the_policy_it_documents(
+    tmp_path: Path,
+) -> None:
+    """The guide's copyable keys are the policy the archiver applies.
+
+    A reader copies this block into a host's ``supervisor.toml``, so the file
+    it produces must load as the thirty-day, fifteen-gigabyte policy with no
+    count cap. Loading the published example rather than a copy keeps the
+    documented text and the tested text the same one.
+    """
+    path = tmp_path / "supervisor.toml"
+    path.write_text(_marked_example(RETENTION_EXAMPLE, "toml"), encoding="utf-8")
+
+    policy = policy_from_settings(config.load(path))
+
+    assert policy.max_age == dt.timedelta(days=30), "the example asks for 30 days"
+    assert policy.max_bytes == ROHGA_MAX_BYTES, "and fifteen decimal gigabytes"
+    assert policy.max_records is None, "with no count cap to truncate history"
+    assert policy.is_segmented is True, "the budget rotates the active file"
 
 
 def test_the_archive_service_runs_a_subcommand_the_command_accepts() -> None:

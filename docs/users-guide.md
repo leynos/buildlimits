@@ -122,7 +122,7 @@ with exit status 2, and nothing is half-applied.
 | `cache_outcomes`                        | `off`                                          | `record` opts in to observation-only cache outcome recording; it requires `cache_mode = "sccache"`                                                                                                          |
 | `cache_outcomes_max_age_days`           | `30`                                           | Oldest retained outcome age in days; `0` disables age eviction                                                                                                                                              |
 | `cache_outcomes_max_bytes`              | `12582912` (12 MiB)                            | Logical uncompressed bytes retained across active, sealed and archived history; `0` disables the byte bound and requires segmentation. The default is the legacy 12 MiB bound                               |
-| `cache_outcomes_max_records`            | `0`                                            | Cap on the rows the writer keeps in active history; `0` keeps the legacy 10,000-row cap in legacy mode and means no cap in segmented mode. The cap never evicts sealed or archived history                  |
+| `cache_outcomes_max_records`            | `0`                                            | Cap on retained rows: the writer applies it to the active file on compaction and the archiver evicts the oldest closed history to meet it. `0` keeps the legacy 10,000-row cap in legacy mode and means no cap in segmented mode |
 | `cache_outcomes_archive_headroom_bytes` | `25165824` (24 MiB)                            | Temporary disk space an archive run may use; never counted against retained bytes. Must hold at least one 12 MiB segment                                                                                    |
 | `cache_outcomes_archive_preset`         | `6`                                            | XZ preset from 0 (fastest) to 9 (smallest)                                                                                                                                                                  |
 | `sccache_executable`                    | `sccache`                                      | The sccache client used in `sccache` mode                                                                                                                                                                   |
@@ -404,6 +404,7 @@ Every retention key requires `cache_outcomes = "record"`.
 To retain up to 30 days or 15,000,000,000 logical bytes, whichever is reached
 first, with no hidden row cap:
 
+<!-- tested-example: buildlimits-cache-outcomes-retention -->
 ```toml
 cache_outcomes = "record"
 cache_outcomes_max_age_days = 30
@@ -541,8 +542,10 @@ lower bounds, not a claim that history was lost. Retained counts are not the
 recorder's cumulative `attributed` and `readings` counters, and neither is a
 journal reader's `--max-records` query cap.
 
-`evictions` counts the trims and deletions a run performed under `age`, `bytes`
-and `age_and_bytes`; every key is always present. Each action in `actions` also
+`evictions` counts the trims and deletions a run performed under `age`, `bytes`,
+`records`, `age_and_bytes`, `age_and_records`, `bytes_and_records` and
+`age_and_bytes_and_records`; every key is always present, and only the bounds
+that acted are non-zero. Each action in `actions` also
 names its reason, and `failures`, `gaps`, `missing_sidecars`,
 `corrupt_sidecars` and `orphan_sidecars` identify history that could not be
 processed. `maintenance` reports whether `retention.json` and `last-run.json`
