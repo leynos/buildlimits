@@ -156,7 +156,11 @@ disagree about a bound.
   measured history: while a surviving sealed source has no writer metadata, or
   an archive has no trustworthy sidecar, the plan cannot tell which rows will
   survive and leaves the whole budget to its follow-up pass rather than choose
-  a deletion from a partial total.
+  a deletion from a partial total. A source the writer seals during the run is
+  discovered by that follow-up pass and archived before the budget is planned
+  over it, so a cap can still be met in one firing. If new seals keep the
+  bounded follow-up passes from settling the store, the run reports `unsettled`
+  and exits 75 rather than claiming success; the next firing retries.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
   segment, or a budget of zero, makes the writer seal closed segments. The
   default budget remains the legacy 12 MiB, so a deployment that writes none of
@@ -201,7 +205,11 @@ Ownership follows file state, not a shared lock.
 - Every archiver mutation runs under a non-blocking exclusive `flock` on
   `cache-outcomes.archive/archive.lock`. A second invocation reports `busy` and
   exits 75 instead of waiting. The writer never takes that lock, so there is no
-  shared lock and no lock ordering to get wrong.
+  shared lock and no lock ordering to get wrong. Because the writer can seal
+  between the plan and its follow-up passes, each bounded pass re-reads the
+  store and archives what it finds before applying the budget. Work that still
+  remains after the last pass is reported as `unsettled`, also retryable,
+  rather than treating the plan-time snapshot as the whole store.
 
 A sealed source is immutable until its verified archive is published; after
 that the archiver owns the segment's lifecycle. Table 2 names the three states

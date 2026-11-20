@@ -24,7 +24,9 @@ EXIT_USAGE = 2
 EXIT_CORRUPT = 3
 EXIT_TEMPFAIL = 75
 
-type RunStatus = typ.Literal["ok", "failed", "corrupt", "busy", "no_headroom"]
+type RunStatus = typ.Literal[
+    "ok", "failed", "corrupt", "busy", "no_headroom", "unsettled"
+]
 
 __all__ = [
     "ARCHIVE_SCHEMA",
@@ -147,7 +149,7 @@ class RunReport:
             Zero for success, one for a failed run, two for usage, three for
             corruption, and 75 when a retry may succeed.
         """
-        if self.status in {"busy", "no_headroom"}:
+        if self.status in {"busy", "no_headroom", "unsettled"}:
             return EXIT_TEMPFAIL
         if self.status == "corrupt":
             return EXIT_CORRUPT

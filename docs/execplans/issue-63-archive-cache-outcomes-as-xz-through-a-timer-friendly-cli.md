@@ -493,6 +493,20 @@ verified archive is published, and leaves compile admission untouched.
   exact-fit deletion went on to trim the next archive; the existing planner
   tests pin the corrected behaviour. All seven commit gates pass once each on
   the final tree.
+- [x] Whole-plan revision-16 remediation (2026-11-20): the writer never takes
+  the archive lock, so it can seal a source after the run has planned. Each of
+  the bounded follow-up passes now re-reads the store and performs the archive,
+  reconcile, heal and orphan work it discovers before planning the budget over
+  the settled inventory, so a source that arrives mid-run is still archived,
+  measured and capped in the same firing. The follow-up loop moved to
+  `outcome_archive_retain`, which narrows every pass to work the run has not
+  already applied and leaves a failed eviction, and every newer one, for the
+  next firing; work still pending after three passes reports the new retryable
+  `unsettled` status at exit 75 instead of `ok`. Two deterministic
+  writer/archiver interleaving regressions pin a mid-run seal being archived
+  and capped at `retained_records == 5` with status `ok`, and a seal on every
+  pass reporting `unsettled` at exit 75, which the next run settles. All seven
+  commit gates pass once each on the final tree.
 
 ## Surprises & discoveries
 
@@ -653,6 +667,14 @@ verified archive is published, and leaves compile admission untouched.
   nothing about its span, so an entry that age eviction will remove whole still
   inflates the total the byte walk acts on, and a budget that counts it can
   delete an older archive the settled store keeps.
+- Narrowing a follow-up plan to the work a run has not done is easy to do in a
+  way that inverts eviction order. Filtering failed sequences out of the
+  follow-up trims and deletes let a newer trim run after an older deletion had
+  failed: the store then discarded rows from the newest archive while the
+  oldest entry the budget asked for was still present. The failed-eviction
+  barrier, which stops every step at or after the oldest failed sequence, is
+  what keeps the follow-up pass as strictly oldest-first as the first plan; a
+  regression test that fails only the older deletion pins it.
 
 ## Decision log
 
@@ -847,6 +869,23 @@ verified archive is published, and leaves compile admission untouched.
   allocations are O(segments). The claim now says so, and the segment-count
   measurement bounds the share at about 4 KiB per segment instead of asserting
   a segment independence the code does not provide.
+- Each follow-up pass re-plans the whole store and performs the archive,
+  reconcile, heal and orphan work it discovers before applying the budget, and
+  the run reports `unsettled` (exit 75) when work remains after three passes.
+  The writer can seal between the first plan and the first pass, so the plan's
+  snapshot is not the store the budgets must describe; discovering the seal
+  inside the pass is what lets one firing meet a record cap. `unsettled` is
+  deliberately retryable rather than a failure: the store is intact, and the
+  next firing continues. The follow-up loop lives in `outcome_archive_retain` so
+  `outcome_archive_run` stays a per-segment executor and both modules stay
+  under the 400-line limit.
+- The follow-up pass never retries an eviction step that failed in this run,
+  and it stops every step at or after the oldest such sequence. The first plan
+  walks trims and deletions in sequence order, ending at the first failure, so
+  a pass that skipped only the failed sequence would let a newer trim or
+  deletion discard newer history while the older entry the budget asked for
+  remained. The barrier keeps the two walks the same order; the failure is
+  already in the report and the next firing retries it.
 
 ## Outcomes & retrospective
 
@@ -879,7 +918,10 @@ Invariants:
 4. Retained logical bytes never exceed the configured budget after a successful
    run unless one active segment plus one record transiently exceeds it. A plan
    acts on measured history only: while a surviving entry's size, span or count
-   is unknown, it leaves the budget to its follow-up pass.
+   is unknown, it leaves the budget to its follow-up pass. A run reports `ok`
+   only when its follow-up passes settle the store as it stands after them; a
+   source the writer seals mid-run is archived and measured by a pass, and work
+   that still remains reports the retryable `unsettled` status instead.
 5. Eviction is oldest-first; records at the cutoff survive.
 6. Iterating history yields records in sequence order: archived or sealed
    segments ascending, then the active file.
@@ -924,6 +966,16 @@ Methods and evidence:
   (`tests/test_outcome_archive_retention.py`), and the planner and CLI tests
   prove `retention_deferred` for a walk that stops at a sealed source it cannot
   trim.
+- Writer/archiver interleaving regressions
+  (`tests/test_outcome_archive_interleaving.py`) drive the real run and seal a
+  source through the archiver's archive seam at a deterministic point. One
+  proves a source the writer seals after the plan is archived and then trimmed
+  by the same firing, ending at `retained_records == 5` with status `ok` and no
+  sealed source left; the other seals on every pass and proves the run reports
+  `unsettled` at exit 75 with the last source still present, after which the
+  next run settles it to `ok`. Both failed on the pre-fix code for the intended
+  reasons, and the failed-eviction barrier is pinned by
+  `test_a_failed_older_delete_stops_before_a_newer_trim`.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
@@ -934,7 +986,12 @@ growth proves the traces observe rows; the segment-count test asserts its
 fixture really sealed more than three times the segments before comparing
 peaks, so a writer that ignored the segment size could not make it pass
 vacuously; and disabling the publication gate makes
-`test_a_temporary_that_does_not_match_its_facts_is_not_published` fail.
+`test_a_temporary_that_does_not_match_its_facts_is_not_published` fail. The
+interleaving regressions assert the sealed source exists before asserting it
+was archived, so a seam that never fired could not make either pass; the
+unsettled test asserts the source is still present as well as the status, so a
+run that archived everything and mislabelled itself cannot pass, and the
+following run's `ok` proves the reported work was real.
 
 ## Revision note
 
@@ -1055,3 +1112,15 @@ vacuously; and disabling the publication gate makes
   archive byte-identical while the newer unmeasured source is archived,
   measured and age-evicted, and a CLI regression covers a measured sealed
   source that straddles a byte budget, whose archive the real run then trims.
+- Revision 16 records the whole-plan revision-15 assessment's finding. The
+  writer can seal a source between the plan and the follow-up passes, so each
+  pass now re-reads the store and performs the archive, reconcile, heal and
+  orphan work it discovers before applying the budget; a record cap is
+  therefore met in one firing even when the writer seals mid-run. The passes
+  are bounded, and work still pending after them reports the new retryable
+  `unsettled` status at exit 75 rather than `ok`. The follow-up loop moved to
+  `outcome_archive_retain`, which narrows each pass to work this run has not
+  applied and applies the failed-eviction barrier so a newer trim never follows
+  an older failed deletion. Two deterministic interleaving regressions pin the
+  archive-and-cap outcome and the unsettled status, and the users' guide and
+  ADR 0010 describe both.

@@ -399,7 +399,12 @@ missing or corrupt, and while a sealed source has no writer metadata: none of
 them is measured well enough to choose a whole deletion or a trim. A walk that
 reaches an entry it cannot yet rewrite, such as a sealed source larger than the
 remaining allowance, also stops there and leaves the rest of the budget to the
-follow-up pass.
+follow-up pass. The writer does not take the archive lock, so it can also seal
+a source after the run has planned. Each follow-up pass re-reads the store and
+archives what it finds before applying the budget, so a source that arrives
+mid-run is still measured and capped in the same firing. The passes are
+bounded: if new seals keep arriving and work remains, the run reports
+`status: unsettled` and exits 75, and the next timer firing continues.
 
 A plan that leaves a configured budget to a later pass reports
 `retention: deferred` on its plain output and `"retention_deferred": true` under
@@ -484,8 +489,10 @@ The command maps every outcome to a closed exit status a timer can act on:
   local path, on standard error.
 - `3`: corruption that needs an operator, such as a segment that cannot be
   decoded, a damaged archive, or a sidecar that cannot be repaired.
-- `75`: a temporary condition, such as another run holding the lock or
-  insufficient temporary headroom. The next timer firing should retry.
+- `75`: a temporary condition, such as another run holding the lock,
+  insufficient temporary headroom, or retention that could not settle within
+  the run's bounded follow-up passes because the writer kept sealing new
+  sources. The next timer firing should retry.
 
 ### Size the archive timer unit
 

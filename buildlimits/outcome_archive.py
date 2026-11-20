@@ -15,6 +15,7 @@ from buildlimits import (
     outcome_archive_active,
     outcome_archive_fs,
     outcome_archive_lock,
+    outcome_archive_retain,
     outcome_archive_run,
     outcome_segment_inventory,
     outcome_segment_state,
@@ -186,7 +187,7 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
     )
     outcome = outcome_archive_run.RunOutcome()
     outcome_archive_run.perform(run, outcome)
-    outcome_archive_run.retain(run, outcome)
+    outcome.retention_unsettled = not outcome_archive_retain.retain(run, outcome)
     floor = _retention_floor(
         outcome_segment_inventory.read_inventory(layout),
         outcome_segment_state.read_retention_floor(layout),
@@ -231,10 +232,10 @@ def _run_status(outcome: outcome_archive_run.RunOutcome) -> RunStatus:
     Returns
     -------
     RunStatus
-        ``ok``, ``no_headroom`` or ``corrupt``.
+        ``ok``, ``unsettled``, ``no_headroom`` or ``corrupt``.
     """
     if not outcome.failures:
-        return "ok"
+        return "unsettled" if outcome.retention_unsettled else "ok"
     if all(reason == "no_headroom" for _sequence, reason in outcome.failures):
         return "no_headroom"
     return "corrupt"
