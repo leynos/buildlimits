@@ -183,23 +183,6 @@ Ownership follows file state, not a shared lock.
   next sequence counter and the segment metadata durably, then renames the
   active file into the sealed directory and installs a fresh header-only active
   file. An empty store installs a header-only active file instead of claiming a
-  sequence, so the sequence series has no artificial first gap. The age bound
-  is applied on ordinary appends as well: once the oldest retained row is older
-  than the cutoff, the writer compacts the active file, so a quiet store cannot
-  keep expired rows until the next restart. Compaction drops every row observed
-  before the cutoff, which makes the check self-limiting: it costs a clock read
-  per append and a rewrite only when the bound is crossed.
-- The archiver never appends to the active file and never takes the writer's
-  queue. It reads the file's size with `lstat` to include those bytes in the
-  retained total, and streams its rows once per plan to count them against the
-  record cap. Because the writer may be mid-append, an unterminated final row
-  is dropped exactly as a torn tail is dropped from a sealed source; a file
-  that cannot be read at all contributes its size alone to the diagnostic
-  totals, a configured byte budget is deferred until the next firing can read
-  its committed bytes, and that firing counts its rows again. The report's
-  `retained` document is built from the same settled reading as the plan, so
-  its rows, bytes and span describe the version the run measured; a file that
-  cannot be decoded leaves its rows and span unmeasured rather than empty.
 - Every archiver mutation runs under a non-blocking exclusive `flock` on
   `cache-outcomes.archive/archive.lock`. A second invocation reports `busy` and
   exits 75 instead of waiting. The writer never takes that lock, so there is no

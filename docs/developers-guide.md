@@ -388,7 +388,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
 | `outcome_archive_state`                                                            | Deriving the retention floor and persisting the floor and run report                                                                                        |
 | `outcome_archive_context`                                                          | Shared context and result values for one archive run                                                                                                        |
-| `outcome_archive_active`                                                           | Bounded, read-only measurement of the active file for diagnostics only                                                                                      |
+| `outcome_archive_active`                                                           | Bounded, read-only measurement of the active file for the byte budget, record cap and diagnostics                                                           |
 | `outcome_archive_plan`                                                             | Pure retention and repair plan from the inventory                                                                                                           |
 | `outcome_archive_active`                                                           | Lock-free bounded read of the writer's active file through one descriptor, and the non-regular path it refuses                                              |
 | `outcome_archive_age`                                                              | Which closed history the age rule evicts whole, and which straddling archive it trims                                                                       |
@@ -1018,9 +1018,6 @@ oversized active file is sealed, and an active file whose oldest record
 predates the age cutoff is compacted, so a store that stayed small is not
 exempt from the age bound.
 
-The archiver in `outcome_archive` reads the active file once per plan through
-the bounded no-follow reader, to count the rows and span the writer currently
-holds. It never writes or replaces the file and never takes its queue.
 `outcome_archive_lock` takes a non-blocking exclusive `flock` on
 `cache-outcomes.archive/archive.lock` for the whole run, and its headroom guard
 refuses a run whose temporary files cannot fit; a second invocation reports
@@ -1203,8 +1200,10 @@ inventory dependency so the pure shapes do not acquire it. The status document,
 disagree about a policy. Neither shape is a cumulative recorder counter or a
 journal query cap, and `complete=False` marks a lower bound rather than an
 exact count. `outcome_archive_active.read_active_history` performs the one
-bounded, read-only read of the active file that feeds the archiver's diagnostic
-snapshot; retention decisions use the file's `lstat` size only.
+bounded, read-only read of the active file. Its measured length is the file's
+contribution to the byte budget and its row count is the contribution to the
+record cap; the same snapshot feeds the archiver's diagnostic `retained`
+document.
 
 `outcome_archive_cli` is the timer-facing surface. `inspect` is a dry run by
 definition; `run --dry-run` plans without taking the lock or writing state; and

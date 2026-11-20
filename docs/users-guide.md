@@ -408,21 +408,6 @@ retained history. The JSON carries the same figures as `retained_records`,
 `observed_from`, `observed_until` and `unmeasured_entries`.
 
 The writer seals the active file when an append would take it past 12 MiB, so
-the archiver only ever rewrites closed segments. The archiver compresses each
-sealed segment to XZ, verifies the archive against its source, publishes it,
-and only then removes the plain source. A segment that retention has placed
-wholly outside the bounds is the exception: it is removed without being
-compressed, so a run never spends its scratch space archiving history the same
-plan deletes. It holds a private lock of its own and never writes or replaces
-the active file. It does read the active file to measure the rows and span the
-writer currently holds; the read is bounded and refuses a path that is not a
-regular file. The size and the rows come from the same opened version, so a
-writer that replaces the path mid-read cannot pair one version's bytes with
-another's rows. A writer that appends while the scan runs is detected by
-comparing the size immediately before and after it, and the scan is retried so
-both figures describe the same version; a final row whose newline has not been
-written is the writer's append in flight, which a failed write truncates back
-out, so it is not counted.
 
 Retention is one policy shared by the writer, the archiver and the read-only
 history view. Whichever bound is reached first evicts the oldest history:
