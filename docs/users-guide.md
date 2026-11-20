@@ -661,7 +661,10 @@ force, and what history it currently retains.
   measures covers bytes no row accounts for. Its JSON form carries the same
   `limits` and `active` documents.
 - `retention.json` records the retention floor, the retained logical bytes,
-  the budget, the cutoff, and the `limits` and `retained` documents.
+  the budget, the cutoff, and the `limits` and `retained` documents. The floor
+  advances only across a contiguous run of deletions from its recorded value,
+  so an archive removed beyond a sequence that is already missing does not
+  excuse that missing sequence: it keeps being reported as a gap.
 - `last-run.json` is the full run report. Its `limits`, `retained`,
   `evictions` and `maintenance` sections are the documents the `--json` form
   prints.

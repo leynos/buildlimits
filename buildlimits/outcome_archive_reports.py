@@ -32,6 +32,7 @@ __all__ = [
     "UNREADABLE",
     "Unfinished",
     "after_work_failure",
+    "contiguous_floor",
     "dry_report",
     "unfinished",
     "write_deleted_floor",
@@ -288,6 +289,43 @@ def write_floor_after_failure(
         write_floor(layout, floor, report)
 
 
+def contiguous_floor(start: int, deleted: cabc.Iterable[int]) -> int:
+    """Advance a floor across a contiguous run of intentional deletions.
+
+    A single floor number can only say that every sequence below it was
+    removed on purpose. Advancing past a deletion that lies beyond a hole
+    would excuse the hole as well, so the walk stops at the first sequence
+    the run did not remove. A deletion beyond that stop is reported as a gap
+    rather than allowed to hide a sequence that may have been lost.
+
+    Parameters
+    ----------
+    start : int
+        The lowest sequence the floor may report as missing.
+    deleted : Iterable[int]
+        The sequences the run removed from the archive directory.
+
+    Returns
+    -------
+    int
+        The advanced floor.
+
+    Examples
+    --------
+    >>> contiguous_floor(1, (1, 2, 3))
+    4
+    >>> contiguous_floor(1, (1, 3))
+    2
+    >>> contiguous_floor(2, (3,))
+    2
+    """
+    removed = set(deleted)
+    floor = start
+    while floor in removed:
+        floor += 1
+    return floor
+
+
 def write_deleted_floor(
     layout: SegmentLayout, previous: int | None, deleted: tuple[int, ...]
 ) -> None:
@@ -297,10 +335,13 @@ def write_deleted_floor(
     later run that deletes nothing derives its floor from ``retention.json``
     alone, so the floor is written from the completed deletions and the floor
     the last successful run recorded; no further inventory read is needed.
-    Only the floor and its time are recorded. The failed run has no
-    measurement to describe, and the previous document's diagnostics describe
-    a state it never observed. A write failure is suppressed because the
-    caller already reports the run as failed.
+    The floor advances only across a contiguous run of deletions from the
+    recorded floor, so a deletion beyond a hole cannot excuse that hole, and
+    nothing is written when the run did not advance it. Only the floor and
+    its time are recorded. The failed run has no measurement to describe, and
+    the previous document's diagnostics describe a state it never observed. A
+    write failure is suppressed because the caller already reports the run as
+    failed.
 
     Parameters
     ----------
@@ -313,7 +354,10 @@ def write_deleted_floor(
     """
     if not deleted:
         return
-    floor = max(previous or 0, max(deleted) + 1)
+    start = 1 if previous is None else max(previous, 1)
+    floor = contiguous_floor(start, deleted)
+    if floor <= start:
+        return
     with contextlib.suppress(OSError):
         outcome_archive_fs.atomic_write_json(
             layout.retention_file,
