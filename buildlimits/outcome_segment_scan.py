@@ -272,10 +272,10 @@ def _archive_entry(
     """Describe one archive, trusting its sidecar only when one was validated.
 
     Without a trustworthy sidecar the archive's logical size falls back to its
-    physical size. For a compressed archive that figure is a lower bound: it
-    cannot overstate the bytes the archive represents, but it can understate
-    them, so a run that heals sidecars plans retention again from the repaired
-    inventory before it evicts anything.
+    physical size. That figure does not describe the history the archive
+    holds. The container header can make it larger than the content, so it
+    overstates as well as understates, and a run that heals sidecars plans
+    retention again from the repaired inventory before it evicts anything.
 
     Parameters
     ----------

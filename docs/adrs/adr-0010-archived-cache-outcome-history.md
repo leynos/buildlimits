@@ -77,8 +77,11 @@ record covers the command and the storage contract it acts on.
 
 - Only the writer thread appends to, truncates, replaces or renames the active
   file.
-- Compression and verification stream in fixed-size chunks; peak memory must
-  not follow segment or history size.
+- Compression and verification stream in fixed-size chunks and never buffer a
+  segment's rows. The inventory, plan and report hold one small record per
+  segment, so peak memory is the encoder's working set plus a bounded
+  per-segment allocation, measured at about 4 KiB; it must not follow the
+  retained history's size.
 - XZ comes from the standard-library `lzma` module with an explicit preset and
   CRC64 check.
 - Publication uses a private temporary file, an `fsync`, a no-clobber link and
@@ -221,8 +224,12 @@ and is validated in the range 0 to 9. No runtime dependency is added: `lzma`
 ships with CPython and the package's dependency set is unchanged.
 
 Reading and writing stream in `CHUNK_BYTES` (64 KiB) chunks with at most one
-row buffered, so peak memory follows the chunk size and preset rather than the
-segment or the retained history.
+row buffered, so the encoder and decoder peaks follow the chunk size and preset
+rather than the segment or the retained history. The surrounding bookkeeping
+does not: the scan holds one entry per segment, the plan one action per entry
+and the report one record per performed action, which is O(segments) and
+measured at about 4 KiB per segment. The bound is therefore the preset's
+working set plus that share, never the history's size.
 
 Before any filesystem publication, the temporary archive is decompressed to its
 declared end and decoded as a document. Verification requires:
@@ -444,6 +451,9 @@ re-encoded, reordered or re-timestamped.
 
 - Bounded memory depends on the streaming design. A high preset raises the
   encoder's own working set, so the preset trades memory and CPU against size.
+  The plan and report also keep one small record per segment; with a very small
+  `cache_outcomes_segment_bytes`, that bookkeeping grows with the segment count
+  even though no segment's rows are ever buffered.
 - Verification proves the archive matches what was written, not that the source
   rows were meaningful; a malformed row is caught only by the record codec.
 - A time-based trim cannot be planned in bytes without reading rows, so the

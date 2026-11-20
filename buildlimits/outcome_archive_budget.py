@@ -7,10 +7,8 @@ straddles the remaining allowance; every estimate is conservative, because a
 planned trim never frees more bytes than its sidecar proves.
 
 A sealed source counts towards both budgets and can be evicted whole, but it
-is never trimmed: it is still uncompressed. A sealed source that straddles an
-allowance therefore ends the walk, and the follow-up plan trims the archive it
-becomes once this run has compressed it. Walking past it would delete newer
-history sooner than older history, which is not what a retention budget means.
+is never trimmed: it is still uncompressed, so a straddler ends the walk and
+the follow-up plan trims the archive it becomes.
 
 A count trim is only planned for an archive that no time or byte trim already
 rewrites. Those trims drop rows the planner never counted, at positions a
@@ -19,13 +17,13 @@ in addition to the rows the other rule removes, discarding rows the policy
 allows. Such a straddler ends the count walk, and the follow-up plan applies
 the count to the measured document the other trim leaves behind.
 
-The walks are only sound over a store whose age trims are settled. A time trim
-removes rows no planner can count, so a total that still includes them
-overstates what the store will retain, and deleting a whole older entry
-against that total would discard history the settled store keeps. The caller
-therefore plans the byte and record walks only when no surviving entry
-straddles the cutoff, and the follow-up plan runs them once the trim's sidecar
-has measured the result.
+The walks are only sound over measured history. A time trim removes rows no
+planner can count, so a total that still includes them overstates what the
+store will retain, and an archive with no trustworthy sidecar is counted at
+its compressed file's size, which need not describe the history it holds.
+Deleting a whole older entry against either total would discard history the
+settled store keeps, so the walks run only once every surviving entry has
+been measured; the follow-up plan runs them after the trim and the rebuild.
 """
 
 import dataclasses as dc
@@ -44,7 +42,7 @@ __all__ = [
     "ActiveHistory",
     "Budget",
     "UnknownActiveHistoryError",
-    "age_trims_are_unsettled",
+    "budget_totals_are_unsettled",
     "plan_byte_steps",
     "plan_record_steps",
     "planned_records",
@@ -163,22 +161,15 @@ def plan_record_steps(
 ) -> None:
     """Evict the oldest entries until the retained record cap is met.
 
-    Only an explicitly configured cap applies. The cap bounds the whole
-    retained store, so the rows in the active file and in every closed entry
-    count towards it. The writer owns the active file and retention never
-    removes its rows, but a sealed source is closed history and is evicted
-    whole like an archive.
-
-    ``deletes`` and ``trims`` are updated in place, exactly as the byte budget
-    does. An entry with no trustworthy count ends the walk rather than being
-    skipped: evicting a newer entry ahead of older history whose count is
-    merely unknown would break oldest-first retention. The heal step repairs a
-    missing sidecar and the follow-up plan then continues from the count it
-    rebuilt.
+    Only an explicitly configured cap applies, and it bounds the whole
+    retained store: the active file's rows and every closed entry's rows count
+    towards it. A sealed source is closed history and is evicted whole like an
+    archive. ``deletes`` and ``trims`` are updated in place, exactly as the
+    byte budget does.
 
     The cap's precondition is checked by ``require_measurable_active``, which
-    raises when the active file's rows were not read: they count towards the
-    cap, so no plan can show the store is within it.
+    raises when the active file's rows were not read: no plan can show the
+    store is within a cap it cannot count against.
     """
     require_measurable_active(budget)
     max_records = budget.policy.max_records
@@ -194,17 +185,23 @@ def plan_record_steps(
     walk.evict(retained - max_records, planned_records, _record_trim)
 
 
-def age_trims_are_unsettled(
+def budget_totals_are_unsettled(
     candidates: tuple[SegmentEntry, ...],
     cutoff: dt.datetime | None,
     deletes: cabc.Mapping[int, SegmentEntry],
 ) -> bool:
-    """Whether a surviving entry's row count still depends on an age trim.
+    """Whether a surviving entry's planned value depends on a measurement.
 
-    The walks act on the counts their sidecars describe, so an entry a time
-    trim is about to shorten makes their totals overstate what will be kept. An
-    entry with no trustworthy sidecar is unsettled for the same reason: the
-    heal step rebuilds it, and the next pass measures what it recorded.
+    The walks act on the counts and sizes their sidecars describe, so a total
+    is only trustworthy when every surviving entry has been measured. Two
+    states break that. An entry whose span crosses the cutoff still holds rows
+    a time trim removes, so the total counts rows that will not survive. An
+    archive with no trustworthy sidecar is counted at its XZ file's size,
+    which is not the history it holds: the container's own header makes a
+    small document's file larger than its content, so that fallback can
+    overstate the store as well as understate it. The run repairs both -- it
+    applies the age trim and rebuilds the sidecar -- and the follow-up pass
+    measures the result.
 
     Parameters
     ----------
@@ -218,21 +215,29 @@ def age_trims_are_unsettled(
     Returns
     -------
     bool
-        True when the pass cannot know how many rows a surviving entry keeps:
-        its span crosses the cutoff, or no trustworthy sidecar describes it.
+        True when a surviving entry's planned value is not yet measured.
     """
-    if cutoff is None:
-        return False
     return any(
         entry.sequence not in deletes
         and (
-            not entry.has_metadata
-            or (
-                entry.first_observed_at is not None and entry.first_observed_at < cutoff
-            )
+            (entry.state == "archived" and not entry.has_metadata)
+            or _straddles_cutoff(entry, cutoff)
         )
         for entry in candidates
     )
+
+
+def _straddles_cutoff(entry: SegmentEntry, cutoff: dt.datetime | None) -> bool:
+    """Whether an entry still holds rows an age trim removes.
+
+    Returns
+    -------
+    bool
+        True when the entry's earliest row is older than the cutoff.
+    """
+    if cutoff is None or entry.first_observed_at is None:
+        return False
+    return entry.first_observed_at < cutoff
 
 
 @dc.dataclass(slots=True)
@@ -288,17 +293,15 @@ class _BudgetWalk:
         """Delete whole entries oldest-first, then trim the one that straddles.
 
         An entry is deleted while its planned value fits inside the remaining
-        excess. A deletion may meet the allowance exactly, so the walk stops as
-        soon as the excess is covered instead of churning a later archive. The
-        first entry that does not fit is trimmed instead, so no later entry is
-        rewritten when the budget is already met. A sealed source is never
-        given an allowance, because it cannot be rewritten until this run has
-        compressed it: the walk stops and the follow-up plan trims the archive
-        it becomes. An entry whose value cannot be planned also ends the walk,
-        because evicting newer history ahead of older history whose count is
-        merely unknown would break oldest-first retention. A trim callable may
-        likewise decline to compose with the entry's existing trim, which ends
-        the walk the same way and leaves the decision to the follow-up plan.
+        excess, and the walk stops as soon as the excess is covered rather than
+        churning a later archive. The first entry that does not fit is trimmed
+        instead, so no later entry is rewritten when the budget is met. A
+        sealed source never gets an allowance, because it cannot be rewritten
+        until this run has compressed it, and an entry whose value cannot be
+        planned ends the walk: evicting newer history ahead of older history
+        whose count is merely unknown would break oldest-first retention. A
+        trim callable may likewise decline to compose, which leaves the
+        decision to the follow-up plan.
 
         Parameters
         ----------

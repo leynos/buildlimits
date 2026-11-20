@@ -115,7 +115,8 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
     true after one successful run instead of leaving the excess for the next
     timer firing. A run that only healed sidecars re-plans too, because the
     first plan had to fall back to each archive's physical size where a
-    sidecar was missing or corrupt, which understates the logical bytes.
+    sidecar was missing or corrupt, which does not describe the logical bytes
+    the archive holds.
 
     A count trim is decided only after the time or byte trim it would compose
     with has been applied and measured, so the passes continue while the

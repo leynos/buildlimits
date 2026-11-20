@@ -394,7 +394,15 @@ A single firing may apply retention over more than one pass. The byte and
 record walks act on the rows that survive the age rule, so while an age trim is
 still pending the run plans no whole deletion and no byte or record trim; it
 applies the age trim first and re-plans from the measured history. The same
-applies after a duplicated source is reconciled.
+applies after a duplicated source is reconciled, and while an archive's sidecar
+is missing or corrupt: its logical size is then unknown, so no budget is
+decided from the file's own compressed size.
+
+A plan that leaves a configured budget to a later pass reports
+`retention: deferred` on its plain output and `"retention_deferred": true` under
+`plan` in JSON. Its `trim` and `delete` counts describe only what the first
+plan could decide, so `inspect` and `run --dry-run` cannot be read as the run's
+final eviction; the run's `actions` list records what it performed.
 
 The writer also enforces the age bound when it starts, and on every append: an
 active file whose oldest record predates the cutoff, and which is not also

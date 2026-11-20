@@ -56,6 +56,40 @@ def test_a_duplicate_is_reconciled_rather_than_archived() -> None:
     )
 
 
+def test_a_reconciled_duplicate_defers_a_configured_budget() -> None:
+    """A cap is not decided while a duplicated sequence is excluded.
+
+    Reconciliation settles the pair in the same run, so the budget is decided
+    by the follow-up plan instead of from a total that leaves the duplicated
+    history out.
+    """
+    inventory = Inventory(sealed=(sealed(1),), archived=(archived(1), archived(2)))
+
+    decision = plan(inventory, policy(max_records=1))
+
+    assert decision.retention_deferred is True, "the cap is left to the follow-up"
+    assert not decision.trims and not decision.deletes, "nothing is evicted yet"
+
+
+def test_an_unmeasured_archive_defers_a_configured_byte_budget() -> None:
+    """An archive counted at its file size leaves the byte budget undecided."""
+    inventory = Inventory(archived=(archived(1, span=None),), missing_sidecars=(1,))
+
+    decision = plan(inventory, policy(max_bytes=10))
+
+    assert [item.sequence for item in decision.heal] == [1], "the sidecar is rebuilt"
+    assert decision.retention_deferred is True, "the byte walk waits for the heal"
+
+
+def test_a_duplicate_without_a_budget_defers_nothing() -> None:
+    """A plan with no bound to enforce has no budget decision to defer."""
+    inventory = Inventory(sealed=(sealed(1),), archived=(archived(1), archived(2)))
+
+    decision = plan(inventory, policy())
+
+    assert decision.retention_deferred is False, "no configured budget was skipped"
+
+
 def test_damaged_sidecars_are_healed_except_for_duplicates() -> None:
     """Healing skips a sequence reconciliation already owns."""
     inventory = Inventory(
@@ -183,6 +217,7 @@ def test_the_summary_counts_every_operation(snapshot: SnapshotAssertion) -> None
         deletes=(archived(6),),
         retained_bytes=70,
         cutoff=None,
+        retention_deferred=True,
     )
 
     summary = PlanSummary.of(decision)

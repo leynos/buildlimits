@@ -63,8 +63,11 @@ verified archive is published, and leaves compile admission untouched.
   compressing it, because archiving history the same plan would delete spends
   the scratch headroom for nothing. A partially expired segment is still
   archived first, and its archive is then trimmed.
-- All archive work is streamed in fixed-size chunks. Peak memory depends on
-  the XZ preset and chunk size, not on retained history size.
+- All archive work is streamed in fixed-size chunks, so the encoder and decoder
+  buffers depend on the XZ preset and the chunk size rather than on retained
+  history. The inventory, the plan and the report hold one small record per
+  segment, so the peak also grows by a bounded amount per segment. No code path
+  buffers a segment's rows.
 - The byte budget counts logical uncompressed retained bytes: active and sealed
   files by `stat`, archived segments by their sidecar's `logical_bytes`.
   Temporary disk headroom is a separate bound.
@@ -465,6 +468,16 @@ verified archive is published, and leaves compile admission untouched.
   helper, and the prelude families are recorded as reasoned `df12-duplication`
   exceptions, including the plan module's typing-only prelude in the
   repository-wide entry.
+- [x] Whole-plan revision-14 remediation (2026-11-20): the byte and record
+  walks now also wait while any surviving archive has no trustworthy sidecar,
+  because the physical-size fallback is not a lower bound on the history the
+  file holds; the heal step and the follow-up pass measure it. A configured
+  budget left to the follow-up is reported as `plan.retention_deferred` in
+  `inspect` and `run --dry-run`, both as a JSON field and as a prose line, and
+  a complete-run regression and two planner tests pin it. The bounded-memory
+  claim now names the per-segment bookkeeping, and a new measurement of the
+  same 16,000-row history in 18 and 74 segments bounds that share at about 4
+  KiB per segment.
 
 ## Surprises & discoveries
 
@@ -614,6 +627,12 @@ verified archive is published, and leaves compile admission untouched.
   active file once per plan, through the bounded no-follow reader, to count the
   rows and span the writer currently holds; it never writes or replaces it. The
   guide now states both halves.
+- A compressed archive's file size is not a lower bound on the logical history
+  it holds. The XZ container adds its own header and index overhead, so a
+  header-only document of 107 logical bytes occupies 156 bytes on disk; a
+  budget planned from the physical-size fallback can therefore overstate the
+  store, not only understate it. The missing-sidecar deferral and the
+  `_archive_entry` docstring were corrected for this.
 
 ## Decision log
 
@@ -675,9 +694,12 @@ verified archive is published, and leaves compile admission untouched.
   sealed segment is closed, and a complete row whose newline was lost is
   history that must not be dropped. The developers' guide states both rules.
 - Retention planning uses an archive's physical size when its sidecar is
-  untrustworthy. For XZ that figure is a lower bound, not a safe overestimate,
-  so any run that repaired a sidecar now re-plans from the repaired inventory
-  instead of relying on the first plan.
+  untrustworthy. That figure does not describe the logical bytes: the container
+  header can make a small archive's file larger than its content, so the
+  fallback can overstate the store as well as understate it. A byte or record
+  walk is deferred while such a sidecar survives, and any run that repaired a
+  sidecar re-plans from the repaired inventory instead of relying on the first
+  plan.
 - A byte trim and an age trim compose into one rewrite, but a sequence the byte
   plan deletes is excluded from the trim list: rewriting a file that is about
   to be removed cannot improve the retained bytes.
@@ -787,6 +809,24 @@ verified archive is published, and leaves compile admission untouched.
   from the cutoff alone and is planned either way; `retain()` re-plans from the
   reconciled and measured inventory, and a pass that defers its walk still
   reports a configured but unmeasurable record cap.
+- A byte or record walk is also deferred while any surviving archive lacks a
+  trustworthy sidecar. The fallback counts the XZ file's own size, and a
+  container header makes a small file larger than the history it holds, so that
+  figure can overstate the store as well as understate it: a whole older
+  deletion chosen against it would discard history the settled store keeps. The
+  heal step repairs the sidecar, and the follow-up plan measures it.
+- `Plan.retention_deferred` names the work the first plan leaves to the
+  follow-up. `inspect` and `run --dry-run` must not present an empty trim and
+  delete count as final when a configured budget could not be decided yet. The
+  flag is set only when a byte limit or record cap is actually configured, so a
+  policy with no bound reports no deferral it never had.
+- The memory claim is stated as a fixed streaming cost plus per-segment
+  bookkeeping rather than as an absolute constant. Compression and verification
+  never buffer a segment, but the scan builds one entry per segment, the plan
+  holds one per action and the report names each performed action, so those
+  allocations are O(segments). The claim now says so, and the segment-count
+  measurement bounds the share at about 4 KiB per segment instead of asserting
+  a segment independence the code does not provide.
 
 ## Outcomes & retrospective
 
@@ -821,8 +861,11 @@ Invariants:
 5. Eviction is oldest-first; records at the cutoff survive.
 6. Iterating history yields records in sequence order: archived or sealed
    segments ascending, then the active file.
-7. Peak memory during archiving is bounded by chunk size and XZ preset, not by
-   segment or history size.
+7. Peak memory during archiving is the XZ encoder's working set, fixed by the
+   chunk size and preset, plus an allocation per segment the inventory, plan
+   and report describe. No archive, trim or eviction buffers a segment's rows,
+   so the peak does not follow the retained history's size; the per-segment
+   share is measured at about 4 KiB.
 
 Methods and evidence:
 
@@ -837,13 +880,16 @@ Methods and evidence:
   `tests/test_outcome_archive_subprocess.py` that run the installed command and
   two overlapping runs.
 - Fixed `tracemalloc` bounds at two history sizes
-  (`tests/test_outcome_archive_memory.py`, 4,000 and 16,000 rows), plus an
-  opt-in subprocess test (`BUILDLIMITS_ARCHIVE_LARGE_MEMORY=1`) with a
-  320,000,000-byte history and a 150,000 KiB `ru_maxrss` bound, with the
-  archiver and the replay consumer each measured in their own process. H2's
-  fold is measured separately: 100,000 streamed hits for one hot key must stay
-  under one mebibyte, which the unbounded fold failed by timing out after its
-  per-row median became quadratic.
+  (`tests/test_outcome_archive_memory.py`, 4,000 and 16,000 rows), plus a third
+  measurement of the same 16,000-row history sealed into quarter-size segments:
+  74 segments peaked at 98,454,136 traced bytes against 18 segments at
+  98,215,635, so 56 extra segments cost 238,501 bytes, about 4 KiB each, which
+  is the per-segment bound invariant 7 states. An opt-in subprocess test
+  (`BUILDLIMITS_ARCHIVE_LARGE_MEMORY=1`) with a 320,000,000-byte history and a
+  150,000 KiB `ru_maxrss` bound measures the archiver and the replay consumer
+  in their own processes. H2's fold is measured separately: 100,000 streamed
+  hits for one hot key must stay under one mebibyte, which the unbounded fold
+  failed by timing out after its per-row median became quadratic.
 - Boundary tests at exactly 30 days and exactly the byte cap, including sparse
   history below both bounds and an explicit record cap, plus device-level tests
   that a store which grew after its size check is followed up to the bound and
@@ -857,7 +903,10 @@ Methods and evidence:
 Non-vacuity: every boundary test exhibits at least one record on each side of
 the threshold; the memory tests compare two sizes so a constant-buffer failure
 or an accumulating buffer both fail, while the materializing read's measured
-growth proves the traces observe rows; and disabling the publication gate makes
+growth proves the traces observe rows; the segment-count test asserts its
+fixture really sealed more than three times the segments before comparing
+peaks, so a writer that ignored the segment size could not make it pass
+vacuously; and disabling the publication gate makes
 `test_a_temporary_that_does_not_match_its_facts_is_not_published` fail.
 
 ## Revision note
@@ -955,3 +1004,16 @@ growth proves the traces observe rows; and disabling the publication gate makes
   across two segments, a byte budget across two segments, and a duplicate pair
   whose failed older deletion leaves the newer archive byte-identical; the
   planner tests now pin the deferral rather than same-pass composition.
+- Revision 14 records the whole-plan revision-13 assessment's three findings.
+  The budget walks also wait while a surviving archive has no trustworthy
+  sidecar, because a container header can make the XZ file larger than its
+  content and the physical-size fallback therefore overstates as well as
+  understates the store; a complete-run regression proves neither archive is
+  rewritten once the healed store fits. `inspect` and `run --dry-run` now report
+  `plan.retention_deferred`, with a prose line, when a configured budget is
+  decided by the follow-up pass, and a CLI regression proves the reported
+  zeroes give way to a deletion and a trim in the run that settles the
+  duplicate. The bounded-memory claim is restated as a fixed streaming cost
+  plus a measured per-segment share, and the segment-count measurement bounds
+  that share at about 4 KiB per segment for 18 and 74 segments of the same
+  history.

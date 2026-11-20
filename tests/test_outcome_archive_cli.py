@@ -8,6 +8,7 @@ the command through ``main`` so argument parsing and rendering are included.
 
 import datetime as dt
 import json
+import lzma
 import re
 import typing as typ
 from pathlib import Path
@@ -131,6 +132,60 @@ def test_run_dry_run_changes_nothing(
     assert source.exists(), "the source is untouched"
     assert not SegmentLayout.beside(store).archive_dir.exists(), (
         "no archive state is created"
+    )
+
+
+def test_inspect_and_dry_run_name_the_retention_they_defer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A plan that cannot decide retention says so instead of reporting zeroes.
+
+    A sealed source restored beside its published archive is settled by the run
+    itself, so the first plan leaves the duplicated history out of its totals
+    and cannot decide the record cap. Its empty trim and delete counts are
+    provisional, and both inspection and a dry run must say so.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    sealed_source(store, 1, encode_document(_records(10)))
+    sealed_source(store, 2, encode_document(_records(10)))
+    publish = write_config(tmp_path / "publish.toml")
+    assert main(["run", *command_arguments(store, publish)]) == 0, "the store publishes"
+    capsys.readouterr()
+    store_layout = SegmentLayout.beside(store)
+    sealed_source(
+        store,
+        1,
+        lzma.decompress((store_layout.archive_dir / archive_name(1)).read_bytes()),
+    )
+    capped = write_config(tmp_path / "capped.toml", max_records=5)
+
+    status = main(["inspect", *command_arguments(store, capped), "--json"])
+    inspected = json.loads(capsys.readouterr().out)
+
+    assert status == 0, "inspection succeeds"
+    assert inspected["plan"]["reconcile"] == 1, "the duplicated pair is settled first"
+    assert (inspected["plan"]["trim"], inspected["plan"]["delete"]) == (0, 0), (
+        "the first plan defers the cap, so it names no trim or delete"
+    )
+    assert inspected["plan"]["retention_deferred"] is True, (
+        "inspection says the budget is decided after reconciliation"
+    )
+
+    status = main(["run", "--dry-run", *command_arguments(store, capped), "--json"])
+    dry = json.loads(capsys.readouterr().out)
+
+    assert status == 0, "a dry run succeeds"
+    assert dry["plan"]["retention_deferred"] is True, (
+        "a dry run reports the deferral inspection reported"
+    )
+
+    status = main(["run", *command_arguments(store, capped), "--json"])
+    settled = json.loads(capsys.readouterr().out)
+
+    assert status == 0, "the run settles the duplicate and applies the cap"
+    actions = [(action["action"], action["sequence"]) for action in settled["actions"]]
+    assert ("deleted", 1) in actions and ("trimmed", 2) in actions, (
+        "the settled pass does the eviction the first plan deferred"
     )
 
 

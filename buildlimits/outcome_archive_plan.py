@@ -16,7 +16,7 @@ import typing as typ
 from buildlimits.outcome_archive_budget import (
     ActiveHistory,
     Budget,
-    age_trims_are_unsettled,
+    budget_totals_are_unsettled,
     plan_byte_steps,
     plan_record_steps,
     planned_size,
@@ -57,6 +57,10 @@ class Plan:
         Conservative logical bytes that will remain after the plan runs.
     cutoff : datetime | None
         The age cutoff applied, or None when age eviction is disabled.
+    retention_deferred : bool
+        Whether a configured budget was left to a follow-up plan. The trims and
+        deletes above are then provisional: this plan could not measure the
+        store the budget applies to.
     """
 
     reconcile: tuple[tuple[SegmentEntry, SegmentEntry], ...] = ()
@@ -67,6 +71,7 @@ class Plan:
     deletes: tuple[SegmentEntry, ...] = ()
     retained_bytes: int = 0
     cutoff: dt.datetime | None = None
+    retention_deferred: bool = False
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -91,6 +96,9 @@ class PlanSummary:
         Conservative logical bytes remaining after the plan.
     cutoff : datetime | None
         The age cutoff applied.
+    retention_deferred : bool
+        Whether a configured budget is decided by a follow-up plan, so the trim
+        and delete counts are not final.
     """
 
     reconcile: int = 0
@@ -101,6 +109,7 @@ class PlanSummary:
     delete: int = 0
     retained_bytes: int = 0
     cutoff: dt.datetime | None = None
+    retention_deferred: bool = False
 
     @classmethod
     def of(cls, plan: Plan) -> PlanSummary:
@@ -125,6 +134,7 @@ class PlanSummary:
             delete=len(plan.deletes),
             retained_bytes=plan.retained_bytes,
             cutoff=plan.cutoff,
+            retention_deferred=plan.retention_deferred,
         )
 
     def as_dict(self) -> dict[str, object]:
@@ -144,6 +154,7 @@ class PlanSummary:
             "delete": self.delete,
             "retained_logical_bytes": self.retained_bytes,
             "cutoff": optional_utc_text(self.cutoff),
+            "retention_deferred": self.retention_deferred,
         }
 
 
@@ -194,7 +205,7 @@ def plan_run(
     duplicated_sequences = {sealed.sequence for sealed, _archived in duplicates}
     heal = _heal_steps(inventory, duplicated_sequences)
     budget = Budget(policy=policy, cutoff=policy.cutoff(now), active=active)
-    deletes, trims = _retention_steps(inventory, budget, duplicated_sequences)
+    deletes, trims, deferred = _retention_steps(inventory, budget, duplicated_sequences)
     evicted = {entry.sequence for entry in deletes}
     # A source retention evicts is removed whole instead of being compressed
     # and then deleted: compression would only defer the same removal.
@@ -215,6 +226,7 @@ def plan_run(
         deletes=deletes,
         retained_bytes=retained,
         cutoff=budget.cutoff,
+        retention_deferred=deferred,
     )
 
 
@@ -239,7 +251,7 @@ def _retention_steps(
     inventory: Inventory,
     budget: Budget,
     duplicated: set[int],
-) -> tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...]]:
+) -> tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...], bool]:
     """Decide age and byte eviction over closed history, oldest first.
 
     Sealed sources are candidates as well as archives. Both count towards the
@@ -248,18 +260,18 @@ def _retention_steps(
     ever removed whole: it cannot be trimmed before it is compressed, and the
     follow-up plan trims it once this run has archived it.
 
-    The byte and record walks run only when the store's age outcome is settled
-    and no duplicated sequence is excluded from the candidates. In either case
-    the totals those walks act on would be missing rows that are still
-    retained, and a whole deletion chosen against such a total could remove an
-    older entry the settled store keeps. Age eviction itself is decided from
-    the cutoff alone, so it is planned either way; the follow-up pass re-plans
-    the budgets from the reconciled and measured inventory.
+    The byte and record walks run only when every surviving entry has been
+    measured and no duplicated sequence is excluded from the candidates;
+    otherwise their totals misstate what the store retains, and a whole
+    deletion chosen against them could remove an older entry the settled
+    store keeps. Age eviction is decided from the cutoff alone, so it is
+    planned either way and the follow-up pass re-plans the budgets.
 
     Returns
     -------
-    tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...]]
-        Entries to delete and archives to rewrite with a trim.
+    tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...], bool]
+        Entries to delete, archives to rewrite with a trim, and whether a
+        configured budget was left to the follow-up plan.
     """
     candidates = tuple(
         entry for entry in inventory.effective if entry.sequence not in duplicated
@@ -269,7 +281,8 @@ def _retention_steps(
         for entry in candidates:
             _plan_age_step(entry, budget.cutoff, deletes)
     trims = _age_trims(candidates, budget.cutoff, deletes)
-    if _budgets_are_measurable(candidates, budget.cutoff, deletes, duplicated):
+    measurable = _budgets_are_measurable(candidates, budget.cutoff, deletes, duplicated)
+    if measurable:
         plan_byte_steps(candidates, budget, deletes, trims)
         plan_record_steps(candidates, budget, deletes, trims)
     else:
@@ -284,7 +297,9 @@ def _retention_steps(
         for entry in candidates
         if entry.sequence in trims and entry.sequence not in deletes
     )
-    return tuple(deletes[sequence] for sequence in sorted(deletes)), trimmed
+    bounded = budget.policy.has_byte_limit or budget.policy.max_records is not None
+    deferred = not measurable and bounded
+    return tuple(deletes[sequence] for sequence in sorted(deletes)), trimmed, deferred
 
 
 def _budgets_are_measurable(
@@ -295,21 +310,21 @@ def _budgets_are_measurable(
 ) -> bool:
     """Whether a budget walk can safely choose whole deletions this pass.
 
-    Two kinds of history make this pass's totals untrustworthy. A duplicated
-    sequence is left out of the candidates while reconciliation is expected to
-    settle it, so its retained rows would be missing from the total the walk
-    acts on. An entry whose span crosses the cutoff keeps rows a time trim is
-    about to remove, so the walk would count rows that will not survive. A
-    later pass re-plans from the reconciled and measured inventory.
+    A duplicated sequence is left out of the candidates while reconciliation
+    is expected to settle it, so its retained rows would be missing from the
+    total the walk acts on. The other conditions are the planner's:
+    ``budget_totals_are_unsettled`` reports an entry whose span crosses the
+    cutoff, and an archive whose size has never been measured. A later pass
+    re-plans from the reconciled and measured inventory.
 
     Returns
     -------
     bool
-        True when neither condition applies.
+        True when none of those conditions applies.
     """
     if duplicated:
         return False
-    return not age_trims_are_unsettled(candidates, cutoff, deletes)
+    return not budget_totals_are_unsettled(candidates, cutoff, deletes)
 
 
 def _plan_age_step(

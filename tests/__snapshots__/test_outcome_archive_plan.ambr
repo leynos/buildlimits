@@ -8,6 +8,7 @@
     'orphan': 1,
     'reconcile': 1,
     'retained_logical_bytes': 70,
+    'retention_deferred': True,
     'trim': 1,
   })
 # ---

@@ -151,9 +151,9 @@ def test_a_heal_only_run_replans_retention_with_real_logical_bytes(
 ) -> None:
     """A repaired sidecar lets the same run see the bytes the archive holds.
 
-    The first plan had to fall back to the archive's physical size, which
-    understates what it represents, so the budget is only true after the
-    repaired inventory is planned again.
+    The first plan had to fall back to the archive's physical size, which does
+    not describe the history the archive holds, so the budget is only true
+    after the repaired inventory is planned again.
     """
     store_layout = layout(tmp_path)
     store_layout.sealed_dir.mkdir(parents=True)
@@ -180,6 +180,48 @@ def test_a_heal_only_run_replans_retention_with_real_logical_bytes(
         "the healed bytes change the plan in the same run"
     )
     assert report.retained_bytes <= budget, "the budget is met in one firing"
+
+
+def test_a_byte_budget_waits_for_an_unmeasured_archive_size(tmp_path: Path) -> None:
+    """A budget is never applied from a compressed file's own size.
+
+    A missing sidecar leaves the inventory counting the XZ file instead of the
+    history it holds. For a header-only document the container's own header
+    makes the file larger than its content, so a plan built on that figure
+    overstates the store and would trim an older archive the settled store
+    keeps. The run rebuilds the sidecar first and plans the budget from the
+    size it measures, even though age eviction is disabled and no trim could
+    make the archive look smaller.
+    """
+    store_layout = layout(tmp_path)
+    store_layout.sealed_dir.mkdir(parents=True)
+    write_private(
+        store_layout.sealed_dir / segment_name(1),
+        document(records(NOW - dt.timedelta(hours=1), 6)),
+    )
+    write_private(store_layout.sealed_dir / segment_name(2), document(()))
+    run(tmp_path, policy(max_age_days=0))
+    older, newer = read_inventory(store_layout).archived
+    older_archive = store_layout.archive_dir / archive_name(older.sequence)
+    before = older_archive.read_bytes()
+    assert newer.physical_bytes > newer.logical_bytes, (
+        "the fixture needs a header-only archive larger on disk than its content"
+    )
+    (store_layout.archive_dir / sidecar_name(newer.sequence)).unlink()
+    budget = older.logical_bytes + newer.logical_bytes
+
+    report = run(tmp_path, policy(max_age_days=0, max_bytes=budget))
+
+    assert report.status == "ok", "the deferred budget is not a failure"
+    assert older_archive.read_bytes() == before, (
+        "the older archive is not rewritten from an unmeasured total"
+    )
+    assert not [action for action in report.actions if action.action == "trimmed"], (
+        "no archive is trimmed once the settled store fits the budget"
+    )
+    assert not read_inventory(store_layout).missing_sidecars, (
+        "the run repairs the sidecar the follow-up plan measures"
+    )
 
 
 def test_a_record_cap_evicts_the_oldest_sealed_source_in_one_run(

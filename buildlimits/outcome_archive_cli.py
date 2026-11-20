@@ -222,6 +222,10 @@ def _write_plan(report: RunReport) -> None:
         f"archive {plan.archive}, reconcile {plan.reconcile}, heal {plan.heal}, "
         f"orphan {plan.orphan}, trim {plan.trim}, delete {plan.delete}"
     )
+    if plan.retention_deferred:
+        # The plan's trim and delete counts are provisional until a settled
+        # pass has measured the store a budget applies to.
+        print("retention: deferred; trims and deletes are decided once settled")
     if report.dry_run:
         print("dry run: no file was changed")
 

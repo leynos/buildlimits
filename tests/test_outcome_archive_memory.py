@@ -1,12 +1,14 @@
-"""Bounded memory at two history sizes and across a several-hundred-MB run.
+"""Bounded memory across history sizes, segment counts and a large run.
 
 The archiver and the streaming replay must cost memory proportional to one
 segment rather than to the retained history, while a materializing read holds
 every row it returns. The first test traces each consumer separately at two
 sizes: the fixed costs must not grow, and the materializing read must, which is
-what proves the traces observe rows at all. The second test measures the peak
-resident set size of the real processes over a several-hundred-megabyte
-history; it is opt-in because generating that history takes minutes.
+what proves the traces observe rows at all. The second seals the same history
+into far more segments, so the plan's per-segment bookkeeping is measured
+rather than assumed. The third measures the peak resident set size of the real
+processes over a several-hundred-megabyte history; it is opt-in because
+generating that history takes minutes.
 """
 
 import contextlib
@@ -69,14 +71,15 @@ _RSS_KIB = 150_000
 
 @dc.dataclass(frozen=True, slots=True)
 class _Peaks:
-    """Traced peaks for one history size, in bytes."""
+    """Traced peaks for one history size, in bytes, and its segment count."""
 
     archive: int
     read: int
     replay: int
+    segments: int
 
 
-def _measure(root: Path, count: int) -> _Peaks:
+def _measure(root: Path, count: int, *, segment_bytes: int = _SEGMENT_BYTES) -> _Peaks:
     """Generate one history and trace the archiver and each reader in turn.
 
     Parameters
@@ -85,16 +88,20 @@ def _measure(root: Path, count: int) -> _Peaks:
         The directory the generated store lives under.
     count : int
         How many records the history holds.
+    segment_bytes : int
+        The size at which the writer seals a source, so a smaller value seals
+        the same rows into more segments.
 
     Returns
     -------
     _Peaks
         The traced peak of the archive run, the materializing read and the
-        streaming replay, each measured in its own trace.
+        streaming replay, each measured in its own trace, and the number of
+        sources the archive run compressed.
     """
     root.mkdir(parents=True, exist_ok=True)
     store = root / "cache-outcomes.jsonl"
-    policy = history_policy(_SEGMENT_BYTES)
+    policy = history_policy(segment_bytes)
     write_store(store, records(NOW - dt.timedelta(minutes=count), count), policy)
     layout = SegmentLayout.beside(store)
 
@@ -105,6 +112,7 @@ def _measure(root: Path, count: int) -> _Peaks:
     finally:
         tracemalloc.stop()
     assert report.status == "ok", "the generated history archives cleanly"
+    segments = sum(1 for action in report.actions if action.action == "archived")
 
     tracemalloc.start()
     try:
@@ -128,7 +136,7 @@ def _measure(root: Path, count: int) -> _Peaks:
     finally:
         tracemalloc.stop()
     assert status == 0, "the streaming replay reads the archived history"
-    return _Peaks(archive=archive, read=read, replay=replay)
+    return _Peaks(archive=archive, read=read, replay=replay, segments=segments)
 
 
 # Tracing slows the compressor several-fold, and the two sizes are measured in
@@ -161,6 +169,32 @@ def test_memory_is_bounded_at_two_history_sizes(tmp_path: Path) -> None:
     )
     assert large.read > small.read + _READ_GROWTH, (
         "the materializing read grows with the history, so the traces do observe rows"
+    )
+
+
+@pytest.mark.timeout(300)
+def test_memory_does_not_follow_the_segment_count(tmp_path: Path) -> None:
+    """Over three times the segments for the same history cost little more.
+
+    Every archive is streamed, but the inventory and the plan hold one small
+    record per segment, so the peak would follow the segment count if that
+    bookkeeping dominated it. Sealing the same history into quarter-sized
+    segments measures the cost instead of assuming it is negligible.
+    """
+    wide = _measure(tmp_path / "wide", _LARGE_ROWS)
+    narrow = _measure(
+        tmp_path / "narrow", _LARGE_ROWS, segment_bytes=_SEGMENT_BYTES // 4
+    )
+
+    assert narrow.segments > 3 * wide.segments, (
+        f"the fixture needs more segments: {narrow.segments} against {wide.segments}"
+    )
+    assert narrow.archive < _ARCHIVE_BOUND, (
+        f"{narrow.segments} segments peaked at {narrow.archive} traced bytes"
+    )
+    assert narrow.archive - wide.archive < _ARCHIVE_GROWTH, (
+        "archiving three times the segments added "
+        f"{narrow.archive - wide.archive} traced bytes"
     )
 
 

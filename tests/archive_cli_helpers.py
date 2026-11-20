@@ -54,7 +54,11 @@ def sealed_source(store: Path, sequence: int, data: bytes) -> Path:
 
 
 def write_config(
-    path: Path, *, preset: int = 0, max_bytes: int = 15_000_000_000
+    path: Path,
+    *,
+    preset: int = 0,
+    max_bytes: int = 15_000_000_000,
+    max_records: int = 0,
 ) -> Path:
     """Write a configuration that enables recorded, archived outcomes.
 
@@ -66,6 +70,8 @@ def write_config(
         The XZ preset the command should use.
     max_bytes : int
         The logical-byte budget the archiver retains.
+    max_records : int
+        The record cap, or zero for none.
 
     Returns
     -------
@@ -80,6 +86,7 @@ def write_config(
             # them once the wall clock passed it. Zero disables age eviction.
             "cache_outcomes_max_age_days = 0",
             f"cache_outcomes_max_bytes = {max_bytes}",
+            f"cache_outcomes_max_records = {max_records}",
             f"cache_outcomes_archive_preset = {preset}",
             "",
         ])
