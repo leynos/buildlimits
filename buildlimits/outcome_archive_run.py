@@ -22,7 +22,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_trim import Trim
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
-__all__ = ["ArchiveRun", "RunOutcome", "perform"]
+__all__ = ["ArchiveRun", "RunOutcome", "perform", "quarantined_history"]
 
 # A filesystem that cannot hold this run's output. The headroom check reads
 # free space once before the pass, so another writer can still fill it while
@@ -107,17 +107,27 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
         _heal_one(run, entry, outcome)
     for sequence in run.plan.orphans:
         _quarantine_orphan(run, sequence, outcome)
-    if _quarantined_history(outcome, first_action):
+    if quarantined_history(outcome, first_action):
         return
     _evict(run, outcome, run.plan.trims, run.plan.deletes)
 
 
-def _quarantined_history(outcome: RunOutcome, first_action: int) -> bool:
+def quarantined_history(outcome: RunOutcome, first_action: int) -> bool:
     """Whether this pass quarantined an archive or a sealed source.
 
     An orphaned sidecar holds no history, so quarantining it leaves the plan's
     budget totals true and eviction may proceed. Any other quarantine removes
-    rows the plan counted, and the run records the fault as well.
+    rows the plan counted, and every such pass returns before its eviction
+    steps. A caller that records which eviction it asked for must therefore
+    ask this before crediting the plan's trims and deletions: those steps
+    never ran, so they stay pending rather than being skipped as done.
+
+    Parameters
+    ----------
+    outcome : RunOutcome
+        The actions and failures accumulated so far.
+    first_action : int
+        The number of actions recorded before the pass began.
 
     Returns
     -------

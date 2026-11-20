@@ -15,7 +15,12 @@ from buildlimits import outcome_segment_inventory
 from buildlimits.outcome_archive_active import active_history
 from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
-from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome, perform
+from buildlimits.outcome_archive_run import (
+    ArchiveRun,
+    RunOutcome,
+    perform,
+    quarantined_history,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -109,11 +114,19 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> bool:
         if pending is None:
             return True
         failures = len(outcome.failures)
+        first_action = len(outcome.actions)
         perform(_follow_up_run(run, pending), outcome)
         if len(outcome.failures) > failures:
             # The failure is already reported, and it outranks a deferred
             # status: the next firing retries what this one could not change.
             return True
+        if quarantined_history(outcome, first_action):
+            # The pass returned before its eviction steps, so none of this
+            # plan's trims or deletions ran. Crediting them would make the
+            # next pass filter the still-present entries as already handled
+            # and report the store settled with its budget unmet. The plan is
+            # rebuilt from the store as the quarantine left it instead.
+            continue
         applied.update(_measured(pending.trims))
         removed.update(entry.sequence for entry in pending.deletes)
     try:

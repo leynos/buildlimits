@@ -714,6 +714,35 @@ verified archive is published, and leaves compile admission untouched.
   archive with no trustworthy sidecar makes `budget_totals_are_unsettled` true,
   so the walk never trims a sealed source or an unmeasured archive. The
   planner, active-budget and settlement tests pass.
+- [ ] CodeRabbit review 6000304047 remediation, group 4 (2026-11-21): the byte
+  budget floor at load (findings 1, 13). `header_floor_bytes` is now public and
+  measured from a header whose timestamp carries one microsecond, because the
+  encoder preserves fractional seconds and a whole-second header is four bytes
+  shorter. `validate_policy` and the configuration rules both use it: a
+  positive `cache_outcomes_max_bytes` below the floor is refused when the
+  document loads, instead of constructing a policy the supervisor would catch
+  and turn into silent non-recording. Zero still means unlimited. Regressions
+  pin the floor as accepted, one byte less as refused, in both the policy
+  validator and the document loader.
+- [ ] CodeRabbit review 6000304047 remediation, group 5 (2026-11-21): inverted
+  spans and duplicate indexing (findings 7, 14). A sidecar whose
+  `first_observed_at` follows its `last_observed_at` is `corrupt`, and writer
+  metadata for a sealed source with the same contradiction is withheld, so the
+  age planner can no longer delete an archive or source from a span that claims
+  it ended before it started. `plan_run` pairs sealed sources with archives
+  through one sequence-keyed lookup rather than comparing every pair, which
+  keeps a large store's plan linear.
+- [ ] CodeRabbit review 6000304047 remediation, group 6 (2026-11-21): an
+  eviction a quarantine suppressed (finding 8). `perform` returns before its
+  trim and delete steps when a quarantine removed history the plan counted, and
+  `reconcile_duplicate` can return that quarantine action without recording a
+  failure, so `retain` previously credited eviction work that never ran. The
+  next pass then filtered the still-present entries as already handled and the
+  run reported success with the budget unmet. `quarantined_history` is now
+  shared, and a pass that quarantined history continues to a fresh plan without
+  recording its trims or deletions. The regression archives a sealed source,
+  leaves a corrupt copy behind so the follow-up reconcile quarantines it, and
+  asserts an expired archive beside it is still deleted by a later pass.
 
 ## Surprises & discoveries
 

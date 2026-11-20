@@ -12,7 +12,7 @@ import itertools
 import typing as typ
 from pathlib import Path
 
-from archive_cli_helpers import sealed_measured_source
+from archive_cli_helpers import sealed_measured_source, sealed_source
 from outcome_archive_helpers import (
     NOW,
     archives,
@@ -36,7 +36,7 @@ from buildlimits import (
 from buildlimits.outcome_archive import inspect_store
 from buildlimits.outcome_archive_report import EXIT_TEMPFAIL
 from buildlimits.outcome_segment_inventory import read_inventory
-from buildlimits.outcome_segments import sidecar_name
+from buildlimits.outcome_segments import archive_name, sidecar_name
 
 if typ.TYPE_CHECKING:
     import pytest
@@ -133,6 +133,55 @@ def test_a_quarantined_source_does_not_evict_older_history(tmp_path: Path) -> No
     assert archive.read_bytes() == archive_before, "the older archive is untouched"
     assert sidecar.read_bytes() == sidecar_before, "its sidecar still describes it"
     assert report.status == "corrupt", "the quarantine needs an operator"
+
+
+def test_a_follow_up_quarantine_leaves_the_eviction_unrecorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reconcile that quarantines must not credit the pass's eviction.
+
+    ``perform`` returns before its trim and delete steps once a quarantine has
+    removed history the plan counted, so none of them ran. Recording them as
+    done anyway would make the next pass filter the still-present entry as
+    handled and end the run with the budget unmet. The archive here is old
+    enough to delete and becomes measured only after the run archives it,
+    which is why the first plan could not decide it.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, (), policy(segment_bytes=1_000_000))
+    sealed_measured_source(store, 1, records(NOW, 1))
+    first = run(tmp_path, policy(segment_bytes=1_000_000, max_age_days=30))
+    assert first.status == "ok", "the fixture archive is published"
+
+    sealed_source(store, 2, document(records(NOW, 2)))
+    sealed_source(store, 3, document(records(NOW - dt.timedelta(days=2), 2)))
+    real = outcome_archive_files.archive_source
+
+    def archive_and_reinstate(
+        context: ArchiveContext, entry: SegmentEntry
+    ) -> ActionResult:
+        """Archive one source, leaving a corrupt copy of source two behind."""
+        result = real(context, entry)
+        if entry.sequence == 2:
+            # A crash between publishing and releasing the source leaves the
+            # pair for reconciliation; making the leftover unreadable is what
+            # sends it to quarantine without a recorded failure.
+            sealed_source(store, 2, b"not a cache outcome document\n")
+        return result
+
+    monkeypatch.setattr(outcome_archive_files, "archive_source", archive_and_reinstate)
+
+    report = run(tmp_path, policy(segment_bytes=1_000_000, max_age_days=1))
+
+    actions = [(action.action, action.sequence) for action in report.actions]
+    assert ("quarantined", 2) in actions, "the leftover duplicate is quarantined"
+    assert ("deleted", 3) in actions, "the expired archive is deleted once settled"
+    assert not (layout(tmp_path).archive_dir / archive_name(3)).exists(), (
+        "the expired archive does not outlive the run"
+    )
+    assert report.status == "ok", (
+        "a later pass applies the eviction the quarantine held"
+    )
 
 
 def test_the_last_permitted_pass_is_confirmed_settled(
