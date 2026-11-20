@@ -10,6 +10,7 @@ intact.
 
 import dataclasses as dc
 import datetime as dt
+import errno
 import lzma
 import typing as typ
 from pathlib import Path
@@ -30,6 +31,7 @@ from buildlimits import (
     outcome_archive_files,
     outcome_archive_run,
 )
+from buildlimits.outcome_archive import EXIT_TEMPFAIL
 from buildlimits.outcome_archive_verify import OutputFaultError, SegmentFaultError
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import archive_name, segment_name
@@ -152,34 +154,89 @@ def test_an_unreadable_source_is_recorded_as_unreadable(
     assert report.status == "corrupt", "the run names the fault it met"
 
 
-def test_a_failed_delete_is_recorded_and_keeps_the_archive(
+def test_a_failed_source_delete_is_recorded_and_keeps_the_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An archive that cannot be removed is reported and left in place."""
+    """A source that cannot be evicted is reported and left in place.
+
+    History already outside the age bound is evicted without being compressed,
+    so this run's only operation is the delete that fails here.
+    """
     store = tmp_path / "cache-outcomes.jsonl"
     old = NOW - dt.timedelta(days=40)
     # The writer drops a row that arrives already expired, so expired history
     # on disk is sealed under a longer bound than the run applies.
     write(store, records(old, 1), policy(max_age_days=60))
 
-    monkeypatch.setattr(outcome_archive_files, "delete_archive", refuse)
+    monkeypatch.setattr(outcome_archive_files, "delete_source", refuse)
 
     report = run(tmp_path, policy(max_age_days=30))
 
     assert report.failures == ((1, "unreadable"),), "the failure is recorded"
-    assert [action.action for action in report.actions] == ["archived"], (
-        "the archive is published even though eviction failed"
+    assert not report.actions, "the delete did not report success"
+    assert report.status == "corrupt", "the run names the fault it met"
+    assert layout(tmp_path).sealed_dir.joinpath(segment_name(1)).exists(), (
+        "the unremovable source stays"
     )
-    assert archives(tmp_path), "the unremovable archive stays"
 
 
-def test_a_record_cap_trims_an_archive_in_the_planning_run(tmp_path: Path) -> None:
-    """A cap is met by deleting whole archives and trimming the straddler.
+def test_space_exhausted_after_the_headroom_check_is_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A disk that fills mid-pass defers the run and keeps the history.
+
+    Headroom is checked once, before the pass, and is not reserved: another
+    writer can consume the free space while this run works. A temporary write
+    that meets ``ENOSPC`` after that check must leave the sealed source for
+    the next timer firing and report the retryable status, not corruption.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 2), policy())
+    store_layout = layout(tmp_path)
+
+    def exhaust(
+        _stream: object, sink: typ.BinaryIO, *, preset: int, trim: object
+    ) -> typ.NoReturn:
+        """Leave a partial archive behind and report a full filesystem."""
+        sink.write(b"partial archive")
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    with monkeypatch.context() as failing:
+        failing.setattr(outcome_archive_encode, "write_archive", exhaust)
+        deflated = run(tmp_path, policy())
+
+    assert deflated.status == "no_headroom", "a full disk is a retryable run"
+    assert deflated.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    assert deflated.failures == ((1, "no_headroom"), (2, "no_headroom")), (
+        "each source the disk could not hold is named with the closed reason"
+    )
+    assert [
+        store_layout.sealed_dir.joinpath(segment_name(sequence)).exists()
+        for sequence in (1, 2)
+    ] == [True, True], "no source is lost to a failed temporary"
+    assert not archives(tmp_path), "nothing is published from a partial write"
+
+    recovered = run(tmp_path, policy())
+
+    assert recovered.status == "ok", "the next firing completes once space returns"
+    assert [path.name for path in archives(tmp_path)] == [
+        archive_name(1),
+        archive_name(2),
+    ], "both sources are archived by the retry"
+
+
+def test_a_record_cap_evicts_the_oldest_source_in_the_planning_run(
+    tmp_path: Path,
+) -> None:
+    """A cap is met by deleting the oldest source and trimming the straddler.
 
     The cap counts the rows the writer still holds in the active file, so the
-    plan removes more from the archives than the closed count alone suggests.
-    The trim is planned by the run's own plan, so this covers the run's trim
-    step rather than the retention re-plan a heal-only run performs.
+    plan removes more from the closed history than the closed count alone
+    suggests. The oldest source is outside the budget before it is ever
+    compressed, so the plan deletes it whole rather than archiving history it
+    would immediately remove; the trim is planned by the run's own plan, so
+    this covers the run's trim step rather than the retention re-plan a
+    heal-only run performs.
     """
     store = tmp_path / "cache-outcomes.jsonl"
     base = policy(segment_bytes=2000)
@@ -189,11 +246,11 @@ def test_a_record_cap_trims_an_archive_in_the_planning_run(tmp_path: Path) -> No
     report = run(tmp_path, dc.replace(base, max_records=8))
 
     assert report.status == "ok", "a trim is not a failure"
-    expected = [("archived", sequence) for sequence in (1, 2, 3)]
-    expected += [("trimmed", 2), ("deleted", 1)]
+    expected = [("archived", sequence) for sequence in (2, 3)]
+    expected += [("deleted", 1), ("trimmed", 2)]
     assert [
         (action.action, action.sequence) for action in report.actions
-    ] == expected, "the oldest archive goes and the straddler is trimmed"
+    ] == expected, "the oldest source goes and the straddler is trimmed"
     kept = read_inventory(layout(tmp_path)).archived
     assert [entry.record_count for entry in kept] == [2, 3], (
         "the straddler keeps exactly the rows the cap allows"

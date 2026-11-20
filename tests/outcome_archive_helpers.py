@@ -55,22 +55,23 @@ def policy(
     *,
     max_age_days: int = 30,
     max_bytes: int = 0,
-    headroom_bytes: int | None = None,
+    max_records: int | None = None,
 ) -> RetentionPolicy:
     """Build one archiver policy with the bounds a test needs.
 
     Returns
     -------
     RetentionPolicy
-        A policy that seals one record per segment by default.
+        A policy that seals one record per segment by default. The temporary
+        headroom is four segments, which every real store has room for; a test
+        that needs a full filesystem refuses the headroom check instead of
+        asking for an impossible size.
     """
     return RetentionPolicy(
         max_age=dt.timedelta(days=max_age_days),
         max_bytes=max_bytes,
-        max_records=None,
-        headroom_bytes=(
-            max(segment_bytes, 1) * 4 if headroom_bytes is None else headroom_bytes
-        ),
+        max_records=max_records,
+        headroom_bytes=max(segment_bytes, 1) * 4,
         segment_bytes=segment_bytes,
     )
 

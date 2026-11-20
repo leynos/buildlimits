@@ -2,9 +2,15 @@
 
 The byte budget counts uncompressed history, so an archive's contribution is
 the size its sidecar records rather than the XZ file's own size. Planning
-deletes whole archives oldest-first and only then trims the one archive that
+deletes whole entries oldest-first and only then trims the one archive that
 straddles the remaining allowance; every estimate is conservative, because a
 planned trim never frees more bytes than its sidecar proves.
+
+A sealed source counts towards both budgets and can be evicted whole, but it
+is never trimmed: it is still uncompressed. A sealed source that straddles an
+allowance therefore ends the walk, and the follow-up plan trims the archive it
+becomes once this run has compressed it. Walking past it would delete newer
+history sooner than older history, which is not what a retention budget means.
 """
 
 import dataclasses as dc
@@ -71,18 +77,14 @@ class Budget:
     cutoff : datetime | None
         The age cutoff, or None when no age limit is configured.
     active : ActiveHistory
-        What the writer's active file holds.
-    sealed_records : int
-        Rows in sealed sources this run will archive, counted so the record cap
-        covers history the writer has closed but the archiver has not yet
-        compressed. Sources without writer metadata have no known count and
-        contribute nothing; the next run counts them once they are archives.
+        What the writer's active file holds. The candidates passed to the
+        planners cover the closed history the writer has sealed but the
+        archiver has not yet compressed, so no separate sealed count is needed.
     """
 
     policy: RetentionPolicy
     cutoff: dt.datetime | None
     active: ActiveHistory = dc.field(default_factory=ActiveHistory)
-    sealed_records: int = 0
 
 
 def plan_byte_steps(
@@ -91,36 +93,19 @@ def plan_byte_steps(
     deletes: dict[int, SegmentEntry],
     trims: dict[int, Trim],
 ) -> None:
-    """Evict the oldest archives until the logical byte budget is met.
+    """Evict the oldest entries until the logical byte budget is met.
 
-    ``deletes`` and ``trims`` are updated in place. A whole archive is deleted
-    while it fits inside the excess; the first archive that does not is given
-    a byte allowance and planning stops, so no later archive is rewritten when
-    the budget is already met.
+    ``deletes`` and ``trims`` are updated in place. The walk is shared with the
+    record cap and documented in ``_BudgetWalk.evict``; only the measure and
+    the straddling archive's trim differ between the two budgets.
     """
     if not budget.policy.has_byte_limit:
         return
+    walk = _BudgetWalk(candidates, deletes, trims)
     retained = budget.active.bytes + sum(
-        size for _, size in _surviving(candidates, deletes, trims, planned_size)
+        size for _, size in walk.surviving(planned_size)
     )
-    excess = retained - budget.policy.max_bytes
-    if excess <= 0:
-        return
-    for entry, size in _surviving(candidates, deletes, trims, planned_size):
-        if excess <= 0:
-            # A whole-archive deletion may have met the budget exactly. The
-            # next archive then needs no rewrite, and trimming it to its own
-            # size would churn the file without dropping a row.
-            return
-        if size <= excess:
-            deletes[entry.sequence] = entry
-            excess -= size
-            continue
-        existing = trims.get(entry.sequence, Trim())
-        trims[entry.sequence] = dc.replace(
-            existing, allowed_bytes=size - excess, source_bytes=size
-        )
-        return
+    walk.evict(retained - budget.policy.max_bytes, planned_size, _byte_trim)
 
 
 def plan_record_steps(
@@ -129,47 +114,145 @@ def plan_record_steps(
     deletes: dict[int, SegmentEntry],
     trims: dict[int, Trim],
 ) -> None:
-    """Evict the oldest archives until the retained record cap is met.
+    """Evict the oldest entries until the retained record cap is met.
 
     Only an explicitly configured cap applies. The cap bounds the whole
-    retained store, so the rows in the active file and in sealed sources count
-    towards it; only archives are evictable, because the writer owns the active
-    file and a sealed source must be archived before it can be dropped. An
-    archive with no trustworthy sidecar has no known count and is skipped; the
-    heal step runs before retention on the next pass.
+    retained store, so the rows in the active file and in every closed entry
+    count towards it. The writer owns the active file and retention never
+    removes its rows, but a sealed source is closed history and is evicted
+    whole like an archive.
 
     ``deletes`` and ``trims`` are updated in place, exactly as the byte budget
-    does, and a whole archive is deleted while it fits inside the excess.
+    does. An entry with no trustworthy count ends the walk rather than being
+    skipped: evicting a newer entry ahead of older history whose count is
+    merely unknown would break oldest-first retention. The heal step repairs a
+    missing sidecar and the follow-up plan then continues from the count it
+    rebuilt.
     """
     max_records = budget.policy.max_records
     if max_records is None:
         return
-    retained = budget.active.records + budget.sealed_records
+    walk = _BudgetWalk(candidates, deletes, trims)
+    retained = budget.active.records
     retained += sum(
         records
-        for entry, records in _surviving(candidates, deletes, trims, planned_records)
+        for _entry, records in walk.surviving(planned_records)
         if records is not None
     )
-    excess = retained - max_records
-    if excess <= 0:
-        return
-    for entry, records in _surviving(candidates, deletes, trims, planned_records):
+    walk.evict(retained - max_records, planned_records, _record_trim)
+
+
+@dc.dataclass(slots=True)
+class _BudgetWalk:
+    """One budget's walk over the closed entries, with its decisions so far.
+
+    The candidates and the two decision maps travel together because every
+    step of the walk reads and writes all three. The maps are the planners'
+    own and are updated in place, so a walk sees the age cutoff's decisions
+    and the other budget's.
+
+    Attributes
+    ----------
+    candidates : tuple[SegmentEntry, ...]
+        The closed entries the scan found, oldest first.
+    deletes : dict[int, SegmentEntry]
+        The entries already planned for deletion, updated in place.
+    trims : dict[int, Trim]
+        The trims already planned, by sequence, updated in place.
+    """
+
+    candidates: tuple[SegmentEntry, ...]
+    deletes: dict[int, SegmentEntry]
+    trims: dict[int, Trim]
+
+    def surviving[Kept](
+        self, keep: cabc.Callable[[SegmentEntry, Trim | None], Kept]
+    ) -> cabc.Iterator[tuple[SegmentEntry, Kept]]:
+        """Yield each surviving candidate with the value ``keep`` estimates.
+
+        Parameters
+        ----------
+        keep : Callable[[SegmentEntry, Trim | None], _Kept]
+            The estimate to report for one surviving entry.
+
+        Returns
+        -------
+        Iterator[tuple[SegmentEntry, Kept]]
+            Each entry no step has deleted yet, with its planned value.
+        """
+        return (
+            (entry, keep(entry, self.trims.get(entry.sequence)))
+            for entry in self.candidates
+            if entry.sequence not in self.deletes
+        )
+
+    def evict(
+        self,
+        excess: int,
+        keep: cabc.Callable[[SegmentEntry, Trim | None], int | None],
+        trim_straddler: cabc.Callable[[Trim, int, int], Trim],
+    ) -> None:
+        """Delete whole entries oldest-first, then trim the one that straddles.
+
+        An entry is deleted while its planned value fits inside the remaining
+        excess. A deletion may meet the allowance exactly, so the walk stops as
+        soon as the excess is covered instead of churning a later archive. The
+        first entry that does not fit is trimmed instead, so no later entry is
+        rewritten when the budget is already met. A sealed source is never
+        given an allowance, because it cannot be rewritten until this run has
+        compressed it: the walk stops and the follow-up plan trims the archive
+        it becomes. An entry whose value cannot be planned also ends the walk,
+        because evicting newer history ahead of older history whose count is
+        merely unknown would break oldest-first retention.
+
+        Parameters
+        ----------
+        excess : int
+            The planned value that must be freed.
+        keep : Callable[[SegmentEntry, Trim | None], int | None]
+            The planned value of one entry, or None when it cannot be planned.
+        trim_straddler : Callable[[Trim, int, int], Trim]
+            The updated trim for the first entry that does not fit.
+        """
         if excess <= 0:
             return
-        if records is None:
-            # Without a sidecar the count cannot be planned, and guessing
-            # would either overstate or understate the cap. The sidecar is
-            # repaired before the next retention pass.
-            continue
-        if records <= excess:
-            deletes[entry.sequence] = entry
-            excess -= records
-            continue
-        existing = trims.get(entry.sequence, Trim())
-        trims[entry.sequence] = dc.replace(
-            existing, records=max(existing.records, excess)
-        )
-        return
+        for entry, value in self.surviving(keep):
+            if excess <= 0:
+                return
+            if value is None:
+                return
+            if value <= excess:
+                self.deletes[entry.sequence] = entry
+                excess -= value
+                continue
+            if entry.state == "sealed":
+                return
+            self.trims[entry.sequence] = trim_straddler(
+                self.trims.get(entry.sequence, Trim()), value, excess
+            )
+            return
+
+
+def _byte_trim(existing: Trim, size: int, excess: int) -> Trim:
+    """Allow one straddling archive the bytes that fit inside the excess.
+
+    Returns
+    -------
+    Trim
+        The previous trim with the byte allowance and source size set.
+    """
+    return dc.replace(existing, allowed_bytes=size - excess, source_bytes=size)
+
+
+def _record_trim(existing: Trim, _records: int, excess: int) -> Trim:
+    """Cap one straddling archive at the row count that fits in the excess.
+
+    Returns
+    -------
+    Trim
+        The previous trim with the leading row count raised to the excess.
+    """
+    return dc.replace(existing, records=max(existing.records, excess))
 
 
 def planned_records(entry: SegmentEntry, trim: Trim | None) -> int | None:
@@ -190,47 +273,13 @@ def planned_records(entry: SegmentEntry, trim: Trim | None) -> int | None:
     return max(entry.record_count - trim.records, 0)
 
 
-def _surviving[Kept](
-    candidates: tuple[SegmentEntry, ...],
-    deletes: cabc.Mapping[int, SegmentEntry],
-    trims: cabc.Mapping[int, Trim],
-    keep: cabc.Callable[[SegmentEntry, Trim | None], Kept],
-) -> cabc.Iterator[tuple[SegmentEntry, Kept]]:
-    """Yield each surviving candidate with the value ``keep`` estimates.
-
-    The delete set and the trims are read as each entry is yielded, so a
-    planner that changes them while walking still sees its own decisions.
-
-    Parameters
-    ----------
-    candidates : tuple[SegmentEntry, ...]
-        The archives the scan found, oldest first.
-    deletes : Mapping[int, SegmentEntry]
-        The archives already planned for deletion.
-    trims : Mapping[int, Trim]
-        The trims already planned, by sequence.
-    keep : Callable[[SegmentEntry, Trim | None], _Kept]
-        The estimate to report for one surviving archive.
-
-    Returns
-    -------
-    Iterator[tuple[SegmentEntry, Kept]]
-        Each archive no step has deleted yet, with its planned value.
-    """
-    return (
-        (entry, keep(entry, trims.get(entry.sequence)))
-        for entry in candidates
-        if entry.sequence not in deletes
-    )
-
-
 def planned_size(entry: SegmentEntry, trim: Trim | None) -> int:
-    """Estimate the logical bytes one archive keeps after its trim.
+    """Estimate the logical bytes one entry keeps after its trim.
 
     Returns
     -------
     int
-        The sidecar's logical size, capped by an explicit byte allowance. A
+        The recorded logical size, capped by an explicit byte allowance. A
         time-based trim cannot be estimated without reading rows, so it is
         treated as freeing nothing.
     """

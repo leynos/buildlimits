@@ -21,7 +21,7 @@ import dataclasses as dc
 import io
 import typing as typ
 
-from buildlimits import outcome_segment_inventory
+from buildlimits import outcome_records, outcome_segment_inventory
 from buildlimits.outcome_archive_rows import (
     DocumentReader,
     HeaderRow,
@@ -30,6 +30,7 @@ from buildlimits.outcome_archive_rows import (
 from buildlimits.outcome_history_settle import fingerprint, is_settled
 from buildlimits.outcome_record_stream import LineStream, StreamFaultError
 from buildlimits.outcome_segments import SegmentLayout, archive_name
+from buildlimits.outcome_store_files import read_private_bytes
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -262,22 +263,28 @@ def _read_active(path: Path) -> _PinnedActive | None:
     """Freeze the active file's bytes, or report that it does not exist.
 
     The writer seals the active file at its segment threshold, so these bytes
-    are bounded by that threshold rather than by the retained history.
+    are bounded by that threshold rather than by the retained history. The
+    read uses the store's bounded private-file reader so a symlink, a special
+    file or a file that grew past the store bound is a closed fault instead of
+    an unbounded read.
 
     Returns
     -------
     _PinnedActive | None
         The bytes and header of the writer's file, when it exists.
 
-    Notes
-    -----
-    A file that exists but does not start with a supported header raises
-    ``HistoryFaultError``.
+    Raises
+    ------
+    HistoryFaultError
+        If the file exists but does not start with a supported header, cannot
+        be read as a private regular file, or exceeds ``MAX_STORE_BYTES``.
     """
     try:
-        data = path.read_bytes()
+        data = read_private_bytes(path, limit=outcome_records.MAX_STORE_BYTES)
     except FileNotFoundError:
         return None
+    except OSError as error:
+        raise HistoryFaultError("corrupt") from error
     return _PinnedActive(header=_header_of_bytes(data), data=data)
 
 

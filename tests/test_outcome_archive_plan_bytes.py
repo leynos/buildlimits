@@ -7,7 +7,7 @@ age cutoff so one rewrite can apply both bounds.
 
 import datetime as dt
 
-from archive_plan_helpers import NOW, archived, plan, policy
+from archive_plan_helpers import NOW, archived, plan, policy, sealed
 
 from buildlimits.outcome_archive_verify import Trim
 from buildlimits.outcome_segment_inventory import Inventory
@@ -116,6 +116,41 @@ def test_a_deleted_archive_is_never_also_trimmed() -> None:
     assert [(item.sequence, trim.before) for item, trim in decision.trims] == [
         (2, NOW - dt.timedelta(days=1))
     ], "only the surviving archive is rewritten"
+
+
+def test_a_byte_budget_evicts_a_sealed_source_before_a_newer_archive() -> None:
+    """A source awaiting archival is evicted whole when it is the oldest."""
+    source = sealed(1, logical_bytes=100)
+    archive = archived(2, logical_bytes=100)
+
+    decision = plan(
+        Inventory(sealed=(source,), archived=(archive,)),
+        policy(max_bytes=100),
+    )
+
+    assert [(item.sequence, item.state) for item in decision.deletes] == [
+        (1, "sealed")
+    ], "the oldest entry is removed whole"
+    assert not decision.trims, "nothing is rewritten"
+    assert not decision.archive, "an evicted source is not compressed first"
+    assert decision.retained_bytes == 100, "the newer archive alone remains"
+
+
+def test_a_sealed_source_that_straddles_the_budget_is_not_trimmed() -> None:
+    """An uncompressed source cannot be trimmed, so the walk stops there."""
+    source = sealed(1, logical_bytes=100)
+    archive = archived(2, logical_bytes=100)
+
+    decision = plan(
+        Inventory(sealed=(source,), archived=(archive,)),
+        policy(max_bytes=150),
+    )
+
+    assert not decision.deletes, "the oldest entry is too large to evict whole"
+    assert not decision.trims, "a sealed source is never given a trim"
+    assert [item.sequence for item in decision.archive] == [1], (
+        "the source is archived so the follow-up plan can trim it"
+    )
 
 
 def test_no_byte_limit_disables_byte_eviction() -> None:

@@ -15,14 +15,18 @@ from pathlib import Path
 from outcome_archive_helpers import NOW, archives, layout, policy, records, run, write
 from segment_test_helpers import sidecar_document, write_private
 
-from buildlimits import outcome_archive_files, outcome_archive_quarantine
+from buildlimits import (
+    outcome_archive_files,
+    outcome_archive_lock,
+    outcome_archive_quarantine,
+)
 from buildlimits.outcome_archive import (
     EXIT_CORRUPT,
     EXIT_OK,
     EXIT_TEMPFAIL,
     inspect_store,
 )
-from buildlimits.outcome_archive_lock import ArchiveLock
+from buildlimits.outcome_archive_lock import ArchiveLock, NoHeadroomError
 from buildlimits.outcome_archive_verify import OutputFaultError
 from buildlimits.outcome_segments import archive_name, segment_name, sidecar_name
 
@@ -223,12 +227,20 @@ def test_a_failed_orphan_quarantine_does_not_stop_eviction(
     assert report.status == "corrupt", "the run names the fault it met"
 
 
-def test_insufficient_headroom_reports_a_retryable_status(tmp_path: Path) -> None:
+def test_insufficient_headroom_reports_a_retryable_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A full filesystem defers the run rather than failing it permanently."""
     store = tmp_path / "cache-outcomes.jsonl"
     write(store, records(NOW, 1), policy())
 
-    report = run(tmp_path, policy(headroom_bytes=1 << 62))
+    def refuse_headroom(*_args: object, **_kwargs: object) -> typ.NoReturn:
+        """Refuse the run as a filesystem without free space would."""
+        raise NoHeadroomError
+
+    monkeypatch.setattr(outcome_archive_lock, "require_headroom", refuse_headroom)
+
+    report = run(tmp_path, policy())
 
     assert report.status == "no_headroom", "the run did not start"
     assert report.exit_status == EXIT_TEMPFAIL, "the run is retryable"

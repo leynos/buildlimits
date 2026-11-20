@@ -7,9 +7,11 @@ history is identical before and after compression.
 """
 
 import datetime as dt
+import errno
 import json
 import lzma
 import os
+import typing as typ
 from pathlib import Path
 
 from hypothesis import HealthCheck, given, settings
@@ -26,14 +28,19 @@ from outcome_archive_helpers import (
 )
 from segment_test_helpers import write_private
 
-from buildlimits import outcome_history
-from buildlimits.outcome_segment_inventory import read_inventory
+from buildlimits import outcome_archive_files, outcome_history
+from buildlimits.outcome_segment_inventory import SegmentEntry, read_inventory
 from buildlimits.outcome_segments import (
     SegmentLayout,
     archive_name,
     segment_name,
     sidecar_name,
 )
+
+if typ.TYPE_CHECKING:
+    import pytest
+
+    from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
 
 
 def test_archiving_releases_every_sealed_source(tmp_path: Path) -> None:
@@ -79,8 +86,14 @@ def test_a_second_run_finds_no_work(tmp_path: Path) -> None:
     )
 
 
-def test_age_eviction_settles_in_the_same_run(tmp_path: Path) -> None:
-    """History archived by a run is evicted by that run when already too old."""
+def test_age_eviction_removes_expired_sources_without_archiving(
+    tmp_path: Path,
+) -> None:
+    """A wholly expired source is evicted, not compressed only to be deleted.
+
+    Compressing history the policy has already expired would spend the run's
+    work on an archive that the same plan removes.
+    """
     store = tmp_path / "cache-outcomes.jsonl"
     old = NOW - dt.timedelta(days=40)
     # The writer enforces the age bound on its own appends, so the fixture is
@@ -91,13 +104,11 @@ def test_age_eviction_settles_in_the_same_run(tmp_path: Path) -> None:
     report = run(tmp_path, policy(max_age_days=30))
 
     assert report.status == "ok", "expiry is not a failure"
-    assert [action.action for action in report.actions] == [
-        "archived",
-        "archived",
-        "deleted",
-        "deleted",
-    ], "both sources are archived and then deleted"
+    assert [action.action for action in report.actions] == ["deleted", "deleted"], (
+        "both expired sources are removed whole"
+    )
     assert not archives(tmp_path), "no expired history remains"
+    assert not read_inventory(layout(tmp_path)).sealed, "no source remains"
     assert (
         json.loads(layout(tmp_path).retention_file.read_text(encoding="utf-8"))[
             "floor_sequence"
@@ -140,6 +151,45 @@ def test_a_heal_only_run_replans_retention_with_real_logical_bytes(
         "the healed bytes change the plan in the same run"
     )
     assert report.retained_bytes <= budget, "the budget is met in one firing"
+
+
+def test_a_record_cap_evicts_the_oldest_sealed_source_in_one_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A source older than a published archive is evicted, not compressed.
+
+    The first run cannot archive sequence 1, so it leaves a sealed source
+    beside the newer archive it publishes. A cap of one row must then drop the
+    older source whole; compressing it first would keep the older row and
+    delete the newer archive instead.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 2), policy())
+    real = outcome_archive_files.archive_source
+
+    def refuse_first(context: ArchiveContext, entry: SegmentEntry) -> ActionResult:
+        """Archive every source but the oldest."""
+        if entry.sequence == 1:
+            raise OSError(errno.EIO, "injected failure")
+        return real(context, entry)
+
+    monkeypatch.setattr(outcome_archive_files, "archive_source", refuse_first)
+    first = run(tmp_path, policy())
+
+    assert [(action.action, action.sequence) for action in first.actions] == [
+        ("archived", 2)
+    ], "the fixture leaves the older source sealed"
+
+    monkeypatch.setattr(outcome_archive_files, "archive_source", real)
+    report = run(tmp_path, policy(max_records=1))
+
+    assert [(action.action, action.sequence) for action in report.actions] == [
+        ("deleted", 1)
+    ], "the older source is evicted without being archived"
+    assert not list(layout(tmp_path).sealed_dir.glob("*.jsonl")), "no source remains"
+    assert [path.name for path in archives(tmp_path)] == [archive_name(2)], (
+        "the newer archive survives"
+    )
 
 
 def test_byte_eviction_deletes_the_oldest_archive_first(tmp_path: Path) -> None:

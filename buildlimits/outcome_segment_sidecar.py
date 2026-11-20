@@ -10,7 +10,7 @@ import dataclasses as dc
 import json
 import typing as typ
 
-from buildlimits.outcome_store_io import read_private_bytes
+from buildlimits.outcome_store_files import read_private_bytes
 from buildlimits.utc_text import optional_utc_moment, optional_utc_text
 
 if typ.TYPE_CHECKING:

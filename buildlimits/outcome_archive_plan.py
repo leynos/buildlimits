@@ -3,9 +3,11 @@
 The planner reads an inventory scanned without reading segment content, so it
 never opens a file and never blocks the writer. It decides which sources to
 archive, which sidecars to rebuild, which orphans to quarantine, and which
-archives to trim or delete for the age and byte budgets. Retention evicts
-oldest closed history first, and every estimate is conservative: a planned
-trim never frees more bytes than its sidecar proves.
+closed history to trim or delete for the age and byte budgets. Retention evicts
+oldest closed history first, whether it is a sealed source or an archive: a
+budget that counts a sealed source's rows must be able to remove them, or the
+plan would delete newer archives while older history survived. Every estimate
+is conservative: a planned trim never frees more bytes than its sidecar proves.
 """
 
 import dataclasses as dc
@@ -39,7 +41,7 @@ class Plan:
     reconcile : tuple[tuple[SegmentEntry, SegmentEntry], ...]
         Sealed sources whose archive was already published.
     archive : tuple[SegmentEntry, ...]
-        Sealed sources with no archive.
+        Sealed sources with no archive that retention does not evict.
     heal : tuple[SegmentEntry, ...]
         Archives whose sidecar is missing or corrupt.
     orphans : tuple[int, ...]
@@ -47,7 +49,7 @@ class Plan:
     trims : tuple[tuple[SegmentEntry, Trim], ...]
         Archives to rewrite with a prefix trim.
     deletes : tuple[SegmentEntry, ...]
-        Archives to remove entirely.
+        Archives and sealed sources to remove entirely.
     retained_bytes : int
         Conservative logical bytes that will remain after the plan runs.
     cutoff : datetime | None
@@ -81,7 +83,7 @@ class PlanSummary:
     trim : int
         Archives that will be rewritten.
     delete : int
-        Archives that will be removed.
+        Archives and sealed sources that will be removed.
     retained_bytes : int
         Conservative logical bytes remaining after the plan.
     cutoff : datetime | None
@@ -187,19 +189,17 @@ def plan_run(
         if sealed.sequence == archived.sequence
     )
     duplicated_sequences = {sealed.sequence for sealed, _archived in duplicates}
+    heal = _heal_steps(inventory, duplicated_sequences)
+    budget = Budget(policy=policy, cutoff=policy.cutoff(now), active=active)
+    deletes, trims = _retention_steps(inventory, budget, duplicated_sequences)
+    evicted = {entry.sequence for entry in deletes}
+    # A source retention evicts is removed whole instead of being compressed
+    # and then deleted: compression would only defer the same removal.
     archive = tuple(
         entry
         for entry in inventory.sealed
-        if entry.sequence not in duplicated_sequences
+        if entry.sequence not in duplicated_sequences and entry.sequence not in evicted
     )
-    heal = _heal_steps(inventory, duplicated_sequences)
-    budget = Budget(
-        policy=policy,
-        cutoff=policy.cutoff(now),
-        active=active,
-        sealed_records=_sealed_records(inventory.sealed, duplicated_sequences),
-    )
-    deletes, trims = _retention_steps(inventory, budget, duplicated_sequences)
     retained = _retained_estimate(
         inventory, active_bytes=active.bytes, deletes=deletes, trims=trims
     )
@@ -212,22 +212,6 @@ def plan_run(
         deletes=deletes,
         retained_bytes=retained,
         cutoff=budget.cutoff,
-    )
-
-
-def _sealed_records(sealed: tuple[SegmentEntry, ...], duplicated: set[int]) -> int:
-    """Count the rows in sealed sources this run will archive.
-
-    A duplicated sequence is counted once, through its archive: reconciliation
-    removes the redundant source rather than compressing it again.
-
-    Returns
-    -------
-    int
-        The known record count of the sealed sources, excluding duplicates.
-    """
-    return sum(
-        entry.record_count or 0 for entry in sealed if entry.sequence not in duplicated
     )
 
 
@@ -253,15 +237,21 @@ def _retention_steps(
     budget: Budget,
     duplicated: set[int],
 ) -> tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...]]:
-    """Decide age and byte eviction over closed archives, oldest first.
+    """Decide age and byte eviction over closed history, oldest first.
+
+    Sealed sources are candidates as well as archives. Both count towards the
+    budgets, so excluding a sealed source from eviction would make the plan
+    delete newer archives while older history survived. A sealed source is only
+    ever removed whole: it cannot be trimmed before it is compressed, and the
+    follow-up plan trims it once this run has archived it.
 
     Returns
     -------
     tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...]]
-        Archives to delete and archives to rewrite with a trim.
+        Entries to delete and archives to rewrite with a trim.
     """
     candidates = tuple(
-        entry for entry in inventory.archived if entry.sequence not in duplicated
+        entry for entry in inventory.effective if entry.sequence not in duplicated
     )
     deletes: dict[int, SegmentEntry] = {}
     if budget.cutoff is not None:
@@ -303,6 +293,10 @@ def _age_trims(
 ) -> dict[int, Trim]:
     """Record the prefix trim a straddling archive needs.
 
+    A sealed source that straddles the cutoff is left untrimmed here. This run
+    archives it, and the follow-up plan applies the trim to the archive it
+    becomes, which is the first point at which it can be rewritten.
+
     Returns
     -------
     dict[int, Trim]
@@ -313,6 +307,8 @@ def _age_trims(
     trims: dict[int, Trim] = {}
     for entry in candidates:
         if entry.sequence in deletes or not entry.has_metadata:
+            continue
+        if entry.state != "archived":
             continue
         first = entry.first_observed_at
         if first is not None and first < cutoff:
@@ -332,15 +328,17 @@ def _retained_estimate(
     Returns
     -------
     int
-        Active bytes plus every sealed source plus every archive that is not
-        deleted, with planned trims applied.
+        Active bytes plus every surviving sealed source plus every surviving
+        archive, with planned trims applied.
     """
     deleted = {entry.sequence for entry in deletes}
     trim_map = {entry.sequence: trim for entry, trim in trims}
     retained = active_bytes
     for entry in inventory.effective:
+        if entry.sequence in deleted:
+            continue
         if entry.state == "sealed":
             retained += entry.logical_bytes
-        elif entry.sequence not in deleted:
+        else:
             retained += planned_size(entry, trim_map.get(entry.sequence))
     return retained

@@ -7,6 +7,7 @@ archive, heal, quarantine orphans, trim and finally delete.
 """
 
 import dataclasses as dc
+import errno
 import typing as typ
 
 from buildlimits import (
@@ -33,6 +34,11 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
 __all__ = ["ArchiveRun", "RunOutcome", "active_history", "perform", "retain"]
+
+# A filesystem that cannot hold this run's output. The headroom check reads
+# free space once before the pass, so another writer can still fill it while
+# this run works; that is a temporary condition the next firing retries.
+_NO_SPACE_ERRNOS = frozenset({errno.ENOSPC, errno.EDQUOT})
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -63,6 +69,21 @@ class RunOutcome:
 
     actions: list[ActionResult] = dc.field(default_factory=list)
     failures: list[tuple[int, str]] = dc.field(default_factory=list)
+
+
+def failure_reason(error: OSError) -> str:
+    """Name one filesystem failure with the report's closed vocabulary.
+
+    A full filesystem is temporary: the store is intact, and the next timer
+    firing retries once space returns. Anything else is reported as
+    ``unreadable``, the reason an operator must look at.
+
+    Returns
+    -------
+    str
+        ``no_headroom`` for a full filesystem, else ``unreadable``.
+    """
+    return "no_headroom" if error.errno in _NO_SPACE_ERRNOS else "unreadable"
 
 
 def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
@@ -165,8 +186,8 @@ def _reconcile_one(
         # any other archive pass can. The pair is left for the next run rather
         # than ending this one.
         outcome.failures.append((sealed.sequence, fault.reason))
-    except OSError:
-        outcome.failures.append((sealed.sequence, "unreadable"))
+    except OSError as error:
+        outcome.failures.append((sealed.sequence, failure_reason(error)))
 
 
 def _quarantine_orphan(run: ArchiveRun, sequence: int, outcome: RunOutcome) -> None:
@@ -179,8 +200,8 @@ def _quarantine_orphan(run: ArchiveRun, sequence: int, outcome: RunOutcome) -> N
         outcome.actions.append(
             outcome_archive_quarantine.remove_orphan_sidecar(run.context, sequence)
         )
-    except OSError:
-        outcome.failures.append((sequence, "unreadable"))
+    except OSError as error:
+        outcome.failures.append((sequence, failure_reason(error)))
 
 
 def _quarantining(
@@ -194,8 +215,9 @@ def _quarantining(
     Every operation that can meet a closed fault reports the same way: a
     success appends its action, a closed fault moves the artefact that owns the
     file into quarantine, and any other filesystem failure is recorded as
-    ``unreadable``. ``quarantine`` therefore names the artefact rather than the
-    reason, because only the caller knows which file a fault implicates.
+    ``unreadable`` or, when the filesystem is full, ``no_headroom``.
+    ``quarantine`` therefore names the artefact rather than the reason, because
+    only the caller knows which file a fault implicates.
     """
     try:
         outcome.actions.append(action())
@@ -205,8 +227,8 @@ def _quarantining(
         outcome.failures.append((sequence, fault.reason))
     except SegmentFaultError as fault:
         _quarantine_fault(outcome, sequence, fault.reason, quarantine)
-    except OSError:
-        outcome.failures.append((sequence, "unreadable"))
+    except OSError as error:
+        outcome.failures.append((sequence, failure_reason(error)))
 
 
 def _quarantine_fault(
@@ -223,8 +245,8 @@ def _quarantine_fault(
     """
     try:
         outcome.actions.append(quarantine(reason))
-    except OSError:
-        outcome.failures.append((sequence, "unreadable"))
+    except OSError as error:
+        outcome.failures.append((sequence, failure_reason(error)))
         return
     outcome.failures.append((sequence, reason))
 
@@ -271,10 +293,13 @@ def _trim_one(
 
 
 def _delete_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
-    """Remove one expired archive."""
+    """Remove one evicted archive or sealed source."""
     try:
-        outcome_archive_files.delete_archive(run.context, entry)
-    except OSError:
-        outcome.failures.append((entry.sequence, "unreadable"))
+        if entry.state == "sealed":
+            outcome_archive_files.delete_source(run.context, entry)
+        else:
+            outcome_archive_files.delete_archive(run.context, entry)
+    except OSError as error:
+        outcome.failures.append((entry.sequence, failure_reason(error)))
         return
     outcome.actions.append(ActionResult("deleted", entry.sequence))

@@ -44,6 +44,7 @@ if typ.TYPE_CHECKING:
 __all__ = [
     "archive_source",
     "delete_archive",
+    "delete_source",
     "recompress_archive",
     "reconcile_duplicate",
     "repair_sidecar",
@@ -248,6 +249,24 @@ def delete_archive(context: ArchiveContext, entry: SegmentEntry) -> None:
     _unlink(entry.path)
     _unlink(context.layout.archive_dir / outcome_segments.sidecar_name(entry.sequence))
     end_replacement(context.layout.archive_dir, entry.sequence)
+
+
+def delete_source(context: ArchiveContext, entry: SegmentEntry) -> None:
+    """Remove one sealed source the retention budget has evicted.
+
+    A source old enough to be outside the retained history is removed without
+    being compressed: compressing it first would only defer the same removal.
+    The writer's metadata goes with it, exactly as it does after archival, so
+    no sidecar outlives the rows it described.
+
+    Parameters
+    ----------
+    context : ArchiveContext
+        The run's layout, policy and moment.
+    entry : SegmentEntry
+        The sealed source to remove.
+    """
+    _remove_sealed_source(context, entry.sequence)
 
 
 def _rearchive(context: ArchiveContext, sealed: SegmentEntry) -> ActionResult:

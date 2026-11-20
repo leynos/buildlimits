@@ -34,18 +34,23 @@ __all__ = [
 ]
 
 
-def history_policy(segment_bytes: int = 1) -> RetentionPolicy:
+def history_policy(
+    segment_bytes: int = 1,
+    *,
+    max_records: int | None = None,
+    max_age_days: int = 30,
+) -> RetentionPolicy:
     """Build an unlimited-budget policy that seals at ``segment_bytes``.
 
     Returns
     -------
     RetentionPolicy
-        A policy with no age or byte eviction, so archived history survives.
+        A policy with no byte eviction, so archived history survives.
     """
     return RetentionPolicy(
-        max_age=dt.timedelta(days=30),
+        max_age=dt.timedelta(days=max_age_days),
         max_bytes=0,
-        max_records=None,
+        max_records=max_records,
         headroom_bytes=max(segment_bytes, 1) * 4,
         segment_bytes=segment_bytes,
     )

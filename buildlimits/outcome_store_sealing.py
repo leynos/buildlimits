@@ -79,7 +79,7 @@ def seal(files: StoreFiles, *, salt_id: str | None = None) -> bool:
     # The rows have left the active file, so the writer must stop treating
     # them as active even if the steps that follow fail.
     released = len(files.records)
-    files.records = []
+    files.set_records([])
     files.header = outcome_records.StoreHeader(salt.salt_id, now)
     installed = restart_active(files)
     if not (installed and (not moved or _sync_sealed(files))):

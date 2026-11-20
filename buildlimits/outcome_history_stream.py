@@ -8,15 +8,18 @@ per closed segment, plus the active file's bytes -- and each iteration
 re-streams that snapshot one segment at a time, decoding rows lazily and
 skipping a domain the caller did not select.
 
-A pass that finds a pinned segment changed fails closed as ``unsettled``
-before yielding anything, and its caller may open a fresh stream. Because
-every pass reads the same frozen snapshot, a two-pass comparison such as H2
-compares the same rows. Callers that need the whole history in memory call
+A pass that finds a pinned segment changed fails closed as ``unsettled``:
+the pre-pass check covers every segment, and each opened descriptor is
+checked again, so a replacement between the check and the open is refused
+rather than read. The caller may open a fresh stream. Because every pass
+reads the same frozen snapshot, a two-pass comparison such as H2 compares
+the same rows. Callers that need the whole history in memory call
 ``outcome_history.read_history``, which collects this stream.
 """
 
 import dataclasses as dc
 import io
+import os
 import typing as typ
 
 from buildlimits.outcome_archive_rows import (
@@ -201,10 +204,28 @@ def _iter_segment(segment: _PinnedSegment) -> cabc.Iterator[StoreRecord]:
     """
     try:
         with segment.path.open("rb") as source:
+            _require_same_file(source, segment)
             stream = LineStream(source, is_compressed=segment.is_compressed)
             yield from _records(stream)
     except FileNotFoundError as error:
         raise HistoryFaultError("unsettled") from error
+
+
+def _require_same_file(source: typ.BinaryIO, segment: _PinnedSegment) -> None:
+    """Refuse a descriptor that is not the file the pin fingerprinted.
+
+    The pre-pass check cannot close the window between itself and this open:
+    retention may replace a later segment in between. Comparing the opened
+    descriptor's identity is the check that binds the rows to the snapshot.
+
+    Raises
+    ------
+    HistoryFaultError
+        If the opened file is not the pinned inode and size.
+    """
+    info = os.fstat(source.fileno())
+    if (info.st_dev, info.st_ino, info.st_size) != segment.fingerprint:
+        raise HistoryFaultError("unsettled")
 
 
 def _iter_active(active: _PinnedActive) -> cabc.Iterator[StoreRecord]:

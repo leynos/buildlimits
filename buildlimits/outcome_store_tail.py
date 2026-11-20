@@ -9,7 +9,7 @@ truncation that makes the file on disk match the rows the decoder accepted.
 import os
 import typing as typ
 
-from buildlimits.outcome_store_io import open_private_regular
+from buildlimits.outcome_store_files import open_private_regular
 
 if typ.TYPE_CHECKING:
     from pathlib import Path

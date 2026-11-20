@@ -227,8 +227,9 @@ def evaluate_h2(records: cabc.Iterable[StoreRecord]) -> H2Report:
     """Evaluate the fixed child-plus-runtime classifier in store order.
 
     Only hit and miss rows with at least one sample and a key containing both
-    labels are evaluable. The runtime baseline uses all earlier hits for that
-    key, whether or not those earlier rows were sampled.
+    labels are evaluable. The runtime baseline uses the most recent
+    ``H2_RUNTIME_WINDOW`` earlier hits for that key, whether or not those
+    earlier rows were sampled.
 
     Returns
     -------

@@ -1,13 +1,20 @@
 """H2 replay classification, fixed thresholds and CLI reports."""
 
-import dataclasses as dc
 import datetime as dt
 import json
 import typing as typ
 from pathlib import Path
 
 import pytest
-from outcome_test_helpers import OBSERVED_AT, cache_key
+from outcome_replay_h2_helpers import (
+    key as _key,
+)
+from outcome_replay_h2_helpers import (
+    outcome as _outcome,
+)
+from outcome_replay_h2_helpers import (
+    rows as _rows,
+)
 
 from buildlimits import (
     outcome_evidence,
@@ -15,142 +22,13 @@ from buildlimits import (
     outcome_replay_cli,
     outcome_store_io,
 )
-from buildlimits.outcome_record_format import ChildSighting, OutcomeRecord, StoreHeader
+from buildlimits.outcome_record_format import StoreHeader
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
 
-    from buildlimits.outcome_key import CacheKey
-    from buildlimits.outcome_vocabulary import CacheResult
-
 
 _ADR = Path(__file__).parents[1] / "docs/adrs/adr-0005-cache-outcome-recording.md"
-
-
-def _key(index: int) -> CacheKey:
-    """Create a stable, path-free key for one synthetic history.
-
-    Returns
-    -------
-    CacheKey
-        One key with a unique, non-path argument digest.
-    """
-    return dc.replace(cache_key(), argument_digest=f"{index:064x}")
-
-
-def _outcome(
-    key: CacheKey,
-    label: CacheResult,
-    *,
-    runtime: float,
-    sighting: ChildSighting = "not_seen",
-) -> OutcomeRecord:
-    """Build one store row with explicit H2 inputs.
-
-    Returns
-    -------
-    OutcomeRecord
-        One deterministic cache history row.
-    """
-    return OutcomeRecord(
-        key=key,
-        outcome=label,
-        origin="registry",
-        runtime_seconds=runtime,
-        observed_at=OBSERVED_AT,
-        parser_class="cacheable",
-        child_sighting=sighting,
-        child_samples=0 if label == "failed" else 1,
-    )
-
-
-def _rows(
-    evaluable: int,
-    correct: int,
-    attributed: int,
-    *,
-    status_overrides: dict[int, ChildSighting] | None = None,
-) -> tuple[OutcomeRecord, ...]:
-    """Build paired key histories with a chosen number of combined matches.
-
-    Returns
-    -------
-    tuple[OutcomeRecord, ...]
-        Sampled paired rows plus unattributed-to-H2 supporting rows.
-    """
-    overrides = {} if status_overrides is None else status_overrides
-    records = [
-        _paired_row(index, evaluable, correct, overrides) for index in range(evaluable)
-    ]
-    records.extend(
-        _outcome(_key(100_000 + index), "failed", runtime=0.25)
-        for index in range(len(records), attributed)
-    )
-    return tuple(records)
-
-
-def _paired_row(
-    index: int,
-    evaluable: int,
-    correct: int,
-    overrides: dict[int, ChildSighting],
-) -> OutcomeRecord:
-    """Build one sampled paired row, honouring an explicit sighting override.
-
-    Returns
-    -------
-    OutcomeRecord
-        The paired hit or miss row for ``index``.
-    """
-    key_index, label = _row_identity(index, evaluable)
-    is_correct = index < correct or index in overrides
-    sighting = overrides[index] if index in overrides else _sighting(label, is_correct)
-    runtime = _row_runtime(label, is_correct)
-    if index in overrides and label == "miss":
-        runtime = 2.0
-    return _outcome(_key(key_index), label, runtime=runtime, sighting=sighting)
-
-
-def _row_identity(index: int, evaluable: int) -> tuple[int, CacheResult]:
-    """Choose the paired key and label for one evaluable row index.
-
-    Rows in the paired region alternate hit and miss on shared keys; any
-    remainder row is a single extra hit on the first key.
-
-    Returns
-    -------
-    tuple[int, CacheResult]
-        Key index and the row's hit or miss label.
-    """
-    if index < evaluable // 2 * 2:
-        return index // 2, "hit" if index % 2 == 0 else "miss"
-    return 0, "hit"
-
-
-def _sighting(label: CacheResult, is_correct: bool) -> ChildSighting:
-    """Choose the child sighting that matches the predicted correctness.
-
-    Returns
-    -------
-    ChildSighting
-        The sighting value implied by the label and correctness.
-    """
-    if label == "hit":
-        return "not_seen" if is_correct else "seen"
-    return "seen" if is_correct else "not_seen"
-
-
-def _row_runtime(label: CacheResult, is_correct: bool) -> float:
-    """Choose the runtime that carries the row's prediction.
-
-    Returns
-    -------
-    float
-        Hit rows stay fast; miss rows are slow only when predicted correctly.
-    """
-    if label == "hit":
-        return 0.25
-    return 2.0 if is_correct else 0.5
 
 
 @pytest.mark.parametrize(

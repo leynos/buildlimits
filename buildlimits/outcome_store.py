@@ -28,6 +28,9 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
 
 MAX_APPEND_QUEUE = 4_096
+IDLE_TICK_SECONDS = 60.0
+"""How long an idle worker waits before re-checking the age bound."""
+
 _STOP = None
 
 
@@ -48,6 +51,9 @@ class StoreWriter(OutcomeStorePort):
         The effective retention policy. A policy that requires segmentation
         makes the writer seal the active file at ``segment_bytes`` instead of
         compacting it in place; the legacy default keeps in-place compaction.
+    idle_tick : float
+        Seconds an idle worker waits before re-checking the age bound, so a
+        store that receives no appends still lets aged rows leave.
 
     Examples
     --------
@@ -67,17 +73,22 @@ class StoreWriter(OutcomeStorePort):
         wall_clock: cabc.Callable[[], dt.datetime] | None = None,
         monotonic_clock: cabc.Callable[[], float] = time.monotonic,
         policy: RetentionPolicy | None = None,
+        idle_tick: float = IDLE_TICK_SECONDS,
     ) -> None:
         """Start the sole file-owning worker without waiting for its setup.
 
         Raises
         ------
         ValueError
-            If the append queue capacity is not positive.
+            If the append queue capacity or the idle tick is not positive.
         """
         if queue_capacity < 1:
             msg = "append queue capacity must be positive"
             raise ValueError(msg)
+        if not (math.isfinite(idle_tick) and idle_tick > 0):
+            msg = "idle tick must be a positive number of seconds"
+            raise ValueError(msg)
+        self._idle_tick = idle_tick
         self._salt_path = path.with_name("cache-outcomes.salt")
         self._queue_capacity = queue_capacity
         self._work: queue.Queue[tuple[bytes, StoreRecord] | None] = queue.Queue(
@@ -191,7 +202,15 @@ class StoreWriter(OutcomeStorePort):
         """Initialize once, then serialize every queued operation."""
         self._initialize()
         while True:
-            item = self._work.get()
+            try:
+                item = self._work.get(timeout=self._idle_tick)
+            except queue.Empty:
+                # A quiet store must still let aged rows leave. Without this
+                # wake-up a writer that receives no appends would keep them
+                # until shutdown, however long that takes.
+                if self._files.ready:
+                    self._files.expire_if_aged()
+                continue
             if item is _STOP:
                 if self._files.ready:
                     self._files.final_flush()

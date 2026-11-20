@@ -10,11 +10,8 @@ from pathlib import Path
 
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreFailure
-from buildlimits.outcome_store_io import (
-    ensure_directory,
-    open_private_regular,
-    write_private_temp,
-)
+from buildlimits.outcome_store_files import open_private_regular
+from buildlimits.outcome_store_io import ensure_directory, write_private_temp
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

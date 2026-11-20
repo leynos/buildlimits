@@ -10,7 +10,7 @@ import os
 import stat
 import typing as typ
 
-from buildlimits.outcome_store_io import read_private_bytes
+from buildlimits.outcome_store_files import read_private_bytes
 
 if typ.TYPE_CHECKING:
     from pathlib import Path

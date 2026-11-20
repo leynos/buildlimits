@@ -9,6 +9,7 @@ reported as a closed reason and an exit status a systemd timer can act on.
 
 import dataclasses as dc
 import datetime as dt
+import errno
 import typing as typ
 
 from buildlimits import (
@@ -122,7 +123,11 @@ def run_archive(
         return _unfinished(started, "busy", "busy")
     except outcome_archive_lock.NoHeadroomError:
         return _unfinished(started, "no_headroom", "no_headroom")
-    except OSError:
+    except OSError as error:
+        if error.errno == errno.ENOSPC:
+            # The headroom check reads free space once, before the pass; the
+            # filesystem can still fill while this run works.
+            return _unfinished(started, "no_headroom", "no_headroom")
         return _unfinished(started, "failed", "unreadable")
 
 
@@ -185,7 +190,7 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
     retained = final_active.bytes + final.sealed_bytes + final.archived_logical_bytes
     observed = _observed(final, final_active)
     report = RunReport(
-        status="corrupt" if outcome.failures else "ok",
+        status=_run_status(outcome),
         started_at=run.started_at,
         finished_at=utc_now(),
         active_bytes=active.bytes,
@@ -207,6 +212,25 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunR
     )
     _write_state(layout, floor, report)
     return report
+
+
+def _run_status(outcome: outcome_archive_run.RunOutcome) -> RunStatus:
+    """Classify a completed pass by the failures it recorded.
+
+    A run that met only a full filesystem is retryable: nothing is corrupt and
+    the next timer firing picks the work up once space returns. Any other
+    failure needs an operator, so it outranks a space failure in the same run.
+
+    Returns
+    -------
+    RunStatus
+        ``ok``, ``no_headroom`` or ``corrupt``.
+    """
+    if not outcome.failures:
+        return "ok"
+    if all(reason == "no_headroom" for _sequence, reason in outcome.failures):
+        return "no_headroom"
+    return "corrupt"
 
 
 def _write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:

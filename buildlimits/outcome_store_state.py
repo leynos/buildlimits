@@ -106,6 +106,7 @@ class StoreFiles:
         self.salt: Salt | None = None
         self.header: outcome_records.StoreHeader | None = None
         self.records: list[StoreRecord] = []
+        self.oldest_observed: dt.datetime | None = None
         self.needs_compaction = False
         self.clock_skew_pending = False
         self.ready = False
@@ -177,6 +178,24 @@ class StoreFiles:
         """Choose which validated rows can belong to the active salt."""
         outcome_store_restart.restore_loaded_store(self, decoded, salt, now)
 
+    def set_records(self, records: list[StoreRecord]) -> None:
+        """Replace the active rows and cache their oldest observation.
+
+        Retention asks whether the oldest retained row has aged past the
+        cutoff, and a writer may append a row observed before every row it
+        already holds. Caching the minimum here keeps that check constant-time
+        however many rows the file carries.
+
+        Parameters
+        ----------
+        records : list[StoreRecord]
+            The rows the active file now holds.
+        """
+        self.records = records
+        self.oldest_observed = min(
+            (record.observed_at for record in records), default=None
+        )
+
     def append(self, line: bytes, record: StoreRecord) -> None:
         """Compact at high water, preserve the hard bound and append one row."""
         if self.header is None:
@@ -185,6 +204,8 @@ class StoreFiles:
         if self.needs_compaction and not self.settle():
             self.publish("append", "save_failed", discarded=1)
             return
+        if self.exceeds_record_cap():
+            self.settle()
         try:
             size = store_size(self.path)
             water_mark = self.settle_bytes()
@@ -200,8 +221,30 @@ class StoreFiles:
             self.publish("append", "save_failed", discarded=1)
             return
         self.records.append(record)
+        if self.oldest_observed is None or record.observed_at < self.oldest_observed:
+            self.oldest_observed = record.observed_at
         self.publish("append", "none", records=1)
         self.expire_if_aged()
+
+    def exceeds_record_cap(self) -> bool:
+        """Whether one more row would take the active file past its record cap.
+
+        The cap bounds retained history, and only a closed segment can be
+        archived and evicted. Sealing at the cap hands the rows to the
+        archiver instead of letting a small active file hold more rows than
+        the policy allows.
+
+        Returns
+        -------
+        bool
+            Whether the active file must be closed before the next append.
+        """
+        policy = self.policy
+        return (
+            policy.is_segmented
+            and policy.max_records is not None
+            and len(self.records) >= policy.max_records
+        )
 
     def expire_if_aged(self) -> None:
         """Compact once the oldest retained row has aged past the cutoff.
@@ -209,17 +252,18 @@ class StoreFiles:
         A segmented store seals only when the active file reaches
         ``segment_bytes``, so a quiet store would otherwise keep rows past the
         age bound until shutdown. Compaction drops every row observed before
-        the cutoff, which makes the check cheap and self-limiting: it reads the
-        clock on each append and rewrites the file only when the bound has
-        actually been crossed. Rows are appended in observation order, so the
-        first retained row is the oldest; a caller that appends an older row
-        later still has it dropped by the next compaction.
+        the cutoff, which makes the check self-limiting: it reads the clock on
+        each append and rewrites the file only when the bound has actually
+        been crossed. The check follows the oldest observation the file holds,
+        not its first row. A caller may append a row observed before every row
+        it follows, and that older row must not survive until some later row
+        happens to age past the cutoff.
         """
         policy = self.policy
-        if not policy.has_age_limit or not self.records:
+        if not policy.has_age_limit or self.oldest_observed is None:
             return
         cutoff = policy.cutoff(self.observe_clock())
-        if cutoff is not None and self.records[0].observed_at < cutoff:
+        if cutoff is not None and self.oldest_observed < cutoff:
             self.compact()
 
     def settle_bytes(self) -> int:
@@ -285,7 +329,7 @@ class StoreFiles:
             self.publish("compact", "save_failed")
             return False
         self.header = compacted.header
-        self.records = list(compacted.records)
+        self.set_records(list(compacted.records))
         self.clock_skew_pending = False
         self.needs_compaction = False
         self.publish(

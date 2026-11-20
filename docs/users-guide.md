@@ -471,8 +471,12 @@ Throughput is about 3 MB/s of logical input, so a first run over a 15 GB
 backlog takes roughly 80 minutes, while a daily run over one day's segments
 takes seconds. Set `TimeoutStartSec` to cover the backlog rather than the
 steady state, for example `TimeoutStartSec=2h`. Scratch use is bounded by the
-archive the pass writes, which the `cache_outcomes_archive_headroom_bytes`
-setting reserves.
+archive the pass writes. The `cache_outcomes_archive_headroom_bytes` setting
+requires that much free space when a run starts; it is a check, not a
+reservation, so another writer that fills the filesystem after the check still
+stops the pass. A run that meets a full filesystem reports the retryable
+status: nothing is corrupted, and the next timer firing picks the work up once
+space returns.
 
 ### Compare offline hit predictors
 

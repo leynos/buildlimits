@@ -1,17 +1,24 @@
-"""Internal bounded file operations for cache-outcome storage.
+"""Internal store-document operations for cache-outcome storage.
 
-These shared filesystem primitives are package implementation support for the
-store writer and salt adapter, not a standalone public API.
+These operations write and replace whole store documents and their sidecars.
+The private-file primitives they build on, including the bounded reader, live
+in :mod:`buildlimits.outcome_store_files`. Both are package implementation
+support for the store writer and salt adapter, not a standalone public API.
 """
 
 import contextlib
-import errno
 import json
 import os
-import stat
 import typing as typ
 
 from buildlimits import outcome_records
+from buildlimits.outcome_store_files import (
+    FILE_MODE,
+    OversizedFileError,
+    open_private_regular,
+    read_private_bytes,
+    require_regular,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -19,7 +26,6 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.outcome_record_format import StoreRecord
 
-_FILE_MODE = 0o600
 _DIRECTORY_MODE = 0o700
 _TEMP_SUFFIX = ".tmp"
 
@@ -45,10 +51,6 @@ def append_line(path: Path, line: bytes) -> None:
         os.close(descriptor)
 
 
-class _OversizedError(OSError):
-    """A private file grew past the caller's read bound."""
-
-
 def read_store(
     path: Path,
 ) -> outcome_records.DecodedStore | outcome_records.RecordFailure:
@@ -62,7 +64,7 @@ def read_store(
     """
     try:
         document = read_private_bytes(path, limit=outcome_records.MAX_STORE_BYTES)
-    except _OversizedError:
+    except OversizedFileError:
         return outcome_records.RecordFailure("corrupt")
     try:
         complete_document = document[: document.rfind(b"\n") + 1]
@@ -71,43 +73,6 @@ def read_store(
         return outcome_records.decode_lines(complete_document.decode("utf-8"))
     except UnicodeError:
         return outcome_records.RecordFailure("corrupt")
-
-
-def read_private_bytes(path: Path, *, limit: int) -> bytes:
-    """Read one private regular file entirely, refusing anything over ``limit``.
-
-    The file is opened without following links and its size is checked both
-    from the descriptor's metadata and from the bytes actually read, so a file
-    that grows while it is read cannot exceed the caller's bound either.
-    Filesystem failures other than an oversized file propagate as ``OSError``.
-
-    Parameters
-    ----------
-    path : Path
-        The private regular file to read.
-    limit : int
-        The largest permitted size in bytes.
-
-    Returns
-    -------
-    bytes
-        The file's contents.
-
-    Raises
-    ------
-    _OversizedError
-        If the file's size, measured either way, exceeds ``limit``.
-    """
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor, metadata = open_private_regular(path, flags, enforce_mode=False)
-    if metadata.st_size > limit:
-        os.close(descriptor)
-        raise _OversizedError(errno.EFBIG, "file exceeds its read bound")
-    with os.fdopen(descriptor, "rb") as source:
-        data = source.read(limit + 1)
-    if len(data) > limit:
-        raise _OversizedError(errno.EFBIG, "file exceeds its read bound")
-    return data
 
 
 def store_size(path: Path) -> int:
@@ -123,7 +88,7 @@ def store_size(path: Path) -> int:
         metadata = path.lstat()
     except FileNotFoundError:
         return 0
-    _require_regular(metadata)
+    require_regular(metadata)
     return metadata.st_size
 
 
@@ -148,47 +113,6 @@ def replace_store(
     replace_temp(write_private_temporary(path, document), path)
 
 
-def open_private_regular(
-    path: Path, flags: int, *, enforce_mode: bool = True
-) -> tuple[int, os.stat_result]:
-    """Open a regular file without following links, optionally enforcing mode.
-
-    Returns
-    -------
-    tuple[int, os.stat_result]
-        The open descriptor and the metadata captured from it.
-
-    Raises
-    ------
-    OSError
-        If opening, validating or enforcing the private file mode fails.
-    """
-    descriptor = os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
-    try:
-        metadata = os.fstat(descriptor)
-        _require_regular(metadata)
-        if enforce_mode:
-            os.fchmod(descriptor, _FILE_MODE)
-    except OSError:
-        with contextlib.suppress(OSError):
-            os.close(descriptor)
-        raise
-    return descriptor, metadata
-
-
-def _require_regular(metadata: os.stat_result) -> None:
-    """Reject filesystem objects that are not regular files.
-
-    Raises
-    ------
-    OSError
-        If the supplied metadata describes another filesystem object.
-    """
-    if not stat.S_ISREG(metadata.st_mode):
-        msg = "outcome store is not a regular file"
-        raise OSError(msg)
-
-
 def write_private_temp(temporary: Path, descriptor: int, data: bytes) -> None:
     """Write, sync and close one already-created private temporary file.
 
@@ -198,7 +122,7 @@ def write_private_temp(temporary: Path, descriptor: int, data: bytes) -> None:
         If writing, syncing or closing fails; the temporary file is removed.
     """
     try:
-        os.fchmod(descriptor, _FILE_MODE)
+        os.fchmod(descriptor, FILE_MODE)
         write_all(descriptor, data)
         os.fsync(descriptor)
     except OSError:
@@ -344,7 +268,7 @@ def write_private_temporary(path: Path, data: bytes, *, suffix: str = "") -> Pat
     temporary = path.with_name(f".{path.name}{suffix}{_TEMP_SUFFIX}")
     temporary.unlink(missing_ok=True)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(temporary, flags, _FILE_MODE)
+    descriptor = os.open(temporary, flags, FILE_MODE)
     write_private_temp(temporary, descriptor, data)
     return temporary
 

@@ -328,6 +328,51 @@ verified archive is published, and leaves compile admission untouched.
   exceptions, and `lint-actions`), `make typecheck`, `make test` (4487 passed,
   86 skipped and 76 snapshots passed), `make markdownlint`, `make nixie` and
   `make audit` (no known vulnerabilities).
+- [x] Third remediation: the whole-plan assessment's remaining four defects
+  (2026-11-20). The record cap now counts the active file and evicts the oldest
+  closed history first, deleting a sealed source whole when the budget would
+  remove its rows anyway rather than compressing and then deleting it; the
+  archive run-fault tests were rewritten to that contract. H2's runtime
+  baseline keeps a fixed 64-hit window per paired key, so a hot key cannot grow
+  the fold with the history; the behavioural test watches the window roll and
+  the memory test scores 100,000 streamed hits under one mebibyte. An idle
+  writer expires aged rows through its idle tick and reports the tick as
+  `idle_tick_seconds`, and record-cap sealing is exercised in segmented mode. A
+  filesystem that fills after the headroom check now records `no_headroom` per
+  source and exits 75, and an end-to-end test shows the next firing completes
+  the pass once space returns. Finally, the bounded private-file reader that
+  finding 2 introduced now allocates the descriptor's reported size plus one
+  byte instead of the whole 16 MiB bound, follows concurrent growth in 64 KiB
+  chunks, and refuses a file only once it passes the bound. The targeted suite
+  passes: 301 passed and 1 skipped across the archive, retention, replay,
+  history, store, segment-inventory and memory modules, including the 6,000-row
+  generated archive-and-replay memory test that the first reader change had
+  broken.
+- [x] Fourth gate remediation (2026-11-20): the gate run over the third
+  remediation cleared `check-fmt`, `typecheck` (with one load-sensitive
+  `test_outcome_loop.py` failure that passed in the earlier run and in
+  isolation), `markdownlint`, `nixie` and `audit`, and found three defects in
+  `make lint`. Four ruff violations in the new H2 test helper were fixed
+  directly. Two test modules still exceeded the 400-line limit, so the reader
+  tests moved to `tests/test_outcome_store_reader.py` and the H2 runtime-window
+  tests to `tests/test_outcome_replay_h2_window.py`, with the row builders
+  shared from `tests/outcome_replay_h2_helpers.py`. The duplication gate, newly
+  reached, reported six families: the two budget walks were extracted into one
+  helper, and the remaining five families are recorded as reasoned exceptions
+  (260 in total), with the two superseded prelude entries replaced by one
+  forty-member entry. The focused suites pass (39 store/reader tests, 19 H2
+  tests, 53 archive planning tests, and the isolated loop test), and the
+  duplication gate passes at 260 reasoned exceptions.
+- [x] Fifth fix round (2026-11-20): the next gate run cleared `check-fmt`,
+  `typecheck`, `test` (4504 passed, 86 skipped; the loop test passed), and the
+  documentation gates, and failed `make lint` in `ruff check` with four
+  findings on the new budget helper: six parameters on `_evict_oldest` (Ruff
+  allows four) and missing `Returns` sections on the two trim functions. The
+  walk became a small `_BudgetWalk` dataclass whose `surviving` and `evict`
+  methods own the candidate list and the two decision maps, so the method takes
+  three arguments and needs no suppression; the trim docstrings gained their
+  return descriptions. `ruff check`, `make typecheck` and the 36 planning and
+  retention tests pass on the result.
 
 ## Surprises & discoveries
 
@@ -412,6 +457,36 @@ verified archive is published, and leaves compile admission untouched.
   sets two hours.
 - `pytest-mock` is not installed and no test uses `mocker`, so converting the
   patch-based tests for uniformity would add a dependency; `monkeypatch` stays.
+- The headroom check reads free space once and reserves nothing, so another
+  writer can fill the filesystem while the pass runs. A write that met `ENOSPC`
+  was recorded as `unreadable` and reported as `corrupt`, which told the timer
+  the history was damaged instead of deferring the work. A full filesystem is
+  now `no_headroom`, and a run whose every failure was `no_headroom` exits 75;
+  the users' guide, ADR 0010's exit table and the recovery test all state that
+  the check is not a reservation.
+- A buffered `read(n)` allocates `n` bytes even when the file is smaller.
+  Reading `limit + 1` for a 6 KiB active file cost 16.9 MB traced and broke the
+  generated history test's memory contract, so `read_private_bytes` asks for
+  the descriptor's reported size plus one byte and follows any growth in 64 KiB
+  chunks. The same file now costs about 138 KiB traced, and a concurrent append
+  is still tolerated up to the bound instead of being reported as `corrupt`.
+- Adding modules can break the duplication gate without adding duplication. The
+  detector pools every module's import and `TYPE_CHECKING` prelude into one
+  near-matched family, so the two new test helper modules and the reader split
+  merged families that each had their own reasoned exception into one 40-member
+  family that matched neither. The gate then reported a value of 288.9 with no
+  new shared behaviour to remove. The remediation replaced the narrowed entries
+  with one entry naming all forty members, and the gate now passes at 260
+  exceptions. Treat a family that suddenly grows after a file move as a
+  regrouping signal first, and only then as evidence of real duplication.
+- One full gate run failed only
+  `tests/test_outcome_loop.py::test_loop_admits_while_query_stalls`, which
+  asserts that a timed-out helper is cancelled before its result arrives. The
+  file is untouched by this branch, the test passed in the previous full run,
+  and it passed alone in 0.20 s, so the failure is a timing flake under xdist
+  rather than a regression this work introduced. The final gate run is the
+  confirmation: if it recurs, the assertion needs a wider bound instead of a
+  code change here.
 
 ## Decision log
 
@@ -488,6 +563,36 @@ verified archive is published, and leaves compile admission untouched.
   writer reports it, retrying a refused append. Treating `append` as
   synchronous would hide the writer's documented loss policy and let a loaded
   host shrink the fixture's history.
+- With a record cap set, the planner evicts the oldest sealed sources whole
+  before compressing anything the cap would remove. The cap counts the writer's
+  active rows, so the closed history can already be over budget before the
+  first archive exists; archiving a source only to delete its archive would
+  spend the scratch headroom for nothing.
+- H2's runtime baseline uses a fixed window of 64 earlier hits per paired key.
+  Keeping every hit made the fold grow with the history and made the per-row
+  median quadratic; the window bounds both while still comparing a row with the
+  key's recent behaviour.
+- `read_private_bytes` reads the descriptor-reported size plus one byte, then
+  follows growth in 64 KiB chunks. Asking for the caller's limit allocated the
+  whole bound for a small active file, and refusing any growth would turn a
+  writer's concurrent append into a `corrupt` history fault.
+- The two budget planners now share one `_BudgetWalk.evict` walk. Their
+  delete, sealed-source and straddling-trim control flow was identical, and
+  keeping two copies risked one retention rule drifting from the other; only
+  the measure (`planned_size` or `planned_records`) and the straddling entry's
+  trim differ, and the walk takes both as arguments. The record walk's `None`
+  count still ends the walk, through a `keep` callable that reports "cannot be
+  planned". The candidates and the two decision maps travel as one object
+  because every step of the walk reads and writes all three, which also keeps
+  the method inside Ruff's four-argument bound instead of needing a suppression.
+- The duplication gate's families are regrouped by the detector as the tree
+  changes, so an exception that names a subset stops matching once the family
+  grows: the prelude family was reported with 40 members while two older
+  entries named 5 and 7 of them. Both stale entries were replaced by one entry
+  naming all 40 locations, and the remaining new families are recorded as
+  reasoned exceptions rather than force-extracted: the store tests' import
+  lists, two production import preludes, and two retention test bodies that
+  share the suite's fixture shape while proving different rules.
 
 ## Outcomes & retrospective
 
@@ -538,9 +643,17 @@ Methods and evidence:
   (`tests/test_outcome_archive_memory.py`, 4,000 and 16,000 rows), plus an
   opt-in subprocess test (`BUILDLIMITS_ARCHIVE_LARGE_MEMORY=1`) with a
   320,000,000-byte history and a 150,000 KiB `ru_maxrss` bound, with the
-  archiver and the replay consumer each measured in their own process.
+  archiver and the replay consumer each measured in their own process. H2's
+  fold is measured separately: 100,000 streamed hits for one hot key must stay
+  under one mebibyte, which the unbounded fold failed by timing out after its
+  per-row median became quadratic.
 - Boundary tests at exactly 30 days and exactly the byte cap, including sparse
-  history below both bounds and an explicit record cap.
+  history below both bounds and an explicit record cap, plus device-level tests
+  that a store which grew after its size check is followed up to the bound and
+  refused past it.
+- Recovery tests for a filesystem that fills after the headroom check: every
+  source it could not hold is recorded as `no_headroom`, the run exits 75, no
+  source is lost, and an unpatched second run archives both sources.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
@@ -579,3 +692,10 @@ growth proves the traces observe rows; and disabling the publication gate makes
   modules along their responsibility boundaries, recorded the merged
   duplication families, and made the archive fixture retry a row the writer's
   non-blocking queue refuses; the plan records the final all-green gate run.
+- Revision 8 records the remaining whole-plan remediation of findings 4 to 7:
+  the record cap counts the active file and evicts sealed sources whole, H2
+  keeps a bounded recent-hit window, record-cap sealing and idle expiry are
+  exercised in segmented mode, the headroom check is documented as a read
+  rather than a reservation with `no_headroom`/`EX_TEMPFAIL` recovery, and the
+  bounded private-file reader follows concurrent growth without allocating its
+  caller's limit.

@@ -144,9 +144,12 @@ disagree about a bound.
   either mode. When it is omitted, a segmented store has no count cap and a
   legacy store keeps the historical 10,000-record cap. The cap bounds the whole
   store, so the archiver counts the active file's rows and each sealed source's
-  recorded count as well as the surviving archives; only archives are
-  evictable, because the writer owns the active file and a sealed source must
-  be archived before it can be dropped.
+  recorded count as well as the surviving archives. Oldest-first eviction
+  considers archives and sealed sources together: a sealed source outside the
+  budget is deleted whole rather than compressed into an archive the same run
+  would remove, while the writer's active file stays outside the archiver's
+  reach, and a sealed source that straddles the age or byte cutoff is archived
+  untrimmed and trimmed by the run's follow-up plan.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
   segment, or a budget of zero, makes the writer seal closed segments. The
   default budget remains the legacy 12 MiB, so a deployment that writes none of
@@ -154,7 +157,9 @@ disagree about a bound.
 - Headroom is `cache_outcomes_archive_headroom_bytes`, two segments by default
   and at least one segment when configured. It is temporary disk space checked
   with `statvfs`; it is never part of the retained budget and never appears as
-  retained bytes.
+  retained bytes. The check reads free space once, before the pass, so it
+  reserves nothing: a write that meets `ENOSPC` afterwards reports
+  `no_headroom` per sequence and `EX_TEMPFAIL` for the run.
 
 The 15,000,000,000-byte history requested for this work is a configured policy
 value, not a built-in default. Below both bounds and without an explicit cap,
@@ -296,13 +301,13 @@ needs attention.
 
 Exit statuses are part of the contract, as Table 3 records.
 
-| Status | Meaning                                                      |
-| ------ | ------------------------------------------------------------ |
-| 0      | Success                                                      |
-| 1      | Operational failure                                          |
-| 2      | Usage or configuration error                                 |
-| 3      | Corruption, or a segment that could not be processed         |
-| 75     | `EX_TEMPFAIL`: the lock is held, or headroom is insufficient |
+| Status | Meaning                                                    |
+| ------ | ---------------------------------------------------------- |
+| 0      | Success                                                    |
+| 1      | Operational failure                                        |
+| 2      | Usage or configuration error                               |
+| 3      | Corruption, or a segment that could not be processed       |
+| 75     | `EX_TEMPFAIL`: the lock is held, or the filesystem is full |
 
 _Table 3: Exit statuses of `build-limits-outcome-archive`._
 

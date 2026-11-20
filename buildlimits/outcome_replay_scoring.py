@@ -3,8 +3,10 @@
 Both hypotheses judge a history that may be far larger than memory, so their
 evidence is gathered by folds rather than by collecting rows. The H3 fold
 judges each row as it passes; the H2 fold surveys the stream and then scores
-the same rows in store order. The report types and their verdict thresholds
-live in ``outcome_replay``; this module owns the counting behind them.
+the same rows in store order. The H2 fold keeps one bounded runtime window per
+key that can be scored, so neither hypothesis grows with the number of rows.
+The report types and their verdict thresholds live in ``outcome_replay``; this
+module owns the counting behind them.
 """
 
 import collections
@@ -25,6 +27,11 @@ from buildlimits.outcome_record_format import (
 
 # A key is paired for H2 when it was seen under both of these labels.
 H2_LABEL_COUNT = 2
+# The runtime clue compares a row with the median of the key's recent hits. A
+# key can be built thousands of times, so keeping every hit it ever had would
+# let one hot key grow the fold with the history. Sixty-four hits give a stable
+# median while bounding each scored key's share of memory.
+H2_RUNTIME_WINDOW = 64
 
 
 @dc.dataclass(slots=True)
@@ -152,12 +159,15 @@ def score_h2(
 ) -> collections.Counter[str]:
     """Score each evaluable row in store order.
 
+    Only a paired key can produce an evaluable row, so only those keys keep a
+    runtime window; a key seen under a single label costs no memory per row.
+
     Returns
     -------
     collections.Counter[str]
         The counters the H2 report is built from.
     """
-    earlier_hits: dict[CacheKey, list[float]] = collections.defaultdict(list)
+    earlier_hits: dict[CacheKey, collections.deque[float]] = {}
     counters: collections.Counter[str] = collections.Counter()
     for record in records:
         if isinstance(record, OutcomeRecord):
@@ -168,23 +178,27 @@ def score_h2(
 def _score_h2_record(
     record: OutcomeRecord,
     paired_keys: frozenset[CacheKey],
-    earlier_hits: dict[CacheKey, list[float]],
+    earlier_hits: dict[CacheKey, collections.deque[float]],
     counters: collections.Counter[str],
 ) -> None:
     """Accumulate one row while preserving store-order runtime history."""
-    if record.outcome not in {"hit", "miss"}:
+    if record.outcome not in {"hit", "miss"} or record.key not in paired_keys:
         return
-    previous_hits = earlier_hits[record.key]
-    runtime_miss = bool(previous_hits) and record.runtime_seconds > max(
+    previous_hits = earlier_hits.get(record.key)
+    runtime_miss = previous_hits is not None and record.runtime_seconds > max(
         1.0, 3 * statistics.median(previous_hits)
     )
-    if record.child_samples >= 1 and record.key in paired_keys:
+    if record.child_samples >= 1:
         _score_h2_sighting(
             record,
             runtime_miss=runtime_miss,
             counters=counters,
         )
     if record.outcome == "hit":
+        if previous_hits is None:
+            previous_hits = earlier_hits[record.key] = collections.deque(
+                maxlen=H2_RUNTIME_WINDOW
+            )
         previous_hits.append(record.runtime_seconds)
 
 

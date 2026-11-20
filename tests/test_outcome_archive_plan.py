@@ -138,21 +138,38 @@ def test_a_record_cap_counts_the_writers_unsealed_rows() -> None:
     )
 
 
-def test_a_record_cap_counts_sealed_rows_still_awaiting_archival() -> None:
-    """A row the writer has closed is retained whether or not it is compressed."""
-    entries = (sealed(1), archived(2))
+def test_a_record_cap_evicts_the_oldest_sealed_source_first() -> None:
+    """A sealed row counts towards the cap and is evictable like an archive.
+
+    Counting the sealed row but evicting only archives would delete the newer
+    archive and keep the older row, which is the reverse of oldest-first
+    retention.
+    """
+    source = sealed(1)
+    archive = archived(2)
 
     decision = plan(
-        Inventory(sealed=entries[:1], archived=entries[1:]),
+        Inventory(sealed=(source,), archived=(archive,)),
         policy(max_bytes=0, max_records=1),
     )
 
-    assert [item.sequence for item in decision.deletes] == [2], (
-        "the sealed row is counted, so the archive must make room"
+    assert [(item.sequence, item.state) for item in decision.deletes] == [
+        (1, "sealed")
+    ], "the oldest entry is evicted whole"
+    assert not decision.archive, "an evicted source is not compressed first"
+    assert decision.retained_bytes == 100, "the newer archive alone remains"
+
+
+def test_a_record_cap_stops_at_an_entry_with_no_known_count() -> None:
+    """An unknown count ends the walk instead of evicting newer history."""
+    unknown = dc.replace(sealed(1), record_count=None)
+
+    decision = plan(
+        Inventory(sealed=(unknown,), archived=(archived(2), archived(3))),
+        policy(max_bytes=0, max_records=1),
     )
-    assert [item.sequence for item in decision.archive] == [1], (
-        "a sealed source is archived rather than evicted"
-    )
+
+    assert not decision.deletes, "no newer entry is evicted ahead of the unknown one"
 
 
 def test_the_summary_counts_every_operation(snapshot: SnapshotAssertion) -> None:

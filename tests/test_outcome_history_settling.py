@@ -13,10 +13,11 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from history_fixtures import archived_segments
-from segment_test_helpers import write_private
+from history_fixtures import active_records, archived_segments, records
+from outcome_archive_helpers import write as write_store
+from segment_test_helpers import history_policy, write_private
 
-from buildlimits import outcome_history, outcome_segment_inventory
+from buildlimits import outcome_history, outcome_records, outcome_segment_inventory
 from buildlimits.outcome_segment_inventory import Inventory
 from buildlimits.outcome_segments import SegmentLayout, segment_name
 
@@ -145,3 +146,62 @@ def test_a_segment_with_no_header_is_corrupt(tmp_path: Path) -> None:
         outcome_history.read_history(layout)
 
     assert raised.value.reason == "corrupt", "the fault is closed"
+
+
+def test_a_segment_replaced_after_the_pin_is_refused(tmp_path: Path) -> None:
+    """A replacement between the pre-pass check and the open is a fault.
+
+    Retention can replace a later segment after the pin's pre-pass check has
+    passed over it. The identity check on the opened descriptor is what binds
+    the rows to the snapshot, so the pass refuses the replacement instead of
+    yielding rows from two states of the store.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, records(0, 2), history_policy(1))
+    layout = SegmentLayout.beside(store)
+    history = outcome_history.open_history(layout)
+    rows = iter(history)
+    next(rows)
+    second = layout.sealed_dir / segment_name(2)
+    replacement = tmp_path / "replacement"
+    write_private(replacement, second.read_bytes())
+    replacement.replace(second)
+
+    with pytest.raises(outcome_history.HistoryFaultError) as raised:
+        list(rows)
+
+    assert raised.value.reason == "unsettled", "the pass refuses a replaced segment"
+
+
+def test_a_symlinked_active_file_is_corrupt(tmp_path: Path) -> None:
+    """The active file is read as a private file, never through a link.
+
+    Following a link would let the reader leave the store directory or grow
+    without bound, so the pin reports a closed corrupt fault instead.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    active_records(store, 0, 1)
+    outside = tmp_path / "elsewhere.jsonl"
+    outside.write_bytes(store.read_bytes())
+    outside.chmod(0o600)
+    store.unlink()
+    store.symlink_to(outside)
+
+    with pytest.raises(outcome_history.HistoryFaultError) as raised:
+        outcome_history.read_history(SegmentLayout.beside(store))
+
+    assert raised.value.reason == "corrupt", "a link is a closed fault"
+
+
+def test_an_active_file_past_the_store_bound_is_corrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An active file larger than the store bound is refused, not read."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    active_records(store, 0, 1)
+    monkeypatch.setattr(outcome_records, "MAX_STORE_BYTES", 8)
+
+    with pytest.raises(outcome_history.HistoryFaultError) as raised:
+        outcome_history.read_history(SegmentLayout.beside(store))
+
+    assert raised.value.reason == "corrupt", "the bound is closed"

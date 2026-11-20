@@ -90,11 +90,11 @@ def restore_loaded_store(
                 return
             store.publish("load", failure.reason)
             store.header = outcome_records.StoreHeader(salt.salt_id, now)
-            store.records = []
+            store.set_records([])
         case None:
             store.publish("load", "none")
             store.header = outcome_records.StoreHeader(salt.salt_id, now)
-            store.records = []
+            store.set_records([])
         case outcome_records.DecodedStore() as loaded if (
             loaded.header.salt_id != salt.salt_id
         ):
@@ -108,11 +108,11 @@ def restore_loaded_store(
                 # domain and are dropped, as they always were.
                 store.publish("load", "salt_changed", discarded=len(loaded.records))
                 store.header = outcome_records.StoreHeader(salt.salt_id, now)
-                store.records = []
+                store.set_records([])
         case outcome_records.DecodedStore() as loaded:
             store.publish("load", "none", records=len(loaded.records))
             store.header = loaded.header
-            store.records = list(loaded.records)
+            store.set_records(list(loaded.records))
     store.ready = True
 
 
@@ -150,10 +150,10 @@ def _retire_previous_domain(
         # must actually be replaced: leaving it would key the new domain's rows
         # under the previous salt.
         store.header = outcome_records.StoreHeader(salt.salt_id, now)
-        store.records = []
+        store.set_records([])
         return restart_active(store)
     store.header = loaded.header
-    store.records = list(loaded.records)
+    store.set_records(list(loaded.records))
     # ``seal`` installs the active salt's header afterwards, so success leaves
     # the writer holding the new domain and no rows.
     return seal(store, salt_id=loaded.header.salt_id)

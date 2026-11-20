@@ -1542,16 +1542,6 @@ members = [
 reason = "These TYPE_CHECKING blocks import different domain-owned annotation types for production and test contracts. Sharing a re-export would hide each module's dependencies without sharing runtime behaviour."
 
 [[tool.duplication_gate.allow]]
-members = [
-    "buildlimits/outcome_recorder_types.py",
-    "buildlimits/outcome_recorder_outputs.py",
-    "tests/outcome_shell_test_support.py",
-    "buildlimits/server_watch.py",
-    "buildlimits/cache_recovery.py",
-]
-reason = "Matching TYPE_CHECKING import lists: each module names the annotation, port and value symbols it uses, so a re-export would hide each module's real dependencies without sharing any behaviour."
-
-[[tool.duplication_gate.allow]]
 unit = "tests/test_outcome_server_process.py"
 reason = "These process-sampling tests keep each failure boundary beside its distinct fixture and assertion; the detector reports their shared short assertion fragments without function names, so a narrower member key cannot match."
 
@@ -1896,17 +1886,6 @@ members = [
     "modelcheck/cli.py",
 ]
 reason = "Matching import lists: each module names the ports, records and helpers it uses, and sharing them through a re-export module would hide each module's real dependencies."
-[[tool.duplication_gate.allow]]
-members = [
-    "buildlimits/outcome_recorder_types.py",
-    "buildlimits/outcome_recorder_outputs.py",
-    "tests/outcome_shell_test_support.py",
-    "buildlimits/server_watch.py",
-    "buildlimits/cache_recovery.py",
-    "tests/predict_test_helpers.py",
-    "buildlimits/outcome_store.py",
-]
-reason = "Matching import lists: each module names the store records, ports and helpers it uses, and sharing them through a re-export module would hide each module's real dependencies."
 
 [[tool.duplication_gate.allow]]
 members = ["buildlimits/metrics_pressure_report.py", "buildlimits/predict/bootstrap.py", "buildlimits/predict/metrics.py"]
@@ -2356,7 +2335,34 @@ members = [
 ]
 reason = "One identical raise expression at two layers: the command reports that its retry bound ended without a settled snapshot, and the test's injected substitution reports a closed corruption. A shared helper would couple the command's retry loop to a test stub that must be able to raise the fault at a chosen pass."
 
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/admission_readiness.py", "tests/outcome_replay_h2_helpers.py"]
+reason = "One conditional phrase and one sighting label chosen by a conditional expression. The two values, their owners and their tests are unrelated; a shared helper would have to abstract the wording of an advisory message and the vocabulary of a cache sighting into one shape neither uses."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_recorder_types.py", "buildlimits/outcome_recorder_outputs.py", "tests/outcome_shell_test_support.py", "tests/modelcheck_cases.py", "buildlimits/server_watch.py", "tests/modelcheck_service_cases.py", "tests/outcome_store_helpers.py", "buildlimits/cache_recovery.py", "buildlimits/outcome_store.py", "buildlimits/predict/dataset_cli.py", "buildlimits/predict/ensemble_runs.py", "buildlimits/predict/harness.py", "buildlimits/supervisor_wiring.py", "tests/test_group_drain_metrics.py", "buildlimits/outcome_archive_run.py", "buildlimits/outcome_store_state.py", "buildlimits/predict/evaluation.py", "buildlimits/predict/report.py", "buildlimits/predict/scoring.py", "buildlimits/predict/snapshot_codec.py", "modelcheck/cli_outputs.py", "modelcheck/expectations.py", "modelcheck/records.py", "modelcheck/report.py", "tests/predict_test_helpers.py", "tests/test_cache_recovery_telemetry.py", "tests/test_recovery_roots_deadline.py", "buildlimits/group_recovery.py", "buildlimits/outcome_archive_files.py", "buildlimits/outcome_record_codec.py", "buildlimits/predict/report_codec.py", "tests/differential_trace_test_helpers.py", "tests/test_outcome_archive_run_faults.py", "tests/test_outcome_totality.py", "tests/test_predict_evaluation.py", "buildlimits/outcome_archive.py", "buildlimits/outcome_history_pin.py", "modelcheck/cli.py", "tests/outcome_archive_helpers.py", "tests/test_kache_detached_events.py"]
+reason = "Matching TYPE_CHECKING preludes across the package and its tests: each module names exactly the annotation, port and value symbols it uses, and the shared shape stops at the typing guard itself. A re-export module would hide every module's real dependencies and couple production code to unrelated test support without sharing any runtime behaviour."
 [[tool.duplication_gate.unit]]
 unit = "buildlimits/outcome_archive_verify.py"
 reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."
 
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_archive_dirs.py",
+    "buildlimits/outcome_store_files.py",
+]
+reason = "Matching import preludes: each module names only the standard-library modules it opens files with and the `pathlib` type its annotations use. A shared prelude would couple the archiver's descriptor-relative directory walk to the store's bounded file reader, which share no code."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_store_writes.py",
+    "tests/test_outcome_store_sealing.py",
+]
+reason = "Matching import lists in two writer tests: each names the store helpers and segment fixtures it drives, and sharing them through a re-export module would hide each module's real dependencies without sharing behaviour."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_archive_retention.py::test_a_record_cap_evicts_the_oldest_sealed_source_in_one_run",
+    "tests/test_outcome_archive_run_faults.py::test_a_duplicate_pair_is_settled_by_the_run",
+]
+reason = "Two retention scenarios that share the suite's fixture shape but prove different rules: one shows a record cap evicting a sealed source whole instead of compressing it first, the other shows a source left beside its archive being reconciled. Their shared lines are store setup and the ordered action-pair assertion used throughout the archive tests; extracting them would hide which run and which fault each test forces."
