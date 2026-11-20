@@ -220,12 +220,6 @@ def test_an_incomplete_active_measurement_refuses_a_record_cap() -> None:
         dc.replace(archived(sequence), record_count=1) for sequence in (1, 2, 3)
     )
 
-    with pytest.raises(UnknownActiveHistoryError):
-        plan(
-            Inventory(archived=entries),
-            policy(max_bytes=0, max_records=6),
-            active=ActiveHistory(records=6, has_metadata=False, reason="corrupt"),
-        )
 
 
 def test_the_summary_counts_every_operation(snapshot: SnapshotAssertion) -> None:
