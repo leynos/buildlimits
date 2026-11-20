@@ -505,8 +505,14 @@ verified archive is published, and leaves compile admission untouched.
   `unsettled` status at exit 75 instead of `ok`. Two deterministic
   writer/archiver interleaving regressions pin a mid-run seal being archived
   and capped at `retained_records == 5` with status `ok`, and a seal on every
-  pass reporting `unsettled` at exit 75, which the next run settles. All seven
-  commit gates pass once each on the final tree.
+  pass reporting `unsettled` at exit 75, which the next run settles. The
+  planner's retention contract also gained property coverage: two Hypothesis
+  properties over generated measured histories assert that eviction is a
+  whole-entry oldest-first prefix, at most one straddler is rewritten, and the
+  planned byte budget and record cap both fit. All seven commit gates pass once
+  each on the final tree, with `make test` reporting 4532 passed and 86
+  skipped, 76 snapshots, and the duplication gate allowing 269 reasoned
+  exceptions.
 
 ## Surprises & discoveries
 
@@ -886,6 +892,15 @@ verified archive is published, and leaves compile admission untouched.
   deletion discard newer history while the older entry the budget asked for
   remained. The barrier keeps the two walks the same order; the failure is
   already in the report and the next firing retries it.
+- The retention walk's ordering and fit are stated as two Hypothesis
+  properties over generated measured inventories rather than as more examples.
+  The example tests pin each boundary of the byte and record rules, but the
+  contract that eviction is an oldest-first whole-entry prefix, that only the
+  first survivor is rewritten, and that the estimate fits the bound is a
+  statement about every history, not about the sizes a test author thought of.
+  Both properties run the pure planner, so they need no filesystem and stay
+  fast. Their negative controls replace the byte allowance or the record trim
+  with a no-op: each mutation makes its property fail for the intended reason.
 
 ## Outcomes & retrospective
 
@@ -976,6 +991,16 @@ Methods and evidence:
   next run settles it to `ok`. Both failed on the pre-fix code for the intended
   reasons, and the failed-eviction barrier is pinned by
   `test_a_failed_older_delete_stops_before_a_newer_trim`.
+- Planner retention properties in
+  `tests/test_outcome_archive_plan_properties.py`: 50 generated measured
+  histories for the byte budget and 50 for the record cap assert that whole
+  deletions form an oldest-first prefix, at most one straddler is trimmed,
+  `retention_deferred` stays false, and the estimate after the plan fits the
+  bound (exactly the bound whenever a trim is planned). The negative control
+  makes `_byte_trim` return the existing trim and the byte property fails on
+  "the planned history fits the budget"; making `_record_trim` return `None`
+  fails the cap property on "a measured history decides its cap". Both
+  mutations were reverted and the properties pass again.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
@@ -991,7 +1016,13 @@ interleaving regressions assert the sealed source exists before asserting it
 was archived, so a seam that never fired could not make either pass; the
 unsettled test asserts the source is still present as well as the status, so a
 run that archived everything and mislabelled itself cannot pass, and the
-following run's `ok` proves the reported work was real.
+following run's `ok` proves the reported work was real. The planner properties
+have executable negative controls: returning the existing trim from
+`_byte_trim` fails the byte property and returning `None` from `_record_trim`
+fails the cap property, each on the fit assertion, so neither property can pass
+by never planning a trim. The generated sizes and caps span empty, exact-fit
+and over-budget histories, and each property's surviving-sum branch proves the
+no-trim case is reachable.
 
 ## Revision note
 
@@ -1123,4 +1154,6 @@ following run's `ok` proves the reported work was real.
   applied and applies the failed-eviction barrier so a newer trim never follows
   an older failed deletion. Two deterministic interleaving regressions pin the
   archive-and-cap outcome and the unsettled status, and the users' guide and
-  ADR 0010 describe both.
+  ADR 0010 describe both. The revision also adds the planner retention
+  properties the revision-15 assessment asked for, with negative controls that
+  make each property fail when its trim or cap step is disabled.
