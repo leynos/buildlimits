@@ -373,6 +373,46 @@ verified archive is published, and leaves compile admission untouched.
   three arguments and needs no suppression; the trim docstrings gained their
   return descriptions. `ruff check`, `make typecheck` and the 36 planning and
   retention tests pass on the result.
+- [x] Sixth fix round (2026-11-20): the whole-plan assessment's six remaining
+  defects are closed, each with a regression test that fails on the previous
+  code. `open_private_regular` adds `O_NOFOLLOW` and `O_NONBLOCK` itself, so no
+  caller can lose the no-follow rule, and `active_history` refuses an active
+  path that is not a regular file rather than reading whatever a symlink names.
+  Eviction builds one sequence-sorted walk of trims and deletions and stops at
+  the first failure, so a newer trim can no longer follow a failed older
+  deletion. A composed age-and-byte trim measures every policy drop over the
+  whole source (`Trim.policy_bytes`) before the byte suffix decides, so a row
+  that expires later in the document cannot cost an earlier eligible row its
+  place. The retention floor advances only over a contiguous deleted prefix, so
+  a sequence deleted above an unknown gap leaves the gap reported. The writer
+  checks the record-cap `settle()` result and refuses the row when the seal
+  failed, because the archiver cannot evict active rows. The users' guide now
+  says the archiver reads the active file once per plan and never writes or
+  replaces it. The two composed-trim tests prove the measurement at the encoder
+  and through `recompress_archive`; the active-file and opener tests drive a
+  real symlink; and the cap-seal test follows the refusal with an archive run
+  that retains exactly the cap. The six touched modules pass (66 tests).
+- [x] Gate remediation (2026-11-20): the first full gate run after the sixth
+  fix round was red at `make lint`'s duplication sub-gate with six unsuppressed
+  families, and `lint-actions` never ran because `make` stopped there. Two
+  families were real copies and are now one implementation each: the archiver's
+  `open_private_regular` delegates to the outcome store's primitive, which
+  gains a `validate` seam so the archiver keeps its ownership requirement while
+  the no-follow, non-blocking flags and the close-on-failure rule live in one
+  place; and `outcome_archive_rows.iter_records` owns the record walk and its
+  stream-to-segment fault translation, used by `scan_archive` and
+  `policy_dropped_bytes`. The other four families are import preludes shared by
+  suites that drive different fixtures, and one property proved twice at two
+  public boundaries; each is recorded as a reasoned exception. The entry the
+  consolidation made obsolete was removed. Focused checks pass: ruff, both
+  pylint passes, interrogate, ty, and 271 archive and store tests.
+- [x] Final gate verification (2026-11-20): the full sequence passed on the
+  remediated tree. `check-fmt`, `lint` (including `lint-actions`), `typecheck`,
+  `markdownlint`, `nixie` and `audit` were green in one run; the `make test`
+  re-run then passed with 4,513 tests and 86 skips. The first `make test` run
+  had failed only on the two doctests whose example now names the typing-only
+  `LineStream`, because a doctest executes in the module's globals; each
+  Example block imports that name explicitly.
 
 ## Surprises & discoveries
 
@@ -487,6 +527,41 @@ verified archive is published, and leaves compile admission untouched.
   rather than a regression this work introduced. The final gate run is the
   confirmation: if it recurs, the assertion needs a wider bound instead of a
   code change here.
+- `os.open` follows a symlink unless `O_NOFOLLOW` is passed, and a flag each
+  caller had to remember was one omission away from reading a file the store
+  never owned. The opener now adds the flag itself; the archiver's active-file
+  read additionally requires a regular file through `lstat`, because no-follow
+  alone still accepts a hard link or a regular file that merely sits at the
+  path.
+- Eviction ordered all trims before all deletions. A record cap could therefore
+  trim the next archive after the older whole deletion had failed, discarding
+  rows from history that survives while the entry the budget asked for was
+  still present. A single sequence-sorted walk that stops at the first failure
+  is the only ordering that keeps "oldest first" true across both operations;
+  the follow-up `retain` pass then re-attempts the failed deletion before any
+  trim.
+- Counting policy drops only as they are met over-drops whenever an expired row
+  follows the first eligible one: the eligible row is judged against a document
+  that still contains bytes the policy will remove. Only a pass over the whole
+  source can say how many bytes the age rule drops, so `policy_dropped_bytes`
+  measures it before the byte suffix is decided. The measurement rides on
+  `Trim.policy_bytes` rather than a new `write_archive` parameter, which keeps
+  the call inside Ruff's four-argument bound.
+- A single-integer retention floor cannot both hide retention's deletions and
+  remember an unknown gap. Advancing the floor over every deleted sequence
+  hides the gap from the next scan; advancing only over the contiguous deleted
+  prefix preserves it, and a sequence retention deleted above the gap is then
+  reported as a gap itself. The conservative report is the accepted trade-off.
+- `StoreWriter.append` ignored `settle()`'s result at the record cap. A seal
+  that failed before its rename leaves the rows in the active file, which the
+  archiver cannot evict, so accepting the next row held history past the cap
+  that no run could remove. The refusal reports `save_failed` with one
+  discarded row, and the next successful seal returns the store to its bound.
+- The guide described the archiver as owning the active file's age bound while
+  also promising never to touch the active file. The archiver does read the
+  active file once per plan, through the bounded no-follow reader, to count the
+  rows and span the writer currently holds; it never writes or replaces it. The
+  guide now states both halves.
 
 ## Decision log
 
@@ -516,8 +591,18 @@ verified archive is published, and leaves compile admission untouched.
   or all salts. H2 remains a two-pass evaluation over a re-iterable stream that
   retains only per-key state; H3 consumes one pass.
 - `--salt-id` and `--all-salts` imply history mode, while no flag keeps each
-  command reading only the active store, so existing invocations are unchanged.
-  Both commands share the option definitions in `outcome_history_args`.
+  command reading only the active store, so an existing invocation reads the
+  same rows it read before. That is a statement about the input, not about the
+  H2 classifier: since revision 9 the runtime clue compares a row with the
+  median of the key's most recent 64 earlier hits on every path, including a
+  replay with no flag and a report built from the active store alone. This is
+  an approved classifier change, required by the bounded-memory constraint, and
+  its compatibility impact is that a history whose key has more than 64 earlier
+  hits can produce a different `runtime_correct` and combined agreement, and so
+  a different H2 verdict, than an earlier release did. Every reported field is
+  unchanged and the report schema stays 1; no stored row changes shape and no
+  migration is needed. Both commands share the option definitions in
+  `outcome_history_args`.
 - A segmented writer installs its header at startup so the first append always
   has an active file to reach; an empty seal still avoids claiming a sequence.
 - Archive metadata records the torn tail observed while reading the source,
@@ -593,6 +678,30 @@ verified archive is published, and leaves compile admission untouched.
   reasoned exceptions rather than force-extracted: the store tests' import
   lists, two production import preludes, and two retention test bodies that
   share the suite's fixture shape while proving different rules.
+- A private opener owns the no-follow rule. `open_private_regular` adds
+  `O_NOFOLLOW` and `O_NONBLOCK` to every call, because a safety rule that each
+  caller must remember is one new caller away from being lost; a caller may
+  still pass the flags redundantly. The archiver's active-file read goes
+  further and refuses any path that is not a regular file before reading it,
+  since a store's history is only ever the writer's own file.
+- Eviction is one sequence-ordered walk over trims and whole deletions, ending
+  at the first failure. The oldest entry the budget removes must be gone before
+  any newer entry is rewritten, or the newer trim spends bytes that the failed
+  deletion still needs to account for.
+- `Trim.policy_bytes` carries the bytes the age rule drops over the whole
+  source, measured by `policy_dropped_bytes` before the byte suffix is chosen.
+  The byte allowance is compared with the document that survives every policy
+  drop, not with the rows met so far; a zero value means unmeasured and
+  over-drops rather than exceeding the allowance. Keeping the measurement on
+  `Trim` avoids a fifth `write_archive` argument.
+- The retention floor advances only over a contiguous prefix of deleted
+  sequences, starting from the previous floor or the lowest sequence seen. A
+  deletion above an unknown gap cannot raise the floor past it; reporting that
+  deleted sequence as a gap is the deliberate cost of a single-integer floor.
+- When the record-cap seal fails, the writer refuses the row instead of
+  appending past the cap: the archiver cannot evict active rows, so accepting
+  it would retain history nothing could remove. The refusal is a `save_failed`
+  append with one discarded row, not a store fault.
 
 ## Outcomes & retrospective
 
@@ -708,3 +817,24 @@ growth proves the traces observe rows; and disabling the publication gate makes
   rather than a reservation with `no_headroom`/`EX_TEMPFAIL` recovery, and the
   bounded private-file reader follows concurrent growth without allocating its
   caller's limit.
+- Revision 9 records the retention-and-symlink remediation of the whole-plan
+  assessment's six defects: the private opener adds `O_NOFOLLOW` and
+  `O_NONBLOCK` itself and the archiver refuses a non-regular active path,
+  eviction interleaves trims and deletions in sequence order and stops at the
+  first failure, a composed age-and-byte trim measures every policy drop before
+  the byte suffix, the retention floor advances only over a contiguous deleted
+  prefix, the writer refuses a row when the record-cap seal fails, and the
+  guide states that the archiver reads the active file once per plan without
+  writing it. Each fix carries a regression test; the six touched modules pass
+  (66 tests).
+- Revision 10 records the duplication-gate remediation that followed revision
+  9's first full gate run. One private open path now serves both the archiver
+  and the outcome store, parameterized by the guarantee the caller requires, so
+  the no-follow rule and the mode narrowing cannot drift between them; one
+  record walk, `iter_records`, owns the stream-to-segment fault translation,
+  and the archiver's verification and trim measurement both use it. Four
+  families remain as reasoned exceptions: import preludes in suites that drive
+  different fixtures, and one composition property proved at two public
+  boundaries. The exception the consolidation made obsolete was removed. The
+  final gate run passed all seven gates, with 4,513 tests passed and 86
+  skipped, after the two doctest Examples gained their `LineStream` import.

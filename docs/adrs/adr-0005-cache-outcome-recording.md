@@ -328,11 +328,16 @@ insertion order and predict `miss` when a child is uniquely seen; otherwise
 predict `miss` when an earlier hit exists and runtime exceeds the greater of 1
 second or three times the median of the key's most recent 64 earlier hits;
 otherwise predict `hit`. The bounded window keeps a hot key from growing the
-replay's memory with the history. Evaluate records with at least one sample
-whose key has both outcomes; an ambiguous sighting contributes no child clue,
-but its runtime may still be evaluated. The child-only agreement and the share
-of labelled misses with a sighting use only `seen`/`not_seen` records; report
-ambiguous and unavailable counts separately. Report `supported` at 95%
+replay's memory with the history. This is the one deliberate classifier change
+from the earlier median of all earlier hits: a key with more than 64 earlier
+hits can score a different runtime and combined agreement, and so a different
+H2 verdict, while every reported field and the report schema stay as they were.
+The change applies on every replay path, including a replay with no history
+flag, because both paths share the fold. Evaluate records with at least one
+sample whose key has both outcomes; an ambiguous sighting contributes no child
+clue, but its runtime may still be evaluated. The child-only agreement and the
+share of labelled misses with a sighting use only `seen`/`not_seen` records;
+report ambiguous and unavailable counts separately. Report `supported` at 95%
 agreement or more, `refuted` below 90%, `inconclusive` between, and
 `insufficient` below 2,000 attributed outcomes or 100 evaluable records. Also
 report each clue's agreement.

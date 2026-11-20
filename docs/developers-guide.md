@@ -381,7 +381,8 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_budget`                                                           | Logical-byte budget: oldest-first archive deletion, then one straddling trim                                                                                |
 | `outcome_archive_run`                                                              | Executing one archive plan operation by operation                                                                                                           |
 | `outcome_archive_verify`                                                           | Streaming XZ write and verification, and the closed segment-fault reasons                                                                                   |
-| `outcome_archive_rows`                                                             | Decodes one segment's rows, tolerating a torn tail                                                                                                          |
+| `outcome_archive_trim`                                                             | Prefix-trim policy and the policy-drop measurement a byte allowance composes with                                                                           |
+| `outcome_archive_rows`                                                             | Decodes one segment's rows, tolerating a torn tail, and walks its records under the closed fault reasons                                                    |
 | `outcome_archive_encode`                                                           | Verified temporary archives and the sidecars that describe them                                                                                             |
 | `outcome_archive_quarantine`                                                       | Quarantine moves for files an archive run cannot trust                                                                                                      |
 | `outcome_archive_files`                                                            | Per-segment archive, reconcile, heal, trim, delete and quarantine operations                                                                                |
@@ -991,13 +992,14 @@ appending above the fragment, an oversized active file is sealed, and an active
 file whose oldest record predates the age cutoff is compacted, so a store that
 stayed small is not exempt from the age bound.
 
-The archiver in `outcome_archive` only reads the active file's size. It never
-opens its content and never takes its queue. `outcome_archive_lock` takes a
-non-blocking exclusive `flock` on `cache-outcomes.archive/archive.lock` for the
-whole run, and its headroom guard refuses a run whose temporary files cannot
-fit; a second invocation reports `busy` and exits 75 rather than waiting. There
-is no shared lock between writer and archiver, so there is no lock ordering to
-get wrong.
+The archiver in `outcome_archive` reads the active file once per plan through
+the bounded no-follow reader, to count the rows and span the writer currently
+holds. It never writes or replaces the file and never takes its queue.
+`outcome_archive_lock` takes a non-blocking exclusive `flock` on
+`cache-outcomes.archive/archive.lock` for the whole run, and its headroom guard
+refuses a run whose temporary files cannot fit; a second invocation reports
+`busy` and exits 75 rather than waiting. There is no shared lock between writer
+and archiver, so there is no lock ordering to get wrong.
 
 Compression and verification stream in `outcome_record_stream`'s 64 KiB chunks
 with at most one row buffered (`CHUNK_BYTES`). Peak memory therefore follows
@@ -1037,17 +1039,20 @@ and sidecar are durable. `outcome_archive_fs` owns the private filesystem
 primitives and atomic state writes, descending a directory chain through
 descriptors opened with `O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC`; a symlink, a
 non-directory or a failed descriptor operation raises `UnsafePathError`, and
-neither the successful nor the refused walk leaks a descriptor.
-`outcome_archive_files` owns the per-segment operations: archive, reconcile,
-heal, trim, delete and quarantine. `outcome_archive_quarantine` performs the
-quarantine moves for files a run cannot trust, and `outcome_archive_run`
-executes one plan operation by operation. `outcome_archive_budget` owns the
-byte budget: it counts an archive's uncompressed size from its sidecar, deletes
-whole archives oldest first, and then trims the single archive that straddles
-the remaining allowance. `plan_record_steps` applies the configured record cap
-to segmented history in the same shape: whole oldest archives are deleted while
-they fit the excess, then the straddling archive is trimmed rather than left to
-break the cap.
+neither the successful nor the refused walk leaks a descriptor. Opening one
+private file is the outcome store's `open_private_regular`, so the no-follow
+and non-blocking flags and the close-on-failure rule exist once for both
+subsystems; the archiver supplies the stricter validation that also refuses a
+file owned by another account. `outcome_archive_files` owns the per-segment
+operations: archive, reconcile, heal, trim, delete and quarantine.
+`outcome_archive_quarantine` performs the quarantine moves for files a run
+cannot trust, and `outcome_archive_run` executes one plan operation by
+operation. `outcome_archive_budget` owns the byte budget: it counts an
+archive's uncompressed size from its sidecar, deletes whole archives oldest
+first, and then trims the single archive that straddles the remaining allowance.
+`plan_record_steps` applies the configured record cap to segmented history in
+the same shape: whole oldest archives are deleted while they fit the excess,
+then the straddling archive is trimmed rather than left to break the cap.
 
 The segment contract is defined by `outcome_segments`, which owns naming and
 layout only; `outcome_segment_sidecar` defines the record that describes one

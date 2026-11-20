@@ -198,13 +198,20 @@ attribution, reading failures and skipped readings, store operations, child
 sightings and sampling failures. H2 and H3 replay read the local store only. H3
 compares the parser prediction with attributed outcomes and refusal summaries.
 H2 combines full-emit child sightings with prior hit runtimes for the same
-compile key. It evaluates only sampled keys that have both a hit and a miss,
-and requires 100 evaluable rows and 2,000 attributed outcomes. H2 reports
-`supported` at 95% agreement, `refuted` below 90%, and `inconclusive` between
-those thresholds. Both commands print the time span the store covers and the
-limits of their sample: labels come from solo and unanimous windows, so a
-verdict may not represent busy, mixed traffic, and H2 also states that child
-sightings are sampled, which biases the sighting clue towards long misses.
+compile key. The runtime clue compares each row with the median of the key's
+most recent 64 earlier hits, on every replay path, so a key built thousands of
+times cannot make replay memory grow with the history. That window is a
+deliberate classifier change from earlier releases: a history whose key has
+more than 64 earlier hits can produce a different runtime and combined
+agreement figure, and so a different H2 verdict, although every reported field
+and the report schema are unchanged. H2 evaluates only sampled keys that have
+both a hit and a miss, and requires 100 evaluable rows and 2,000 attributed
+outcomes. H2 reports `supported` at 95% agreement, `refuted` below 90%, and
+`inconclusive` between those thresholds. Both commands print the time span the
+store covers and the limits of their sample: labels come from solo and
+unanimous windows, so a verdict may not represent busy, mixed traffic, and H2
+also states that child sightings are sampled, which biases the sighting clue
+towards long misses.
 
 While cached requests are moving, the supervisor samples the managed server's
 control group every 250 ms and inspects at most 64 processes per sample. It
@@ -353,10 +360,12 @@ carries the same figures as `retained_records`, `observed_from`,
 `observed_until` and `unmeasured_entries`.
 
 The writer seals the active file when an append would take it past 12 MiB, so
-the archiver only ever touches closed segments. The archiver compresses each
+the archiver only ever rewrites closed segments. The archiver compresses each
 sealed segment to XZ, verifies the archive against its source, publishes it,
 and only then removes the plain source. It holds a private lock of its own and
-never opens the active file.
+never writes or replaces the active file. It does read the active file, once
+per plan, to measure the rows and span the writer currently holds; the read is
+bounded and refuses a path that is not a regular file.
 
 Retention is one policy shared by the writer, the archiver and the read-only
 history view:
@@ -424,7 +433,9 @@ whole retained history. `--history` reads archived, sealed and active history
 for the newest salt domain; `--salt-id ID` reads one named domain; and
 `--all-salts` reads every domain in append order. Both `--salt-id` and
 `--all-salts` imply `--history`. With none of these flags, each command reads
-only the active store, so existing invocations are unchanged.
+only the active store, exactly the rows an existing invocation read before.
+That is a statement about the input, not about the H2 classifier: the runtime
+window described above applies to every replay path.
 
 A report read across domains names every salt it counted, so a figure that
 spans a salt change is never attributed to the newest domain alone. The list is

@@ -8,6 +8,7 @@ archive, heal, quarantine orphans, trim and finally delete.
 
 import dataclasses as dc
 import errno
+import stat
 import typing as typ
 
 from buildlimits import (
@@ -19,11 +20,7 @@ from buildlimits.outcome_archive_budget import ActiveHistory
 from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
 from buildlimits.outcome_archive_encode import read_source_facts
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
-from buildlimits.outcome_archive_verify import (
-    OutputFaultError,
-    SegmentFaultError,
-    Trim,
-)
+from buildlimits.outcome_archive_verify import OutputFaultError, SegmentFaultError
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -31,6 +28,7 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.outcome_archive_plan import Plan
+    from buildlimits.outcome_archive_trim import Trim
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
 __all__ = ["ArchiveRun", "RunOutcome", "active_history", "perform", "retain"]
@@ -87,7 +85,13 @@ def failure_reason(error: OSError) -> str:
 
 
 def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
-    """Execute every planned operation in a fixed order."""
+    """Execute every planned operation in a fixed order.
+
+    The eviction steps run last, interleaved by sequence, so an older entry is
+    settled before any newer one is rewritten or removed. A failure ends that
+    phase: the steps after it would act on newer history while the older entry
+    the budget asked for is still present.
+    """
     for sealed, archived in run.plan.reconcile:
         _reconcile_one(run, sealed, archived, outcome)
     for entry in run.plan.archive:
@@ -96,10 +100,7 @@ def perform(run: ArchiveRun, outcome: RunOutcome) -> None:
         _heal_one(run, entry, outcome)
     for sequence in run.plan.orphans:
         _quarantine_orphan(run, sequence, outcome)
-    for entry, trim in run.plan.trims:
-        _trim_one(run, entry, trim, outcome)
-    for entry in run.plan.deletes:
-        _delete_one(run, entry, outcome)
+    _evict(run, outcome, run.plan.trims, run.plan.deletes)
 
 
 def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
@@ -128,12 +129,17 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
     settled = {
         action.sequence for action in outcome.actions if action.action == "deleted"
     }
-    for entry, trim in follow_up.trims:
-        if entry.sequence not in settled and entry.path.exists():
-            _trim_one(run, entry, trim, outcome)
-    for entry in follow_up.deletes:
-        if entry.sequence not in settled and entry.path.exists():
-            _delete_one(run, entry, outcome)
+    trims = (
+        (entry, trim)
+        for entry, trim in follow_up.trims
+        if entry.sequence not in settled and entry.path.exists()
+    )
+    deletes = (
+        entry
+        for entry in follow_up.deletes
+        if entry.sequence not in settled and entry.path.exists()
+    )
+    _evict(run, outcome, trims, deletes)
 
 
 def active_history(path: Path) -> ActiveHistory:
@@ -146,6 +152,11 @@ def active_history(path: Path) -> ActiveHistory:
     nothing to count; one that cannot be read at all is reported by its size
     alone, and the next run counts its rows again.
 
+    A path that is not a regular file is not the writer's store, so it counts
+    as nothing. Following a symlink would let a file outside the store decide
+    retention, and the link's own metadata is not a history size; the writer
+    and the bounded reader both refuse to open such a path at all.
+
     Returns
     -------
     ActiveHistory
@@ -153,11 +164,12 @@ def active_history(path: Path) -> ActiveHistory:
         span their observations cover.
     """
     try:
-        size = path.lstat().st_size
-    except FileNotFoundError:
-        return ActiveHistory()
+        metadata = path.lstat()
     except OSError:
         return ActiveHistory()
+    if not stat.S_ISREG(metadata.st_mode):
+        return ActiveHistory()
+    size = metadata.st_size
     try:
         facts = read_source_facts(path)
     except OSError, SegmentFaultError:
@@ -168,6 +180,46 @@ def active_history(path: Path) -> ActiveHistory:
         first_observed_at=facts.first_observed_at,
         last_observed_at=facts.last_observed_at,
     )
+
+
+def _evict(
+    run: ArchiveRun,
+    outcome: RunOutcome,
+    trims: cabc.Iterable[tuple[SegmentEntry, Trim]],
+    deletes: cabc.Iterable[SegmentEntry],
+) -> None:
+    """Apply one plan's trims and deletions oldest-first, stopping at a failure.
+
+    A trim discards rows from history that survives, and a deletion removes a
+    whole entry, so the two operations must follow the same oldest-first walk
+    the planner used. Running every trim before every deletion would rewrite a
+    newer archive even when an older entry could not be removed, discarding
+    rows from history while the entry the budget asked for remained. The first
+    failure therefore ends the phase and leaves newer history untouched for the
+    next run.
+
+    Parameters
+    ----------
+    run : ArchiveRun
+        The run whose context the operations use.
+    outcome : RunOutcome
+        The actions and failures accumulated so far.
+    trims : Iterable[tuple[SegmentEntry, Trim]]
+        Archives to rewrite with a prefix trim.
+    deletes : Iterable[SegmentEntry]
+        Archives and sealed sources to remove entirely.
+    """
+    steps: list[tuple[SegmentEntry, Trim | None]] = []
+    steps.extend(trims)
+    steps.extend((entry, None) for entry in deletes)
+    for entry, trim in sorted(steps, key=lambda step: step[0].sequence):
+        applied = (
+            _delete_one(run, entry, outcome)
+            if trim is None
+            else _trim_one(run, entry, trim, outcome)
+        )
+        if not applied:
+            return
 
 
 def _reconcile_one(
@@ -209,7 +261,7 @@ def _quarantining(
     sequence: int,
     action: cabc.Callable[[], ActionResult],
     quarantine: cabc.Callable[[str], ActionResult],
-) -> None:
+) -> bool:
     """Run one per-segment action, quarantining whatever a fault names.
 
     Every operation that can meet a closed fault reports the same way: a
@@ -218,6 +270,12 @@ def _quarantining(
     ``unreadable`` or, when the filesystem is full, ``no_headroom``.
     ``quarantine`` therefore names the artefact rather than the reason, because
     only the caller knows which file a fault implicates.
+
+    Returns
+    -------
+    bool
+        Whether the action succeeded. A caller that performs dependent work
+        uses this to stop before acting on newer history.
     """
     try:
         outcome.actions.append(action())
@@ -225,10 +283,14 @@ def _quarantining(
         # The source was readable and the fault is in this run's own output,
         # so the artefact must survive for the next attempt.
         outcome.failures.append((sequence, fault.reason))
+        return False
     except SegmentFaultError as fault:
         _quarantine_fault(outcome, sequence, fault.reason, quarantine)
+        return False
     except OSError as error:
         outcome.failures.append((sequence, failure_reason(error)))
+        return False
+    return True
 
 
 def _quarantine_fault(
@@ -280,9 +342,15 @@ def _trim_one(
     entry: SegmentEntry,
     trim: Trim,
     outcome: RunOutcome,
-) -> None:
-    """Apply one planned trim, quarantining an archive that will not verify."""
-    _quarantining(
+) -> bool:
+    """Apply one planned trim, quarantining an archive that will not verify.
+
+    Returns
+    -------
+    bool
+        Whether the rewrite succeeded.
+    """
+    return _quarantining(
         outcome,
         entry.sequence,
         lambda: outcome_archive_files.recompress_archive(run.context, entry, trim),
@@ -292,8 +360,14 @@ def _trim_one(
     )
 
 
-def _delete_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> None:
-    """Remove one evicted archive or sealed source."""
+def _delete_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> bool:
+    """Remove one evicted archive or sealed source.
+
+    Returns
+    -------
+    bool
+        Whether the entry was removed.
+    """
     try:
         if entry.state == "sealed":
             outcome_archive_files.delete_source(run.context, entry)
@@ -301,5 +375,6 @@ def _delete_one(run: ArchiveRun, entry: SegmentEntry, outcome: RunOutcome) -> No
             outcome_archive_files.delete_archive(run.context, entry)
     except OSError as error:
         outcome.failures.append((entry.sequence, failure_reason(error)))
-        return
+        return False
     outcome.actions.append(ActionResult("deleted", entry.sequence))
+    return True

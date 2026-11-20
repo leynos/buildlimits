@@ -14,6 +14,7 @@ import stat
 import typing as typ
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
 FILE_MODE = 0o600
@@ -106,34 +107,6 @@ def _read_growth(source: typ.BinaryIO, first: bytes, limit: int) -> bytes:
     return b"".join(chunks)
 
 
-def open_private_regular(
-    path: Path, flags: int, *, enforce_mode: bool = True
-) -> tuple[int, os.stat_result]:
-    """Open a regular file without following links, optionally enforcing mode.
-
-    Returns
-    -------
-    tuple[int, os.stat_result]
-        The open descriptor and the metadata captured from it.
-
-    Raises
-    ------
-    OSError
-        If opening, validating or enforcing the private file mode fails.
-    """
-    descriptor = os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
-    try:
-        metadata = os.fstat(descriptor)
-        require_regular(metadata)
-        if enforce_mode:
-            os.fchmod(descriptor, FILE_MODE)
-    except OSError:
-        with contextlib.suppress(OSError):
-            os.close(descriptor)
-        raise
-    return descriptor, metadata
-
-
 def require_regular(metadata: os.stat_result) -> None:
     """Reject filesystem objects that are not regular files.
 
@@ -145,3 +118,57 @@ def require_regular(metadata: os.stat_result) -> None:
     if not stat.S_ISREG(metadata.st_mode):
         msg = "outcome store is not a regular file"
         raise OSError(msg)
+
+
+def open_private_regular(
+    path: Path,
+    flags: int,
+    *,
+    enforce_mode: bool = True,
+    validate: cabc.Callable[[os.stat_result], None] = require_regular,
+) -> tuple[int, os.stat_result]:
+    """Open a regular file without following links, optionally enforcing mode.
+
+    ``O_NOFOLLOW`` and ``O_NONBLOCK`` are always added, whatever the caller
+    passes, so a substitution the caller did not anticipate is refused at this
+    one boundary: a symlink at a store path fails with ``ELOOP`` and a FIFO
+    cannot block the open. Each current caller passes ``O_NOFOLLOW`` itself as
+    well; keeping the flag here means a new caller cannot lose the check.
+
+    Parameters
+    ----------
+    path : Path
+        The file to open.
+    flags : int
+        Open flags; ``O_NOFOLLOW`` and ``O_NONBLOCK`` are added.
+    enforce_mode : bool, default=True
+        Whether to narrow the file to the private owner-only mode.
+    validate : Callable[[os.stat_result], None], default=require_regular
+        The guarantee the opened object must satisfy. The archiver supplies a
+        stricter check than the store's, because it also refuses a file owned
+        by another account. One open path serves both, so neither can drift
+        from the flags above.
+
+    Returns
+    -------
+    tuple[int, os.stat_result]
+        The open descriptor and the metadata captured from it.
+
+    Raises
+    ------
+    OSError
+        If opening, validating or enforcing the private file mode fails, or if
+        the path is not a regular file.
+    """
+    guarded = flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(path, guarded)
+    try:
+        metadata = os.fstat(descriptor)
+        validate(metadata)
+        if enforce_mode:
+            os.fchmod(descriptor, FILE_MODE)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
+        raise
+    return descriptor, metadata

@@ -17,11 +17,11 @@ from buildlimits.outcome_archive_fs import (
     open_private_regular,
     open_private_temp,
 )
+from buildlimits.outcome_archive_trim import Trim, policy_dropped_bytes
 from buildlimits.outcome_archive_verify import (
     ArchiveFacts,
     OutputFaultError,
     SegmentFaultError,
-    Trim,
     scan_archive,
     write_archive,
 )
@@ -214,6 +214,44 @@ def discard(path: Path) -> None:
         path.unlink()
 
 
+def _composed_trim(source_path: Path, options: EncodeOptions) -> Trim:
+    """Return the trim the writing pass needs, measuring policy drops first.
+
+    A byte allowance must be compared with the document that survives the
+    count and age rules, and only a whole pass over the source can measure
+    what those rules drop. That pass is skipped when the allowance cannot
+    compose with either rule, so an ordinary archive still reads its source
+    once before the verification pass. The measurement propagates the
+    ``SegmentFaultError`` its reader reports when a row or header in the source
+    is invalid.
+
+    Parameters
+    ----------
+    source_path : Path
+        The plain or compressed document the writing pass will read.
+    options : EncodeOptions
+        The preset, prefix trim and source encoding.
+
+    Returns
+    -------
+    Trim
+        The trim, with ``policy_bytes`` measured when the byte allowance
+        composes with a count or age rule.
+    """
+    trim = options.trim
+    composes = trim.before is not None or trim.records != 0
+    if trim.allowed_bytes is None or not composes:
+        return trim
+    descriptor, _metadata = open_private_regular(
+        source_path, os.O_RDONLY, enforce_mode=False
+    )
+    with os.fdopen(descriptor, "rb") as source:
+        measured = policy_dropped_bytes(
+            LineStream(source, is_compressed=options.is_compressed), trim
+        )
+    return dc.replace(trim, policy_bytes=measured)
+
+
 def _write_temp(
     source_path: Path,
     descriptor: int,
@@ -240,6 +278,7 @@ def _write_temp(
     # that are not private regular files, and that rejection must not leak the
     # temporary's descriptor.
     with os.fdopen(descriptor, "wb") as sink:
+        trim = _composed_trim(source_path, options)
         source_descriptor, _metadata = open_private_regular(
             source_path, os.O_RDONLY, enforce_mode=False
         )
@@ -248,7 +287,7 @@ def _write_temp(
                 LineStream(source, is_compressed=options.is_compressed),
                 sink,
                 preset=options.preset,
-                trim=options.trim,
+                trim=trim,
             )
             sink.flush()
             os.fsync(sink.fileno())

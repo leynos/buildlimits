@@ -31,7 +31,8 @@ from buildlimits.outcome_archive_quarantine import (
     quarantine_source,
 )
 from buildlimits.outcome_archive_replace import begin_replacement, end_replacement
-from buildlimits.outcome_archive_verify import ArchiveFacts, SegmentFaultError, Trim
+from buildlimits.outcome_archive_trim import Trim
+from buildlimits.outcome_archive_verify import ArchiveFacts, SegmentFaultError
 from buildlimits.outcome_store_io import fsync_directory
 
 if typ.TYPE_CHECKING:

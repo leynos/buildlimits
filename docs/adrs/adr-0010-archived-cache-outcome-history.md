@@ -451,8 +451,10 @@ re-encoded, reordered or re-timestamped.
   lock.
 - The report's physical byte figures are per action, not a disk-usage total;
   sidecars, state files and quarantine also occupy the filesystem.
-- The archiver reads the active file's size but not its content, so a retained
-  total can be stale by whatever the writer appended after the inventory scan.
+- The archiver reads the active file once per plan, through the bounded
+  no-follow reader, to count the rows and span the writer currently holds; it
+  never writes or replaces the file. A retained total can still be stale by
+  whatever the writer appended after that read.
 
 ## Architectural rationale
 

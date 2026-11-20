@@ -23,6 +23,7 @@ from buildlimits.outcome_archive_dirs import (
     ensure_private_directory,
     require_private_chain,
 )
+from buildlimits.outcome_store_files import open_private_regular as _open_private
 from buildlimits.outcome_store_io import fsync_directory, write_all
 
 if typ.TYPE_CHECKING:
@@ -48,10 +49,15 @@ def open_private_regular(
     path: Path,
     flags: int,
     *,
-    mode: int = _FILE_MODE,
     enforce_mode: bool = True,
 ) -> tuple[int, os.stat_result]:
     """Open a private regular file without following links.
+
+    The open itself is the outcome store's primitive, so the no-follow and
+    non-blocking flags, the close-on-failure rule and the race-free narrowing
+    exist in exactly one place and the archiver cannot drift from them. This
+    wrapper supplies the archiver's stricter validation: a file another
+    account owns is not private, whatever its mode bits say.
 
     Parameters
     ----------
@@ -59,33 +65,22 @@ def open_private_regular(
         The file to open.
     flags : int
         Open flags; ``O_NOFOLLOW`` and ``O_NONBLOCK`` are added.
-    mode : int, default=0o600
-        Mode applied when ``enforce_mode`` is true.
     enforce_mode : bool, default=True
-        Whether to require and set the private owner-only mode.
+        Whether to narrow the file to the private owner-only mode.
 
     Returns
     -------
     tuple[int, os.stat_result]
-        The open descriptor and its metadata.
-
-    Raises
-    ------
-    OSError
-        If the file cannot be opened, inspected or made private.
+        The open descriptor and its metadata. A file that cannot be opened,
+        inspected or made private propagates the ``OSError`` the shared
+        primitive raises.
     """
-    full_flags = flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
-    descriptor = os.open(path, full_flags)
-    try:
-        metadata = os.fstat(descriptor)
-        require_private_regular(metadata)
-        if enforce_mode:
-            os.fchmod(descriptor, mode)
-    except OSError:
-        with contextlib.suppress(OSError):
-            os.close(descriptor)
-        raise
-    return descriptor, metadata
+    return _open_private(
+        path,
+        flags,
+        enforce_mode=enforce_mode,
+        validate=require_private_regular,
+    )
 
 
 def open_private_temp(directory: Path, *, prefix: str) -> tuple[int, Path]:

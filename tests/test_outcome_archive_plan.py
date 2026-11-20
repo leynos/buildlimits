@@ -13,7 +13,7 @@ import typing as typ
 from archive_plan_helpers import NOW, archived, plan, policy, sealed
 
 from buildlimits.outcome_archive_plan import Plan, PlanSummary
-from buildlimits.outcome_archive_verify import Trim
+from buildlimits.outcome_archive_trim import Trim
 from buildlimits.outcome_segment_inventory import Inventory
 
 if typ.TYPE_CHECKING:

@@ -20,7 +20,7 @@ from buildlimits.outcome_archive_budget import (
     plan_record_steps,
     planned_size,
 )
-from buildlimits.outcome_archive_verify import Trim
+from buildlimits.outcome_archive_trim import Trim
 from buildlimits.utc_text import optional_utc_text
 
 if typ.TYPE_CHECKING:

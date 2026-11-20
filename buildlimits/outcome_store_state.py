@@ -204,8 +204,12 @@ class StoreFiles:
         if self.needs_compaction and not self.settle():
             self.publish("append", "save_failed", discarded=1)
             return
-        if self.exceeds_record_cap():
-            self.settle()
+        if self.exceeds_record_cap() and not self.settle():
+            # A seal that failed before its rename leaves the rows in the
+            # active file, which the archiver cannot evict. Accepting another
+            # row would hold history past the cap that nothing can remove.
+            self.publish("append", "save_failed", discarded=1)
+            return
         try:
             size = store_size(self.path)
             water_mark = self.settle_bytes()

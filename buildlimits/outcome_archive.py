@@ -278,11 +278,22 @@ def _retention_floor(
         The retention floor to persist.
     """
     present = [entry.sequence for entry in inventory.effective]
-    baseline = min(present, default=0) if previous is None else previous
-    deleted = [
+    deleted = {
         action.sequence for action in outcome.actions if action.action == "deleted"
-    ]
-    return max([baseline, *(sequence + 1 for sequence in deleted)])
+    }
+    # A fresh store starts at the lowest sequence it is known to have had:
+    # either one that survives, or one this run deleted. Later runs keep the
+    # floor they recorded.
+    baseline = (
+        previous if previous is not None else min([*present, *deleted], default=0)
+    )
+    # Only a contiguous deleted prefix advances the floor. A sequence that is
+    # missing without a deletion may be a gap retention did not create, and
+    # stepping past it would stop the next scan reporting it.
+    floor = baseline
+    while floor in deleted:
+        floor += 1
+    return floor
 
 
 @dc.dataclass(frozen=True, slots=True)

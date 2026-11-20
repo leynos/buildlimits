@@ -16,7 +16,7 @@ history sooner than older history, which is not what a retention budget means.
 import dataclasses as dc
 import typing as typ
 
-from buildlimits.outcome_archive_verify import Trim
+from buildlimits.outcome_archive_trim import Trim
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc

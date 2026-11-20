@@ -33,6 +33,7 @@ from buildlimits.outcome_segment_inventory import SegmentEntry, read_inventory
 from buildlimits.outcome_segments import (
     SegmentLayout,
     archive_name,
+    sealed_meta_name,
     segment_name,
     sidecar_name,
 )
@@ -115,6 +116,34 @@ def test_age_eviction_removes_expired_sources_without_archiving(
         ]
         == 3
     ), "the floor starts past the sequences retention removed"
+
+
+def test_a_deletion_after_a_gap_does_not_hide_the_gap(tmp_path: Path) -> None:
+    """The floor advances only over a deletion prefix, never past a gap.
+
+    A sequence that went missing without retention deleting it is unknown
+    history. Deleting a later sequence must not raise the floor past the gap,
+    or the next scan would stop reporting it.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    old = NOW - dt.timedelta(days=40)
+    write(store, records(old, 3), policy(max_age_days=60))
+    # A fresh source survives the run, so the next scan still holds history
+    # above the floor to bracket the unknown sequence with.
+    write(store, records(NOW, 1), policy(max_age_days=60))
+    store_layout = layout(tmp_path)
+    for name in (segment_name(2), sealed_meta_name(2)):
+        (store_layout.sealed_dir / name).unlink()
+
+    report = run(tmp_path, policy(max_age_days=30))
+
+    assert report.status == "ok", "expiry is not a failure"
+    assert [
+        action.sequence for action in report.actions if action.action == "deleted"
+    ] == [1, 3], "the surviving expired sequences are removed"
+    state = json.loads(store_layout.retention_file.read_text(encoding="utf-8"))
+    assert state["floor_sequence"] == 2, "the floor stops at the unknown sequence"
+    assert 2 in report.gaps, "the missing sequence is still reported"
 
 
 def test_a_heal_only_run_replans_retention_with_real_logical_bytes(

@@ -17,11 +17,15 @@ from buildlimits.outcome_archive_rows import (
     HeaderRow,
     RecordRow,
     SegmentFaultError,
+    iter_records,
 )
-from buildlimits.outcome_record_stream import LineStream, StreamFaultError
+from buildlimits.outcome_archive_trim import Trim, fits_allowance, policy_drops
+from buildlimits.outcome_record_stream import StreamFaultError
 
 if typ.TYPE_CHECKING:
     import datetime as dt
+
+    from buildlimits.outcome_record_stream import LineStream
 
 __all__ = [
     "ArchiveFacts",
@@ -30,7 +34,6 @@ __all__ = [
     "OutputFaultError",
     "RecordRow",
     "SegmentFaultError",
-    "Trim",
     "scan_archive",
     "write_archive",
 ]
@@ -97,41 +100,6 @@ class ArchiveFacts:
         )
 
 
-@dc.dataclass(frozen=True, slots=True)
-class Trim:
-    """A prefix trim applied while a segment is rewritten.
-
-    Attributes
-    ----------
-    before : datetime | None
-        Drop rows observed strictly before this time.
-    records : int
-        Drop this many leading rows regardless of time.
-    allowed_bytes : int | None
-        Keep at most this many logical bytes, dropping leading rows. The
-        header is always written and counts against the allowance, because
-        the plan compares this bound with ``ArchiveFacts.logical_bytes``.
-    source_bytes : int
-        Original logical size, needed to honour ``allowed_bytes`` exactly.
-    """
-
-    before: dt.datetime | None = None
-    records: int = 0
-    allowed_bytes: int | None = None
-    source_bytes: int = 0
-
-    @property
-    def is_empty(self) -> bool:
-        """Whether the trim would keep every row.
-
-        Returns
-        -------
-        bool
-            Whether all trim fields are inert.
-        """
-        return self.before is None and self.records == 0 and self.allowed_bytes is None
-
-
 def scan_archive(stream: LineStream) -> ArchiveFacts:
     """Read one archive or source to its end and prove its contents.
 
@@ -154,15 +122,11 @@ def scan_archive(stream: LineStream) -> ArchiveFacts:
     first: dt.datetime | None = None
     last: dt.datetime | None = None
     count = 0
-    try:
-        for row in reader:
-            if isinstance(row, RecordRow):
-                count += 1
-                observed = row.record.observed_at
-                first = observed if first is None or observed < first else first
-                last = observed if last is None or observed > last else last
-    except StreamFaultError as fault:
-        raise SegmentFaultError(fault.reason) from fault
+    for row in iter_records(reader):
+        count += 1
+        observed = row.record.observed_at
+        first = observed if first is None or observed < first else first
+        last = observed if last is None or observed > last else last
     if reader.header is None or not stream.is_verified:
         raise SegmentFaultError("truncated_xz")
     return ArchiveFacts(
@@ -194,7 +158,10 @@ def write_archive(
     preset : int
         XZ preset from 0 to 9.
     trim : Trim
-        The prefix policy; an empty trim keeps every row.
+        The prefix policy; an empty trim keeps every row. A byte allowance
+        that composes with a count or age rule is exact only when the trim
+        carries the ``policy_bytes`` that ``policy_dropped_bytes`` measured
+        for this source.
 
     Returns
     -------
@@ -211,6 +178,7 @@ def write_archive(
     >>> import datetime as dt, io
     >>> from buildlimits.outcome_record_encode import encode_line
     >>> from buildlimits.outcome_record_format import StoreHeader
+    >>> from buildlimits.outcome_record_stream import LineStream
     >>> header = StoreHeader("s", dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
     >>> text = encode_line(header) + chr(10)
     >>> source = LineStream(io.BytesIO(text.encode()))
@@ -233,9 +201,11 @@ def write_archive(
                 # The header belongs in the archive but is not a record.
                 emitted.write(row.raw)
                 continue
-            keep = _should_keep(row, trim, seen=seen, dropped=dropped)
+            drops = policy_drops(row, trim, seen=seen)
             seen += 1
-            if not keep:
+            if drops:
+                continue
+            if not fits_allowance(trim, dropped=dropped):
                 dropped += len(row.raw) + 1
                 continue
             emitted.push_record(row.raw)
@@ -256,40 +226,6 @@ def write_archive(
         last_observed_at=last,
         had_torn_tail=reader.had_torn_tail,
     )
-
-
-def _should_keep(row: RecordRow, trim: Trim, *, seen: int, dropped: int) -> bool:
-    """Decide whether one record survives the prefix trim.
-
-    Parameters
-    ----------
-    row : RecordRow
-        The candidate record.
-    trim : Trim
-        The prefix policy.
-    seen : int
-        Records already decided, used by the explicit count trim.
-    dropped : int
-        Bytes of the records already rejected by this trim.
-
-    Returns
-    -------
-    bool
-        Whether the row is retained.
-    """
-    if seen < trim.records:
-        return False
-    if trim.before is not None and row.record.observed_at < trim.before:
-        return False
-    if trim.allowed_bytes is None:
-        return True
-    # The header is always written, so what a trim frees is exactly the rows
-    # it drops. Keeping this row and every later one writes everything except
-    # the dropped prefix, and that whole document must fit the allowance.
-    # ``_planned_size`` relies on this bound, so counting only the later rows
-    # would overstate the space the plan expects to free.
-    retained = trim.source_bytes - dropped
-    return retained <= trim.allowed_bytes
 
 
 class _Emitted:

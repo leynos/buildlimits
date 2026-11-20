@@ -17,10 +17,10 @@ from outcome_test_helpers import attributed_record
 from segment_test_helpers import document as encode_document
 
 from buildlimits import outcome_record_encode
+from buildlimits.outcome_archive_trim import Trim, policy_dropped_bytes
 from buildlimits.outcome_archive_verify import (
     ArchiveFacts,
     SegmentFaultError,
-    Trim,
     scan_archive,
     write_archive,
 )
@@ -267,6 +267,44 @@ def test_a_byte_trim_keeps_a_suffix_within_its_allowance() -> None:
     assert facts.logical_bytes == header_bytes + last_row_bytes, (
         "the allowance is measured in the bytes the archive actually holds"
     )
+
+
+def test_a_later_expired_row_does_not_cost_an_earlier_eligible_row() -> None:
+    """The byte allowance counts every policy drop, wherever it falls.
+
+    The document is ordered *at cutoff, expired, fresh*. Both eligible rows
+    fit the allowance once the expired row leaves, so a decision that measured
+    only the rows dropped before the current one would discard the cutoff row
+    while still counting the expired row's bytes against the allowance.
+    """
+    at_cutoff = attributed_record(observed_at=NOW + dt.timedelta(minutes=1))
+    expired = attributed_record(observed_at=NOW)
+    fresh = attributed_record(observed_at=NOW + dt.timedelta(minutes=2))
+    document = encode_document((at_cutoff, expired, fresh))
+    cutoff = NOW + dt.timedelta(minutes=1)
+    trim = Trim(before=cutoff)
+    expired_row = _row(document, 2)
+
+    policy_dropped = policy_dropped_bytes(LineStream(io.BytesIO(document)), trim)
+    allowance = len(document) - policy_dropped
+    facts, archived = _write(
+        document,
+        Trim(
+            before=cutoff,
+            allowed_bytes=allowance,
+            source_bytes=len(document),
+            policy_bytes=policy_dropped,
+        ),
+    )
+
+    assert policy_dropped == len(expired_row), "only the expired row is measured"
+    assert _row(document, 1) in archived, "the row at the cutoff survives"
+    assert expired_row not in archived, "the expired row is still dropped"
+    assert _row(document, 3) in archived, "the fresh row survives"
+    assert archived == _row(document, 0) + _row(document, 1) + _row(document, 3), (
+        "the written document is exactly the two eligible rows and the header"
+    )
+    assert facts.logical_bytes == allowance, "the document meets the allowance"
 
 
 def test_one_byte_below_the_document_size_drops_the_whole_suffix() -> None:

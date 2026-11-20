@@ -11,6 +11,7 @@ import typing as typ
 
 from buildlimits import outcome_record_codec
 from buildlimits.outcome_record_format import RecordFailure, StoreHeader, StoreRecord
+from buildlimits.outcome_record_stream import StreamFaultError
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -33,6 +34,7 @@ __all__ = [
     "HeaderRow",
     "RecordRow",
     "SegmentFaultError",
+    "iter_records",
 ]
 
 
@@ -149,6 +151,38 @@ class DocumentReader:
         yield RecordRow(pending, decoded)
         if not self._stream.is_terminated:
             self.had_torn_tail = True
+
+
+def iter_records(reader: DocumentReader) -> cabc.Iterator[RecordRow]:
+    """Yield each record row, translating a stream fault into a segment fault.
+
+    Every consumer of a document walks it the same way: record rows are what it
+    acts on, and a stream failure is the segment fault the caller reports or
+    quarantines. Sharing that walk keeps the translation in one place. The
+    caller keeps the reader, so it can still settle the facts that only exist
+    after the last row, such as the header and a dropped torn tail.
+
+    Parameters
+    ----------
+    reader : DocumentReader
+        The reader over one line stream.
+
+    Yields
+    ------
+    RecordRow
+        Each decoded record row in document order.
+
+    Raises
+    ------
+    SegmentFaultError
+        If a row or header is invalid, or a compressed stream is incomplete.
+    """
+    try:
+        for row in reader:
+            if isinstance(row, RecordRow):
+                yield row
+    except StreamFaultError as fault:
+        raise SegmentFaultError(fault.reason) from fault
 
 
 def _decode_header(raw: bytes) -> StoreHeader:

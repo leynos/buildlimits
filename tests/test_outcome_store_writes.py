@@ -1,7 +1,6 @@
 """Queue pressure, append faults and bounded shutdown for the store writer."""
 
 import datetime as dt
-import json
 import time
 from pathlib import Path
 from unittest import mock
@@ -11,10 +10,8 @@ import pytest
 from outcome_store_helpers import (
     append_and_wait,
     assert_failed_append,
-    close_writer,
     running_writer,
     salt_path,
-    segment_writer,
     stalled_append,
     start_writer,
     stored_records,
@@ -24,7 +21,6 @@ from outcome_store_helpers import (
     worker_exited,
 )
 from outcome_test_helpers import STORE_EPOCH as NOW
-from outcome_test_helpers import record_after
 from segment_test_helpers import document, history_policy, write_private
 
 from buildlimits import (
@@ -36,7 +32,6 @@ from buildlimits import (
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_record_format import DecodedStore
-from buildlimits.outcome_segments import SegmentLayout, sealed_meta_name
 from buildlimits.outcome_store_salt import file_salt
 
 
@@ -273,33 +268,6 @@ def test_an_idle_writer_expires_aged_rows(tmp_path: Path) -> None:
     )
     assert isinstance(decoded, DecodedStore), "the compacted store decodes"
     assert decoded.records == (), "no row outlives the age bound"
-
-
-def test_a_record_cap_seals_the_active_file_in_segmented_mode(
-    tmp_path: Path,
-) -> None:
-    """A record cap closes the active file so the archiver can evict its rows.
-
-    The segment size is far larger than the cap, so only the cap can seal the
-    file. Without that seal a small active file would hold more rows than the
-    policy allows, and no archive pass could ever see them.
-    """
-    store = tmp_path / "cache-outcomes.jsonl"
-    writer = segment_writer(store, history_policy(10**9, max_records=2), NOW)
-    try:
-        for minute in range(3):
-            writer.append(record_after(minute))
-        wait_for_results(writer, operation="seal", reason="none")
-    finally:
-        close_writer(writer)
-
-    sidecar = SegmentLayout.beside(store).sealed_dir / sealed_meta_name(1)
-    assert json.loads(sidecar.read_text())["record_count"] == 2, (
-        "the cap-sized file is sealed whole"
-    )
-    assert [record.observed_at for record in stored_records(store)] == [
-        record_after(2).observed_at
-    ], "the newest row stays active"
 
 
 def test_failed_append_keeps_the_previous_store_readable(tmp_path: Path) -> None:

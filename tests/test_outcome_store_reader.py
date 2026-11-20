@@ -7,11 +7,13 @@ writer grew the file after its size was checked.
 """
 
 import collections.abc as cabc
+import errno
 import os
 import stat
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from outcome_store_fixture_helpers import (
     append_torn_utf8_tail as _append_torn_utf8_tail,
 )
@@ -22,6 +24,7 @@ from outcome_store_fixture_helpers import write_private_file as _write_private_f
 from outcome_store_helpers import window_summary as _window_summary
 
 from buildlimits import outcome_records, outcome_store_io
+from buildlimits.outcome_store_files import open_private_regular
 
 
 def test_reader_keeps_complete_rows_before_a_utf8_torn_tail(
@@ -52,6 +55,28 @@ def test_reader_preserves_store_permissions(tmp_path: Path) -> None:
     assert isinstance(result, outcome_records.DecodedStore), "the store is readable"
     assert stat.S_IMODE(path.stat().st_mode) == 0o640, (
         "read-only inspection does not change the file mode"
+    )
+
+
+def test_the_private_opener_refuses_a_symlink_without_a_caller_flag(
+    tmp_path: Path,
+) -> None:
+    """No-follow is the primitive's own rule, not each caller's duty.
+
+    Every current caller passes ``O_NOFOLLOW`` too, but a new one could omit
+    it. The opener adds the flag itself, so a substitution that reaches it is
+    refused rather than followed.
+    """
+    target = tmp_path / "target.jsonl"
+    _write_private_file(target, b"")
+    link = tmp_path / "link.jsonl"
+    link.symlink_to(target)
+
+    with pytest.raises(OSError, match="Too many") as raised:
+        open_private_regular(link, os.O_RDONLY)
+
+    assert raised.value.errno in {errno.ELOOP, errno.EMLINK}, (
+        "the link is refused by the filesystem rather than followed"
     )
 
 

@@ -25,11 +25,11 @@ from archive_files_helpers import (
 from buildlimits import outcome_archive_encode
 from buildlimits.outcome_archive_encode import read_archive_facts, read_source_facts
 from buildlimits.outcome_archive_files import archive_source, recompress_archive
+from buildlimits.outcome_archive_trim import Trim
 from buildlimits.outcome_archive_verify import (
     ArchiveFacts,
     OutputFaultError,
     SegmentFaultError,
-    Trim,
 )
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import (
