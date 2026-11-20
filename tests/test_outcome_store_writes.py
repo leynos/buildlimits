@@ -2,6 +2,7 @@
 
 import datetime as dt
 import time
+import typing as typ
 from pathlib import Path
 from unittest import mock
 
@@ -12,6 +13,7 @@ from outcome_store_fault_helpers import partial_append, stalled_append
 from outcome_store_helpers import (
     append_and_wait,
     assert_failed_append,
+    loaded_store_files,
     running_writer,
     salt_path,
     start_writer,
@@ -35,8 +37,36 @@ from buildlimits import (
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_record_format import DecodedStore
-from buildlimits.outcome_store_clock import Clocks
 from buildlimits.outcome_store_salt import file_salt
+
+if typ.TYPE_CHECKING:
+    from buildlimits.outcome_archive_history import ActiveHistory
+
+
+def published_snapshot(files: outcome_store_state.StoreFiles) -> ActiveHistory:
+    """Publish the worker's current state and return the status read.
+
+    Returns
+    -------
+    ActiveHistory
+        The snapshot a supervisor would see after this state.
+    """
+    files.publish_snapshot()
+    return files.retention()
+
+
+def assert_unpaired(snapshot: ActiveHistory, reason: str) -> None:
+    """Require a snapshot to refuse to pair its size with its row count.
+
+    Parameters
+    ----------
+    snapshot : ActiveHistory
+        The reported active history.
+    reason : str
+        The closed reason the snapshot must name.
+    """
+    assert snapshot.has_metadata is False, f"the {reason} state is not a measured one"
+    assert snapshot.reason == reason, f"the reason names {reason}"
 
 
 def test_writer_reports_queue_overflow_without_waiting_for_the_worker(
@@ -435,16 +465,7 @@ def test_a_failed_rollback_is_never_paired_with_the_row_count(
     rather than present it beside a row count it does not describe.
     """
     path = tmp_path / "cache-outcomes.jsonl"
-    salted = file_salt(salt_path(path))
-    assert isinstance(salted, Salt), "the fixture installs its own salt"
-    files = outcome_store_state.StoreFiles(
-        path,
-        mock.Mock(),
-        Clocks(wall=lambda: NOW),
-        policy=history_policy(1 << 20),
-    )
-    files.salt = salted
-    files.load_and_settle(salted, NOW)
+    files = loaded_store_files(path, policy=history_policy(1 << 20), now=NOW)
     record = window_summary()
     line = outcome_records.encode_line(record).encode("utf-8")
 
@@ -456,24 +477,41 @@ def test_a_failed_rollback_is_never_paired_with_the_row_count(
 
     with mock.patch.object(outcome_store_state, "append_line", tear):
         files.append(line, record)
-    files.publish_snapshot()
-    unrepaired = files.retention()
+    unrepaired = published_snapshot(files)
 
-    assert unrepaired.has_metadata is False, "the fragment is not one measured state"
-    assert unrepaired.reason == "repair_pending", "the reason names the repair"
+    assert_unpaired(unrepaired, "repair_pending")
     assert unrepaired.records == 0, "the refused row is not counted"
     assert unrepaired.bytes == path.stat().st_size, (
         "the fragment is still part of the file's measured size"
     )
 
     assert files.compact() is True, "the next compaction repairs the file"
-    files.publish_snapshot()
-    repaired = files.retention()
+    repaired = published_snapshot(files)
 
     assert repaired.has_metadata is True, "the repaired file is one state again"
     assert repaired.records == 0, "the refused row was never retained"
     assert repaired.bytes == path.stat().st_size, "the size is the new file's"
     assert repaired.bytes < unrepaired.bytes, "the fragment is gone"
+
+
+def test_a_missing_active_file_is_not_reported_as_an_empty_one(
+    tmp_path: Path,
+) -> None:
+    """A file the writer cannot find is not a complete zero-byte state.
+
+    A seal moves the active file into the sealed directory before it installs
+    the replacement. If that installation fails, the writer still holds rows
+    while the path holds no file at all, so the published snapshot must mark
+    the state incomplete rather than pair a zero-byte size with those rows.
+    """
+    path = tmp_path / "cache-outcomes.jsonl"
+    files = loaded_store_files(path, policy=history_policy(1 << 20), now=NOW)
+    record = window_summary()
+    files.append(outcome_records.encode_line(record).encode("utf-8"), record)
+    path.unlink()
+
+    snapshot = published_snapshot(files)
+    assert_unpaired(snapshot, "unreadable")
 
 
 def test_close_returns_within_its_bound_when_a_write_stalls(tmp_path: Path) -> None:

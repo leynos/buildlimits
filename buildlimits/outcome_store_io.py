@@ -94,10 +94,30 @@ def store_size(path: Path) -> int:
         The regular file size, or zero when the file does not exist.
 
     """
+    size = store_size_if_present(path)
+    return 0 if size is None else size
+
+
+def store_size_if_present(path: Path) -> int | None:
+    """Return a regular store's size, or None when no file exists.
+
+    ``store_size`` reports an absent store as zero for callers that go on to
+    create it. A caller that describes an existing store must be able to tell
+    an empty file from no file at all, so this stricter measurement keeps that
+    difference.
+
+    Returns
+    -------
+    int or None
+        The regular file size, or None when the path does not exist.
+
+    A path that exists but is not a regular file, or cannot be measured,
+    raises ``OSError``.
+    """
     try:
         metadata = path.lstat()
     except FileNotFoundError:
-        return 0
+        return None
     require_regular(metadata)
     return metadata.st_size
 
