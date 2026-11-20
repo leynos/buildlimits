@@ -12,6 +12,7 @@ import dataclasses as dc
 import datetime as dt
 import errno
 import lzma
+import os
 import typing as typ
 from pathlib import Path
 
@@ -400,4 +401,68 @@ def test_a_fault_after_removal_still_records_the_deletion(
     ], "the removal the run completed is recorded beside the fault"
     assert read_retention_floor(layout(tmp_path)).sequence == 2, (
         "the floor advances over the sequence the run removed"
+    )
+
+
+def test_an_unreadable_lookup_is_not_a_completed_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lookup that failed for another reason proves nothing about the entry.
+
+    ``Path.exists`` answers ``False`` for every ``OSError``, so an entry that
+    is present but cannot be inspected reads as absent. Recording a deletion
+    from that answer would advance the floor over a sequence still in the
+    store. Only a confirmed absence may stand as evidence the removal
+    completed; any other lookup failure leaves the failure reported and the
+    floor where it was.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    old = NOW - dt.timedelta(days=40)
+    # Seeded under a policy with no age bound: the writer expires an aged row
+    # when it compacts, so the store must be written before that bound applies.
+    write(store, records(old, 1), policy(max_age_days=0))
+    source = layout(tmp_path).sealed_dir / segment_name(1)
+    stat = os.stat
+    is_hidden = False
+
+    def refuse_to_inspect(
+        path: os.PathLike[str] | str, *, follow_symlinks: bool = True
+    ) -> os.stat_result:
+        """Fail the entry's own lookup while the injected fault is in force.
+
+        Every other path is inspected normally, so the denial stands in for an
+        entry the process may no longer read rather than for a broken run.
+
+        Returns
+        -------
+        os.stat_result
+            The status of a path the fault does not hide.
+
+        Raises
+        ------
+        PermissionError
+            For the hidden entry only.
+        """
+        if is_hidden and os.fspath(path) == os.fspath(source):
+            raise PermissionError(errno.EACCES, "the entry cannot be inspected")
+        return stat(path, follow_symlinks=follow_symlinks)
+
+    def refuse_and_hide(*_args: object, **_kwargs: object) -> typ.NoReturn:
+        """Refuse the removal, then hide the entry from path lookups."""
+        nonlocal is_hidden
+        is_hidden = True
+        refuse()
+
+    monkeypatch.setattr(os, "stat", refuse_to_inspect)
+    monkeypatch.setattr(outcome_archive_files, "delete_source", refuse_and_hide)
+
+    report = run(tmp_path, policy(max_age_days=30))
+    is_hidden = False
+
+    assert (1, "unreadable") in report.failures, "the failed removal is reported"
+    assert [action.action for action in report.actions] == [], (
+        "a lookup that failed is not evidence the entry is gone"
+    )
+    assert read_retention_floor(layout(tmp_path)).sequence == 1, (
+        "the floor does not advance over an entry the run still holds"
     )

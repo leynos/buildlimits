@@ -671,10 +671,13 @@ force, and what history it currently retains.
   cannot replace this file writes its floor to `retention-pending.json`
   instead; every later read merges the two records and uses the higher valid
   floor, so a fault local to one file does not turn a completed deletion into a
-  reported gap. A removal counts as completed once the archive itself is gone:
-  a sidecar cleanup or directory sync that fails afterwards is still reported
-  as a failure, but the deletion advances the floor rather than leaving the
-  sequence to be reported as lost history.
+  reported gap. A removal counts as completed once the archive itself is
+  confirmed gone: a sidecar cleanup or directory sync that fails afterwards is
+  still reported as a failure, but the deletion advances the floor rather than
+  leaving the sequence to be reported as lost history. A lookup that fails for
+  any other reason, such as an archive the process may no longer inspect,
+  proves neither outcome, so the failure is reported without advancing the
+  floor.
 - `last-run.json` is the full run report. Its `limits`, `retained`,
   `evictions` and `maintenance` sections are the documents the `--json` form
   prints.
