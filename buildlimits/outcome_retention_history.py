@@ -30,7 +30,9 @@ def retained_history(
     A closed segment whose metadata is missing still contributes its logical
     bytes, because the file is retained either way, but its rows and times are
     unknown. The result then reports ``complete=False`` so a caller never
-    presents a lower bound as an exact count.
+    presents a lower bound as an exact count. For the same reason an unmeasured
+    active file, passed as None, also leaves the result incomplete: its rows
+    and bytes are missing from the totals rather than known to be zero.
 
     Parameters
     ----------
@@ -49,8 +51,14 @@ def retained_history(
     >>> from buildlimits.outcome_segment_inventory import Inventory
     >>> retained_history(Inventory()).record_count
     0
+    >>> retained_history(Inventory()).complete
+    False
     """
-    measured = ActiveHistory() if active is None else active
+    measured = (
+        ActiveHistory(has_metadata=False, reason="unmeasured")
+        if active is None
+        else active
+    )
     entries = inventory.effective
     sealed_bytes = _logical_bytes(entries, "sealed")
     archived_logical = _logical_bytes(entries, "archived")

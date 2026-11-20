@@ -149,15 +149,23 @@ def _scan_settled(
         try:
             source.seek(0)
             history = _measure(LineStream(source), size=size, cutoff=cutoff)
-        except OSError, SegmentFaultError, StreamFaultError:
+        except SegmentFaultError as fault:
             return ActiveHistory(
-                bytes=_size_of(source, fallback=size), has_metadata=False
+                bytes=_size_of(source, fallback=size),
+                has_metadata=False,
+                reason=fault.reason,
+            )
+        except OSError, StreamFaultError:
+            return ActiveHistory(
+                bytes=_size_of(source, fallback=size),
+                has_metadata=False,
+                reason="unreadable",
             )
         if _size_of(source, fallback=size) == size:
             return history
         if on_retry is not None:
             on_retry("active_scan", attempt + 1, "active_changed")
-    return ActiveHistory(bytes=size, has_metadata=False)
+    return ActiveHistory(bytes=size, has_metadata=False, reason="unsettled")
 
 
 def _size_of(source: typ.BinaryIO, *, fallback: int = 0) -> int:

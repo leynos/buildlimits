@@ -285,8 +285,6 @@ def _write_maintenance(report: RunReport) -> None:
     maintenance reason and is already labelled above; only a fault is printed.
     """
     reason = report.maintenance.reason
-    if reason is not None:
-        print(f"state: not written ({reason})")
 
 
 def _elapsed(report: RunReport) -> str:

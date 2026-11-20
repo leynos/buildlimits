@@ -209,29 +209,27 @@ def dry_report(
     run: ArchiveRun,
     active: ActiveHistory,
     inventory: Inventory,
-    *,
-    clock: cabc.Callable[[], dt.datetime] | None = None,
 ) -> RunReport:
     """Build the report a dry run returns without changing any file.
 
     The inventory and the active history are the settled pair the plan was
     built from, so the report and the plan describe one version of the store;
-    reading the inventory again could count a seal between the two.
+    reading the inventory again could count a seal between the two. An active
+    file that could not be counted makes the retained totals a lower bound, so
+    the inspection reports ``corrupt`` rather than claiming the history it
+    could not read is empty. No state file is installed, and the report says
+    so.
 
     Returns
     -------
     RunReport
         A dry-run report carrying the plan and the history it planned against.
-        An active file that could not be counted makes the totals a lower
-        bound, so the inspection reports ``corrupt`` rather than presenting
-        the history it could not read as empty. No state file is installed,
-        and the report says so.
     """
     observed = observed_history(inventory, active)
     return RunReport(
         status="ok" if active.has_metadata else "corrupt",
         started_at=run.started_at,
-        finished_at=run.context.clock() if clock is None else clock(),
+        finished_at=run.context.clock(),
         dry_run=True,
         active_bytes=active.bytes,
         retained_bytes=retained_logical_bytes(inventory, active),
@@ -251,7 +249,6 @@ def dry_report(
         limits=RetentionLimits.of(run.context.policy),
         retained=retained_history(inventory, active),
         maintenance=Maintenance(state_written=False),
-        reason=None if active.has_metadata else active.reason,
     )
 
 
@@ -260,6 +257,7 @@ def unsettled_report(
     *,
     dry_run: bool = False,
     clock: cabc.Callable[[], dt.datetime] = utc_now,
+    limits: RetentionLimits | None = None,
 ) -> RunReport:
     """Build a retryable report for a store that never held still.
 
@@ -278,6 +276,8 @@ def unsettled_report(
         started_at=started_at,
         finished_at=clock(),
         dry_run=dry_run,
+        limits=limits,
+        maintenance=Maintenance(state_written=False, reason="unsettled"),
     )
 
 
@@ -307,7 +307,6 @@ def unfinished_report(
         started_at=started_at,
         finished_at=clock(),
         dry_run=dry_run,
-        budget_bytes=0 if limits is None else limits.max_bytes,
         limits=limits,
         maintenance=Maintenance(state_written=False, reason=reason),
         reason=reason,

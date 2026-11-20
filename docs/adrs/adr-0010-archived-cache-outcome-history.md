@@ -114,7 +114,8 @@ already gone. Rejected.
 The writer seals the active document at a fixed high-water mark by atomic
 rename. A separate archiver compresses each sealed source to XZ, verifies the
 archive, publishes it without clobbering, then removes the source. It holds a
-private lock of its own and never opens the active file. Chosen.
+private lock of its own, never writes the active file, and reads it once,
+bounded, to report the retained history. Chosen.
 
 Table 1 compares the options on the properties the decision drivers name.
 
@@ -476,7 +477,9 @@ either component's private counters.
 - `evictions` counts trims and deletions under `age`, `bytes` and
   `age_and_bytes`, and each action carries the same reason. `maintenance`
   reports whether the state documents were installed, so a failed write is a
-  retryable `failed` status rather than silent success.
+  retryable `failed` status rather than silent success. A dry run, a deferred
+  run and a run that could not start install no state and report
+  `state_written` false.
 - The supervisor's status document carries the same `limits` derivation and
   the writer's active snapshot, which the renderer prints as one line. Closed
   history is reported by the archive command, which owns it.

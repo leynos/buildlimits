@@ -195,6 +195,15 @@ def test_an_unreadable_active_file_reports_its_reason() -> None:
     assert history.span_seconds is None, "no span is invented"
 
 
+def test_an_unmeasured_active_file_leaves_the_result_incomplete() -> None:
+    """An unmeasured active file is unknown history, not an empty one."""
+    history = retained_history(Inventory())
+
+    assert history.record_count == 0, "no row is invented"
+    assert history.active_bytes == 0, "no active bytes are attributed"
+    assert history.complete is False, "the missing measurement is disclosed"
+
+
 def test_the_retained_document_is_closed_json(
     snapshot: SnapshotAssertion,
 ) -> None:

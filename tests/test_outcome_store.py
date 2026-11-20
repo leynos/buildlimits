@@ -7,6 +7,9 @@ from unittest import mock
 
 import pytest
 from outcome_store_fixture_helpers import (
+    append_torn_utf8_tail as _append_torn_utf8_tail,
+)
+from outcome_store_fixture_helpers import (
     seed_one_record_store as _seed_one_record_store,
 )
 from outcome_store_fixture_helpers import seed_store as _seed_store
@@ -202,6 +205,88 @@ def test_writer_drops_only_a_torn_final_line_on_load(tmp_path: Path) -> None:
 
     assert _stored_records(path) == (record,), "the partial append is dropped"
     assert path.read_bytes().endswith(b"\n"), "compaction leaves a complete final line"
+
+
+def test_reader_keeps_complete_rows_before_a_utf8_torn_tail(
+    tmp_path: Path,
+) -> None:
+    """An interrupted multibyte tail cannot discard valid earlier rows."""
+    path = tmp_path / "cache-outcomes.jsonl"
+    record = _seed_one_record_store(path, server_version="sccache-é")
+    torn_record = _window_summary(server_version="partial-é")
+    _append_torn_utf8_tail(path, torn_record)
+
+    result = outcome_store_io.read_store(path)
+
+    assert isinstance(result, outcome_records.DecodedStore), (
+        "the incomplete UTF-8 bytes are confined to the final row"
+    )
+    assert result.records == (record,), "the complete non-ASCII row is retained"
+
+
+def test_reader_preserves_store_permissions(tmp_path: Path) -> None:
+    """Read-only store inspection leaves caller-owned mode unchanged."""
+    path = tmp_path / "cache-outcomes.jsonl"
+    _seed_one_record_store(path)
+    path.chmod(0o640)
+
+    result = outcome_store_io.read_store(path)
+
+    assert isinstance(result, outcome_records.DecodedStore), "the store is readable"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640, (
+        "read-only inspection does not change the file mode"
+    )
+
+
+def test_reader_rejects_invalid_utf8_in_a_complete_line(tmp_path: Path) -> None:
+    """Invalid encoding in a newline-terminated row remains store corruption."""
+    path = tmp_path / "cache-outcomes.jsonl"
+    _seed_one_record_store(path, server_version="sccache-é")
+    original = path.read_bytes()
+    malformed = original.replace("é".encode(), b"\xff\xa9", 1)
+    _write_private_file(path, malformed)
+
+    result = outcome_store_io.read_store(path)
+
+    assert result == outcome_records.RecordFailure("corrupt"), (
+        "a complete line still undergoes strict UTF-8 validation"
+    )
+
+
+def test_snapshot_reports_bytes_and_rows_from_one_read(tmp_path: Path) -> None:
+    """A reported size and row count describe the same read of the store."""
+    path = tmp_path / "cache-outcomes.jsonl"
+    record = _seed_one_record_store(path)
+    _append_torn_utf8_tail(path, _window_summary(server_version="torn-é"))
+    document = path.read_bytes()
+
+    snapshot = outcome_store_io.read_store_snapshot(path)
+
+    assert snapshot.logical_bytes == len(document), (
+        "the byte count includes the header, its newline and the torn tail"
+    )
+    assert isinstance(snapshot.decoded, outcome_records.DecodedStore), (
+        "the complete rows are still decoded"
+    )
+    assert snapshot.decoded.records == (record,), "the torn tail contributes no row"
+
+
+def test_snapshot_reports_an_oversized_store_at_its_full_size(
+    tmp_path: Path,
+) -> None:
+    """An unreadable store still has a size a diagnostic can report."""
+    path = tmp_path / "cache-outcomes.jsonl"
+    oversized = b"x" * (outcome_records.MAX_STORE_BYTES + 1)
+    _write_private_file(path, oversized)
+
+    snapshot = outcome_store_io.read_store_snapshot(path)
+
+    assert snapshot.decoded == outcome_records.RecordFailure("corrupt"), (
+        "bytes past the read bound are never decoded"
+    )
+    assert snapshot.logical_bytes == len(oversized), (
+        "the report keeps the file's real size rather than the truncated read"
+    )
 
 
 def test_startup_compaction_is_retried_before_appending_after_failure(

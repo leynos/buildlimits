@@ -38,7 +38,10 @@ def utc_text(value: dt.datetime) -> str:
     >>> utc_text(datetime(2026, 11, 17, 13, 30, tzinfo=timezone(timedelta(hours=1))))
     '2026-11-17T12:30:00Z'
     """
-    if value.tzinfo is None:
+    # Check the offset rather than only ``tzinfo``: a tzinfo whose
+    # ``utcoffset`` returns None is as unusable as a naive value, and
+    # ``astimezone`` would interpret it in the host's zone.
+    if value.utcoffset() is None:
         msg = "a timestamp to serialize must carry an offset"
         raise ValueError(msg)
     return value.astimezone(dt.UTC).isoformat().replace("+00:00", "Z")

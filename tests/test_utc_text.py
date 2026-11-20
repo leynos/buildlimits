@@ -20,6 +20,22 @@ def test_a_naive_timestamp_is_refused_rather_than_read_as_local() -> None:
         utc_text(naive)
 
 
+def test_a_tzinfo_without_an_offset_is_refused() -> None:
+    """A tzinfo that reports no offset is as unusable as a naive value."""
+
+    class Offsetless(dt.tzinfo):
+        """A zone that cannot say how far it is from UTC."""
+
+        def utcoffset(self, _value: dt.datetime | None) -> dt.timedelta | None:
+            """Report no offset, as an unresolved zone would."""
+            return None
+
+    moment = dt.datetime(2026, 11, 17, 12, 30, tzinfo=Offsetless())
+
+    with pytest.raises(ValueError, match="must carry an offset"):
+        utc_text(moment)
+
+
 def test_an_offset_timestamp_is_written_in_utc() -> None:
     """An aware value keeps the instant it names, expressed as UTC."""
     moment = dt.datetime(
