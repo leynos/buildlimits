@@ -692,6 +692,15 @@ growth proves the traces observe rows; and disabling the publication gate makes
   modules along their responsibility boundaries, recorded the merged
   duplication families, and made the archive fixture retry a row the writer's
   non-blocking queue refuses; the plan records the final all-green gate run.
+- The third whole-plan remediation closed the seven correctness defects:
+  replay rechecks each opened segment's identity against its fingerprint, the
+  active file is read through the bounded no-follow reader, sealed sources are
+  evicted oldest-first together with archives, the writer seals at the record
+  cap and compacts an idle store past the age cutoff, H2 keeps a 64-hit runtime
+  window per paired key, and the headroom setting is documented as a check
+  rather than a reservation. The budget planners share one `_BudgetWalk`, the
+  H2 and reader tests moved to focused modules, and the plan records the final
+  all-green gate run.
 - Revision 8 records the remaining whole-plan remediation of findings 4 to 7:
   the record cap counts the active file and evicts sealed sources whole, H2
   keeps a bounded recent-hit window, record-cap sealing and idle expiry are
