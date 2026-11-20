@@ -27,7 +27,21 @@ _READ_CHUNK = 64 * 1024
 
 
 class OversizedFileError(OSError):
-    """A private file exceeded the caller's read bound."""
+    """A private file exceeded the caller's read bound.
+
+    Attributes
+    ----------
+    size : int
+        The size the descriptor reported when the read was refused. A caller
+        reports this measurement rather than measuring the pathname again: the
+        writer may replace the file after the refusal, and the replacement's
+        size would then be paired with this file's result.
+    """
+
+    def __init__(self, *args: object, size: int) -> None:
+        """Record the refusal's error arguments and the measured size."""
+        super().__init__(*args)
+        self.size = size
 
 
 def read_private_bytes(path: Path, *, limit: int) -> bytes:
@@ -63,13 +77,19 @@ def read_private_bytes(path: Path, *, limit: int) -> bytes:
     descriptor, metadata = open_private_regular(path, flags, enforce_mode=False)
     if metadata.st_size > limit:
         os.close(descriptor)
-        raise OversizedFileError(errno.EFBIG, "file exceeds its read bound")
+        raise OversizedFileError(
+            errno.EFBIG, "file exceeds its read bound", size=metadata.st_size
+        )
     with os.fdopen(descriptor, "rb") as source:
         data = source.read(metadata.st_size + 1)
         if len(data) > metadata.st_size:
             data = _read_growth(source, data, limit)
     if len(data) > limit:
-        raise OversizedFileError(errno.EFBIG, "file exceeds its read bound")
+        msg = "file exceeds its read bound"
+        # The refusal is a fact about the file this read opened, so the size
+        # comes from the descriptor rather than a later measurement of the
+        # pathname, which the writer may already have replaced.
+        raise OversizedFileError(errno.EFBIG, msg, size=len(data))
     return data
 
 

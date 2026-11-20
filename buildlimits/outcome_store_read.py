@@ -4,8 +4,8 @@ A store read trusts neither the file's size nor its rows. It opens the file
 without following links, refuses a document larger than the store's bound, and
 reports the exact byte length it decoded beside the rows, so a caller that
 compares the two is comparing one state. The write side lives in
-``outcome_store_io``, which also owns the regular-file checks these reads
-share.
+``outcome_store_io``, and the private-file primitives these reads build on live
+in ``outcome_store_files``.
 """
 
 import dataclasses as dc
@@ -16,7 +16,6 @@ from buildlimits.outcome_store_files import (
     OversizedFileError,
     read_private_bytes,
 )
-from buildlimits.outcome_store_io import store_size
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
@@ -78,10 +77,12 @@ def read_store_snapshot(path: Path) -> StoreSnapshot:
     """
     try:
         document = read_private_bytes(path, limit=outcome_records.MAX_STORE_BYTES)
-    except OversizedFileError:
-        # The rows are untrusted, but the file's size is still a fact. Only a
-        # failing ``lstat`` here would be an unreadable store.
-        return StoreSnapshot(store_size(path), outcome_records.RecordFailure("corrupt"))
+    except OversizedFileError as oversized:
+        # The rows are untrusted, but the refused file's size is still a fact.
+        # Measuring the pathname again could describe a replacement the writer
+        # installed after the refusal, pairing its size with this file's
+        # corruption result.
+        return StoreSnapshot(oversized.size, outcome_records.RecordFailure("corrupt"))
     try:
         complete_document = document[: document.rfind(b"\n") + 1]
         # An interrupted append can end inside a multibyte character. Discard
