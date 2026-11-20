@@ -382,8 +382,9 @@ either component's private counters.
   deferred run and a run that could not start install no state and report
   `state_written` false.
 - The supervisor's status document carries the same `limits` derivation and
-  the writer's active snapshot, which the renderer prints as one line. Closed
-  history is reported by the archive command, which owns it.
+  the writer's active snapshot, which the renderer prints as one line. A
+  snapshot the writer cannot supply omits the section rather than failing the
+  status read. Closed history is reported by the archive command, which owns it.
 
 None of these figures is a cumulative recorder counter or a journal-reader
 query cap: `record_count` counts rows retained on disk, not outcomes seen since

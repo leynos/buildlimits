@@ -879,7 +879,9 @@ outcomes and completed readings, and a `cache outcomes retention` line naming
 the effective age, byte and record bounds with the active file's retained rows.
 Its `retention` object carries the same `limits` and `active` documents the
 archive report uses. Those optional objects and lines are absent when recording
-is off. See [Read the retention diagnostics](#read-the-retention-diagnostics).
+is off; the `retention` object is also omitted when the writer cannot supply
+its snapshot, so a status read never fails because history could not be
+measured. See [Read the retention diagnostics](#read-the-retention-diagnostics).
 
 | Exit status | Default: health check                         | With `--ready`                                  |
 | ----------- | --------------------------------------------- | ----------------------------------------------- |
