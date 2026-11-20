@@ -8,6 +8,7 @@ published.
 
 import typing as typ
 from pathlib import Path
+from unittest import mock
 
 import outcome_archive_helpers as archive
 
@@ -16,8 +17,6 @@ from buildlimits.outcome_archive import EXIT_CORRUPT, EXIT_FAILED
 from buildlimits.outcome_archive_lock import ArchiveLock
 
 if typ.TYPE_CHECKING:
-    import pytest
-
     from buildlimits.outcome_segments import SegmentLayout
 
 
@@ -63,9 +62,7 @@ def test_a_corrupt_active_file_fails_a_dry_run_without_writing_state(
     assert not report.maintenance.state_written, "a dry run installs no state"
 
 
-def test_a_dry_run_reports_the_inventory_it_planned_from(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_dry_run_reports_the_inventory_it_planned_from(tmp_path: Path) -> None:
     """A dry run must not rescan a directory another process may change.
 
     Re-reading after planning could describe a segment the plan never saw, so
@@ -83,9 +80,8 @@ def test_a_dry_run_reports_the_inventory_it_planned_from(
         calls += 1
         return read_inventory(inventory_layout, retention_floor=retention_floor)
 
-    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", counted_read)
-
-    report = archive.run(tmp_path, archive.policy(), dry_run=True)
+    with mock.patch.object(outcome_segment_inventory, "read_inventory", counted_read):
+        report = archive.run(tmp_path, archive.policy(), dry_run=True)
 
     assert calls == 1, "the dry run plans and reports from one inventory scan"
     assert report.retained is not None, "the report describes the planned history"
@@ -93,12 +89,11 @@ def test_a_dry_run_reports_the_inventory_it_planned_from(
 
 
 def test_an_unreadable_store_fails_a_dry_run_without_writing_state(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """A failed inspection keeps its dry-run flag and installs no state."""
-    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", archive.refuse)
-
-    report = archive.run(tmp_path, archive.policy(), dry_run=True)
+    with mock.patch.object(outcome_segment_inventory, "read_inventory", archive.refuse):
+        report = archive.run(tmp_path, archive.policy(), dry_run=True)
 
     assert report.status == "failed", "the run could not start"
     assert report.reason == "unreadable", "the reason is closed"
@@ -119,7 +114,7 @@ def test_a_busy_run_reports_that_it_wrote_no_state(tmp_path: Path) -> None:
 
 
 def test_a_failed_post_work_read_keeps_the_work_already_done(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """Archives published before a read failure must stay in the report.
 
@@ -143,11 +138,10 @@ def test_a_failed_post_work_read_keeps_the_work_already_done(
             raise OSError("the store cannot be read")
         return read_inventory(inventory_layout, retention_floor=retention_floor)
 
-    monkeypatch.setattr(
+    with mock.patch.object(
         outcome_segment_inventory, "read_inventory", fail_after_planning
-    )
-
-    report = archive.run(tmp_path, archive.policy())
+    ):
+        report = archive.run(tmp_path, archive.policy())
 
     assert report.status == "failed", "the result could not be measured"
     assert report.exit_status == EXIT_FAILED, "a retry may recompute it"
