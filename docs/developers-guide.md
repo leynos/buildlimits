@@ -382,7 +382,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_history`, `outcome_history_args`                                          | Cross-state history reader and the shared replay and dataset options                                                                                        |
 | `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
 | `outcome_archive_context`                                                          | Shared context and result values for one archive run                                                                                                        |
-| `outcome_archive_active`                                                           | Bounded, read-only measurement of the active file for diagnostics only                                                                                      |
+| `outcome_archive_active`                                                           | Bounded, read-only measurement of the active file for the byte budget, record cap and diagnostics                                                           |
 | `outcome_archive_plan`                                                             | Pure retention and repair plan from the inventory                                                                                                           |
 | `outcome_archive_budget`                                                           | Logical-byte budget: oldest-first archive deletion, then one straddling trim                                                                                |
 | `outcome_archive_run`                                                              | Executing one archive plan operation by operation                                                                                                           |
@@ -999,13 +999,15 @@ file whose oldest record predates the age cutoff is compacted, so a store that
 stayed small is not exempt from the age bound.
 
 The archiver in `outcome_archive` never writes the active file and never takes
-its queue. It reads the file's size for every retention decision and, once per
-run, reads its content through the same bounded reader the writer uses, only to
-report the retained rows. `outcome_archive_lock` takes a non-blocking exclusive
-`flock` on `cache-outcomes.archive/archive.lock` for the whole run, and its
-headroom guard refuses a run whose temporary files cannot fit; a second
-invocation reports `busy` and exits 75 rather than waiting. There is no shared
-lock between writer and archiver, so there is no lock ordering to get wrong.
+its queue. Once per run it reads the file through the same bounded reader the
+writer uses, which reports the byte length and the rows as one observation:
+byte planning uses the measured length and record planning uses the measured
+row count, and the same snapshot reports the retained rows.
+`outcome_archive_lock` takes a non-blocking exclusive `flock` on
+`cache-outcomes.archive/archive.lock` for the whole run, and its headroom guard
+refuses a run whose temporary files cannot fit; a second invocation reports
+`busy` and exits 75 rather than waiting. There is no shared lock between writer
+and archiver, so there is no lock ordering to get wrong.
 
 Compression and verification stream in `outcome_record_stream`'s 64 KiB chunks
 with at most one row buffered (`CHUNK_BYTES`). Peak memory therefore follows
@@ -1121,8 +1123,10 @@ inventory dependency so the pure shapes do not acquire it. The status document,
 disagree about a policy. Neither shape is a cumulative recorder counter or a
 journal query cap, and `complete=False` marks a lower bound rather than an
 exact count. `outcome_archive_active.read_active_history` performs the one
-bounded, read-only read of the active file that feeds the archiver's diagnostic
-snapshot; retention decisions use the file's `lstat` size only.
+bounded, read-only read of the active file. Its measured length is the file's
+contribution to the byte budget and its row count is the contribution to the
+record cap; the same snapshot feeds the archiver's diagnostic `retained`
+document.
 
 `outcome_archive_cli` is the timer-facing surface. `inspect` is a dry run by
 definition; `run --dry-run` plans without taking the lock or writing state; and

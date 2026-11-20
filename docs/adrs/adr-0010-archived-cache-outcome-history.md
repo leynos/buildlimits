@@ -179,14 +179,14 @@ Ownership follows file state, not a shared lock.
   file. An empty store installs a header-only active file instead of claiming a
   sequence, so the sequence series has no artificial first gap.
 - The archiver never appends to, truncates or replaces the active file, and
-  never takes the writer's queue. It reads the file's size with `lstat` to
-  include those bytes in the retained total. To report what that history
-  actually contains it also reads the file once, under its lock, through the
-  same bounded reader the writer uses. That measurement feeds only the
-  diagnostic `retained` document: every retention decision still uses the
-  `lstat` size, so a concurrent append cannot change a plan. A file larger than
-  the reader's bound, or one that cannot be decoded, reports an incomplete
-  lower bound with a closed reason.
+  never takes the writer's queue. It reads the file once, under its lock,
+  through the same bounded reader the writer uses; that one read reports the
+  file's byte length and its rows together, so a concurrent append cannot put a
+  stale size beside a fresh row count. The byte budget and every byte step
+  count the measured length, while the record cap counts the measured row
+  count, exactly as D1 requires. The same observation supplies the diagnostic
+  `retained` document. A file larger than the reader's bound, or one that
+  cannot be decoded, reports an incomplete lower bound with a closed reason.
 - Every archiver mutation runs under a non-blocking exclusive `flock` on
   `cache-outcomes.archive/archive.lock`. A second invocation reports `busy` and
   exits 75 instead of waiting. The writer never takes that lock, so there is no

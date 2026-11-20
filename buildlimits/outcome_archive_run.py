@@ -95,6 +95,17 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> None:
     measurement. The writer may have appended while this run worked, so the
     plan is measured against the rows the file holds now rather than the
     snapshot the first plan saw.
+
+    The writer seals without the archive lock, so a seal can land between the
+    inventory and active reads. The pair then describes the store either side
+    of that seal: the moved rows are a sealed source this run has already
+    passed, and neither the inventory's archived candidates nor the replaced
+    active file holds them. They are counted, and any excess they create is
+    removed, by the next firing once the segment has been archived. Repeating
+    the reads until both sides agree would not change that, because a sealed
+    source is never an eviction candidate in the run that first sees it, and
+    the inconsistent pair can only under-count the active contribution, never
+    remove history twice.
     """
     if not (run.plan.archive or run.plan.reconcile or run.plan.heal):
         return

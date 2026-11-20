@@ -1,11 +1,11 @@
 """Bounded, read-only measurement of the active file for retention and reports.
 
-The active file's size from ``lstat`` is the whole contribution to the byte
-budget, while the record cap also needs its row count. Reporting what the
-store retains needs that count and an observation span as well, so this
-adapter reads the active file once through the same bounded reader the writer
-uses. It only reads: the writer remains the only component that appends,
-truncates or replaces the file.
+The active file contributes its byte length to the byte budget and its row
+count to the record cap, and reporting what the store retains needs that count
+and an observation span as well. This adapter therefore reads the active file
+once through the same bounded reader the writer uses. It only reads: the
+writer remains the only component that appends, truncates or replaces the
+file.
 
 One read supplies both the byte length and the rows, so an append that races
 the read cannot put the new row count beside the old file size. The read is

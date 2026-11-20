@@ -346,8 +346,9 @@ The writer seals the active file when an append would take it past 12 MiB, so
 the archiver's mutations only ever touch closed segments. The archiver
 compresses each sealed segment to XZ, verifies the archive against its source,
 publishes it, and only then removes the plain source. It holds a private lock
-of its own and never writes the active file; to report what history is retained
-it reads that file once, under the lock, without changing it.
+of its own and never writes the active file; it reads that file once, under the
+lock, without changing it, which supplies both its size for the byte budget and
+its rows for the record cap.
 
 Retention is one policy shared by the writer, the archiver and the read-only
 history view. Whichever bound is reached first evicts the oldest history:
