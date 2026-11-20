@@ -1,7 +1,6 @@
 """Shared factories and asynchronous result waits for outcome-store tests."""
 
 import contextlib
-import datetime as dt
 import threading
 import time
 import typing as typ
@@ -12,11 +11,11 @@ import pytest
 
 from buildlimits import outcome_records, outcome_store_state
 from buildlimits.outcome_ports import StoreResult
-from buildlimits.outcome_record_format import WindowSummary
 from buildlimits.outcome_store import StoreWriter
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
     from pathlib import Path
 
     from buildlimits.outcome_key import Salt
@@ -30,34 +29,6 @@ _WAIT_SECONDS = 2.0
 _RESULT_BACKLOG: weakref.WeakKeyDictionary[StoreWriter, list[StoreResult]] = (
     weakref.WeakKeyDictionary()
 )
-
-
-def window_summary(
-    *,
-    server_version: str = "0.14.0",
-    observed_at: dt.datetime = dt.datetime(2026, 10, 25, tzinfo=dt.UTC),
-) -> WindowSummary:
-    """Build one small valid row for store-writer contracts.
-
-    Returns
-    -------
-    WindowSummary
-        A balanced one-group summary with fixed test values.
-
-    Examples
-    --------
-    ``window_summary().window_groups`` is one.
-    """
-    return WindowSummary(
-        observed_at=observed_at,
-        server_version=server_version,
-        window_groups=1,
-        requests_not_compile=0,
-        requests_not_cacheable=0,
-        predicted_not_compile=0,
-        predicted_declined=0,
-        predicted_cacheable=1,
-    )
 
 
 def wait_for_salt(writer: StoreWriter) -> Salt | StoreFailure:
@@ -82,15 +53,31 @@ def wait_for_results(
     *,
     operation: str,
     reason: str | None = None,
+    timeout: float = _WAIT_SECONDS,
 ) -> tuple[StoreResult, ...]:
     """Wait for one result and retain concurrently drained unrelated results.
+
+    A test that seeds a multi-megabyte store passes a longer ``timeout``: the
+    startup pass over ten thousand rows can outlast the default wait when the
+    host is busy, which is load, not a writer fault.
+
+    Parameters
+    ----------
+    writer : StoreWriter
+        The writer whose published results are drained.
+    operation : str
+        The result operation to wait for.
+    reason : str | None
+        A required closed reason, or None to accept any reason.
+    timeout : float
+        Seconds to allow the writer to publish the result.
 
     Returns
     -------
     tuple[StoreResult, ...]
         The collected results, including unrelated values drained meanwhile.
     """
-    deadline = time.monotonic() + _WAIT_SECONDS
+    deadline = time.monotonic() + timeout
     observed = _RESULT_BACKLOG.pop(writer, [])
     while time.monotonic() < deadline:
         observed.extend(writer.results())

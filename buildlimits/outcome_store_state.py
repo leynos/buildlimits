@@ -7,7 +7,6 @@ starting a thread. Sealing lives in ``outcome_store_sealing``.
 """
 
 import datetime as dt
-import time
 import typing as typ
 
 from buildlimits import outcome_records, outcome_segments, outcome_store_restart
@@ -19,7 +18,6 @@ from buildlimits.outcome_store_io import (
     store_size,
 )
 from buildlimits.outcome_store_sealing import seal
-from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -32,39 +30,22 @@ if typ.TYPE_CHECKING:
 _CLOCK_SKEW_SECONDS = 24 * 60 * 60
 
 
-class Publisher(typ.Protocol):
-    """The writer's coalescing sink for closed operation outcomes."""
+from buildlimits.outcome_retention_report import ActiveHistory, measured_history
+from buildlimits.outcome_store_tail import drop_torn_tail
 
-    def __call__(
-        self,
-        operation: StoreOperation,
-        reason: StoreReason,
-        *,
-        records: int = 0,
-        discarded: int = 0,
-    ) -> None:
-        """Record one outcome under its operation and reason."""
-
-
-class Clocks:
-    """The wall and monotonic clocks the writer reads as a pair.
-
-    Parameters
-    ----------
-    wall : Callable[[], datetime] or None
-        UTC clock, defaulting to the system wall clock.
-    monotonic : Callable[[], float] or None
-        Monotonic clock, defaulting to ``time.monotonic``.
-    """
-
-    def __init__(
-        self,
-        wall: cabc.Callable[[], dt.datetime] | None = None,
-        monotonic: cabc.Callable[[], float] | None = None,
-    ) -> None:
-        """Bind the clocks, falling back to the system's own."""
-        self.wall = utc_now if wall is None else wall
-        self.monotonic = time.monotonic if monotonic is None else monotonic
+"""The writer's file state machine for the cache-outcome store.
+compaction and bounded-append rules here, apart from the queue plumbing in
+``outcome_store``, lets the transition logic be read and tested without
+starting a thread. Sealing lives in ``outcome_store_sealing``.
+"""
+if typ.TYPE_CHECKING:
+    from pathlib import Path
+    from buildlimits.outcome_key import Salt
+    from buildlimits.outcome_ports import StorePublisher
+    from buildlimits.outcome_record_format import StoreRecord
+    from buildlimits.outcome_store_clock import Clocks
+    from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
+_CLOCK_SKEW_SECONDS = 24 * 60 * 60
 
 
 class StoreFiles:
@@ -74,7 +55,7 @@ class StoreFiles:
     ----------
     path : Path
         The JSON Lines store path, commonly returned by ``store_path``.
-    publish : Publisher
+    publish : StorePublisher
         Sink for outcomes such as ``load``/``unreadable`` or ``compact``.
     clocks : Clocks
         Wall and monotonic clocks used for headers, retention and skew checks.
@@ -92,7 +73,7 @@ class StoreFiles:
     def __init__(
         self,
         path: Path,
-        publish: Publisher,
+        publish: StorePublisher,
         clocks: Clocks,
         policy: RetentionPolicy | None = None,
     ) -> None:
@@ -176,6 +157,30 @@ class StoreFiles:
     ) -> None:
         """Choose which validated rows can belong to the active salt."""
         outcome_store_restart.restore_loaded_store(self, decoded, salt, now)
+
+    def retention(self) -> ActiveHistory:
+        """Describe the rows the writer currently holds in the active file.
+
+        The supervisor asks for this snapshot while the worker may be
+        appending. Reading a tuple copy means an append that races the copy is
+        included or omitted as a whole; the result is a diagnostic snapshot,
+        not a consistency barrier.
+
+        Returns
+        -------
+        ActiveHistory
+            The active row count, its logical size and observation span, or an
+            incomplete snapshot with a closed reason.
+        """
+        try:
+            size = store_size(self.path)
+        except OSError:
+            return ActiveHistory(complete=False, reason="unreadable")
+        if not self.ready:
+            return ActiveHistory(
+                logical_bytes=size, complete=False, reason="not_loaded"
+            )
+        return measured_history(self.records, logical_bytes=size)
 
     def append(self, line: bytes, record: StoreRecord) -> None:
         """Compact at high water, preserve the hard bound and append one row."""

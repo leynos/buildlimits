@@ -9,7 +9,7 @@ import typing as typ
 
 from hypothesis import event
 
-from buildlimits.outcome_record_format import OutcomeRecord
+from buildlimits.outcome_record_format import OutcomeRecord, WindowSummary
 
 if typ.TYPE_CHECKING:
     from types import ModuleType
@@ -22,6 +22,34 @@ class _TimedGateEvent(typ.Protocol):
     """The monotonic time carried by a fake recorder gate event."""
 
     now: float
+
+
+def window_summary(
+    *,
+    server_version: str = "0.14.0",
+    observed_at: dt.datetime = dt.datetime(2026, 10, 25, tzinfo=dt.UTC),
+) -> WindowSummary:
+    """Build one small valid row for store-writer contracts.
+
+    Returns
+    -------
+    WindowSummary
+        A balanced one-group summary with fixed test values.
+
+    Examples
+    --------
+    ``window_summary().window_groups`` is one.
+    """
+    return WindowSummary(
+        observed_at=observed_at,
+        server_version=server_version,
+        window_groups=1,
+        requests_not_compile=0,
+        requests_not_cacheable=0,
+        predicted_not_compile=0,
+        predicted_declined=0,
+        predicted_cacheable=1,
+    )
 
 
 def outcome_module(name: str) -> ModuleType:

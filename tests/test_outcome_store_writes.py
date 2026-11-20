@@ -16,10 +16,10 @@ from outcome_store_helpers import (
     start_writer,
     stored_records,
     wait_for_results,
-    window_summary,
     worker_exited,
 )
 from outcome_test_helpers import STORE_EPOCH as NOW
+from outcome_test_helpers import window_summary
 from segment_test_helpers import document, history_policy, write_private
 
 from buildlimits import (
@@ -249,3 +249,4 @@ def test_close_returns_within_its_bound_when_a_write_stalls(tmp_path: Path) -> N
             )
 
     assert elapsed < 1.25, "close honours the supplied one-second bound"
+# weave: run 'weave explain tests/test_outcome_store_writes.py' for per-hunk detail, 'weave check' to verify your resolution

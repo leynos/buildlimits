@@ -12,7 +12,16 @@ import json
 import typing as typ
 from pathlib import Path
 
-from outcome_archive_helpers import NOW, archives, layout, policy, records, run, write
+from outcome_archive_helpers import (
+    NOW,
+    archives,
+    layout,
+    policy,
+    records,
+    run,
+    write,
+    seeded_store,
+)
 from segment_test_helpers import sidecar_document, write_private
 
 from buildlimits import outcome_archive_files, outcome_archive_quarantine
@@ -26,6 +35,18 @@ from buildlimits.outcome_archive_lock import ArchiveLock
 from buildlimits.outcome_archive_verify import OutputFaultError
 from buildlimits.outcome_segments import archive_name, segment_name, sidecar_name
 
+if typ.TYPE_CHECKING:
+    import pytest
+
+
+
+"""End-to-end archive runs: statuses, dry runs and damaged stores.
+The archiver plans, compresses, verifies and reports in one timer firing.
+These tests build real segments with the writer and assert the observable
+contract a timer depends on: closed exit statuses, a dry run that changes
+nothing, a lock that reports busy, and damaged files that are quarantined
+rather than silently trusted.
+"""
 if typ.TYPE_CHECKING:
     import pytest
 
@@ -50,8 +71,7 @@ def test_an_empty_store_records_a_successful_run(tmp_path: Path) -> None:
 
 def test_a_dry_run_changes_nothing(tmp_path: Path) -> None:
     """A plan may be inspected without taking the lock or writing a file."""
-    store = tmp_path / "cache-outcomes.jsonl"
-    write(store, records(NOW, 2), policy())
+    seeded_store(tmp_path, records(NOW, 2))
 
     report = run(tmp_path, policy(), dry_run=True)
 
@@ -68,8 +88,7 @@ def test_a_dry_run_changes_nothing(tmp_path: Path) -> None:
 
 def test_inspect_is_a_dry_run(tmp_path: Path) -> None:
     """The inspect entry point never mutates the store."""
-    store = tmp_path / "cache-outcomes.jsonl"
-    write(store, records(NOW, 1), policy())
+    seeded_store(tmp_path, records(NOW, 1))
 
     report = inspect_store(layout(tmp_path), policy())
 

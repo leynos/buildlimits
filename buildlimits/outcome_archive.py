@@ -7,10 +7,12 @@ is never opened for writing: only the writer seals it. Every failure is
 reported as a closed reason and an exit status a systemd timer can act on.
 """
 
+import dataclasses as dc
 import datetime as dt
 import typing as typ
 
 from buildlimits import (
+    outcome_archive_active,
     outcome_archive_fs,
     outcome_archive_lock,
     outcome_archive_run,
@@ -26,15 +28,19 @@ from buildlimits.outcome_archive_report import (
     EXIT_OK,
     EXIT_TEMPFAIL,
     EXIT_USAGE,
+    Maintenance,
     RunOptions,
     RunReport,
     RunStatus,
 )
+from buildlimits.outcome_retention_history import retained_history
+from buildlimits.outcome_retention_report import RetentionLimits
 from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_plan import Plan
     from buildlimits.outcome_retention import RetentionPolicy
+    from buildlimits.outcome_retention_report import ActiveHistory
     from buildlimits.outcome_segments import SegmentLayout
 
 _STATE_SCHEMA = 1
@@ -117,27 +123,31 @@ def run_archive(
             plan, active = _plan(layout, policy, started)
             return _execute(_archive_run(context, plan), active)
     except outcome_archive_lock.ArchiveBusyError:
-        return _unfinished(started, "busy", "busy")
+        return _unfinished(started, "busy", "busy", policy)
     except outcome_archive_lock.NoHeadroomError:
-        return _unfinished(started, "no_headroom", "no_headroom")
+        return _unfinished(started, "no_headroom", "no_headroom", policy)
     except OSError:
-        return _unfinished(started, "failed", "unreadable")
+        return _unfinished(started, "failed", "unreadable", policy)
 
 
 def _plan(
     layout: SegmentLayout, policy: RetentionPolicy, now: dt.datetime
-) -> tuple[Plan, int]:
+) -> tuple[Plan, ActiveHistory]:
     """Read the store as it is and plan one run from it.
+
+    The active file is read once, through a bounded reader, so its size drives
+    the plan and its rows describe the retained history without a second pass.
 
     Returns
     -------
-    tuple[Plan, int]
-        The operations to perform and the active file's logical size.
+    tuple[Plan, ActiveHistory]
+        The operations to perform and the active file's measured state.
     """
     floor = outcome_segment_state.read_retention_floor(layout)
     inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    active = outcome_archive_run.active_bytes(layout.active)
-    return plan_run(inventory, policy, now=now, active_bytes=active), active
+    active = outcome_archive_active.read_active_history(layout.active)
+    plan = plan_run(inventory, policy, now=now, active_bytes=active.logical_bytes)
+    return plan, active
 
 
 def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.ArchiveRun:
@@ -156,8 +166,14 @@ def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.Arc
     )
 
 
-def _execute(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
+def _execute(run: outcome_archive_run.ArchiveRun, active: ActiveHistory) -> RunReport:
     """Take the archive directories, perform the plan and write state.
+
+    A state write that fails does not discard the report of work already done:
+    the archive and its evictions are real even when ``retention.json`` could
+    not be replaced. The run then reports ``failed`` with
+    ``state_write_failed``, so a timer retries and the next run rewrites the
+    state from what is on disk.
 
     Returns
     -------
@@ -179,15 +195,14 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
         outcome,
     )
     final = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
-    retained = outcome_archive_run.active_bytes(layout.active) + final.sealed_bytes
-    retained += final.archived_logical_bytes
+    measured = retained_history(final, active)
     records, observed_from, observed_until = _observed(final)
     report = RunReport(
         status="corrupt" if outcome.failures else "ok",
         started_at=run.started_at,
         finished_at=utc_now(),
-        active_bytes=active,
-        retained_bytes=retained,
+        active_bytes=active.logical_bytes,
+        retained_bytes=measured.logical_bytes,
         retained_records=records,
         observed_from=observed_from,
         observed_until=observed_until,
@@ -201,8 +216,18 @@ def _execute(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
         missing_sidecars=final.missing_sidecars,
         corrupt_sidecars=final.corrupt_sidecars,
         orphan_sidecars=final.orphan_sidecars,
+        limits=RetentionLimits.of(run.context.policy),
+        retained=measured,
     )
-    _write_state(layout, floor, report)
+    try:
+        _write_state(layout, floor, report)
+    except OSError:
+        return dc.replace(
+            report,
+            status="failed",
+            reason="state_write_failed",
+            maintenance=Maintenance(state_written=False, reason="state_write_failed"),
+        )
     return report
 
 
@@ -216,6 +241,8 @@ def _write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:
             "retained_logical_bytes": report.retained_bytes,
             "budget_bytes": report.budget_bytes,
             "cutoff": optional_utc_text(report.cutoff),
+            "limits": None if report.limits is None else report.limits.as_dict(),
+            "retained": None if report.retained is None else report.retained.as_dict(),
             "updated_at": utc_text(report.finished_at),
         },
     )
@@ -278,13 +305,19 @@ def _observed(
     return records, min(first, default=None), max(last, default=None)
 
 
-def _dry_report(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
+def _dry_report(
+    run: outcome_archive_run.ArchiveRun, active: ActiveHistory
+) -> RunReport:
     """Build the report a dry run returns without changing any file.
+
+    ``retained_bytes`` is the plan's conservative estimate, because a dry run
+    is asked what the bound would be after the work. ``retained`` describes
+    the state on disk now, which a caller needs to tell the two apart.
 
     Returns
     -------
     RunReport
-        A successful dry-run report carrying the plan.
+        A successful dry-run report carrying the plan and current history.
     """
     layout = run.context.layout
     floor = outcome_segment_state.read_retention_floor(layout)
@@ -295,7 +328,7 @@ def _dry_report(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
         started_at=run.started_at,
         finished_at=utc_now(),
         dry_run=True,
-        active_bytes=active,
+        active_bytes=active.logical_bytes,
         retained_bytes=run.plan.retained_bytes,
         retained_records=records,
         observed_from=observed_from,
@@ -308,11 +341,21 @@ def _dry_report(run: outcome_archive_run.ArchiveRun, active: int) -> RunReport:
         missing_sidecars=inventory.missing_sidecars,
         corrupt_sidecars=inventory.corrupt_sidecars,
         orphan_sidecars=inventory.orphan_sidecars,
+        limits=RetentionLimits.of(run.context.policy),
+        retained=retained_history(inventory, active),
     )
 
 
-def _unfinished(started: dt.datetime, status: RunStatus, reason: str) -> RunReport:
+def _unfinished(
+    started: dt.datetime,
+    status: RunStatus,
+    reason: str,
+    policy: RetentionPolicy,
+) -> RunReport:
     """Build a report for a run that could not start or complete.
+
+    The effective limits are reported even when no run happened, so a caller
+    that only reads the failure document still learns the policy in force.
 
     Returns
     -------
@@ -323,5 +366,7 @@ def _unfinished(started: dt.datetime, status: RunStatus, reason: str) -> RunRepo
         status=status,
         started_at=started,
         finished_at=utc_now(),
+        limits=RetentionLimits.of(policy),
         reason=reason,
     )
+# weave: run 'weave explain buildlimits/outcome_archive.py' for per-hunk detail, 'weave check' to verify your resolution

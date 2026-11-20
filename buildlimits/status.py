@@ -43,7 +43,10 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
         ``unhealthy``; only the first three set ``ready`` to true. The queued
         count comes from the admission queue, and cache reachability does not
         affect this classification. The function only reads this ledger; it
-        does not release tokens.
+        does not release tokens. When outcome recording is on, a top-level
+        ``retention`` section reports the effective limits and the active
+        file's retained row count, bytes and observation span. Closed-history
+        counts belong to the archive command's report, which owns that state.
     """
     admission = supervisor.admission
     now = supervisor.clock()
@@ -86,6 +89,9 @@ def describe(supervisor: Supervisor) -> dict[str, object]:
     outcome_status = supervisor.outcomes.describe()
     if outcome_status is not None:
         document["cache_outcomes"] = outcome_status
+    retention_status = supervisor.outcomes.retention()
+    if retention_status is not None:
+        document["retention"] = retention_status
     return document
 
 

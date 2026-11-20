@@ -138,11 +138,14 @@ disagree about a bound.
   one older than the cutoff is not.
 - The byte budget is `cache_outcomes_max_bytes`. It counts logical uncompressed
   bytes across active, sealed and archived history: active and sealed files by
-  `stat`, an archive by its sidecar's `logical_bytes`. Zero disables the byte
-  bound.
+  `stat`, an archive by its sidecar's `logical_bytes`. The header row and each
+  row's terminating newline are part of that total. Zero disables the byte
+  bound, and is reported as a disabled bound rather than a zero-byte target.
 - The record cap is `cache_outcomes_max_records`. A positive value applies in
   either mode. When it is omitted, a segmented store has no count cap and a
-  legacy store keeps the historical 10,000-record cap.
+  legacy store keeps the historical 10,000-record cap. The cap bounds only the
+  rows the writer keeps in the active file; it never evicts a sealed segment or
+  an archive.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
   segment, or a budget of zero, makes the writer seal closed segments. The
   default budget remains the legacy 12 MiB, so a deployment that writes none of
@@ -170,9 +173,15 @@ Ownership follows file state, not a shared lock.
   active file into the sealed directory and installs a fresh header-only active
   file. An empty store installs a header-only active file instead of claiming a
   sequence, so the sequence series has no artificial first gap.
-- The archiver never opens the active file, never reads its content and never
-  takes the writer's queue. It reads the active file's size with `lstat` to
-  include those bytes in the retained total.
+- The archiver never appends to, truncates or replaces the active file, and
+  never takes the writer's queue. It reads the file's size with `lstat` to
+  include those bytes in the retained total. To report what that history
+  actually contains it also reads the file once, under its lock, through the
+  same bounded reader the writer uses. That measurement feeds only the
+  diagnostic `retained` document: every retention decision still uses the
+  `lstat` size, so a concurrent append cannot change a plan. A file larger than
+  the reader's bound, or one that cannot be decoded, reports an incomplete
+  lower bound with a closed reason.
 - Every archiver mutation runs under a non-blocking exclusive `flock` on
   `cache-outcomes.archive/archive.lock`. A second invocation reports `busy` and
   exits 75 instead of waiting. The writer never takes that lock, so there is no
@@ -294,9 +303,10 @@ Each completed run writes two documents into the archive directory:
 
 - `retention.json` records the schema, the lowest intentionally retained
   sequence (the retention floor), retained logical bytes, the budget, the
-  cutoff and the update time.
+  cutoff, the update time, and the `limits` and `retained` documents.
 - `last-run.json` is the run's report document, carrying the fields `--json`
-  prints.
+  prints, including `limits`, `retained`, `evictions`, `maintenance` and the
+  per-action reasons.
 
 Both are written by atomic replacement. The retention floor is why evicting old
 history does not look like corruption: the inventory reports a missing sequence
@@ -346,6 +356,34 @@ archive.
 
 Compression is an encoding change, never a schema change. No record is
 re-encoded, reordered or re-timestamped.
+
+### D9: diagnostics separate the effective policy from retained history
+
+One report shape answers two questions an operator must keep apart, so
+`outcome_retention_report` derives both from validated values rather than from
+either component's private counters.
+
+- `limits` names the effective policy: the age in days and seconds, the
+  logical byte budget, the record cap (`null` when unbounded), the headroom,
+  the segment size, whether the store is segmented, and whether age or byte
+  eviction is active. A zero age or byte bound appears as zero with its
+  eviction flag false.
+- `retained` names what the store holds now: total rows and logical bytes,
+  the split across active, sealed and archived history, the archives' physical
+  bytes, the closed-segment count, the observation span and a `complete` flag.
+  The flag is false when a segment's metadata is missing or the active file
+  could not be read, so a lower bound is never presented as exact.
+- `evictions` counts trims and deletions under `age`, `bytes` and
+  `age_and_bytes`, and each action carries the same reason. `maintenance`
+  reports whether the state documents were installed, so a failed write is a
+  retryable `failed` status rather than silent success.
+- The supervisor's status document carries the same `limits` derivation and
+  the writer's active snapshot, which the renderer prints as one line. Closed
+  history is reported by the archive command, which owns it.
+
+None of these figures is a cumulative recorder counter or a journal-reader
+query cap: `record_count` counts rows retained on disk, not outcomes seen since
+start-up, and `--max-records` limits a query rather than the store.
 
 ## Goals and non-goals
 

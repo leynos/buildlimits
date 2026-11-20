@@ -34,6 +34,7 @@ __all__ = [
     "records",
     "refuse",
     "run",
+    "seeded_store",
     "write",
 ]
 
@@ -107,6 +108,19 @@ def write(
             writer.append(row)
     finally:
         close_writer(writer)
+
+
+def seeded_store(root: Path, rows: tuple[StoreRecord, ...]) -> Path:
+    """Write one default-policy store of ``rows`` and return its path.
+
+    Returns
+    -------
+    Path
+        The active JSON Lines store the archiver will read.
+    """
+    store = root / "cache-outcomes.jsonl"
+    write(store, rows, policy())
+    return store
 
 
 def run(

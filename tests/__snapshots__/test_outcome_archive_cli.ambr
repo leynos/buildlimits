@@ -5,6 +5,9 @@
   retained: 713 of 15000000000 logical bytes
   active: 0 logical bytes
   cutoff: <utc now>
+  limits: age disabled, 15000000000 logical bytes, none record cap, 25165824 headroom bytes, segmented
+  history: 0 records, 713 logical bytes, span unknown
+  history: retained count is a lower bound; some rows lack metadata
   plan: archive 1, reconcile 0, heal 0, orphan 0, trim 0, delete 0
   dry run: no file was changed
   

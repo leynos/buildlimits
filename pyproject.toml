@@ -2316,3 +2316,73 @@ reason = "Matching module preludes: each module names the record, sighting or ar
 unit = "buildlimits/outcome_archive_verify.py"
 reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."
 
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/cache_backend.py::CacheBackend",
+    "buildlimits/outcome_ports.py::OutcomeStorePort",
+]
+reason = "Two independent cache ports whose method shapes coincide: CacheBackend serves the managed-cache control path, while OutcomeStorePort serves the asynchronous outcome writer. Each names its own operations, and merging them would couple an admission-side port to a diagnostic store."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/fizzbee_spike.py::read_graph",
+    "tests/test_outcome_retention_diagnostics.py::_document",
+]
+reason = "Two independent readers of two different JSON artefacts: the model-checker spike decodes an error graph the checker wrote, and the retention diagnostics decode the timer's own state files. They share the one-line parse and nothing else, so a shared reader would name neither document."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_archive.py",
+    "tests/test_outcome_retention_diagnostics.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/dataset_cli.py",
+    "buildlimits/outcome_archive.py",
+    "tests/test_kache_detached_events.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/supervisor_outcome_setup.py",
+    "tests/modelcheck_cases.py",
+    "tests/outcome_store_helpers.py",
+    "buildlimits/outcome_archive_report.py",
+    "buildlimits/outcome_store.py",
+    "buildlimits/server_watch.py",
+    "tests/modelcheck_service_cases.py",
+    "buildlimits/cache_recovery.py",
+    "buildlimits/outcome_store_state.py",
+    "buildlimits/predict/ensemble_runs.py",
+    "buildlimits/predict/harness.py",
+    "buildlimits/supervisor_wiring.py",
+    "tests/test_group_drain_metrics.py",
+    "buildlimits/outcome_archive_run.py",
+    "buildlimits/predict/evaluation.py",
+    "buildlimits/predict/report.py",
+    "buildlimits/predict/scoring.py",
+    "buildlimits/predict/snapshot_codec.py",
+    "modelcheck/cli_outputs.py",
+    "modelcheck/expectations.py",
+    "modelcheck/records.py",
+    "modelcheck/report.py",
+    "tests/predict_test_helpers.py",
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "buildlimits/predict/report_codec.py",
+    "tests/differential_trace_test_helpers.py",
+    "buildlimits/outcome_ports.py",
+    "modelcheck/cli.py",
+]
+reason = "Matching type-checking preludes: every one of these modules declares the standard-library and package names its own annotations need under `if typ.TYPE_CHECKING`, so the blocks coincide without sharing meaning. A common prelude module would hide each module's real dependencies from a reader and from the checker."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/supervisor_outcome_setup.py",
+    "tests/outcome_shell_test_support.py",
+]
+reason = "Matching import lists: both name the same three outcome ports because the test double set mirrors the collaborators the setup module constructs, and sharing them through a re-export module would hide each module's real dependencies."
