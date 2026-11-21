@@ -209,7 +209,7 @@ def test_a_follow_up_replan_reports_the_pass_it_abandoned(
         """Keep one retry notice from the run."""
         notices.append((operation, attempt, category))
 
-    run(
+    report = run(
         tmp_path,
         policy(segment_bytes=1_000_000, max_age_days=30, max_records=5),
         on_retry=record,
@@ -217,6 +217,10 @@ def test_a_follow_up_replan_reports_the_pass_it_abandoned(
 
     assert ("retain", 1, "inventory_changed") in notices, (
         "the abandoned follow-up pass is reported"
+    )
+    assert report.status == "ok", "the retry settles the store"
+    assert (layout(tmp_path).archive_dir / archive_name(2)).exists(), (
+        "the source the seal created is archived by the next pass"
     )
 
 
