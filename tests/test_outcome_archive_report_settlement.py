@@ -19,6 +19,7 @@ from outcome_archive_helpers import (
     layout,
     policy,
     records,
+    refuse,
     run,
     store_with_archive,
     write,
@@ -160,11 +161,7 @@ def test_a_source_left_beside_its_archive_is_counted_once(
     source = store_layout.sealed_dir / segment_name(1)
     single = source.stat().st_size
 
-    def refuse_removal(*_args: object, **_kwargs: object) -> None:
-        """Fail the removal the publication has already earned."""
-        raise OSError("injected removal failure")
-
-    monkeypatch.setattr(outcome_archive_files, "_remove_sealed_source", refuse_removal)
+    monkeypatch.setattr(outcome_archive_files, "_remove_sealed_source", refuse)
 
     report = run(tmp_path, policy())
 
