@@ -22,6 +22,7 @@ from history_fixtures import (
     start_domain,
     window,
 )
+from outcome_archive_helpers import refuse
 from outcome_archive_helpers import write as write_store
 from segment_test_helpers import history_policy
 
@@ -362,11 +363,6 @@ def test_the_settle_check_refuses_a_scan_that_cannot_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A failing rescan cannot prove the store held still."""
-
-    def refuse(*_args: object, **_kwargs: object) -> Inventory:
-        """Fail as an unreadable store does."""
-        raise OSError("injected scan failure")
-
     monkeypatch.setattr(outcome_segment_inventory, "read_inventory", refuse)
 
     assert (

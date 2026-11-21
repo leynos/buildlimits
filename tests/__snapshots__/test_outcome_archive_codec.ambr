@@ -8,7 +8,7 @@
     'sequence': 4,
   })
 # ---
-# name: test_the_document_renders_each_action
+# name: test_the_document_renders_the_plan_and_actions[actions]
   list([
     dict({
       'action': 'trimmed',
@@ -19,7 +19,7 @@
     }),
   ])
 # ---
-# name: test_the_document_renders_the_plan
+# name: test_the_document_renders_the_plan_and_actions[plan]
   dict({
     'archive': 1,
     'cutoff': None,

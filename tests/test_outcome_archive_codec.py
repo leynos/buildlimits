@@ -69,8 +69,12 @@ def _report() -> RunReport:
 def test_the_report_document_has_exactly_the_documented_fields() -> None:
     """Every published field is present, and nothing else is."""
     document = report_dict(_report())
+    empty = report_dict(
+        RunReport(status="unsettled", started_at=_NOW, finished_at=_NOW)
+    )
 
     assert set(document) == _EXPECTED_KEYS, "the document's key set is fixed"
+    assert set(empty) == _EXPECTED_KEYS, "the key set does not depend on values"
     assert document["schema"] == ARCHIVE_SCHEMA, "the schema version is published"
     assert document["status"] == "corrupt", "the closed status is published"
     assert document["dry_run"] is True, "the dry-run marker is published"
@@ -93,36 +97,27 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     assert document["corrupt_sidecars"] == [7], "the corrupt sidecars are published"
     assert document["orphan_sidecars"] == [8], "the orphan sidecars are published"
     assert document["reason"] == "unreadable", "the run-level reason is published"
+    assert empty["plan"] is None, "an absent plan is null"
+    assert empty["cutoff"] is None, "an absent cutoff is null"
+    assert empty["observed_from"] is None, "an absent span start is null"
+    assert empty["observed_until"] is None, "an absent span end is null"
+    assert empty["actions"] == [], "no action is an empty list"
+    assert empty["failures"] == [], "no failure is an empty list"
+    assert empty["reason"] is None, "an absent reason is null"
 
 
-def test_the_document_renders_the_plan(snapshot: SnapshotAssertion) -> None:
-    """The plan summary keeps its own stable shape inside the document."""
+def test_the_document_renders_the_plan_and_actions(
+    snapshot: SnapshotAssertion,
+) -> None:
+    """The plan summary and each action keep their own stable shapes."""
     document = report_dict(_report())
 
-    assert document["plan"] == snapshot, "the plan's counts and estimate are fixed"
-
-
-def test_the_document_renders_each_action(snapshot: SnapshotAssertion) -> None:
-    """Each action keeps its closed name, sequence, sizes and reason."""
-    document = report_dict(_report())
-
-    assert document["actions"] == snapshot, "the action list is a fixed shape"
-
-
-def test_an_empty_report_renders_every_optional_field_as_null() -> None:
-    """A report with no plan and no observations still has the full key set."""
-    document = report_dict(
-        RunReport(status="unsettled", started_at=_NOW, finished_at=_NOW)
+    assert document["plan"] == snapshot(name="plan"), (
+        "the plan's counts and estimate are fixed"
     )
-
-    assert set(document) == _EXPECTED_KEYS, "the key set does not depend on values"
-    assert document["plan"] is None, "an absent plan is null"
-    assert document["cutoff"] is None, "an absent cutoff is null"
-    assert document["observed_from"] is None, "an absent span start is null"
-    assert document["observed_until"] is None, "an absent span end is null"
-    assert document["actions"] == [], "no action is an empty list"
-    assert document["failures"] == [], "no failure is an empty list"
-    assert document["reason"] is None, "an absent reason is null"
+    assert document["actions"] == snapshot(name="actions"), (
+        "the action list is a fixed shape"
+    )
 
 
 def test_an_action_carries_its_fault_reason(
