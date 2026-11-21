@@ -2347,3 +2347,15 @@ after each revert.
   behaviour was checked against a mutation that removes or inverts it. The Out
   of Scope row is dispositioned as gate-enabling test fixes and module-size
   work already recorded in this plan's revision note.
+- Revision 35 records the revision-34 reconciliation's three remaining
+  findings. `_plan` and the settled report now pass the run's retry observer
+  into `settled_snapshot`, so the initial plan's and the final report's
+  snapshot retries — and the active scans nested in them — reach the journal;
+  `inspect_store` and `run_archive` are tested through their own entry points,
+  and the final report's notice is observed in its settlement test.
+  `read_history` and the replay pass report their unsettled stream retries at
+  the loop boundary, while `pin_history` reports only a pin it could not take.
+  The retention configuration cases assert the complete rule message through
+  `_rejected_exactly`, because `pytest.raises(match=...)` is an unanchored
+  search that a longer message would still satisfy. Five mutations, one per
+  notice, were each observed to fail and reverted.
