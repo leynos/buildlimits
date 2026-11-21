@@ -230,3 +230,26 @@ def test_repairing_a_sidecar_rebuilds_it_from_the_archive(tmp_path: Path) -> Non
     assert result.action == "repaired", "the sidecar is rebuilt"
     assert result.logical_bytes == facts.logical_bytes, "the verified size is reported"
     assert '"record_count":2' in sidecar, "the archive's own rows are counted"
+
+
+def test_repairing_refuses_an_archive_with_a_torn_tail(tmp_path: Path) -> None:
+    """A published archive is always terminated, so a torn one is not trusted.
+
+    A scan counts an unterminated final fragment in the logical size while a
+    reader drops it. A sidecar rebuilt from that size would overstate the
+    history, and a later byte trim would discard a row no reader returns.
+    """
+    run, entry = published(tmp_path, 2)
+    complete = lzma.decompress(entry.path.read_bytes())
+    entry.path.write_bytes(lzma.compress(complete + b'{"partial'))
+    (run.layout.archive_dir / sidecar_name(1)).unlink()
+
+    with pytest.raises(SegmentFaultError) as raised:
+        repair_sidecar(run, entry)
+
+    assert raised.value.reason == "corrupt", (
+        "an unterminated fragment means the file is not the published archive"
+    )
+    assert not (run.layout.archive_dir / sidecar_name(1)).exists(), (
+        "no sidecar describes bytes the repair refused"
+    )

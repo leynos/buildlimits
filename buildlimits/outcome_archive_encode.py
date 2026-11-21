@@ -148,8 +148,21 @@ def read_archive_facts(path: Path) -> ArchiveFacts:
     -------
     ArchiveFacts
         The verified counts, span and digest.
+
+    Raises
+    ------
+    SegmentFaultError
+        If the archive does not decode as a complete document. A published
+        archive is always written by `write_archive`, which terminates every
+        row it emits, so an unterminated final fragment means the file is not
+        the document this code published. Measuring it would count bytes no
+        reader returns, and a sidecar rebuilt from that size would overstate
+        the history and mis-price a later byte trim.
     """
-    return _scan_facts(path, is_compressed=True)
+    facts = _scan_facts(path, is_compressed=True)
+    if facts.had_torn_tail:
+        raise SegmentFaultError("corrupt")
+    return facts
 
 
 def read_source_facts(path: Path) -> ArchiveFacts:
