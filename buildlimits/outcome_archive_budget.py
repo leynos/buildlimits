@@ -35,6 +35,7 @@ import dataclasses as dc
 import typing as typ
 
 from buildlimits.outcome_archive_history import ActiveHistory
+from buildlimits.outcome_archive_sizes import planned_records, planned_size
 from buildlimits.outcome_archive_trim import Trim
 
 if typ.TYPE_CHECKING:
@@ -348,35 +349,3 @@ def _record_trim(existing: Trim, _records: int, excess: int) -> Trim | None:
     if existing.before is not None or existing.allowed_bytes is not None:
         return None
     return dc.replace(existing, records=max(existing.records, excess))
-
-
-def planned_records(entry: SegmentEntry, trim: Trim | None) -> int | None:
-    """Estimate the records one archive keeps after its trim.
-
-    Returns
-    -------
-    int | None
-        The sidecar's count less a leading count trim, or None when no
-        trustworthy sidecar describes the archive. A time or byte trim frees
-        no estimated records, because that cannot be known without the rows.
-    """
-    if entry.record_count is None:
-        return None
-    if trim is None:
-        return entry.record_count
-    return max(entry.record_count - trim.records, 0)
-
-
-def planned_size(entry: SegmentEntry, trim: Trim | None) -> int:
-    """Estimate the logical bytes one entry keeps after its trim.
-
-    Returns
-    -------
-    int
-        The recorded logical size, capped by an explicit byte allowance. A
-        time-based trim frees nothing here, because that cannot be known
-        without reading the rows.
-    """
-    if trim is None or trim.allowed_bytes is None:
-        return entry.logical_bytes
-    return min(entry.logical_bytes, trim.allowed_bytes)

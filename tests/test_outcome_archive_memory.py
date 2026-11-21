@@ -284,19 +284,19 @@ def _measure_command(arguments: list[str], *, timeout: int = 1_800) -> tuple[int
         "peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss",
         "print(finished.returncode, peak)",
     ])
-    process = subprocess.Popen(
+    with subprocess.Popen(
         [sys.executable, "-c", wrapper, *arguments],
         cwd=REPO_ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         start_new_session=True,
-    )
-    try:
-        stdout, stderr = process.communicate(timeout=timeout)
-    except BaseException:
-        _kill_group(process)
-        raise
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except BaseException:
+            _kill_group(process)
+            raise
     if not stdout.strip():
         pytest.fail(f"the measurement wrapper failed: {stderr.strip()}")
     status, peak = stdout.split()

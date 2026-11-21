@@ -373,7 +373,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_segment_state`                                                            | Reading the advisory sequence counter and retention floor                                                                                                   |
 | `outcome_segment_gaps`                                                             | Bounded enumeration of the sequences missing from retained history                                                                                          |
 | `outcome_record_stream`                                                            | Bounded 64 KiB line streaming over plain and XZ sources                                                                                                     |
-| `outcome_history`, `outcome_history_pin`                                           | Cross-state history reader and the snapshot the streaming readers pin                                                                                       |
+| `outcome_history`, `outcome_history_files`                                         | Cross-state history reader, and the private pinned files the streaming readers read                                                                         |
 | `outcome_history_settle`                                                           | File identity and a repeated scan, used to detect a store that moved under a pin                                                                            |
 | `outcome_history_stream`, `outcome_history_args`                                   | Re-iterable, salt-filtered stream over a pinned snapshot and the shared replay and dataset options                                                          |
 | `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
@@ -384,6 +384,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_age`                                                              | Which closed history the age rule evicts whole, and which straddling archive it trims                                                                       |
 | `outcome_archive_history`                                                          | The active-file snapshot and the retained-history summary the run report carries                                                                            |
 | `outcome_archive_budget`                                                           | Logical-byte and record budgets: oldest-first archive deletion, then one straddling trim                                                                    |
+| `outcome_archive_sizes`                                                            | Planned entry and retained-store sizes shared by the budget walk and the run report                                                                         |
 | `outcome_archive_run`                                                              | Executing one archive plan operation by operation                                                                                                           |
 | `outcome_archive_retain`                                                           | Bounded follow-up passes that settle a store the writer may change mid-run                                                                                  |
 | `outcome_archive_verify`                                                           | Streaming XZ write and verification, and the closed segment-fault reasons                                                                                   |
@@ -1196,16 +1197,18 @@ The archive tests are `tests/test_outcome_archive.py`,
 `test_outcome_archive_verify.py`, `test_outcome_archive_cli.py`,
 `test_outcome_archive_cli_defaults.py`, `test_outcome_archive_subprocess.py`,
 `test_outcome_history.py`, `test_outcome_history_replacement.py`,
-`test_outcome_segments.py`, `test_outcome_segment_inventory.py`,
+`test_outcome_history_settling.py`, `test_outcome_segments.py`,
+`test_outcome_segment_inventory.py`, `test_outcome_segment_sidecar_faults.py`,
 `test_outcome_segment_state.py`, `test_outcome_record_stream.py`,
-`test_outcome_sealing_bounds.py`, `test_outcome_store_tail.py` and
-`test_outcome_store_sealing.py`. `test_outcome_archive_subprocess.py` runs the
-installed console script, and the `python -m` form, as separate processes,
-including two overlapping runs, and shares its launcher and configuration with
-`tests/archive_cli_helpers.py`. `tests/test_outcome_archive_bench.py` holds the
-reader's traced-memory test, which streams a multi-megabyte segment under one
-mebibyte, and the tests that pin the report's schema, its tracing ownership and
-the decodability of the generated segment. `make outcome-archive-bench` runs
+`test_outcome_sealing_bounds.py`, `test_outcome_store_tail.py`,
+`test_outcome_store_sealing.py` and `test_outcome_store_sealing_durability.py`.
+`test_outcome_archive_subprocess.py` runs the installed console script, and the
+`python -m` form, as separate processes, including two overlapping runs, and
+shares its launcher and configuration with `tests/archive_cli_helpers.py`.
+`tests/test_outcome_archive_bench.py` holds the reader's traced-memory test,
+which streams a multi-megabyte segment under one mebibyte, and the tests that
+pin the report's schema, its tracing ownership and the decodability of the
+generated segment. `make outcome-archive-bench` runs
 `buildlimits.outcome_archive_bench` and prints a JSON report with the source
 size, record count, archive size, ratio, chunk size, peak buffered rows,
 elapsed time, peak resident set, temporary disk and peak traced allocation; it
@@ -1413,6 +1416,10 @@ Use these before writing a new arrange step; extend one rather than copying it.
 | `outcome_store_helpers.py`                | Store rows, salts and asynchronous writer outcomes for outcome-store tests                                                                                              |
 | `outcome_shell_test_support.py`           | Pending statistics, fake server and writer ports for shell-loop tests                                                                                                   |
 | `outcome_store_fixture_helpers.py`        | Single-row reader fixtures and torn UTF-8 tails for outcome-store tests                                                                                                 |
+| `outcome_sealing_helpers.py`              | Decoded store views and the writer harness the sealing tests drive                                                                                                      |
+| `history_fixtures.py`                     | Generated multi-domain histories, observed-time views and a scan-then-seal interleaving for history tests                                                               |
+| `archive_seal_helpers.py`                 | Seals a test performs at a chosen point inside an archive run, leaving the store as the writer would                                                                    |
+| `append_ledger_helpers.py`                | A ledger that matches each fixture row to the writer's own answer, so a fixture never misreads a discard as a refusal                                                   |
 | `outcome_vocabulary_test_support.py`      | Shared outcome-token aliases for schema and metrics-sink contract tests                                                                                                 |
 | `fizzbee_spike.py`                        | The scratch-directory `run_model` runner, output masking and error-graph readers                                                                                        |
 | `fizzbee_expectations.py`                 | `Expectation`, `check` and `paired`: what one run or a pass/fail pair must show, enforced per test                                                                      |

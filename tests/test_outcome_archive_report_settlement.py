@@ -13,13 +13,12 @@ import itertools
 import typing as typ
 from pathlib import Path
 
+from archive_seal_helpers import seal_five_rows, seal_one_row
 from outcome_archive_helpers import (
     NOW,
     policy,
     records,
     run,
-    seal_five_rows,
-    seal_one_row,
     store_with_archive,
 )
 from segment_test_helpers import document, write_private

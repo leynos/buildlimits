@@ -8,6 +8,7 @@ attacker could have replaced between validation and use. `outcome_archive_fs`
 owns the file primitives that use this walk.
 """
 
+import contextlib
 import errno
 import os
 import stat
@@ -234,12 +235,10 @@ def require_private_chain_when_present(path: Path) -> None:
     A directory that exists is validated with `require_private_chain`, whose
     refusals propagate unchanged.
     """
-    try:
-        require_private_chain(path)
-    except MissingPathError:
+    with contextlib.suppress(MissingPathError):
         # Every component above the missing one was validated before the walk
         # stopped, so an absent directory is the only thing this call accepts.
-        return
+        require_private_chain(path)
 
 
 def _require_private_directory(metadata: os.stat_result, part: str) -> None:

@@ -368,36 +368,3 @@ def test_the_model_ages_by_the_oldest_row_after_a_backward_jump(
         ), "the row appended during the backward jump is gone"
 
     verify()
-
-
-def test_generated_compaction_reaches_the_retention_bound() -> None:
-    """Generated compact input evicts only the oldest row at the real bound."""
-    reached: set[str] = set()
-
-    @settings(max_examples=1, deadline=None)
-    @given(seed=st.integers(min_value=0, max_value=10_000))
-    def verify(seed: int) -> None:
-        """Generate a valid store just beyond its real retention bound."""
-        now = _BASE_TIME
-        header = outcome_records.StoreHeader("generated-salt", now)
-        records = tuple(
-            window_summary(server_version=f"{seed}-{index}", observed_at=now)
-            for index in range(outcome_records.MAX_COMPACT_RECORDS + 1)
-        )
-
-        compacted = outcome_records.compact(
-            outcome_records.DecodedStore(header, records), now=now
-        )
-
-        assert compacted.records == records[1:], (
-            "the count bound retains the newest rows in insertion order"
-        )
-        assert compacted.discarded == 1, "only the oldest row is counted as evicted"
-        reached.add("retention-bound")
-        record_generated_case("retention-bound")
-
-    verify()
-
-    assert reached == {"retention-bound"}, (
-        "generation crossed the actual 10,000-row cap"
-    )

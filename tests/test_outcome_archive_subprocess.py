@@ -212,10 +212,10 @@ def test_two_real_runs_do_not_archive_at_once(tmp_path: Path) -> None:
     with (
         output_path.open("w", encoding="utf-8") as output,
         errors_path.open("w", encoding="utf-8") as errors,
-    ):
-        first = subprocess.Popen(
+        subprocess.Popen(
             [SCRIPT, "run", *arguments], cwd=REPO_ROOT, stdout=output, stderr=errors
-        )
+        ) as first,
+    ):
         try:
             _await_first_archive(layout)
             _hold_first(first)

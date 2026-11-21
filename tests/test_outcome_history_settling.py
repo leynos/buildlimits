@@ -14,23 +14,21 @@ from pathlib import Path
 
 import pytest
 from history_fixtures import (
-    SALT_NAME,
     active_records,
     archived_segments,
     observed,
     records,
+    seal_once_after_scan,
+    start_domain,
 )
-from outcome_archive_helpers import seal_active
 from outcome_archive_helpers import write as write_store
 from segment_test_helpers import history_policy, write_private
 
 from buildlimits import outcome_history, outcome_records, outcome_segment_inventory
 from buildlimits.outcome_segment_inventory import Inventory
 from buildlimits.outcome_segments import SegmentLayout, segment_name
-from buildlimits.outcome_store_io import read_store
 
 if typ.TYPE_CHECKING:
-    from buildlimits.outcome_record_format import DecodedStore
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
 type _Scan = cabc.Callable[[SegmentLayout], Inventory]
@@ -159,22 +157,7 @@ def test_an_empty_scan_is_not_empty_history_once_a_seal_lands(
     rows = records(0, 1)
     write_store(store, rows, history_policy(10**6))
     layout = SegmentLayout.beside(store)
-    real = outcome_segment_inventory.read_inventory
-    sealed = False
-
-    def scan_then_seal(
-        target: SegmentLayout, *, retention_floor: int | None = None
-    ) -> Inventory:
-        """Report the pre-seal inventory, then seal the active rows once."""
-        nonlocal sealed
-        inventory = real(target, retention_floor=retention_floor)
-        if not sealed:
-            sealed = True
-            target.sealed_dir.mkdir(parents=True, exist_ok=True)
-            seal_active(target, rows, 1)
-        return inventory
-
-    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", scan_then_seal)
+    seal_once_after_scan(monkeypatch, rows, 1)
 
     history = outcome_history.read_history(layout)
 
@@ -193,25 +176,9 @@ def test_a_salt_sealed_during_the_pin_is_not_unknown(
     """
     store = tmp_path / "cache-outcomes.jsonl"
     archived_segments(store, 1)
-    (tmp_path / SALT_NAME).unlink()
-    active_records(store, 2, 1)
     sealed_b = records(2, 1)
-    salt_b = typ.cast("DecodedStore", read_store(store)).header.salt_id
-    real = outcome_segment_inventory.read_inventory
-    sealed = False
-
-    def scan_then_seal(
-        target: SegmentLayout, *, retention_floor: int | None = None
-    ) -> Inventory:
-        """Report the pre-seal inventory, then seal domain B once."""
-        nonlocal sealed
-        inventory = real(target, retention_floor=retention_floor)
-        if not sealed:
-            sealed = True
-            seal_active(target, sealed_b, 2)
-        return inventory
-
-    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", scan_then_seal)
+    salt_b = start_domain(store, first=2, count=1)
+    seal_once_after_scan(monkeypatch, sealed_b, 2)
 
     history = outcome_history.read_history_beside(
         store, outcome_history.HistorySelection(salt_id=salt_b)

@@ -19,9 +19,9 @@ from buildlimits.outcome_archive_budget import (
     budget_totals_are_unsettled,
     plan_byte_steps,
     plan_record_steps,
-    planned_size,
     require_measurable_active,
 )
+from buildlimits.outcome_archive_sizes import retained_estimate
 from buildlimits.utc_text import optional_utc_text
 
 if typ.TYPE_CHECKING:
@@ -210,7 +210,7 @@ def plan_run(
         for entry in inventory.sealed
         if entry.sequence not in duplicated_sequences and entry.sequence not in evicted
     )
-    retained = _retained_estimate(
+    retained = retained_estimate(
         inventory, active_bytes=active.budget_bytes, deletes=deletes, trims=trims
     )
     return Plan(
@@ -371,31 +371,3 @@ def _active_is_measurable(budget: Budget) -> bool:
     if budget.active.has_metadata:
         return True
     return not budget.policy.has_byte_limit
-
-
-def _retained_estimate(
-    inventory: Inventory,
-    *,
-    active_bytes: int,
-    deletes: tuple[SegmentEntry, ...],
-    trims: tuple[tuple[SegmentEntry, Trim], ...],
-) -> int:
-    """Estimate the logical bytes retained after the planned eviction.
-
-    Returns
-    -------
-    int
-        Active bytes plus every surviving sealed source plus every surviving
-        archive, with planned trims applied.
-    """
-    deleted = {entry.sequence for entry in deletes}
-    trim_map = {entry.sequence: trim for entry, trim in trims}
-    retained = active_bytes
-    for entry in inventory.effective:
-        if entry.sequence in deleted:
-            continue
-        if entry.state == "sealed":
-            retained += entry.logical_bytes
-        else:
-            retained += planned_size(entry, trim_map.get(entry.sequence))
-    return retained

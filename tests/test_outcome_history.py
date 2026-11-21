@@ -18,6 +18,7 @@ from history_fixtures import (
     archived_segments,
     observed,
     records,
+    start_domain,
     window,
 )
 from outcome_archive_helpers import write as write_store
@@ -245,9 +246,7 @@ def test_all_salts_names_every_domain_it_reads(tmp_path: Path) -> None:
     store = tmp_path / "cache-outcomes.jsonl"
     write_store(store, (window(0, 1),), history_policy(1))
     first = typ.cast("DecodedStore", read_store(store)).header.salt_id
-    (tmp_path / SALT_NAME).unlink()
-    active_records(store, first=2, count=1)
-    second = typ.cast("DecodedStore", read_store(store)).header.salt_id
+    second = start_domain(store, first=2, count=1)
     assert first != second, "the fixture activates a new salt"
 
     every = outcome_history.read_history_beside(
@@ -262,9 +261,7 @@ def test_history_defaults_to_the_newest_salt_domain(tmp_path: Path) -> None:
     store = tmp_path / "cache-outcomes.jsonl"
     policy = history_policy(1)
     write_store(store, (window(0, 1), window(1, 1)), policy)
-    (tmp_path / SALT_NAME).unlink()
-    active_records(store, first=2, count=2)
-    newest_salt = typ.cast("DecodedStore", read_store(store)).header.salt_id
+    newest_salt = start_domain(store, first=2, count=2)
 
     default = outcome_history.read_history_beside(store)
     selected = outcome_history.read_history_beside(

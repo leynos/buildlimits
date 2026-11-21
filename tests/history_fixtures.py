@@ -9,16 +9,28 @@ definition of what a generated history looks like.
 import datetime as dt
 import typing as typ
 
+from archive_seal_helpers import seal_active
 from outcome_archive_helpers import write as write_store
 from outcome_test_helpers import attributed_record
 from segment_test_helpers import history_policy
 
+from buildlimits import outcome_segment_inventory
 from buildlimits.outcome_archive import RunOptions, run_archive
-from buildlimits.outcome_record_format import OutcomeRecord, StoreRecord, WindowSummary
+from buildlimits.outcome_record_format import (
+    DecodedStore,
+    OutcomeRecord,
+    StoreRecord,
+    WindowSummary,
+)
 from buildlimits.outcome_segments import SegmentLayout
+from buildlimits.outcome_store_io import read_store
 
 if typ.TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
+
+    from buildlimits.outcome_segment_inventory import Inventory
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 SALT_NAME = "cache-outcomes.salt"
@@ -111,6 +123,72 @@ def active_records(path: Path, first: int, count: int) -> None:
         How many records to append.
     """
     write_store(path, records(first, count), history_policy(10**6))
+
+
+def start_domain(path: Path, *, first: int, count: int) -> str:
+    """Rotate the host salt, append rows in the new domain and name it.
+
+    Parameters
+    ----------
+    path : Path
+        The store path; its salt sits beside it.
+    first : int
+        The minute offset of the oldest appended record from `NOW`.
+    count : int
+        How many records the new domain appends.
+
+    Returns
+    -------
+    str
+        The new domain's salt identifier.
+    """
+    (path.parent / SALT_NAME).unlink()
+    active_records(path, first, count)
+    return typ.cast("DecodedStore", read_store(path)).header.salt_id
+
+
+def seal_once_after_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    rows: tuple[StoreRecord, ...],
+    sequence: int,
+) -> None:
+    """Seal the active rows once, after the first inventory scan reports.
+
+    The replacement reports the pre-seal inventory and then applies the seal,
+    so a reader meets the store exactly as it is when a writer seals during a
+    read.
+
+    Parameters
+    ----------
+    monkeypatch : pytest.MonkeyPatch
+        The test's patcher, which owns undoing the replacement.
+    rows : tuple[StoreRecord, ...]
+        The rows the seal closes into the new source.
+    sequence : int
+        The sequence the new source takes.
+    """
+    real = outcome_segment_inventory.read_inventory
+    sealed = False
+
+    def scan_then_seal(
+        target: SegmentLayout, *, retention_floor: int | None = None
+    ) -> Inventory:
+        """Report the pre-seal inventory, then seal the rows once.
+
+        Returns
+        -------
+        Inventory
+            The inventory taken before the seal was applied.
+        """
+        nonlocal sealed
+        inventory = real(target, retention_floor=retention_floor)
+        if not sealed:
+            sealed = True
+            target.sealed_dir.mkdir(parents=True, exist_ok=True)
+            seal_active(target, rows, sequence)
+        return inventory
+
+    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", scan_then_seal)
 
 
 def observed(rows: tuple[StoreRecord, ...]) -> tuple[dt.datetime, ...]:

@@ -13,6 +13,12 @@ import typing as typ
 from pathlib import Path
 
 from archive_cli_helpers import sealed_measured_source, sealed_source
+from archive_seal_helpers import (
+    seal_active,
+    seal_five_rows_once,
+    seal_on_each_archive,
+    seal_one_row,
+)
 from outcome_archive_helpers import (
     NOW,
     archives,
@@ -20,10 +26,6 @@ from outcome_archive_helpers import (
     policy,
     records,
     run,
-    seal_active,
-    seal_five_rows_once,
-    seal_on_each_archive,
-    seal_one_row,
     store_with_archive,
     write,
 )

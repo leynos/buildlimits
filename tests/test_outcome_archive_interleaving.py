@@ -11,14 +11,13 @@ import typing as typ
 from pathlib import Path
 
 from archive_cli_helpers import sealed_measured_source
+from archive_seal_helpers import seal_active, seal_on_each_archive
 from outcome_archive_helpers import (
     NOW,
     layout,
     policy,
     records,
     run,
-    seal_active,
-    seal_on_each_archive,
     write,
 )
 from segment_test_helpers import document, write_private

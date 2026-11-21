@@ -27,11 +27,13 @@ from buildlimits.outcome_archive_rows import (
     HeaderRow,
     SegmentFaultError,
 )
-from buildlimits.outcome_history_pin import (
+from buildlimits.outcome_history_files import (
     HistoryFaultError,
+    PinnedActive,
+    PinnedSegment,
+)
+from buildlimits.outcome_history_pin import (
     HistorySelection,
-    _PinnedActive,
-    _PinnedSegment,
     _Snapshot,
     pin_history,
 )
@@ -172,7 +174,7 @@ def open_history_beside(
     return open_history(SegmentLayout.beside(store), selection)
 
 
-def _require_unchanged(segments: tuple[_PinnedSegment, ...]) -> None:
+def _require_unchanged(segments: tuple[PinnedSegment, ...]) -> None:
     """Refuse a pass whose pinned segments are no longer the files read.
 
     Raises
@@ -189,7 +191,7 @@ def _require_unchanged(segments: tuple[_PinnedSegment, ...]) -> None:
             raise HistoryFaultError("unsettled")
 
 
-def _iter_segment(segment: _PinnedSegment) -> cabc.Iterator[StoreRecord]:
+def _iter_segment(segment: PinnedSegment) -> cabc.Iterator[StoreRecord]:
     """Yield one pinned segment's records, decoding as the caller reads.
 
     Yields
@@ -211,7 +213,7 @@ def _iter_segment(segment: _PinnedSegment) -> cabc.Iterator[StoreRecord]:
         raise HistoryFaultError("unsettled") from error
 
 
-def _require_same_file(source: typ.BinaryIO, segment: _PinnedSegment) -> None:
+def _require_same_file(source: typ.BinaryIO, segment: PinnedSegment) -> None:
     """Refuse a descriptor that is not the file the pin fingerprinted.
 
     The pre-pass check cannot close the window between itself and this open:
@@ -228,7 +230,7 @@ def _require_same_file(source: typ.BinaryIO, segment: _PinnedSegment) -> None:
         raise HistoryFaultError("unsettled")
 
 
-def _iter_active(active: _PinnedActive) -> cabc.Iterator[StoreRecord]:
+def _iter_active(active: PinnedActive) -> cabc.Iterator[StoreRecord]:
     """Yield the frozen active file's committed records.
 
     The writer commits an append by writing its newline, and it removes any
