@@ -122,6 +122,46 @@ def test_worker_survives_clock_overflow_during_startup_compaction(
     assert stored_records(path) == (record,), "the retried append remains readable"
 
 
+def test_wall_now_reads_the_clock_without_recording_a_skew(tmp_path: Path) -> None:
+    """A timestamp-only read never changes what the next compaction decides.
+
+    ``record_clock_observation`` updates the comparison baseline and raises the
+    skew flag, which makes the next compaction keep its rows. A seal only needs
+    the time for its metadata, so it reads ``wall_now`` and leaves that
+    decision alone.
+    """
+    wall = [NOW]
+    monotonic = [100.0]
+    files = outcome_store_state.StoreFiles(
+        tmp_path / "cache-outcomes.jsonl",
+        mock.Mock(),
+        outcome_store_state.Clocks(
+            wall=lambda: wall[0], monotonic=lambda: monotonic[0]
+        ),
+    )
+    files.record_clock_observation()
+    wall[0] += dt.timedelta(days=2)
+    monotonic[0] += 1.0
+
+    assert files.wall_now() == wall[0], "the read returns the wall clock"
+    assert not files.clock_skew_pending, "a read-only call records no skew"
+
+    files.record_clock_observation()
+    assert files.clock_skew_pending, "the recording call retains the jump"
+
+
+def test_measure_active_reports_no_failure_of_its_own(tmp_path: Path) -> None:
+    """A measurement failure belongs to the caller that knows the operation."""
+    publisher = mock.Mock()
+    # A directory is not a regular store file, so the measurement refuses it.
+    files = outcome_store_state.StoreFiles(
+        tmp_path, publisher, outcome_store_state.Clocks()
+    )
+
+    assert files.measure_active() is None, "a non-regular path cannot be measured"
+    publisher.assert_not_called()
+
+
 def test_a_tail_that_cannot_be_repaired_stops_every_append(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

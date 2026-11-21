@@ -148,17 +148,12 @@ class StoreFiles:
         if self.ready:
             self.settle_loaded_store()
 
-    def measure_active(
-        self, operation: StoreOperation, reason: StoreReason
-    ) -> int | None:
-        """Return the active file's size, reporting ``reason`` when it is unreadable.
+    def measure_active(self) -> int | None:
+        """Return the active file's size, or None when it is unreadable.
 
-        Parameters
-        ----------
-        operation : str
-            The reported operation the failure belongs to.
-        reason : str
-            The closed reason published when the file cannot be measured.
+        The method only reads. A caller that owns the operation the failure
+        belongs to publishes the closed reason itself, so a name that says it
+        measures cannot also notify an observer.
 
         Returns
         -------
@@ -168,7 +163,6 @@ class StoreFiles:
         try:
             return store_size(self.path)
         except OSError:
-            self.publish(operation, reason)
             return None
 
     def settle_loaded_store(self) -> None:
@@ -272,7 +266,7 @@ class StoreFiles:
         policy = self.policy
         if not policy.has_age_limit or self.oldest_observed is None:
             return
-        cutoff = policy.cutoff(self.observe_clock())
+        cutoff = policy.cutoff(self.record_clock_observation())
         if cutoff is not None and self.oldest_observed < cutoff:
             self.compact()
 
@@ -305,8 +299,9 @@ class StoreFiles:
         if not self.policy.is_segmented:
             self.compact()
             return
-        size = self.measure_active("compact", "save_failed")
+        size = self.measure_active()
         if size is None:
+            self.publish("compact", "save_failed")
             return
         if size <= self.policy.segment_bytes:
             if self.policy.has_age_limit:
@@ -325,7 +320,7 @@ class StoreFiles:
         if self.header is None or self.salt is None:
             return False
         try:
-            now = self.observe_clock()
+            now = self.record_clock_observation()
             decoded = outcome_records.DecodedStore(self.header, tuple(self.records))
             compacted = outcome_records.compact(
                 decoded,
@@ -350,15 +345,36 @@ class StoreFiles:
         )
         return True
 
-    def observe_clock(self) -> dt.datetime:
+    def wall_now(self) -> dt.datetime:
+        """Read the current UTC wall time without changing the writer's state.
+
+        Returns
+        -------
+        datetime
+            The current aware UTC wall-clock value.
+
+        Examples
+        --------
+        A seal stamps its metadata with the time this returns, because the
+        timestamp must not decide whether the next compaction skips ageing.
+        """
+        return self.clocks.wall()
+
+    def record_clock_observation(self) -> dt.datetime:
         """Read UTC time and retain a skew flag when wall time jumps by a day.
+
+        The name states the effect: the reading becomes the baseline the next
+        observation is compared with, and a jump of more than a day raises
+        ``clock_skew_pending``, which makes the next compaction keep its rows
+        rather than age them. A caller that only needs a timestamp calls
+        ``wall_now`` instead.
 
         Returns
         -------
         datetime
             The current aware UTC wall-clock value.
         """
-        now = self.clocks.wall()
+        now = self.wall_now()
         monotonic = self.clocks.monotonic()
         if self._last_wall is not None and self._last_monotonic is not None:
             wall_elapsed = (now - self._last_wall).total_seconds()

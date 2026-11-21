@@ -227,7 +227,7 @@ class StoreWriter(OutcomeStorePort):
         if salt is None:
             return
         try:
-            now = self._files.observe_clock()
+            now = self._files.record_clock_observation()
         except TypeError, ValueError, OverflowError:
             self._publish("load", "unreadable")
             return

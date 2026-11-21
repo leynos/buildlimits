@@ -43,8 +43,9 @@ def settle_loaded_store(store: StoreFiles) -> None:
         store.ready = False
         store.publish("load", "save_failed")
         return
-    size = store.measure_active("load", "unreadable")
+    size = store.measure_active()
     if size is None:
+        store.publish("load", "unreadable")
         return
     if size > store.policy.segment_bytes:
         seal(store)

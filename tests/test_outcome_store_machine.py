@@ -153,7 +153,7 @@ class OutcomeStoreMachine(RuleBasedStateMachine):
         self._compact_model()
 
     def _observe_model_clock(self) -> None:
-        """Mirror ``StoreFiles.observe_clock`` and the flag it retains."""
+        """Mirror ``StoreFiles.record_clock_observation`` and the flag it retains."""
         wall_elapsed = (self.wall_time - self.last_wall_time).total_seconds()
         monotonic_elapsed = self.monotonic_time - self.last_monotonic_time
         if abs(wall_elapsed - monotonic_elapsed) > _DAY_SECONDS:
