@@ -98,7 +98,7 @@ def test_a_replay_pass_reports_an_unsettled_retry(
         attempts.append(1)
         if len(attempts) == 1:
             raise outcome_history.HistoryFaultError("unsettled")
-        return outcome_replay.evaluate_h3(())
+        return outcome_replay.evaluate_h3([])
 
     monkeypatch.setattr(outcome_replay_cli, "_evaluate", evaluate)
     monkeypatch.setattr(

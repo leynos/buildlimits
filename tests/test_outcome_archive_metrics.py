@@ -6,7 +6,7 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from archive_seal_helpers import seal_one_row
+from archive_seal_helpers import seal_five_rows_once
 from outcome_archive_helpers import NOW, layout, policy, records, write
 
 from buildlimits import (
@@ -181,63 +181,30 @@ def test_a_history_pin_retry_names_every_attempt(
 def _seal_at_first_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[SegmentLayout, _RetryLog]:
-    """Seal one source when the first active read runs, collecting notices."""
+    """Seal five rows when the first active read runs, collecting notices."""
     write(tmp_path / "cache-outcomes.jsonl", records(NOW, 1), policy())
     store_layout = layout(tmp_path)
-    log = _RetryLog()
-    real = outcome_archive_retain.active_history
-    sealed = False
-
-    def seal_once(
-        path: Path,
-        *,
-        cutoff: dt.datetime | None = None,
-        on_retry: cabc.Callable[[str, int, str], None] | None = None,
-    ) -> ActiveHistory:
-        """Seal one source before the first read returns."""
-        nonlocal sealed
-        if not sealed:
-            sealed = True
-            seal_one_row(store_layout, 2)
-        return real(path, cutoff=cutoff, on_retry=on_retry)
-
-    monkeypatch.setattr(outcome_archive_retain, "active_history", seal_once)
-    return store_layout, log
+    seal_five_rows_once(store_layout, monkeypatch)
+    return store_layout, _RetryLog()
 
 
-def test_a_run_propagates_the_snapshot_retry_notice(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("entry", ["run", "inspection"])
+def test_the_entry_point_propagates_the_snapshot_retry_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str
 ) -> None:
-    """A plan that retries its settled snapshot reports the attempt."""
+    """A run or inspection reports the snapshot retry its plan made."""
     store_layout, log = _seal_at_first_read(tmp_path, monkeypatch)
+    options = RunOptions(now=NOW, clock=lambda: _FINISHED, on_retry=log)
 
-    report = run_archive(
-        store_layout,
-        policy(),
-        RunOptions(now=NOW, clock=lambda: _FINISHED, on_retry=log),
+    report = (
+        run_archive(store_layout, policy(), options)
+        if entry == "run"
+        else inspect_store(store_layout, policy(), options=options)
     )
 
-    assert report.status == "ok", "the run settles after the retry"
+    assert report.status == "ok", "the reading settles after the retry"
     assert ("snapshot", 1, "inventory_changed") in log.notices, (
-        "the run reports the retry it made"
-    )
-
-
-def test_an_inspection_propagates_the_snapshot_retry_notice(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A dry inspection reports the snapshot retry through its own entry."""
-    store_layout, log = _seal_at_first_read(tmp_path, monkeypatch)
-
-    report = inspect_store(
-        store_layout,
-        policy(),
-        options=RunOptions(now=NOW, clock=lambda: _FINISHED, on_retry=log),
-    )
-
-    assert report.status == "ok", "the inspection settles after the retry"
-    assert ("snapshot", 1, "inventory_changed") in log.notices, (
-        "the inspection reports the retry it made"
+        "the entry point reports the retry it made"
     )
 
 
