@@ -303,8 +303,7 @@ def _execute(
     Returns
     -------
     tuple[int | None, RunReport]
-        The retention floor the run recorded, when it could measure one, and
-        its report.
+        The recorded floor, when measured, and the report.
     """
     _prepare(run.context.layout, run.context.policy)
     outcome = _perform(run)
@@ -317,10 +316,9 @@ def _execute(
         return floor, _report(run, outcome, floor)
     except OSError, UnknownActiveHistoryError:
         # The archives and evictions are already published. The deletions
-        # are the only record the floor has, so it is written from the
-        # actions before the unmeasurable result is reported. The final plan
-        # re-reads the active file, so the same ordering covers a cap that
-        # cannot be settled there.
+        # are the only record the floor has, so they are written before the
+        # unmeasurable result is reported. The final plan re-reads the active
+        # file, so a cap it cannot settle takes this path too.
         outcome_archive_state.write_deleted_floor(
             run.context.layout,
             outcome_segment_state.read_retention_floor(run.context.layout).sequence,

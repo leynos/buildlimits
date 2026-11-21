@@ -8,21 +8,12 @@ itself stays a plain value with no filesystem read in it.
 
 import typing as typ
 
-from buildlimits.outcome_archive_history import (
-    ActiveHistory,
-    observed_history,
-    physical_fallback_bytes,
-    retained_logical_bytes,
-)
 from buildlimits.outcome_archive_plan import plan_run
-from buildlimits.outcome_archive_report import (
-    RunReport,
-    RunStatus,
-    settled_fields,
-)
+from buildlimits.outcome_archive_report import RunReport, RunStatus
+from buildlimits.outcome_archive_report_fields import settled_fields
 
 if typ.TYPE_CHECKING:
-    from buildlimits.outcome_archive_history import SettledStore
+    from buildlimits.outcome_archive_history import ActiveHistory, SettledStore
     from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome
     from buildlimits.outcome_segment_inventory import Inventory
 
@@ -54,8 +45,6 @@ def settled_report(
     """
     inventory = settled.inventory
     active = settled.active
-    retained = retained_logical_bytes(inventory, active)
-    observed = observed_history(inventory, active)
     return RunReport(
         status=_run_status(
             outcome,
@@ -64,19 +53,9 @@ def settled_report(
         ),
         started_at=run.started_at,
         finished_at=run.context.clock(),
-        active_bytes=active.bytes,
-        retained_bytes=retained,
-        fallback_bytes=physical_fallback_bytes(inventory),
-        retained_records=observed.records,
-        observed_from=observed.observed_from,
-        observed_until=observed.observed_until,
-        unmeasured_entries=observed.unmeasured,
-        budget_bytes=run.context.policy.max_bytes,
-        cutoff=run.plan.cutoff,
-        plan=run.summary,
+        **settled_fields(run, inventory, active),
         actions=tuple(outcome.actions),
         failures=tuple(outcome.failures),
-        **settled_fields(run, inventory, active),
         reason=None if active.has_metadata else active.reason,
     )
 

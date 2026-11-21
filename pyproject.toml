@@ -2497,8 +2497,8 @@ members = [
     "buildlimits/outcome_recorder_outputs.py",
     "buildlimits/supervisor_outcome_setup.py",
     "tests/archive_seal_helpers.py",
-    "tests/modelcheck_cases.py",
     "buildlimits/outcome_archive_report.py",
+    "tests/modelcheck_cases.py",
     "tests/outcome_store_helpers.py",
     "buildlimits/outcome_store.py",
     "buildlimits/outcome_store_state.py",
@@ -2507,6 +2507,7 @@ members = [
     "tests/test_outcome_archive_report_settlement.py",
     "buildlimits/cache_recovery.py",
     "buildlimits/outcome_archive_plan.py",
+    "buildlimits/outcome_archive_report_fields.py",
     "buildlimits/predict/dataset_cli.py",
     "buildlimits/predict/ensemble_runs.py",
     "buildlimits/predict/harness.py",
@@ -2537,11 +2538,11 @@ members = [
     "buildlimits/predict/report_codec.py",
     "tests/differential_trace_test_helpers.py",
     "tests/outcome_archive_helpers.py",
+    "tests/outcome_store_fixture_helpers.py",
     "tests/test_outcome_totality.py",
     "tests/test_predict_evaluation.py",
     "buildlimits/outcome_ports.py",
     "modelcheck/cli.py",
-    "tests/outcome_store_fixture_helpers.py",
     "tests/test_kache_detached_events.py",
 ]
 reason = "Matching type-checking preludes: every module guards the standard-library and domain types its own signatures annotate behind if typ.TYPE_CHECKING. The guard is the shared idiom, not shared logic, and a re-export module would hide which types each file annotates."
@@ -2551,6 +2552,12 @@ members = [
     "tests/test_outcome_store_snapshot.py",
 ]
 reason = "Matching fixture import preludes: both reader tests alias the same store fixtures, and a re-export module would hide which fixture each test actually uses rather than sharing any test logic."
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/dataset.py::SnapshotStats",
+    "buildlimits/outcome_archive_report_fields.py::SettledFields",
+]
+reason = "Matching data shapes, not shared logic: one is a prediction snapshot's statistics value and the other a TypedDict of report fields. Sharing a type would couple prediction to archiving for no behaviour."
 [[tool.duplication_gate.unit]]
 unit = "buildlimits/outcome_archive_verify.py"
 reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."

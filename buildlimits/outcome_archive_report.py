@@ -1,22 +1,15 @@
 """The bounded report and status vocabulary one archive run produces.
 
 The report is the command's only user-facing surface: it names no filesystem
-path and carries closed action and reason vocabularies. Rendering it and
-mapping its status to a process exit code are adapters' work, so the model
-stays a plain value that a caller can compare and pass on.
+path and carries closed action and reason vocabularies. Rendering it and mapping
+its status to an exit code are adapters' work, so the model stays a plain value.
 """
 
 import dataclasses as dc
 import typing as typ
 
 from buildlimits.outcome_archive_context import ignore_retry
-from buildlimits.outcome_archive_history import (
-    ActiveHistory,
-    observed_history,
-    physical_fallback_bytes,
-    retained_logical_bytes,
-)
-from buildlimits.outcome_retention_history import retained_history
+from buildlimits.outcome_archive_report_fields import settled_fields
 from buildlimits.outcome_retention_report import RetentionLimits
 from buildlimits.utc_text import utc_now
 
@@ -26,6 +19,7 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.metrics import MetricsPort
     from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
+    from buildlimits.outcome_archive_history import ActiveHistory
     from buildlimits.outcome_archive_plan import PlanSummary
     from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome
     from buildlimits.outcome_retention_report import RetainedHistory
@@ -66,11 +60,9 @@ class RunOptions:
     clock : Callable[[], datetime]
         The clock for the run's start when ``now`` is None, and each finish.
     on_retry : Callable[[str, int, str], None]
-        Receives the operation, attempt number and closed category of every
-        reading the run retries; the default discards them.
+        Receives each retried reading's operation, attempt and closed category.
     metrics : MetricsPort | None
-        The bounded event transport an ``archive_run`` record is published
-        through, or None when the caller collects no metrics.
+        The transport an ``archive_run`` record publishes through, or None.
     """
 
     preset: int = 6
@@ -145,22 +137,18 @@ class RunReport:
     active_bytes : int
         Logical bytes in the writer's active file.
     retained_bytes : int
-        Logical bytes retained after the run, or the bytes an inspection still
-        holds.
+        Logical bytes retained after the run, or the bytes an inspection holds.
     fallback_bytes : int
-        The part of ``retained_bytes`` taken from a physical file size because
-        an archive's logical size is unknown; zero when every entry is
-        measured.
+        The part of ``retained_bytes`` taken from a physical file size when
+        an archive's logical size is unknown; zero when all are measured.
     retained_records : int
-        Records in the whole retained history: the closed rows sidecar
-        metadata describes plus the rows still in the writer's active file.
-        Entries whose metadata is missing contribute nothing here; they are
-        counted by ``unmeasured_entries`` instead.
+        Records in the whole retained history: the closed rows sidecar metadata
+        describes plus the rows in the active file. Entries without metadata
+        contribute nothing; ``unmeasured_entries`` counts them instead.
     observed_from : datetime | None
         Earliest retained closed observation, when metadata describes one.
     observed_until : datetime | None
-        Latest retained observation, from sidecar metadata or the active
-        file, when one was read.
+        Latest retained observation, from metadata or the active file.
     unmeasured_entries : int
         Effective entries whose record count and span could not be read: an
         archive with no trustworthy sidecar, or an undecodable active file.
@@ -221,39 +209,6 @@ class RunReport:
     reason: str | None = None
 
 
-class SettledFields(typ.TypedDict):
-    """The report fields both builders derive from one settled pair."""
-
-    gaps: tuple[int, ...]
-    gaps_truncated: bool
-    missing_sidecars: tuple[int, ...]
-    corrupt_sidecars: tuple[int, ...]
-    orphan_sidecars: tuple[int, ...]
-    limits: RetentionLimits
-    retained: RetainedHistory
-
-
-def settled_fields(
-    run: ArchiveRun, inventory: Inventory, active: ActiveHistory
-) -> SettledFields:
-    """Describe the fields both report builders derive from one settled pair.
-
-    Returns
-    -------
-    SettledFields
-        The inventory counts, limits and retained history.
-    """
-    return {
-        "gaps": inventory.gaps,
-        "gaps_truncated": inventory.gaps_truncated,
-        "missing_sidecars": inventory.missing_sidecars,
-        "corrupt_sidecars": inventory.corrupt_sidecars,
-        "orphan_sidecars": inventory.orphan_sidecars,
-        "limits": RetentionLimits.of(run.context.policy),
-        "retained": retained_history(inventory, active),
-    }
-
-
 def dry_report(
     run: ArchiveRun,
     active: ActiveHistory,
@@ -273,7 +228,6 @@ def dry_report(
     RunReport
         A dry-run report carrying the plan and the history it planned against.
     """
-    observed = observed_history(inventory, active)
     return RunReport(
         status=(
             "ok"
@@ -287,16 +241,6 @@ def dry_report(
         started_at=run.started_at,
         finished_at=run.context.clock(),
         dry_run=True,
-        active_bytes=active.bytes,
-        retained_bytes=retained_logical_bytes(inventory, active),
-        fallback_bytes=physical_fallback_bytes(inventory),
-        retained_records=observed.records,
-        observed_from=observed.observed_from,
-        observed_until=observed.observed_until,
-        unmeasured_entries=observed.unmeasured,
-        budget_bytes=run.context.policy.max_bytes,
-        cutoff=run.plan.cutoff,
-        plan=run.summary,
         **settled_fields(run, inventory, active),
         maintenance=Maintenance(state_written=False),
         # The reason the active file could not be counted is the reason the
