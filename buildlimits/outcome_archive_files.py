@@ -11,7 +11,6 @@ the quarantine moves in ``outcome_archive_quarantine`` and the temp/verify
 machinery in ``outcome_archive_encode``.
 """
 
-import contextlib
 import dataclasses as dc
 import typing as typ
 
@@ -25,7 +24,7 @@ from buildlimits.outcome_archive_encode import (
     read_source_facts,
     write_sidecar,
 )
-from buildlimits.outcome_archive_fs import publish_no_clobber
+from buildlimits.outcome_archive_fs import publish_no_clobber, remove_private_files
 from buildlimits.outcome_archive_quarantine import (
     quarantine_and_remove_sidecar,
     quarantine_source,
@@ -149,8 +148,10 @@ def _replace_sidecar(
     try:
         return write_sidecar(context, sequence, facts)
     except OSError:
-        _unlink(context.layout.archive_dir / outcome_segments.sidecar_name(sequence))
-        fsync_directory(context.layout.archive_dir)
+        remove_private_files(
+            context.layout.archive_dir,
+            [outcome_segments.sidecar_name(sequence)],
+        )
         raise
 
 
@@ -247,8 +248,13 @@ def delete_archive(context: ArchiveContext, entry: SegmentEntry) -> None:
     entry : SegmentEntry
         The archive to remove.
     """
-    _unlink(entry.path)
-    _unlink(context.layout.archive_dir / outcome_segments.sidecar_name(entry.sequence))
+    remove_private_files(
+        context.layout.archive_dir,
+        [
+            outcome_segments.archive_name(entry.sequence),
+            outcome_segments.sidecar_name(entry.sequence),
+        ],
+    )
     end_replacement(context.layout.archive_dir, entry.sequence)
 
 
@@ -285,9 +291,10 @@ def _rearchive(context: ArchiveContext, sealed: SegmentEntry) -> ActionResult:
     ActionResult
         The re-archived result.
     """
-    context.layout.archive_dir.joinpath(
-        outcome_segments.sidecar_name(sealed.sequence)
-    ).unlink(missing_ok=True)
+    remove_private_files(
+        context.layout.archive_dir,
+        [outcome_segments.sidecar_name(sealed.sequence)],
+    )
     result = archive_source(context, sealed)
     return dc.replace(result, action="re-archived")
 
@@ -305,9 +312,13 @@ def _remove_sealed_source(context: ArchiveContext, sequence: int) -> None:
     sequence : int
         The archived sequence whose source must be released.
     """
-    _unlink(context.layout.sealed_dir / outcome_segments.segment_name(sequence))
-    _unlink(context.layout.sealed_dir / outcome_segments.sealed_meta_name(sequence))
-    fsync_directory(context.layout.sealed_dir)
+    remove_private_files(
+        context.layout.sealed_dir,
+        [
+            outcome_segments.segment_name(sequence),
+            outcome_segments.sealed_meta_name(sequence),
+        ],
+    )
 
 
 def _archive_path(context: ArchiveContext, sequence: int) -> Path:
@@ -319,9 +330,3 @@ def _archive_path(context: ArchiveContext, sequence: int) -> Path:
         ``segment-<sequence>.jsonl.xz`` inside the archive directory.
     """
     return context.layout.archive_dir / outcome_segments.archive_name(sequence)
-
-
-def _unlink(path: Path) -> None:
-    """Remove one file, tolerating one that is already gone."""
-    with contextlib.suppress(FileNotFoundError):
-        path.unlink()

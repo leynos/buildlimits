@@ -12,7 +12,7 @@ import re
 import stat
 import typing as typ
 
-from buildlimits.outcome_archive_dirs import require_private_chain_when_present
+from buildlimits.outcome_archive_dirs import open_private_chain_when_present
 from buildlimits.outcome_segment_sidecar import (
     Sidecar,
     read_mapping,
@@ -320,12 +320,14 @@ def _archive_entry(
 def regular_files(directory: Path) -> list[tuple[Path, int]]:
     """List regular files in one directory without following links.
 
-    The directory's whole chain is validated before it is listed. ``scandir``
-    follows a symlinked directory argument, and an inventory that followed one
-    would name files outside the store that a retention pass then deletes. A
-    missing directory is an empty listing, but any other listing or validation
-    failure propagates: reporting no entries for an unreadable directory would
-    present damage as an empty store.
+    The directory's whole chain is validated before it is listed, and the
+    listing then reads through that same open descriptor. ``scandir`` follows a
+    symlinked directory argument, and a path re-opened after validation could
+    be redirected by replacing a component; either would name files outside
+    the store that a retention pass then deletes. A missing directory is an
+    empty listing, but any other listing or validation failure propagates:
+    reporting no entries for an unreadable directory would present damage as
+    an empty store.
 
     Returns
     -------
@@ -337,22 +339,21 @@ def regular_files(directory: Path) -> list[tuple[Path, int]]:
     -----
     A refused chain propagates `outcome_archive_dirs.UnsafePathError`.
     """
-    require_private_chain_when_present(directory)
-    try:
-        iterator = os.scandir(directory)
-    except FileNotFoundError:
+    descriptor = open_private_chain_when_present(directory)
+    if descriptor is None:
         return []
     found: list[tuple[Path, int]] = []
     try:
-        for entry in iterator:
-            try:
-                metadata = entry.stat(follow_symlinks=False)
-            except FileNotFoundError:
-                # The entry was removed between listing and stat; it is gone
-                # rather than unreadable, so it simply is not part of the scan.
-                continue
-            if stat.S_ISREG(metadata.st_mode):
-                found.append((directory / entry.name, metadata.st_size))
+        with os.scandir(descriptor) as iterator:
+            for entry in iterator:
+                try:
+                    metadata = entry.stat(follow_symlinks=False)
+                except FileNotFoundError:
+                    # The entry was removed between listing and stat; it is
+                    # gone rather than unreadable, so it is not in the scan.
+                    continue
+                if stat.S_ISREG(metadata.st_mode):
+                    found.append((directory / entry.name, metadata.st_size))
     finally:
-        iterator.close()
+        os.close(descriptor)
     return found

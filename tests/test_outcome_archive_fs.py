@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 from segment_test_helpers import mode
 
+from buildlimits import outcome_archive_fs
 from buildlimits.outcome_archive_fs import (
     UnsafePathError,
     atomic_write_json,
@@ -20,6 +21,7 @@ from buildlimits.outcome_archive_fs import (
     open_private_regular,
     open_private_temp,
     publish_no_clobber,
+    remove_private_files,
     remove_stale_temps,
     require_private_chain,
 )
@@ -44,6 +46,49 @@ def test_missing_components_are_created_private(tmp_path: Path) -> None:
     assert path.is_dir(), "the whole path exists"
     assert {mode(path), mode(path.parent), mode(path.parent.parent)} == {0o700}, (
         "every created component is private, whatever the umask"
+    )
+
+
+def test_a_retry_syncs_the_parent_of_a_component_it_only_opened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A directory left by a failed sync is made durable by the next attempt.
+
+    The first attempt creates the directory and fails to sync its parent, so a
+    crash could still discard a name the filesystem never committed. Nothing on
+    disk records that failure, so the retry must sync the parent of the
+    component it merely opens; otherwise the run could publish an archive
+    beneath a name that is not durable.
+    """
+    target = tmp_path / "one" / "archive"
+    parent_inode = tmp_path.stat().st_ino
+    synced: list[int] = []
+    real_fsync = os.fsync
+    failed = False
+
+    def fail_at_the_archive_parent(descriptor: int) -> None:
+        """Refuse the archive directory's parent once, then record the rest."""
+        nonlocal failed
+        inode = os.fstat(descriptor).st_ino
+        if inode == parent_inode and not failed:
+            failed = True
+            raise OSError("the parent cannot be synced")
+        synced.append(inode)
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", fail_at_the_archive_parent)
+
+    with pytest.raises(OSError, match="cannot be synced"):
+        ensure_private_directory(target)
+
+    assert (tmp_path / "one").is_dir(), "the created name is left behind"
+    assert not target.exists(), "nothing is created beneath the unsynced name"
+
+    synced.clear()
+    ensure_private_directory(target)
+
+    assert parent_inode in synced, (
+        "the retry syncs the parent of the component it only opened"
     )
 
 
@@ -292,3 +337,43 @@ def test_an_absent_directory_has_no_temporaries(tmp_path: Path) -> None:
     assert not remove_stale_temps(tmp_path / "absent"), (
         "an absent directory has no temporaries to remove"
     )
+
+
+def test_a_removal_follows_the_validated_directory_after_its_path_is_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deletion uses the pinned descriptor, not a path that may have moved."""
+    archive_dir = tmp_path / "archive"
+    ensure_private_directory(archive_dir)
+    doomed = archive_dir / "segment-000000000001.jsonl.xz"
+    doomed.write_bytes(b"real")
+    moved = tmp_path / "archive-as-validated"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    decoy = elsewhere / doomed.name
+    decoy.write_bytes(b"decoy")
+    original = outcome_archive_fs.open_private_chain_when_present
+
+    def replace_after_validation(path: Path) -> int | None:
+        """Validate the path, then swap it before the caller can use it."""
+        descriptor = original(path)
+        if descriptor is not None and path == archive_dir:
+            archive_dir.rename(moved)
+            archive_dir.symlink_to(elsewhere, target_is_directory=True)
+        return descriptor
+
+    monkeypatch.setattr(
+        outcome_archive_fs, "open_private_chain_when_present", replace_after_validation
+    )
+
+    remove_private_files(archive_dir, [doomed.name])
+
+    assert not (moved / doomed.name).exists(), "the validated file is removed"
+    assert decoy.exists(), "a file beside the replacement is untouched"
+
+
+def test_removing_from_an_absent_directory_does_nothing(tmp_path: Path) -> None:
+    """A directory an earlier run already removed reports no failure."""
+    remove_private_files(tmp_path / "absent", ["segment-000000000001.jsonl.xz"])
+
+    assert not list(tmp_path.iterdir()), "nothing is created to remove from"

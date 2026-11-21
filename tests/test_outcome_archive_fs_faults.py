@@ -9,6 +9,7 @@ from the operations that call it.
 """
 
 import collections.abc as cabc
+import contextlib
 import errno
 import os
 from pathlib import Path
@@ -174,7 +175,9 @@ def test_a_final_directory_owned_by_another_user_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The final component must belong to this user even when the walk passes."""
-    metadata = tmp_path.stat()
+    descriptor = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    real_fstat = os.fstat
+    metadata = real_fstat(descriptor)
     foreign = os.stat_result((
         metadata.st_mode,
         0,
@@ -187,12 +190,22 @@ def test_a_final_directory_owned_by_another_user_is_refused(
         0,
         0,
     ))
-    monkeypatch.setattr(
-        outcome_archive_dirs, "_walk_chain", lambda *_args, **_kwargs: foreign
-    )
 
-    with pytest.raises(UnsafePathError, match="owned by this user"):
-        outcome_archive_dirs.require_private_chain(tmp_path)
+    def _foreign_final(candidate: int) -> os.stat_result:
+        return foreign if candidate == descriptor else real_fstat(candidate)
+
+    monkeypatch.setattr(
+        outcome_archive_dirs, "_open_chain", lambda *_args, **_kwargs: descriptor
+    )
+    monkeypatch.setattr(outcome_archive_dirs.os, "fstat", _foreign_final)
+    try:
+        with pytest.raises(UnsafePathError, match="owned by this user"):
+            outcome_archive_dirs.require_private_chain(tmp_path)
+    finally:
+        # The refusal closes the descriptor itself; closing again is only
+        # insurance for a test that fails before reaching the check.
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
 
 
 def test_a_component_error_other_than_a_link_propagates(

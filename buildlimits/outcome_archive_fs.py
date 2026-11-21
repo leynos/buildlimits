@@ -21,6 +21,7 @@ from pathlib import Path
 from buildlimits.outcome_archive_dirs import (
     UnsafePathError,
     ensure_private_directory,
+    open_private_chain_when_present,
     require_private_chain,
 )
 from buildlimits.outcome_store_files import open_private_regular as _open_private
@@ -39,6 +40,7 @@ __all__ = [
     "open_private_regular",
     "open_private_temp",
     "publish_no_clobber",
+    "remove_private_files",
     "remove_stale_temps",
     "require_private_chain",
     "require_private_regular",
@@ -185,6 +187,43 @@ def atomic_write_json(path: Path, document: cabc.Mapping[str, object]) -> None:
         with contextlib.suppress(OSError):
             temporary.unlink()
         raise
+
+
+def remove_private_files(directory: Path, names: cabc.Iterable[str]) -> None:
+    """Remove named files through one validated directory descriptor.
+
+    The chain is validated once, and every removal is then relative to that
+    same descriptor, so a path replaced after validation cannot redirect the
+    deletions outside the store. The descriptor is synced before it closes, so
+    the removals survive a crash. A name that is already absent is not an
+    error: an earlier run may have removed it before stopping, and reporting
+    that as a failure would strand the run's remaining work.
+
+    Parameters
+    ----------
+    directory : Path
+        The private directory holding the files.
+    names : collections.abc.Iterable[str]
+        Names of files inside the directory.
+
+    Notes
+    -----
+    A chain that is not private to this user is refused with `UnsafePathError`
+    from `open_private_chain_when_present`, and a removal or sync that fails
+    propagates its `OSError`. A directory that does not exist is treated as
+    holding no files, so this is the removal equivalent of a ``missing_ok``
+    unlink.
+    """
+    descriptor = open_private_chain_when_present(directory)
+    if descriptor is None:
+        return
+    try:
+        for name in names:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(name, dir_fd=descriptor)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def remove_stale_temps(directory: Path) -> tuple[str, ...]:
