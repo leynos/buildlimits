@@ -153,3 +153,17 @@ def test_a_byte_budget_at_the_header_floor_is_accepted(tmp_path: Path) -> None:
     assert settings.cache_outcomes_max_bytes == header_floor_bytes(), (
         "a budget that holds one maximal header is accepted"
     )
+
+
+def test_a_byte_budget_one_below_the_header_floor_is_rejected(tmp_path: Path) -> None:
+    """The loader refuses the exact value below the floor, not merely ``1``.
+
+    The policy layer pins this boundary already. Checking the loader at the
+    same value keeps a change to one layer from silently widening the other.
+    """
+    _rejected(
+        tmp_path,
+        'cache_outcomes = "record"\n'
+        f"cache_outcomes_max_bytes = {header_floor_bytes() - 1}\n",
+        "replacement store header",
+    )

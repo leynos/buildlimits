@@ -8,7 +8,6 @@ Two running processes are also raced for the archive lock so the busy status
 is proved across processes rather than within one.
 """
 
-import contextlib
 import json
 import os
 import signal
@@ -50,23 +49,56 @@ def _invoke(*arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _await_first_archive(layout: SegmentLayout, *, timeout: float = 60.0) -> None:
-    """Wait until a running command has published its first archive.
+def _lock_is_held(layout: SegmentLayout, pid: int) -> bool:
+    """Report whether ``/proc/locks`` shows ``pid`` holding the archive lock.
 
     Parameters
     ----------
     layout : SegmentLayout
-        The layout whose archive directory the run publishes into.
+        The layout naming the lock file.
+    pid : int
+        The process whose lock entry is sought.
+
+    Returns
+    -------
+    bool
+        True when a ``FLOCK`` entry for the lock file's inode names ``pid``.
+    """
+    try:
+        metadata = layout.lock_file.stat()
+        listing = Path("/proc/locks").read_text(encoding="ascii")
+    except OSError:
+        return False
+    device = f"{os.major(metadata.st_dev):02x}:{os.minor(metadata.st_dev):02x}"
+    expected = f"{device}:{metadata.st_ino}"
+    return any(
+        parts[1] == "FLOCK" and parts[4] == str(pid) and parts[5] == expected
+        for line in listing.splitlines()
+        if len(parts := line.split()) >= 6
+    )
+
+
+def _await_lock(layout: SegmentLayout, pid: int, *, timeout: float = 60.0) -> None:
+    """Wait until the first run has taken the archive lock.
+
+    The lock, not an archive, is the barrier: it is the state the second run
+    must meet, and it is observable before any work is published.
+
+    Parameters
+    ----------
+    layout : SegmentLayout
+        The layout naming the lock file.
+    pid : int
+        The first run's process identifier.
     timeout : float
-        How long to wait before failing the test, which it does when no
-        archive appears before the deadline.
+        How long to wait before failing the test.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if any(layout.archive_dir.glob("*.jsonl.xz")):
+        if _lock_is_held(layout, pid):
             return
-        time.sleep(0.01)
-    pytest.fail("the running command published no archive before the deadline")
+        time.sleep(0.005)
+    pytest.fail("the first run never took the archive lock before the deadline")
 
 
 def test_the_installed_command_inspects_dry_runs_and_archives(
@@ -160,14 +192,17 @@ def test_a_lock_held_by_another_process_exits_seventy_five(
     assert "reason: busy" in finished.stdout, "the reason is closed"
 
 
-def _hold_first(first: subprocess.Popen[bytes]) -> None:
-    """Stop the first run at a barrier that only the test releases.
+def _hold_first(first: subprocess.Popen[bytes], layout: SegmentLayout) -> None:
+    """Stop the first run while it holds the archive lock.
 
     A stopped process keeps its open descriptors, and with them the ``flock``
     the archive lock holds, so the second command meets a lock that is held for
-    as long as the test needs. The barrier replaces the previous assumption
-    that compressing the fixture would outlast the second launch. ``WNOWAIT``
-    reads the stop without consuming the exit status the final wait needs.
+    as long as the test needs. ``CLD_STOPPED`` alone would only prove the
+    process stopped, so the lock entry is re-read afterwards: a process stopped
+    after releasing the lock would let the second run acquire it, and the busy
+    status would be asserted against a lock that is no longer held.
+    ``WNOWAIT`` reads the stop without consuming the exit status the final wait
+    needs.
     """
     first.send_signal(signal.SIGSTOP)
     deadline = time.monotonic() + 10.0
@@ -176,24 +211,41 @@ def _hold_first(first: subprocess.Popen[bytes]) -> None:
             os.P_PID, first.pid, os.WEXITED | os.WSTOPPED | os.WNOHANG | os.WNOWAIT
         )
         if state is not None:
-            if state.si_code == os.CLD_STOPPED:
-                return
-            pytest.fail("the first run left before it reached the barrier")
+            if state.si_code != os.CLD_STOPPED:
+                pytest.fail("the first run left before it reached the barrier")
+            if not _lock_is_held(layout, first.pid):
+                pytest.fail("the first run stopped after releasing the archive lock")
+            return
         time.sleep(0.01)
     pytest.fail("the first run did not stop at the barrier before the deadline")
 
 
-def _abandon(first: subprocess.Popen[bytes]) -> None:
-    """Kill and reap a first run that failed before its normal wait."""
+def _reap(first: subprocess.Popen[bytes]) -> None:
+    """End one run without an unbounded wait on any path.
+
+    A ``Popen`` context manager waits for the process on exit with no timeout.
+    This does the bounded equivalent: an already-finished run is left alone,
+    and a live one is killed and waited for with a deadline.
+
+    Raises
+    ------
+    RuntimeError
+        If the process is still running after a kill and a bounded wait.
+    """
+    if first.poll() is not None:
+        return
     first.kill()
-    with contextlib.suppress(subprocess.TimeoutExpired):
+    try:
         first.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        msg = "the first run survived SIGKILL"
+        raise RuntimeError(msg) from None
 
 
 def test_two_real_runs_do_not_archive_at_once(tmp_path: Path) -> None:
     """A second timer firing during a run reports busy instead of racing.
 
-    The first run publishes an archive, which proves it holds the lock, and is
+    The first run is synchronized on its own acquisition of the archive lock,
     then stopped at a barrier while the second command runs. Stopping the
     process keeps its lock, so the second run provably overlaps the first
     rather than relying on compression time. The barrier is released only
@@ -212,21 +264,20 @@ def test_two_real_runs_do_not_archive_at_once(tmp_path: Path) -> None:
     with (
         output_path.open("w", encoding="utf-8") as output,
         errors_path.open("w", encoding="utf-8") as errors,
-        subprocess.Popen(
-            [SCRIPT, "run", *arguments], cwd=REPO_ROOT, stdout=output, stderr=errors
-        ) as first,
     ):
+        first = subprocess.Popen(
+            [SCRIPT, "run", *arguments], cwd=REPO_ROOT, stdout=output, stderr=errors
+        )
         try:
-            _await_first_archive(layout)
-            _hold_first(first)
+            _await_lock(layout, first.pid)
+            _hold_first(first, layout)
             try:
                 second = _invoke("run", *arguments)
             finally:
                 first.send_signal(signal.SIGCONT)
             first.wait(timeout=180)
-        except BaseException:
-            _abandon(first)
-            raise
+        finally:
+            _reap(first)
 
     assert second.returncode == 75, second.stderr
     assert "status: busy" in second.stdout, "the overlapping run reports busy"

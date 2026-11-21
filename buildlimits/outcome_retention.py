@@ -291,9 +291,8 @@ def header_floor_bytes() -> int:
     A compacted document always starts with a replacement header, so no
     reachable store is smaller than one. The timestamp carries microseconds
     because the encoder preserves fractional seconds: a header written at a
-    whole second is four bytes shorter than one written with any fraction, and
-    a budget sized to the shorter form would still be unable to hold the
-    longer one.
+    whole second is shorter than one written with any fraction, and a budget
+    sized to the shorter form would still be unable to hold the longer one.
 
     Returns
     -------

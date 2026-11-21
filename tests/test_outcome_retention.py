@@ -5,9 +5,12 @@ lets the active file grow past that bound would make every compaction fail, so
 the policy is rejected when it is validated rather than at the first write.
 """
 
+import datetime as dt
+
 import pytest
 
-from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
+from buildlimits.outcome_record_encode import encode_line
+from buildlimits.outcome_record_format import MAX_COMPACT_BYTES, StoreHeader
 from buildlimits.outcome_retention import (
     RetentionPolicy,
     header_floor_bytes,
@@ -53,8 +56,8 @@ def test_a_byte_budget_at_the_header_floor_is_accepted() -> None:
     """The floor itself holds the longest replacement header compaction writes.
 
     The encoder preserves fractional seconds, so a header written with any
-    microsecond value is four bytes longer than one written at a whole second.
-    A budget one byte below this floor could not hold it, which
+    microsecond value is longer than one written at a whole second. A budget
+    one byte below this floor could not hold it, which
     ``test_a_byte_budget_below_one_header_is_refused`` pins from the other side.
     """
     policy = RetentionPolicy(
@@ -62,6 +65,26 @@ def test_a_byte_budget_at_the_header_floor_is_accepted() -> None:
     )
 
     validate_policy(policy)
+
+
+def test_the_header_floor_holds_an_independently_encoded_fractional_header() -> None:
+    """The floor is the longest header the encoder writes, plus its newline.
+
+    Encoding the header here rather than reusing ``header_floor_bytes`` keeps
+    the boundary honest: a floor that reverted to a whole-second header would
+    be smaller than this document and fail the first assertion.
+    """
+    spoken_at = dt.datetime(1970, 1, 1, microsecond=1, tzinfo=dt.UTC)
+    fractional = encode_line(StoreHeader("0" * 64, spoken_at)).encode() + b"\n"
+    whole_second = dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
+    whole = encode_line(StoreHeader("0" * 64, whole_second)).encode() + b"\n"
+
+    assert header_floor_bytes() == len(fractional), (
+        "the floor is exactly one fractional-second header with its newline"
+    )
+    assert len(whole) < header_floor_bytes(), (
+        "a whole-second header is shorter, so it cannot be the floor"
+    )
 
 
 def test_a_byte_budget_one_below_the_header_floor_is_refused() -> None:

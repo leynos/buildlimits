@@ -161,21 +161,35 @@ def test_measure_preserves_a_callers_traced_peak(tmp_path: Path) -> None:
     ``reset_peak`` would discard it, so the caller would observe only the
     smaller peak this pass reached and could not tell which pass allocated
     what. The report leaves its traced figure at zero rather than claiming the
-    caller's peak as its own.
+    caller's peak as its own. The allocation that establishes the caller's
+    peak is released before the pass runs, so a reset could not hide behind
+    memory that is still held while it is measured.
     """
     source = _segment(tmp_path, 5)
-    earlier = 2 * 1_048_576
+    # Comfortably above the pass's own peak, which is dominated by the
+    # compressor's dictionary, so the caller's figure can only survive if the
+    # benchmark left it alone.
+    earlier = 16 * 1_048_576
+
+    tracemalloc.start()
+    try:
+        measure(source, preset=1)
+        pass_peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
     tracemalloc.start()
     try:
         held = bytearray(earlier)
         caller_peak = tracemalloc.get_traced_memory()[1]
+        del held
         report = measure(source, preset=1)
         after = tracemalloc.get_traced_memory()[1]
     finally:
-        del held
         tracemalloc.stop()
 
     assert caller_peak >= earlier, "the caller's own peak is established"
+    assert pass_peak < caller_peak, "the pass alone stays below the caller's peak"
     assert after >= caller_peak, "the caller's peak is not reset by the pass"
     assert report.peak_python_bytes == 0, (
         "the caller's traced peak is not reported as this pass's allocation"
