@@ -92,19 +92,18 @@ def _run_status(
     An active file that could not be counted also makes the totals a lower
     bound, and a timer that recorded ``ok`` would hide history a later run can
     see. A scan that could not finish is retryable; content that cannot be
-    decoded is corrupt.
+    decoded is corrupt, and that corruption outranks a space failure in the
+    same run because it needs an operator rather than another attempt.
 
     Returns
     -------
     RunStatus
         ``ok``, ``unsettled``, ``no_headroom`` or ``corrupt``.
     """
-    if not outcome.failures and not active.has_metadata:
-        return (
-            "unsettled" if active.reason in {"unreadable", "unsettled"} else "corrupt"
-        )
+    if not active.has_metadata and active.reason not in {"unreadable", "unsettled"}:
+        return "corrupt"
     if not outcome.failures:
-        return "unsettled" if retention_unsettled else "ok"
+        return "unsettled" if not active.has_metadata or retention_unsettled else "ok"
     if all(reason == "no_headroom" for _sequence, reason in outcome.failures):
         return "no_headroom"
     return "corrupt"

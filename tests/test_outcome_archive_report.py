@@ -3,6 +3,8 @@
 import datetime as dt
 from pathlib import Path
 
+import pytest
+
 from buildlimits.outcome_archive_context import ArchiveContext
 from buildlimits.outcome_archive_history import ActiveHistory, SettledStore
 from buildlimits.outcome_archive_plan import Plan, PlanSummary
@@ -50,3 +52,35 @@ def test_the_builder_reports_retention_the_caller_measured_as_owed() -> None:
     )
 
     assert report.status == "unsettled", "the caller's decision is honoured"
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("corrupt", "corrupt"),
+        ("unreadable", "no_headroom"),
+    ],
+)
+def test_an_active_scan_failure_does_not_hide_a_space_fault(
+    reason: str, expected: str
+) -> None:
+    """Corruption outranks space; a retryable scan leaves the space fault.
+
+    A full filesystem is retryable, but it must not hide corruption the run
+    also found: the report would tell the timer to try again while history it
+    cannot count stays invisible. A scan that could not finish is itself
+    retryable, so the space fault remains the reason the timer retries.
+    """
+    outcome = RunOutcome(failures=[(1, "no_headroom")])
+
+    report = settled_report(
+        _run(),
+        outcome,
+        SettledStore(
+            Inventory(),
+            ActiveHistory(has_metadata=False, reason=reason),
+            False,
+        ),
+    )
+
+    assert report.status == expected, f"an active {reason} scan reports {expected}"

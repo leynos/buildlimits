@@ -499,7 +499,8 @@ A wall-clock jump of more than a day, in either direction, is treated as
 suspect. The writer then skips age eviction for that pass, reports `clock_skew`
 rather than `expired`, and still applies the byte and record bounds; the next
 undisturbed pass applies the real age bound. Future-dated rows stay until the
-clock agrees with them, so moving the clock back never deletes history.
+clock agrees with them, so moving the clock back does not expire them by age;
+the byte and record bounds still apply.
 
 The retention keys and their defaults are in [Table 2](#supervisor-settings).
 The 12 MiB default is the legacy bound, so a host that writes none of the keys

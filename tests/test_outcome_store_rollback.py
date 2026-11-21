@@ -32,7 +32,7 @@ def test_failed_append_rollback_is_repaired_before_the_next_append(
     rejected = window_summary(server_version="0.14.0")
     appended = window_summary(server_version="0.15.0")
 
-    with running_writer(path) as writer:
+    with running_writer(path, wall_clock=lambda: NOW) as writer:
         append_and_wait(writer, previous)
         with (
             partial_append(),
@@ -143,7 +143,7 @@ def test_a_refused_rollback_names_the_fragment_it_left(tmp_path: Path) -> None:
 def test_close_returns_within_its_bound_when_a_write_stalls(tmp_path: Path) -> None:
     """A stalled worker cannot extend the caller's one-second close bound."""
     path = tmp_path / "cache-outcomes.jsonl"
-    with running_writer(path) as writer:
+    with running_writer(path, wall_clock=lambda: NOW) as writer:
         with stalled_append() as (entered, release):
             writer.append(window_summary())
             assert entered.wait(1.0), "the worker entered its stalled write"

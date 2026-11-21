@@ -2545,6 +2545,12 @@ members = [
     "tests/test_kache_detached_events.py",
 ]
 reason = "Matching type-checking preludes: every module guards the standard-library and domain types its own signatures annotate behind if typ.TYPE_CHECKING. The guard is the shared idiom, not shared logic, and a re-export module would hide which types each file annotates."
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_store_reader.py",
+    "tests/test_outcome_store_snapshot.py",
+]
+reason = "Matching fixture import preludes: both reader tests alias the same store fixtures, and a re-export module would hide which fixture each test actually uses rather than sharing any test logic."
 [[tool.duplication_gate.unit]]
 unit = "buildlimits/outcome_archive_verify.py"
 reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."

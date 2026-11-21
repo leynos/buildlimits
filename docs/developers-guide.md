@@ -1165,11 +1165,14 @@ active-store-only behaviour.
 
 `outcome_archive_report` defines the closed report vocabulary. Statuses are
 `ok`, `failed`, `corrupt`, `busy`, `no_headroom` and `unsettled`. The module
-also owns the four report builders the runner uses: `dry_report` from a settled
-inventory and active snapshot, `settled_report` for an executed run's final
-measurement, and `unsettled_report` and `unfinished_report` for a store that
-never held still or a run that could not start. Every builder takes its finish
-time from the same injected clock, which `RunOptions.clock` carries into
+owns the value vocabulary and the builders for inspections and runs that could
+not complete: `dry_report` from a settled inventory and active snapshot,
+`unsettled_report` for a store that never held still, and `unfinished_report`
+and `after_work_failure` for a run that could not start or measure its result.
+`outcome_archive_settled` owns `settled_report`, which maps the `SettledStore`
+an executed run measured into the same report, classifies the run's status and
+tests whether retention still owes work. Every builder takes its finish time
+from the same injected clock, which `RunOptions.clock` carries into
 `ArchiveContext.clock`; `ArchiveContext.quarantine_token` likewise supplies the
 random tag a quarantine name records, so both the report's timing and the
 evidence naming are ports a test can substitute. The report names no path and
