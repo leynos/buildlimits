@@ -4,8 +4,7 @@ The writer never takes the archive lock, so it can seal a source after the run
 has planned and before the follow-up passes look again. Each pass re-reads the
 store, performs the archive, reconcile, heal and orphan work it discovers, then
 applies the retention the settled inventory plans. The passes are bounded; a
-run that still finds work after them reports an unsettled result so the next
-timer firing retries instead of claiming success.
+run that still finds work reports an unsettled result so the next firing retries.
 """
 
 import dataclasses as dc
@@ -103,13 +102,14 @@ def retain(run: ArchiveRun, outcome: RunOutcome) -> bool:
     """
     applied = _applied_trims(run, outcome)
     removed = _removed(outcome)
-    for _pass in range(_MAX_RETAIN_PASSES):
+    for attempt in range(_MAX_RETAIN_PASSES):
         try:
             pending = _pending_work(run, outcome, applied, removed)
         except _InventoryChangedError:
             # The store moved while this pass read it. Spend another bounded
             # pass on a fresh pair of reads rather than acting on a plan that
             # counted neither the sealed source nor its active rows.
+            run.context.on_retry("retain", attempt + 1, "inventory_changed")
             continue
         if pending is None:
             return True
@@ -309,7 +309,7 @@ def settled_snapshot(
         The age cutoff to measure the active rows against, or None to count
         the whole file. The returned history carries both figures either way.
     on_retry : Callable[[str, int, str], None] | None
-        Receives each retried read's operation, attempt number and category.
+        Receives each retried read's operation, attempt and category.
 
     Returns
     -------

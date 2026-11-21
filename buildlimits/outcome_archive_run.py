@@ -64,11 +64,15 @@ class RunOutcome:
         Sequences that could not be processed, with a closed reason.
     retention_unsettled : bool
         Whether the bounded follow-up passes left retention work pending.
+    quarantine_unsettled : bool
+        Whether a quarantine move failed after it may already have renamed the
+        file, so the pass cannot tell whether retained history changed.
     """
 
     actions: list[ActionResult] = dc.field(default_factory=list)
     failures: list[tuple[int, str]] = dc.field(default_factory=list)
     retention_unsettled: bool = False
+    quarantine_unsettled: bool = False
 
 
 def failure_reason(error: OSError) -> str:
@@ -132,8 +136,13 @@ def quarantined_history(outcome: RunOutcome, first_action: int) -> bool:
     Returns
     -------
     bool
-        True when a quarantine changed the retained history.
+        True when a quarantine changed, or may have changed, retained history.
     """
+    if outcome.quarantine_unsettled:
+        # A move that failed after its rename has left the retained history
+        # without recording the action, so the plan's totals are just as stale
+        # as they are after a recorded quarantine.
+        return True
     return any(
         action.action == "quarantined" and action.reason != "orphan_sidecar"
         for action in outcome.actions[first_action:]
@@ -266,6 +275,11 @@ def _quarantine_fault(
     try:
         outcome.actions.append(quarantine(reason))
     except OSError as error:
+        # The move renames the file before it syncs the directories, so a
+        # failure here can leave the file quarantined with no action recorded.
+        # The pass cannot know whether the counted history is still there, so
+        # it records the uncertainty and the caller skips eviction.
+        outcome.quarantine_unsettled = True
         outcome.failures.append((sequence, failure_reason(error)))
         return
     outcome.failures.append((sequence, reason))

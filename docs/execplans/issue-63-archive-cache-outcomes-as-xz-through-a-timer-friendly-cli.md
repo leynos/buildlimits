@@ -1742,6 +1742,10 @@ verified archive is published, and leaves compile admission untouched.
   sink only when systemd supplies `JOURNAL_STREAM`, so a shell run and the test
   suite never write to the host journal, and the event stays a closed,
   identifier-free vocabulary.
+- A quarantine move is treated as history-changing until it completes. The
+  rename happens before the directory sync, so a sync failure can leave the
+  file quarantined with no recorded action; the run then stops eviction because
+  its budget totals may no longer describe the store.
 
 ## Outcomes & retrospective
 
@@ -2359,3 +2363,19 @@ after each revert.
   `_rejected_exactly`, because `pytest.raises(match=...)` is an unanchored
   search that a longer message would still satisfy. Five mutations, one per
   notice, were each observed to fail and reverted.
+- Revision 36 records the revision-35 assessment's findings. A quarantine move
+  that renames the file and then fails its directory sync no longer leaves the
+  pass free to evict: `RunOutcome.quarantine_unsettled` records the uncertainty,
+  `quarantined_history` treats it as changed history, and the new regression
+  fails only that second sync and asserts the older archive is untouched. A
+  follow-up pass abandoned because the inventory moved now reports
+  `("retain", attempt, "inventory_changed")`, and a run that seals during its
+  second active read is observed with that notice. Operation-level tracing
+  spans remain outside the plan's stated observability contract (exit statuses,
+  `last-run.json`, `inspect`, the store's `outcome_store` telemetry, and this
+  revision's `archive_run` event and retry notices); the tracing catalogue
+  reserves only `statistics_read` and the three store operations, so archive
+  spans are recorded as a follow-up rather than an in-scope gap. The Rohga
+  measurement remains an evidential limit: the host is unreachable from the
+  development host, so the plan keeps the generated-data figures rather than
+  claiming a Rohga measurement.

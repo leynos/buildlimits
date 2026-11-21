@@ -34,6 +34,7 @@ from segment_test_helpers import document, write_private
 
 from buildlimits import (
     outcome_archive_files,
+    outcome_archive_quarantine,
     outcome_archive_retain,
 )
 from buildlimits.outcome_archive import inspect_store
@@ -139,6 +140,84 @@ def test_a_quarantined_source_does_not_evict_older_history(tmp_path: Path) -> No
     assert archive.read_bytes() == archive_before, "the older archive is untouched"
     assert sidecar.read_bytes() == sidecar_before, "its sidecar still describes it"
     assert report.status == "corrupt", "the quarantine needs an operator"
+
+
+def test_a_quarantine_whose_sync_fails_still_holds_eviction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A move that renamed before its sync failed may have removed history.
+
+    ``quarantine_file`` renames the file and only then syncs the directory, so
+    a sync failure leaves the file quarantined with no recorded action. The
+    pass cannot prove the plan's budget is still true, so it must not evict.
+    """
+    store, _store_layout = store_with_archive(tmp_path, 5)
+    archive = archives(tmp_path)[0]
+    archive_before = archive.read_bytes()
+    corrupt = sealed_measured_source(store, 2, records(NOW, 10))
+    corrupt.write_bytes(b"not a cache outcome document\n")
+    real_sync = outcome_archive_quarantine.fsync_directory
+    calls = 0
+
+    def fail_the_directory_sync(directory: Path) -> None:
+        """Fail the sync that follows the rename, keeping the earlier one."""
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected sync failure")
+        real_sync(directory)
+
+    monkeypatch.setattr(
+        outcome_archive_quarantine, "fsync_directory", fail_the_directory_sync
+    )
+
+    report = run(
+        tmp_path, policy(segment_bytes=1_000_000, max_age_days=0, max_records=10)
+    )
+
+    actions = [(action.action, action.sequence) for action in report.actions]
+    assert ("deleted", 1) not in actions, "the older archive outlives the budget"
+    assert archive.read_bytes() == archive_before, "the older archive is untouched"
+    assert report.status == "corrupt", "the failed move needs an operator"
+
+
+def test_a_follow_up_replan_reports_the_pass_it_abandoned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A seal during a follow-up read reports the retry at its attempt."""
+    _, store_layout = store_with_archive(tmp_path, 1)
+    real = outcome_archive_retain.active_history
+    calls = 0
+
+    def seal_second_read(
+        path: Path,
+        *,
+        cutoff: dt.datetime | None = None,
+        on_retry: cabc.Callable[[str, int, str], None] | None = None,
+    ) -> ActiveHistory:
+        """Seal one row before the second active read returns."""
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            seal_one_row(store_layout, 2)
+        return real(path, cutoff=cutoff, on_retry=on_retry)
+
+    monkeypatch.setattr(outcome_archive_retain, "active_history", seal_second_read)
+    notices: list[tuple[str, int, str]] = []
+
+    def record(operation: str, attempt: int, category: str) -> None:
+        """Keep one retry notice from the run."""
+        notices.append((operation, attempt, category))
+
+    run(
+        tmp_path,
+        policy(segment_bytes=1_000_000, max_age_days=30, max_records=5),
+        on_retry=record,
+    )
+
+    assert ("retain", 1, "inventory_changed") in notices, (
+        "the abandoned follow-up pass is reported"
+    )
 
 
 def test_a_follow_up_quarantine_leaves_the_eviction_unrecorded(
