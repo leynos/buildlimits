@@ -259,7 +259,13 @@ def settled_report(
     """
     inventory = settled.inventory
     active = settled.active
-    retained = active.bytes + inventory.sealed_bytes + inventory.archived_logical_bytes
+    # A crash between publication and source removal leaves both copies until
+    # reconciliation, and only the sealed source is the effective copy then.
+    # Summing every sealed and every archived entry would count that sequence
+    # twice, so the retained bytes follow the same one-entry-per-sequence view
+    # the record count and span already use.
+    closed = sum(entry.logical_bytes for entry in inventory.effective)
+    retained = active.bytes + closed
     observed = observed_history(inventory, active)
     return RunReport(
         status=_run_status(outcome, retention_unsettled=settled.retention_unsettled),

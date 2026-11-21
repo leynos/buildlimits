@@ -16,15 +16,22 @@ from pathlib import Path
 from archive_seal_helpers import seal_five_rows, seal_one_row
 from outcome_archive_helpers import (
     NOW,
+    layout,
     policy,
     records,
     run,
     store_with_archive,
+    write,
 )
 from segment_test_helpers import document, write_private
 
-from buildlimits import outcome_archive_retain, outcome_record_encode
+from buildlimits import (
+    outcome_archive_files,
+    outcome_archive_retain,
+    outcome_record_encode,
+)
 from buildlimits.outcome_archive_exit import EXIT_TEMPFAIL, exit_status
+from buildlimits.outcome_segments import archive_name, segment_name
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -136,6 +143,40 @@ def test_the_final_report_retries_a_seal_at_its_active_read(
     assert report.observed_until == NOW + dt.timedelta(minutes=4), (
         "the span reaches the newest row in the sealed source"
     )
+
+
+def test_a_source_left_beside_its_archive_is_counted_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed source removal leaves two copies but one retained sequence.
+
+    Publication succeeds before the removal fails, so the sealed source and its
+    archive both exist until reconciliation. The report counts the effective
+    copy once, exactly as it counts the sequence's rows once.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 1), policy())
+    store_layout = layout(tmp_path)
+    source = store_layout.sealed_dir / segment_name(1)
+    single = source.stat().st_size
+
+    def refuse_removal(*_args: object, **_kwargs: object) -> None:
+        """Fail the removal the publication has already earned."""
+        raise OSError("injected removal failure")
+
+    monkeypatch.setattr(outcome_archive_files, "_remove_sealed_source", refuse_removal)
+
+    report = run(tmp_path, policy())
+
+    assert source.exists(), "the source the removal failed to delete remains"
+    assert (store_layout.archive_dir / archive_name(1)).exists(), (
+        "the archive is published before the removal fails"
+    )
+    assert report.retained_bytes == report.active_bytes + single, (
+        "the duplicated sequence counts once"
+    )
+    assert report.retained_records == 1, "its rows count once"
+    assert report.status == "corrupt", "the failed removal needs an operator"
 
 
 def test_a_writer_that_keeps_sealing_leaves_the_report_unsettled(
