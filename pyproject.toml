@@ -2470,6 +2470,10 @@ reason = "Each test waits a fixed interval for its own observable condition: one
 members = ["tests/fake_cache_processes.py", "tests/test_outcome_archive_subprocess.py"]
 reason = "One standard-library call on each module's own process handle: the fake cache process stops the scripted child it started, and the subprocess test stops the archiver it launched. A helper would have to be shared between a test double and a test for a single `kill()`, while each keeps its own wait and reap rules."
 
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_archive_lifecycle_properties.py", "tests/test_outcome_archive_retention.py"]
+reason = "Matching import lists: each suite decompresses a published archive, names a scratch path and drives generated cases through the same Hypothesis symbols, and both use every shared name. A re-export module would hide which dependencies each suite actually needs, so only the prelude repeats."
+
 [[tool.duplication_gate.unit]]
 unit = "buildlimits/outcome_archive_verify.py"
 reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."

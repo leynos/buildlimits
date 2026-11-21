@@ -886,6 +886,18 @@ verified archive is published, and leaves compile admission untouched.
   enumeration fails the gap assertion. The Rohga criterion remains a maintainer
   decision; the host is unreachable and the measured substitute is recorded as
   evidence, not as the issue's measurement.
+- [x] Revision-30 assessment remediation (2026-11-21): the whole-plan
+  assessment asked the generated property to cover seal, reconcile, trim and
+  delete transitions, to assert that a repeat firing reports no action, and to
+  correct its docstring's claim that the withheld source is the last. The
+  property now generates five transition classes, asserts `again.actions` is
+  empty after every step, and says the withheld source is a middle one.
+  `test_each_transition_class_is_reachable` pins every class to its exact
+  action names, so coverage no longer depends on the classes a seed happens to
+  draw, and `event` reports each step's classes under
+  `--hypothesis-show-statistics`. Three mutations were observed and reverted: a
+  seal between the two firings, a blank expected gap tuple, and an unwritten
+  duplicate source.
 
 ## Surprises & discoveries
 
@@ -1200,6 +1212,15 @@ verified archive is published, and leaves compile admission untouched.
   lowest sequence it still holds, so a missing head reads as a late start. Only
   a middle sequence is unambiguously loss, which is why the generated history
   withholds one of those and leaves shorter histories whole.
+- A trim is only visible once an archive holds more rows than the budget can
+  keep. The property's first version wrote one record per segment, so a record
+  cap could only delete whole archives and `trimmed` never appeared in the
+  statistics. Writing a four-row group under a record cap of three seals a
+  three-row source and leaves one row active, and the planner then shortens
+  that source when the remaining budget falls inside it. The same cap bounds
+  the generator: a cap below the writer's active-row count makes a run report
+  `unsettled`, because the planner cannot trim the active file, so a trim draws
+  a cap of at least the largest active count a schedule can create.
 
 ## Decision log
 
@@ -1634,6 +1655,15 @@ verified archive is published, and leaves compile admission untouched.
   therefore asserts the serialized value first and redacts second; the CLI test
   derives the expected byte count from the encoded fixture rather than
   restating it.
+- A lifecycle generator must build the states its transitions need. A trim is
+  only reachable once an archive holds more rows than the budget can keep, so a
+  seal transition writes four rows under a record cap of three: the writer
+  seals three and keeps one active. Trim transitions then draw a cap of at
+  least three, because a cap below the writer's active-row count makes the
+  planner report `unsettled` instead of exercising a trim. Half the generated
+  schedules seal first for the same reason, and the deterministic companion
+  test states each class's exact action names so coverage is asserted rather
+  than inferred from a seed's statistics.
 
 ## Outcomes & retrospective
 
@@ -1813,15 +1843,19 @@ Methods and evidence:
   walk, including that the returned descriptor names the mode it found.
   Restoring the unconditional `fchmod` fails both with `448 == 493`.
 - Generated lifecycle transitions in
-  `tests/test_outcome_archive_lifecycle_properties.py`: fifteen generated
-  multi-segment histories, each built from real encoded documents, are archived
-  by the real run and read back. One branch withholds a middle sealed source;
-  the property asserts replay equals exactly the surviving rows in sequence
-  order, the inventory's only gap is that sequence with no truncation, no
-  source survives the archive, and a second firing leaves replay and gaps
-  unchanged. The negative controls drop the last replayed row (the replay
-  assertion fails) and suppress gap enumeration (the gap assertion fails); both
-  mutations were reverted.
+  `tests/test_outcome_archive_lifecycle_properties.py`: the property drives the
+  real writer and archiver over generated histories and applies generated
+  schedules of five transition classes -- writer seal, archive, crash
+  duplicate, record budget and age cutoff -- asserting after each step that
+  replay is exactly the surviving rows in order, the inventory's gaps are
+  exactly the sequences the scan did not find, and a repeat of the same firing
+  performs no action. Half the schedules seal a multi-row source first, so a
+  later budget step has a multi-row archive to shorten. One branch withholds a
+  middle sealed source. A deterministic companion,
+  `test_each_transition_class_is_reachable`, asserts the exact action names
+  each class reports -- `archived`, `reconciled`, `deleted` and `trimmed` -- so
+  a schedule that never draws a class is a coverage gap rather than an
+  unreachable state. The negative controls appear under Non-vacuity.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
@@ -1860,11 +1894,15 @@ beside the two rows of the 1319-byte opened version, and replacing the retrying
 snapshot with a single read makes both report tests fail (the sealed source is
 undercounted, and the persistent seal reports `ok` instead of `unsettled`).
 Each mutation was reverted and the focused suite passed again. The generated
-lifecycle property has both branches reached by explicit examples as well as
-generated ones, and its two assertions were each checked against a mutation:
-dropping the last replayed record fails the replay assertion, and returning an
-empty gap tuple fails the gap assertion. Both mutations were reverted and the
-property passed again.
+lifecycle property records each step's action names with `event`, so
+`--hypothesis-show-statistics` shows the classes a run exercised; its
+deterministic companion asserts the exact names of all five classes. Three
+mutations were observed and reverted: inserting a seal between the two firings
+fails the no-op assertion in both tests, skipping the duplicate write fails the
+settle assertion in both, and returning an empty gap tuple fails the gap
+assertion in the generated property, whose histories withhold a source; the
+companion's histories are complete and report no gap. The suite passed again
+after each revert.
 
 ## Revision note
 
@@ -2165,3 +2203,14 @@ property passed again.
   property's design: only a withheld middle sequence is reportable, since a
   missing head reads as a late start under the retention floor's own rule and a
   missing tail as a store that ended.
+- Revision 31 records the revision-30 assessment's lifecycle-coverage
+  disposition. The generated property now draws seal, duplicate, trim and
+  expire transitions as well as archive, asserts the repeated firing reports no
+  actions, and states correctly that the withheld source is a middle one. A
+  deterministic companion asserts the exact action names of all five classes,
+  so the class evidence no longer depends on a seed. Discovering that `trimmed`
+  needs a multi-row archive changed the generator: a seal writes four rows
+  under a record cap of three, and trim caps stay at or above the largest
+  active-row count so a run settles instead of reporting `unsettled`. Three
+  mutations -- a seal between firings, a blank gap tuple and an unwritten
+  duplicate -- were each observed to fail and reverted.

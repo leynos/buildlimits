@@ -1,139 +1,366 @@
-"""Generated lifecycle transitions, replayed and gap-checked after each.
+"""Generated lifecycle transitions, replayed and gap-checked after each step.
 
-A closed segment's life is a small sequence of transitions: the writer seals
-it, the archiver compresses and publishes it, and a later firing may evict it.
-The deterministic tests pin each transition's decision; these properties drive
-the real archiver over generated histories and assert what an operator reads
-afterwards: every surviving row replays in order, a sequence that went missing
-is reported exactly once as a gap, and a second firing changes neither. One
-generated history withholds its last sealed source before the run, so the gap
-branch is exercised rather than assumed.
+A closed segment's life is a sequence of transitions: the writer seals it, the
+archiver compresses and publishes it, a crash can leave a duplicate source
+beside its archive, a record budget trims or deletes it, and the age cutoff
+expires it. These properties drive the real writer and archiver over generated
+histories and assert after every step what an operator reads: history replays
+in order without inventing or repeating a row, the gap list is exactly the
+sequences the scan could not find, and a repeat of the same step performs no
+action. One generated history loses a middle sealed source before the first
+run, so gap reporting is exercised rather than assumed.
+
+The schedules genuinely reach each transition: the writer seals multi-row
+groups at a record cap, an archive is duplicated as a crash leaves it, a record
+budget shortens a multi-row archive as well as deleting whole ones, and an age
+cutoff expires a prefix. `event` records which actions each step's report
+carried, so `--hypothesis-show-statistics` shows the classes a run exercised
+instead of leaving coverage to be assumed.
 """
 
+import dataclasses as dc
 import datetime as dt
+import lzma
 import os
 import typing as typ
 from pathlib import Path
 
-from hypothesis import HealthCheck, example, given, settings
+from hypothesis import HealthCheck, event, example, given, settings
 from hypothesis import strategies as st
+from outcome_archive_helpers import NOW, policy, run, write
 from outcome_test_helpers import records_at
-from segment_test_helpers import document, write_private
+from segment_test_helpers import write_private
 
 from buildlimits.outcome_history import read_history
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segment_state import read_retention_floor
-from buildlimits.outcome_segments import SegmentLayout, archive_name
+from buildlimits.outcome_segments import SegmentLayout
 
 if typ.TYPE_CHECKING:
-    from buildlimits.outcome_record_format import StoreRecord
+    from buildlimits.outcome_archive import RunReport
+    from buildlimits.outcome_retention import RetentionPolicy
 
-from outcome_archive_helpers import NOW, policy, run
+# The archiver reads a zero age bound as "no age limit", so an archive, trim
+# or seal step asks for a bound no generated observation can reach. Only the
+# expire step chooses a real cutoff.
+_NO_EXPIRY_DAYS = 3_650
+
+# Older rows let an expire step delete a prefix; recent rows survive every
+# cutoff it draws, so one store can exercise both outcomes.
+_OLDER_DAYS = 40
+_RECENT_DAYS = 1
+
+# A pair the archiver settles from either side: it reconciles a duplicate
+# source into its verified archive, or archives the source again when the
+# archive has already gone.
+_SETTLING = frozenset({"reconciled", "re-archived", "archived"})
 
 # A gap is only reportable strictly between two surviving sequences. A fresh
-# store derives its floor from the lowest sequence it still holds, so a
-# withheld first sequence reads as a late start rather than a loss; a withheld
-# last sequence sits above every survivor, which is indistinguishable from a
-# store that simply ended there. The generated history therefore has at least
-# three segments and withholds a middle one, and a shorter one withholds
-# nothing.
+# store derives its floor from the lowest sequence it still holds, so a lost
+# first sequence reads as a late start rather than a loss; a lost last
+# sequence sits above every survivor, which is indistinguishable from a store
+# that simply ended there. The generator therefore withholds a middle source,
+# and only from a store with at least three of them.
 _GAP_CHOICE = st.one_of(st.none(), st.integers(min_value=0, max_value=2))
 
+# The older rows, recent rows and withheld source describe one starting store,
+# so they travel as one draw and keep the property's signature within bounds.
+_HISTORY = st.tuples(
+    st.integers(min_value=0, max_value=3),
+    st.integers(min_value=0, max_value=3),
+    _GAP_CHOICE,
+)
 
-def _withheld_sequence(counts: list[int], choice: int | None) -> int | None:
-    """Return a middle sequence to withhold, or None to withhold nothing.
+# A seal transition writes four rows under a record cap of three: the writer
+# seals the first three as one source and keeps the fourth active, so a later
+# record cap has a multi-row archive to shorten rather than delete whole. A
+# record cap below three would leave more active rows than the cap can count,
+# which the planner refuses to settle, so trim draws a cap of at least three.
+_SEAL_ROWS = 4
+_SEAL_RECORD_CAP = 3
+
+_TRANSITION = st.one_of(
+    st.tuples(st.just("archive"), st.just(0)),
+    st.tuples(st.just("trim"), st.sampled_from([3, 4])),
+    st.tuples(st.just("expire"), st.sampled_from([1, 10, 45])),
+    st.tuples(st.just("seal"), st.just(0)),
+    st.tuples(st.just("duplicate"), st.just(0)),
+)
+
+
+def _prefixed_with_seal(
+    rest: list[tuple[str, int]],
+) -> list[tuple[str, int]]:
+    """Return a schedule that seals one multi-row source before its steps."""
+    return [("seal", 0), *rest]
+
+
+# Half the schedules seal a source first, so a later budget step usually has a
+# multi-row archive to shorten rather than only whole sources to delete.
+_SCHEDULE = st.one_of(
+    st.lists(_TRANSITION, min_size=1, max_size=3),
+    st.builds(_prefixed_with_seal, st.lists(_TRANSITION, min_size=0, max_size=2)),
+)
+
+
+@dc.dataclass(slots=True)
+class _Store:
+    """One generated store and the rows its writer was offered.
+
+    Attributes
+    ----------
+    root : Path
+        The directory the store and its layout live under.
+    path : Path
+        The store's active file path.
+    layout : SegmentLayout
+        The sealed, archive and quarantine directories beside the store.
+    offered : set[datetime.datetime]
+        Observation times of every row the writer accepted, which is what
+        replay may report and nothing else.
+    seals : int
+        How many seal transitions have run, so each one observes new times.
+    """
+
+    root: Path
+    path: Path
+    layout: SegmentLayout
+    offered: set[dt.datetime]
+    seals: int = 0
+
+
+def _build(root: Path, older: int, recent: int, choice: int | None) -> _Store:
+    """Write a sealed store through the real writer and withhold one source.
+
+    Returns
+    -------
+    _Store
+        The store, its layout and every row offered to the writer.
+    """
+    root.mkdir(mode=0o700)
+    path = root / "cache-outcomes.jsonl"
+    rows = (
+        *records_at(NOW - dt.timedelta(days=_OLDER_DAYS), older),
+        *records_at(NOW - dt.timedelta(days=_RECENT_DAYS), recent),
+    )
+    write(path, rows, policy(segment_bytes=1, max_age_days=_NO_EXPIRY_DAYS))
+    state = _Store(
+        root, path, SegmentLayout.beside(path), {row.observed_at for row in rows}
+    )
+    _withhold(state, choice)
+    return state
+
+
+def _sealed_sources(state: _Store) -> list[Path]:
+    """Return the sealed source paths in sequence order.
+
+    Returns
+    -------
+    list[Path]
+        Every ``segment-*.jsonl`` file under the sealed directory.
+    """
+    return sorted(state.layout.sealed_dir.glob("segment-*.jsonl"))
+
+
+def _withhold(state: _Store, choice: int | None) -> None:
+    """Remove one middle sealed source, as a lost file would be missing."""
+    sources = _sealed_sources(state)
+    if choice is None or len(sources) < 3:
+        return
+    source = sources[1 + choice % (len(sources) - 2)]
+    metadata = source.with_name(f"{source.name}.meta.json")
+    metadata.unlink(missing_ok=True)
+    source.unlink()
+
+
+def _policy_for(name: str, argument: int) -> RetentionPolicy:
+    """Return the retention policy one transition runs under.
+
+    Returns
+    -------
+    RetentionPolicy
+        The record cap a trim needs, the cutoff an expire draws, or a policy
+        that archives without evicting anything by age.
+    """
+    if name == "trim":
+        return policy(max_age_days=_NO_EXPIRY_DAYS, max_records=argument)
+    if name == "expire":
+        return policy(max_age_days=argument)
+    return policy(max_age_days=_NO_EXPIRY_DAYS)
+
+
+def _run(state: _Store, chosen: RetentionPolicy) -> RunReport:
+    """Run the archiver once at the fixed wall time.
+
+    Returns
+    -------
+    RunReport
+        The run's report.
+    """
+    return run(state.root, chosen)
+
+
+def _seal_more(state: _Store) -> None:
+    """Append a group the writer seals as one multi-row source.
+
+    The byte water mark is far above a group's size, so only the record cap
+    forces a seal; the cap leaves the group's last row active.
+    """
+    state.seals += 1
+    observed = NOW + dt.timedelta(minutes=10 * state.seals)
+    rows = records_at(observed, _SEAL_ROWS)
+    write(
+        state.path,
+        rows,
+        policy(
+            segment_bytes=1_000_000,
+            max_age_days=_NO_EXPIRY_DAYS,
+            max_records=_SEAL_RECORD_CAP,
+        ),
+    )
+    state.offered.update(row.observed_at for row in rows)
+
+
+def _leave_duplicate(state: _Store) -> int | None:
+    """Recreate a sealed source from a published archive, as a crash can.
 
     Returns
     -------
     int | None
-        A sequence with a surviving entry both before and after it, or None.
+        The sequence of the source that now sits beside its archive, or None
+        when the store holds no rows to archive in the first place.
     """
-    if choice is None or len(counts) < 3:
+    archives = sorted(state.layout.archive_dir.glob("segment-*.jsonl.xz"))
+    if not archives:
+        assert _run(state, _policy_for("archive", 0)).status == "ok", (
+            "a duplicate needs an archive to duplicate"
+        )
+        archives = sorted(state.layout.archive_dir.glob("segment-*.jsonl.xz"))
+    if not archives:
         return None
-    return 2 + choice % (len(counts) - 2)
+    archive = archives[0]
+    source = state.layout.sealed_dir / archive.name.removesuffix(".xz")
+    write_private(source, lzma.decompress(archive.read_bytes()))
+    return int(archive.name.removeprefix("segment-").split(".", 1)[0])
 
 
-def _rows_for(sequence: int, count: int) -> tuple[StoreRecord, ...]:
-    """Return one segment's rows, distinct from every other segment's.
-
-    Returns
-    -------
-    tuple[StoreRecord, ...]
-        Rows observed ten minutes apart, offset by the sequence.
-    """
-    return records_at(NOW + dt.timedelta(minutes=10 * sequence), count)
-
-
-def _build_store(
-    root: Path, counts: list[int], withheld: int | None
-) -> tuple[SegmentLayout, dict[int, tuple[StoreRecord, ...]]]:
-    """Write one sealed source per generated count and withhold one of them.
-
-    Returns
-    -------
-    tuple[SegmentLayout, dict[int, tuple[StoreRecord, ...]]]
-        The store's layout and the rows each surviving sequence holds.
-    """
-    store_layout = SegmentLayout.beside(root / "cache-outcomes.jsonl")
-    surviving: dict[int, tuple[StoreRecord, ...]] = {}
-    for sequence, count in enumerate(counts, start=1):
-        rows = _rows_for(sequence, count)
-        if sequence == withheld:
-            continue
-        path = store_layout.sealed_dir / archive_name(sequence).removesuffix(".xz")
-        write_private(path, document(rows))
-        surviving[sequence] = rows
-    return store_layout, surviving
-
-
-def _assert_replayed(
-    store_layout: SegmentLayout, surviving: dict[int, tuple[StoreRecord, ...]]
-) -> None:
-    """Assert retained history is exactly the surviving rows, in order."""
-    expected = tuple(row for rows in surviving.values() for row in rows)
-    assert read_history(store_layout).records == expected, (
-        "every surviving row replays once, in sequence order"
+def _assert_gaps(state: _Store) -> None:
+    """Assert the gap list is exactly the sequences missing between survivors."""
+    floor = read_retention_floor(state.layout).sequence
+    inventory = read_inventory(state.layout, retention_floor=floor)
+    present = {entry.sequence for entry in (*inventory.sealed, *inventory.archived)}
+    # No recorded floor retains nothing intentionally, so sequence one is the
+    # lowest a store can report; a recorded floor raises that bound.
+    lowest = 1 if floor is None else max(1, floor)
+    highest = max(present) if present else lowest
+    expected = tuple(
+        sequence for sequence in range(lowest, highest) if sequence not in present
     )
+    assert inventory.gaps == expected, (
+        "the reported gaps are the sequences the scan did not find"
+    )
+    assert inventory.gaps_truncated is False, "a generated history fits the gap list"
 
 
-def _assert_gaps(store_layout: SegmentLayout, withheld: int | None) -> None:
-    """Assert the inventory reports exactly the withheld sequence."""
-    floor = read_retention_floor(store_layout).sequence
-    inventory = read_inventory(store_layout, retention_floor=floor)
-    expected = () if withheld is None else (withheld,)
-    assert inventory.gaps == expected, "a missing sequence is reported once"
-    assert inventory.gaps_truncated is False, "a generated history fits the list"
+def _assert_observable(state: _Store) -> None:
+    """Assert replay and gap reporting agree with what the writer accepted."""
+    times = tuple(row.observed_at for row in read_history(state.layout).records)
+    assert set(times) <= state.offered, "replay reports only rows the writer accepted"
+    assert list(times) == sorted(set(times)), "replay is ordered and repeats no row"
+    _assert_gaps(state)
 
 
-@given(
-    counts=st.lists(st.integers(min_value=0, max_value=4), min_size=1, max_size=3),
-    choice=_GAP_CHOICE,
-)
-@example(counts=[2, 0], choice=None)
-@example(counts=[0, 0, 0], choice=0)
-@example(counts=[1, 3, 0], choice=1)
+def _step(state: _Store, transition: tuple[str, int]) -> tuple[str, ...]:
+    """Apply one transition, then require it to settle and stay settled.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The action names the run reported, in the order it took them.
+    """
+    name, argument = transition
+    duplicated: int | None = None
+    match name:
+        case "seal":
+            _seal_more(state)
+        case "duplicate":
+            duplicated = _leave_duplicate(state)
+    chosen = _policy_for(name, argument)
+
+    report = _run(state, chosen)
+
+    assert report.status == "ok", "every generated transition completes"
+    if duplicated is not None:
+        settled = any(
+            action.sequence == duplicated and action.action in _SETTLING
+            for action in report.actions
+        )
+        assert settled, "the duplicate source is settled by the run that follows it"
+    _assert_observable(state)
+
+    again = _run(state, chosen)
+
+    assert again.status == "ok", "a repeated firing succeeds"
+    assert not again.actions, "a settled store performs no action on a repeat"
+    _assert_observable(state)
+    return tuple(action.action for action in report.actions)
+
+
+@given(history=_HISTORY, schedule=_SCHEDULE)
+@example(history=(2, 2, None), schedule=[("archive", 0)])
+@example(history=(2, 2, 0), schedule=[("archive", 0)])
+@example(history=(2, 2, None), schedule=[("seal", 0)])
+@example(history=(2, 2, None), schedule=[("archive", 0), ("trim", 3)])
+@example(history=(3, 0, None), schedule=[("expire", 10)])
+@example(history=(2, 1, None), schedule=[("archive", 0), ("duplicate", 0)])
+@example(history=(1, 0, None), schedule=[("seal", 0), ("expire", 10)])
+@example(history=(0, 0, None), schedule=[("seal", 0), ("archive", 0), ("trim", 3)])
 @settings(
-    max_examples=15,
+    max_examples=40,
     deadline=None,
     suppress_health_check=[HealthCheck.function_scoped_fixture],
 )
-def test_generated_lifecycles_replay_and_report_gaps(
-    tmp_path: Path, counts: list[int], choice: int | None
+def test_generated_lifecycles_settle_and_report_gaps(
+    tmp_path: Path,
+    history: tuple[int, int, int | None],
+    schedule: list[tuple[str, int]],
 ) -> None:
-    """Archiving preserves replay and reports a withheld sequence as a gap."""
-    withheld = _withheld_sequence(counts, choice)
-    root = tmp_path / os.urandom(4).hex()
-    store_layout, surviving = _build_store(root, counts, withheld)
+    """Every generated lifecycle transition leaves replay and gaps consistent."""
+    state = _build(tmp_path / os.urandom(4).hex(), *history)
 
-    report = run(root, policy(max_age_days=0))
+    for transition in schedule:
+        name, _ = transition
+        actions = _step(state, transition)
+        event(name, tuple(sorted(set(actions))))
 
-    assert report.status == "ok", "a generated history archives successfully"
-    assert not read_inventory(store_layout).sealed, "no source is left behind"
-    _assert_replayed(store_layout, surviving)
-    _assert_gaps(store_layout, withheld)
 
-    again = run(root, policy(max_age_days=0))
+def test_each_transition_class_is_reachable(tmp_path: Path) -> None:
+    """Each transition in the schedules reports the action it names.
 
-    assert again.status == "ok", "a repeat firing is a no-op success"
-    _assert_replayed(store_layout, surviving)
-    _assert_gaps(store_layout, withheld)
+    The generated property records which classes a run happened to draw; this
+    fixed sequence proves every class is reachable, so a schedule that never
+    draws one is a coverage gap rather than an unreachable state.
+    """
+    state = _build(tmp_path / "lifecycle", older=2, recent=1, choice=None)
+
+    assert _step(state, ("archive", 0)) == ("archived",) * 3, (
+        "archiving publishes each sealed source"
+    )
+    assert _step(state, ("duplicate", 0)) == ("reconciled",), (
+        "a duplicate source is reconciled with its archive"
+    )
+    assert _step(state, ("seal", 0)) == ("archived",), (
+        "a source the writer seals is archived next"
+    )
+    assert _step(state, ("trim", 3)) == (
+        "deleted",
+        "deleted",
+        "deleted",
+        "trimmed",
+    ), "a budget deletes whole sources and then shortens one"
+
+    expiring = _build(tmp_path / "expiry", older=3, recent=0, choice=None)
+
+    assert _step(expiring, ("expire", 10)) == ("deleted",) * 3, (
+        "an age cutoff expires every old source"
+    )
