@@ -228,4 +228,10 @@ def test_the_summary_counts_every_operation(snapshot: SnapshotAssertion) -> None
     assert (summary.orphan, summary.trim, summary.delete) == (1, 1, 1), (
         "orphan, trim and delete are counted"
     )
-    assert summary.as_dict() == snapshot, "the JSON fields are closed and stable"
+    # The summary passes the plan's measurement through unchanged; asserting
+    # that here keeps the byte value out of the snapshot, which pins the closed
+    # set of field names without restating a number the plan supplied.
+    assert summary.retained_bytes == 70, "the plan's measurement is reported"
+    reported = summary.as_dict()
+    reported["retained_logical_bytes"] = "<bytes>"
+    assert reported == snapshot, "the JSON fields are closed and stable"

@@ -7,7 +7,7 @@
     'heal': 1,
     'orphan': 1,
     'reconcile': 1,
-    'retained_logical_bytes': 70,
+    'retained_logical_bytes': '<bytes>',
     'retention_deferred': True,
     'trim': 1,
   })

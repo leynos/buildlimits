@@ -64,11 +64,24 @@ def test_inspect_prints_bounded_operator_lines(
 
     status = main(["inspect", *command_arguments(store, config)])
     output = capsys.readouterr().out
-    # The command reads the system clock; the cutoff is the only field that
-    # changes between runs, so redact it before snapshotting the contract.
+    # The cutoff follows the system clock, and the byte counts follow the
+    # fixture's encoding: both would churn the snapshot when neither the
+    # report's shape nor its budget field changed. They are redacted here and
+    # asserted exactly below, so the snapshot pins the line contract while the
+    # numbers keep their own check.
     normalized = re.sub(r"(?m)^cutoff: .*$", "cutoff: <utc now>", output)
+    normalized = re.sub(r"(?m)^retained: \d+ of ", "retained: <bytes> of ", normalized)
+    normalized = re.sub(
+        r"(?m)^active: \d+ logical bytes$", "active: <bytes> logical bytes", normalized
+    )
+
+    source_bytes = len(encode_document(records_at(NOW, 1)))
 
     assert status == 0, "inspection succeeds"
+    assert f"retained: {source_bytes} of 15000000000 logical bytes" in output, (
+        "the report counts the pending source in the budget"
+    )
+    assert "active: 0 logical bytes" in output, "no active file exists yet"
     assert normalized == snapshot, "the plain report is a closed operator contract"
 
 

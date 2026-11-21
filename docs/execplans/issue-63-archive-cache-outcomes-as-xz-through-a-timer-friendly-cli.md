@@ -1551,6 +1551,13 @@ verified archive is published, and leaves compile admission untouched.
   segment with `SEGMENT=`. A generated segment is still measured as well,
   because only it can be built at 12 MiB and 100 MiB to show that the peak does
   not follow the history. Neither row claims to be Rohga's own data.
+- A snapshot pins the report's field names, not the fixture's byte counts.
+  Both the CLI report and the plan summary carried numbers that follow the
+  fixture's encoding, so a record that gained a field would fail a snapshot
+  without changing anything an operator reads. The numbers now have their own
+  assertions and the snapshots hold `<bytes>`, which keeps the closed set of
+  field names under test while leaving the size to a check that says what it
+  means.
 - A history read follows the store's committed-state rule for the active file.
   `DocumentReader` keeps a decodable unterminated final row because a sealed
   segment's complete row must not be lost, but the active file is not sealed:
@@ -2033,3 +2040,13 @@ Each mutation was reverted and the focused suite passed again.
   recorded history, measured at 655 bytes per row against the issue's 661 and
   compressing to 8.0%; Rohga's own store remains unreachable from the
   development host and is recorded as an evidential limit, not as measured.
+- Revision 28 records the saved pre-merge check's snapshot requirement. Both
+  CLI and plan snapshots pinned byte counts that belong to the fixture rather
+  than to the report's contract: the plain report's `retained:` and `active:`
+  lines carried 713 and 0, and the plan summary carried 70. The snapshots now
+  show `<bytes>` in those positions and the numbers are asserted directly --
+  the CLI test derives the source size from the encoded document and checks the
+  exact budget line, and the plan test asserts the summary passes its
+  measurement through unchanged. A fixture that grows a field therefore no
+  longer churns a snapshot, while a report that stops counting the pending
+  source or stops passing the measurement on still fails.
