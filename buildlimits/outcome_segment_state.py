@@ -139,8 +139,13 @@ def read_retention_floor(layout: SegmentLayout) -> RetentionFloor:
         The lowest retained sequence and how it was read, or the state that
         kept it from being read.
     """
-    primary = _floor_in(layout.retention_file)
+    # Read the fallback first. A run installs the primary record before it
+    # removes the fallback, so a primary read after the fallback either sees
+    # the installed value or a fallback that still holds it. The reverse
+    # order can observe an old primary and a removed fallback, lowering the
+    # floor below a deletion the run had already recorded.
     pending = _floor_in(layout.pending_retention_file)
+    primary = _floor_in(layout.retention_file)
     recorded = [floor for floor in (primary, pending) if floor.state == "recorded"]
     if recorded:
         # The fallback record is only ever written for a floor the run has

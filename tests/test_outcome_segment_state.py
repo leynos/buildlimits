@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 from segment_test_helpers import store_layout, write_private
 
-from buildlimits.outcome_segment_state import read_retention_floor, read_sequence
+from buildlimits import outcome_segment_state
+from buildlimits.outcome_segment_state import (
+    RetentionFloor,
+    read_retention_floor,
+    read_sequence,
+)
 from buildlimits.outcome_segments import MAX_SEQUENCE
 
 
@@ -188,3 +193,33 @@ def test_an_oversized_retention_record_is_not_read(tmp_path: Path) -> None:
 
     assert floor.sequence is None, "the record is refused unread"
     assert floor.state == "invalid", "an oversized record is not this code's state"
+
+
+def test_the_fallback_record_is_read_before_the_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent install cannot make the floor read lower than it is.
+
+    A run installs ``retention.json`` before it removes
+    ``retention-pending.json``. Reading the fallback first means a read that
+    sees no fallback also sees the installed primary; the reverse order can
+    take an old primary and then miss the removed fallback.
+    """
+    layout = store_layout(tmp_path)
+    calls: list[str] = []
+
+    def fake(path: Path) -> RetentionFloor:
+        """Name the order and return the higher floor from the fallback."""
+        calls.append(path.name)
+        sequence = 5 if path.name == layout.pending_retention_file.name else 2
+        return RetentionFloor(sequence=sequence, state="recorded")
+
+    monkeypatch.setattr(outcome_segment_state, "_floor_in", fake)
+
+    floor = outcome_segment_state.read_retention_floor(layout)
+
+    assert calls == [
+        layout.pending_retention_file.name,
+        layout.retention_file.name,
+    ], "the fallback is read before the primary"
+    assert floor.sequence == 5, "the higher recorded floor wins"

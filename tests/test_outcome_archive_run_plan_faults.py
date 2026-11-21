@@ -19,10 +19,16 @@ from outcome_archive_helpers import (
 )
 from segment_test_helpers import write_private
 
-from buildlimits import outcome_archive_encode, outcome_archive_files
+from buildlimits import (
+    outcome_archive_encode,
+    outcome_archive_files,
+    outcome_archive_settled,
+)
 from buildlimits.outcome_archive_active import active_history
+from buildlimits.outcome_archive_budget import UnknownActiveHistoryError
 from buildlimits.outcome_archive_exit import EXIT_TEMPFAIL, exit_status
 from buildlimits.outcome_segment_inventory import read_inventory
+from buildlimits.outcome_segment_state import read_retention_floor
 from buildlimits.outcome_segments import archive_name, segment_name
 
 if typ.TYPE_CHECKING:
@@ -183,3 +189,35 @@ def test_a_symlinked_sealed_directory_is_refused_before_any_delete(
     assert report.status == "failed", "the unsafe store is not acted on"
     assert report.reason == "unreadable", "the operator-visible reason is closed"
     assert external.exists(), "the file outside the store is not deleted"
+
+
+def test_an_unreadable_final_plan_records_the_completed_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deletion stays in the floor when the final plan cannot read the store.
+
+    The pass re-plans after its work to confirm the budget is met. If that
+    read cannot settle the record cap, the deletion the pass completed must
+    still reach the floor before the unreadable report is returned; otherwise
+    a later run reports the sequence as lost history.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    base = policy(segment_bytes=2000)
+    write(store, records(NOW, 12), base)
+
+    def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
+        """Report a cap the final read cannot settle."""
+        raise UnknownActiveHistoryError
+
+    monkeypatch.setattr(outcome_archive_settled, "plan_run", refuse)
+
+    report = run(tmp_path, dc.replace(base, max_records=8))
+
+    assert report.status == "failed", "an unreadable final plan needs an operator"
+    assert report.reason == "unreadable", "the closed reason names the read"
+    assert ("deleted", 1) in [
+        (action.action, action.sequence) for action in report.actions
+    ], "the completed deletion is reported"
+    assert read_retention_floor(layout(tmp_path)).sequence == 2, (
+        "the floor records the deleted sequence as intentional"
+    )

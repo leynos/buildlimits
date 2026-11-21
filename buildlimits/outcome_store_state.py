@@ -255,7 +255,7 @@ class StoreFiles:
             and len(self.records) >= policy.max_records
         )
 
-    def expire_if_aged(self) -> None:
+    def expire_if_aged(self) -> bool:
         """Compact once the oldest retained row has aged past the cutoff.
 
         A segmented store seals only when the active file reaches
@@ -267,13 +267,20 @@ class StoreFiles:
         not its first row. A caller may append a row observed before every row
         it follows, and that older row must not survive until some later row
         happens to age past the cutoff.
+
+        Returns
+        -------
+        bool
+            Whether the age bound rewrote the file.
         """
         policy = self.policy
         if not policy.has_age_limit or self.oldest_observed is None:
-            return
+            return False
         cutoff = policy.cutoff(self.record_clock_observation())
         if cutoff is not None and self.oldest_observed < cutoff:
             self.compact()
+            return True
+        return False
 
     def settle_bytes(self) -> int:
         """Return the active size that triggers compaction or sealing.

@@ -315,10 +315,12 @@ def _execute(
             outcome,
         )
         return floor, _report(run, outcome, floor)
-    except OSError:
+    except OSError, UnknownActiveHistoryError:
         # The archives and evictions are already published. The deletions
         # are the only record the floor has, so it is written from the
-        # actions before the unmeasurable result is reported.
+        # actions before the unmeasurable result is reported. The final plan
+        # re-reads the active file, so the same ordering covers a cap that
+        # cannot be settled there.
         outcome_archive_state.write_deleted_floor(
             run.context.layout,
             outcome_segment_state.read_retention_floor(run.context.layout).sequence,

@@ -232,8 +232,11 @@ class StoreWriter(OutcomeStorePort):
                 # A quiet store must still let aged rows leave. Without this
                 # wake-up a writer that receives no appends would keep them
                 # until shutdown, however long that takes.
-                if self._files.ready:
-                    self._files.expire_if_aged()
+                if self._files.ready and self._files.expire_if_aged():
+                    # The compaction replaced the retained rows and their
+                    # bytes, so a status read must see the compacted state
+                    # rather than the one published before it.
+                    self._files.publish_snapshot()
                 continue
             if item is _STOP:
                 if self._files.ready:

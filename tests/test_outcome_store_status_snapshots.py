@@ -6,6 +6,7 @@ row count describe different states, and the snapshot must say so rather than
 present the pair as a complete measurement.
 """
 
+import datetime as dt
 import typing as typ
 from pathlib import Path
 from unittest import mock
@@ -116,3 +117,15 @@ def test_a_missing_active_file_is_not_reported_as_an_empty_one(
 
     snapshot = published_snapshot(files)
     assert_unpaired(snapshot, "unreadable")
+
+
+def test_an_idle_expiry_reports_the_compaction_it_performed(tmp_path: Path) -> None:
+    """The worker republishes only when the age bound rewrote the file."""
+    path = tmp_path / "cache-outcomes.jsonl"
+    files = loaded_store_files(
+        path, policy=history_policy(1 << 20, max_age_days=1), now=NOW
+    )
+    files.oldest_observed = dt.datetime(2026, 10, 25, tzinfo=dt.UTC)
+
+    assert files.expire_if_aged() is True, "the aged state is compacted away"
+    assert files.expire_if_aged() is False, "a compacted store has nothing to expire"
