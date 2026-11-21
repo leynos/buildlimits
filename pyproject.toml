@@ -622,6 +622,8 @@ ignore_names = [
     "pytest_collection_modifyitems",
     "teardown",
     "descriptor_leak_guard",
+    # pytest runs this autouse fixture by request; no test names it.
+    "_append_completion_barrier",
     # Vulture cannot resolve quoted cast types imported only for type checks.
     "RecorderEvent",
     "OutcomeStorePort",
@@ -2474,6 +2476,12 @@ reason = "One standard-library call on each module's own process handle: the fak
 members = ["tests/test_outcome_archive_lifecycle_properties.py", "tests/test_outcome_archive_retention.py"]
 reason = "Matching import lists: each suite decompresses a published archive, names a scratch path and drives generated cases through the same Hypothesis symbols, and both use every shared name. A re-export module would hide which dependencies each suite actually needs, so only the prelude repeats."
 
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_history.py::read_history_beside", "buildlimits/outcome_history_stream.py::open_history_beside"]
+reason = "Two parallel public entry points share the beside-the-store shape: each names its own reader and return type, so a shared helper would return a union and hide which reader the caller gets."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_archive_events.py", "tests/test_kache_admission_properties.py"]
+reason = "The matched lines belong to unrelated contracts: the archive event emits its closed field set, and the kache property asserts a group left admission. They share an outline, not logic, and neither gains a helper from the other."
 [[tool.duplication_gate.unit]]
 unit = "buildlimits/outcome_archive_verify.py"
 reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."

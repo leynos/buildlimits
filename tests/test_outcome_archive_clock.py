@@ -26,6 +26,13 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_segments import SegmentLayout
 
 
+def _store(tmp_path: Path) -> SegmentLayout:
+    """Write one retained row and return the layout that describes it."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 1), policy())
+    return layout(tmp_path)
+
+
 def test_the_run_reads_both_its_times_from_the_injected_clock(tmp_path: Path) -> None:
     """The start and finish come from the supplied clock, not the system wall.
 
@@ -34,20 +41,17 @@ def test_the_run_reads_both_its_times_from_the_injected_clock(tmp_path: Path) ->
     before the start when the host clock steps, so both readings come from one
     injected source.
     """
-    store = tmp_path / "cache-outcomes.jsonl"
-    write(store, records(NOW, 1), policy())
+    store_layout = _store(tmp_path)
     first = NOW + dt.timedelta(seconds=10)
     second = NOW + dt.timedelta(seconds=30)
     times = iter((first, second))
 
-    report = run_archive(
-        layout(tmp_path), policy(), RunOptions(clock=lambda: next(times))
-    )
+    report = run_archive(store_layout, policy(), RunOptions(clock=lambda: next(times)))
 
     assert report.status == "ok", "the run completed"
     assert report.started_at == first, "the start is the clock's first reading"
     assert report.finished_at == second, "the finish is the clock's second reading"
-    last_run = json.loads(layout(tmp_path).last_run_file.read_text(encoding="utf-8"))
+    last_run = json.loads(store_layout.last_run_file.read_text(encoding="utf-8"))
     assert last_run["finished_at"] == "2026-11-19T00:00:30Z", (
         "the persisted state carries the same finish time"
     )
@@ -88,15 +92,12 @@ def test_an_unsettled_run_stamps_the_injected_clock(
 
 def test_a_busy_run_stamps_the_injected_clock(tmp_path: Path) -> None:
     """A run that never took its lock still reports the supplied finish time."""
-    store = tmp_path / "cache-outcomes.jsonl"
-    write(store, records(NOW, 1), policy())
+    store_layout = _store(tmp_path)
     finished = NOW + dt.timedelta(seconds=1)
 
-    with ArchiveLock(layout(tmp_path).lock_file):
+    with ArchiveLock(store_layout.lock_file):
         report = run_archive(
-            layout(tmp_path),
-            policy(),
-            RunOptions(now=NOW, clock=lambda: finished),
+            store_layout, policy(), RunOptions(now=NOW, clock=lambda: finished)
         )
 
     assert report.status == "busy", "the run did not start"
@@ -109,12 +110,11 @@ def test_an_inspection_finishes_on_the_injected_clock(tmp_path: Path) -> None:
     ``inspect_store`` builds its own options, so before it accepted a clock the
     finish time came from the system wall even when the caller fixed ``now``.
     """
-    store = tmp_path / "cache-outcomes.jsonl"
-    write(store, records(NOW, 1), policy())
+    store_layout = _store(tmp_path)
     finished = NOW + dt.timedelta(seconds=42)
 
     report = inspect_store(
-        layout(tmp_path), policy(), options=RunOptions(now=NOW, clock=lambda: finished)
+        store_layout, policy(), options=RunOptions(now=NOW, clock=lambda: finished)
     )
 
     assert report.status == "ok", "the inspection planned without changing files"

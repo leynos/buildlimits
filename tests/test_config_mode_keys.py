@@ -58,10 +58,49 @@ def _rejected(tmp_path: Path, text: str, fragment: str) -> None:
         ("colour = 1\n", "unknown setting"),
         ('compilers_slice = "x.service"\n', "slice"),
         ("slots = [\n", "cannot read"),
+        (
+            'cache_outcomes = "record"\ncache_outcomes_max_bytes = 1\n',
+            "replacement store header",
+        ),
+        (
+            (
+                'cache_outcomes = "record"\n'
+                f"cache_outcomes_max_bytes = {header_floor_bytes() - 1}\n"
+            ),
+            "replacement store header",
+        ),
+        (
+            'cache_outcomes = "record"\ncache_outcomes_archive_preset = -1\n',
+            "cache_outcomes_archive_preset must be between 0 and 9",
+        ),
+        (
+            'cache_outcomes = "record"\ncache_outcomes_archive_preset = 10\n',
+            "cache_outcomes_archive_preset must be between 0 and 9",
+        ),
+    ],
+    ids=[
+        "slots",
+        "cache-mode",
+        "slot-type",
+        "unknown-key",
+        "slice",
+        "unparsable",
+        "budget-one",
+        "budget-below-floor",
+        "preset-low",
+        "preset-high",
     ],
 )
 def test_invalid_files_are_rejected(tmp_path: Path, text: str, fragment: str) -> None:
-    """Invalid configuration is reported, never half-applied."""
+    """Invalid configuration is reported, never half-applied.
+
+    A retention bound is part of the document for the same reason: the
+    supervisor catches a construction failure and disables recording, so a
+    byte budget below the replacement header would silently leave the operator
+    with no history at all, and an XZ preset outside 0 to 9 could never encode
+    an archive. The budget floor is checked at both ends so a change to one
+    layer cannot silently widen the other.
+    """
     _rejected(tmp_path, text, fragment)
 
 
@@ -126,25 +165,6 @@ def test_a_backend_setting_is_inert_in_direct_mode(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("budget", [1, header_floor_bytes() - 1])
-def test_a_byte_budget_below_the_header_floor_is_rejected(
-    tmp_path: Path, budget: int
-) -> None:
-    """Loading refuses a budget that no compacted store could ever meet.
-
-    ``policy_from_settings`` refused this after loading, but the supervisor
-    catches that construction failure and disables recording, so the operator
-    who asked for a history silently got none. The configuration check now
-    refuses the document instead. The largest rejected value is checked as
-    well as ``1``, so a change to one layer cannot silently widen the other.
-    """
-    _rejected(
-        tmp_path,
-        f'cache_outcomes = "record"\ncache_outcomes_max_bytes = {budget}\n',
-        "replacement store header",
-    )
-
-
 def test_a_byte_budget_at_the_header_floor_is_accepted(tmp_path: Path) -> None:
     """The floor itself is usable, so the boundary is not off by one."""
     path = tmp_path / "s.toml"
@@ -157,23 +177,6 @@ def test_a_byte_budget_at_the_header_floor_is_accepted(tmp_path: Path) -> None:
 
     assert settings.cache_outcomes_max_bytes == header_floor_bytes(), (
         "a budget that holds one maximal header is accepted"
-    )
-
-
-@pytest.mark.parametrize("preset", [-1, 10])
-def test_an_archive_preset_outside_the_xz_range_is_rejected(
-    tmp_path: Path, preset: int
-) -> None:
-    """Both ends of the XZ preset range are checked before a run starts.
-
-    ``lzma`` accepts only presets 0 to 9. Refusing the document here shows the
-    operator the mistake at configuration time, rather than after a timer
-    fires and the archive job fails on a value it could never encode with.
-    """
-    _rejected(
-        tmp_path,
-        f'cache_outcomes = "record"\ncache_outcomes_archive_preset = {preset}\n',
-        "cache_outcomes_archive_preset must be between 0 and 9",
     )
 
 
