@@ -818,6 +818,17 @@ verified archive is published, and leaves compile admission untouched.
   measured command and asserts a marker written past the deadline never
   appears; the previous implementation left the worker running and the marker
   appeared.
+- [ ] CodeRabbit review 6000304047 remediation, group 13 (2026-11-21): the
+  cross-process lock test's barrier and cleanup (findings 23, 24). The first
+  run is now held with `SIGSTOP` once it has published an archive, which keeps
+  its `flock` while the second command runs, and the test waits on `waitid` with
+  `WNOWAIT` for the kernel to report the stop. The second command therefore
+  provably overlaps a held lock instead of relying on how long the fixture
+  takes to compress, and `SIGCONT` releases the barrier only after the busy
+  status is captured. A cleanup guard around the whole interaction kills and
+  reaps the first run on every exceptional exit, so a stalled archive wait or a
+  failed second invocation cannot become an unbounded `Popen` context wait.
+
 ## Surprises & discoveries
 
 - A module split can leave a private helper behind. `outcome_history_stream`

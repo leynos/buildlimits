@@ -8,7 +8,10 @@ Two running processes are also raced for the archive lock so the busy status
 is proved across processes rather than within one.
 """
 
+import contextlib
 import json
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -157,13 +160,44 @@ def test_a_lock_held_by_another_process_exits_seventy_five(
     assert "reason: busy" in finished.stdout, "the reason is closed"
 
 
+def _hold_first(first: subprocess.Popen[bytes]) -> None:
+    """Stop the first run at a barrier that only the test releases.
+
+    A stopped process keeps its open descriptors, and with them the ``flock``
+    the archive lock holds, so the second command meets a lock that is held for
+    as long as the test needs. The barrier replaces the previous assumption
+    that compressing the fixture would outlast the second launch. ``WNOWAIT``
+    reads the stop without consuming the exit status the final wait needs.
+    """
+    first.send_signal(signal.SIGSTOP)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        state = os.waitid(
+            os.P_PID, first.pid, os.WEXITED | os.WSTOPPED | os.WNOHANG | os.WNOWAIT
+        )
+        if state is not None:
+            if state.si_code == os.CLD_STOPPED:
+                return
+            pytest.fail("the first run left before it reached the barrier")
+        time.sleep(0.01)
+    pytest.fail("the first run did not stop at the barrier before the deadline")
+
+
+def _abandon(first: subprocess.Popen[bytes]) -> None:
+    """Kill and reap a first run that failed before its normal wait."""
+    first.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        first.wait(timeout=10)
+
+
 def test_two_real_runs_do_not_archive_at_once(tmp_path: Path) -> None:
     """A second timer firing during a run reports busy instead of racing.
 
-    The fixture is large enough that compressing it takes seconds, so the
-    second process starts while the first still holds the lock. The first
-    published archive proves the lock is taken and work is under way, which is
-    what makes the overlap a real one rather than a timing accident.
+    The first run publishes an archive, which proves it holds the lock, and is
+    then stopped at a barrier while the second command runs. Stopping the
+    process keeps its lock, so the second run provably overlaps the first
+    rather than relying on compression time. The barrier is released only
+    after the second command has reported busy.
     """
     store = tmp_path / "cache-outcomes.jsonl"
     write(store, records(NOW, 24_000), policy(512 * 1024))
@@ -171,24 +205,27 @@ def test_two_real_runs_do_not_archive_at_once(tmp_path: Path) -> None:
     layout = SegmentLayout.beside(store)
     arguments = command_arguments(store, config)
 
-    # The first run's output goes to files: the context manager closes pipes,
-    # so a file keeps the report readable after the process is reaped.
+    # The first run's output goes to files: a pipe would fill and block the
+    # run, and a file keeps the report readable after the process is reaped.
     output_path = tmp_path / "first.out"
     errors_path = tmp_path / "first.err"
     with (
         output_path.open("w", encoding="utf-8") as output,
         errors_path.open("w", encoding="utf-8") as errors,
-        subprocess.Popen(
-            [SCRIPT, "run", *arguments], cwd=REPO_ROOT, stdout=output, stderr=errors
-        ) as first,
     ):
-        _await_first_archive(layout)
-        assert first.poll() is None, "the first run is still working"
-        second = _invoke("run", *arguments)
+        first = subprocess.Popen(
+            [SCRIPT, "run", *arguments], cwd=REPO_ROOT, stdout=output, stderr=errors
+        )
         try:
+            _await_first_archive(layout)
+            _hold_first(first)
+            try:
+                second = _invoke("run", *arguments)
+            finally:
+                first.send_signal(signal.SIGCONT)
             first.wait(timeout=180)
-        except subprocess.TimeoutExpired:
-            first.kill()
+        except BaseException:
+            _abandon(first)
             raise
 
     assert second.returncode == 75, second.stderr
