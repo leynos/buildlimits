@@ -1037,7 +1037,7 @@ complete row whose newline never reached the disk is not lost. That tolerance
 belongs to the sealed source, which the writer can leave torn. A published
 archive is always terminated by `write_archive`, so `read_archive_facts`
 refuses a torn tail there as `corrupt`: measuring the fragment would count
-history the archive does not hold and mis-price a trim planned against it. The
+history the archive does not hold and misprice a trim planned against it. The
 active store is stricter: `read_store` decodes only up to the last newline and
 `outcome_store_tail.drop_torn_tail` removes any remainder before the next
 append, scanning backwards in fixed-size chunks so the bound holds however long

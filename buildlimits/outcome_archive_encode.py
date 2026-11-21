@@ -157,7 +157,7 @@ def read_archive_facts(path: Path) -> ArchiveFacts:
         row it emits, so an unterminated final fragment means the file is not
         the document this code published. Measuring it would count bytes no
         reader returns, and a sidecar rebuilt from that size would overstate
-        the history and mis-price a later byte trim.
+        the history and misprice a later byte trim.
     """
     facts = _scan_facts(path, is_compressed=True)
     if facts.had_torn_tail:
