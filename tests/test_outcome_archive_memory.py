@@ -16,8 +16,10 @@ import dataclasses as dc
 import datetime as dt
 import io
 import os
+import signal
 import subprocess
 import sys
+import time
 import tracemalloc
 from pathlib import Path
 
@@ -242,12 +244,26 @@ def _generate_large_store(root: Path, target_bytes: int) -> tuple[Path, int]:
     return store, _sealed_bytes(layout)
 
 
+def _kill_group(process: subprocess.Popen[str]) -> None:
+    """Kill a measurement's whole process group and reap its wrapper.
+
+    The wrapper's child is not this process's direct child, so killing only
+    the wrapper would leave the measured command running against the
+    temporary store after the test has failed.
+    """
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        process.communicate(timeout=10)
+
+
 def _measure_command(arguments: list[str], *, timeout: int = 1_800) -> tuple[int, int]:
     """Run one command in a fresh process and report status and peak RSS.
 
     ``RUSAGE_CHILDREN`` aggregates the wrapper's waited-for children and the
     wrapper has exactly one, so the figure is that command's peak resident set
-    size in KiB.
+    size in KiB. The wrapper leads its own process group, so a timeout or a
+    cancelled test kills the measured command with it.
 
     Parameters
     ----------
@@ -268,16 +284,54 @@ def _measure_command(arguments: list[str], *, timeout: int = 1_800) -> tuple[int
         "peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss",
         "print(finished.returncode, peak)",
     ])
-    finished = subprocess.run(
+    process = subprocess.Popen(
         [sys.executable, "-c", wrapper, *arguments],
         cwd=REPO_ROOT,
-        check=False,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=timeout,
+        start_new_session=True,
     )
-    status, peak = finished.stdout.split()
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except BaseException:
+        _kill_group(process)
+        raise
+    if not stdout.strip():
+        pytest.fail(f"the measurement wrapper failed: {stderr.strip()}")
+    status, peak = stdout.split()
     return int(status), int(peak)
+
+
+def test_a_timed_out_measurement_kills_the_measured_command(
+    tmp_path: Path,
+) -> None:
+    """A measured command cannot outlive the bounded measurement.
+
+    The wrapper starts the measured command as its own child, and that child
+    starts a worker. Only killing the group reaches the worker: the worker
+    writes a marker after a delay long past the timeout, and the marker must
+    never appear.
+    """
+    started = tmp_path / "started"
+    outlived = tmp_path / "outlived"
+    worker = (
+        "import pathlib, time; "
+        f"pathlib.Path({str(started)!r}).write_text('x'); "
+        f"time.sleep(3.0); pathlib.Path({str(outlived)!r}).write_text('x')"
+    )
+    command = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {worker!r}]); "
+        "time.sleep(60)"
+    )
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        _measure_command([sys.executable, "-c", command], timeout=2)
+
+    time.sleep(2.0)
+    assert started.exists(), "the worker ran before the measurement timed out"
+    assert not outlived.exists(), "the measured command's worker was killed with it"
 
 
 @pytest.mark.skipif(

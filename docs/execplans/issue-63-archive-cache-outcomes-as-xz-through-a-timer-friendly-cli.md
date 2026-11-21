@@ -802,7 +802,22 @@ verified archive is published, and leaves compile admission untouched.
   tail regression's fragment was 80 bytes, shorter than the 64 KiB scan chunk,
   so a scan that read one chunk and stopped still passed; it now writes 280 KB
   of unterminated fragment, and the single-chunk scan reports a clean store.
-
+- [ ] CodeRabbit review 6000304047 remediation, group 12 (2026-11-21): fixture
+  appends and the measured process group (findings 20, 21). `write` no longer
+  retries a row because `results()` showed a discard: aggregate results cannot
+  say which row a discard belongs to, and an earlier row's worker failure was
+  being read as a refusal of the row just offered, which stored that row twice
+  and lost the failed one. `_AppendLedger` keeps fewer rows in flight than the
+  append queue can hold, waits for the queue's answers instead of spending its
+  slack, and fails the test on any discard.
+  `test_a_discarded_row_fails_the_fixture` injects one worker failure; the
+  previous helper returned successfully with the lost row. `_measure_command`
+  now starts the measurement wrapper in its own session and kills the whole
+  process group on a timeout or cancellation before reaping it, so the measured
+  command cannot outlive the test. The regression starts a worker under the
+  measured command and asserts a marker written past the deadline never
+  appears; the previous implementation left the worker running and the marker
+  appeared.
 ## Surprises & discoveries
 
 - A module split can leave a private helper behind. `outcome_history_stream`

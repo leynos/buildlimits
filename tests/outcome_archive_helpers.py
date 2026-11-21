@@ -26,6 +26,7 @@ from buildlimits import outcome_archive_files, outcome_archive_retain
 from buildlimits.outcome_archive import RunOptions, RunReport, run_archive
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segments import sealed_meta_name, segment_name
+from buildlimits.outcome_store import MAX_APPEND_QUEUE, StoreWriter
 from buildlimits.outcome_store_sealing import sealed_metadata
 
 if typ.TYPE_CHECKING:
@@ -36,16 +37,17 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import DecodedStore, StoreRecord
     from buildlimits.outcome_segment_inventory import SegmentEntry
     from buildlimits.outcome_segments import SegmentLayout
-    from buildlimits.outcome_store import StoreWriter
 
 # ``StoreWriter.append`` never blocks: a full queue refuses the row and counts
-# it as discarded. Under a loaded host the writer's worker can fall behind a
-# fixture that appends thousands of rows, so a refused row is offered again
-# once the worker has had a moment to drain. The bound is generous for a
-# worker that is merely descheduled, and short enough that a row the writer
-# can never encode still fails the test promptly.
-_APPEND_ATTEMPTS = 200
-_APPEND_RETRY_SECONDS = 0.01
+# it as discarded, while the worker publishes discards for rows it could not
+# write. Aggregate results cannot say which row a discard belongs to, so a
+# fixture must not read one as a refusal of the row it just offered. This
+# ledger spends none of the queue's slack: it keeps fewer rows in flight than
+# the queue can hold, which makes a refusal impossible, and fails the test on
+# any discard rather than re-offering a row that may already be stored.
+_QUEUE_HEADROOM = MAX_APPEND_QUEUE - 1
+_APPEND_WAIT_SECONDS = 2.0
+_APPEND_POLL_SECONDS = 0.005
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
@@ -110,6 +112,70 @@ def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
     raise OSError(errno.EIO, "injected failure")
 
 
+class _AppendLedger:
+    """Count a fixture's append calls against the writer's published results."""
+
+    def __init__(self, writer: StoreWriter) -> None:
+        """Track one writer's answers to the rows offered through it."""
+        self._writer = writer
+        self._calls = 0
+        self._stored = 0
+        self._discarded = 0
+
+    def append(self, row: StoreRecord) -> None:
+        """Offer one row once the queue can accept it."""
+        self._await_outstanding(at_most=_QUEUE_HEADROOM - 1)
+        self._calls += 1
+        self._writer.append(row)
+
+    def settle(self, expected: int) -> None:
+        """Wait until every offered row is answered without a discard.
+
+        Parameters
+        ----------
+        expected : int
+            The number of rows the fixture offered.
+        """
+        self._await_outstanding(at_most=0)
+        if self._stored != expected:
+            pytest.fail(f"the writer stored {self._stored} of {expected} fixture rows")
+
+    def _await_outstanding(self, *, at_most: int) -> None:
+        """Wait, within the append bound, until few enough rows are unanswered.
+
+        A discard fails the test instead of being retried: the aggregate
+        result does not identify its row, and re-offering the row just
+        appended would store that row twice while the discarded one stays
+        missing.
+        """
+        deadline = time.monotonic() + _APPEND_WAIT_SECONDS
+        waiting = self._drain()
+        while waiting > at_most:
+            if time.monotonic() >= deadline:
+                pytest.fail(f"the writer left {waiting} fixture rows unanswered")
+            time.sleep(_APPEND_POLL_SECONDS)
+            waiting = self._drain()
+
+    def _drain(self) -> int:
+        """Add the writer's published append outcomes to the counters.
+
+        Returns
+        -------
+        int
+            Rows offered through this ledger and not yet answered.
+        """
+        for result in self._writer.results():
+            if result.operation == "append":
+                self._stored += result.records
+                self._discarded += result.discarded
+        if self._discarded:
+            pytest.fail(
+                f"the writer discarded {self._discarded} fixture rows; "
+                "the history would be shorter than the fixture asked for"
+            )
+        return self._calls - self._stored
+
+
 def write(
     path: Path, rows: tuple[StoreRecord, ...], retention: RetentionPolicy
 ) -> None:
@@ -117,14 +183,17 @@ def write(
 
     A plain ``close`` returns at its caller's bound whether or not the worker
     has stopped, so an archiver run that follows could see a half-written
-    fixture. Every row must also be accepted before the close: a full append
-    queue refuses a row rather than waiting, and a fixture that ignored the
-    refusal would silently hand the test a shorter history.
+    fixture. Every row must also be stored before the close: a row the writer
+    discards would silently hand the test a shorter history. The ledger keeps
+    the queue from filling, so a full queue never refuses a row, and it waits
+    for each row's outcome instead of deciding from an older row's discard.
     """
     writer = segment_writer(path, retention, NOW)
+    ledger = _AppendLedger(writer)
     try:
         for row in rows:
-            _append_or_retry(writer, row)
+            ledger.append(row)
+        ledger.settle(len(rows))
     finally:
         close_writer(writer)
 
@@ -293,25 +362,6 @@ def seal_five_rows_once(
         return real(path, cutoff=cutoff)
 
     monkeypatch.setattr(outcome_archive_retain, "active_history", seal_then_read)
-
-
-def _append_or_retry(writer: StoreWriter, row: StoreRecord) -> None:
-    """Append one row, retrying while the writer reports a full queue.
-
-    A row the writer keeps refusing beyond the retry bound fails the current
-    test, because the history it believes it wrote would be missing that row.
-    """
-    for _attempt in range(_APPEND_ATTEMPTS):
-        writer.append(row)
-        if not any(
-            result.operation == "append" and result.discarded
-            for result in writer.results()
-        ):
-            return
-        # The worker owns the queue's head; let it drain before offering the
-        # row again.
-        time.sleep(_APPEND_RETRY_SECONDS)
-    pytest.fail("the writer refused a row beyond its retry bound")
 
 
 def run(
