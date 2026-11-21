@@ -36,7 +36,7 @@ from buildlimits import (
     outcome_archive_retain,
 )
 from buildlimits.outcome_archive import inspect_store
-from buildlimits.outcome_archive_report import EXIT_TEMPFAIL
+from buildlimits.outcome_archive_exit import EXIT_TEMPFAIL, exit_status
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import archive_name, sidecar_name
 
@@ -200,7 +200,7 @@ def test_the_last_permitted_pass_is_confirmed_settled(
     assert not read_inventory(layout(tmp_path)).sealed, "every source is archived"
     assert len(archives(tmp_path)) == 4, "each seal becomes its own archive"
     assert report.status == "ok", "a store settled by the last pass is not retryable"
-    assert report.exit_status == 0, "the timer records a successful firing"
+    assert exit_status(report.status) == 0, "the timer records a successful firing"
 
 
 def test_inspection_retries_a_seal_at_its_active_read(
@@ -286,6 +286,6 @@ def test_inspection_reports_unsettled_when_no_snapshot_holds(
     )
 
     assert report.status == "unsettled", "no reading describes the whole store"
-    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    assert exit_status(report.status) == EXIT_TEMPFAIL, "the timer retries the run"
     assert report.dry_run, "inspection is still a dry run"
     assert report.plan is None, "no torn pair is reported as a plan"

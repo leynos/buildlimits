@@ -9,7 +9,7 @@ written into leaves the orchestrator to plan and execute only.
 
 import typing as typ
 
-from buildlimits import outcome_archive_fs, outcome_segment_state
+from buildlimits import outcome_archive_codec, outcome_archive_fs, outcome_segment_state
 from buildlimits.utc_text import optional_utc_text, utc_text
 
 if typ.TYPE_CHECKING:
@@ -127,4 +127,6 @@ def write_state(layout: SegmentLayout, floor: int, report: RunReport) -> None:
             "updated_at": utc_text(report.finished_at),
         },
     )
-    outcome_archive_fs.atomic_write_json(layout.last_run_file, report.as_dict())
+    outcome_archive_fs.atomic_write_json(
+        layout.last_run_file, outcome_archive_codec.report_dict(report)
+    )

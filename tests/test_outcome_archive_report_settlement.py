@@ -24,7 +24,7 @@ from outcome_archive_helpers import (
 from segment_test_helpers import document, write_private
 
 from buildlimits import outcome_archive_retain, outcome_record_encode
-from buildlimits.outcome_archive_report import EXIT_TEMPFAIL
+from buildlimits.outcome_archive_exit import EXIT_TEMPFAIL, exit_status
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -143,7 +143,7 @@ def test_a_writer_that_keeps_sealing_leaves_the_report_unsettled(
     report = run(tmp_path, policy(segment_bytes=1_000_000, max_age_days=30))
 
     assert report.status == "unsettled", "no reading describes the whole store"
-    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    assert exit_status(report.status) == EXIT_TEMPFAIL, "the timer retries the run"
 
 
 def _report_after_an_append(
@@ -227,5 +227,5 @@ def test_the_final_snapshot_reports_retention_it_still_owes(
 
     assert report.retained_records == 6, "the final report counts the appended row"
     assert report.status == "unsettled", "the store is still over its record cap"
-    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    assert exit_status(report.status) == EXIT_TEMPFAIL, "the timer retries the run"
     assert not report.actions, "the final plan is reported, not applied in this run"

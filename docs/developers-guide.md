@@ -398,7 +398,9 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_lock`                                                             | The archive lock and the disk-headroom guard for one run                                                                                                    |
 | `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication, descriptor-relative removal and atomic state writes                |
 | `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates, syncs and validates each private path component, and returns the descriptor it validated                   |
-| `outcome_archive_report`                                                           | Bounded run report, status vocabulary and exit statuses                                                                                                     |
+| `outcome_archive_report`                                                           | Bounded run report and status vocabulary                                                                                                                    |
+| `outcome_archive_codec`                                                            | Stable JSON rendering of one run report                                                                                                                     |
+| `outcome_archive_exit`                                                             | Mapping a run status to the process exit code a timer records                                                                                               |
 | `outcome_archive_cli`                                                              | The `build-limits-outcome-archive` timer-facing command                                                                                                     |
 | `outcome_archive_bench`                                                            | Bounded-memory archive benchmark behind `make outcome-archive-bench`                                                                                        |
 | `nonblocking_child`                                                                | Non-blocking helper-process pipes and bounded child reaping for supervisor-loop work                                                                        |
@@ -1185,19 +1187,25 @@ the newest header. `outcome_history_args` defines the shared `--history`,
 active-store-only behaviour.
 
 `outcome_archive_report` defines the closed report vocabulary. Statuses are
-`ok`, `failed`, `corrupt`, `busy`, `no_headroom` and `unsettled`; exit statuses
-are 0 for success, 1 for an operational failure, 2 for usage or configuration,
-3 for corruption that needs an operator, and 75 for a temporary condition a
-timer should retry. The module also owns the three report builders the runner
-uses: `dry_report` from a settled inventory and active snapshot, and
-`unsettled_report` and `unfinished_report` for a store that never held still or
-a run that could not start. Every builder takes its finish time from the same
-injected clock, which `RunOptions.clock` carries into `ArchiveContext.clock`;
+`ok`, `failed`, `corrupt`, `busy`, `no_headroom` and `unsettled`. The module
+also owns the three report builders the runner uses: `dry_report` from a
+settled inventory and active snapshot, and `unsettled_report` and
+`unfinished_report` for a store that never held still or a run that could not
+start. Every builder takes its finish time from the same injected clock, which
+`RunOptions.clock` carries into `ArchiveContext.clock`;
 `ArchiveContext.quarantine_token` likewise supplies the random tag a quarantine
 name records, so both the report's timing and the evidence naming are ports a
 test can substitute. The report names no path and carries no raw exception
 text; the only path a run prints is an unreadable configuration file, on
 standard error before the report exists.
+
+`outcome_archive_codec` owns the JSON document a report is published in, and
+`outcome_archive_exit` owns the process status: 0 for success, 1 for an
+operational failure, 2 for usage or configuration, 3 for corruption that needs
+an operator, and 75 for a temporary condition a timer should retry. Both are
+adapters around the report model: `outcome_archive_state` and the command
+render through the codec, and the command derives its exit status from
+`RunReport.status` through the exit module.
 
 `outcome_archive_cli` is the timer-facing surface. `inspect` is a dry run by
 definition; `run --dry-run` plans without taking the lock or writing state; and

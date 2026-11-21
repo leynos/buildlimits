@@ -17,9 +17,9 @@ from outcome_archive_helpers import NOW, document, layout, policy, records, run,
 from segment_test_helpers import write_private
 
 from buildlimits import outcome_archive_active, outcome_record_encode
-from buildlimits.outcome_archive import EXIT_FAILED
 from buildlimits.outcome_archive_active import active_history
 from buildlimits.outcome_archive_dirs import UnsafePathError
+from buildlimits.outcome_archive_exit import EXIT_FAILED, exit_status
 from buildlimits.outcome_segments import segment_name
 
 if typ.TYPE_CHECKING:
@@ -45,7 +45,9 @@ def _assert_refused(report: RunReport, store_layout: SegmentLayout) -> None:
     """
     assert report.status == "failed", "an unknown active history is a run failure"
     assert report.reason == "unreadable", "the closed reason names the inspection"
-    assert report.exit_status == EXIT_FAILED, "the timer does not treat it as a retry"
+    assert exit_status(report.status) == EXIT_FAILED, (
+        "the timer does not treat it as a retry"
+    )
     assert not report.actions, "nothing is archived over an unknown history"
     assert store_layout.sealed_dir.joinpath(segment_name(1)).exists(), (
         "the sealed source is left for a run that can read the store"

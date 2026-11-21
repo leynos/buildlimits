@@ -1,16 +1,16 @@
-"""The bounded report and exit statuses one archive run produces.
+"""The bounded report and status vocabulary one archive run produces.
 
 The report is the command's only user-facing surface: it names no filesystem
-path, carries closed action and reason vocabularies, and maps each outcome to
-the status a systemd timer records. State files reuse the same document so an
-operator can compare a run against the retention record without reading code.
+path and carries closed action and reason vocabularies. Rendering it and
+mapping its status to a process exit code are adapters' work, so the model
+stays a plain value that a caller can compare and pass on.
 """
 
 import dataclasses as dc
 import typing as typ
 
 from buildlimits.outcome_archive_history import ActiveHistory, observed_history
-from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
+from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -21,28 +21,14 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_run import ArchiveRun
     from buildlimits.outcome_segment_inventory import Inventory
 
-ARCHIVE_SCHEMA = 1
-EXIT_OK = 0
-EXIT_FAILED = 1
-EXIT_USAGE = 2
-EXIT_CORRUPT = 3
-EXIT_TEMPFAIL = 75
-
 type RunStatus = typ.Literal[
     "ok", "failed", "corrupt", "busy", "no_headroom", "unsettled"
 ]
 
 __all__ = [
-    "ARCHIVE_SCHEMA",
-    "EXIT_CORRUPT",
-    "EXIT_FAILED",
-    "EXIT_OK",
-    "EXIT_TEMPFAIL",
-    "EXIT_USAGE",
     "RunOptions",
     "RunReport",
     "RunStatus",
-    "action_dict",
     "dry_report",
     "unfinished_report",
     "unsettled_report",
@@ -149,82 +135,6 @@ class RunReport:
     corrupt_sidecars: tuple[int, ...] = ()
     orphan_sidecars: tuple[int, ...] = ()
     reason: str | None = None
-
-    @property
-    def exit_status(self) -> int:
-        """The process status a timer should record.
-
-        Returns
-        -------
-        int
-            Zero for success, one for a failed run, two for usage, three for
-            corruption, and 75 when a retry may succeed.
-        """
-        if self.status in {"busy", "no_headroom", "unsettled"}:
-            return EXIT_TEMPFAIL
-        if self.status == "corrupt":
-            return EXIT_CORRUPT
-        if self.status == "failed":
-            return EXIT_FAILED
-        return EXIT_OK
-
-    def as_dict(self) -> dict[str, object]:
-        """Return the stable JSON fields a report or state file carries.
-
-        Returns
-        -------
-        dict[str, object]
-            A JSON-compatible mapping with no filesystem paths.
-        """
-        return {
-            "schema": ARCHIVE_SCHEMA,
-            "status": self.status,
-            "dry_run": self.dry_run,
-            "started_at": utc_text(self.started_at),
-            "finished_at": utc_text(self.finished_at),
-            "active_bytes": self.active_bytes,
-            "retained_logical_bytes": self.retained_bytes,
-            "retained_records": self.retained_records,
-            "observed_from": optional_utc_text(self.observed_from),
-            "observed_until": optional_utc_text(self.observed_until),
-            "unmeasured_entries": self.unmeasured_entries,
-            "budget_bytes": self.budget_bytes,
-            "cutoff": optional_utc_text(self.cutoff),
-            "plan": None if self.plan is None else self.plan.as_dict(),
-            "actions": [action_dict(action) for action in self.actions],
-            "failures": [
-                {"sequence": sequence, "reason": reason}
-                for sequence, reason in self.failures
-            ],
-            "gaps": list(self.gaps),
-            "gaps_truncated": self.gaps_truncated,
-            "missing_sidecars": list(self.missing_sidecars),
-            "corrupt_sidecars": list(self.corrupt_sidecars),
-            "orphan_sidecars": list(self.orphan_sidecars),
-            "reason": self.reason,
-        }
-
-
-def action_dict(action: ActionResult) -> dict[str, object]:
-    """Render one performed action for the report.
-
-    Parameters
-    ----------
-    action : ActionResult
-        One operation the run performed.
-
-    Returns
-    -------
-    dict[str, object]
-        The action's closed name, sequence, sizes and optional reason.
-    """
-    return {
-        "action": action.action,
-        "sequence": action.sequence,
-        "logical_bytes": action.logical_bytes,
-        "physical_bytes": action.physical_bytes,
-        "reason": action.reason,
-    }
 
 
 def dry_report(

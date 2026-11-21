@@ -15,12 +15,13 @@ from pathlib import Path
 
 from buildlimits import config
 from buildlimits.outcome_archive import (
-    EXIT_USAGE,
     RunOptions,
     RunReport,
     inspect_store,
     run_archive,
 )
+from buildlimits.outcome_archive_codec import report_dict
+from buildlimits.outcome_archive_exit import EXIT_USAGE, exit_status
 from buildlimits.outcome_retention import RetentionPolicy, policy_from_settings
 from buildlimits.outcome_segments import SegmentLayout
 from buildlimits.outcome_store_salt import store_path
@@ -78,7 +79,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         return EXIT_USAGE
     report = _report(options, layout, settings, policy)
     _write_report(report, as_json=options.json)
-    return report.exit_status
+    return exit_status(report.status)
 
 
 def _default_config() -> Path:
@@ -194,7 +195,7 @@ def _write_report(report: RunReport, *, as_json: bool) -> None:
         Whether to print the stable JSON document instead of prose.
     """
     if as_json:
-        print(json.dumps(report.as_dict(), sort_keys=True))
+        print(json.dumps(report_dict(report), sort_keys=True))
         return
     print(f"status: {report.status}")
     if report.reason is not None:

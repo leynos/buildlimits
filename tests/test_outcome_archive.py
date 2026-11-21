@@ -20,11 +20,12 @@ from buildlimits import (
     outcome_archive_lock,
     outcome_archive_quarantine,
 )
-from buildlimits.outcome_archive import (
+from buildlimits.outcome_archive import inspect_store
+from buildlimits.outcome_archive_exit import (
     EXIT_CORRUPT,
     EXIT_OK,
     EXIT_TEMPFAIL,
-    inspect_store,
+    exit_status,
 )
 from buildlimits.outcome_archive_lock import ArchiveLock, NoHeadroomError
 from buildlimits.outcome_archive_verify import OutputFaultError
@@ -40,7 +41,7 @@ def test_an_empty_store_records_a_successful_run(tmp_path: Path) -> None:
 
     store = layout(tmp_path)
     assert report.status == "ok", "an empty run is successful"
-    assert report.exit_status == EXIT_OK, "the timer sees success"
+    assert exit_status(report.status) == EXIT_OK, "the timer sees success"
     assert not report.actions, "there is nothing to do"
     assert report.retained_bytes == 0, "no history is retained"
     assert not report.gaps, "an empty store has no gaps"
@@ -159,7 +160,7 @@ def test_a_held_lock_reports_a_retryable_status(tmp_path: Path) -> None:
         report = run(tmp_path, policy())
 
     assert report.status == "busy", "the run did not start"
-    assert report.exit_status == EXIT_TEMPFAIL, "a retry may succeed"
+    assert exit_status(report.status) == EXIT_TEMPFAIL, "a retry may succeed"
     assert report.reason == "busy", "the reason is closed"
     assert not archives(tmp_path), "a busy run publishes nothing"
 
@@ -243,7 +244,7 @@ def test_insufficient_headroom_reports_a_retryable_status(
     report = run(tmp_path, policy())
 
     assert report.status == "no_headroom", "the run did not start"
-    assert report.exit_status == EXIT_TEMPFAIL, "the run is retryable"
+    assert exit_status(report.status) == EXIT_TEMPFAIL, "the run is retryable"
     assert report.reason == "no_headroom", "the reason is closed"
 
 
@@ -258,7 +259,7 @@ def test_a_corrupt_source_is_quarantined_and_reported(tmp_path: Path) -> None:
     report = run(tmp_path, policy())
 
     assert report.status == "corrupt", "the run reports corruption"
-    assert report.exit_status == EXIT_CORRUPT, "an operator must act"
+    assert exit_status(report.status) == EXIT_CORRUPT, "an operator must act"
     assert report.failures == ((1, "corrupt"),), "the sequence and reason are named"
     assert [action.action for action in report.actions] == ["quarantined"], (
         "the source is moved aside"
@@ -352,7 +353,7 @@ def test_a_damaged_archive_cannot_be_healed(tmp_path: Path) -> None:
     report = run(tmp_path, policy())
 
     assert report.status == "corrupt", "the archive is unusable"
-    assert report.exit_status == EXIT_CORRUPT, "an operator must act"
+    assert exit_status(report.status) == EXIT_CORRUPT, "an operator must act"
     assert report.failures == ((1, "bad_xz"),), "the fault is closed"
     assert not archive.exists(), "the damaged archive is moved aside"
 

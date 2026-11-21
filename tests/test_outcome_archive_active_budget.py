@@ -26,7 +26,7 @@ from outcome_archive_helpers import (
 from segment_test_helpers import document, write_private
 
 from buildlimits import outcome_archive_active, outcome_record_encode
-from buildlimits.outcome_archive_report import EXIT_TEMPFAIL
+from buildlimits.outcome_archive_exit import EXIT_TEMPFAIL, exit_status
 from buildlimits.outcome_retention import RetentionPolicy
 
 if typ.TYPE_CHECKING:
@@ -305,7 +305,7 @@ def test_an_unmeasurable_active_file_defers_an_age_aware_byte_budget(
 
     assert archive.read_bytes() == before, "no eviction without a measurement"
     assert report.status == "unsettled", "the deferred budget is retryable"
-    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    assert exit_status(report.status) == EXIT_TEMPFAIL, "the timer retries the run"
     evictions = [action for action in report.actions if action.action != "archived"]
     assert not evictions, "nothing is evicted against an unread active file"
 
@@ -339,7 +339,7 @@ def test_a_failed_scan_of_a_paused_append_defers_the_byte_budget(
 
     assert archive.read_bytes() == before, "no eviction against an unread active file"
     assert report.status == "unsettled", "the deferred budget is retryable"
-    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    assert exit_status(report.status) == EXIT_TEMPFAIL, "the timer retries the run"
     evictions = [action for action in report.actions if action.action != "archived"]
     assert not evictions, "nothing is evicted against an unread active file"
 
@@ -363,7 +363,7 @@ def test_active_rows_over_the_cap_leave_the_cap_unsettled(
 
     assert report.retained_records == 4, "the active rows cannot be trimmed"
     assert report.status == "unsettled", "the cap is still over its bound"
-    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    assert exit_status(report.status) == EXIT_TEMPFAIL, "the timer retries the run"
 
 
 def test_active_bytes_over_the_bound_leave_the_budget_unsettled(
@@ -381,4 +381,4 @@ def test_active_bytes_over_the_bound_leave_the_budget_unsettled(
 
     assert report.active_bytes == kept, "the active file holds the excess"
     assert report.status == "unsettled", "the byte bound is still over its bound"
-    assert report.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    assert exit_status(report.status) == EXIT_TEMPFAIL, "the timer retries the run"

@@ -29,8 +29,8 @@ from outcome_archive_helpers import (
 from segment_test_helpers import write_private
 
 from buildlimits import outcome_archive_encode, outcome_archive_files
-from buildlimits.outcome_archive import EXIT_TEMPFAIL
 from buildlimits.outcome_archive_active import active_history
+from buildlimits.outcome_archive_exit import EXIT_TEMPFAIL, exit_status
 from buildlimits.outcome_archive_verify import OutputFaultError, SegmentFaultError
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import archive_name, segment_name
@@ -288,7 +288,7 @@ def test_space_exhausted_after_the_headroom_check_is_retried(
         deflated = run(tmp_path, policy())
 
     assert deflated.status == "no_headroom", "a full disk is a retryable run"
-    assert deflated.exit_status == EXIT_TEMPFAIL, "the timer retries the run"
+    assert exit_status(deflated.status) == EXIT_TEMPFAIL, "the timer retries the run"
     assert deflated.failures == ((1, "no_headroom"), (2, "no_headroom")), (
         "each source the disk could not hold is named with the closed reason"
     )

@@ -23,12 +23,6 @@ from buildlimits.outcome_archive_context import ArchiveContext
 from buildlimits.outcome_archive_history import ActiveHistory, observed_history
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
 from buildlimits.outcome_archive_report import (
-    ARCHIVE_SCHEMA,
-    EXIT_CORRUPT,
-    EXIT_FAILED,
-    EXIT_OK,
-    EXIT_TEMPFAIL,
-    EXIT_USAGE,
     RunOptions,
     RunReport,
     RunStatus,
@@ -48,12 +42,6 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_segments import SegmentLayout
 
 __all__ = [
-    "ARCHIVE_SCHEMA",
-    "EXIT_CORRUPT",
-    "EXIT_FAILED",
-    "EXIT_OK",
-    "EXIT_TEMPFAIL",
-    "EXIT_USAGE",
     "RunOptions",
     "RunReport",
     "RunStatus",

@@ -23,6 +23,7 @@ from outcome_archive_helpers import (
 from segment_test_helpers import document, write_private
 
 from buildlimits import outcome_archive_files
+from buildlimits.outcome_archive_exit import exit_status
 from buildlimits.outcome_segment_inventory import read_inventory
 
 if typ.TYPE_CHECKING:
@@ -93,7 +94,9 @@ def test_a_run_reports_unsettled_when_seals_outpace_its_follow_up_passes(
         "the last seal waits for the next firing"
     )
     assert report.status == "unsettled", "a source arriving every pass is not settled"
-    assert report.exit_status == 75, "the timer retries a run that could not settle"
+    assert exit_status(report.status) == 75, (
+        "the timer retries a run that could not settle"
+    )
 
     monkeypatch.setattr(outcome_archive_files, "archive_source", real)
     later = run(tmp_path, policy(max_age_days=0))
