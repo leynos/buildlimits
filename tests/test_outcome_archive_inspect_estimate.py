@@ -69,17 +69,23 @@ def test_the_json_keeps_the_current_bytes_apart_from_the_plan(
     )
 
 
-def test_a_missing_sidecar_discloses_the_physical_size_fallback(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """An unmeasured archive's bytes are named as a physical-size estimate."""
+def _published_archive_without_sidecar(tmp_path: Path) -> Path:
+    """Publish one archive, remove its sidecar, and return the archive path."""
     store = tmp_path / "cache-outcomes.jsonl"
     write(store, records(RUN_NOW, 1), policy())
     first = run(tmp_path, policy())
     assert first.status == "ok", "the fixture archive is published"
-    (layout(tmp_path).archive_dir / sidecar_name(1)).unlink()
+    store_layout = layout(tmp_path)
+    (store_layout.archive_dir / sidecar_name(1)).unlink()
+    return store_layout.archive_dir / archive_name(1)
 
-    archive = layout(tmp_path).archive_dir / archive_name(1)
+
+def test_a_missing_sidecar_discloses_the_physical_size_fallback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unmeasured archive's bytes are named as a physical-size estimate."""
+    archive = _published_archive_without_sidecar(tmp_path)
+
     report = run(tmp_path, policy(), dry_run=True)
     document = report_dict(report)
 
@@ -103,12 +109,7 @@ def test_an_executed_report_discloses_an_unrepaired_archive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A repair that fails leaves the archive counted by its physical size."""
-    store = tmp_path / "cache-outcomes.jsonl"
-    write(store, records(RUN_NOW, 1), policy())
-    first = run(tmp_path, policy())
-    assert first.status == "ok", "the fixture archive is published"
-    (layout(tmp_path).archive_dir / sidecar_name(1)).unlink()
-    archive = layout(tmp_path).archive_dir / archive_name(1)
+    archive = _published_archive_without_sidecar(tmp_path)
     monkeypatch.setattr(outcome_archive_files, "repair_sidecar", refuse)
 
     report = run(tmp_path, policy())
