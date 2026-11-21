@@ -1733,6 +1733,16 @@ verified archive is published, and leaves compile admission untouched.
   inside the 400-line limit; it is used only by that property, and no
   production module or other test depends on it.
 
+- The report model is a plain value. JSON rendering lives in
+  `outcome_archive_codec` and status-to-exit mapping in `outcome_archive_exit`,
+  so the model carries neither a schema version nor process semantics; the
+  state writer and the command call the adapters.
+- An archive run publishes metrics only through an injected
+  `RunOptions.metrics` port. The command builds one from the native journal
+  sink only when systemd supplies `JOURNAL_STREAM`, so a shell run and the test
+  suite never write to the host journal, and the event stays a closed,
+  identifier-free vocabulary.
+
 ## Outcomes & retrospective
 
 The timer-facing archive command, its verification and retention execution, the
@@ -2310,3 +2320,26 @@ after each revert.
   over a history with a withheld middle source. Two mutations -- a
   survivor-derived implementation floor and a model that never advances its
   floor -- were each observed to fail and reverted.
+- Revision 34 records the revision-33 review's five findings and the saved
+  pre-merge checks. The two store tests now count acknowledged records rather
+  than results, because the writer aggregates equal results; the append barrier
+  marks the writer's post-append ageing done before the test moves its clock.
+  The dataset command refuses an output inside a sealed or archive directory,
+  the plan property asserts the closed rows the record cap keeps, and the 0.2.0
+  guide tells the operator to restart the supervisor. The pre-merge Testing gap
+  added the configuration-level retention-rule cases and a pinned-byte
+  quarantine-token test; the restart move-aside cases already exists in
+  `test_outcome_store.py`. The Unit and Domain Architecture checks drove four
+  refactors: the writer's clock methods separate the read-only `wall_now` from
+  `record_clock_observation`, and `measure_active` leaves publishing to its
+  caller; `_execute` is split into preparation, performance, reporting and a
+  caller-owned state write; the report model lost its JSON and exit adapters to
+  `outcome_archive_codec` and `outcome_archive_exit`; and `header_floor_bytes`
+  moved to `outcome_record_encode` so the policy receives the floor as a value.
+  The Observability check added one bounded `archive_run` event
+  (`outcome_archive_events`), retry notices from `settled_snapshot`,
+  `active_history`, `pin_history` and the history read, and start and elapsed
+  lines in the plain report. Every new behaviour was checked against a mutation
+  that removes or inverts it. The Out of Scope row is dispositioned as
+  gate-enabling test fixes and module-size work already recorded in this plan's
+  revision note.
