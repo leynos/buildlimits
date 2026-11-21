@@ -60,13 +60,19 @@ def test_an_absent_store_has_no_tail(tmp_path: Path) -> None:
 
 
 def test_the_tail_is_found_beyond_one_read_chunk(tmp_path: Path) -> None:
-    """The scan reads backwards in fixed chunks, so a long file still works."""
+    """The scan reads backwards in fixed chunks, so a long file still works.
+
+    The fragment is several scan chunks long, so the last newline lies beyond
+    the final chunk. A scan that looked only at that chunk, or stopped at the
+    first one without a newline, would report a clean store.
+    """
     rows = b'{"a":1}\n' * 20_000
-    path = write_private(tmp_path / "cache-outcomes.jsonl", rows + b'{"torn')
+    fragment = b'{"torn' * 40_000
+    path = write_private(tmp_path / "cache-outcomes.jsonl", rows + fragment)
 
     removed = drop_torn_tail(path)
 
-    assert removed, "the tail is found past the first chunk"
+    assert removed, "the newline is found past every chunk of the fragment"
     assert path.read_bytes() == rows, "every complete row is kept"
 
 

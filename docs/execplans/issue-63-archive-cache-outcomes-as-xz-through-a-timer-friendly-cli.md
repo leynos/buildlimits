@@ -787,6 +787,21 @@ verified archive is published, and leaves compile admission untouched.
   guide's archiving step now sets `cache_outcomes = "record"`, which the
   configuration validator requires before any `cache_outcomes_*` key is
   accepted.
+- [ ] CodeRabbit review 6000304047 remediation, group 11 (2026-11-21): the
+  model's age cutoff and a single-chunk tail scan (findings 25, 26). The state
+  machine's model compared the cutoff with `expected[0]`, but the writer asks
+  `oldest_observed` over every retained row, so a row appended after a backward
+  clock jump can be older than the first row and expire while the model keeps
+  it. `_model_append_ageing` now compares
+  `min(record.observed_at for record in self.expected)`. The generated machine
+  did not catch the mismatch, so a deterministic regression drives one real
+  writer through first, a backward jump, the older row, a forward advance and
+  two more rows; it fails against the first-row guard with the store holding
+  `middle-<seed>` where the model keeps `older-<seed>`, and it runs inside a
+  `@given` example because the model's `_mark` records Hypothesis events. The
+  tail regression's fragment was 80 bytes, shorter than the 64 KiB scan chunk,
+  so a scan that read one chunk and stopped still passed; it now writes 280 KB
+  of unterminated fragment, and the single-chunk scan reports a clean store.
 
 ## Surprises & discoveries
 
@@ -1059,6 +1074,14 @@ verified archive is published, and leaves compile admission untouched.
   The whole-plan assessment caught the omission by comparing the directory
   against the table, so that table is a checklist for every new module, not
   only for modules whose behaviour changed.
+- A generated state machine is not a proof of its model. The backward-jump
+  rule the writer implements through `oldest_observed` was reached by the
+  generated sequences, but never with a row older than the first one still in
+  the model, so five examples of twelve steps left the first-row comparison
+  green. A deterministic sequence that names the ordering hazard was needed to
+  show the model could disagree with the store. Driving state-machine methods
+  directly also runs their event recording, which Hypothesis refuses outside a
+  test, so such a regression needs its own example context.
 
 ## Decision log
 

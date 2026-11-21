@@ -128,7 +128,11 @@ class OutcomeStoreMachine(RuleBasedStateMachine):
             return
         self._observe_model_clock()
         cutoff = self.wall_time - dt.timedelta(days=outcome_records.RETENTION_DAYS)
-        if self.expected[0].observed_at >= cutoff:
+        # The writer asks its oldest retained observation, not its first row.
+        # A clock that steps back can append a row older than every row already
+        # there, and that row expires while the first row is still fresh.
+        oldest = min(record.observed_at for record in self.expected)
+        if oldest >= cutoff:
             return
         wait_for_results(self.writer, operation="compact")
         self._compact_model()
@@ -321,6 +325,49 @@ def test_generated_store_operations_reach_required_branches(tmp_path: Path) -> N
     assert required <= OutcomeStoreMachine.reached, (
         "every generated sequence reaches the non-vacuous startup contract"
     )
+
+
+def test_the_model_ages_by_the_oldest_row_after_a_backward_jump(
+    tmp_path: Path,
+) -> None:
+    """A backward clock jump can append a row older than the first one.
+
+    The writer asks its oldest retained observation, so the older row expires
+    while the first row is still fresh. A model that asks only its first row
+    keeps the expired row, and the next comparison with the real store fails.
+    """
+    OutcomeStoreMachine.root = tmp_path
+    OutcomeStoreMachine.next_example = 0
+
+    @settings(max_examples=1, deadline=None)
+    @given(seed=st.integers(min_value=0, max_value=10_000))
+    def verify(seed: int) -> None:
+        """Drive one real writer through the backward jump and its aftermath."""
+        machine = OutcomeStoreMachine()
+        try:
+            machine._append(f"first-{seed}")
+            machine._advance_with_skew(40, backwards=True)
+            machine._append(f"older-{seed}")
+            machine._advance_in_sync(31)
+            machine._append(f"middle-{seed}")
+            machine._append(f"last-{seed}")
+
+            stored = stored_records(machine.path)
+            expected = tuple(machine.expected)
+            wall_time = machine.wall_time
+        finally:
+            machine._close_writer()
+
+        assert stored == expected, (
+            "the model drops the row the writer's oldest-observation check expired"
+        )
+        assert all(
+            record.observed_at
+            > wall_time - dt.timedelta(days=outcome_records.RETENTION_DAYS)
+            for record in stored
+        ), "the row appended during the backward jump is gone"
+
+    verify()
 
 
 def test_generated_compaction_reaches_the_retention_bound() -> None:
