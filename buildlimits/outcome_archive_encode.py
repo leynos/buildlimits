@@ -291,6 +291,7 @@ def policy_dropped_bytes(stream: LineStream, trim: Trim) -> int:
     Examples
     --------
     >>> import datetime as dt, io
+    >>> from buildlimits.outcome_record_encode import encode_line
     >>> from buildlimits.outcome_record_format import StoreHeader
     >>> header = StoreHeader("s", dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
     >>> text = encode_line(header) + chr(10)

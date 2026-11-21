@@ -1,0 +1,34 @@
+# serializer version: 1
+# name: test_an_action_carries_its_fault_reason
+  dict({
+    'action': 'quarantined',
+    'logical_bytes': 0,
+    'physical_bytes': 0,
+    'reason': 'bad_xz',
+    'sequence': 4,
+  })
+# ---
+# name: test_the_document_renders_each_action
+  list([
+    dict({
+      'action': 'trimmed',
+      'logical_bytes': 8,
+      'physical_bytes': 9,
+      'reason': None,
+      'sequence': 7,
+    }),
+  ])
+# ---
+# name: test_the_document_renders_the_plan
+  dict({
+    'archive': 1,
+    'cutoff': None,
+    'delete': 3,
+    'heal': 0,
+    'orphan': 0,
+    'reconcile': 0,
+    'retained_logical_bytes': 55,
+    'retention_deferred': False,
+    'trim': 2,
+  })
+# ---

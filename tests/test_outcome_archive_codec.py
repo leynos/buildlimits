@@ -1,11 +1,15 @@
 """The stable JSON document a report is published in, field by field."""
 
 import datetime as dt
+import typing as typ
 
 from buildlimits.outcome_archive_codec import ARCHIVE_SCHEMA, action_dict, report_dict
 from buildlimits.outcome_archive_context import ActionResult
 from buildlimits.outcome_archive_plan import PlanSummary
 from buildlimits.outcome_archive_report import RunReport
+
+if typ.TYPE_CHECKING:
+    from syrupy.assertion import SnapshotAssertion
 
 _NOW = dt.datetime(2026, 11, 19, 12, 0, 0, tzinfo=dt.UTC)
 _LATER = _NOW + dt.timedelta(seconds=3)
@@ -91,23 +95,18 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     assert document["reason"] == "unreadable", "the run-level reason is published"
 
 
-def test_the_document_renders_a_plan_and_its_actions() -> None:
-    """The plan summary and each action keep their own stable shapes."""
+def test_the_document_renders_the_plan(snapshot: SnapshotAssertion) -> None:
+    """The plan summary keeps its own stable shape inside the document."""
     document = report_dict(_report())
 
-    plan = document["plan"]
-    assert isinstance(plan, dict), "the plan is an object"
-    assert plan["archive"] == 1 and plan["delete"] == 3, "the plan counts are kept"
-    assert plan["retained_logical_bytes"] == 55, "the plan's estimate is kept"
-    assert document["actions"] == [
-        {
-            "action": "trimmed",
-            "sequence": 7,
-            "logical_bytes": 8,
-            "physical_bytes": 9,
-            "reason": None,
-        }
-    ], "each action keeps its closed name, sequence, sizes and reason"
+    assert document["plan"] == snapshot, "the plan's counts and estimate are fixed"
+
+
+def test_the_document_renders_each_action(snapshot: SnapshotAssertion) -> None:
+    """Each action keeps its closed name, sequence, sizes and reason."""
+    document = report_dict(_report())
+
+    assert document["actions"] == snapshot, "the action list is a fixed shape"
 
 
 def test_an_empty_report_renders_every_optional_field_as_null() -> None:
@@ -126,14 +125,10 @@ def test_an_empty_report_renders_every_optional_field_as_null() -> None:
     assert document["reason"] is None, "an absent reason is null"
 
 
-def test_an_action_carries_its_fault_reason() -> None:
+def test_an_action_carries_its_fault_reason(
+    snapshot: SnapshotAssertion,
+) -> None:
     """A quarantined action publishes the closed reason it recorded."""
     action = ActionResult("quarantined", 4, reason="bad_xz")
 
-    assert action_dict(action) == {
-        "action": "quarantined",
-        "sequence": 4,
-        "logical_bytes": 0,
-        "physical_bytes": 0,
-        "reason": "bad_xz",
-    }, "the fault reason survives the rendering"
+    assert action_dict(action) == snapshot, "the fault reason survives"

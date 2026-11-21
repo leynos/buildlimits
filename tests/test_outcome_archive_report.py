@@ -39,7 +39,7 @@ def test_the_builder_maps_a_settled_store_without_reading_one() -> None:
     assert report.status == "ok", "a settled run with no failure is ok"
     assert report.retained_records == 0, "the empty settled store holds no rows"
     assert report.retained_bytes == 0, "the empty settled store holds no bytes"
-    assert report.gaps == (), "the empty inventory reports no gap"
+    assert not report.gaps, "the empty inventory reports no gap"
     assert report.gaps_truncated is False, "the empty inventory truncates nothing"
 
 
