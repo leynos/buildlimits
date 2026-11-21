@@ -16,8 +16,7 @@ import dataclasses as dc
 import datetime as dt
 import typing as typ
 
-from buildlimits.outcome_record_encode import encode_line
-from buildlimits.outcome_record_format import MAX_COMPACT_BYTES, StoreHeader
+from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 
 SEGMENT_BYTES = 12 * 1024 * 1024
 """The active file's high-water mark before the writer seals it."""
@@ -48,7 +47,6 @@ __all__ = [
     "MIN_XZ_PRESET",
     "SEGMENT_BYTES",
     "RetentionPolicy",
-    "header_floor_bytes",
     "policy_from_settings",
     "validate_policy",
 ]
@@ -193,7 +191,9 @@ class _RetentionSettings(typ.Protocol):
         """Temporary disk headroom reserved for archive work."""
 
 
-def policy_from_settings(settings: _RetentionSettings) -> RetentionPolicy:
+def policy_from_settings(
+    settings: _RetentionSettings, *, header_floor: int
+) -> RetentionPolicy:
     """Build the effective policy from validated supervisor settings.
 
     A byte budget larger than one active segment switches the store to
@@ -204,6 +204,9 @@ def policy_from_settings(settings: _RetentionSettings) -> RetentionPolicy:
     ----------
     settings : _RetentionSettings
         The validated configuration values.
+    header_floor : int
+        The smallest document the record encoder can write, supplied by the
+        encoding adapter so this module never encodes a header itself.
 
     Returns
     -------
@@ -217,7 +220,8 @@ def policy_from_settings(settings: _RetentionSettings) -> RetentionPolicy:
     ...     cache_outcomes_max_bytes = 15_000_000_000
     ...     cache_outcomes_max_records = 0
     ...     cache_outcomes_archive_headroom_bytes = 64 * 1024 * 1024
-    >>> policy = policy_from_settings(Settings())
+    >>> from buildlimits.outcome_record_encode import header_floor_bytes
+    >>> policy = policy_from_settings(Settings(), header_floor=header_floor_bytes())
     >>> policy.is_segmented, policy.max_records
     (True, None)
     """
@@ -236,17 +240,20 @@ def policy_from_settings(settings: _RetentionSettings) -> RetentionPolicy:
         max_records=max_records,
         headroom_bytes=settings.cache_outcomes_archive_headroom_bytes,
     )
-    validate_policy(policy)
+    validate_policy(policy, header_floor=header_floor)
     return policy
 
 
-def validate_policy(policy: RetentionPolicy) -> None:
+def validate_policy(policy: RetentionPolicy, *, header_floor: int) -> None:
     """Reject a policy whose bounds are contradictory or unusable.
 
     Parameters
     ----------
     policy : RetentionPolicy
         The policy to check.
+    header_floor : int
+        The smallest document the record encoder can write, supplied by the
+        encoding adapter so this module never encodes a header itself.
 
     Raises
     ------
@@ -269,7 +276,7 @@ def validate_policy(policy: RetentionPolicy) -> None:
     if policy.headroom_bytes < policy.segment_bytes:
         msg = "headroom_bytes must hold at least one segment"
         raise ValueError(msg)
-    if 0 < policy.max_bytes < header_floor_bytes():
+    if 0 < policy.max_bytes < header_floor:
         # Compaction discards records but always writes a replacement header.
         # A budget smaller than that header can never be met, and accepting it
         # would make every compacted result over budget.
@@ -283,32 +290,6 @@ def validate_policy(policy: RetentionPolicy) -> None:
     if policy.max_age > dt.timedelta(days=MAX_AGE_DAYS):
         msg = "max_age is too large"
         raise ValueError(msg)
-
-
-def header_floor_bytes() -> int:
-    """Return the smallest possible compacted document: one maximal header.
-
-    A compacted document always starts with a replacement header, so no
-    reachable store is smaller than one. The timestamp carries microseconds
-    because the encoder preserves fractional seconds: a header written at a
-    whole second is shorter than one written with any fraction, and a budget
-    sized to the shorter form would still be unable to hold the longer one.
-
-    Returns
-    -------
-    int
-        The encoded size of a header with the longest salt identifier and a
-        fractional-second timestamp, plus its newline. A positive byte budget
-        below this cannot be honoured.
-
-    Examples
-    --------
-    >>> header_floor_bytes() > 0
-    True
-    """
-    written_at = dt.datetime(1970, 1, 1, microsecond=1, tzinfo=dt.UTC)
-    header = StoreHeader("0" * 64, written_at)
-    return len(encode_line(header).encode("utf-8")) + 1
 
 
 def _require_range(name: str, value: int) -> None:

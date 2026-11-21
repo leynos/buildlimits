@@ -7,6 +7,7 @@ expect.
 """
 
 import dataclasses as dc
+import datetime as dt
 import json
 
 from buildlimits.json_values import nonnegative_integer
@@ -24,7 +25,7 @@ from buildlimits.outcome_record_format import (
     _validate_key,
 )
 
-__all__ = ["encode_line"]
+__all__ = ["encode_line", "header_floor_bytes"]
 
 
 def encode_line(value: StoreHeader | StoreRecord) -> str:
@@ -123,3 +124,29 @@ def _summary_counts(summary: WindowSummary) -> tuple[int, ...]:
         summary.predicted_declined,
         summary.predicted_cacheable,
     )
+
+
+def header_floor_bytes() -> int:
+    """Return the smallest possible compacted document: one maximal header.
+
+    A compacted document always starts with a replacement header, so no
+    reachable store is smaller than one. The timestamp carries microseconds
+    because the encoder preserves fractional seconds: a header written at a
+    whole second is shorter than one written with any fraction, and a budget
+    sized to the shorter form would still be unable to hold the longer one.
+
+    Returns
+    -------
+    int
+        The encoded size of a header with the longest salt identifier and a
+        fractional-second timestamp, plus its newline. A positive byte budget
+        below this cannot be honoured.
+
+    Examples
+    --------
+    >>> header_floor_bytes() > 0
+    True
+    """
+    written_at = dt.datetime(1970, 1, 1, microsecond=1, tzinfo=dt.UTC)
+    header = StoreHeader("0" * 64, written_at)
+    return len(encode_line(header).encode("utf-8")) + 1

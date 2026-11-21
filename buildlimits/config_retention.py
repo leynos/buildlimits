@@ -7,13 +7,13 @@ the supervisor share one definition of what a valid retention policy is.
 
 import typing as typ
 
+from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_retention import (
     MAX_AGE_DAYS,
     MAX_POLICY_VALUE,
     MAX_XZ_PRESET,
     MIN_XZ_PRESET,
     SEGMENT_BYTES,
-    header_floor_bytes,
 )
 
 if typ.TYPE_CHECKING:

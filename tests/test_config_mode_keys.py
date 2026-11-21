@@ -10,11 +10,8 @@ from pathlib import Path
 import pytest
 
 from buildlimits import config
-from buildlimits.outcome_retention import (
-    MAX_AGE_DAYS,
-    SEGMENT_BYTES,
-    header_floor_bytes,
-)
+from buildlimits.outcome_record_encode import header_floor_bytes
+from buildlimits.outcome_retention import MAX_AGE_DAYS, SEGMENT_BYTES
 
 
 def test_defaults_load_without_a_file(tmp_path: Path) -> None:
