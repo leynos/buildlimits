@@ -114,7 +114,10 @@ def _open_chain(path: Path, *, create: bool) -> int:
     Notes
     -----
     A component missing while ``create`` is false propagates `MissingPathError`
-    from `_descend`.
+    from `_descend`. A read-only walk validates the chain but never rewrites a
+    mode: inspection and a dry run must leave a store exactly as they found it,
+    and an operator's choice of mode on an existing directory is theirs to
+    keep.
     """
     if not path.is_absolute():
         msg = "an archive path must be absolute"
@@ -126,7 +129,12 @@ def _open_chain(path: Path, *, create: bool) -> int:
             child, created = _descend(descriptor, part, create=create)
             try:
                 _require_private_directory(os.fstat(child), part)
-                if created or index == len(parts) - 1:
+                # Only a walk allowed to create takes responsibility for a
+                # component's mode. A read-only walk validates without
+                # rewriting what it found, so inspection and dry runs leave
+                # the store exactly as they found it.
+                owns_mode = create and (created or index == len(parts) - 1)
+                if owns_mode:
                     os.fchmod(child, _DIRECTORY_MODE)
             except BaseException:
                 os.close(child)

@@ -818,7 +818,7 @@ verified archive is published, and leaves compile admission untouched.
   measured command and asserts a marker written past the deadline never
   appears; the previous implementation left the worker running and the marker
   appeared.
-- [ ] CodeRabbit review 6000304047 remediation, group 13 (2026-11-21): the
+- [x] CodeRabbit review 6000304047 remediation, group 13 (2026-11-21): the
   cross-process lock test's barrier and cleanup (findings 23, 24). The first
   run is now held with `SIGSTOP` once it has published an archive, which keeps
   its `flock` while the second command runs, and the test waits on `waitid` with
@@ -828,7 +828,7 @@ verified archive is published, and leaves compile admission untouched.
   status is captured. A cleanup guard around the whole interaction kills and
   reaps the first run on every exceptional exit, so a stalled archive wait or a
   failed second invocation cannot become an unbounded `Popen` context wait.
-- [ ] CodeRabbit review 6000304047 remediation, group 14 (2026-11-21): nine
+- [x] CodeRabbit review 6000304047 remediation, group 14 (2026-11-21): nine
   follow-ups on the earlier remediation commits. Directory durability no longer
   depends on a name having been created by the attempt that syncs it:
   `_descend` syncs the parent on every create-capable walk, because nothing on
@@ -859,6 +859,18 @@ verified archive is published, and leaves compile admission untouched.
   spells "misprice" as one word, because the shared spelling gate rejects the
   hyphenated form: it tokenizes the prefix alone and reports it as a misspelt
   short word.
+- [x] Revision-28 assessment remediation (2026-11-21): the whole-plan
+  assessment's three findings are implemented. A read-only directory walk no
+  longer rewrites a mode: `_open_chain` gates its `fchmod` on `create`, so
+  `inspect`, `run --dry-run` and history reads validate the chain without
+  narrowing an operator's directory. Regressions check the mode before and
+  after both commands at the CLI, and a filesystem-level test asserts the
+  validated descriptor reports the mode it found; both fail against the prior
+  guard with `448 == 493` (0700 against 0755). The plan summary test now
+  asserts the serialized `retained_logical_bytes` before redacting it, so a
+  wrong JSON value cannot hide behind the placeholder. The developers' guide
+  inventory names `outcome_store_files` and `outcome_archive_replace`, which
+  the save-time check had reported missing since revision 25.
 
 ## Surprises & discoveries
 
@@ -920,7 +932,12 @@ verified archive is published, and leaves compile admission untouched.
   the detector.
 - liblzma allocates its encoder dictionary through Python's allocator, so the
   benchmark's traced peak is about 98 MB at preset 6 whether it reads 500 rows
-  or 523,588. The bounded-memory claim belongs to `peak_rss_bytes` (140 MB for
+  or 523,588.
+- A command that reports a plan changes no file. `inspect` and
+  `run --dry-run` validate the layout's directory chain, refuse a link or a
+  shared component, and leave every directory mode exactly as they found it;
+  only a run that may create a directory narrows one.
+- The bounded-memory claim belongs to `peak_rss_bytes` (140 MB for
   a 12 MiB segment, 143 MB for a 100 MiB one), not to the traced figure; the
   "under one mebibyte" traced bound holds for the reader alone. The benchmark's
   docstrings and the developers' guide now say so.
@@ -1150,6 +1167,16 @@ verified archive is published, and leaves compile admission untouched.
   show the model could disagree with the store. Driving state-machine methods
   directly also runs their event recording, which Hypothesis refuses outside a
   test, so such a regression needs its own example context.
+- A shared validation walk can hide a write. `_open_chain` narrowed the final
+  directory on every walk, including the read-only one, because the mode write
+  was written beside the validation rather than beside the creation. Every
+  caller therefore changed the store: inspection, a dry run and history reads
+  all rewrote a `0755` sealed directory to `0700`. The unit tests exercised the
+  creation path's narrowing, which was intended, and none asserted that the
+  read-only path left the mode alone, so the contract "inspection changes
+  nothing" had no test of its own. The two new regressions assert the mode
+  after the command, and both fail against the old guard with the exact
+  `0700`-against-`0755` mismatch the assessment predicted.
 
 ## Decision log
 
@@ -1566,6 +1593,19 @@ verified archive is published, and leaves compile admission untouched.
   final row back unless the stream ended with a newline, so replay and dataset
   snapshots cannot report a row the ordinary reader never returns and the
   writer may still roll back.
+- A read-only path may validate a directory but not narrow it. The archive
+  command promises that `inspect` and `run --dry-run` change nothing, and the
+  descriptor walk is shared with both, so the walk now applies its owner-only
+  mode only when it is allowed to create. Creation and every existing
+  ancestor's mode remain the writer's business: `ensure_private_directory`
+  still narrows the directories it creates and the final directory it is asked
+  to take, which is the only caller that has taken responsibility for them.
+- A redacted snapshot value still needs its own assertion. Replacing a number
+  with `<bytes>` keeps the field-name contract stable, but a test that redacts
+  before comparing can no longer see a wrong value. The plan summary test
+  therefore asserts the serialized value first and redacts second; the CLI test
+  derives the expected byte count from the encoded fixture rather than
+  restating it.
 
 ## Outcomes & retrospective
 
@@ -1622,6 +1662,11 @@ Invariants:
    and report describe. No archive, trim or eviction buffers a segment's rows,
    so the peak does not follow the retained history's size; the per-segment
    share is measured at about 4 KiB.
+8. A command that reports a plan changes no file. `inspect` and
+   `run --dry-run` validate the layout's directory chain, refuse a link or a
+   component shared with another account, and leave every directory mode
+   exactly as they found it; only a walk that may create a directory narrows
+   one.
 
 Methods and evidence:
 
@@ -1732,6 +1777,13 @@ Methods and evidence:
   `read_store`. The previous reader returned three rows, so the test failed on
   "the uncommitted row is not history" before the fix; sealed segments keep
   their separate rule and their tests still pass.
+- A read-only-mode regression in `tests/test_outcome_archive_cli.py`
+  (`test_inspection_leaves_the_store_directories_as_it_found_them`) widens a
+  sealed directory to `0755` and asserts both `inspect` and `run --dry-run`
+  leave it there, and `tests/test_outcome_archive_fs.py`
+  (`test_a_read_only_walk_leaves_every_mode_alone`) asserts the same at the
+  walk, including that the returned descriptor names the mode it found.
+  Restoring the unconditional `fchmod` fails both with `448 == 493`.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
@@ -2050,3 +2102,14 @@ Each mutation was reverted and the focused suite passed again.
   measurement through unchanged. A fixture that grows a field therefore no
   longer churns a snapshot, while a report that stops counting the pending
   source or stops passing the measurement on still fails.
+- Revision 29 records the whole-plan revision-28 assessment's three findings.
+  `_open_chain` now applies its owner-only mode only when the walk may create,
+  so inspection, a dry run and history reads validate the chain without
+  rewriting a directory an operator left at `0755`; the two regressions fail
+  against the prior guard with `448 == 493`. The plan summary test asserts the
+  serialized `retained_logical_bytes` before redacting it, so a wrong JSON
+  value can no longer hide behind the placeholder. The developers' guide
+  inventory now names `outcome_store_files` and `outcome_archive_replace`,
+  which the save-time check had reported missing since revision 25. The
+  revision also marks the group-13 and group-14 Progress entries done: both
+  were already implemented in the tree.

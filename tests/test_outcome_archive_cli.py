@@ -22,6 +22,7 @@ from archive_cli_helpers import (
 )
 from outcome_test_helpers import records_at
 from segment_test_helpers import document as encode_document
+from segment_test_helpers import mode
 
 from buildlimits.outcome_archive_cli import main
 from buildlimits.outcome_archive_lock import ArchiveLock
@@ -83,6 +84,35 @@ def test_inspect_prints_bounded_operator_lines(
     )
     assert "active: 0 logical bytes" in output, "no active file exists yet"
     assert normalized == snapshot, "the plain report is a closed operator contract"
+
+
+def test_inspection_leaves_the_store_directories_as_it_found_them(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Inspection validates the layout without rewriting a directory mode.
+
+    The sealed directory is ordinarily private, but its mode is the operator's
+    choice. A report is read-only, so a wider mode must survive both inspection
+    and a dry run untouched.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    sealed_source(store, 1, encode_document(records_at(NOW, 1)))
+    layout = SegmentLayout.beside(store)
+    layout.sealed_dir.chmod(0o755)
+    config = write_config(tmp_path / "supervisor.toml")
+
+    status = main(["inspect", *command_arguments(store, config)])
+    capsys.readouterr()
+
+    assert status == 0, "inspection succeeds against the wider mode"
+    assert mode(layout.sealed_dir) == 0o755, "inspection changes no directory mode"
+
+    status = main(["run", "--dry-run", *command_arguments(store, config)])
+    capsys.readouterr()
+
+    assert status == 0, "the dry run succeeds"
+    assert mode(layout.sealed_dir) == 0o755, "a dry run changes no directory mode"
+    assert not layout.archive_dir.exists(), "a dry run creates no archive state"
 
 
 def test_run_archives_and_reports_the_action(

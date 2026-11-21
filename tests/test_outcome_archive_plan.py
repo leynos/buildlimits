@@ -230,8 +230,13 @@ def test_the_summary_counts_every_operation(snapshot: SnapshotAssertion) -> None
     )
     # The summary passes the plan's measurement through unchanged; asserting
     # that here keeps the byte value out of the snapshot, which pins the closed
-    # set of field names without restating a number the plan supplied.
+    # set of field names without restating a number the plan supplied. The
+    # serialized value is asserted before it is redacted, because a wrong JSON
+    # value would otherwise be masked by the placeholder.
     assert summary.retained_bytes == 70, "the plan's measurement is reported"
     reported = summary.as_dict()
+    assert reported["retained_logical_bytes"] == 70, (
+        "the serialized summary carries the plan's measurement"
+    )
     reported["retained_logical_bytes"] = "<bytes>"
     assert reported == snapshot, "the JSON fields are closed and stable"

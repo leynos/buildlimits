@@ -14,6 +14,7 @@ import pytest
 from segment_test_helpers import mode, swap_after_validation
 
 from buildlimits import outcome_archive_fs
+from buildlimits.outcome_archive_dirs import open_private_chain
 from buildlimits.outcome_archive_fs import (
     UnsafePathError,
     atomic_write_json,
@@ -199,6 +200,29 @@ def test_a_relative_path_is_refused() -> None:
 def test_a_private_chain_accepts_a_private_directory(tmp_path: Path) -> None:
     """The intended path passes the check unchanged."""
     assert require_private_chain(tmp_path) is None, "an accepted chain returns nothing"
+
+
+def test_a_read_only_walk_leaves_every_mode_alone(tmp_path: Path) -> None:
+    """Validating a chain must not rewrite a mode an operator chose.
+
+    The walk is shared with inspection, dry runs and history reads, so
+    narrowing the final directory on a read would make those commands change
+    the store. Validation is still applied: only the mode write is skipped.
+    """
+    path = tmp_path / "archive"
+    path.mkdir(mode=0o755)
+    path.chmod(0o755)
+
+    assert require_private_chain(path) is None, "the chain is validated"
+    assert mode(path) == 0o755, "a read-only walk never narrows a directory"
+
+    descriptor = open_private_chain(path)
+    try:
+        assert os.fstat(descriptor).st_mode & 0o777 == 0o755, (
+            "the descriptor names the directory as it was found"
+        )
+    finally:
+        os.close(descriptor)
 
 
 def test_a_temporary_file_is_exclusive_and_private(tmp_path: Path) -> None:

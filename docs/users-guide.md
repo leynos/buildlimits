@@ -321,9 +321,11 @@ unit that sets neither archives whatever the default resolves to, and an empty
 run is still a success, so check `last-run.json` in the archive directory after
 the first firing.
 
-Use `inspect` to see what a run would do without changing a file, or
-`run --dry-run` to take no lock and write no state. `run` performs the plan
-under its own lock:
+Use `inspect` to see what a run would do without changing a file or a
+directory's mode, or `run --dry-run` to take no lock and write no state. Both
+still validate the store's directories, so a symlinked or shared component is
+refused exactly as a run would refuse it. `run` performs the plan under its own
+lock:
 
 <!-- tested-example: buildlimits-outcome-archive-commands -->
 ```bash
