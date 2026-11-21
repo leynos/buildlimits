@@ -149,7 +149,9 @@ def physical_fallback_bytes(inventory: Inventory) -> int:
 
     An archive whose sidecar is missing or untrusted has no known logical
     size, so the scan substitutes its compressed file size. The budget walks
-    use that conservative figure, but it is not a logical-byte measurement:
+    defer while such an archive survives rather than acting on the substitute,
+    because a compressed size can be larger or smaller than the logical
+    history. The figure is therefore not a conservative logical measurement:
     callers that print the total must say how much of it is a fallback.
 
     Returns

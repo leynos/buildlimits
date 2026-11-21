@@ -7,12 +7,13 @@ from pathlib import Path
 import pytest
 from archive_cli_helpers import command_arguments, sealed_measured_source, write_config
 from outcome_archive_helpers import NOW as RUN_NOW
-from outcome_archive_helpers import layout, policy, records, run, write
+from outcome_archive_helpers import layout, policy, records, refuse, run, write
 from outcome_test_helpers import records_at
 
+from buildlimits import outcome_archive_files
 from buildlimits.outcome_archive_cli import _write_report, main
 from buildlimits.outcome_archive_codec import report_dict
-from buildlimits.outcome_segments import sidecar_name
+from buildlimits.outcome_segments import archive_name, sidecar_name
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
@@ -78,11 +79,14 @@ def test_a_missing_sidecar_discloses_the_physical_size_fallback(
     assert first.status == "ok", "the fixture archive is published"
     (layout(tmp_path).archive_dir / sidecar_name(1)).unlink()
 
+    archive = layout(tmp_path).archive_dir / archive_name(1)
     report = run(tmp_path, policy(), dry_run=True)
     document = report_dict(report)
 
     assert report.unmeasured_entries == 1, "the archive is counted as unmeasured"
-    assert report.fallback_bytes > 0, "its physical size is the substituted figure"
+    assert report.fallback_bytes == archive.stat().st_size, (
+        "its physical size is the substituted figure"
+    )
     assert document["retained_fallback_bytes"] == report.fallback_bytes, (
         "the JSON names the fallback component"
     )
@@ -93,3 +97,24 @@ def test_a_missing_sidecar_discloses_the_physical_size_fallback(
         f"retained fallback: {report.fallback_bytes} bytes from physical size; "
         "1 entries unmeasured"
     ) in output, "the plain report names the fallback component"
+
+
+def test_an_executed_report_discloses_an_unrepaired_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repair that fails leaves the archive counted by its physical size."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(RUN_NOW, 1), policy())
+    first = run(tmp_path, policy())
+    assert first.status == "ok", "the fixture archive is published"
+    (layout(tmp_path).archive_dir / sidecar_name(1)).unlink()
+    archive = layout(tmp_path).archive_dir / archive_name(1)
+    monkeypatch.setattr(outcome_archive_files, "repair_sidecar", refuse)
+
+    report = run(tmp_path, policy())
+
+    assert report.status == "corrupt", "the failed repair needs an operator"
+    assert report.unmeasured_entries == 1, "the archive remains unmeasured"
+    assert report.fallback_bytes == archive.stat().st_size, (
+        "the executed report discloses the substituted physical size"
+    )

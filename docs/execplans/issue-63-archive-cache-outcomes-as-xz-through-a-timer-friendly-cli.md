@@ -2448,3 +2448,12 @@ after each revert.
   sidecar and asserts the unmeasured entry, the non-zero fallback and both
   output forms; removing either assignment fails it. Budget deferral is
   unchanged: the walks still wait for an unmeasured archive.
+- Revision 42 records the revision-41 assessment's two verification items. The
+  fallback docstring now states that the budget walks defer while an unmeasured
+  archive survives, rather than calling the compressed size a conservative
+  logical figure. The executed-report regression removes a published archive's
+  sidecar, makes the heal step fail with the shared refusal, and asserts the
+  report's fallback equals the archive's physical size; the dry-run case
+  asserts the exact size too. Removing the settled report's assignment fails
+  the executed regression, and removing the dry report's fails the inspection
+  pair.
