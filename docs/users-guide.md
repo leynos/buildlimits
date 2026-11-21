@@ -344,6 +344,18 @@ with sorted keys. Neither form prints a filesystem path on a successful run.
 The one exception is an unreadable configuration file, which is reported on
 standard error before any report exists and does name the file.
 
+Every plain report also names when the firing started and how long it took, so
+a journal reader can tell a slow run from a stalled one:
+
+```text
+started: 2026-11-19T17:30:00Z
+elapsed: 1.250s
+```
+
+Both figures come from the report's own clock readings, so `elapsed` is the
+span the report describes rather than the time the reader happens to run it.
+The JSON form carries the same times as `started_at` and `finished_at`.
+
 The plain report's `retained:` line gives the logical bytes against the budget,
 and its `history:` line gives the rows the store retains, the observed span
 they cover and, when any segment's metadata is missing, how many entries could

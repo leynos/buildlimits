@@ -201,6 +201,8 @@ def _write_report(report: RunReport, *, as_json: bool) -> None:
     print(f"status: {report.status}")
     if report.reason is not None:
         print(f"reason: {report.reason}")
+    print(f"started: {utc_text(report.started_at)}")
+    print(f"elapsed: {_elapsed(report)}")
     print(f"retained: {report.retained_bytes} of {report.budget_bytes} logical bytes")
     _write_history(report)
     print(f"active: {report.active_bytes} logical bytes")
@@ -208,6 +210,20 @@ def _write_report(report: RunReport, *, as_json: bool) -> None:
     _write_plan(report)
     _write_actions(report)
     _write_diagnostics(report)
+
+
+def _elapsed(report: RunReport) -> str:
+    """Return the wall duration the report spans, to the millisecond.
+
+    Returns
+    -------
+    str
+        The finish minus the start, so a journal reader can tell a slow firing
+        from a stalled one. A host clock that steps can make the difference
+        negative, which is printed as measured rather than hidden.
+    """
+    seconds = (report.finished_at - report.started_at).total_seconds()
+    return f"{seconds:.3f}s"
 
 
 def _write_history(report: RunReport) -> None:

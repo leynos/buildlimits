@@ -2,6 +2,8 @@
 # name: test_inspect_prints_bounded_operator_lines
   '''
   status: ok
+  started: <utc now>
+  elapsed: <duration>
   retained: <bytes> of 15000000000 logical bytes
   history: 0 records, 1 unmeasured, observed unknown
   active: <bytes> logical bytes

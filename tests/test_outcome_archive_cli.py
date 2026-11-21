@@ -71,6 +71,8 @@ def test_inspect_prints_bounded_operator_lines(
     # asserted exactly below, so the snapshot pins the line contract while the
     # numbers keep their own check.
     normalized = re.sub(r"(?m)^cutoff: .*$", "cutoff: <utc now>", output)
+    normalized = re.sub(r"(?m)^started: .*$", "started: <utc now>", normalized)
+    normalized = re.sub(r"(?m)^elapsed: .*$", "elapsed: <duration>", normalized)
     normalized = re.sub(r"(?m)^retained: \d+ of ", "retained: <bytes> of ", normalized)
     normalized = re.sub(
         r"(?m)^active: \d+ logical bytes$", "active: <bytes> logical bytes", normalized
@@ -83,6 +85,12 @@ def test_inspect_prints_bounded_operator_lines(
         "the report counts the pending source in the budget"
     )
     assert "active: 0 logical bytes" in output, "no active file exists yet"
+    assert re.search(r"(?m)^started: \d{4}-\d{2}-\d{2}T", output), (
+        "the report names when the inspection started"
+    )
+    assert re.search(r"(?m)^elapsed: \d+\.\d{3}s$", output), (
+        "the report names how long it took"
+    )
     assert normalized == snapshot, "the plain report is a closed operator contract"
 
 
