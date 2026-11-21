@@ -90,11 +90,12 @@ def test_the_largest_supported_value_is_accepted(tmp_path: Path) -> None:
     """The documented upper bound itself is a valid policy."""
     loaded = settings(tmp_path, f"cache_outcomes_max_bytes = {MAX_POLICY_VALUE}\n")
 
-    assert policy_from_settings(
-        loaded, header_floor=header_floor_bytes(), segment_limit=MAX_COMPACT_BYTES
-    ).max_bytes == MAX_POLICY_VALUE, (
-        "the documented upper bound is accepted"
-    )
+    assert (
+        policy_from_settings(
+            loaded, header_floor=header_floor_bytes(), segment_limit=MAX_COMPACT_BYTES
+        ).max_bytes
+        == MAX_POLICY_VALUE
+    ), "the documented upper bound is accepted"
 
 
 def test_a_retention_key_needs_record_mode(tmp_path: Path) -> None:

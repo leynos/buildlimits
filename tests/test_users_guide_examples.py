@@ -8,6 +8,7 @@ from outcome_retention_helpers import ROHGA_MAX_BYTES
 from buildlimits import config, outcome_archive_cli
 from buildlimits.journal_policy import ROUTINE_LINES_VARIABLE
 from buildlimits.outcome_record_encode import header_floor_bytes
+from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_retention import policy_from_settings
 from buildlimits.predict import benchmark_cli, dataset_cli
 
@@ -137,7 +138,11 @@ def test_the_retention_example_states_the_policy_it_documents(
     path = tmp_path / "supervisor.toml"
     path.write_text(_marked_example(RETENTION_EXAMPLE, "toml"), encoding="utf-8")
 
-    policy = policy_from_settings(config.load(path), header_floor=header_floor_bytes())
+    policy = policy_from_settings(
+        config.load(path),
+        header_floor=header_floor_bytes(),
+        segment_limit=MAX_COMPACT_BYTES,
+    )
 
     assert policy.max_age == dt.timedelta(days=30), "the example asks for 30 days"
     assert policy.max_bytes == ROHGA_MAX_BYTES, "and fifteen decimal gigabytes"

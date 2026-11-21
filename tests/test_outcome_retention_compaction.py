@@ -35,11 +35,10 @@ from outcome_test_helpers import attributed_record
 from segment_test_helpers import store_layout
 
 from buildlimits import config, outcome_records, outcome_store_state
-from buildlimits.outcome_record_encode import header_floor_bytes
-from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_record_encode import header_floor_bytes
+from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_retention import LEGACY_MAX_RECORDS, policy_from_settings
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_store import StoreWriter

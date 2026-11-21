@@ -337,13 +337,16 @@ def test_status_and_the_report_agree_on_the_configured_policy(tmp_path: Path) ->
     assert limits == last_run["limits"], (
         "status and the last run derive the same limits"
     )
-    assert limits == RetentionLimits.of(policy_from_settings(
-            loaded,
-            header_floor=header_floor_bytes(),
-            segment_limit=MAX_COMPACT_BYTES,
-        )).as_dict(), (
-        "the documented derivation is the one reported"
-    )
+    assert (
+        limits
+        == RetentionLimits.of(
+            policy_from_settings(
+                loaded,
+                header_floor=header_floor_bytes(),
+                segment_limit=MAX_COMPACT_BYTES,
+            )
+        ).as_dict()
+    ), "the documented derivation is the one reported"
     assert document["active"] == _SizedWriter.SNAPSHOT.as_dict(), (
         "the active snapshot is the writer's own"
     )

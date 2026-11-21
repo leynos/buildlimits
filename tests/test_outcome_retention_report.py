@@ -41,11 +41,13 @@ def _limits(loaded: config.SupervisorConfig) -> RetentionLimits:
     RetentionLimits
         The effective limits.
     """
-    return RetentionLimits.of(policy_from_settings(
+    return RetentionLimits.of(
+        policy_from_settings(
             loaded,
             header_floor=header_floor_bytes(),
             segment_limit=MAX_COMPACT_BYTES,
-        ))
+        )
+    )
 
 
 def test_omitted_retention_keys_keep_the_legacy_policy(

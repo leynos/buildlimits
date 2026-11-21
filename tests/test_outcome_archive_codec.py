@@ -5,8 +5,12 @@ import typing as typ
 
 from buildlimits.outcome_archive_codec import ARCHIVE_SCHEMA, action_dict, report_dict
 from buildlimits.outcome_archive_context import ActionResult
+from buildlimits.outcome_archive_evictions import EVICTION_CAUSES
 from buildlimits.outcome_archive_plan import PlanSummary
-from buildlimits.outcome_archive_report import RunReport
+from buildlimits.outcome_archive_report import Maintenance, RunReport
+from buildlimits.outcome_retention import RetentionPolicy
+from buildlimits.outcome_retention_history import RetainedHistory
+from buildlimits.outcome_retention_report import RetentionLimits
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
@@ -36,8 +40,27 @@ _EXPECTED_KEYS = {
     "missing_sidecars",
     "corrupt_sidecars",
     "orphan_sidecars",
+    "evictions",
+    "limits",
+    "retained",
+    "maintenance",
     "reason",
 }
+
+
+_RETAINED = RetainedHistory(
+    record_count=3,
+    logical_bytes=22,
+    active_bytes=11,
+    sealed_bytes=5,
+    archived_logical_bytes=6,
+    archived_physical_bytes=4,
+    closed_segments=1,
+    active_records=3,
+    first_observed_at=_NOW,
+    last_observed_at=_LATER,
+    complete=False,
+)
 
 
 def _report() -> RunReport:
@@ -63,6 +86,9 @@ def _report() -> RunReport:
         missing_sidecars=(6,),
         corrupt_sidecars=(7,),
         orphan_sidecars=(8,),
+        limits=RetentionLimits.of(RetentionPolicy()),
+        retained=_RETAINED,
+        maintenance=Maintenance(state_written=False, reason="state_write_failed"),
         reason="unreadable",
     )
 
@@ -100,6 +126,19 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     assert document["missing_sidecars"] == [6], "the missing sidecars are published"
     assert document["corrupt_sidecars"] == [7], "the corrupt sidecars are published"
     assert document["orphan_sidecars"] == [8], "the orphan sidecars are published"
+    assert document["evictions"] == dict.fromkeys(EVICTION_CAUSES, 0), (
+        "every eviction cause is counted, even at zero"
+    )
+    assert document["limits"] == RetentionLimits.of(RetentionPolicy()).as_dict(), (
+        "the effective limits are published"
+    )
+    assert document["retained"] == _RETAINED.as_dict(), (
+        "the retained history is published"
+    )
+    assert document["maintenance"] == {
+        "state_written": False,
+        "reason": "state_write_failed",
+    }, "a failed state write is named in the document"
     assert document["reason"] == "unreadable", "the run-level reason is published"
     assert empty["plan"] is None, "an absent plan is null"
     assert empty["cutoff"] is None, "an absent cutoff is null"
@@ -108,6 +147,11 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     assert empty["actions"] == [], "no action is an empty list"
     assert empty["failures"] == [], "no failure is an empty list"
     assert empty["reason"] is None, "an absent reason is null"
+    assert empty["limits"] is None, "an underived policy is null"
+    assert empty["retained"] is None, "an unmeasured history is null"
+    assert empty["maintenance"] == {"state_written": True, "reason": None}, (
+        "a report built without state still says nothing failed"
+    )
 
 
 def test_the_document_renders_the_plan_and_actions(

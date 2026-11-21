@@ -156,48 +156,6 @@ def _floor_document(floor: int, report: RunReport) -> dict[str, object]:
     }
 
 
-def _floor_document(floor: int, report: RunReport) -> dict[str, object]:
-    """Build the floor document a measured run installs.
-
-    Returns
-    -------
-    dict[str, object]
-        The JSON-compatible document ``retention.json`` carries, including
-        the limits and retained history the report measured.
-    """
-    return {
-        "schema": _STATE_SCHEMA,
-        "floor_sequence": floor,
-        "retained_logical_bytes": report.retained_bytes,
-        "budget_bytes": report.budget_bytes,
-        "cutoff": optional_utc_text(report.cutoff),
-        "limits": None if report.limits is None else report.limits.as_dict(),
-        "retained": None if report.retained is None else report.retained.as_dict(),
-        "updated_at": utc_text(report.finished_at),
-    }
-
-
-def _floor_document(floor: int, report: RunReport) -> dict[str, object]:
-    """Build the floor document a measured run installs.
-
-    Returns
-    -------
-    dict[str, object]
-        The JSON-compatible document ``retention.json`` carries, including
-        the limits and retained history the report measured.
-    """
-    return {
-        "schema": _STATE_SCHEMA,
-        "floor_sequence": floor,
-        "retained_logical_bytes": report.retained_bytes,
-        "budget_bytes": report.budget_bytes,
-        "cutoff": optional_utc_text(report.cutoff),
-        "limits": None if report.limits is None else report.limits.as_dict(),
-        "retained": None if report.retained is None else report.retained.as_dict(),
-        "updated_at": utc_text(report.finished_at),
-    }
-
-
 def write_floor(layout: SegmentLayout, floor: int, report: RunReport) -> None:
     """Persist the retention floor and the history measured beside it.
 

@@ -6,8 +6,8 @@ from pathlib import Path
 from buildlimits.outcome_archive_context import ArchiveContext
 from buildlimits.outcome_archive_history import ActiveHistory, SettledStore
 from buildlimits.outcome_archive_plan import Plan, PlanSummary
-from buildlimits.outcome_archive_report import settled_report
 from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome
+from buildlimits.outcome_archive_settled import settled_report
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segment_inventory import Inventory
 from buildlimits.outcome_segments import SegmentLayout

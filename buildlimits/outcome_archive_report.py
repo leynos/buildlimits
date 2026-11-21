@@ -26,7 +26,6 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.metrics import MetricsPort
     from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
-    from buildlimits.outcome_archive_history import SettledStore
     from buildlimits.outcome_archive_plan import PlanSummary
     from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome
     from buildlimits.outcome_retention_report import RetainedHistory
@@ -44,7 +43,6 @@ __all__ = [
     "RunOptions",
     "RunReport",
     "RunStatus",
-    "settled_report",
     "Unfinished",
     "after_work_failure",
     "dry_report",
@@ -225,6 +223,39 @@ class RunReport:
     reason: str | None = None
 
 
+class SettledFields(typ.TypedDict):
+    """The report fields both builders derive from one settled pair."""
+
+    gaps: tuple[int, ...]
+    gaps_truncated: bool
+    missing_sidecars: tuple[int, ...]
+    corrupt_sidecars: tuple[int, ...]
+    orphan_sidecars: tuple[int, ...]
+    limits: RetentionLimits
+    retained: RetainedHistory
+
+
+def settled_fields(
+    run: ArchiveRun, inventory: Inventory, active: ActiveHistory
+) -> SettledFields:
+    """Describe the inventory and history fields both report builders share.
+
+    Returns
+    -------
+    SettledFields
+        The inventory counts, the effective limits and retained history.
+    """
+    return {
+        "gaps": inventory.gaps,
+        "gaps_truncated": inventory.gaps_truncated,
+        "missing_sidecars": inventory.missing_sidecars,
+        "corrupt_sidecars": inventory.corrupt_sidecars,
+        "orphan_sidecars": inventory.orphan_sidecars,
+        "limits": RetentionLimits.of(run.context.policy),
+        "retained": retained_history(inventory, active),
+    }
+
+
 def dry_report(
     run: ArchiveRun,
     active: ActiveHistory,
@@ -269,13 +300,7 @@ def dry_report(
         budget_bytes=run.context.policy.max_bytes,
         cutoff=run.plan.cutoff,
         plan=run.summary,
-        gaps=inventory.gaps,
-        gaps_truncated=inventory.gaps_truncated,
-        missing_sidecars=inventory.missing_sidecars,
-        corrupt_sidecars=inventory.corrupt_sidecars,
-        orphan_sidecars=inventory.orphan_sidecars,
-        limits=RetentionLimits.of(run.context.policy),
-        retained=retained_history(inventory, active),
+        **settled_fields(run, inventory, active),
         maintenance=Maintenance(state_written=False),
         # The reason the active file could not be counted is the reason the
         # inspection reports ``corrupt``; leaving it out would name the status
@@ -343,93 +368,6 @@ def unfinished_report(
         maintenance=Maintenance(state_written=False, reason=fault.reason),
         reason=fault.reason,
     )
-
-
-def settled_report(
-    run: ArchiveRun, outcome: RunOutcome, settled: SettledStore
-) -> RunReport:
-    """Build the report one settled run's measurements describe.
-
-    The caller owns the store read and the retention decision; this builder
-    only maps the settled values and the run's own record into the report.
-
-    Parameters
-    ----------
-    run : ArchiveRun
-        The executed plan and the context its report describes.
-    outcome : RunOutcome
-        The actions and failures the run recorded.
-    settled : SettledStore
-        The final inventory and active reading, and whether retention still
-        owes work after it.
-
-    Returns
-    -------
-    RunReport
-        The completed run's report, before it is persisted.
-    """
-    inventory = settled.inventory
-    active = settled.active
-    retained = retained_logical_bytes(inventory, active)
-    observed = observed_history(inventory, active)
-    return RunReport(
-        status=_run_status(
-            outcome,
-            active,
-            retention_unsettled=settled.retention_unsettled,
-        ),
-        started_at=run.started_at,
-        finished_at=run.context.clock(),
-        active_bytes=active.bytes,
-        retained_bytes=retained,
-        fallback_bytes=physical_fallback_bytes(inventory),
-        retained_records=observed.records,
-        observed_from=observed.observed_from,
-        observed_until=observed.observed_until,
-        unmeasured_entries=observed.unmeasured,
-        budget_bytes=run.context.policy.max_bytes,
-        cutoff=run.plan.cutoff,
-        plan=run.summary,
-        actions=tuple(outcome.actions),
-        failures=tuple(outcome.failures),
-        gaps=inventory.gaps,
-        gaps_truncated=inventory.gaps_truncated,
-        missing_sidecars=inventory.missing_sidecars,
-        corrupt_sidecars=inventory.corrupt_sidecars,
-        orphan_sidecars=inventory.orphan_sidecars,
-        limits=RetentionLimits.of(run.context.policy),
-        retained=retained_history(inventory, active),
-        reason=None if active.has_metadata else active.reason,
-    )
-
-
-def _run_status(
-    outcome: RunOutcome, active: ActiveHistory, *, retention_unsettled: bool
-) -> RunStatus:
-    """Classify a completed pass by what it recorded and could not measure.
-
-    A run that met only a full filesystem is retryable: nothing is corrupt and
-    the next timer firing picks the work up once space returns. Any other
-    failure needs an operator, so it outranks a space failure in the same run.
-    An active file that could not be counted also makes the totals a lower
-    bound, and a timer that recorded ``ok`` would hide history a later run can
-    see. A scan that could not finish is retryable; content that cannot be
-    decoded is corrupt.
-
-    Returns
-    -------
-    RunStatus
-        ``ok``, ``unsettled``, ``no_headroom`` or ``corrupt``.
-    """
-    if not outcome.failures and not active.has_metadata:
-        return (
-            "unsettled" if active.reason in {"unreadable", "unsettled"} else "corrupt"
-        )
-    if not outcome.failures:
-        return "unsettled" if retention_unsettled else "ok"
-    if all(reason == "no_headroom" for _sequence, reason in outcome.failures):
-        return "no_headroom"
-    return "corrupt"
 
 
 def after_work_failure(

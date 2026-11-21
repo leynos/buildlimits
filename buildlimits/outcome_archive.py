@@ -18,6 +18,7 @@ from buildlimits import (
     outcome_archive_report,
     outcome_archive_retain,
     outcome_archive_run,
+    outcome_archive_settled,
     outcome_archive_state,
     outcome_segment_inventory,
     outcome_segment_state,
@@ -287,36 +288,23 @@ def _execute(
     Persisting the report is left to the locked caller: writing state is a
     separate effect from deciding what the run achieved.
 
-    A run whose active file cannot be counted, or was replaced while it was
-    read, is reported as ``corrupt`` even when every closed segment succeeded:
-    the retained total is then a lower bound, and a timer that recorded ``ok``
-    would hide history it cannot see.
-
     A state write that fails does not discard the report of work already done:
     the archive and its evictions are real even when ``retention.json`` could
-    not be replaced. The run then reports ``failed`` with
-    ``state_write_failed``, so a timer retries and the next run rewrites the
-    state from what is on disk.
+    not be replaced. The run reports ``failed`` with ``state_write_failed``,
+    so a timer retries and the next run rewrites the state from disk.
 
-    The floor gets its own attempt before that failure is returned. A later
-    run that deletes nothing can only learn about this run's deletions from
-    the recorded floor, so a transient failure of the full write must not
-    turn them into permanent gaps. A post-run read that fails takes the same
-    path: the deletions are already real, so the floor is written from their
-    actions without needing another inventory read. A retry that still cannot
-    replace ``retention.json`` falls back to ``retention-pending.json``, which
-    every reader merges with the primary record; only when both records refuse
-    the write is the loss reported as a gap.
-
-    The retained totals come from ``_measure``, which reads each side of the
-    store once and detects a seal racing those reads. A replacement in the
-    window leaves the active contribution unmeasured, which marks the totals
-    incomplete rather than counting the sealed rows twice.
+    The floor gets its own attempt before that failure is returned: a later
+    run that deletes nothing learns about this run's deletions only from the
+    recorded floor, so a transient failure must not turn them into permanent
+    gaps. A retry that still cannot replace ``retention.json`` falls back to
+    ``retention-pending.json``, which readers merge with the primary record;
+    only when both refuse the write is the loss reported as a gap.
 
     Returns
     -------
-    tuple[int, RunReport]
-        The retention floor the run recorded, and its report.
+    tuple[int | None, RunReport]
+        The retention floor the run recorded, when it could measure one, and
+        its report.
     """
     _prepare(run.context.layout, run.context.policy)
     outcome = _perform(run)
@@ -369,7 +357,7 @@ def _report(
         # bind rows to one version of the store. Report it as retryable rather
         # than recording an undercount as success.
         outcome.retention_unsettled = True
-    elif _retention_owes_work(final, final_active, run):
+    elif outcome_archive_settled.retention_owes_work(final, final_active, run):
         # The writer can append or seal between the last retention pass and
         # this read. The report must not claim the store is within its bounds
         # when the next firing still has history to evict.
@@ -379,28 +367,7 @@ def _report(
         active=final_active,
         retention_unsettled=outcome.retention_unsettled,
     )
-    return outcome_archive_report.settled_report(run, outcome, settled)
-
-
-def _retention_owes_work(
-    inventory: Inventory, active: ActiveHistory, run: outcome_archive_run.ArchiveRun
-) -> bool:
-    """Whether the final snapshot still calls for retention work.
-
-    The writer never takes the archive lock, so it can append or seal between
-    the last retention pass and this read. A report that claimed success over
-    that store would tell the timer the budget is met while the next firing
-    still has to trim or delete. Only retention decides this: a source sealed
-    just before the read is archival work the next firing picks up, and the
-    report already counts its bytes.
-
-    Returns
-    -------
-    bool
-        True when the plan still evicts history or defers a budget.
-    """
-    pending = plan_run(inventory, run.context.policy, now=run.started_at, active=active)
-    return bool(pending.trims or pending.deletes or pending.retention_deferred)
+    return outcome_archive_settled.settled_report(run, outcome, settled)
 
 
 def _prepare(layout: SegmentLayout, policy: RetentionPolicy) -> None:
