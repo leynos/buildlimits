@@ -908,6 +908,23 @@ verified archive is published, and leaves compile admission untouched.
   firing. Two mutations were observed and reverted: dropping the last replayed
   row fails the replay assertion in both tests, and skipping the model update
   fails its first evicting step.
+- [x] Revision-32 assessment remediation (2026-11-21): the whole-plan
+  assessment found the lifecycle property's gap oracle circular, because
+  `_assert_gaps` read the floor the implementation had persisted and used it to
+  build the expected gap list. The property now carries
+  `tests/outcome_lifecycle_model.py`, an independent model of the closed
+  sequences, their rows, the writer's monotone counter and the floor each
+  completed run should leave; it applies the record budget's oldest-first
+  deletion and prefix trim, the age cutoff's expire-and-shorten rule, and the
+  floor's contiguous-deleted-prefix advance. Replay is compared with the
+  model's rows and the run report's `gaps` with the model's gaps, so a floor
+  that advanced past a lost sequence fails the assertion instead of supplying
+  its own expectation. One pinned example keeps a withheld sequence reportable
+  across a seal, an expire and a trim. Two mutations were observed and
+  reverted: deriving the floor from the current survivors fails the pinned
+  example with `() == (2, 3)`, and never advancing the model's floor fails the
+  generated property (`() == (1,)` and `() == (1, 2, 3)`) as well as the
+  deterministic companion's gap assertion.
 
 ## Surprises & discoveries
 
@@ -1240,6 +1257,17 @@ verified archive is published, and leaves compile admission untouched.
   budget, because whole archives are deleted oldest-first and only the
   straddler is prefix-trimmed, and every row at or after the cutoff for an age
   limit, because the age rule expires only strictly older rows.
+- A gap oracle that reads the floor cannot fail on a wrong floor. The
+  revision-31 property derived its expected gap list from the floor the run had
+  persisted, so a floor that advanced past a withheld sequence produced the
+  same shortened list on both sides of the comparison; only replay, which never
+  reads the floor, could notice. The expected floor has to be modelled with the
+  sequences: a fresh store starts at the lowest sequence it is known to have
+  had, and only a contiguous deleted prefix advances it. The difference is
+  invisible in a single run whose deletions include every missing sequence; it
+  needs a floor recorded by an earlier run, which is why the new regression
+  pins a seal, an expire and a trim over a history with a withheld middle
+  source.
 
 ## Decision log
 
@@ -1691,6 +1719,19 @@ verified archive is published, and leaves compile admission untouched.
   model stays coarser than the planner -- it states which rows survive, not how
   they are grouped -- so a defect in grouping still surfaces through the gap
   and action assertions.
+- The lifecycle property's gap oracle owns the floor, and the model lives in
+  its own module. Expected gaps come from the model's sequences and its own
+  recorded floor, while the compared value is the `RunReport.gaps` the run
+  produced, so the implementation cannot supply either side without failing the
+  other. The floor is modelled after `retention_floor`: a store that never
+  recorded one starts at the lowest sequence it is known to have had, and a
+  recorded floor advances only past a contiguous deleted prefix, which keeps an
+  intentional deletion above a gap reportable. The model also tracks the
+  writer's monotone sequence counter and the active rows retention cannot
+  evict, because a seal's numbering and a trim's excess both depend on them.
+  The model lives in `tests/outcome_lifecycle_model.py` so the property stays
+  inside the 400-line limit; it is used only by that property, and no
+  production module or other test depends on it.
 
 ## Outcomes & retrospective
 
@@ -1875,16 +1916,18 @@ Methods and evidence:
   schedules of five transition classes -- writer seal, archive, crash
   duplicate, record budget and age cutoff -- asserting after each step that
   replay equals, record for record and in order, an independently maintained
-  model of the rows that step's retention policy keeps (an age cutoff expires
-  rows observed before it; a record budget keeps the newest rows), that the
-  inventory's gaps are exactly the sequences the scan did not find, and that a
-  repeat of the same firing performs no action. Half the schedules seal a
-  multi-row source first, so a later budget step has a multi-row archive to
-  shorten. One branch withholds a middle sealed source. A deterministic
-  companion, `test_each_transition_class_is_reachable`, asserts the exact
-  action names each class reports -- `archived`, `reconciled`, `deleted` and
-  `trimmed` -- so a schedule that never draws a class is a coverage gap rather
-  than an unreachable state. The negative controls appear under Non-vacuity.
+  model of the rows that step's retention policy keeps and the floor it leaves
+  (an age cutoff expires rows observed before it; a record budget deletes whole
+  entries oldest-first and keeps the newest rows; only a contiguous deleted
+  prefix advances the floor), that the run report's gaps are exactly the
+  sequences the model's own floor leaves missing, and that a repeat of the same
+  firing performs no action. Half the schedules seal a multi-row source first,
+  so a later budget step has a multi-row archive to shorten. One branch
+  withholds a middle sealed source. A deterministic companion,
+  `test_each_transition_class_is_reachable`, asserts the exact action names
+  each class reports -- `archived`, `reconciled`, `deleted` and `trimmed` -- so
+  a schedule that never draws a class is a coverage gap rather than an
+  unreachable state. The negative controls appear under Non-vacuity.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
@@ -1925,14 +1968,19 @@ undercounted, and the persistent seal reports `ok` instead of `unsettled`).
 Each mutation was reverted and the focused suite passed again. The generated
 lifecycle property records each step's action names with `event`, so
 `--hypothesis-show-statistics` shows the classes a run exercised; its
-deterministic companion asserts the exact names of all five classes. Five
+deterministic companion asserts the exact names of all five classes. Seven
 mutations were observed and reverted: inserting a seal between the two firings
 fails the no-op assertion in both tests, skipping the duplicate write fails the
 settle assertion in both, returning an empty gap tuple fails the gap assertion
 in the generated property (whose histories withhold a source; the companion's
 histories are complete and report no gap), dropping the last replayed record
 fails the replay assertion in both, and skipping the expected-history update
-fails the first evicting step. The suite passed again after each revert.
+fails the first evicting step. The two floor mutations are directed at the
+model itself: returning the survivor-derived baseline from `_floor_baseline` on
+every run fails the pinned example with `() == (2, 3)`, and never advancing the
+model's floor fails the generated property with `() == (1,)` and
+`() == (1, 2, 3)` and the companion's gap assertion. The suite passed again
+after each revert.
 
 ## Revision note
 
@@ -2251,3 +2299,14 @@ fails the first evicting step. The suite passed again after each revert.
   for record, restoring the strength of revision 30's exact-survivor oracle
   across the new transition classes. Two mutations -- a dropped replayed row
   and a skipped model update -- were each observed to fail and reverted.
+- Revision 33 records the revision-32 assessment's gap-oracle finding. The
+  expected gap list no longer comes from the floor the implementation persisted:
+  `tests/outcome_lifecycle_model.py` models the sequences, rows, monotone
+  counter, active rows and floor a generated store should have, and the
+  property compares replay and the run report's `gaps` with it. Discovering
+  that a wrong floor is invisible within a single run changed the regression: a
+  survivor-derived baseline only diverges from the recorded one after an
+  earlier run has recorded a floor, so the new example seals, expires and trims
+  over a history with a withheld middle source. Two mutations -- a
+  survivor-derived implementation floor and a model that never advances its
+  floor -- were each observed to fail and reverted.

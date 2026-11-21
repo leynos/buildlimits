@@ -6,9 +6,11 @@ beside its archive, a record budget trims or deletes it, and the age cutoff
 expires it. These properties drive the real writer and archiver over generated
 histories and assert after every step what an operator reads: history replays
 exactly the rows retention keeps, field for field and in order; the gap list is
-exactly the sequences the scan could not find; and a repeat of the same step
-performs no action. One generated history loses a middle sealed source before
-the first run, so gap reporting is exercised rather than assumed.
+exactly the sequences the model's own floor leaves missing; and a repeat of the
+same step performs no action. The expectation never reads the store, so a floor
+that advances past a lost sequence fails the gap assertion instead of supplying
+its own answer. One generated history loses a middle sealed source before the
+first run, so gap reporting is exercised rather than assumed.
 
 The schedules genuinely reach each transition: the writer seals multi-row
 groups at a record cap, an archive is duplicated as a crash leaves it, a record
@@ -28,17 +30,15 @@ from pathlib import Path
 from hypothesis import HealthCheck, event, example, given, settings
 from hypothesis import strategies as st
 from outcome_archive_helpers import NOW, policy, run, write
+from outcome_lifecycle_model import LifecycleModel, one_row_per_source
 from outcome_test_helpers import records_at
 from segment_test_helpers import write_private
 
 from buildlimits.outcome_history import read_history
-from buildlimits.outcome_segment_inventory import read_inventory
-from buildlimits.outcome_segment_state import read_retention_floor
 from buildlimits.outcome_segments import SegmentLayout
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive import RunReport
-    from buildlimits.outcome_record_format import OutcomeRecord
     from buildlimits.outcome_retention import RetentionPolicy
 
 # The archiver reads a zero age bound as "no age limit", so an archive, trim
@@ -106,7 +106,7 @@ _SCHEDULE = st.one_of(
 
 @dc.dataclass(slots=True)
 class _Store:
-    """One generated store and the rows retention should still hold.
+    """One generated store and the history retention should leave.
 
     Attributes
     ----------
@@ -116,9 +116,11 @@ class _Store:
         The store's active file path.
     layout : SegmentLayout
         The sealed, archive and quarantine directories beside the store.
-    expected : list[OutcomeRecord]
-        The rows the retention policy of the current step should keep, in
-        sequence order: an independent model replay must match exactly.
+    model : LifecycleModel
+        The sequences, rows and floor the store should hold. The model applies
+        each transition's retention rule itself, so replay and the reported
+        gaps are compared with an independent expectation rather than with the
+        run's own answers.
     seals : int
         How many seal transitions have run, so each one observes new times.
     """
@@ -126,7 +128,7 @@ class _Store:
     root: Path
     path: Path
     layout: SegmentLayout
-    expected: list[OutcomeRecord]
+    model: LifecycleModel
     seals: int = 0
 
 
@@ -145,7 +147,7 @@ def _build(root: Path, older: int, recent: int, choice: int | None) -> _Store:
         *records_at(NOW - dt.timedelta(days=_RECENT_DAYS), recent),
     )
     write(path, rows, policy(segment_bytes=1, max_age_days=_NO_EXPIRY_DAYS))
-    state = _Store(root, path, SegmentLayout.beside(path), list(rows))
+    state = _Store(root, path, SegmentLayout.beside(path), one_row_per_source(rows))
     _withhold(state, choice)
     return state
 
@@ -164,8 +166,9 @@ def _sealed_sources(state: _Store) -> list[Path]:
 def _withhold(state: _Store, choice: int | None) -> None:
     """Remove one middle sealed source, as a lost file would be missing.
 
-    The store was written one record per segment, so the removed source is
-    also the one expected row to drop from the model.
+    The store was written one record per segment, so the sources sort into
+    sequence order and the removed file is sequence ``index + 1``. The
+    counter keeps its value, so the sequence is not reused.
     """
     sources = _sealed_sources(state)
     if choice is None or len(sources) < 3:
@@ -175,7 +178,7 @@ def _withhold(state: _Store, choice: int | None) -> None:
     metadata = source.with_name(f"{source.name}.meta.json")
     metadata.unlink(missing_ok=True)
     source.unlink()
-    del state.expected[index]
+    state.model.drop(index + 1)
 
 
 def _policy_for(name: str, argument: int) -> RetentionPolicy:
@@ -223,7 +226,7 @@ def _seal_more(state: _Store) -> None:
             max_records=_SEAL_RECORD_CAP,
         ),
     )
-    state.expected.extend(rows)
+    state.model.seal(rows, _SEAL_RECORD_CAP)
 
 
 def _leave_duplicate(state: _Store) -> int | None:
@@ -240,6 +243,9 @@ def _leave_duplicate(state: _Store) -> int | None:
         assert _run(state, _policy_for("archive", 0)).status == "ok", (
             "a duplicate needs an archive to duplicate"
         )
+        # The archive run completes like any other and records a floor, but
+        # it evicts nothing, so only the model's sequence bookkeeping changes.
+        state.model.record_run(())
         archives = sorted(state.layout.archive_dir.glob("segment-*.jsonl.xz"))
     if not archives:
         return None
@@ -249,59 +255,42 @@ def _leave_duplicate(state: _Store) -> int | None:
     return int(archive.name.removeprefix("segment-").split(".", 1)[0])
 
 
-def _assert_gaps(state: _Store) -> None:
-    """Assert the gap list is exactly the sequences missing between survivors."""
-    floor = read_retention_floor(state.layout).sequence
-    inventory = read_inventory(state.layout, retention_floor=floor)
-    present = {entry.sequence for entry in (*inventory.sealed, *inventory.archived)}
-    # No recorded floor retains nothing intentionally, so sequence one is the
-    # lowest a store can report; a recorded floor raises that bound.
-    lowest = 1 if floor is None else max(1, floor)
-    highest = max(present) if present else lowest
-    expected = tuple(
-        sequence for sequence in range(lowest, highest) if sequence not in present
-    )
-    assert inventory.gaps == expected, (
-        "the reported gaps are the sequences the scan did not find"
-    )
-    assert inventory.gaps_truncated is False, "a generated history fits the gap list"
+def _apply_retention(model: LifecycleModel, name: str, argument: int) -> set[int]:
+    """Apply one transition's retention rule to the model.
 
-
-def _survivors(
-    rows: list[OutcomeRecord], name: str, argument: int
-) -> list[OutcomeRecord]:
-    """Return the rows one transition's retention policy keeps.
-
-    An age cutoff expires every row observed before it, and a record budget
-    keeps the newest rows after dropping the oldest. Every other transition
-    evicts nothing, so the rows it started with survive untouched.
+    An age cutoff expires entries observed before it, and a record budget
+    keeps the newest rows after deleting whole entries and shortening the
+    first that does not fit. Every other transition evicts nothing.
 
     Returns
     -------
-    list[OutcomeRecord]
-        The rows the policy should leave, in sequence order.
+    set[int]
+        The sequences the transition deletes whole.
     """
-    if name == "expire":
-        cutoff = NOW - dt.timedelta(days=argument)
-        return [row for row in rows if row.observed_at >= cutoff]
     if name == "trim":
-        return rows[-argument:]
-    return list(rows)
+        return model.trim(argument)
+    if name == "expire":
+        return model.expire(NOW - dt.timedelta(days=argument))
+    return set()
 
 
-def _assert_observable(state: _Store) -> None:
-    """Assert replay is exactly the expected rows and the gaps are exact."""
-    assert read_history(state.layout).records == tuple(state.expected), (
+def _assert_observable(state: _Store, report: RunReport) -> None:
+    """Assert replay and the report's gaps match the independent model."""
+    assert read_history(state.layout).records == tuple(state.model.records), (
         "every row retention keeps replays once, in sequence order"
     )
-    _assert_gaps(state)
+    assert report.gaps == state.model.gaps, (
+        "the report names exactly the sequences the model finds missing"
+    )
+    assert report.gaps_truncated is False, "a generated history fits the gap list"
 
 
 def _step(state: _Store, transition: tuple[str, int]) -> tuple[str, ...]:
     """Apply one transition, then require it to settle and stay settled.
 
-    The expected history is updated from the transition's own retention rule
-    before replay is compared with it, so the model never reads the store.
+    The model applies the transition's own retention rule and records the
+    floor the completed run should leave before replay and gaps are compared
+    with it, so neither expectation reads the store.
 
     Returns
     -------
@@ -320,20 +309,20 @@ def _step(state: _Store, transition: tuple[str, int]) -> tuple[str, ...]:
     report = _run(state, chosen)
 
     assert report.status == "ok", "every generated transition completes"
-    state.expected = _survivors(state.expected, name, argument)
+    state.model.record_run(_apply_retention(state.model, name, argument))
     if duplicated is not None:
         settled = any(
             action.sequence == duplicated and action.action in _SETTLING
             for action in report.actions
         )
         assert settled, "the duplicate source is settled by the run that follows it"
-    _assert_observable(state)
+    _assert_observable(state, report)
 
     again = _run(state, chosen)
 
     assert again.status == "ok", "a repeated firing succeeds"
     assert not again.actions, "a settled store performs no action on a repeat"
-    _assert_observable(state)
+    _assert_observable(state, again)
     return tuple(action.action for action in report.actions)
 
 
@@ -346,6 +335,9 @@ def _step(state: _Store, transition: tuple[str, int]) -> tuple[str, ...]:
 @example(history=(2, 1, None), schedule=[("archive", 0), ("duplicate", 0)])
 @example(history=(1, 0, None), schedule=[("seal", 0), ("expire", 10)])
 @example(history=(0, 0, None), schedule=[("seal", 0), ("archive", 0), ("trim", 3)])
+# A floor is recorded once and then advanced only past a contiguous deleted
+# prefix, so a withheld sequence stays reportable through later steps.
+@example(history=(3, 0, 2), schedule=[("seal", 0), ("expire", 10), ("trim", 3)])
 @settings(
     max_examples=40,
     deadline=None,
