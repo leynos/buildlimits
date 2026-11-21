@@ -265,7 +265,9 @@ def test_two_real_runs_do_not_archive_at_once(tmp_path: Path) -> None:
         output_path.open("w", encoding="utf-8") as output,
         errors_path.open("w", encoding="utf-8") as errors,
     ):
-        first = subprocess.Popen(
+        # The context manager waits for the child without a bound; _reap does
+        # the same work with a deadline.
+        first = subprocess.Popen(  # pylint: disable=consider-using-with
             [SCRIPT, "run", *arguments], cwd=REPO_ROOT, stdout=output, stderr=errors
         )
         try:
