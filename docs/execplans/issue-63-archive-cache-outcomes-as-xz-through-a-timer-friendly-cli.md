@@ -2379,3 +2379,15 @@ after each revert.
   measurement remains an evidential limit: the host is unreachable from the
   development host, so the plan keeps the generated-data figures rather than
   claiming a Rohga measurement.
+- Revision 37 records the revision-36 assessment's verification items. The
+  abandoned-follow-up regression now also asserts that the retry settles the run
+  (`ok`) and that the source the seal created is archived by the next pass, so
+  the notice is not the only evidence. The assessment accepted the plan's
+  tracing scope and withdrew its plan-level span claim; the separate
+  Observability pre-merge warning is recorded here as a maintainer disposition:
+  archive spans are a follow-up because they would extend the closed
+  `tracing_export` catalogue, while the run's outcome record is the
+  `archive_run` event, the retry notices, the report's timing lines and
+  `last-run.json`. No follow-up issue is opened without authorization. The
+  Rohga measurement stays unverified and the issue's measurement criterion is
+  not claimed as met on that host.
