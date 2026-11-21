@@ -9,6 +9,7 @@ caller, a timer or a later inspection reads is assembled here;
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.outcome_archive_history import ActiveHistory, observed_history
 from buildlimits.outcome_archive_report import Maintenance, RunReport, RunStatus
 from buildlimits.outcome_retention_history import retained_history
 from buildlimits.outcome_retention_report import RetentionLimits
@@ -158,7 +159,7 @@ def dry_report(
         # The reason the active file could not be counted is the reason the
         # inspection reports ``corrupt``; leaving it out would name the status
         # without the closed fault behind it.
-        reason=None if active.complete else active.reason,
+        reason=None if active.has_metadata else active.reason,
     )
 
 
