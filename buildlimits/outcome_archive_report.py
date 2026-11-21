@@ -64,8 +64,7 @@ class RunOptions:
     dry_run : bool
         Whether to plan without changing any file.
     clock : Callable[[], datetime]
-        The UTC clock the run reads: for its start when ``now`` is None, and
-        for the finish time every report carries.
+        The clock for the run's start when ``now`` is None, and each finish.
     on_retry : Callable[[str, int, str], None]
         Receives the operation, attempt number and closed category of every
         reading the run retries; the default discards them.
@@ -164,8 +163,7 @@ class RunReport:
         file, when one was read.
     unmeasured_entries : int
         Effective entries whose record count and span could not be read: an
-        archive with no trustworthy sidecar, or an active file that could not
-        be decoded.
+        archive with no trustworthy sidecar, or an undecodable active file.
     budget_bytes : int
         The configured logical byte budget.
     cutoff : datetime | None
@@ -238,12 +236,12 @@ class SettledFields(typ.TypedDict):
 def settled_fields(
     run: ArchiveRun, inventory: Inventory, active: ActiveHistory
 ) -> SettledFields:
-    """Describe the inventory and history fields both report builders share.
+    """Describe the fields both report builders derive from one settled pair.
 
     Returns
     -------
     SettledFields
-        The inventory counts, the effective limits and retained history.
+        The inventory counts, limits and retained history.
     """
     return {
         "gaps": inventory.gaps,
@@ -268,8 +266,7 @@ def dry_report(
     reading the inventory again could count a seal between the two. An active
     file that could not be counted makes the retained totals a lower bound, so
     the inspection reports ``corrupt`` rather than claiming the history it
-    could not read is empty. No state file is installed, and the report says
-    so.
+    could not read is empty. No state file is installed, and the report says so.
 
     Returns
     -------
