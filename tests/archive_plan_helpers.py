@@ -12,7 +12,6 @@ from pathlib import Path
 from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_archive_plan import Plan, plan_run
 from buildlimits.outcome_retention import RetentionPolicy
-from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_segment_inventory import Inventory, SegmentEntry
 from buildlimits.outcome_segments import segment_name
 

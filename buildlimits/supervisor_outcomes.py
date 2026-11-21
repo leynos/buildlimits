@@ -202,9 +202,7 @@ class OutcomeShell:
         try:
             return action(*args)
         except Exception:  # ruff: ignore[blind-except] - keep recorder faults outside token and admission decisions.
-            # The shield keeps even a defective fault path inside this
-            # boundary, so D19's totality does not depend on _disable being
-            # perfect.
+            # The shield keeps even a defective fault path inside D19's bound.
             with contextlib.suppress(Exception):
                 self._disable()
             return None

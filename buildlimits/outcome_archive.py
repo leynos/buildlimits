@@ -12,6 +12,7 @@ import typing as typ
 
 from buildlimits import (
     outcome_archive_events,
+    outcome_archive_evict,
     outcome_archive_fs,
     outcome_archive_lock,
     outcome_archive_report,
@@ -27,15 +28,18 @@ from buildlimits.outcome_archive_history import SettledStore
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
 from buildlimits.outcome_archive_quarantine import fresh_quarantine_token
 from buildlimits.outcome_archive_report import (
+    BUSY,
+    NO_HEADROOM,
+    UNREADABLE,
     Maintenance,
     RunOptions,
     RunReport,
     RunStatus,
+    Unfinished,
     dry_report,
     unfinished_report,
     unsettled_report,
 )
-from buildlimits.outcome_retention_report import RetentionLimits
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -139,47 +143,26 @@ def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
         with outcome_archive_lock.ArchiveLock(context.layout.lock_file):
             return _execute_locked(context, context.policy, started)
     except outcome_archive_lock.ArchiveBusyError:
-        return unfinished_report(
-            started,
-            "busy",
-            "busy",
-            clock=context.clock,
-            limits=RetentionLimits.of(context.policy),
-            dry_run=selected.dry_run,
-        )
+        return unfinished_report(started, BUSY, context, dry_run=selected.dry_run)
     except outcome_archive_lock.NoHeadroomError:
         return unfinished_report(
-            started,
-            "no_headroom",
-            "no_headroom",
-            clock=context.clock,
-            limits=RetentionLimits.of(context.policy),
-            dry_run=selected.dry_run,
+            started, NO_HEADROOM, context, dry_run=selected.dry_run
         )
     except UnknownActiveHistoryError:
         # The record cap counts the writer's unsealed rows. A run that cannot
         # read them cannot show the store is within the cap, so it reports an
         # operational failure rather than counting the active file as empty.
-        return unfinished_report(
-            started,
-            "failed",
-            "unreadable",
-            clock=context.clock,
-            limits=RetentionLimits.of(context.policy),
-            dry_run=selected.dry_run,
-        )
+        return unfinished_report(started, UNREADABLE, context, dry_run=selected.dry_run)
     except OSError as error:
         # The headroom check reads free space once, before the pass, so the
         # filesystem can still fill while this run works. A full filesystem is
         # retryable; anything else needs an operator.
-        reason = outcome_archive_run.failure_reason(error)
+        reason = outcome_archive_evict.failure_reason(error)
         status: RunStatus = "no_headroom" if reason == "no_headroom" else "failed"
         return unfinished_report(
             started,
-            status,
-            reason,
-            clock=context.clock,
-            limits=RetentionLimits.of(context.policy),
+            Unfinished(status, reason),
+            context,
             dry_run=selected.dry_run,
         )
 
@@ -233,16 +216,12 @@ def _execute_locked(
         # The archive and its evictions are real even when the state could not
         # be replaced. The floor gets its own attempt, so completed deletions
         # are not reported as gaps later.
-        outcome_archive_state.write_floor_after_failure(
-            context.layout, floor, report
-        )
+        outcome_archive_state.write_floor_after_failure(context.layout, floor, report)
         return dc.replace(
             report,
             status="failed",
             reason="state_write_failed",
-            maintenance=Maintenance(
-                state_written=False, reason="state_write_failed"
-            ),
+            maintenance=Maintenance(state_written=False, reason="state_write_failed"),
         )
     return report
 
@@ -302,7 +281,7 @@ def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.Arc
 
 def _execute(
     run: outcome_archive_run.ArchiveRun,
-) -> tuple[int, RunReport]:
+) -> tuple[int | None, RunReport]:
     """Prepare the store, perform the plan and report what settled.
 
     Persisting the report is left to the locked caller: writing state is a
@@ -354,9 +333,7 @@ def _execute(
         # actions before the unmeasurable result is reported.
         outcome_archive_state.write_deleted_floor(
             run.context.layout,
-            outcome_segment_state.read_retention_floor(
-                run.context.layout
-            ).sequence,
+            outcome_segment_state.read_retention_floor(run.context.layout).sequence,
             outcome_archive_run.deleted_sequences(outcome.actions),
         )
         return (

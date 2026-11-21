@@ -13,6 +13,7 @@ from pathlib import Path
 
 from outcome_retention_helpers import settings
 
+from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_retention import (
@@ -20,7 +21,6 @@ from buildlimits.outcome_retention import (
     policy_from_settings,
 )
 from buildlimits.outcome_retention_history import retained_history
-from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_retention_report import RetentionLimits
 from buildlimits.outcome_segment_inventory import Inventory, SegmentEntry
 

@@ -35,7 +35,6 @@ if typ.TYPE_CHECKING:
     import pytest
 
 
-
 """End-to-end archive runs: statuses, dry runs and damaged stores.
 The archiver plans, compresses, verifies and reports in one timer firing.
 These tests build real segments with the writer and assert the observable

@@ -32,16 +32,13 @@ from segment_test_helpers import document, write_private
 
 from buildlimits import config, outcome_archive_cli
 from buildlimits.outcome_archive_codec import report_dict
+from buildlimits.outcome_archive_evictions import EVICTION_CAUSES
 from buildlimits.outcome_archive_exit import EXIT_OK
-from buildlimits.outcome_archive_report import (
-    EVICTION_CAUSES,
-    Maintenance,
-    RunReport,
-)
+from buildlimits.outcome_archive_history import ActiveHistory
+from buildlimits.outcome_archive_report import Maintenance, RunReport
 from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_retention import policy_from_settings
-from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_retention_report import RetentionLimits
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import segment_name
@@ -248,6 +245,16 @@ def test_history_over_two_bounds_names_each_cause(tmp_path: Path) -> None:
         policy(max_age_days=30, max_bytes=active + archived // 2),
     )
 
+    assert report_dict(report)["evictions"] == {**NO_EVICTIONS, "age": 1, "bytes": 1}, (
+        "the age trim and the byte deletion are counted apart"
+    )
+    trims = [action for action in report.actions if action.action == "trimmed"]
+    assert [action.reason for action in trims] == ["age", "bytes"], (
+        "each rewrite names the bound that decided it"
+    )
+    assert not [action for action in report.actions if action.action == "deleted"], (
+        "the byte bound trims the archive rather than removing it"
+    )
 
 
 def test_a_dry_run_reports_limits_and_history_without_state(tmp_path: Path) -> None:

@@ -6,95 +6,36 @@ compaction and bounded-append rules here, apart from the queue plumbing in
 starting a thread. Sealing lives in ``outcome_store_sealing``.
 """
 
-import dataclasses as dc
 import datetime as dt
-import time
 import typing as typ
 
-from buildlimits import outcome_records, outcome_segments, outcome_store_restart
-from buildlimits.outcome_archive_history import ActiveHistory, measured_history
+from buildlimits import (
+    outcome_records,
+    outcome_segments,
+    outcome_store_restart,
+    outcome_store_status,
+)
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_store_io import (
     TornTailError,
     append_line,
     replace_store,
     store_size,
-    store_size_if_present,
 )
 from buildlimits.outcome_store_read import read_store
 from buildlimits.outcome_store_sealing import seal
-from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     from pathlib import Path
 
+    from buildlimits.outcome_archive_history import ActiveHistory
     from buildlimits.outcome_key import Salt
+    from buildlimits.outcome_ports import StorePublisher as Publisher
     from buildlimits.outcome_record_format import StoreRecord
-    from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
+    from buildlimits.outcome_store_clock import Clocks
+    from buildlimits.outcome_store_status import _Published
 
 _CLOCK_SKEW_SECONDS = 24 * 60 * 60
-
-
-@dc.dataclass(frozen=True, slots=True)
-class _Published:
-    """One completed store state, as the writer's worker observed it.
-
-    Attributes
-    ----------
-    rows : list[StoreRecord]
-        The row list that state held. The worker only appends to a list it has
-        published before replacing it with a new one, so a reader can take the
-        published prefix while the worker appends.
-    count : int
-        The number of rows the state held.
-    logical_bytes : int | None
-        The active file's size in that state, or None when no file exists or
-        it could not be measured.
-    reason : str | None
-        A closed reason the size and the count do not describe one state, or
-        None when they do.
-    """
-
-    rows: list[StoreRecord]
-    count: int
-    logical_bytes: int | None
-    reason: str | None = None
-
-
-class Publisher(typ.Protocol):
-    """The writer's coalescing sink for closed operation outcomes."""
-
-    def __call__(
-        self,
-        operation: StoreOperation,
-        reason: StoreReason,
-        *,
-        records: int = 0,
-        discarded: int = 0,
-    ) -> None:
-        """Record one outcome under its operation and reason."""
-
-
-class Clocks:
-    """The wall and monotonic clocks the writer reads as a pair.
-
-    Parameters
-    ----------
-    wall : Callable[[], datetime] or None
-        UTC clock, defaulting to the system wall clock.
-    monotonic : Callable[[], float] or None
-        Monotonic clock, defaulting to ``time.monotonic``.
-    """
-
-    def __init__(
-        self,
-        wall: cabc.Callable[[], dt.datetime] | None = None,
-        monotonic: cabc.Callable[[], float] | None = None,
-    ) -> None:
-        """Bind the clocks, falling back to the system's own."""
-        self.wall = utc_now if wall is None else wall
-        self.monotonic = time.monotonic if monotonic is None else monotonic
 
 
 class StoreFiles:
@@ -211,64 +152,18 @@ class StoreFiles:
         outcome_store_restart.restore_loaded_store(self, decoded, salt, now)
 
     def publish_snapshot(self) -> None:
-        """Publish the rows and byte size of one completed store state.
-
-        The worker owns every mutation and calls this after each transition it
-        completes, so one immutable pairing always describes one moment. A
-        status read can then report a coherent view without opening the file,
-        waiting for an append or seeing a row that reached disk but not the
-        writer's rows.
-
-        A failed rollback leaves a fragment on disk that belongs to no row, so
-        the measured size and the row count describe different states. The
-        snapshot names that instead of pairing them, and keeps naming it until
-        a compaction or a new active file removes the fragment.
-
-        A missing active file is published as unmeasured rather than as an
-        empty one. A seal that moved the file but could not install its
-        replacement leaves no file to measure, and a zero-byte size beside the
-        writer's rows would describe a state that never existed.
-        """
-        try:
-            size: int | None = store_size_if_present(self.path)
-        except OSError:
-            size = None
-        reason = "repair_pending" if self.torn_tail else None
-        self._published = _Published(self.records, len(self.records), size, reason)
+        """Publish the rows and byte size of one completed store state."""
+        outcome_store_status.publish_snapshot(self)
 
     def retention(self) -> ActiveHistory:
         """Describe the rows the writer currently holds in the active file.
 
-        The supervisor asks for this snapshot while the worker may be
-        appending. It reads the last state the worker published, so the row
-        count and the byte size always describe the same state; an append that
-        races the read is either wholly included in a later snapshot or left
-        to the next one.
-
         Returns
         -------
         ActiveHistory
-            The active row count, its logical size and observation span, or an
-            incomplete snapshot with a closed reason.
+            The published active snapshot, or an incomplete one with a reason.
         """
-        published = self._published
-        if published is None:
-            return ActiveHistory(has_metadata=False, reason="not_loaded")
-        size = published.logical_bytes
-        if size is None:
-            return ActiveHistory(has_metadata=False, reason="unreadable")
-        if published.reason is not None:
-            return ActiveHistory(
-                bytes=size, has_metadata=False, reason=published.reason
-            )
-        if not self.ready:
-            return ActiveHistory(bytes=size, has_metadata=False, reason="not_loaded")
-        # A published list only grows until the worker replaces it, and a
-        # replaced list stops changing, so its published prefix is intact even
-        # while an append lands. The slice copies the state the size belongs
-        # to, not whatever the list holds by the time it is read.
-        rows = tuple(published.rows[: published.count])
-        return measured_history(rows, logical_bytes=size)
+        return outcome_store_status.retention_snapshot(self)
 
     def set_records(self, records: list[StoreRecord]) -> None:
         """Replace the active rows and cache their oldest observation.
@@ -288,18 +183,28 @@ class StoreFiles:
             (record.observed_at for record in records), default=None
         )
 
+    def _accepts_append(self) -> bool:
+        """Whether this writer can take another row after settling what it may.
+
+        A writer with no header cannot append at all. One whose file needs
+        compaction or has reached its record cap settles first: a seal that
+        failed before its rename leaves rows the archiver cannot evict, so
+        accepting another row would hold history past the cap.
+
+        Returns
+        -------
+        bool
+            Whether the writer is ready for the row.
+        """
+        if self.header is None:
+            return False
+        if self.needs_compaction and not self.settle():
+            return False
+        return not (self.exceeds_record_cap() and not self.settle())
+
     def append(self, line: bytes, record: StoreRecord) -> None:
         """Compact at high water, preserve the hard bound and append one row."""
-        if self.header is None:
-            self.publish("append", "save_failed", discarded=1)
-            return
-        if self.needs_compaction and not self.settle():
-            self.publish("append", "save_failed", discarded=1)
-            return
-        if self.exceeds_record_cap() and not self.settle():
-            # A seal that failed before its rename leaves the rows in the
-            # active file, which the archiver cannot evict. Accepting another
-            # row would hold history past the cap that nothing can remove.
+        if not self._accepts_append():
             self.publish("append", "save_failed", discarded=1)
             return
         try:

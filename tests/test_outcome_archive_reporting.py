@@ -8,8 +8,6 @@ published.
 
 import dataclasses as dc
 import json
-import dataclasses as dc
-import json
 import typing as typ
 from pathlib import Path
 from unittest import mock
@@ -234,7 +232,8 @@ def test_a_writer_that_never_settles_reports_an_unsettled_run(
     with mock.patch.object(outcome_segment_inventory, "read_inventory", seal_then_read):
         report = archive.run(tmp_path, archive.policy(max_bytes=0, segment_bytes=4000))
 
-
+    assert report.status == "unsettled", "the readings never described one store"
+    assert exit_status(report.status) == EXIT_TEMPFAIL, "the timer retries"
 
 
 def test_a_seal_during_planning_is_retried_to_one_exact_reading(
@@ -293,20 +292,10 @@ def test_a_failed_state_write_still_records_the_deletions_it_completed(
     unlimited = archive.policy(max_bytes=0)
     archive.run(tmp_path, unlimited)
     files = archive.layout(tmp_path)
-    write_json = outcome_archive_fs.atomic_write_json
-    attempts = 0
-
-    def fail_first_floor_write(target: Path, document: dict[str, object]) -> None:
-        """Refuse the first floor write, then delegate every later one."""
-        nonlocal attempts
-        if target == files.retention_file:
-            attempts += 1
-            if attempts == 1:
-                archive.refuse()
-        write_json(target, document)
-
     with mock.patch.object(
-        outcome_archive_fs, "atomic_write_json", fail_first_floor_write
+        outcome_archive_fs,
+        "atomic_write_json",
+        archive.refuse_first_floor_write(files),
     ):
         failed = archive.run(tmp_path, dc.replace(unlimited, max_records=2))
 

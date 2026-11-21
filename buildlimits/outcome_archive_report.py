@@ -25,39 +25,29 @@ if typ.TYPE_CHECKING:
     import datetime as dt
 
     from buildlimits.metrics import MetricsPort
-    from buildlimits.outcome_archive_context import ActionResult
-    from buildlimits.outcome_archive_history import ActiveHistory, SettledStore
+    from buildlimits.outcome_archive_context import ActionResult, ArchiveContext
+    from buildlimits.outcome_archive_history import SettledStore
     from buildlimits.outcome_archive_plan import PlanSummary
     from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome
     from buildlimits.outcome_retention_report import RetainedHistory
     from buildlimits.outcome_segment_inventory import Inventory
-
-# The closed vocabulary a report counts evictions under. A trim that serves
-# more than one bound names each of them, so every combination is listed.
-EVICTION_CAUSES = (
-    "age",
-    "bytes",
-    "records",
-    "age_and_bytes",
-    "age_and_records",
-    "bytes_and_records",
-    "age_and_bytes_and_records",
-)
 
 type RunStatus = typ.Literal[
     "ok", "failed", "corrupt", "busy", "no_headroom", "unsettled"
 ]
 
 __all__ = [
-    "EVICTION_CAUSES",
+    "BUSY",
+    "NO_HEADROOM",
+    "UNREADABLE",
     "Maintenance",
     "RunOptions",
     "RunReport",
     "RunStatus",
+    "settled_report",
+    "Unfinished",
     "after_work_failure",
     "dry_report",
-    "eviction_counts",
-    "settled_report",
     "unfinished_report",
     "unsettled_report",
 ]
@@ -92,6 +82,27 @@ class RunOptions:
     clock: cabc.Callable[[], dt.datetime] = utc_now
     on_retry: cabc.Callable[[str, int, str], None] = ignore_retry
     metrics: MetricsPort | None = None
+
+
+@dc.dataclass(frozen=True, slots=True)
+class Unfinished:
+    """The closed classification of a run that could not start or complete.
+
+    Attributes
+    ----------
+    status : RunStatus
+        The status the report carries.
+    reason : str
+        The closed run-level reason.
+    """
+
+    status: RunStatus
+    reason: str
+
+
+BUSY = Unfinished("busy", "busy")
+NO_HEADROOM = Unfinished("no_headroom", "no_headroom")
+UNREADABLE = Unfinished("failed", "unreadable")
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -236,7 +247,15 @@ def dry_report(
     """
     observed = observed_history(inventory, active)
     return RunReport(
-        status="ok" if active.has_metadata else "corrupt",
+        status=(
+            "ok"
+            if active.has_metadata
+            else (
+                "unsettled"
+                if active.reason in {"unreadable", "unsettled"}
+                else "corrupt"
+            )
+        ),
         started_at=run.started_at,
         finished_at=run.context.clock(),
         dry_run=True,
@@ -296,11 +315,9 @@ def unsettled_report(
 
 def unfinished_report(
     started_at: dt.datetime,
-    status: RunStatus,
-    reason: str,
+    fault: Unfinished,
+    context: ArchiveContext,
     *,
-    clock: cabc.Callable[[], dt.datetime] = utc_now,
-    limits: RetentionLimits | None = None,
     dry_run: bool = False,
 ) -> RunReport:
     """Build a report for a run that could not start or complete.
@@ -315,15 +332,16 @@ def unfinished_report(
     RunReport
         The closed failure report.
     """
+    limits = RetentionLimits.of(context.policy)
     return RunReport(
-        status=status,
+        status=fault.status,
         started_at=started_at,
-        finished_at=clock(),
+        finished_at=context.clock(),
         dry_run=dry_run,
-        budget_bytes=0 if limits is None else limits.max_bytes,
+        budget_bytes=limits.max_bytes,
         limits=limits,
-        maintenance=Maintenance(state_written=False, reason=reason),
-        reason=reason,
+        maintenance=Maintenance(state_written=False, reason=fault.reason),
+        reason=fault.reason,
     )
 
 
@@ -395,7 +413,8 @@ def _run_status(
     failure needs an operator, so it outranks a space failure in the same run.
     An active file that could not be counted also makes the totals a lower
     bound, and a timer that recorded ``ok`` would hide history a later run can
-    see.
+    see. A scan that could not finish is retryable; content that cannot be
+    decoded is corrupt.
 
     Returns
     -------
@@ -403,57 +422,14 @@ def _run_status(
         ``ok``, ``unsettled``, ``no_headroom`` or ``corrupt``.
     """
     if not outcome.failures and not active.has_metadata:
-        return "corrupt"
+        return (
+            "unsettled" if active.reason in {"unreadable", "unsettled"} else "corrupt"
+        )
     if not outcome.failures:
         return "unsettled" if retention_unsettled else "ok"
     if all(reason == "no_headroom" for _sequence, reason in outcome.failures):
         return "no_headroom"
     return "corrupt"
-
-
-def eviction_counts(actions: tuple[ActionResult, ...]) -> dict[str, int]:
-    """Count the trims and deletions by the bound that caused them.
-
-    Parameters
-    ----------
-    actions : tuple[ActionResult, ...]
-        The operations a run performed.
-
-    Returns
-    -------
-    dict[str, int]
-        Closed counts keyed by eviction cause, always present so a reader can
-        compare two runs without checking whether a key exists.
-
-    Examples
-    --------
-    >>> counts = eviction_counts(())
-    >>> {cause: count for cause, count in counts.items() if count}
-    {}
-    >>> list(counts) == list(EVICTION_CAUSES)
-    True
-    """
-    counts = dict.fromkeys(EVICTION_CAUSES, 0)
-    for action in actions:
-        reason = _eviction_cause(action)
-        if reason is not None and reason in counts:
-            counts[reason] += 1
-    return counts
-
-
-def _eviction_cause(action: ActionResult) -> str | None:
-    """Return the eviction cause an action names, if it is an eviction.
-
-    Returns
-    -------
-    str | None
-        The closed cause for a trim or deletion, or None for every other
-        action and for a reason that is not a cause.
-    """
-    reason = action.reason
-    if action.action in {"trimmed", "deleted"} and isinstance(reason, str):
-        return reason
-    return None
 
 
 def after_work_failure(

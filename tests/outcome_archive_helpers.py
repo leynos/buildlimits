@@ -7,6 +7,7 @@ states only the archive behaviour it observes.
 
 import datetime as dt
 import errno
+import lzma
 import typing as typ
 
 import pytest
@@ -20,9 +21,11 @@ from outcome_test_helpers import records_at as records
 from segment_test_helpers import document
 from segment_test_helpers import store_layout as layout
 
+from buildlimits import outcome_archive_fs
 from buildlimits.outcome_archive import RunOptions, RunReport, run_archive
 from buildlimits.outcome_archive_context import ignore_retry
 from buildlimits.outcome_retention import RetentionPolicy
+from buildlimits.outcome_segments import archive_name, segment_name
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -42,6 +45,7 @@ __all__ = [
     "policy",
     "records",
     "refuse",
+    "restore_source",
     "run",
     "seal_store",
     "seeded_store",
@@ -221,3 +225,62 @@ def observed(history: DecodedStore) -> tuple[dt.datetime, ...]:
         Each record's ``observed_at``.
     """
     return tuple(record.observed_at for record in history.records)
+
+
+def restore_source(store_layout: SegmentLayout, sequence: int) -> Path:
+    """Rebuild one sealed source from the archive that replaced it.
+
+    Restoring the source models the crash window a reconciling run settles: an
+    archive published while its sealed source still exists.
+
+    Parameters
+    ----------
+    store_layout : SegmentLayout
+        The layout of the store the archive belongs to.
+    sequence : int
+        The archive sequence to restore.
+
+    Returns
+    -------
+    Path
+        The rebuilt sealed source.
+    """
+    archive = store_layout.archive_dir / archive_name(sequence)
+    source = store_layout.sealed_dir / segment_name(sequence)
+    source.write_bytes(lzma.decompress(archive.read_bytes()))
+    source.chmod(0o600)
+    return source
+
+
+def refuse_first_floor_write(
+    store_layout: SegmentLayout,
+) -> cabc.Callable[[Path, dict[str, object]], None]:
+    """Return a writer that refuses the first retention-floor install.
+
+    Every later write delegates to the real durable writer, so a test can
+    exercise the failed state write and the floor's second attempt without
+    disturbing the rest of the run.
+
+    Parameters
+    ----------
+    store_layout : SegmentLayout
+        The layout whose retention file is refused once.
+
+    Returns
+    -------
+    Callable[[Path, dict[str, object]], None]
+        The injected writer.
+    """
+    write_json = outcome_archive_fs.atomic_write_json
+    attempts = 0
+
+    def refuse_first(target: Path, document: dict[str, object]) -> None:
+        """Refuse the first floor write, then delegate every later one."""
+        nonlocal attempts
+        if target == store_layout.retention_file:
+            attempts += 1
+            if attempts == 1:
+                refuse()
+        write_json(target, document)
+
+    return refuse_first

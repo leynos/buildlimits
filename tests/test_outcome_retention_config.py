@@ -14,9 +14,9 @@ from outcome_retention_helpers import settings
 from segment_test_helpers import document, store_layout, write_private
 
 from buildlimits import config, outcome_archive_cli
+from buildlimits.outcome_archive_exit import EXIT_USAGE
 from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
-from buildlimits.outcome_archive_exit import EXIT_USAGE
 from buildlimits.outcome_retention import (
     DEFAULT_HEADROOM_BYTES,
     DEFAULT_MAX_AGE_DAYS,

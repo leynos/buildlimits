@@ -6,9 +6,9 @@ import typing as typ
 
 from buildlimits.journal import log
 from buildlimits.outcome_gate import QuietInputs
-from buildlimits.outcome_recorder_types import Querying, RecorderState
 from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
+from buildlimits.outcome_recorder_types import Querying, RecorderState
 from buildlimits.outcome_retention import policy_from_settings
 from buildlimits.outcome_retention_report import RetentionLimits
 

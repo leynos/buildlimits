@@ -124,22 +124,12 @@ def test_a_failed_state_write_still_records_the_deletions_it_completed(
     reporting the deleted sequence as a gap for ever.
     """
     files = archive.layout(tmp_path)
-    write_json = outcome_archive_fs.atomic_write_json
-    attempts = 0
-
-    def fail_first_floor_write(path: Path, document: dict[str, object]) -> None:
-        """Refuse the first floor write, then delegate every later one."""
-        nonlocal attempts
-        if path == files.retention_file:
-            attempts += 1
-            if attempts == 1:
-                archive.refuse()
-        write_json(path, document)
-
     failed, recovered = recover_after_failure(
         tmp_path,
         mock.patch.object(
-            outcome_archive_fs, "atomic_write_json", fail_first_floor_write
+            outcome_archive_fs,
+            "atomic_write_json",
+            archive.refuse_first_floor_write(files),
         ),
         max_records=2,
     )

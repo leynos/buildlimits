@@ -419,14 +419,14 @@ history view. Whichever bound is reached first evicts the oldest history:
   included, and an archive contributes its sidecar's `logical_bytes`, so
   compression never moves the boundary. The archives' physical XZ size is
   reported beside that figure but is not compared with the budget. The active
-  file contributes only the bytes of the rows the age rule keeps, because a
-  row the writer will compact away is not retained history; counting it would
-  evict closed history to make room for bytes retention has already released.
-  When the active file cannot be decoded, its committed bytes are unknown, so
-  the byte budget is deferred rather than decided from the whole file, whether
-  or not an age cutoff applies: the whole file includes any append the writer
-  has not committed and may roll back. The run reports `unsettled` and exits
-  75, and the next firing retries.
+  file contributes only the bytes of the rows the age rule keeps, because a row
+  the writer will compact away is not retained history; counting it would evict
+  closed history to make room for bytes retention has already released. When
+  the active file cannot be decoded, its committed bytes are unknown, so the
+  byte budget is deferred rather than decided from the whole file, whether or
+  not an age cutoff applies: the whole file includes any append the writer has
+  not committed and may roll back. The run reports `unsettled` and exits 75,
+  and the next firing retries.
 - Eviction is oldest-first. A record whose observation time equals the age
   cutoff is retained; one older than the cutoff is not.
 

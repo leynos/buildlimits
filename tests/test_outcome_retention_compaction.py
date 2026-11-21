@@ -39,6 +39,7 @@ from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreResult
+from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_retention import LEGACY_MAX_RECORDS, policy_from_settings
 from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_store import StoreWriter
@@ -270,7 +271,9 @@ def test_the_status_snapshot_never_reads_closed_history(tmp_path: Path) -> None:
         wait_for_results(writer, operation="compact", reason="none")
         snapshot = writer.retention()
 
-    assert snapshot.has_metadata is True, "an unreadable segment cannot spoil the answer"
+    assert snapshot.has_metadata is True, (
+        "an unreadable segment cannot spoil the answer"
+    )
     assert snapshot.records == len(rows), "only active rows are counted"
     assert snapshot.bytes == path.stat().st_size, "the size is the file's own"
 

@@ -7,7 +7,7 @@ and the state writer cannot disagree about the persisted shape.
 
 import typing as typ
 
-from buildlimits.outcome_archive_report import eviction_counts
+from buildlimits.outcome_archive_evictions import eviction_counts
 from buildlimits.utc_text import optional_utc_text, utc_text
 
 if typ.TYPE_CHECKING:

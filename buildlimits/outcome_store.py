@@ -24,9 +24,9 @@ if typ.TYPE_CHECKING:
     import datetime as dt
     from pathlib import Path
 
+    from buildlimits.outcome_archive_history import ActiveHistory
     from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_retention import RetentionPolicy
-    from buildlimits.outcome_retention_report import ActiveHistory
     from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
 
 MAX_APPEND_QUEUE = 4_096

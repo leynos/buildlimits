@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from buildlimits.admission import Admission, Launch
 from buildlimits.metrics import Metrics
+from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_attribution import Generation
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import Pending, StatisticsText, StoreResult, Ticket
@@ -14,7 +15,6 @@ from buildlimits.outcome_retention import (
     DEFAULT_MAX_AGE_DAYS,
     LEGACY_MAX_BYTES,
 )
-from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.supervisor_outcome_setup import NullOutcomeShell, OutcomeShellPort
 from buildlimits.supervisor_outcomes import (
     OutcomeDependencies,

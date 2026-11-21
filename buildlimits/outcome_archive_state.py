@@ -156,29 +156,25 @@ def _floor_document(floor: int, report: RunReport) -> dict[str, object]:
     }
 
 
-def write_floor(layout: SegmentLayout, floor: int, report: RunReport) -> None:
-    """Persist the retention floor and the history measured beside it.
+def _floor_document(floor: int, report: RunReport) -> dict[str, object]:
+    """Build the floor document a measured run installs.
 
-    The floor is the only record that a sequence was deleted rather than
-    lost, so it is written on its own before the run report. A successful
-    write also removes any pending fallback an earlier run left behind. A
-    caller whose full state write fails can then give this document a second
-    attempt without pretending the run report was installed.
-
-    Parameters
-    ----------
-    layout : SegmentLayout
-        The store's segment layout.
-    floor : int
-        The retention floor to record.
-    report : RunReport
-        The measurements the floor document describes. A filesystem failure
-        propagates as ``OSError``.
+    Returns
+    -------
+    dict[str, object]
+        The JSON-compatible document ``retention.json`` carries, including
+        the limits and retained history the report measured.
     """
-    write_floor(layout, floor, report)
-    outcome_archive_fs.atomic_write_json(
-        layout.last_run_file, outcome_archive_codec.report_dict(report)
-    )
+    return {
+        "schema": _STATE_SCHEMA,
+        "floor_sequence": floor,
+        "retained_logical_bytes": report.retained_bytes,
+        "budget_bytes": report.budget_bytes,
+        "cutoff": optional_utc_text(report.cutoff),
+        "limits": None if report.limits is None else report.limits.as_dict(),
+        "retained": None if report.retained is None else report.retained.as_dict(),
+        "updated_at": utc_text(report.finished_at),
+    }
 
 
 def _floor_document(floor: int, report: RunReport) -> dict[str, object]:

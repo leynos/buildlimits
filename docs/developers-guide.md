@@ -407,7 +407,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_lock`                                                             | The archive lock and the disk-headroom guard for one run                                                                                                    |
 | `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication, descriptor-relative removal and atomic state writes                |
 | `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates, syncs and validates each private path component, and returns the descriptor it validated                   |
-| `outcome_archive_report`                                                           | Bounded run report, status vocabulary and the report builders a run and an inspection share                                                               |
+| `outcome_archive_report`                                                           | Bounded run report, status vocabulary and the report builders a run and an inspection share                                                                 |
 | `outcome_archive_events`                                                           | One bounded `archive_run` metrics event per timer firing                                                                                                    |
 | `outcome_archive_codec`                                                            | Stable JSON rendering of one run report                                                                                                                     |
 | `outcome_archive_exit`                                                             | Mapping a run status to the process exit code a timer records                                                                                               |
@@ -1117,11 +1117,10 @@ final snapshot is read. A run that could not replace `retention.json` leaves
 `retention-pending.json` instead, and every read merges the two records and
 uses the higher valid floor, so a fault local to one file does not turn
 completed deletions into reported gaps. The floor is why evicting old history
-does not look
-like corruption, so the inventory reports a missing sequence only at or above
-it. `outcome_segment_gaps.retained_gaps` names those sequences for an operator;
-it stops at `MAX_GAP_SEQUENCES` and flags the list as truncated, because a
-restarted counter would otherwise leave no ceiling on one report.
+does not look like corruption, so the inventory reports a missing sequence only
+at or above it. `outcome_segment_gaps.retained_gaps` names those sequences for
+an operator; it stops at `MAX_GAP_SEQUENCES` and flags the list as truncated,
+because a restarted counter would otherwise leave no ceiling on one report.
 
 `outcome_history` is the read port over all three states.
 `outcome_history_pin.pin_history` takes one consistent snapshot: it walks the
@@ -1236,9 +1235,9 @@ The archive tests are `tests/test_outcome_archive.py`,
 `test_outcome_store_tail.py`, `test_outcome_store_sealing.py`,
 `test_outcome_store_sealing_durability.py`, `test_outcome_retention_config.py`,
 `test_outcome_retention_compaction.py`, `test_outcome_retention_report.py`,
-`test_outcome_retention_diagnostics.py`, `test_outcome_archive_reporting.py`
-and `test_outcome_store_snapshot.py`; the store and startup fixtures the
-retention tests share live in `tests/outcome_retention_helpers.py`.
+`test_outcome_retention_diagnostics.py`, `test_outcome_archive_reporting.py` and
+`test_outcome_store_snapshot.py`; the store and startup fixtures the retention
+tests share live in `tests/outcome_retention_helpers.py`.
 `test_outcome_archive_subprocess.py` runs the installed console script, and the
 `python -m` form, as separate processes, including two overlapping runs, and
 shares its launcher and configuration with `tests/archive_cli_helpers.py`.

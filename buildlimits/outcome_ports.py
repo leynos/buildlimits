@@ -7,9 +7,9 @@ import typing as typ
 from buildlimits.outcome_key import Salt as Salt
 
 if typ.TYPE_CHECKING:
+    from buildlimits.outcome_active_history import ActiveHistory
     from buildlimits.outcome_attribution import Generation
     from buildlimits.outcome_record_format import StoreRecord
-    from buildlimits.outcome_retention_report import ActiveHistory
     from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
 
 

@@ -4,15 +4,15 @@ import contextlib
 import threading
 import time
 import typing as typ
-import weakref
+from unittest import mock
 
 import pytest
 from outcome_result_waits import wait_for_records as wait_for_records
 from outcome_result_waits import wait_for_results as wait_for_results
 from outcome_store_clock import FIXED_NOW as _NOW
-from outcome_test_helpers import window_summary
+from outcome_test_helpers import window_summary as window_summary
 
-from buildlimits import outcome_records
+from buildlimits import outcome_records, outcome_store_state
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_store import StoreWriter
 
@@ -185,6 +185,42 @@ def segment_writer(
         close_writer(writer, 1.0)
         raise
     return writer
+
+
+@contextlib.contextmanager
+def append_completion_barrier(finished: threading.Event) -> cabc.Generator[None]:
+    """Mark an event once a writer append, post-append ageing included, returns.
+
+    ``StoreFiles.append`` publishes its success result before it reads the
+    clock to decide whether the oldest row has aged. A test that advanced the
+    clock on the result could move it before that read, so the worker would
+    observe a different skew or cutoff. The event is set after the append.
+
+    Parameters
+    ----------
+    finished : threading.Event
+        The event the test clears before each append and waits on afterwards.
+
+    Yields
+    ------
+    None
+        While the writer's append publishes ``finished`` when it returns.
+    """
+    append = outcome_store_state.StoreFiles.append
+
+    def append_and_signal(
+        files: outcome_store_state.StoreFiles,
+        line: bytes,
+        record: StoreRecord,
+    ) -> None:
+        """Run the writer's append, then mark its post-append ageing done."""
+        try:
+            append(files, line, record)
+        finally:
+            finished.set()
+
+    with mock.patch.object(outcome_store_state.StoreFiles, "append", append_and_signal):
+        yield
 
 
 @contextlib.contextmanager

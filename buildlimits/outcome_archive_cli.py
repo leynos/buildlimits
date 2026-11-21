@@ -23,8 +23,8 @@ from buildlimits.outcome_archive import (
     run_archive,
 )
 from buildlimits.outcome_archive_codec import report_dict
+from buildlimits.outcome_archive_evictions import eviction_counts
 from buildlimits.outcome_archive_exit import EXIT_USAGE, exit_status
-from buildlimits.outcome_archive_report import eviction_counts
 from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_retention import RetentionPolicy, policy_from_settings
@@ -289,6 +289,8 @@ def _write_maintenance(report: RunReport) -> None:
     maintenance reason and is already labelled above; only a fault is printed.
     """
     reason = report.maintenance.reason
+    if reason is not None:
+        print(f"state: not written ({reason})")
 
 
 def _elapsed(report: RunReport) -> str:

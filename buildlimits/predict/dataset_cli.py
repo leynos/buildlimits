@@ -11,10 +11,9 @@ import sys
 import typing as typ
 from pathlib import Path
 
-from buildlimits import outcome_history, outcome_segment_inventory
+from buildlimits import outcome_history
 from buildlimits.outcome_history_args import add_history_arguments, selection_from
 from buildlimits.outcome_record_format import RecordFailure
-from buildlimits.outcome_segments import SegmentLayout, archive_name
 from buildlimits.outcome_store_read import read_store
 from buildlimits.outcome_store_salt import store_path
 from buildlimits.predict.config_loader import load_config as _read_config

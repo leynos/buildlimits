@@ -121,7 +121,6 @@ def read_sequence(path: Path) -> int | None:
 def read_retention_floor(layout: SegmentLayout) -> RetentionFloor:
     """Read the retention floor recorded by the last successful run.
 
-
     ``retention.json`` is the record every run installs. When a run cannot
     replace it, that run leaves ``retention-pending.json`` instead, so both
     files are read and the higher valid floor wins. The floor is evidence

@@ -86,8 +86,7 @@ def retained_history(
         active_records=measured.records,
         first_observed_at=first,
         last_observed_at=last,
-        complete=measured.has_metadata
-        and all(entry.has_metadata for entry in entries),
+        complete=measured.has_metadata and all(entry.has_metadata for entry in entries),
     )
 
 

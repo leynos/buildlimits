@@ -20,8 +20,8 @@ from outcome_store_helpers import (
 )
 
 from buildlimits import config, outcome_records, outcome_store, outcome_store_io
-from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_key import Salt
+from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_record_format import (
     MAX_COMPACT_BYTES,
     StoreHeader,
