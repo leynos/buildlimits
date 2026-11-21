@@ -173,6 +173,34 @@ def test_dataset_command_refuses_a_sealed_segments_future_archive(
     assert not future_archive.exists(), "nothing is written to the future archive"
 
 
+@pytest.mark.parametrize("closed", ["sealed", "archive"])
+def test_dataset_command_refuses_an_output_inside_a_history_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], closed: str
+) -> None:
+    """A segment created after the inventory is still history the read uses.
+
+    The archiver may seal the active file or publish an archive while the
+    history is read, so the whole directory is refused rather than only the
+    names the inventory saw.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, 4)
+    layout = SegmentLayout.beside(store)
+    directory = layout.sealed_dir if closed == "sealed" else layout.archive_dir
+    directory.mkdir(parents=True)
+    output = directory / archive_name(2)
+    assert not output.exists(), "no inventory has seen this segment"
+    options = ["--store", str(store), "--output", str(output), "--skip-journal"]
+
+    status = dataset_cli.main([*options, "--history"])
+
+    assert status == 2, "a destructive output path is a usage failure"
+    assert "must not name a file the command reads" in capsys.readouterr().err, (
+        "the refusal names the reason"
+    )
+    assert not output.exists(), "nothing is written into the history directory"
+
+
 def test_dataset_command_refuses_an_unparsable_journal_span(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

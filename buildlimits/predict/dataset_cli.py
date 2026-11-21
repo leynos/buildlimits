@@ -27,7 +27,7 @@ from buildlimits.predict.journal_provenance import (
     JournalProvenance,
     JournalUnavailable,
 )
-from buildlimits.predict.paths import same_file
+from buildlimits.predict.paths import inside_history_directories, same_file
 from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_store import save_snapshot
 from buildlimits.utc_text import utc_now, utc_text
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
     except OSError as error:
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 1
-    if any(same_file(path, options.output) for path in inputs):
+    if _output_is_an_input(options.output, inputs, store, selection):
         print(
             "build-limits-predict-dataset: --output must not name a file the "
             f"command reads ({options.output}); choose another path",
@@ -185,6 +185,41 @@ def _settings(options: argparse.Namespace, chosen: Edges) -> tuple[Config, Path]
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 1
     return config, store
+
+
+def _output_is_an_input(
+    output: Path,
+    inputs: tuple[Path, ...],
+    store: Path,
+    selection: HistorySelection | None,
+) -> bool:
+    """Return whether the output would replace, or land beside, history read.
+
+    A history read consumes segments that may be created after the inventory
+    was taken, so an output inside a history directory is refused even when no
+    listed input names it. Without ``--history`` the command reads only the
+    active store, and its output may sit anywhere else.
+
+    Parameters
+    ----------
+    output : Path
+        The requested snapshot path.
+    inputs : tuple[Path, ...]
+        The files the command will read.
+    store : Path
+        The configured active store path, which names the layout.
+    selection : HistorySelection | None
+        The salt domain a history read covers, or None when only the active
+        store is read.
+
+    Returns
+    -------
+    bool
+        Whether writing ``output`` would replace or sit beside an input.
+    """
+    if any(same_file(path, output) for path in inputs):
+        return True
+    return selection is not None and inside_history_directories(output, store)
 
 
 def _read_inputs(store: Path, *, with_history: bool) -> tuple[Path, ...]:

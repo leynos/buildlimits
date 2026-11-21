@@ -163,6 +163,14 @@ the first time, unless the pinned version or digest changes.
    cache_outcomes_max_bytes = 15000000000
    ```
 
+   Restart the supervisor so its writer reads the new policy. The settings are
+   loaded at startup, so a supervisor already running with the legacy policy
+   keeps compacting in place instead of sealing segments for the archiver:
+
+   ```bash
+   systemctl --user restart buildlimits-supervisor.service
+   ```
+
    Then install the user service and timer described under
    [Archive cache-outcome history](users-guide.md#archive-cache-outcome-history).
    A budget above the 12 MiB legacy bound, or a budget of `0` that disables

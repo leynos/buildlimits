@@ -136,6 +136,13 @@ def _assert_record_cap(
     trim = _trim_of(decision)
     kept = sum(entry.record_count or 0 for entry in survivors)
     kept = kept if trim is None else kept - trim.records
+    # The plan must keep every closed row the cap can afford. Checking only
+    # that the result fits the cap would accept a plan that deleted history it
+    # did not need to, and an active-only excess still leaves nothing to keep.
+    total = sum(entry.record_count or 0 for entry in entries)
+    assert kept == min(total, max(cap - active, 0)), (
+        "the plan retains the closed rows the cap can afford"
+    )
     assert decision.retention_deferred == (kept + active > cap), (
         "the cap is deferred exactly when the plan cannot meet it"
     )

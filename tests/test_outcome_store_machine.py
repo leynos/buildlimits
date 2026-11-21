@@ -1,9 +1,12 @@
 """Generated append, compaction, reload, clock and salt store contracts."""
 
+import collections.abc as cabc
 import datetime as dt
+import threading
 import typing as typ
 from pathlib import Path
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import (
@@ -14,6 +17,7 @@ from hypothesis.stateful import (
 )
 from outcome_store_fixture_helpers import append_torn_utf8_tail
 from outcome_store_helpers import (
+    append_completion_barrier,
     salt_path,
     stored_records,
     wait_for_results,
@@ -29,6 +33,14 @@ from buildlimits.outcome_store import StoreWriter
 
 _BASE_TIME = dt.datetime(2026, 10, 25, tzinfo=dt.UTC)
 _DAY_SECONDS = 24 * 60 * 60
+_APPEND_FINISHED = threading.Event()
+
+
+@pytest.fixture(autouse=True)
+def _append_completion_barrier() -> cabc.Iterator[None]:
+    """Keep the clock still until the writer's post-append ageing finishes."""
+    with append_completion_barrier(_APPEND_FINISHED):
+        yield
 
 
 class OutcomeStoreMachine(RuleBasedStateMachine):
@@ -108,11 +120,14 @@ class OutcomeStoreMachine(RuleBasedStateMachine):
     def _append(self, version: str) -> None:
         """Append one generated row and update the model after writer success."""
         record = window_summary(server_version=version, observed_at=self.wall_time)
+        _APPEND_FINISHED.clear()
         self.writer.append(record)
         results = wait_for_results(self.writer, operation="append", reason="none")
         assert StoreResult("append", "none", 1, 0) in results, (
             "the generated append is acknowledged"
         )
+        if not _APPEND_FINISHED.wait(2.0):
+            pytest.fail("the writer's append did not finish after its result")
         self.expected.append(record)
         self._model_append_ageing()
 

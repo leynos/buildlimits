@@ -19,9 +19,11 @@ from outcome_sealing_helpers import (
     seal_two_rows,
     sealed_names,
 )
+from outcome_store_helpers import wait_for_records
 from outcome_test_helpers import record_after
 
 from buildlimits import outcome_store_sealing
+from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_segments import MAX_SEQUENCE, segment_name
 
 
@@ -97,7 +99,12 @@ def test_a_seal_that_cannot_sync_the_source_keeps_it_active(tmp_path: Path) -> N
         ),
         open_writer(store) as writer,
     ):
-        seal_two_rows(writer, reason="save_failed")
+        results = seal_two_rows(writer, reason="save_failed")
+        # The worker publishes the seal result before it writes the row that
+        # append carried, so both successful appends must be counted before
+        # the file is read. The sync fault stays installed through the read,
+        # which is what keeps the rows active for the assertion below.
+        wait_for_records(writer, StoreResult("append", "none", 2, 0), observed=results)
         # Read the store before the closing flush, which would otherwise seal
         # the rows this failure deliberately leaves active.
         assert sealed_names(store) == [], "no source is published with unsynced rows"

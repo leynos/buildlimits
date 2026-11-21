@@ -1,14 +1,15 @@
-"""Shared factories and asynchronous result waits for outcome-store tests."""
+"""Shared factories for outcome-store tests, with the result waits re-exported."""
 
 import contextlib
 import datetime as dt
 import threading
 import time
 import typing as typ
-import weakref
 from unittest import mock
 
 import pytest
+from outcome_result_waits import wait_for_records as wait_for_records
+from outcome_result_waits import wait_for_results as wait_for_results
 
 from buildlimits import outcome_records, outcome_store_state
 from buildlimits.outcome_ports import StoreResult
@@ -27,9 +28,6 @@ if typ.TYPE_CHECKING:
 
 _SALT_NAME = "cache-outcomes.salt"
 _WAIT_SECONDS = 2.0
-_RESULT_BACKLOG: weakref.WeakKeyDictionary[StoreWriter, list[StoreResult]] = (
-    weakref.WeakKeyDictionary()
-)
 
 
 def window_summary(
@@ -75,39 +73,6 @@ def wait_for_salt(writer: StoreWriter) -> Salt | StoreFailure:
             return result
         threading.Event().wait(0.01)
     return pytest.fail("writer did not publish its salt result")
-
-
-def wait_for_results(
-    writer: StoreWriter,
-    *,
-    operation: str,
-    reason: str | None = None,
-) -> tuple[StoreResult, ...]:
-    """Wait for one result and retain concurrently drained unrelated results.
-
-    Returns
-    -------
-    tuple[StoreResult, ...]
-        The collected results, including unrelated values drained meanwhile.
-    """
-    deadline = time.monotonic() + _WAIT_SECONDS
-    observed = _RESULT_BACKLOG.pop(writer, [])
-    while time.monotonic() < deadline:
-        observed.extend(writer.results())
-        matching = [
-            result
-            for result in observed
-            if result.operation == operation
-            and (reason is None or result.reason == reason)
-        ]
-        if matching:
-            _RESULT_BACKLOG[writer] = [
-                result for result in observed if result not in matching
-            ]
-            return tuple(observed)
-        threading.Event().wait(0.01)
-    _RESULT_BACKLOG[writer] = observed
-    return pytest.fail(f"writer did not report {operation} with reason {reason!r}")
 
 
 def close_writer(writer: StoreWriter, timeout: float = 2.0) -> None:
@@ -368,6 +333,42 @@ def assert_load_result(
     """
     if StoreResult("load", reason, 0, discarded) not in results:
         pytest.fail(f"load reason {reason!r} reports {discarded} discarded rows")
+
+
+@contextlib.contextmanager
+def append_completion_barrier(finished: threading.Event) -> cabc.Generator[None]:
+    """Mark an event once a writer append, post-append ageing included, returns.
+
+    ``StoreFiles.append`` publishes its success result before it reads the
+    clock to decide whether the oldest row has aged. A test that advanced the
+    clock on the result could move it before that read, so the worker would
+    observe a different skew or cutoff. The event is set after the append.
+
+    Parameters
+    ----------
+    finished : threading.Event
+        The event the test clears before each append and waits on afterwards.
+
+    Yields
+    ------
+    None
+        While the writer's append publishes ``finished`` when it returns.
+    """
+    append = outcome_store_state.StoreFiles.append
+
+    def append_and_signal(
+        files: outcome_store_state.StoreFiles,
+        line: bytes,
+        record: StoreRecord,
+    ) -> None:
+        """Run the writer's append, then mark its post-append ageing done."""
+        try:
+            append(files, line, record)
+        finally:
+            finished.set()
+
+    with mock.patch.object(outcome_store_state.StoreFiles, "append", append_and_signal):
+        yield
 
 
 @contextlib.contextmanager
