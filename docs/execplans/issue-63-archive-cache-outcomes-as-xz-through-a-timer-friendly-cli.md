@@ -848,11 +848,17 @@ verified archive is published, and leaves compile admission untouched.
   Regressions replace the directory path immediately after validation and
   assert the scan and the removal still act on the validated inode. The header
   floor is now compared with an independently encoded fractional-second header,
-  the loader refuses `header_floor_bytes() - 1`, the benchmark releases its
-  caller allocation before measuring, and the cross-process lock test
-  synchronizes on the lock entry in `/proc/locks` instead of the first archive
-  and rejoins it after `SIGSTOP`. `Popen` is no longer used as a context
-  manager, so no path waits without a timeout.
+  and the loader's boundary regression is parametrized over `1` and
+  `header_floor_bytes() - 1`, so the largest rejected value is pinned at both
+  layers from one arrange. The benchmark releases its caller allocation before
+  measuring, and the cross-process lock test synchronizes on the lock entry in
+  `/proc/locks` instead of the first archive and rejoins it after `SIGSTOP`.
+  `Popen` is no longer used as a context manager, so no path waits without a
+  timeout. The swap-after-validation wrapper both regressions need now lives in
+  `segment_test_helpers`, so the duplication gate sees one copy. The new prose
+  spells "misprice" as one word, because the shared spelling gate rejects the
+  hyphenated form: it tokenizes the prefix alone and reports it as a misspelt
+  short word.
 
 ## Surprises & discoveries
 
