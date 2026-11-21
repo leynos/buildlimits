@@ -12,6 +12,7 @@ import typing as typ
 from buildlimits.outcome_archive_context import ignore_retry
 from buildlimits.outcome_archive_history import (
     observed_history,
+    physical_fallback_bytes,
     retained_logical_bytes,
 )
 from buildlimits.utc_text import utc_now
@@ -90,7 +91,12 @@ class RunReport:
     active_bytes : int
         Logical bytes in the writer's active file.
     retained_bytes : int
-        Logical bytes retained after the run, or estimated for a dry run.
+        Logical bytes retained after the run, or the bytes an inspection still
+        holds.
+    fallback_bytes : int
+        The part of ``retained_bytes`` taken from a physical file size because
+        an archive's logical size is unknown; zero when every entry is
+        measured.
     retained_records : int
         Records in the whole retained history: the closed rows sidecar
         metadata describes plus the rows still in the writer's active file.
@@ -135,6 +141,7 @@ class RunReport:
     dry_run: bool = False
     active_bytes: int = 0
     retained_bytes: int = 0
+    fallback_bytes: int = 0
     retained_records: int = 0
     observed_from: dt.datetime | None = None
     observed_until: dt.datetime | None = None
@@ -174,6 +181,7 @@ def dry_report(
         dry_run=True,
         active_bytes=active.bytes,
         retained_bytes=retained_logical_bytes(inventory, active),
+        fallback_bytes=physical_fallback_bytes(inventory),
         retained_records=observed.records,
         observed_from=observed.observed_from,
         observed_until=observed.observed_until,
@@ -270,6 +278,7 @@ def settled_report(
         finished_at=run.context.clock(),
         active_bytes=active.bytes,
         retained_bytes=retained,
+        fallback_bytes=physical_fallback_bytes(inventory),
         retained_records=observed.records,
         observed_from=observed.observed_from,
         observed_until=observed.observed_until,

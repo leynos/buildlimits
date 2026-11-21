@@ -6,9 +6,13 @@ from pathlib import Path
 
 import pytest
 from archive_cli_helpers import command_arguments, sealed_measured_source, write_config
+from outcome_archive_helpers import NOW as RUN_NOW
+from outcome_archive_helpers import layout, policy, records, run, write
 from outcome_test_helpers import records_at
 
-from buildlimits.outcome_archive_cli import main
+from buildlimits.outcome_archive_cli import _write_report, main
+from buildlimits.outcome_archive_codec import report_dict
+from buildlimits.outcome_segments import sidecar_name
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 
@@ -62,3 +66,30 @@ def test_the_json_keeps_the_current_bytes_apart_from_the_plan(
     assert document["plan"]["retained_logical_bytes"] < current, (
         "the plan's estimate is the post-eviction figure"
     )
+
+
+def test_a_missing_sidecar_discloses_the_physical_size_fallback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unmeasured archive's bytes are named as a physical-size estimate."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(RUN_NOW, 1), policy())
+    first = run(tmp_path, policy())
+    assert first.status == "ok", "the fixture archive is published"
+    (layout(tmp_path).archive_dir / sidecar_name(1)).unlink()
+
+    report = run(tmp_path, policy(), dry_run=True)
+    document = report_dict(report)
+
+    assert report.unmeasured_entries == 1, "the archive is counted as unmeasured"
+    assert report.fallback_bytes > 0, "its physical size is the substituted figure"
+    assert document["retained_fallback_bytes"] == report.fallback_bytes, (
+        "the JSON names the fallback component"
+    )
+
+    _write_report(report, as_json=False)
+    output = capsys.readouterr().out
+    assert (
+        f"retained fallback: {report.fallback_bytes} bytes from physical size; "
+        "1 entries unmeasured"
+    ) in output, "the plain report names the fallback component"

@@ -44,6 +44,7 @@ def report_dict(report: RunReport) -> dict[str, object]:
         "finished_at": utc_text(report.finished_at),
         "active_bytes": report.active_bytes,
         "retained_logical_bytes": report.retained_bytes,
+        "retained_fallback_bytes": report.fallback_bytes,
         "retained_records": report.retained_records,
         "observed_from": optional_utc_text(report.observed_from),
         "observed_until": optional_utc_text(report.observed_until),

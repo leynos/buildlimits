@@ -2438,3 +2438,13 @@ after each revert.
   budget precisely because eviction has not run. Reverting the dry report to
   the plan estimate fails both inspection tests, and the users' guide states
   the distinction.
+- Revision 41 records the revision-40 assessment's fallback-byte finding. An
+  archive without a trustworthy sidecar has no known logical size, so the scan
+  substitutes its physical size and the report total could be mistaken for a
+  logical measurement. `physical_fallback_bytes` names that component;
+  `RunReport.fallback_bytes` carries it, the JSON publishes
+  `retained_fallback_bytes`, and the plain report prints a `retained fallback:`
+  line only when it is non-zero. The regression removes a published archive's
+  sidecar and asserts the unmeasured entry, the non-zero fallback and both
+  output forms; removing either assignment fails it. Budget deferral is
+  unchanged: the walks still wait for an unmeasured archive.

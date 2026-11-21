@@ -381,6 +381,12 @@ An inspection or dry run reports the bytes the store still holds, not the
 estimate after the eviction it plans; the JSON plan carries that post-eviction
 estimate as its own `retained_logical_bytes`.
 
+When an archive's sidecar is missing or cannot be trusted, its logical size is
+unknown and the report uses its compressed file size instead. The plain report
+then adds a `retained fallback:` line and the JSON carries
+`retained_fallback_bytes`, so the total is never mistaken for a fully measured
+logical count.
+
 The count covers the closed rows that segment metadata describes and every row
 still in the active file, including rows the age rule has already expired and
 the writer has not yet compacted. Those rows are not retained history, so the

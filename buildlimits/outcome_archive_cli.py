@@ -235,6 +235,11 @@ def _write_report(report: RunReport, *, as_json: bool) -> None:
     print(f"started: {utc_text(report.started_at)}")
     print(f"elapsed: {_elapsed(report)}")
     print(f"retained: {report.retained_bytes} of {report.budget_bytes} logical bytes")
+    if report.fallback_bytes:
+        print(
+            f"retained fallback: {report.fallback_bytes} bytes from physical size; "
+            f"{report.unmeasured_entries} entries unmeasured"
+        )
     _write_history(report)
     print(f"active: {report.active_bytes} logical bytes")
     print(f"cutoff: {_cutoff_text(report)}")

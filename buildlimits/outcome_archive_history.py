@@ -22,6 +22,7 @@ __all__ = [
     "Observed",
     "SettledStore",
     "observed_history",
+    "physical_fallback_bytes",
     "retained_logical_bytes",
 ]
 
@@ -141,6 +142,26 @@ def retained_logical_bytes(inventory: Inventory, active: ActiveHistory) -> int:
         Logical bytes in the active file plus one entry per closed sequence.
     """
     return active.bytes + sum(entry.logical_bytes for entry in inventory.effective)
+
+
+def physical_fallback_bytes(inventory: Inventory) -> int:
+    """Return the part of the retained total taken from a physical file size.
+
+    An archive whose sidecar is missing or untrusted has no known logical
+    size, so the scan substitutes its compressed file size. The budget walks
+    use that conservative figure, but it is not a logical-byte measurement:
+    callers that print the total must say how much of it is a fallback.
+
+    Returns
+    -------
+    int
+        The summed logical figure of archives whose metadata is unavailable.
+    """
+    return sum(
+        entry.logical_bytes
+        for entry in inventory.effective
+        if entry.state == "archived" and not entry.has_metadata
+    )
 
 
 def observed_history(inventory: Inventory, active: ActiveHistory) -> Observed:

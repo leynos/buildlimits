@@ -21,6 +21,7 @@ _EXPECTED_KEYS = {
     "finished_at",
     "active_bytes",
     "retained_logical_bytes",
+    "retained_fallback_bytes",
     "retained_records",
     "observed_from",
     "observed_until",
@@ -82,6 +83,9 @@ def test_the_report_document_has_exactly_the_documented_fields() -> None:
     assert document["finished_at"] == "2026-11-19T12:00:03Z", "UTC text, not a value"
     assert document["active_bytes"] == 11, "the active bytes are published"
     assert document["retained_logical_bytes"] == 22, "the retained bytes are published"
+    assert document["retained_fallback_bytes"] == 0, (
+        "a measured report has no physical-size fallback"
+    )
     assert document["retained_records"] == 3, "the retained count is published"
     assert document["observed_from"] == "2026-11-19T12:00:00Z", "the span start"
     assert document["observed_until"] == "2026-11-19T12:00:03Z", "the span end"
