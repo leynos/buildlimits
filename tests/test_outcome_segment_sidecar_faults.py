@@ -29,7 +29,7 @@ if typ.TYPE_CHECKING:
 
 
 def _inventory_after(
-    tmp_path: Path, prepare: cabc.Callable[[SegmentLayout], None]
+    tmp_path: Path, prepare: cabc.Callable[[SegmentLayout], object]
 ) -> Inventory:
     """Publish one archive, prepare its sidecar, and read the inventory.
 

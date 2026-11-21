@@ -42,7 +42,7 @@ __all__ = [
 @contextlib.contextmanager
 def open_writer(
     store: Path, policy: RetentionPolicy | None = None
-) -> cabc.Iterator[StoreWriter]:
+) -> cabc.Generator[StoreWriter]:
     """Open the segmented writer a sealing test drives, closing it afterwards.
 
     Yields
