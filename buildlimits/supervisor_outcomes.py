@@ -22,6 +22,7 @@ from buildlimits.outcome_gate import quiet_point
 from buildlimits.outcome_ports import SampleFailure
 from buildlimits.outcome_queries import PeerServerProcess, SccacheStatistics
 from buildlimits.outcome_record_encode import header_floor_bytes
+from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_recorder_driver import OutcomeRecorder
 from buildlimits.outcome_recorder_types import (
     Disabled,
@@ -106,26 +107,25 @@ class OutcomeShell:
         writer = dependencies.writer
         if writer is None:
             floor = header_floor_bytes()
-            policy = policy_from_settings(supervisor.settings, header_floor=floor)
+            limit = MAX_COMPACT_BYTES
+            policy = policy_from_settings(
+                supervisor.settings, header_floor=floor, segment_limit=limit
+            )
             writer = StoreWriter(path, policy=policy)
         self._resources = outcome_resources.OutcomeResources(
             reaper, writer, supervisor.clock
         )
-        self._server = (
-            PeerServerProcess(supervisor.settings.sccache_socket)
-            if dependencies.server is None
-            else dependencies.server
-        )
-        self._statistics = (
-            SccacheStatistics(
+        self._server = dependencies.server
+        if self._server is None:
+            self._server = PeerServerProcess(supervisor.settings.sccache_socket)
+        self._statistics = dependencies.statistics
+        if self._statistics is None:
+            self._statistics = SccacheStatistics(
                 supervisor.settings.sccache_executable,
                 env,
                 supervisor.settings.sccache_socket,
                 reaper=reaper,
             )
-            if dependencies.statistics is None
-            else dependencies.statistics
-        )
         self._recorder = OutcomeRecorder(self._statistics, self._server)
         self._child_sampler = ChildSampler(self._server)
         self._telemetry = outcome_telemetry.OutcomeTelemetry(

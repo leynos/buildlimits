@@ -17,7 +17,8 @@ from buildlimits.outcome_archive_fs import (
     open_private_regular,
     open_private_temp,
 )
-from buildlimits.outcome_archive_trim import Trim, policy_dropped_bytes
+from buildlimits.outcome_archive_rows import DocumentReader, iter_records
+from buildlimits.outcome_archive_trim import Trim, policy_drops
 from buildlimits.outcome_archive_verify import (
     ArchiveFacts,
     OutputFaultError,
@@ -263,6 +264,44 @@ def _composed_trim(source_path: Path, options: EncodeOptions) -> Trim:
             LineStream(source, is_compressed=options.is_compressed), trim
         )
     return dc.replace(trim, policy_bytes=measured)
+
+
+def policy_dropped_bytes(stream: LineStream, trim: Trim) -> int:
+    """Measure the bytes a trim's count and age rules drop over a whole source.
+
+    A byte allowance is compared with the document that results after every
+    other rule has been applied, and a row the count or age rule drops after
+    the byte suffix has started is absent from that document too. Deciding the
+    suffix before seeing those rows would discard a row that fits, so this
+    pass measures them first. Rows are still read one at a time, so the memory
+    bound is unchanged.
+
+    Parameters
+    ----------
+    stream : LineStream
+        The uncompressed source rows.
+    trim : Trim
+        The policy whose ``records`` and ``before`` rules apply.
+
+    Returns
+    -------
+    int
+        Bytes, including newlines, of the record rows those rules drop.
+
+    Examples
+    --------
+    >>> import datetime as dt, io
+    >>> from buildlimits.outcome_record_format import StoreHeader
+    >>> header = StoreHeader("s", dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
+    >>> text = encode_line(header) + chr(10)
+    >>> policy_dropped_bytes(LineStream(io.BytesIO(text.encode())), Trim())
+    0
+    """
+    dropped = 0
+    for seen, row in enumerate(iter_records(DocumentReader(stream))):
+        if policy_drops(row.record.observed_at, trim, seen=seen):
+            dropped += len(row.raw) + 1
+    return dropped
 
 
 def _write_temp(

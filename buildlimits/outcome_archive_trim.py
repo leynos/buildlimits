@@ -10,18 +10,10 @@ time, so the measurement keeps one row in memory whatever the source size.
 import dataclasses as dc
 import typing as typ
 
-from buildlimits.outcome_archive_rows import (
-    DocumentReader,
-    RecordRow,
-    iter_records,
-)
-
 if typ.TYPE_CHECKING:
     import datetime as dt
 
-    from buildlimits.outcome_record_stream import LineStream
-
-__all__ = ["Trim", "fits_allowance", "policy_dropped_bytes", "policy_drops"]
+__all__ = ["Trim", "fits_allowance", "policy_drops"]
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -67,55 +59,13 @@ class Trim:
         return self.before is None and self.records == 0 and self.allowed_bytes is None
 
 
-def policy_dropped_bytes(stream: LineStream, trim: Trim) -> int:
-    """Measure the bytes a trim's count and age rules drop over a whole source.
-
-    A byte allowance is compared with the document that results after every
-    other rule has been applied, and a row the count or age rule drops after
-    the byte suffix has started is absent from that document too. Deciding the
-    suffix before seeing those rows would discard a row that fits, so this
-    pass measures them first. Rows are still read one at a time, and the
-    result is a single number, so the memory bound is unchanged.
-
-    Parameters
-    ----------
-    stream : LineStream
-        The uncompressed source rows.
-    trim : Trim
-        The policy whose ``records`` and ``before`` rules apply.
-
-    Returns
-    -------
-    int
-        Bytes, including newlines, of the record rows those rules drop. An
-        invalid row or header, or an incomplete compressed stream, propagates
-        the ``SegmentFaultError`` the shared document walk reports.
-
-    Examples
-    --------
-    >>> import datetime as dt, io
-    >>> from buildlimits.outcome_record_encode import encode_line
-    >>> from buildlimits.outcome_record_format import StoreHeader
-    >>> from buildlimits.outcome_record_stream import LineStream
-    >>> header = StoreHeader("s", dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
-    >>> text = encode_line(header) + chr(10)
-    >>> policy_dropped_bytes(LineStream(io.BytesIO(text.encode())), Trim())
-    0
-    """
-    dropped = 0
-    for seen, row in enumerate(iter_records(DocumentReader(stream))):
-        if policy_drops(row, trim, seen=seen):
-            dropped += len(row.raw) + 1
-    return dropped
-
-
-def policy_drops(row: RecordRow, trim: Trim, *, seen: int) -> bool:
+def policy_drops(observed_at: dt.datetime, trim: Trim, *, seen: int) -> bool:
     """Whether the count or age rule drops one record.
 
     Parameters
     ----------
-    row : RecordRow
-        The candidate record.
+    observed_at : datetime
+        The candidate row's observation time.
     trim : Trim
         The prefix policy.
     seen : int
@@ -128,7 +78,7 @@ def policy_drops(row: RecordRow, trim: Trim, *, seen: int) -> bool:
     """
     if seen < trim.records:
         return True
-    return trim.before is not None and row.record.observed_at < trim.before
+    return trim.before is not None and observed_at < trim.before
 
 
 def fits_allowance(trim: Trim, *, dropped: int) -> bool:

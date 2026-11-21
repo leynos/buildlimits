@@ -7,7 +7,7 @@ store that keeps moving, while the notice stays free of paths and host detail.
 
 import sys
 
-__all__ = ["report_retry"]
+__all__ = ["ignore_retry", "report_retry"]
 
 
 def report_retry(operation: str, attempt: int, category: str) -> None:
@@ -29,3 +29,7 @@ def report_retry(operation: str, attempt: int, category: str) -> None:
     ``retry: snapshot attempt 2 reason inventory_changed``.
     """
     print(f"retry: {operation} attempt {attempt} reason {category}", file=sys.stderr)
+
+
+def ignore_retry(_operation: str, _attempt: int, _category: str) -> None:
+    """Discard one retry notice when the caller reports none."""

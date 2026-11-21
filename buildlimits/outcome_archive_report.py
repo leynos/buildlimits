@@ -9,10 +9,8 @@ stays a plain value that a caller can compare and pass on.
 import dataclasses as dc
 import typing as typ
 
-from buildlimits import outcome_archive_retain
 from buildlimits.outcome_archive_context import ignore_retry
-from buildlimits.outcome_archive_history import ActiveHistory, observed_history
-from buildlimits.outcome_archive_plan import plan_run
+from buildlimits.outcome_archive_history import observed_history
 from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
@@ -21,6 +19,7 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.metrics import MetricsPort
     from buildlimits.outcome_archive_context import ActionResult
+    from buildlimits.outcome_archive_history import ActiveHistory, SettledStore
     from buildlimits.outcome_archive_plan import PlanSummary
     from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome
     from buildlimits.outcome_segment_inventory import Inventory
@@ -236,41 +235,37 @@ def unfinished_report(
 
 
 def settled_report(
-    run: ArchiveRun,
-    outcome: RunOutcome,
-    floor: int,
+    run: ArchiveRun, outcome: RunOutcome, settled: SettledStore
 ) -> RunReport:
-    """Measure the settled store and build the report that describes it.
+    """Build the report one settled run's measurements describe.
+
+    The caller owns the store read and the retention decision; this builder
+    only maps the settled values and the run's own record into the report.
+
+    Parameters
+    ----------
+    run : ArchiveRun
+        The executed plan and the context its report describes.
+    outcome : RunOutcome
+        The actions and failures the run recorded.
+    settled : SettledStore
+        The final inventory and active reading, and whether retention still
+        owes work after it.
 
     Returns
     -------
     RunReport
         The completed run's report, before it is persisted.
     """
-    layout = run.context.layout
-    final, final_active, snapshot_settled = outcome_archive_retain.settled_snapshot(
-        layout,
-        floor,
-        cutoff=run.context.policy.cutoff(run.started_at),
-        on_retry=run.context.on_retry,
-    )
-    if not snapshot_settled:
-        # The writer kept sealing across every reading, so the report cannot
-        # bind rows to one version of the store. Report it as retryable rather
-        # than recording an undercount as success.
-        outcome.retention_unsettled = True
-    elif _retention_owes_work(final, final_active, run):
-        # The writer can append or seal between the last retention pass and
-        # this read. The report must not claim the store is within its bounds
-        # when the next firing still has history to evict.
-        outcome.retention_unsettled = True
-    retained = final_active.bytes + final.sealed_bytes + final.archived_logical_bytes
-    observed = observed_history(final, final_active)
+    inventory = settled.inventory
+    active = settled.active
+    retained = active.bytes + inventory.sealed_bytes + inventory.archived_logical_bytes
+    observed = observed_history(inventory, active)
     return RunReport(
-        status=_run_status(outcome),
+        status=_run_status(outcome, retention_unsettled=settled.retention_unsettled),
         started_at=run.started_at,
         finished_at=run.context.clock(),
-        active_bytes=final_active.bytes,
+        active_bytes=active.bytes,
         retained_bytes=retained,
         retained_records=observed.records,
         observed_from=observed.observed_from,
@@ -281,46 +276,15 @@ def settled_report(
         plan=run.summary,
         actions=tuple(outcome.actions),
         failures=tuple(outcome.failures),
-        gaps=final.gaps,
-        gaps_truncated=final.gaps_truncated,
-        missing_sidecars=final.missing_sidecars,
-        corrupt_sidecars=final.corrupt_sidecars,
-        orphan_sidecars=final.orphan_sidecars,
+        gaps=inventory.gaps,
+        gaps_truncated=inventory.gaps_truncated,
+        missing_sidecars=inventory.missing_sidecars,
+        corrupt_sidecars=inventory.corrupt_sidecars,
+        orphan_sidecars=inventory.orphan_sidecars,
     )
 
 
-def _retention_owes_work(
-    inventory: Inventory, active: ActiveHistory, run: ArchiveRun
-) -> bool:
-    """Whether the final snapshot still calls for retention work.
-
-    The writer never takes the archive lock, so it can append or seal between
-    the last retention pass and this read. A report that claimed success over
-    that store would tell the timer the budget is met while the next firing
-    still has to trim or delete. Only retention decides this: a source sealed
-    just before the read is archival work the next firing picks up, and the
-    report already counts its bytes.
-
-    Parameters
-    ----------
-    inventory : Inventory
-        The store as the final snapshot read it.
-    active : ActiveHistory
-        The active file from the same settled reading, measured against the
-        run's cutoff so the plan counts the rows retention keeps.
-    run : ArchiveRun
-        The run whose policy and start time the plan is built with.
-
-    Returns
-    -------
-    bool
-        True when the plan still evicts history or defers a budget.
-    """
-    pending = plan_run(inventory, run.context.policy, now=run.started_at, active=active)
-    return bool(pending.trims or pending.deletes or pending.retention_deferred)
-
-
-def _run_status(outcome: RunOutcome) -> RunStatus:
+def _run_status(outcome: RunOutcome, *, retention_unsettled: bool) -> RunStatus:
     """Classify a completed pass by the failures it recorded.
 
     A run that met only a full filesystem is retryable: nothing is corrupt and
@@ -333,7 +297,7 @@ def _run_status(outcome: RunOutcome) -> RunStatus:
         ``ok``, ``unsettled``, ``no_headroom`` or ``corrupt``.
     """
     if not outcome.failures:
-        return "unsettled" if outcome.retention_unsettled else "ok"
+        return "unsettled" if retention_unsettled else "ok"
     if all(reason == "no_headroom" for _sequence, reason in outcome.failures):
         return "no_headroom"
     return "corrupt"

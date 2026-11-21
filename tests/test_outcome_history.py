@@ -7,6 +7,7 @@ it with the archiver, and then read it back through the history view.
 
 import datetime as dt
 import tracemalloc
+import types
 import typing as typ
 from pathlib import Path
 
@@ -24,8 +25,15 @@ from history_fixtures import (
 from outcome_archive_helpers import write as write_store
 from segment_test_helpers import history_policy
 
-from buildlimits import outcome_history, outcome_record_encode, outcome_replay_cli
+from buildlimits import (
+    outcome_history,
+    outcome_record_encode,
+    outcome_replay_cli,
+    outcome_segment_inventory,
+)
 from buildlimits.outcome_archive import RunOptions, run_archive
+from buildlimits.outcome_history_settle import fingerprint, is_settled
+from buildlimits.outcome_history_stream import HistoryStream
 from buildlimits.outcome_segments import SegmentLayout, archive_name
 from buildlimits.outcome_store_io import read_store
 
@@ -35,6 +43,7 @@ _TWO_ROWS = (NOW, NOW - dt.timedelta(minutes=1))
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import DecodedStore
+    from buildlimits.outcome_segment_inventory import Inventory
 
 
 def test_a_generated_history_archives_and_replays_in_order(
@@ -309,3 +318,75 @@ def test_history_reports_a_missing_store(tmp_path: Path) -> None:
     """A store with no active file and no segments has no history."""
     with pytest.raises(FileNotFoundError):
         outcome_history.read_history_beside(tmp_path / "absent.jsonl")
+
+
+def test_a_stream_is_a_reiterable_pinned_view(tmp_path: Path) -> None:
+    """The stream yields the same rows on each pass without rescanning."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    rows = records(0, 2)
+    write_store(store, rows, history_policy())
+
+    stream = outcome_history.open_history_beside(store)
+
+    assert isinstance(stream, HistoryStream), "the reader returns the pinned view"
+    first = tuple(stream)
+    second = tuple(stream)
+    assert first == second == rows, "every pass yields the pinned rows in order"
+
+
+def _inventory(*states: str) -> Inventory:
+    """Build a scan result carrying one state per sequence."""
+    entries = [
+        types.SimpleNamespace(sequence=sequence, state=state)
+        for sequence, state in enumerate(states, start=1)
+    ]
+    return typ.cast("Inventory", types.SimpleNamespace(effective=entries))
+
+
+def test_the_settle_check_compares_the_closed_segments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scan that still lists the same states is settled; a change is not."""
+    store_layout = SegmentLayout.beside(tmp_path / "cache-outcomes.jsonl")
+    snapshot = _inventory("sealed", "archived")
+    scans = iter((snapshot, _inventory("sealed", "sealed")))
+    monkeypatch.setattr(
+        outcome_segment_inventory, "read_inventory", lambda *_a, **_k: next(scans)
+    )
+
+    assert is_settled(store_layout, snapshot) is True, "the same scan is settled"
+    assert is_settled(store_layout, snapshot) is False, "a changed state is not"
+
+
+def test_the_settle_check_refuses_a_scan_that_cannot_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing rescan cannot prove the store held still."""
+
+    def refuse(*_args: object, **_kwargs: object) -> Inventory:
+        """Fail as an unreadable store does."""
+        raise OSError("injected scan failure")
+
+    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", refuse)
+
+    assert (
+        is_settled(
+            SegmentLayout.beside(tmp_path / "cache-outcomes.jsonl"), _inventory()
+        )
+        is False
+    ), "an unreadable rescan is never settled"
+
+
+def test_a_fingerprint_changes_when_the_file_is_replaced(tmp_path: Path) -> None:
+    """The identity names the file version, not just its path."""
+    path = tmp_path / "segment.jsonl"
+    path.write_bytes(b"one")
+    before = fingerprint(path)
+
+    replacement = tmp_path / "replacement.jsonl"
+    replacement.write_bytes(b"one")
+    replacement.replace(path)
+
+    assert fingerprint(path)[:2] != before[:2], (
+        "a replaced file keeps the path but not its identity"
+    )

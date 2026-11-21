@@ -201,7 +201,7 @@ def write_archive(
                 # The header belongs in the archive but is not a record.
                 emitted.write(row.raw)
                 continue
-            drops = policy_drops(row, trim, seen=seen)
+            drops = policy_drops(row.record.observed_at, trim, seen=seen)
             seen += 1
             if drops:
                 continue

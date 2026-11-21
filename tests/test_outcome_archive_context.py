@@ -4,7 +4,7 @@ from unittest import mock
 
 import pytest
 
-from buildlimits import outcome_archive_context
+from buildlimits import outcome_archive_quarantine
 
 
 @pytest.mark.parametrize(
@@ -24,9 +24,9 @@ def test_a_quarantine_token_is_the_hex_of_six_random_bytes(
     rather than a sample of whatever the host happened to draw.
     """
     with mock.patch.object(
-        outcome_archive_context.os, "urandom", return_value=raw
+        outcome_archive_quarantine.os, "urandom", return_value=raw
     ) as urandom:
-        token = outcome_archive_context.fresh_quarantine_token()
+        token = outcome_archive_quarantine.fresh_quarantine_token()
 
     urandom.assert_called_once_with(6)
     assert token == expected, "the six bytes are hex-encoded in order"

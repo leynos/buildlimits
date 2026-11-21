@@ -15,6 +15,7 @@ from segment_test_helpers import store_layout as layout
 from buildlimits.outcome_archive_context import ArchiveContext
 from buildlimits.outcome_archive_files import archive_source
 from buildlimits.outcome_archive_fs import ensure_private_directory
+from buildlimits.outcome_archive_quarantine import fresh_quarantine_token
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segment_inventory import SegmentEntry, read_inventory
 from buildlimits.outcome_segments import sealed_meta_name, segment_name, sidecar_name
@@ -92,6 +93,7 @@ def context(
         policy=RetentionPolicy() if policy is None else policy,
         preset=preset,
         now=NOW,
+        quarantine_token=fresh_quarantine_token,
     )
 
 

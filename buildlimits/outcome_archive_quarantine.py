@@ -6,6 +6,7 @@ clobbers the earlier evidence. Everything here runs under the archive lock.
 """
 
 import contextlib
+import os
 import typing as typ
 
 from buildlimits import outcome_segments
@@ -20,11 +21,27 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_segment_inventory import SegmentEntry
 
 __all__ = [
+    "fresh_quarantine_token",
     "quarantine_archive",
     "quarantine_file",
     "quarantine_source",
     "remove_orphan_sidecar",
 ]
+
+
+_QUARANTINE_TOKEN_BYTES = 6
+
+
+def fresh_quarantine_token() -> str:
+    """Return a fresh random tag that keeps quarantine names distinct.
+
+    Returns
+    -------
+    str
+        Twelve lowercase hexadecimal characters drawn from ``os.urandom``, so
+        a repeated fault never overwrites the earlier evidence.
+    """
+    return os.urandom(_QUARANTINE_TOKEN_BYTES).hex()
 
 
 def quarantine_file(

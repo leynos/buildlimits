@@ -2391,3 +2391,28 @@ after each revert.
   `last-run.json`. No follow-up issue is opened without authorization. The
   Rohga measurement stays unverified and the issue's measurement criterion is
   not claimed as met on that host.
+- Revision 38 records the revision-37 pre-merge refresh. `inspect_store` no
+  longer publishes an `archive_run` event: `run_archive` publishes only for an
+  executed firing, and a test asserts an inspection writes nothing to the
+  metrics port. `settled_report` is a pure builder over a `SettledStore` value;
+  the settled snapshot, the `_retention_owes_work` decision and the
+  `RunOutcome` update moved into `outcome_archive._report`, the report model no
+  longer imports the retain layer, and a filesystem-free test pins the builder.
+  The trim measurement moved to `outcome_archive_encode` and `policy_drops`
+  takes an observation time, so `outcome_archive_trim` imports no row, stream
+  or serialization module; the compaction limit is injected into policy
+  validation like the header floor. `fresh_quarantine_token` moved to the
+  quarantine adapter and `ArchiveContext` requires an explicit token, leaving
+  only the pure `utc_now` clock default in the value module.
+  `outcome_archive_trim` and `outcome_retention` join the domain boundary test.
+  The remaining domain modules cannot join it yet: the test follows
+  type-checking imports, and `Inventory`, `SegmentEntry` and `SegmentLayout`
+  live in modules that import `pathlib` and the filesystem walk, so moving
+  those value types to a pure module is the enabling follow-up. The check's
+  remaining advisory items (splitting `StoreFiles`, `outcome_archive_retain`,
+  `outcome_archive_report` and `outcome_archive_files`, and moving the injected
+  edges out of `RunOptions`) are recorded as refactor follow-ups rather than
+  defects: each unit is cohesive, documented and within the line ceiling. The
+  Testing row's direct tests were added for the report codec (exact key set and
+  every field), the CLI's `gaps_truncated` and failure lists, `CoverageBuilder`,
+  `HistoryStream`, the settle comparison and the inspection path.

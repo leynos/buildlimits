@@ -23,7 +23,9 @@ def test_a_segment_at_the_compaction_bound_is_accepted() -> None:
         segment_bytes=MAX_COMPACT_BYTES, headroom_bytes=MAX_COMPACT_BYTES
     )
 
-    validate_policy(policy, header_floor=header_floor_bytes())
+    validate_policy(
+        policy, header_floor=header_floor_bytes(), segment_limit=MAX_COMPACT_BYTES
+    )
 
 
 def test_a_segment_larger_than_the_compaction_bound_is_refused() -> None:
@@ -33,7 +35,9 @@ def test_a_segment_larger_than_the_compaction_bound_is_refused() -> None:
     )
 
     with pytest.raises(ValueError, match="largest compactable"):
-        validate_policy(policy, header_floor=header_floor_bytes())
+        validate_policy(
+            policy, header_floor=header_floor_bytes(), segment_limit=MAX_COMPACT_BYTES
+        )
 
 
 def test_a_byte_budget_below_one_header_is_refused() -> None:
@@ -41,14 +45,18 @@ def test_a_byte_budget_below_one_header_is_refused() -> None:
     policy = RetentionPolicy(max_bytes=1, segment_bytes=1, headroom_bytes=1)
 
     with pytest.raises(ValueError, match="replacement store header"):
-        validate_policy(policy, header_floor=header_floor_bytes())
+        validate_policy(
+            policy, header_floor=header_floor_bytes(), segment_limit=MAX_COMPACT_BYTES
+        )
 
 
 def test_a_byte_budget_that_holds_a_header_is_accepted() -> None:
     """A budget above the header floor is a policy compaction can satisfy."""
     policy = RetentionPolicy(max_bytes=4096, segment_bytes=1, headroom_bytes=1)
 
-    validate_policy(policy, header_floor=header_floor_bytes())
+    validate_policy(
+        policy, header_floor=header_floor_bytes(), segment_limit=MAX_COMPACT_BYTES
+    )
 
 
 def test_a_byte_budget_at_the_header_floor_is_accepted() -> None:
@@ -63,7 +71,9 @@ def test_a_byte_budget_at_the_header_floor_is_accepted() -> None:
         max_bytes=header_floor_bytes(), segment_bytes=1, headroom_bytes=1
     )
 
-    validate_policy(policy, header_floor=header_floor_bytes())
+    validate_policy(
+        policy, header_floor=header_floor_bytes(), segment_limit=MAX_COMPACT_BYTES
+    )
 
 
 def test_the_header_floor_holds_an_independently_encoded_fractional_header() -> None:
@@ -93,11 +103,15 @@ def test_a_byte_budget_one_below_the_header_floor_is_refused() -> None:
     )
 
     with pytest.raises(ValueError, match="replacement store header"):
-        validate_policy(policy, header_floor=header_floor_bytes())
+        validate_policy(
+            policy, header_floor=header_floor_bytes(), segment_limit=MAX_COMPACT_BYTES
+        )
 
 
 def test_a_zero_byte_budget_means_unlimited() -> None:
     """Zero is the documented "no byte bound", not an impossible budget."""
     policy = RetentionPolicy(max_bytes=0, segment_bytes=1, headroom_bytes=1)
 
-    validate_policy(policy, header_floor=header_floor_bytes())
+    validate_policy(
+        policy, header_floor=header_floor_bytes(), segment_limit=MAX_COMPACT_BYTES
+    )

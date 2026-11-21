@@ -6,9 +6,9 @@ pulling in the archive filesystem machinery.
 """
 
 import dataclasses as dc
-import os
 import typing as typ
 
+from buildlimits.retry_notice import ignore_retry
 from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
@@ -28,31 +28,24 @@ type ActionName = typ.Literal[
     "quarantined",
 ]
 
-_QUARANTINE_TOKEN_BYTES = 6
-
 __all__ = [
     "ActionName",
     "ActionResult",
     "ArchiveContext",
-    "fresh_quarantine_token",
     "ignore_retry",
 ]
 
 
-def ignore_retry(_operation: str, _attempt: int, _category: str) -> None:
-    """Discard one retry notice when the caller reports none."""
+def _required_token() -> str:
+    """Refuse a context built without a quarantine-token source.
 
-
-def fresh_quarantine_token() -> str:
-    """Return a fresh random tag that keeps quarantine names distinct.
-
-    Returns
-    -------
-    str
-        Twelve lowercase hexadecimal characters drawn from ``os.urandom``, so
-        a repeated fault never overwrites the earlier evidence.
+    Raises
+    ------
+    TypeError
+        Always, so no default source is bound inside this value module.
     """
-    return os.urandom(_QUARANTINE_TOKEN_BYTES).hex()
+    msg = "ArchiveContext requires a quarantine_token source"
+    raise TypeError(msg)
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -85,7 +78,7 @@ class ArchiveContext:
     preset: int
     now: dt.datetime
     clock: cabc.Callable[[], dt.datetime] = utc_now
-    quarantine_token: cabc.Callable[[], str] = fresh_quarantine_token
+    quarantine_token: cabc.Callable[[], str] = _required_token
     on_retry: cabc.Callable[[str, int, str], None] = ignore_retry
 
 

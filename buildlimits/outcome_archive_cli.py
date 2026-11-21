@@ -25,6 +25,7 @@ from buildlimits.outcome_archive import (
 from buildlimits.outcome_archive_codec import report_dict
 from buildlimits.outcome_archive_exit import EXIT_USAGE, exit_status
 from buildlimits.outcome_record_encode import header_floor_bytes
+from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_retention import RetentionPolicy, policy_from_settings
 from buildlimits.outcome_segments import SegmentLayout
 from buildlimits.outcome_store_salt import store_path
@@ -62,7 +63,11 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
     try:
         settings = config.load(config_path)
         layout = SegmentLayout.beside(_store(options.store, os.environ))
-        policy = policy_from_settings(settings, header_floor=header_floor_bytes())
+        policy = policy_from_settings(
+            settings,
+            header_floor=header_floor_bytes(),
+            segment_limit=MAX_COMPACT_BYTES,
+        )
     except config.ConfigError as error:
         # An unreadable configuration is the one documented path exception: the
         # operator must learn which file failed before any report exists.

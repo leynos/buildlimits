@@ -50,6 +50,8 @@ def test_inspect_reports_the_plan_as_json(
     assert document["status"] == "ok", "the store is healthy"
     assert document["dry_run"] is True, "inspection never executes"
     assert document["plan"]["archive"] == 1, "the pending source is planned"
+    assert document["gaps_truncated"] is False, "no gap list is truncated"
+    assert document["failures"] == [], "a healthy inspection names no failure"
     assert str(tmp_path) not in output, "the report names no path"
 
 
@@ -288,10 +290,19 @@ def test_a_corrupt_source_exits_three(
 
     status = main(["run", *command_arguments(store, config)])
     output = capsys.readouterr().out
-
     assert status == 3, "corruption has its own exit status"
     assert "status: corrupt" in output, "the status is printed"
     assert "failure: sequence 1: corrupt" in output, "the reason is bounded"
+
+    json_store = tmp_path / "second.jsonl"
+    sealed_source(json_store, 1, b"not a header\n")
+    status = main(["run", *command_arguments(json_store, config), "--json"])
+    document = json.loads(capsys.readouterr().out)
+    assert status == 3, "the JSON form keeps the same status"
+    assert document["failures"] == [{"sequence": 1, "reason": "corrupt"}], (
+        "the JSON form carries the failed sequence"
+    )
+    assert document["gaps_truncated"] is False, "the JSON form carries the flag"
 
 
 def test_a_held_lock_exits_seventy_five(

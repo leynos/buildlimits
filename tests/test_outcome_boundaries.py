@@ -25,6 +25,8 @@ _DOMAIN_MODULES = (
     "outcome_record_format.py",
     "outcome_records.py",
     "outcome_window.py",
+    "outcome_retention.py",
+    "outcome_archive_trim.py",
 )
 _DOMAIN_ROOTS = tuple(filename.removesuffix(".py") for filename in _DOMAIN_MODULES)
 _FORBIDDEN_IMPORTS = {

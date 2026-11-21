@@ -1,0 +1,139 @@
+"""The stable JSON document a report is published in, field by field."""
+
+import datetime as dt
+
+from buildlimits.outcome_archive_codec import ARCHIVE_SCHEMA, action_dict, report_dict
+from buildlimits.outcome_archive_context import ActionResult
+from buildlimits.outcome_archive_plan import PlanSummary
+from buildlimits.outcome_archive_report import RunReport
+
+_NOW = dt.datetime(2026, 11, 19, 12, 0, 0, tzinfo=dt.UTC)
+_LATER = _NOW + dt.timedelta(seconds=3)
+_EXPECTED_KEYS = {
+    "schema",
+    "status",
+    "dry_run",
+    "started_at",
+    "finished_at",
+    "active_bytes",
+    "retained_logical_bytes",
+    "retained_records",
+    "observed_from",
+    "observed_until",
+    "unmeasured_entries",
+    "budget_bytes",
+    "cutoff",
+    "plan",
+    "actions",
+    "failures",
+    "gaps",
+    "gaps_truncated",
+    "missing_sidecars",
+    "corrupt_sidecars",
+    "orphan_sidecars",
+    "reason",
+}
+
+
+def _report() -> RunReport:
+    """Build one report carrying a value in every field."""
+    return RunReport(
+        status="corrupt",
+        started_at=_NOW,
+        finished_at=_LATER,
+        dry_run=True,
+        active_bytes=11,
+        retained_bytes=22,
+        retained_records=3,
+        observed_from=_NOW,
+        observed_until=_LATER,
+        unmeasured_entries=1,
+        budget_bytes=44,
+        cutoff=_NOW - dt.timedelta(days=30),
+        plan=PlanSummary(archive=1, trim=2, delete=3, retained_bytes=55),
+        actions=(ActionResult("trimmed", 7, logical_bytes=8, physical_bytes=9),),
+        failures=((5, "corrupt"),),
+        gaps=(2, 4),
+        gaps_truncated=True,
+        missing_sidecars=(6,),
+        corrupt_sidecars=(7,),
+        orphan_sidecars=(8,),
+        reason="unreadable",
+    )
+
+
+def test_the_report_document_has_exactly_the_documented_fields() -> None:
+    """Every published field is present, and nothing else is."""
+    document = report_dict(_report())
+
+    assert set(document) == _EXPECTED_KEYS, "the document's key set is fixed"
+    assert document["schema"] == ARCHIVE_SCHEMA, "the schema version is published"
+    assert document["status"] == "corrupt", "the closed status is published"
+    assert document["dry_run"] is True, "the dry-run marker is published"
+    assert document["started_at"] == "2026-11-19T12:00:00Z", "UTC text, not a value"
+    assert document["finished_at"] == "2026-11-19T12:00:03Z", "UTC text, not a value"
+    assert document["active_bytes"] == 11, "the active bytes are published"
+    assert document["retained_logical_bytes"] == 22, "the retained bytes are published"
+    assert document["retained_records"] == 3, "the retained count is published"
+    assert document["observed_from"] == "2026-11-19T12:00:00Z", "the span start"
+    assert document["observed_until"] == "2026-11-19T12:00:03Z", "the span end"
+    assert document["unmeasured_entries"] == 1, "the unmeasured count is published"
+    assert document["budget_bytes"] == 44, "the budget is published"
+    assert document["cutoff"] == "2026-10-20T12:00:00Z", "the cutoff is published"
+    assert document["failures"] == [{"sequence": 5, "reason": "corrupt"}], (
+        "each failed sequence keeps its closed reason"
+    )
+    assert document["gaps"] == [2, 4], "the gaps are published in order"
+    assert document["gaps_truncated"] is True, "the truncation flag is published"
+    assert document["missing_sidecars"] == [6], "the missing sidecars are published"
+    assert document["corrupt_sidecars"] == [7], "the corrupt sidecars are published"
+    assert document["orphan_sidecars"] == [8], "the orphan sidecars are published"
+    assert document["reason"] == "unreadable", "the run-level reason is published"
+
+
+def test_the_document_renders_a_plan_and_its_actions() -> None:
+    """The plan summary and each action keep their own stable shapes."""
+    document = report_dict(_report())
+
+    plan = document["plan"]
+    assert isinstance(plan, dict), "the plan is an object"
+    assert plan["archive"] == 1 and plan["delete"] == 3, "the plan counts are kept"
+    assert plan["retained_logical_bytes"] == 55, "the plan's estimate is kept"
+    assert document["actions"] == [
+        {
+            "action": "trimmed",
+            "sequence": 7,
+            "logical_bytes": 8,
+            "physical_bytes": 9,
+            "reason": None,
+        }
+    ], "each action keeps its closed name, sequence, sizes and reason"
+
+
+def test_an_empty_report_renders_every_optional_field_as_null() -> None:
+    """A report with no plan and no observations still has the full key set."""
+    document = report_dict(
+        RunReport(status="unsettled", started_at=_NOW, finished_at=_NOW)
+    )
+
+    assert set(document) == _EXPECTED_KEYS, "the key set does not depend on values"
+    assert document["plan"] is None, "an absent plan is null"
+    assert document["cutoff"] is None, "an absent cutoff is null"
+    assert document["observed_from"] is None, "an absent span start is null"
+    assert document["observed_until"] is None, "an absent span end is null"
+    assert document["actions"] == [], "no action is an empty list"
+    assert document["failures"] == [], "no failure is an empty list"
+    assert document["reason"] is None, "an absent reason is null"
+
+
+def test_an_action_carries_its_fault_reason() -> None:
+    """A quarantined action publishes the closed reason it recorded."""
+    action = ActionResult("quarantined", 4, reason="bad_xz")
+
+    assert action_dict(action) == {
+        "action": "quarantined",
+        "sequence": 4,
+        "logical_bytes": 0,
+        "physical_bytes": 0,
+        "reason": "bad_xz",
+    }, "the fault reason survives the rendering"

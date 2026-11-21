@@ -40,6 +40,30 @@ if typ.TYPE_CHECKING:
 _FINISHED = NOW + dt.timedelta(seconds=2)
 
 
+def test_an_inspection_publishes_no_archive_run_event(
+    tmp_path: Path, metric_sink: RecordingSink
+) -> None:
+    """A query reports without writing an execution event to the journal.
+
+    `inspect_store` changes no file, and it must not change the journal either:
+    the `archive_run` event describes a firing that executed.
+    """
+    write(tmp_path / "cache-outcomes.jsonl", records(NOW, 1), policy())
+
+    report = inspect_store(
+        layout(tmp_path),
+        policy(),
+        options=RunOptions(
+            now=NOW,
+            clock=lambda: _FINISHED,
+            metrics=Metrics(metric_sink, source="adapter"),
+        ),
+    )
+
+    assert report.status == "ok", "the inspection completed"
+    assert metric_sink.records == [], "an inspection publishes no execution event"
+
+
 class _RetryLog:
     """Collect every retry notice an operation reports."""
 

@@ -16,8 +16,6 @@ import dataclasses as dc
 import datetime as dt
 import typing as typ
 
-from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
-
 SEGMENT_BYTES = 12 * 1024 * 1024
 """The active file's high-water mark before the writer seals it."""
 
@@ -192,7 +190,7 @@ class _RetentionSettings(typ.Protocol):
 
 
 def policy_from_settings(
-    settings: _RetentionSettings, *, header_floor: int
+    settings: _RetentionSettings, *, header_floor: int, segment_limit: int
 ) -> RetentionPolicy:
     """Build the effective policy from validated supervisor settings.
 
@@ -207,6 +205,9 @@ def policy_from_settings(
     header_floor : int
         The smallest document the record encoder can write, supplied by the
         encoding adapter so this module never encodes a header itself.
+    segment_limit : int
+        The largest document an in-place compaction can write, supplied by
+        the same adapter.
 
     Returns
     -------
@@ -221,7 +222,12 @@ def policy_from_settings(
     ...     cache_outcomes_max_records = 0
     ...     cache_outcomes_archive_headroom_bytes = 64 * 1024 * 1024
     >>> from buildlimits.outcome_record_encode import header_floor_bytes
-    >>> policy = policy_from_settings(Settings(), header_floor=header_floor_bytes())
+    >>> from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
+    >>> policy = policy_from_settings(
+    ...     Settings(),
+    ...     header_floor=header_floor_bytes(),
+    ...     segment_limit=MAX_COMPACT_BYTES,
+    ... )
     >>> policy.is_segmented, policy.max_records
     (True, None)
     """
@@ -240,11 +246,13 @@ def policy_from_settings(
         max_records=max_records,
         headroom_bytes=settings.cache_outcomes_archive_headroom_bytes,
     )
-    validate_policy(policy, header_floor=header_floor)
+    validate_policy(policy, header_floor=header_floor, segment_limit=segment_limit)
     return policy
 
 
-def validate_policy(policy: RetentionPolicy, *, header_floor: int) -> None:
+def validate_policy(
+    policy: RetentionPolicy, *, header_floor: int, segment_limit: int
+) -> None:
     """Reject a policy whose bounds are contradictory or unusable.
 
     Parameters
@@ -254,6 +262,9 @@ def validate_policy(policy: RetentionPolicy, *, header_floor: int) -> None:
     header_floor : int
         The smallest document the record encoder can write, supplied by the
         encoding adapter so this module never encodes a header itself.
+    segment_limit : int
+        The largest document an in-place compaction can write, supplied by
+        the same adapter.
 
     Raises
     ------
@@ -268,7 +279,7 @@ def validate_policy(policy: RetentionPolicy, *, header_floor: int) -> None:
     if policy.segment_bytes <= 0:
         msg = "segment_bytes must be positive"
         raise ValueError(msg)
-    if policy.segment_bytes > MAX_COMPACT_BYTES:
+    if policy.segment_bytes > segment_limit:
         # Legacy mode compacts in place under this bound. A larger active file
         # would make every compaction fail, so the policy is refused instead.
         msg = "segment_bytes exceeds the largest compactable document"

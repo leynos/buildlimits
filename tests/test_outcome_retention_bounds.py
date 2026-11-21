@@ -15,6 +15,7 @@ import pytest
 
 from buildlimits.config import SupervisorConfig
 from buildlimits.outcome_record_encode import header_floor_bytes
+from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_retention import (
     LEGACY_MAX_RECORDS,
     MAX_AGE_DAYS,
@@ -44,7 +45,9 @@ def _settings(**overrides: object) -> SupervisorConfig:
 def test_an_explicit_record_cap_survives_segmented_mode() -> None:
     """An operator's cap applies whether or not the store rotates."""
     policy = policy_from_settings(
-        _settings(cache_outcomes_max_records=500), header_floor=header_floor_bytes()
+        _settings(cache_outcomes_max_records=500),
+        header_floor=header_floor_bytes(),
+        segment_limit=MAX_COMPACT_BYTES,
     )
 
     assert policy.max_records == 500, "the explicit cap is used as given"
@@ -53,7 +56,9 @@ def test_an_explicit_record_cap_survives_segmented_mode() -> None:
 def test_legacy_mode_keeps_the_historical_record_cap() -> None:
     """A legacy store with no configured cap keeps the 10,000-row bound."""
     policy = policy_from_settings(
-        _settings(cache_outcomes_max_bytes=1_000_000), header_floor=header_floor_bytes()
+        _settings(cache_outcomes_max_bytes=1_000_000),
+        header_floor=header_floor_bytes(),
+        segment_limit=MAX_COMPACT_BYTES,
     )
 
     assert policy.max_records == LEGACY_MAX_RECORDS, "the legacy cap applies"
@@ -65,6 +70,7 @@ def test_segmented_mode_without_a_cap_has_no_row_bound() -> None:
     policy = policy_from_settings(
         _settings(cache_outcomes_max_bytes=15_000_000_000),
         header_floor=header_floor_bytes(),
+        segment_limit=MAX_COMPACT_BYTES,
     )
 
     assert policy.max_records is None, "an implied cap would shorten history"
@@ -103,7 +109,9 @@ def test_an_unusable_bound_is_refused(
     policy = RetentionPolicy(**{**base, **overrides})
 
     with pytest.raises(ValueError, match=message):
-        validate_policy(policy, header_floor=header_floor_bytes())
+        validate_policy(
+            policy, header_floor=header_floor_bytes(), segment_limit=MAX_COMPACT_BYTES
+        )
 
 
 def test_an_age_beyond_the_calendar_is_shortened_to_the_minimum() -> None:

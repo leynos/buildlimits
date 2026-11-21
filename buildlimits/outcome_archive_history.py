@@ -17,7 +17,26 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.outcome_segment_inventory import Inventory
 
-__all__ = ["ActiveHistory", "Observed", "observed_history"]
+__all__ = ["ActiveHistory", "Observed", "SettledStore", "observed_history"]
+
+
+@dc.dataclass(frozen=True, slots=True)
+class SettledStore:
+    """One settled reading of the store, with its retention decision.
+
+    Attributes
+    ----------
+    inventory : Inventory
+        The closed history the settled scan found.
+    active : ActiveHistory
+        The active file from the same reading.
+    retention_unsettled : bool
+        Whether retention still owes work after this reading.
+    """
+
+    inventory: Inventory
+    active: ActiveHistory
+    retention_unsettled: bool
 
 
 @dc.dataclass(frozen=True, slots=True)

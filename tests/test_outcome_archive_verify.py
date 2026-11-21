@@ -17,7 +17,8 @@ from outcome_test_helpers import records_around_a_cutoff, records_at
 from segment_test_helpers import document as encode_document
 
 from buildlimits import outcome_record_encode
-from buildlimits.outcome_archive_trim import Trim, policy_dropped_bytes
+from buildlimits.outcome_archive_encode import policy_dropped_bytes
+from buildlimits.outcome_archive_trim import Trim
 from buildlimits.outcome_archive_verify import (
     ArchiveFacts,
     SegmentFaultError,

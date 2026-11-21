@@ -23,7 +23,9 @@ from buildlimits import (
 )
 from buildlimits.outcome_archive_budget import UnknownActiveHistoryError
 from buildlimits.outcome_archive_context import ArchiveContext
+from buildlimits.outcome_archive_history import SettledStore
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
+from buildlimits.outcome_archive_quarantine import fresh_quarantine_token
 from buildlimits.outcome_archive_report import (
     RunOptions,
     RunReport,
@@ -109,9 +111,13 @@ def run_archive(
         now=started,
         clock=selected.clock,
         on_retry=selected.on_retry,
+        quarantine_token=fresh_quarantine_token,
     )
     report = _attempt_run(context, selected)
-    outcome_archive_events.publish_run(selected.metrics, report)
+    if not selected.dry_run:
+        # An inspection is a query: it reads the store and reports, but it
+        # does not publish an execution event.
+        outcome_archive_events.publish_run(selected.metrics, report)
     return report
 
 
@@ -268,7 +274,68 @@ def _execute(
         outcome_segment_state.read_retention_floor(run.context.layout),
         outcome,
     )
-    return floor, outcome_archive_report.settled_report(run, outcome, floor)
+    return floor, _report(run, outcome, floor)
+
+
+def _report(
+    run: outcome_archive_run.ArchiveRun,
+    outcome: outcome_archive_run.RunOutcome,
+    floor: int,
+) -> RunReport:
+    """Measure the settled store and build the report that describes it.
+
+    The read and the retention decision stay here, in the orchestration that
+    owns the store; the report builder receives their results as values.
+
+    Returns
+    -------
+    RunReport
+        The completed run's report, before it is persisted.
+    """
+    layout = run.context.layout
+    final, final_active, snapshot_settled = outcome_archive_retain.settled_snapshot(
+        layout,
+        floor,
+        cutoff=run.context.policy.cutoff(run.started_at),
+        on_retry=run.context.on_retry,
+    )
+    if not snapshot_settled:
+        # The writer kept sealing across every reading, so the report cannot
+        # bind rows to one version of the store. Report it as retryable rather
+        # than recording an undercount as success.
+        outcome.retention_unsettled = True
+    elif _retention_owes_work(final, final_active, run):
+        # The writer can append or seal between the last retention pass and
+        # this read. The report must not claim the store is within its bounds
+        # when the next firing still has history to evict.
+        outcome.retention_unsettled = True
+    settled = SettledStore(
+        inventory=final,
+        active=final_active,
+        retention_unsettled=outcome.retention_unsettled,
+    )
+    return outcome_archive_report.settled_report(run, outcome, settled)
+
+
+def _retention_owes_work(
+    inventory: Inventory, active: ActiveHistory, run: outcome_archive_run.ArchiveRun
+) -> bool:
+    """Whether the final snapshot still calls for retention work.
+
+    The writer never takes the archive lock, so it can append or seal between
+    the last retention pass and this read. A report that claimed success over
+    that store would tell the timer the budget is met while the next firing
+    still has to trim or delete. Only retention decides this: a source sealed
+    just before the read is archival work the next firing picks up, and the
+    report already counts its bytes.
+
+    Returns
+    -------
+    bool
+        True when the plan still evicts history or defers a budget.
+    """
+    pending = plan_run(inventory, run.context.policy, now=run.started_at, active=active)
+    return bool(pending.trims or pending.deletes or pending.retention_deferred)
 
 
 def _prepare(layout: SegmentLayout, policy: RetentionPolicy) -> None:
