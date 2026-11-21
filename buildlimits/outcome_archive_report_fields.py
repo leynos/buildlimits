@@ -6,6 +6,7 @@ history. Building those fields here keeps the shared surface in one place
 without coupling the report value to either caller.
 """
 
+import dataclasses as dc
 import typing as typ
 
 from buildlimits.outcome_archive_history import (
@@ -51,7 +52,11 @@ class SettledFields(typ.TypedDict):
 
 
 def settled_fields(
-    run: ArchiveRun, inventory: Inventory, active: ActiveHistory
+    run: ArchiveRun,
+    inventory: Inventory,
+    active: ActiveHistory,
+    *,
+    is_settled: bool = True,
 ) -> SettledFields:
     """Describe the fields both report builders derive from one settled pair.
 
@@ -60,6 +65,11 @@ def settled_fields(
     SettledFields
     """
     observed = observed_history(inventory, active)
+    retained = retained_history(inventory, active)
+    if not is_settled:
+        # The inventory and active file describe different versions of the
+        # store, so the counts are a lower bound rather than a measurement.
+        retained = dc.replace(retained, complete=False)
     return {
         "active_bytes": active.bytes,
         "retained_bytes": retained_logical_bytes(inventory, active),
@@ -77,5 +87,5 @@ def settled_fields(
         "corrupt_sidecars": inventory.corrupt_sidecars,
         "orphan_sidecars": inventory.orphan_sidecars,
         "limits": RetentionLimits.of(run.context.policy),
-        "retained": retained_history(inventory, active),
+        "retained": retained,
     }

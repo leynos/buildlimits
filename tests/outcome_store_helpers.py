@@ -31,15 +31,24 @@ _SALT_NAME = "cache-outcomes.salt"
 _WAIT_SECONDS = 2.0
 
 
-def wait_for_salt(writer: StoreWriter) -> Salt | StoreFailure:
+def wait_for_salt(
+    writer: StoreWriter, timeout: float = _WAIT_SECONDS
+) -> Salt | StoreFailure:
     """Wait for the writer's startup salt handoff during a test.
+
+    Parameters
+    ----------
+    writer : StoreWriter
+        The writer whose startup result is awaited.
+    timeout : float
+        Seconds to allow the worker to publish its salt.
 
     Returns
     -------
     Salt or StoreFailure
         The writer's startup result.
     """
-    deadline = time.monotonic() + _WAIT_SECONDS
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         result = writer.salt_result()
         if result is not None:

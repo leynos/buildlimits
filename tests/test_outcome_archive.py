@@ -35,17 +35,6 @@ if typ.TYPE_CHECKING:
     import pytest
 
 
-"""End-to-end archive runs: statuses, dry runs and damaged stores.
-The archiver plans, compresses, verifies and reports in one timer firing.
-These tests build real segments with the writer and assert the observable
-contract a timer depends on: closed exit statuses, a dry run that changes
-nothing, a lock that reports busy, and damaged files that are quarantined
-rather than silently trusted.
-"""
-if typ.TYPE_CHECKING:
-    import pytest
-
-
 def test_an_empty_store_records_a_successful_run(tmp_path: Path) -> None:
     """A timer firing on a store with no history still writes its state."""
     report = run(tmp_path, policy())

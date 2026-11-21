@@ -22,6 +22,7 @@ from segment_test_helpers import write_private
 from buildlimits import (
     outcome_archive_encode,
     outcome_archive_files,
+    outcome_archive_retain,
     outcome_archive_settled,
 )
 from buildlimits.outcome_archive_active import active_history
@@ -214,6 +215,37 @@ def test_an_unreadable_final_plan_records_the_completed_deletion(
     report = run(tmp_path, dc.replace(base, max_records=8))
 
     assert report.status == "failed", "an unreadable final plan needs an operator"
+    assert report.reason == "unreadable", "the closed reason names the read"
+    assert ("deleted", 1) in [
+        (action.action, action.sequence) for action in report.actions
+    ], "the completed deletion is reported"
+    assert read_retention_floor(layout(tmp_path)).sequence == 2, (
+        "the floor records the deleted sequence as intentional"
+    )
+
+
+def test_an_unreadable_retention_pass_records_the_completed_deletion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retention replan failure still records what the pass deleted.
+
+    ``retain`` re-plans from the store the run has just published. If that
+    plan cannot read the active file after an eviction, the deletion floor
+    must still learn what was removed, and the report must keep the actions.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    base = policy(segment_bytes=2000)
+    write(store, records(NOW, 12), base)
+
+    def refuse(*_args: object, **_kwargs: object) -> typ.NoReturn:
+        """Report a cap the retention pass cannot settle."""
+        raise UnknownActiveHistoryError
+
+    monkeypatch.setattr(outcome_archive_retain, "retain", refuse)
+
+    report = run(tmp_path, dc.replace(base, max_records=8))
+
+    assert report.status == "failed", "an unreadable retention pass needs an operator"
     assert report.reason == "unreadable", "the closed reason names the read"
     assert ("deleted", 1) in [
         (action.action, action.sequence) for action in report.actions

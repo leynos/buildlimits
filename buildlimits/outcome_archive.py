@@ -306,8 +306,9 @@ def _execute(
         The recorded floor, when measured, and the report.
     """
     _prepare(run.context.layout, run.context.policy)
-    outcome = _perform(run)
+    outcome = outcome_archive_run.RunOutcome()
     try:
+        _perform(run, outcome)
         floor = outcome_archive_state.retention_floor(
             outcome_segment_inventory.read_inventory(run.context.layout),
             outcome_segment_state.read_retention_floor(run.context.layout),
@@ -317,8 +318,9 @@ def _execute(
     except OSError, UnknownActiveHistoryError:
         # The archives and evictions are already published. The deletions
         # are the only record the floor has, so they are written before the
-        # unmeasurable result is reported. The final plan re-reads the active
-        # file, so a cap it cannot settle takes this path too.
+        # unmeasurable result is reported. The retention passes and the final
+        # plan both re-read the active file, so a cap either cannot settle
+        # takes this path.
         outcome_archive_state.write_deleted_floor(
             run.context.layout,
             outcome_segment_state.read_retention_floor(run.context.layout).sequence,
@@ -366,6 +368,7 @@ def _report(
         inventory=final,
         active=final_active,
         retention_unsettled=outcome.retention_unsettled,
+        is_settled=snapshot_settled,
     )
     return outcome_archive_settled.settled_report(run, outcome, settled)
 
@@ -377,23 +380,15 @@ def _prepare(layout: SegmentLayout, policy: RetentionPolicy) -> None:
     outcome_archive_lock.require_headroom(layout.archive_dir, policy.headroom_bytes)
 
 
-def _perform(run: outcome_archive_run.ArchiveRun) -> outcome_archive_run.RunOutcome:
+def _perform(
+    run: outcome_archive_run.ArchiveRun, outcome: outcome_archive_run.RunOutcome
+) -> None:
     """Perform the plan and the retention passes it enables.
 
-    Returns
-    -------
-    RunOutcome
-        The actions and failures the run recorded, including whether its
-        retention passes still owe work.
+    Both phases run inside the caller's completed-work recovery: a retention
+    pass re-plans from the store this run has just published, so a file it
+    cannot read must record the deletions ``perform`` already made rather
+    than escape as a report that omits them.
     """
-    outcome = outcome_archive_run.RunOutcome()
     outcome_archive_run.perform(run, outcome)
-    try:
-        # The retention pass re-plans from the store this run has just
-        # published, so it can fail to read what ``perform`` already wrote.
-        outcome.retention_unsettled = not outcome_archive_retain.retain(run, outcome)
-    except OSError:
-        # The work is already published. Keep its record and let the caller's
-        # measurement report the store as unreadable.
-        outcome.retention_unsettled = True
-    return outcome
+    outcome.retention_unsettled = not outcome_archive_retain.retain(run, outcome)

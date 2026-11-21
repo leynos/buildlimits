@@ -47,11 +47,15 @@ class SettledStore:
         The active file from the same reading.
     retention_unsettled : bool
         Whether retention still owes work after this reading.
+    is_settled : bool
+        Whether one version of the store was read; a mixed pair leaves the
+        retained counts incomplete.
     """
 
     inventory: Inventory
     active: ActiveHistory
     retention_unsettled: bool
+    is_settled: bool = True
 
 
 @dc.dataclass(frozen=True, slots=True)

@@ -132,7 +132,7 @@ def running_writer(
     """
     writer = StoreWriter(path, policy=retention, wall_clock=lambda: now)
     try:
-        if not isinstance(wait_for_salt(writer), Salt):
+        if not isinstance(wait_for_salt(writer, timeout), Salt):
             pytest.fail("the writer publishes its active salt")
         yield writer
     finally:

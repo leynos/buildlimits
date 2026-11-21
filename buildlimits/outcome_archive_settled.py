@@ -53,7 +53,7 @@ def settled_report(
         ),
         started_at=run.started_at,
         finished_at=run.context.clock(),
-        **settled_fields(run, inventory, active),
+        **settled_fields(run, inventory, active, is_settled=settled.is_settled),
         actions=tuple(outcome.actions),
         failures=tuple(outcome.failures),
         reason=None if active.has_metadata else active.reason,

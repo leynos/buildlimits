@@ -278,8 +278,7 @@ class StoreFiles:
             return False
         cutoff = policy.cutoff(self.record_clock_observation())
         if cutoff is not None and self.oldest_observed < cutoff:
-            self.compact()
-            return True
+            return self.compact()
         return False
 
     def settle_bytes(self) -> int:
