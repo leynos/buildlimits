@@ -540,10 +540,20 @@ elapsed time, the peak resident memory and the scratch disk the pass used. Set
 `SEGMENT=/path/to/segment.jsonl` to measure a real segment instead of a
 generated one. At the default preset, on the development host:
 
-| Source  | Records | Archive | Elapsed | Peak RSS | Scratch |
-| ------- | ------- | ------- | ------- | -------- | ------- |
-| 12 MiB  | 62,830  | 746 KB  | 3.5 s   | 140 MB   | 746 KB  |
-| 100 MiB | 523,588 | 6.2 MB  | 33 s    | 143 MB   | 6.2 MB  |
+| Source                   | Records | Archive | Elapsed | Peak RSS | Scratch |
+| ------------------------ | ------- | ------- | ------- | -------- | ------- |
+| 6.4 MiB recorded history | 10,296  | 538 KB  | 0.9 s   | 124 MB   | 538 KB  |
+| 12 MiB                   | 62,830  | 746 KB  | 3.5 s   | 140 MB   | 746 KB  |
+| 100 MiB                  | 523,588 | 6.2 MB  | 33 s    | 143 MB   | 6.2 MB  |
+
+The first row measures a store this host actually recorded, not a generated
+one: 10,296 rows at 655 bytes each, which is within one per cent of the 661
+bytes per record that issue #63 measured on Rohga, so it is the closest
+available stand-in for that host's history. Its archive is 8.0% of the source,
+against 6% for the generated segments, so a generated input understates the
+archive a real backlog leaves behind; the elapsed figures are not comparable
+across the two, because the recorded row is a sixth of the smallest generated
+segment and the fixed cost of a pass weighs more on it.
 
 The peak does not follow the segment: eight times the rows moved the peak
 resident set by 3 MB. What dominates it is the compressor's dictionary, which

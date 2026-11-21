@@ -943,6 +943,17 @@ verified archive is published, and leaves compile admission untouched.
   sets two hours.
 - `pytest-mock` is not installed and no test uses `mocker`, so converting the
   patch-based tests for uniformity would add a dependency; `monkeypatch` stays.
+- The development host keeps its own recorded outcome history, and that store
+  turned out to be a better stand-in for Rohga than the generator. Its 10,296
+  rows average 655 bytes each, within one per cent of the 661 bytes per record
+  the issue measured on Rohga, and it compresses to 8.0% of its source rather
+  than the generated segments' 6%. Two runs of the benchmark over it took 0.87
+  s and 0.97 s, reported an identical 537,732-byte archive, and peaked at 124
+  MB of resident memory, so the operator figures now rest on at least one real
+  distribution. Rohga itself is not reachable from this host: SSH to
+  `rohga.df12.net` is refused for the development account, so the issue's
+  request for measurements on that host's own data is recorded as an evidential
+  limit rather than claimed.
 - The headroom check reads free space once and reserves nothing, so another
   writer can fill the filesystem while the pass runs. A write that met `ENOSPC`
   was recorded as `unreadable` and reported as `corrupt`, which told the timer
@@ -1532,6 +1543,14 @@ verified archive is published, and leaves compile admission untouched.
   walk while an age trim on a straddler is pending, so the composed rewrite
   never decides a byte allowance from an untrimmed sidecar. The plan now says
   which statement is the encoder's contract and which is what a run does.
+- The timer-sizing table reports a real recorded history beside the generated
+  segments. Issue #63 asks for measurements on representative Rohga data and
+  Rohga's store is not reachable from the development host, so the guide
+  measures the development host's own recorded store, states its row size
+  against the issue's figure, and says how to point the benchmark at another
+  segment with `SEGMENT=`. A generated segment is still measured as well,
+  because only it can be built at 12 MiB and 100 MiB to show that the peak does
+  not follow the history. Neither row claims to be Rohga's own data.
 - A history read follows the store's committed-state rule for the active file.
   `DocumentReader` keeps a decodable unterminated final row because a sealed
   segment's complete row must not be lost, but the active file is not sealed:
@@ -2006,3 +2025,11 @@ Each mutation was reverted and the focused suite passed again.
   `test_an_uncommitted_active_row_is_not_history` appends a complete row
   without its newline and asserts the stream omits it, and the developers'
   guide states the active-file rule beside the sealed-segment one.
+- Revision 27 records two changes. The group-14 remediation prose in
+  `Progress` now describes the parametrized header-floor boundary, the shared
+  `swap_after_validation` helper and the spelling-gate wording, none of which
+  had been carried into the plan when they were made. The timer-sizing table
+  and the decision log now rest the operator figures partly on this host's own
+  recorded history, measured at 655 bytes per row against the issue's 661 and
+  compressing to 8.0%; Rohga's own store remains unreachable from the
+  development host and is recorded as an evidential limit, not as measured.
