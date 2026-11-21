@@ -898,6 +898,16 @@ verified archive is published, and leaves compile admission untouched.
   `--hypothesis-show-statistics`. Three mutations were observed and reverted: a
   seal between the two firings, a blank expected gap tuple, and an unwritten
   duplicate source.
+- [x] Revision-31 assessment remediation (2026-11-21): the whole-plan
+  assessment found the generated property's replay assertion weaker than
+  revision 30's, because it checked only that replay was an ordered subset of
+  the rows the writer accepted. The property now keeps an independent ordered
+  model of the rows the current step's retention policy should leave -- an age
+  cutoff expires rows observed before it and a record budget keeps the newest
+  rows -- and compares replay with that model record for record after every
+  firing. Two mutations were observed and reverted: dropping the last replayed
+  row fails the replay assertion in both tests, and skipping the model update
+  fails its first evicting step.
 
 ## Surprises & discoveries
 
@@ -1221,6 +1231,15 @@ verified archive is published, and leaves compile admission untouched.
   the generator: a cap below the writer's active-row count makes a run report
   `unsettled`, because the planner cannot trim the active file, so a trim draws
   a cap of at least the largest active count a schedule can create.
+- A generated lifecycle needs its own model, not a subset check. The
+  transition classes added for revision 31 archived, trimmed and expired rows
+  between steps, so revision 30's pattern of comparing replay with a fixed
+  surviving-row sequence no longer applied, and the weaker subset assertion
+  added in its place could not notice an archive that silently dropped a row.
+  The replacement models what each policy keeps: the newest rows for a record
+  budget, because whole archives are deleted oldest-first and only the
+  straddler is prefix-trimmed, and every row at or after the cutoff for an age
+  limit, because the age rule expires only strictly older rows.
 
 ## Decision log
 
@@ -1664,6 +1683,14 @@ verified archive is published, and leaves compile admission untouched.
   schedules seal first for the same reason, and the deterministic companion
   test states each class's exact action names so coverage is asserted rather
   than inferred from a seed's statistics.
+- The lifecycle property's oracle is a retention model, not the store. Each
+  step updates an ordered list of expected records from its own policy before
+  replay is compared, so the assertion never reads the archive it checks. A
+  subset check was rejected because it cannot distinguish a dropped row from an
+  evicted one: an archive that silently omitted its last row satisfied it. The
+  model stays coarser than the planner -- it states which rows survive, not how
+  they are grouped -- so a defect in grouping still surfaces through the gap
+  and action assertions.
 
 ## Outcomes & retrospective
 
@@ -1847,15 +1874,17 @@ Methods and evidence:
   real writer and archiver over generated histories and applies generated
   schedules of five transition classes -- writer seal, archive, crash
   duplicate, record budget and age cutoff -- asserting after each step that
-  replay is exactly the surviving rows in order, the inventory's gaps are
-  exactly the sequences the scan did not find, and a repeat of the same firing
-  performs no action. Half the schedules seal a multi-row source first, so a
-  later budget step has a multi-row archive to shorten. One branch withholds a
-  middle sealed source. A deterministic companion,
-  `test_each_transition_class_is_reachable`, asserts the exact action names
-  each class reports -- `archived`, `reconciled`, `deleted` and `trimmed` -- so
-  a schedule that never draws a class is a coverage gap rather than an
-  unreachable state. The negative controls appear under Non-vacuity.
+  replay equals, record for record and in order, an independently maintained
+  model of the rows that step's retention policy keeps (an age cutoff expires
+  rows observed before it; a record budget keeps the newest rows), that the
+  inventory's gaps are exactly the sequences the scan did not find, and that a
+  repeat of the same firing performs no action. Half the schedules seal a
+  multi-row source first, so a later budget step has a multi-row archive to
+  shorten. One branch withholds a middle sealed source. A deterministic
+  companion, `test_each_transition_class_is_reachable`, asserts the exact
+  action names each class reports -- `archived`, `reconciled`, `deleted` and
+  `trimmed` -- so a schedule that never draws a class is a coverage gap rather
+  than an unreachable state. The negative controls appear under Non-vacuity.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
@@ -1896,13 +1925,14 @@ undercounted, and the persistent seal reports `ok` instead of `unsettled`).
 Each mutation was reverted and the focused suite passed again. The generated
 lifecycle property records each step's action names with `event`, so
 `--hypothesis-show-statistics` shows the classes a run exercised; its
-deterministic companion asserts the exact names of all five classes. Three
+deterministic companion asserts the exact names of all five classes. Five
 mutations were observed and reverted: inserting a seal between the two firings
 fails the no-op assertion in both tests, skipping the duplicate write fails the
-settle assertion in both, and returning an empty gap tuple fails the gap
-assertion in the generated property, whose histories withhold a source; the
-companion's histories are complete and report no gap. The suite passed again
-after each revert.
+settle assertion in both, returning an empty gap tuple fails the gap assertion
+in the generated property (whose histories withhold a source; the companion's
+histories are complete and report no gap), dropping the last replayed record
+fails the replay assertion in both, and skipping the expected-history update
+fails the first evicting step. The suite passed again after each revert.
 
 ## Revision note
 
@@ -2214,3 +2244,10 @@ after each revert.
   active-row count so a run settles instead of reporting `unsettled`. Three
   mutations -- a seal between firings, a blank gap tuple and an unwritten
   duplicate -- were each observed to fail and reverted.
+- Revision 32 records the revision-31 assessment's replay-oracle disposition.
+  The generated property no longer checks replay as an ordered subset of the
+  rows the writer accepted; it maintains an independent ordered model of the
+  rows each step's retention policy keeps and compares replay with it record
+  for record, restoring the strength of revision 30's exact-survivor oracle
+  across the new transition classes. Two mutations -- a dropped replayed row
+  and a skipped model update -- were each observed to fail and reverted.

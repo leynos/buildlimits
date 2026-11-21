@@ -5,10 +5,10 @@ archiver compresses and publishes it, a crash can leave a duplicate source
 beside its archive, a record budget trims or deletes it, and the age cutoff
 expires it. These properties drive the real writer and archiver over generated
 histories and assert after every step what an operator reads: history replays
-in order without inventing or repeating a row, the gap list is exactly the
-sequences the scan could not find, and a repeat of the same step performs no
-action. One generated history loses a middle sealed source before the first
-run, so gap reporting is exercised rather than assumed.
+exactly the rows retention keeps, field for field and in order; the gap list is
+exactly the sequences the scan could not find; and a repeat of the same step
+performs no action. One generated history loses a middle sealed source before
+the first run, so gap reporting is exercised rather than assumed.
 
 The schedules genuinely reach each transition: the writer seals multi-row
 groups at a record cap, an archive is duplicated as a crash leaves it, a record
@@ -38,6 +38,7 @@ from buildlimits.outcome_segments import SegmentLayout
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive import RunReport
+    from buildlimits.outcome_record_format import OutcomeRecord
     from buildlimits.outcome_retention import RetentionPolicy
 
 # The archiver reads a zero age bound as "no age limit", so an archive, trim
@@ -105,7 +106,7 @@ _SCHEDULE = st.one_of(
 
 @dc.dataclass(slots=True)
 class _Store:
-    """One generated store and the rows its writer was offered.
+    """One generated store and the rows retention should still hold.
 
     Attributes
     ----------
@@ -115,9 +116,9 @@ class _Store:
         The store's active file path.
     layout : SegmentLayout
         The sealed, archive and quarantine directories beside the store.
-    offered : set[datetime.datetime]
-        Observation times of every row the writer accepted, which is what
-        replay may report and nothing else.
+    expected : list[OutcomeRecord]
+        The rows the retention policy of the current step should keep, in
+        sequence order: an independent model replay must match exactly.
     seals : int
         How many seal transitions have run, so each one observes new times.
     """
@@ -125,7 +126,7 @@ class _Store:
     root: Path
     path: Path
     layout: SegmentLayout
-    offered: set[dt.datetime]
+    expected: list[OutcomeRecord]
     seals: int = 0
 
 
@@ -135,7 +136,7 @@ def _build(root: Path, older: int, recent: int, choice: int | None) -> _Store:
     Returns
     -------
     _Store
-        The store, its layout and every row offered to the writer.
+        The store, its layout and the rows it should still replay.
     """
     root.mkdir(mode=0o700)
     path = root / "cache-outcomes.jsonl"
@@ -144,9 +145,7 @@ def _build(root: Path, older: int, recent: int, choice: int | None) -> _Store:
         *records_at(NOW - dt.timedelta(days=_RECENT_DAYS), recent),
     )
     write(path, rows, policy(segment_bytes=1, max_age_days=_NO_EXPIRY_DAYS))
-    state = _Store(
-        root, path, SegmentLayout.beside(path), {row.observed_at for row in rows}
-    )
+    state = _Store(root, path, SegmentLayout.beside(path), list(rows))
     _withhold(state, choice)
     return state
 
@@ -163,14 +162,20 @@ def _sealed_sources(state: _Store) -> list[Path]:
 
 
 def _withhold(state: _Store, choice: int | None) -> None:
-    """Remove one middle sealed source, as a lost file would be missing."""
+    """Remove one middle sealed source, as a lost file would be missing.
+
+    The store was written one record per segment, so the removed source is
+    also the one expected row to drop from the model.
+    """
     sources = _sealed_sources(state)
     if choice is None or len(sources) < 3:
         return
-    source = sources[1 + choice % (len(sources) - 2)]
+    index = 1 + choice % (len(sources) - 2)
+    source = sources[index]
     metadata = source.with_name(f"{source.name}.meta.json")
     metadata.unlink(missing_ok=True)
     source.unlink()
+    del state.expected[index]
 
 
 def _policy_for(name: str, argument: int) -> RetentionPolicy:
@@ -218,7 +223,7 @@ def _seal_more(state: _Store) -> None:
             max_records=_SEAL_RECORD_CAP,
         ),
     )
-    state.offered.update(row.observed_at for row in rows)
+    state.expected.extend(rows)
 
 
 def _leave_duplicate(state: _Store) -> int | None:
@@ -262,16 +267,41 @@ def _assert_gaps(state: _Store) -> None:
     assert inventory.gaps_truncated is False, "a generated history fits the gap list"
 
 
+def _survivors(
+    rows: list[OutcomeRecord], name: str, argument: int
+) -> list[OutcomeRecord]:
+    """Return the rows one transition's retention policy keeps.
+
+    An age cutoff expires every row observed before it, and a record budget
+    keeps the newest rows after dropping the oldest. Every other transition
+    evicts nothing, so the rows it started with survive untouched.
+
+    Returns
+    -------
+    list[OutcomeRecord]
+        The rows the policy should leave, in sequence order.
+    """
+    if name == "expire":
+        cutoff = NOW - dt.timedelta(days=argument)
+        return [row for row in rows if row.observed_at >= cutoff]
+    if name == "trim":
+        return rows[-argument:]
+    return list(rows)
+
+
 def _assert_observable(state: _Store) -> None:
-    """Assert replay and gap reporting agree with what the writer accepted."""
-    times = tuple(row.observed_at for row in read_history(state.layout).records)
-    assert set(times) <= state.offered, "replay reports only rows the writer accepted"
-    assert list(times) == sorted(set(times)), "replay is ordered and repeats no row"
+    """Assert replay is exactly the expected rows and the gaps are exact."""
+    assert read_history(state.layout).records == tuple(state.expected), (
+        "every row retention keeps replays once, in sequence order"
+    )
     _assert_gaps(state)
 
 
 def _step(state: _Store, transition: tuple[str, int]) -> tuple[str, ...]:
     """Apply one transition, then require it to settle and stay settled.
+
+    The expected history is updated from the transition's own retention rule
+    before replay is compared with it, so the model never reads the store.
 
     Returns
     -------
@@ -290,6 +320,7 @@ def _step(state: _Store, transition: tuple[str, int]) -> tuple[str, ...]:
     report = _run(state, chosen)
 
     assert report.status == "ok", "every generated transition completes"
+    state.expected = _survivors(state.expected, name, argument)
     if duplicated is not None:
         settled = any(
             action.sequence == duplicated and action.action in _SETTLING
