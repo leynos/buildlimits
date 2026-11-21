@@ -36,8 +36,10 @@ from buildlimits.outcome_archive_report import (
     unfinished_report,
     unsettled_report,
 )
+from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     import datetime as dt
 
     from buildlimits.outcome_archive_plan import Plan
@@ -65,6 +67,7 @@ def inspect_store(
     policy: RetentionPolicy,
     *,
     now: dt.datetime | None = None,
+    clock: cabc.Callable[[], dt.datetime] = utc_now,
 ) -> RunReport:
     """Report the store's history and the plan a run would execute.
 
@@ -76,13 +79,16 @@ def inspect_store(
         The effective retention policy.
     now : datetime | None
         The UTC wall time to use, or None to read the clock once.
+    clock : Callable[[], datetime]
+        The UTC clock the report's finish time is read from, so a caller that
+        fixes ``now`` can also make the whole report reproducible.
 
     Returns
     -------
     RunReport
         A dry-run report; no file is created or changed.
     """
-    return run_archive(layout, policy, RunOptions(now=now, dry_run=True))
+    return run_archive(layout, policy, RunOptions(now=now, dry_run=True, clock=clock))
 
 
 def run_archive(
@@ -177,7 +183,9 @@ def _execute_locked(
     plan, _active, _inventory, settled = _plan(context.layout, policy, started)
     if not settled:
         return unsettled_report(started, clock=context.clock)
-    return _execute(_archive_run(context, plan))
+    floor, report = _execute(_archive_run(context, plan))
+    outcome_archive_state.write_state(context.layout, floor, report)
+    return report
 
 
 def _plan(
@@ -229,28 +237,64 @@ def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.Arc
     )
 
 
-def _execute(run: outcome_archive_run.ArchiveRun) -> RunReport:
-    """Take the archive directories, perform the plan and write state.
+def _execute(
+    run: outcome_archive_run.ArchiveRun,
+) -> tuple[int, RunReport]:
+    """Prepare the store, perform the plan and report what settled.
+
+    Persisting the report is left to the locked caller: writing state is a
+    separate effect from deciding what the run achieved.
+
+    Returns
+    -------
+    tuple[int, RunReport]
+        The retention floor the run recorded, and its report.
+    """
+    _prepare(run.context.layout, run.context.policy)
+    outcome = _perform(run)
+    floor = outcome_archive_state.retention_floor(
+        outcome_segment_inventory.read_inventory(run.context.layout),
+        outcome_segment_state.read_retention_floor(run.context.layout),
+        outcome,
+    )
+    return floor, _report(run, outcome, floor)
+
+
+def _prepare(layout: SegmentLayout, policy: RetentionPolicy) -> None:
+    """Create the archive directories and prove the headroom they need."""
+    outcome_archive_fs.ensure_private_directory(layout.archive_dir)
+    outcome_archive_fs.remove_stale_temps(layout.archive_dir)
+    outcome_archive_lock.require_headroom(layout.archive_dir, policy.headroom_bytes)
+
+
+def _perform(run: outcome_archive_run.ArchiveRun) -> outcome_archive_run.RunOutcome:
+    """Perform the plan and the retention passes it enables.
+
+    Returns
+    -------
+    RunOutcome
+        The actions and failures the run recorded, including whether its
+        retention passes still owe work.
+    """
+    outcome = outcome_archive_run.RunOutcome()
+    outcome_archive_run.perform(run, outcome)
+    outcome.retention_unsettled = not outcome_archive_retain.retain(run, outcome)
+    return outcome
+
+
+def _report(
+    run: outcome_archive_run.ArchiveRun,
+    outcome: outcome_archive_run.RunOutcome,
+    floor: int,
+) -> RunReport:
+    """Measure the settled store and build the report that describes it.
 
     Returns
     -------
     RunReport
-        The completed run's report.
+        The completed run's report, before it is persisted.
     """
     layout = run.context.layout
-    outcome_archive_fs.ensure_private_directory(layout.archive_dir)
-    outcome_archive_fs.remove_stale_temps(layout.archive_dir)
-    outcome_archive_lock.require_headroom(
-        layout.archive_dir, run.context.policy.headroom_bytes
-    )
-    outcome = outcome_archive_run.RunOutcome()
-    outcome_archive_run.perform(run, outcome)
-    outcome.retention_unsettled = not outcome_archive_retain.retain(run, outcome)
-    floor = outcome_archive_state.retention_floor(
-        outcome_segment_inventory.read_inventory(layout),
-        outcome_segment_state.read_retention_floor(layout),
-        outcome,
-    )
     final, final_active, snapshot_settled = outcome_archive_retain.settled_snapshot(
         layout, floor, cutoff=run.context.policy.cutoff(run.started_at)
     )
@@ -266,7 +310,7 @@ def _execute(run: outcome_archive_run.ArchiveRun) -> RunReport:
         outcome.retention_unsettled = True
     retained = final_active.bytes + final.sealed_bytes + final.archived_logical_bytes
     observed = observed_history(final, final_active)
-    report = RunReport(
+    return RunReport(
         status=_run_status(outcome),
         started_at=run.started_at,
         finished_at=run.context.clock(),
@@ -287,8 +331,6 @@ def _execute(run: outcome_archive_run.ArchiveRun) -> RunReport:
         corrupt_sidecars=final.corrupt_sidecars,
         orphan_sidecars=final.orphan_sidecars,
     )
-    outcome_archive_state.write_state(layout, floor, report)
-    return report
 
 
 def _retention_owes_work(

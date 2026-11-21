@@ -3,8 +3,8 @@
 Every status the timer acts on carries a start and a finish time. Reading the
 wall clock directly would make a run's duration unreproducible and could stamp
 a finish before its start when the host clock steps, so the executed report,
-the retryable report and the busy report all date themselves from the one
-injected source.
+the retryable report, the busy report and the inspection all date themselves
+from the one injected source.
 """
 
 import datetime as dt
@@ -15,7 +15,7 @@ from pathlib import Path
 from outcome_archive_helpers import NOW, layout, policy, records, write
 
 from buildlimits import outcome_archive_retain
-from buildlimits.outcome_archive import RunOptions, run_archive
+from buildlimits.outcome_archive import RunOptions, inspect_store, run_archive
 from buildlimits.outcome_archive_lock import ArchiveLock
 
 if typ.TYPE_CHECKING:
@@ -101,3 +101,19 @@ def test_a_busy_run_stamps_the_injected_clock(tmp_path: Path) -> None:
 
     assert report.status == "busy", "the run did not start"
     assert report.finished_at == finished, "the busy report uses the clock"
+
+
+def test_an_inspection_finishes_on_the_injected_clock(tmp_path: Path) -> None:
+    """A dry inspection dates its finish from the clock the caller supplies.
+
+    ``inspect_store`` builds its own options, so before it accepted a clock the
+    finish time came from the system wall even when the caller fixed ``now``.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write(store, records(NOW, 1), policy())
+    finished = NOW + dt.timedelta(seconds=42)
+
+    report = inspect_store(layout(tmp_path), policy(), now=NOW, clock=lambda: finished)
+
+    assert report.status == "ok", "the inspection planned without changing files"
+    assert report.finished_at == finished, "the finish is the injected clock's"
