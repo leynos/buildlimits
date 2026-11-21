@@ -394,8 +394,8 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_quarantine`                                                       | Quarantine moves for files an archive run cannot trust                                                                                                      |
 | `outcome_archive_files`                                                            | Per-segment archive, reconcile, heal, trim, delete and quarantine operations                                                                                |
 | `outcome_archive_lock`                                                             | The archive lock and the disk-headroom guard for one run                                                                                                    |
-| `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication and atomic state writes                                             |
-| `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates and validates each private path component                                                                   |
+| `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication, descriptor-relative removal and atomic state writes                |
+| `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates, syncs and validates each private path component, and returns the descriptor it validated                   |
 | `outcome_archive_report`                                                           | Bounded run report, status vocabulary and exit statuses                                                                                                     |
 | `outcome_archive_cli`                                                              | The `build-limits-outcome-archive` timer-facing command                                                                                                     |
 | `outcome_archive_bench`                                                            | Bounded-memory archive benchmark behind `make outcome-archive-bench`                                                                                        |
@@ -991,13 +991,17 @@ at the `segment_bytes` high-water mark (12 MiB by default): it writes the next
 sequence and the segment metadata, renames the active file into
 `cache-outcomes.sealed/`, and installs a fresh header-only active file. An
 empty store installs the header without claiming a sequence, so the sequence
-series has no artificial first gap. `outcome_store_sealing` reports
-`archive_backlog` each time the sealed directory reaches eight entries.
-`settle_loaded_store` is where a restart enforces what an append cannot: a torn
-tail it cannot remove clears readiness and publishes `save_failed` rather than
-appending above the fragment, an oversized active file is sealed, and an active
-file whose oldest record predates the age cutoff is compacted, so a store that
-stayed small is not exempt from the age bound.
+series has no artificial first gap. A recorded counter of `MAX_SEQUENCE + 1` is
+the writer's exhaustion marker: the writer stores `sequence + 1` after sealing,
+so the reader accepts that value as readable state rather than damage, and the
+next allocation still refuses with `OverflowError` once no name can be handed
+out. `outcome_store_sealing` reports `archive_backlog` each time the sealed
+directory reaches eight entries. `settle_loaded_store` is where a restart
+enforces what an append cannot: a torn tail it cannot remove clears readiness
+and publishes `save_failed` rather than appending above the fragment, an
+oversized active file is sealed, and an active file whose oldest record
+predates the age cutoff is compacted, so a store that stayed small is not
+exempt from the age bound.
 
 The archiver in `outcome_archive` reads the active file once per plan through
 the bounded no-follow reader, to count the rows and span the writer currently
@@ -1029,8 +1033,12 @@ A terminated row that does not decode is a `corrupt` fault. The final row of a
 segment is held back until its newline status is known: an unterminated
 fragment that does not decode is dropped as a torn tail and flagged
 `had_torn_tail`, while an unterminated fragment that does decode is kept, so a
-complete row whose newline never reached the disk is not lost. The active store
-is stricter: `read_store` decodes only up to the last newline and
+complete row whose newline never reached the disk is not lost. That tolerance
+belongs to the sealed source, which the writer can leave torn. A published
+archive is always terminated by `write_archive`, so `read_archive_facts`
+refuses a torn tail there as `corrupt`: measuring the fragment would count
+history the archive does not hold and mis-price a trim planned against it. The
+active store is stricter: `read_store` decodes only up to the last newline and
 `outcome_store_tail.drop_torn_tail` removes any remainder before the next
 append, scanning backwards in fixed-size chunks so the bound holds however long
 the file is; a fragment that does decode is still discarded there, and the file
@@ -1050,44 +1058,55 @@ neither the successful nor the refused walk leaks a descriptor. Opening one
 private file is the outcome store's `open_private_regular`, so the no-follow
 and non-blocking flags and the close-on-failure rule exist once for both
 subsystems; the archiver supplies the stricter validation that also refuses a
-file owned by another account. `outcome_archive_files` owns the per-segment
-operations: archive, reconcile, heal, trim, delete and quarantine.
-`outcome_archive_quarantine` performs the quarantine moves for files a run
-cannot trust, and `outcome_archive_run` executes one plan operation by
-operation. `outcome_archive_retain` makes the bounded follow-up passes: each
-re-reads the store, performs the archive, reconcile, heal and orphan work it
-finds, and plans the budget over the settled inventory, narrowing the pass to
-work the run has not already applied. It detects a seal between its inventory
-and active-file reads by scanning the inventory a second time, suppresses a
-trim only against the archive measurement it was planned for, and confirms
-settlement with a final plan that mutates nothing. The same module owns
-`settled_snapshot`, the reading a plan and a report share: the inventory is
-scanned on both sides of the active-file read and the reading is retried while
-the two disagree, so a seal cannot leave either copy out of a count.
-`outcome_archive` builds its plan, its dry-run report and its run report from
-that reading, and reports `unsettled` rather than a plan when none settles. A
-run's final report also re-plans retention from its own settled reading: the
-writer can append or seal after the last retention pass, and a report that
-claimed `ok` would tell the timer the store is within its bounds while the next
-firing still has to evict. The re-plan ignores archival work, which the next
-firing picks up as normal, and only `trims`, `deletes` or a deferred budget
-make the run unsettled. `outcome_archive_active` reads the writer's active file
-as a snapshot without the archive lock, through one opened descriptor, so its
-size and rows describe the same version even when the writer replaces the path
-mid-scan. It reads the size immediately before the rows and confirms it
-immediately after them, retrying a version the writer appended to, and excludes
-a final row whose newline was not written: the writer truncates a failed append
-back out, so an uncommitted row is not retained history. It refuses any
-existing path that is not a regular file; only an absent file is empty history.
-Its scan also reports the rows and bytes the age rule keeps when it is given a
-cutoff, and `outcome_archive_history` carries that snapshot plus the summary of
-retained rows the report describes. An unmeasured active file leaves a
-configured byte budget without the committed bytes it must count, with or
-without an age cutoff, so `plan_run` defers that walk rather than evicting
-closed history against a whole-file size that includes an append the writer may
-roll back. `outcome_archive_age` owns the age decisions themselves: which
-entries are wholly older than the cutoff and which archive straddles it and is
-trimmed. `outcome_archive_budget` owns the byte budget: it counts an archive's
+file owned by another account. A walk that may create a component syncs the
+directory holding each new name into its parent before the walk returns, so a
+retry after a failed sync still establishes the durability the first attempt
+did not confirm; nothing on disk records that failure, so the sync is repeated
+rather than assumed. `open_private_chain` and `open_private_chain_when_present`
+return the descriptor they validated, and the callers that act on the directory
+continue through it: `outcome_segment_scan.regular_files` lists a segment
+directory and `remove_private_files` unlinks from it, both by descriptor and
+never by re-opening the path, so a path swapped after validation cannot
+redirect the listing or the removal to another directory.
+
+`outcome_archive_files` owns the per-segment operations: archive, reconcile,
+heal, trim, delete and quarantine. `outcome_archive_quarantine` performs the
+quarantine moves for files a run cannot trust, and `outcome_archive_run`
+executes one plan operation by operation. `outcome_archive_retain` makes the
+bounded follow-up passes: each re-reads the store, performs the archive,
+reconcile, heal and orphan work it finds, and plans the budget over the settled
+inventory, narrowing the pass to work the run has not already applied. It
+detects a seal between its inventory and active-file reads by scanning the
+inventory a second time, suppresses a trim only against the archive measurement
+it was planned for, and confirms settlement with a final plan that mutates
+nothing. The same module owns `settled_snapshot`, the reading a plan and a
+report share: the inventory is scanned on both sides of the active-file read
+and the reading is retried while the two disagree, so a seal cannot leave
+either copy out of a count. `outcome_archive` builds its plan, its dry-run
+report and its run report from that reading, and reports `unsettled` rather
+than a plan when none settles. A run's final report also re-plans retention
+from its own settled reading: the writer can append or seal after the last
+retention pass, and a report that claimed `ok` would tell the timer the store
+is within its bounds while the next firing still has to evict. The re-plan
+ignores archival work, which the next firing picks up as normal, and only
+`trims`, `deletes` or a deferred budget make the run unsettled.
+`outcome_archive_active` reads the writer's active file as a snapshot without
+the archive lock, through one opened descriptor, so its size and rows describe
+the same version even when the writer replaces the path mid-scan. It reads the
+size immediately before the rows and confirms it immediately after them,
+retrying a version the writer appended to, and excludes a final row whose
+newline was not written: the writer truncates a failed append back out, so an
+uncommitted row is not retained history. It refuses any existing path that is
+not a regular file; only an absent file is empty history. Its scan also reports
+the rows and bytes the age rule keeps when it is given a cutoff, and
+`outcome_archive_history` carries that snapshot plus the summary of retained
+rows the report describes. An unmeasured active file leaves a configured byte
+budget without the committed bytes it must count, with or without an age
+cutoff, so `plan_run` defers that walk rather than evicting closed history
+against a whole-file size that includes an append the writer may roll back.
+`outcome_archive_age` owns the age decisions themselves: which entries are
+wholly older than the cutoff and which archive straddles it and is trimmed.
+`outcome_archive_budget` owns the byte budget: it counts an archive's
 uncompressed size from its sidecar plus the active rows the age rule keeps,
 deletes whole archives oldest first, and then trims the single archive that
 straddles the remaining allowance. `plan_record_steps` applies the configured
@@ -1198,10 +1217,11 @@ The archive tests are `tests/test_outcome_archive.py`,
 `test_outcome_archive_cli_defaults.py`, `test_outcome_archive_subprocess.py`,
 `test_outcome_history.py`, `test_outcome_history_replacement.py`,
 `test_outcome_history_settling.py`, `test_outcome_segments.py`,
-`test_outcome_segment_inventory.py`, `test_outcome_segment_sidecar_faults.py`,
-`test_outcome_segment_state.py`, `test_outcome_record_stream.py`,
-`test_outcome_sealing_bounds.py`, `test_outcome_store_tail.py`,
-`test_outcome_store_sealing.py` and `test_outcome_store_sealing_durability.py`.
+`test_outcome_segment_inventory.py`, `test_outcome_segment_scan.py`,
+`test_outcome_segment_sidecar_faults.py`, `test_outcome_segment_state.py`,
+`test_outcome_record_stream.py`, `test_outcome_sealing_bounds.py`,
+`test_outcome_store_tail.py`, `test_outcome_store_sealing.py` and
+`test_outcome_store_sealing_durability.py`.
 `test_outcome_archive_subprocess.py` runs the installed console script, and the
 `python -m` form, as separate processes, including two overlapping runs, and
 shares its launcher and configuration with `tests/archive_cli_helpers.py`.

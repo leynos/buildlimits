@@ -359,7 +359,10 @@ budgets described below do not count them; the report describes what the store
 physically holds until the writer's next compaction. An unmeasured entry, such
 as an archive whose sidecar was lost or a file that cannot be decoded,
 contributes no rows and no span, so a report never presents an unknown part of
-the history as empty. The JSON carries the same figures as `retained_records`,
+the history as empty. An archive is refused as corrupt when its final row is
+torn: publication always terminates an archive, so a fragment at the end means
+the file is not the archive a run published, and counting it would overstate
+retained history. The JSON carries the same figures as `retained_records`,
 `observed_from`, `observed_until` and `unmeasured_entries`.
 
 The writer seals the active file when an append would take it past 12 MiB, so

@@ -717,8 +717,8 @@ verified archive is published, and leaves compile admission untouched.
 - [ ] CodeRabbit review 6000304047 remediation, group 4 (2026-11-21): the byte
   budget floor at load (findings 1, 13). `header_floor_bytes` is now public and
   measured from a header whose timestamp carries one microsecond, because the
-  encoder preserves fractional seconds and a whole-second header is four bytes
-  shorter. `validate_policy` and the configuration rules both use it: a positive
+  encoder preserves fractional seconds and a whole-second header is shorter.
+  `validate_policy` and the configuration rules both use it: a positive
   `cache_outcomes_max_bytes` below the floor is refused when the document
   loads, instead of constructing a policy the supervisor would catch and turn
   into silent non-recording. Zero still means unlimited. Regressions pin the
@@ -828,6 +828,31 @@ verified archive is published, and leaves compile admission untouched.
   status is captured. A cleanup guard around the whole interaction kills and
   reaps the first run on every exceptional exit, so a stalled archive wait or a
   failed second invocation cannot become an unbounded `Popen` context wait.
+- [ ] CodeRabbit review 6000304047 remediation, group 14 (2026-11-21): nine
+  follow-ups on the earlier remediation commits. Directory durability no longer
+  depends on a name having been created by the attempt that syncs it:
+  `_descend` syncs the parent on every create-capable walk, because nothing on
+  disk records an earlier attempt's failed sync, and
+  `test_a_retry_syncs_the_parent_of_a_component_it_only_opened` fails the first
+  sync and checks the retry establishes it. `read_sequence` accepts
+  `MAX_SEQUENCE + 1` as the writer's exhaustion marker rather than damage, so
+  `next_sequence` still raises `OverflowError` after retention has emptied both
+  directories. `read_archive_facts` refuses a torn tail, because a published
+  archive is always terminated and a sidecar rebuilt from a scan that counted
+  the fragment would overprice the history; the repair regression rewrites an
+  archive with an unterminated fragment and expects `corrupt`. Scans and
+  removals now use the descriptor they validated: `open_private_chain` and
+  `open_private_chain_when_present` return the walked descriptor,
+  `regular_files` lists through `os.scandir(descriptor)`, and the new
+  `remove_private_files` unlinks with `dir_fd` and syncs the directory.
+  Regressions replace the directory path immediately after validation and
+  assert the scan and the removal still act on the validated inode. The header
+  floor is now compared with an independently encoded fractional-second header,
+  the loader refuses `header_floor_bytes() - 1`, the benchmark releases its
+  caller allocation before measuring, and the cross-process lock test
+  synchronizes on the lock entry in `/proc/locks` instead of the first archive
+  and rejoins it after `SIGSTOP`. `Popen` is no longer used as a context
+  manager, so no path waits without a timeout.
 
 ## Surprises & discoveries
 
