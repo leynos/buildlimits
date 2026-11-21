@@ -10,7 +10,11 @@ from pathlib import Path
 import pytest
 
 from buildlimits import config
-from buildlimits.outcome_retention import header_floor_bytes
+from buildlimits.outcome_retention import (
+    MAX_AGE_DAYS,
+    SEGMENT_BYTES,
+    header_floor_bytes,
+)
 
 
 def test_defaults_load_without_a_file(tmp_path: Path) -> None:
@@ -156,4 +160,72 @@ def test_a_byte_budget_at_the_header_floor_is_accepted(tmp_path: Path) -> None:
 
     assert settings.cache_outcomes_max_bytes == header_floor_bytes(), (
         "a budget that holds one maximal header is accepted"
+    )
+
+
+@pytest.mark.parametrize("preset", [-1, 10])
+def test_an_archive_preset_outside_the_xz_range_is_rejected(
+    tmp_path: Path, preset: int
+) -> None:
+    """Both ends of the XZ preset range are checked before a run starts.
+
+    ``lzma`` accepts only presets 0 to 9. Refusing the document here shows the
+    operator the mistake at configuration time, rather than after a timer
+    fires and the archive job fails on a value it could never encode with.
+    """
+    _rejected(
+        tmp_path,
+        f'cache_outcomes = "record"\ncache_outcomes_archive_preset = {preset}\n',
+        "cache_outcomes_archive_preset must be between 0 and 9",
+    )
+
+
+def test_the_slowest_archive_preset_is_accepted(tmp_path: Path) -> None:
+    """The upper bound loads, so the preset rule is not off by one."""
+    path = tmp_path / "s.toml"
+    path.write_text('cache_outcomes = "record"\ncache_outcomes_archive_preset = 9\n')
+
+    assert config.load(path).cache_outcomes_archive_preset == 9, (
+        "preset 9 is inside the supported range"
+    )
+
+
+def test_archive_headroom_below_one_segment_is_rejected(tmp_path: Path) -> None:
+    """Headroom that cannot hold one temporary archive is refused.
+
+    Archive work writes a replacement beside its source, so a headroom below
+    one segment could never be honoured and would fail every run instead.
+    """
+    _rejected(
+        tmp_path,
+        'cache_outcomes = "record"\n'
+        f"cache_outcomes_archive_headroom_bytes = {SEGMENT_BYTES - 1}\n",
+        "cache_outcomes_archive_headroom_bytes must hold at least one segment",
+    )
+
+
+def test_archive_headroom_of_one_segment_is_accepted(tmp_path: Path) -> None:
+    """The smallest usable headroom loads, so the floor is not off by one."""
+    path = tmp_path / "s.toml"
+    path.write_text(
+        'cache_outcomes = "record"\n'
+        f"cache_outcomes_archive_headroom_bytes = {SEGMENT_BYTES}\n"
+    )
+
+    settings = config.load(path)
+
+    assert settings.cache_outcomes_archive_headroom_bytes == SEGMENT_BYTES, (
+        "a headroom that holds one segment is accepted"
+    )
+
+
+def test_a_retention_age_beyond_the_supported_span_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """The age rule names its own range, so the operator can see the limit."""
+    _rejected(
+        tmp_path,
+        'cache_outcomes = "record"\n'
+        f"cache_outcomes_max_age_days = {MAX_AGE_DAYS + 1}\n",
+        f"cache_outcomes_max_age_days must be between 0 and {MAX_AGE_DAYS}",
     )
