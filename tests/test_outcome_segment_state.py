@@ -44,12 +44,30 @@ def test_a_counter_beyond_the_name_width_is_a_fault(tmp_path: Path) -> None:
     """An out-of-range counter would name a segment the inventory cannot see.
 
     Accepting it would make every later seal publish a source the twelve-digit
-    scan ignores, so the counter is reported as damaged instead.
+    scan ignores, so the counter is reported as damaged instead. The writer's
+    exhausted marker sits one past the largest name and is readable state, so
+    the damaged value is the one beyond it.
     """
-    path = write_private(tmp_path / "cache-outcomes.seq", b"1000000000000\n")
+    path = write_private(
+        tmp_path / "cache-outcomes.seq", f"{MAX_SEQUENCE + 2}\n".encode()
+    )
 
     with pytest.raises(ValueError, match="out of range"):
         read_sequence(path)
+
+
+def test_the_exhausted_marker_is_readable_state(tmp_path: Path) -> None:
+    """The writer's exhausted counter is not damage.
+
+    One past the largest name is what the writer records after sealing it. A
+    reader that rejected the value would fall back to directory names, which
+    retention can empty, and a later seal could reuse a sequence.
+    """
+    path = write_private(
+        tmp_path / "cache-outcomes.seq", f"{MAX_SEQUENCE + 1}\n".encode()
+    )
+
+    assert read_sequence(path) == MAX_SEQUENCE + 1, "the marker is reported as read"
 
 
 def test_the_largest_nameable_sequence_is_accepted(tmp_path: Path) -> None:

@@ -119,11 +119,29 @@ def test_an_out_of_range_counter_falls_back_to_the_directory(
     sealed.mkdir()
     (sealed / segment_name(5)).write_bytes(b"older source")
     counter = tmp_path / "cache-outcomes.seq"
-    counter.write_text("1000000000000\n", encoding="utf-8")
+    counter.write_text(f"{MAX_SEQUENCE + 2}\n", encoding="utf-8")
 
     sequence = outcome_store_sealing.next_sequence(counter, sealed, tmp_path)
 
     assert sequence == 6, "the directory decides when the counter is damaged"
+
+
+def test_an_exhausted_counter_refuses_the_next_sequence(tmp_path: Path) -> None:
+    """Exhaustion survives retention removing the last nameable segment.
+
+    The writer records the exhausted value in the counter when it seals the
+    last nameable sequence. Retention may then delete that segment, so the
+    directory names no longer prove the range is used. Reading the counter as
+    damage would fall back to those names and reuse a lower sequence, so the
+    exhausted value is a readable state rather than a fault.
+    """
+    sealed = tmp_path / "sealed"
+    sealed.mkdir()
+    counter = tmp_path / "cache-outcomes.seq"
+    counter.write_text(f"{MAX_SEQUENCE + 1}\n", encoding="utf-8")
+
+    with pytest.raises(OverflowError, match="exhausted"):
+        outcome_store_sealing.next_sequence(counter, sealed, tmp_path)
 
 
 def test_the_next_sequence_refuses_an_exhausted_range(tmp_path: Path) -> None:

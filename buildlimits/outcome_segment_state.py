@@ -28,6 +28,11 @@ _MAX_SEQUENCE_TEXT = 32
 # The retention record is a handful of JSON fields; anything larger is not
 # state this code wrote and must not be read into memory.
 _MAX_STATE_BYTES = 4096
+# The writer records one past the name it has just sealed, so the counter holds
+# this value exactly when the last nameable sequence has been used. It is the
+# writer's own record of exhaustion, and distinguishing it from damage keeps a
+# later seal from reusing a name retention has since removed.
+_EXHAUSTED_SEQUENCE = MAX_SEQUENCE + 1
 
 __all__ = ["FloorState", "RetentionFloor", "read_retention_floor", "read_sequence"]
 
@@ -62,13 +67,16 @@ def read_sequence(path: Path) -> int | None:
     Returns
     -------
     int | None
-        The stored sequence, or None when the file does not exist.
+        The stored sequence, or None when the file does not exist. The largest
+        value returned is ``MAX_SEQUENCE + 1``: the writer stores one past the
+        name it sealed, so that value records that no nameable sequence is
+        left rather than a file the inventory cannot see.
 
     Raises
     ------
     ValueError
         If the file is not a regular file, is oversized, is not a decimal
-        integer, or exceeds the largest sequence the segment naming can carry.
+        integer, or exceeds the exhausted marker the writer records.
     """
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
@@ -101,10 +109,10 @@ def read_sequence(path: Path) -> int | None:
         msg = "sequence counter is not a decimal integer"
         raise ValueError(msg)
     sequence = int(text)
-    if sequence > MAX_SEQUENCE:
-        # A counter this large names a file the twelve-digit inventory cannot
-        # see, so every later seal would vanish from reports. Report the
-        # damage and let the caller fall back to the directory names.
+    if sequence > _EXHAUSTED_SEQUENCE:
+        # A counter beyond the exhausted marker names a file the twelve-digit
+        # inventory cannot see, so every later seal would vanish from reports.
+        # Report the damage and let the caller fall back to directory names.
         msg = "sequence counter is out of range"
         raise ValueError(msg)
     return sequence

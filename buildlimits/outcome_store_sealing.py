@@ -131,6 +131,10 @@ def next_sequence(sequence_file: Path, sealed_dir: Path, archived_dir: Path) -> 
         recorded = read_sequence(sequence_file)
     except ValueError:
         recorded = None
+    # The counter records one past the sequence just sealed, so subtracting one
+    # recovers the last name the writer used. An exhausted counter therefore
+    # reaches the guard below even when retention has removed every directory
+    # entry that could have supplied the same answer.
     floor = 0 if recorded is None else recorded - 1
     highest = max(
         floor,
