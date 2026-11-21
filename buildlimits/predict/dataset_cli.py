@@ -30,6 +30,7 @@ from buildlimits.predict.journal_provenance import (
 from buildlimits.predict.paths import inside_history_directories, same_file
 from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_store import save_snapshot
+from buildlimits.retry_notice import report_retry
 from buildlimits.utc_text import utc_now, utc_text
 
 if typ.TYPE_CHECKING:
@@ -333,7 +334,9 @@ def _read_history(store: Path, selection: HistorySelection) -> DecodedStore | in
         An exit status on failure, otherwise the decoded history.
     """
     try:
-        return outcome_history.read_history_beside(store, selection)
+        return outcome_history.read_history_beside(
+            store, selection, on_retry=report_retry
+        )
     except outcome_history.HistoryFaultError as fault:
         print(
             f"build-limits-predict-dataset: the history was rejected as {fault.reason}",

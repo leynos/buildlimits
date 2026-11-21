@@ -35,7 +35,12 @@ __all__ = [
     "ActionResult",
     "ArchiveContext",
     "fresh_quarantine_token",
+    "ignore_retry",
 ]
+
+
+def ignore_retry(_operation: str, _attempt: int, _category: str) -> None:
+    """Discard one retry notice when the caller reports none."""
 
 
 def fresh_quarantine_token() -> str:
@@ -69,6 +74,10 @@ class ArchiveContext:
         the whole report instead of only its start.
     quarantine_token : Callable[[], str]
         The source of the random tag in a quarantine file's name.
+    on_retry : Callable[[str, int, str], None]
+        Receives the operation, attempt number and closed category of every
+        reading the run retries, so a caller can report a store that keeps
+        moving; the default discards them.
     """
 
     layout: SegmentLayout
@@ -77,6 +86,7 @@ class ArchiveContext:
     now: dt.datetime
     clock: cabc.Callable[[], dt.datetime] = utc_now
     quarantine_token: cabc.Callable[[], str] = fresh_quarantine_token
+    on_retry: cabc.Callable[[str, int, str], None] = ignore_retry
 
 
 @dc.dataclass(frozen=True, slots=True)

@@ -356,6 +356,17 @@ Both figures come from the report's own clock readings, so `elapsed` is the
 span the report describes rather than the time the reader happens to run it.
 The JSON form carries the same times as `started_at` and `finished_at`.
 
+A reading that has to be retried writes one bounded line per attempt to
+standard error, such as `retry: snapshot attempt 2 reason inventory_changed`.
+The line names the operation, the attempt and a closed reason, never a path, so
+a store the writer keeps changing is visible in the timer's journal.
+
+Each firing also publishes one `archive_run` metric record: its status and
+reason, the archived, trimmed, deleted and quarantined action counts, the
+number of failed sequences, and the elapsed seconds. Records go to the native
+journal only when systemd started the command, because a shell session has no
+journal stream to address; they never include a path.
+
 The plain report's `retained:` line gives the logical bytes against the budget,
 and its `history:` line gives the rows the store retains, the observed span
 they cover and, when any segment's metadata is missing, how many entries could
@@ -1434,6 +1445,11 @@ When outcome telemetry exists in the selected window, the report includes
 observed cache-result counts, attribution coverage, reading reasons and skipped
 or failed readings, plus store-operation and discard counts. No outcome section
 data is inferred for an empty window.
+
+The archive command's `archive_run` record carries the firing's status and
+reason, its archived, trimmed, deleted and quarantined action counts, the
+number of failed sequences and the elapsed time. It is a closed-vocabulary
+adapter record and names no path.
 
 The supervisor also writes OpenTelemetry `scope_placement` spans to the native
 journal. An adapter writes `adapter_restart_retry` only when it has to retry

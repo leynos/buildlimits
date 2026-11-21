@@ -11,6 +11,7 @@ from buildlimits import outcome_history, outcome_records, outcome_replay
 from buildlimits.outcome_history_args import add_history_arguments, selection_from
 from buildlimits.outcome_store_io import read_store
 from buildlimits.outcome_store_salt import store_path
+from buildlimits.retry_notice import report_retry
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -108,7 +109,9 @@ def _history_report(
     """
     last: outcome_history.HistoryFaultError | None = None
     for _attempt in range(outcome_history.HISTORY_ATTEMPTS):
-        stream = outcome_history.open_history_beside(path, selection)
+        stream = outcome_history.open_history_beside(
+            path, selection, on_retry=report_retry
+        )
         try:
             return _evaluate(hypothesis, stream)
         except outcome_history.HistoryFaultError as error:

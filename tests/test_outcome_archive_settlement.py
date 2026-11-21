@@ -7,6 +7,7 @@ quarantine that removes an entry the budget counted. They also pin that the
 last permitted pass is confirmed settled rather than assumed.
 """
 
+import collections.abc as cabc
 import datetime as dt
 import itertools
 import typing as typ
@@ -89,7 +90,10 @@ def test_a_seal_between_the_inventory_and_active_reads_is_replanned(
     sealed = False
 
     def seal_then_read(
-        path: Path, *, cutoff: dt.datetime | None = None
+        path: Path,
+        *,
+        cutoff: dt.datetime | None = None,
+        on_retry: cabc.Callable[[str, int, str], None] | None = None,
     ) -> ActiveHistory:
         """Seal five rows once, between the inventory and active reads."""
         nonlocal sealed
@@ -99,7 +103,7 @@ def test_a_seal_between_the_inventory_and_active_reads_is_replanned(
             write_private(store_layout.active, document(rows))
             seal_active(store_layout, rows, 2)
             write_private(store_layout.active, document(records(NOW, 4)))
-        return real(path, cutoff=cutoff)
+        return real(path, cutoff=cutoff, on_retry=on_retry)
 
     monkeypatch.setattr(outcome_archive_retain, "active_history", seal_then_read)
 
@@ -273,11 +277,14 @@ def test_inspection_reports_unsettled_when_no_snapshot_holds(
     sequences = itertools.count(2)
 
     def seal_on_every_read(
-        path: Path, *, cutoff: dt.datetime | None = None
+        path: Path,
+        *,
+        cutoff: dt.datetime | None = None,
+        on_retry: cabc.Callable[[str, int, str], None] | None = None,
     ) -> ActiveHistory:
         """Seal one fresh source at every active read."""
         seal_one_row(store_layout, next(sequences))
-        return real(path, cutoff=cutoff)
+        return real(path, cutoff=cutoff, on_retry=on_retry)
 
     monkeypatch.setattr(outcome_archive_retain, "active_history", seal_on_every_read)
 

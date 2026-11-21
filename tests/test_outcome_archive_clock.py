@@ -113,7 +113,9 @@ def test_an_inspection_finishes_on_the_injected_clock(tmp_path: Path) -> None:
     write(store, records(NOW, 1), policy())
     finished = NOW + dt.timedelta(seconds=42)
 
-    report = inspect_store(layout(tmp_path), policy(), now=NOW, clock=lambda: finished)
+    report = inspect_store(
+        layout(tmp_path), policy(), options=RunOptions(now=NOW, clock=lambda: finished)
+    )
 
     assert report.status == "ok", "the inspection planned without changing files"
     assert report.finished_at == finished, "the finish is the injected clock's"

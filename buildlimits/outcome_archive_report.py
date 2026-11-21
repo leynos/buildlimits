@@ -9,16 +9,20 @@ stays a plain value that a caller can compare and pass on.
 import dataclasses as dc
 import typing as typ
 
+from buildlimits import outcome_archive_retain
+from buildlimits.outcome_archive_context import ignore_retry
 from buildlimits.outcome_archive_history import ActiveHistory, observed_history
+from buildlimits.outcome_archive_plan import plan_run
 from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
 
+    from buildlimits.metrics import MetricsPort
     from buildlimits.outcome_archive_context import ActionResult
     from buildlimits.outcome_archive_plan import PlanSummary
-    from buildlimits.outcome_archive_run import ArchiveRun
+    from buildlimits.outcome_archive_run import ArchiveRun, RunOutcome
     from buildlimits.outcome_segment_inventory import Inventory
 
 type RunStatus = typ.Literal[
@@ -30,6 +34,7 @@ __all__ = [
     "RunReport",
     "RunStatus",
     "dry_report",
+    "settled_report",
     "unfinished_report",
     "unsettled_report",
 ]
@@ -50,12 +55,20 @@ class RunOptions:
     clock : Callable[[], datetime]
         The UTC clock the run reads: for its start when ``now`` is None, and
         for the finish time every report carries.
+    on_retry : Callable[[str, int, str], None]
+        Receives the operation, attempt number and closed category of every
+        reading the run retries; the default discards them.
+    metrics : MetricsPort | None
+        The bounded event transport an ``archive_run`` record is published
+        through, or None when the caller collects no metrics.
     """
 
     preset: int = 6
     now: dt.datetime | None = None
     dry_run: bool = False
     clock: cabc.Callable[[], dt.datetime] = utc_now
+    on_retry: cabc.Callable[[str, int, str], None] = ignore_retry
+    metrics: MetricsPort | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -220,3 +233,104 @@ def unfinished_report(
         finished_at=clock(),
         reason=reason,
     )
+
+
+def settled_report(
+    run: ArchiveRun,
+    outcome: RunOutcome,
+    floor: int,
+) -> RunReport:
+    """Measure the settled store and build the report that describes it.
+
+    Returns
+    -------
+    RunReport
+        The completed run's report, before it is persisted.
+    """
+    layout = run.context.layout
+    final, final_active, snapshot_settled = outcome_archive_retain.settled_snapshot(
+        layout, floor, cutoff=run.context.policy.cutoff(run.started_at)
+    )
+    if not snapshot_settled:
+        # The writer kept sealing across every reading, so the report cannot
+        # bind rows to one version of the store. Report it as retryable rather
+        # than recording an undercount as success.
+        outcome.retention_unsettled = True
+    elif _retention_owes_work(final, final_active, run):
+        # The writer can append or seal between the last retention pass and
+        # this read. The report must not claim the store is within its bounds
+        # when the next firing still has history to evict.
+        outcome.retention_unsettled = True
+    retained = final_active.bytes + final.sealed_bytes + final.archived_logical_bytes
+    observed = observed_history(final, final_active)
+    return RunReport(
+        status=_run_status(outcome),
+        started_at=run.started_at,
+        finished_at=run.context.clock(),
+        active_bytes=final_active.bytes,
+        retained_bytes=retained,
+        retained_records=observed.records,
+        observed_from=observed.observed_from,
+        observed_until=observed.observed_until,
+        unmeasured_entries=observed.unmeasured,
+        budget_bytes=run.context.policy.max_bytes,
+        cutoff=run.plan.cutoff,
+        plan=run.summary,
+        actions=tuple(outcome.actions),
+        failures=tuple(outcome.failures),
+        gaps=final.gaps,
+        gaps_truncated=final.gaps_truncated,
+        missing_sidecars=final.missing_sidecars,
+        corrupt_sidecars=final.corrupt_sidecars,
+        orphan_sidecars=final.orphan_sidecars,
+    )
+
+
+def _retention_owes_work(
+    inventory: Inventory, active: ActiveHistory, run: ArchiveRun
+) -> bool:
+    """Whether the final snapshot still calls for retention work.
+
+    The writer never takes the archive lock, so it can append or seal between
+    the last retention pass and this read. A report that claimed success over
+    that store would tell the timer the budget is met while the next firing
+    still has to trim or delete. Only retention decides this: a source sealed
+    just before the read is archival work the next firing picks up, and the
+    report already counts its bytes.
+
+    Parameters
+    ----------
+    inventory : Inventory
+        The store as the final snapshot read it.
+    active : ActiveHistory
+        The active file from the same settled reading, measured against the
+        run's cutoff so the plan counts the rows retention keeps.
+    run : ArchiveRun
+        The run whose policy and start time the plan is built with.
+
+    Returns
+    -------
+    bool
+        True when the plan still evicts history or defers a budget.
+    """
+    pending = plan_run(inventory, run.context.policy, now=run.started_at, active=active)
+    return bool(pending.trims or pending.deletes or pending.retention_deferred)
+
+
+def _run_status(outcome: RunOutcome) -> RunStatus:
+    """Classify a completed pass by the failures it recorded.
+
+    A run that met only a full filesystem is retryable: nothing is corrupt and
+    the next timer firing picks the work up once space returns. Any other
+    failure needs an operator, so it outranks a space failure in the same run.
+
+    Returns
+    -------
+    RunStatus
+        ``ok``, ``unsettled``, ``no_headroom`` or ``corrupt``.
+    """
+    if not outcome.failures:
+        return "unsettled" if outcome.retention_unsettled else "ok"
+    if all(reason == "no_headroom" for _sequence, reason in outcome.failures):
+        return "no_headroom"
+    return "corrupt"

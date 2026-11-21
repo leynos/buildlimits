@@ -35,6 +35,7 @@ EVENTS = frozenset({
     "cache_outcome",
     "outcome_reading",
     "outcome_store",
+    "archive_run",
 })
 OUTCOMES = frozenset({
     "completed",
@@ -162,6 +163,19 @@ VOCABULARIES = {
     "store_operation": STORE_OPERATIONS,
     "gate_reason": GATE_REASONS,
     "child_sighting": frozenset({"seen", "not_seen", "ambiguous", "unavailable"}),
+    # A timer-fired archive run, reported once per firing through
+    # ``run_archive``. The statuses mirror ``RunStatus``; the reasons are
+    # the closed values a report can carry, with ``none`` for a run that
+    # completed or failed without a run-level reason.
+    "archive_status": frozenset({
+        "ok",
+        "failed",
+        "corrupt",
+        "busy",
+        "no_headroom",
+        "unsettled",
+    }),
+    "archive_reason": frozenset({"none", "busy", "no_headroom", "unreadable"}),
 }
 DURATIONS = frozenset({
     "wait_seconds",
@@ -207,6 +221,10 @@ COUNTERS = frozenset({
     "child_samples",
     "child_samples_taken",
     "child_sample_failures",
+    "archived",
+    "trimmed",
+    "deleted",
+    "quarantined",
 })
 BOOLEANS = frozenset({"reachable", "load_unknown", "fd_budget_known", "accept_paused"})
 # The counters that describe the whole supervisor rather than one request. They

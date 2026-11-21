@@ -77,12 +77,15 @@ def _at_report_snapshot(
             armed = False
 
     def active_at_report(
-        path: Path, *, cutoff: dt.datetime | None = None
+        path: Path,
+        *,
+        cutoff: dt.datetime | None = None,
+        on_retry: cabc.Callable[[str, int, str], None] | None = None,
     ) -> ActiveHistory:
         """Inject the writer change just before the report reads the file."""
         if armed:
             before_read()
-        return real_active(path, cutoff=cutoff)
+        return real_active(path, cutoff=cutoff, on_retry=on_retry)
 
     monkeypatch.setattr(outcome_archive_retain, "settled_snapshot", snapshot_at_report)
     monkeypatch.setattr(outcome_archive_retain, "active_history", active_at_report)

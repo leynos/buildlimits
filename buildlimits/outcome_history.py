@@ -33,6 +33,7 @@ from buildlimits.outcome_record_format import DecodedStore
 from buildlimits.outcome_segments import SegmentLayout
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
 __all__ = [
@@ -50,6 +51,8 @@ __all__ = [
 def read_history(
     layout: SegmentLayout,
     selection: HistorySelection | None = None,
+    *,
+    on_retry: cabc.Callable[[str, int, str], None] | None = None,
 ) -> DecodedStore:
     """Read retained history across archived, sealed and active segments.
 
@@ -63,6 +66,8 @@ def read_history(
         The store's segment layout.
     selection : HistorySelection | None
         The record domain to read; the newest domain when None.
+    on_retry : Callable[[str, int, str], None] | None
+        Receives each retried pin's operation, attempt number and category.
 
     Returns
     -------
@@ -87,7 +92,7 @@ def read_history(
     chosen = HistorySelection() if selection is None else selection
     last: HistoryFaultError | None = None
     for _attempt in range(HISTORY_ATTEMPTS):
-        stream = open_history(layout, chosen)
+        stream = open_history(layout, chosen, on_retry=on_retry)
         try:
             records = tuple(stream)
         except HistoryFaultError as error:
@@ -105,6 +110,8 @@ def read_history(
 def read_history_beside(
     store: Path,
     selection: HistorySelection | None = None,
+    *,
+    on_retry: cabc.Callable[[str, int, str], None] | None = None,
 ) -> DecodedStore:
     """Read the retained history that belongs to one store path.
 
@@ -117,6 +124,8 @@ def read_history_beside(
         The configured ``cache-outcomes.jsonl`` path.
     selection : HistorySelection | None
         The record domain to read; the newest domain when None.
+    on_retry : Callable[[str, int, str], None] | None
+        Receives each retried pin's operation, attempt number and category.
 
     Returns
     -------
@@ -128,4 +137,4 @@ def read_history_beside(
     ``read_history_beside(store, HistorySelection(all_salts=True))`` reads
     every retained domain, whichever salt is now active.
     """
-    return read_history(SegmentLayout.beside(store), selection)
+    return read_history(SegmentLayout.beside(store), selection, on_retry=on_retry)

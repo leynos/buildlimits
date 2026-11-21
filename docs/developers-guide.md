@@ -335,6 +335,7 @@ Each module owns one decision. This table is the single module inventory.
 | `predict.render_tables`                                                            | The held-out comparison, calibration, ablation and origin tables in the prediction report                                                                   |
 | `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                                                                      |
 | `utc_text`                                                                         | The wall clock as aware UTC, the canonical ISO 8601 text with a trailing `Z`, and its parser                                                                |
+| `retry_notice`                                                                     | The bounded line a command writes when it retries an unsettled reading                                                                                      |
 | `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper                                                                   |
 | `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar                                                            |
 | `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                                                                             |
@@ -399,6 +400,7 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication, descriptor-relative removal and atomic state writes                |
 | `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates, syncs and validates each private path component, and returns the descriptor it validated                   |
 | `outcome_archive_report`                                                           | Bounded run report and status vocabulary                                                                                                                    |
+| `outcome_archive_events`                                                           | One bounded `archive_run` metrics event per timer firing                                                                                                    |
 | `outcome_archive_codec`                                                            | Stable JSON rendering of one run report                                                                                                                     |
 | `outcome_archive_exit`                                                             | Mapping a run status to the process exit code a timer records                                                                                               |
 | `outcome_archive_cli`                                                              | The `build-limits-outcome-archive` timer-facing command                                                                                                     |
@@ -861,12 +863,13 @@ records the decision.
 The outcome event schema is registered before the supervisor integration is
 enabled. `cache_outcome` carries one bounded classification per cached launch;
 `outcome_reading` and `outcome_store` carry aggregate failure and operation
-counts. `metrics_report` leaves `cache_outcomes` empty until one of these event
-types is present, and computes attributed coverage from `outcome_attribution`
-over cached `request_admitted` records rather than trusting a separate count
-field. `tracing_export` reserves `statistics_read` and the three store
-operations with the fixed `statistics_query`, `store_io` and `salt` failure
-categories.
+counts, and `archive_run` carries one closed status, reason, action counts,
+failed sequences and runtime for a timer firing of the archive command.
+`metrics_report` leaves `cache_outcomes` empty until one of these event types
+is present, and computes attributed coverage from `outcome_attribution` over
+cached `request_admitted` records rather than trusting a separate count field.
+`tracing_export` reserves `statistics_read` and the three store operations with
+the fixed `statistics_query`, `store_io` and `salt` failure categories.
 
 `OutcomeTelemetry` maps reducer outputs to those metrics and owns the bounded
 `statistics_read` span. `outcome_reading` is transition-only: it carries a
@@ -1188,16 +1191,16 @@ active-store-only behaviour.
 
 `outcome_archive_report` defines the closed report vocabulary. Statuses are
 `ok`, `failed`, `corrupt`, `busy`, `no_headroom` and `unsettled`. The module
-also owns the three report builders the runner uses: `dry_report` from a
-settled inventory and active snapshot, and `unsettled_report` and
-`unfinished_report` for a store that never held still or a run that could not
-start. Every builder takes its finish time from the same injected clock, which
-`RunOptions.clock` carries into `ArchiveContext.clock`;
-`ArchiveContext.quarantine_token` likewise supplies the random tag a quarantine
-name records, so both the report's timing and the evidence naming are ports a
-test can substitute. The report names no path and carries no raw exception
-text; the only path a run prints is an unreadable configuration file, on
-standard error before the report exists.
+also owns the four report builders the runner uses: `dry_report` from a settled
+inventory and active snapshot, `settled_report` for an executed run's final
+measurement, and `unsettled_report` and `unfinished_report` for a store that
+never held still or a run that could not start. Every builder takes its finish
+time from the same injected clock, which `RunOptions.clock` carries into
+`ArchiveContext.clock`; `ArchiveContext.quarantine_token` likewise supplies the
+random tag a quarantine name records, so both the report's timing and the
+evidence naming are ports a test can substitute. The report names no path and
+carries no raw exception text; the only path a run prints is an unreadable
+configuration file, on standard error before the report exists.
 
 `outcome_archive_codec` owns the JSON document a report is published in, and
 `outcome_archive_exit` owns the process status: 0 for success, 1 for an
@@ -1206,6 +1209,20 @@ an operator, and 75 for a temporary condition a timer should retry. Both are
 adapters around the report model: `outcome_archive_state` and the command
 render through the codec, and the command derives its exit status from
 `RunReport.status` through the exit module.
+
+`retry_notice.report_retry` writes the one line an operator sees when a reading
+is retried: the operation, the attempt number and the closed reason, with no
+path. `settled_snapshot`, `active_history` and `read_history` accept an
+observer with that signature and call it at the attempt boundary; the archive,
+dataset and replay commands pass `report_retry`, so a store the writer keeps
+moving is visible in the journal rather than only in the final status.
+
+`outcome_archive_events.publish_run` publishes one `archive_run` record when
+`RunOptions.metrics` is set: the status, reason, action counts, failed
+sequences and elapsed seconds, all from the closed vocabularies.
+`outcome_archive_cli` builds the port from the native journal sink only when
+systemd supplies `JOURNAL_STREAM`, so a shell run stays silent and a test run
+never writes to the host journal.
 
 `outcome_archive_cli` is the timer-facing surface. `inspect` is a dry run by
 definition; `run --dry-run` plans without taking the lock or writing state; and

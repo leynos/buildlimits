@@ -32,6 +32,7 @@ from buildlimits.outcome_archive_rows import (
 from buildlimits.outcome_record_stream import LineStream, StreamFaultError
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     import datetime as dt
     from pathlib import Path
 
@@ -44,7 +45,12 @@ __all__ = ["active_history"]
 _SCAN_ATTEMPTS = 3
 
 
-def active_history(path: Path, *, cutoff: dt.datetime | None = None) -> ActiveHistory:
+def active_history(
+    path: Path,
+    *,
+    cutoff: dt.datetime | None = None,
+    on_retry: cabc.Callable[[str, int, str], None] | None = None,
+) -> ActiveHistory:
     """Read what the writer's active file holds at this moment.
 
     The store is scanned without the archive lock, because the writer owns
@@ -78,6 +84,9 @@ def active_history(path: Path, *, cutoff: dt.datetime | None = None) -> ActiveHi
         writer's own compaction keeps, so a budget never evicts closed history
         to make room for an append the writer has not committed or for rows
         retention has already expired.
+    on_retry : Callable[[str, int, str], None] | None
+        Receives the operation, the failed attempt's number and the closed
+        category whenever a scan is retried; None reports nothing.
 
     Returns
     -------
@@ -112,10 +121,15 @@ def active_history(path: Path, *, cutoff: dt.datetime | None = None) -> ActiveHi
         msg = "the active history path is not a regular file"
         raise UnsafePathError(msg, errno.EINVAL) from error
     with os.fdopen(descriptor, "rb") as source:
-        return _scan_settled(source, cutoff=cutoff)
+        return _scan_settled(source, cutoff=cutoff, on_retry=on_retry)
 
 
-def _scan_settled(source: typ.BinaryIO, *, cutoff: dt.datetime | None) -> ActiveHistory:
+def _scan_settled(
+    source: typ.BinaryIO,
+    *,
+    cutoff: dt.datetime | None,
+    on_retry: cabc.Callable[[str, int, str], None] | None = None,
+) -> ActiveHistory:
     """Measure one open file, retrying a version the writer changed.
 
     The size is taken immediately before the scan and confirmed immediately
@@ -130,7 +144,7 @@ def _scan_settled(source: typ.BinaryIO, *, cutoff: dt.datetime | None) -> Active
         when no attempt measured a version that held still.
     """
     size = 0
-    for _attempt in range(_SCAN_ATTEMPTS):
+    for attempt in range(_SCAN_ATTEMPTS):
         size = _size_of(source)
         try:
             source.seek(0)
@@ -141,6 +155,8 @@ def _scan_settled(source: typ.BinaryIO, *, cutoff: dt.datetime | None) -> Active
             )
         if _size_of(source, fallback=size) == size:
             return history
+        if on_retry is not None:
+            on_retry("active_scan", attempt + 1, "active_changed")
     return ActiveHistory(bytes=size, has_metadata=False)
 
 

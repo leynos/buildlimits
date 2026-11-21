@@ -14,6 +14,8 @@ import typing as typ
 from pathlib import Path
 
 from buildlimits import config
+from buildlimits.journal_native import JournalSink
+from buildlimits.metrics import Metrics
 from buildlimits.outcome_archive import (
     RunOptions,
     RunReport,
@@ -26,6 +28,7 @@ from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_retention import RetentionPolicy, policy_from_settings
 from buildlimits.outcome_segments import SegmentLayout
 from buildlimits.outcome_store_salt import store_path
+from buildlimits.retry_notice import report_retry
 from buildlimits.utc_text import utc_text
 
 if typ.TYPE_CHECKING:
@@ -78,9 +81,39 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         # authored, which names the missing setting rather than a path.
         print(f"build-limits-outcome-archive: {error}", file=sys.stderr)
         return EXIT_USAGE
-    report = _report(options, layout, settings, policy)
+    sink, metrics = _journal_metrics()
+    selected = RunOptions(
+        preset=settings.cache_outcomes_archive_preset,
+        dry_run=getattr(options, "dry_run", False),
+        on_retry=report_retry,
+        metrics=metrics,
+    )
+    try:
+        report = _report(options.command, layout, policy, selected)
+    finally:
+        if sink is not None:
+            sink.close()
     _write_report(report, as_json=options.json)
     return exit_status(report.status)
+
+
+def _journal_metrics() -> tuple[JournalSink | None, Metrics]:
+    """Return the journal publisher a timer firing uses, or a discarding one.
+
+    A command run outside a service has no journal stream to address, so it
+    keeps the null sink rather than counting every record as undelivered. The
+    sink is returned beside the port so the caller can close it after the one
+    record this firing publishes.
+
+    Returns
+    -------
+    tuple[JournalSink | None, Metrics]
+        The sink to close, or None, and the validated event port.
+    """
+    if "JOURNAL_STREAM" not in os.environ:
+        return None, Metrics(source="adapter")
+    sink = JournalSink(identifier="build-limits-outcome-archive")
+    return sink, Metrics(sink, source="adapter")
 
 
 def _default_config() -> Path:
@@ -161,10 +194,10 @@ def _store(explicit: Path | None, environ: cabc.Mapping[str, str]) -> Path:
 
 
 def _report(
-    options: argparse.Namespace,
+    command: str,
     layout: SegmentLayout,
-    settings: config.SupervisorConfig,
     policy: RetentionPolicy,
+    selected: RunOptions,
 ) -> RunReport:
     """Run the selected subcommand and return its report.
 
@@ -173,16 +206,9 @@ def _report(
     RunReport
         The command's bounded result.
     """
-    if options.command == "inspect":
-        return inspect_store(layout, policy)
-    return run_archive(
-        layout,
-        policy,
-        RunOptions(
-            preset=settings.cache_outcomes_archive_preset,
-            dry_run=options.dry_run,
-        ),
-    )
+    if command == "inspect":
+        return inspect_store(layout, policy, options=selected)
+    return run_archive(layout, policy, selected)
 
 
 def _write_report(report: RunReport, *, as_json: bool) -> None:

@@ -32,6 +32,8 @@ from buildlimits.outcome_history_files import (
 from buildlimits.outcome_history_settle import is_settled
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from buildlimits.outcome_record_format import StoreHeader
     from buildlimits.outcome_segment_inventory import Inventory
     from buildlimits.outcome_segments import SegmentLayout
@@ -76,7 +78,10 @@ class _Snapshot:
 
 
 def pin_history(
-    layout: SegmentLayout, selection: HistorySelection | None = None
+    layout: SegmentLayout,
+    selection: HistorySelection | None = None,
+    *,
+    on_retry: cabc.Callable[[str, int, str], None] | None = None,
 ) -> _Snapshot:
     """Pin one consistent snapshot of the retained history.
 
@@ -86,6 +91,8 @@ def pin_history(
         The store's segment layout.
     selection : HistorySelection | None
         The record domain to read; the newest domain when None.
+    on_retry : Callable[[str, int, str], None] | None
+        Receives each retried pin's operation, attempt number and category.
 
     Returns
     -------
@@ -101,13 +108,15 @@ def pin_history(
         corrupt, or an explicitly named salt was never written.
     """
     chosen = HistorySelection() if selection is None else selection
-    for _attempt in range(HISTORY_ATTEMPTS):
+    for attempt in range(HISTORY_ATTEMPTS):
         inventory = outcome_segment_inventory.read_inventory(layout)
         if _is_empty_store(layout, inventory):
             raise FileNotFoundError(layout.active)
         snapshot = _pinned_or_retry(layout, inventory, chosen)
         if snapshot is not None:
             return snapshot
+        if on_retry is not None:
+            on_retry("history_pin", attempt + 1, "unsettled")
     raise HistoryFaultError("unsettled")
 
 

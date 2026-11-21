@@ -124,7 +124,10 @@ class HistoryStream:
 
 
 def open_history(
-    layout: SegmentLayout, selection: HistorySelection | None = None
+    layout: SegmentLayout,
+    selection: HistorySelection | None = None,
+    *,
+    on_retry: cabc.Callable[[str, int, str], None] | None = None,
 ) -> HistoryStream:
     """Pin one consistent snapshot of the retained history.
 
@@ -134,6 +137,8 @@ def open_history(
         The store's segment layout.
     selection : HistorySelection | None
         The record domain to read; the newest domain when None.
+    on_retry : Callable[[str, int, str], None] | None
+        Receives each retried pin's operation, attempt number and category.
 
     Returns
     -------
@@ -146,11 +151,14 @@ def open_history(
     segment or an unwritten salt as ``HistoryFaultError``, and a store with no
     segment and no active file as ``FileNotFoundError``.
     """
-    return HistoryStream(pin_history(layout, selection))
+    return HistoryStream(pin_history(layout, selection, on_retry=on_retry))
 
 
 def open_history_beside(
-    store: Path, selection: HistorySelection | None = None
+    store: Path,
+    selection: HistorySelection | None = None,
+    *,
+    on_retry: cabc.Callable[[str, int, str], None] | None = None,
 ) -> HistoryStream:
     """Pin the retained history that belongs to one store path.
 
@@ -160,6 +168,8 @@ def open_history_beside(
         The configured ``cache-outcomes.jsonl`` path.
     selection : HistorySelection | None
         The record domain to read; the newest domain when None.
+    on_retry : Callable[[str, int, str], None] | None
+        Receives each retried pin's operation, attempt number and category.
 
     Returns
     -------
@@ -171,7 +181,7 @@ def open_history_beside(
     ``open_history_beside(store, HistorySelection(all_salts=True))`` streams
     every retained domain, whichever salt is now active.
     """
-    return open_history(SegmentLayout.beside(store), selection)
+    return open_history(SegmentLayout.beside(store), selection, on_retry=on_retry)
 
 
 def _require_unchanged(segments: tuple[PinnedSegment, ...]) -> None:

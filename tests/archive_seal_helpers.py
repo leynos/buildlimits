@@ -20,6 +20,7 @@ from buildlimits.outcome_segments import sealed_meta_name, segment_name
 from buildlimits.outcome_store_sealing import sealed_metadata
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     import datetime as dt
     from pathlib import Path
 
@@ -159,7 +160,10 @@ def seal_five_rows_once(
     sealed = False
 
     def seal_then_read(
-        path: Path, *, cutoff: dt.datetime | None = None
+        path: Path,
+        *,
+        cutoff: dt.datetime | None = None,
+        on_retry: cabc.Callable[[str, int, str], None] | None = None,
     ) -> ActiveHistory:
         """Seal five rows once, then read the active file.
 
@@ -172,6 +176,6 @@ def seal_five_rows_once(
         if not sealed:
             sealed = True
             seal_five_rows(store_layout)
-        return real(path, cutoff=cutoff)
+        return real(path, cutoff=cutoff, on_retry=on_retry)
 
     monkeypatch.setattr(outcome_archive_retain, "active_history", seal_then_read)

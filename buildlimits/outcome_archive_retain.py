@@ -2,10 +2,10 @@
 
 The writer never takes the archive lock, so it can seal a source after the run
 has planned and before the follow-up passes look again. Each pass re-reads the
-store, performs the archive, reconcile, heal and orphan work it discovers, and
-then applies the retention the settled inventory plans. The passes are
-bounded; a run that still finds work after them reports an unsettled result so
-the next timer firing retries instead of claiming success.
+store, performs the archive, reconcile, heal and orphan work it discovers, then
+applies the retention the settled inventory plans. The passes are bounded; a
+run that still finds work after them reports an unsettled result so the next
+timer firing retries instead of claiming success.
 """
 
 import dataclasses as dc
@@ -272,7 +272,9 @@ def _replan(run: ArchiveRun) -> Plan:
     layout = run.context.layout
     inventory = outcome_segment_inventory.read_inventory(layout)
     active = active_history(
-        layout.active, cutoff=run.context.policy.cutoff(run.context.now)
+        layout.active,
+        cutoff=run.context.policy.cutoff(run.context.now),
+        on_retry=run.context.on_retry,
     )
     if outcome_segment_inventory.read_inventory(layout) != inventory:
         msg = "a source was sealed while the follow-up plan read the store"
@@ -281,7 +283,11 @@ def _replan(run: ArchiveRun) -> Plan:
 
 
 def settled_snapshot(
-    layout: SegmentLayout, floor: int | None, *, cutoff: dt.datetime | None = None
+    layout: SegmentLayout,
+    floor: int | None,
+    *,
+    cutoff: dt.datetime | None = None,
+    on_retry: cabc.Callable[[str, int, str], None] | None = None,
 ) -> tuple[Inventory, ActiveHistory, bool]:
     """Read one inventory and active version for a plan or a report.
 
@@ -302,6 +308,8 @@ def settled_snapshot(
     cutoff : datetime | None
         The age cutoff to measure the active rows against, or None to count
         the whole file. The returned history carries both figures either way.
+    on_retry : Callable[[str, int, str], None] | None
+        Receives each retried read's operation, attempt number and category.
 
     Returns
     -------
@@ -312,12 +320,14 @@ def settled_snapshot(
     """
     inventory = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
     active = ActiveHistory()
-    for _attempt in range(_SNAPSHOT_ATTEMPTS):
-        active = active_history(layout.active, cutoff=cutoff)
+    for attempt in range(_SNAPSHOT_ATTEMPTS):
+        active = active_history(layout.active, cutoff=cutoff, on_retry=on_retry)
         after = outcome_segment_inventory.read_inventory(layout, retention_floor=floor)
         if after == inventory:
             return inventory, active, True
         inventory = after
+        if on_retry is not None:
+            on_retry("snapshot", attempt + 1, "inventory_changed")
     return inventory, active, False
 
 
