@@ -21,6 +21,7 @@ from segment_test_helpers import document
 from segment_test_helpers import store_layout as layout
 
 from buildlimits.outcome_archive import RunOptions, RunReport, run_archive
+from buildlimits.outcome_archive_context import ignore_retry
 from buildlimits.outcome_retention import RetentionPolicy
 
 if typ.TYPE_CHECKING:
@@ -139,7 +140,7 @@ def run(
     retention: RetentionPolicy,
     *,
     dry_run: bool = False,
-    on_retry: cabc.Callable[[str, int, str], None] | None = None,
+    on_retry: cabc.Callable[[str, int, str], None] = ignore_retry,
 ) -> RunReport:
     """Run the archiver once at a fixed wall time.
 

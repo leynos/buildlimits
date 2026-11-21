@@ -270,7 +270,7 @@ def test_a_history_read_reports_an_unsettled_stream_retry(
         SegmentLayout.beside(tmp_path / "cache-outcomes.jsonl"), on_retry=log
     )
 
-    assert decoded.records == (), "the second pass is the one returned"
+    assert not decoded.records, "the second pass is the one returned"
     assert log.notices == [("history", 1, "unsettled")], "one notice per retry"
 
 
