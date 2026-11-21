@@ -2328,18 +2328,22 @@ after each revert.
   the plan property asserts the closed rows the record cap keeps, and the 0.2.0
   guide tells the operator to restart the supervisor. The pre-merge Testing gap
   added the configuration-level retention-rule cases and a pinned-byte
-  quarantine-token test; the restart move-aside cases already exists in
+  quarantine-token test; the restart move-aside cases already exist in
   `test_outcome_store.py`. The Unit and Domain Architecture checks drove four
-  refactors: the writer's clock methods separate the read-only `wall_now` from
-  `record_clock_observation`, and `measure_active` leaves publishing to its
-  caller; `_execute` is split into preparation, performance, reporting and a
-  caller-owned state write; the report model lost its JSON and exit adapters to
-  `outcome_archive_codec` and `outcome_archive_exit`; and `header_floor_bytes`
-  moved to `outcome_record_encode` so the policy receives the floor as a value.
-  The Observability check added one bounded `archive_run` event
-  (`outcome_archive_events`), retry notices from `settled_snapshot`,
-  `active_history`, `pin_history` and the history read, and start and elapsed
-  lines in the plain report. Every new behaviour was checked against a mutation
-  that removes or inverts it. The Out of Scope row is dispositioned as
-  gate-enabling test fixes and module-size work already recorded in this plan's
-  revision note.
+  refactors: the writer's clock method states its mutation
+  (`record_clock_observation`), while a seal reads the clock port directly and
+  `measure_active` leaves publishing to its caller; `_execute` is split into
+  preparation, performance, reporting and a caller-owned state write; the
+  report model lost its JSON and exit adapters to `outcome_archive_codec` and
+  `outcome_archive_exit`; and `header_floor_bytes` moved to
+  `outcome_record_encode` so the policy receives the floor as a value. The DF12
+  sweep rejected a `wall_now` wrapper as a trivial attribute forwarder, which
+  is why the read-only form is the clock port itself. The dataset input
+  resolution moved to `predict.dataset_inputs` to keep both the command and
+  `supervisor_outcomes` under the 400-line ceiling. The Observability check
+  added one bounded `archive_run` event (`outcome_archive_events`), retry
+  notices from `settled_snapshot`, `active_history`, `pin_history` and the
+  history read, and start and elapsed lines in the plain report. Every new
+  behaviour was checked against a mutation that removes or inverts it. The Out
+  of Scope row is dispositioned as gate-enabling test fixes and module-size
+  work already recorded in this plan's revision note.
