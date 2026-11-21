@@ -2416,3 +2416,14 @@ after each revert.
   Testing row's direct tests were added for the report codec (exact key set and
   every field), the CLI's `gaps_truncated` and failure lists, `CoverageBuilder`,
   `HistoryStream`, the settle comparison and the inspection path.
+- Revision 39 records the revision-38 assessment's retained-byte finding. A
+  publication whose source removal fails leaves both copies until
+  reconciliation; the report now sums `Inventory.effective`, the same
+  one-entry-per-sequence view the record count and span use, so the sequence's
+  bytes count once. The regression fails only the removal, asserts the source
+  and archive both survive, and asserts the retained bytes equal the active
+  file plus one copy; reverting to the sealed-plus-archived sum fails it. The
+  plain report's truncated-gap diagnostic gains a direct test. The assessment's
+  remaining items are dispositions: the archive domain modules beyond trim and
+  retention await the value-type split, and the Rohga measurement stays
+  unverified.
