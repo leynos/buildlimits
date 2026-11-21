@@ -282,34 +282,3 @@ def _perform(run: outcome_archive_run.ArchiveRun) -> outcome_archive_run.RunOutc
     outcome_archive_run.perform(run, outcome)
     outcome.retention_unsettled = not outcome_archive_retain.retain(run, outcome)
     return outcome
-
-
-def _retention_owes_work(
-    inventory: Inventory, active: ActiveHistory, run: outcome_archive_run.ArchiveRun
-) -> bool:
-    """Whether the final snapshot still calls for retention work.
-
-    The writer never takes the archive lock, so it can append or seal between
-    the last retention pass and this read. A report that claimed success over
-    that store would tell the timer the budget is met while the next firing
-    still has to trim or delete. Only retention decides this: a source sealed
-    just before the read is archival work the next firing picks up, and the
-    report already counts its bytes.
-
-    Parameters
-    ----------
-    inventory : Inventory
-        The store as the final snapshot read it.
-    active : ActiveHistory
-        The active file from the same settled reading, measured against the
-        run's cutoff so the plan counts the rows retention keeps.
-    run : ArchiveRun
-        The run whose policy and start time the plan is built with.
-
-    Returns
-    -------
-    bool
-        True when the plan still evicts history or defers a budget.
-    """
-    pending = plan_run(inventory, run.context.policy, now=run.started_at, active=active)
-    return bool(pending.trims or pending.deletes or pending.retention_deferred)
