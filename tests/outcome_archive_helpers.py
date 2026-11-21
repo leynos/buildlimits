@@ -24,6 +24,7 @@ from buildlimits.outcome_archive import RunOptions, RunReport, run_archive
 from buildlimits.outcome_retention import RetentionPolicy
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
     from buildlimits.outcome_record_format import DecodedStore, StoreRecord
@@ -138,6 +139,7 @@ def run(
     retention: RetentionPolicy,
     *,
     dry_run: bool = False,
+    on_retry: cabc.Callable[[str, int, str], None] | None = None,
 ) -> RunReport:
     """Run the archiver once at a fixed wall time.
 
@@ -146,7 +148,11 @@ def run(
     RunReport
         The run report.
     """
-    return run_archive(layout(root), retention, RunOptions(now=NOW, dry_run=dry_run))
+    return run_archive(
+        layout(root),
+        retention,
+        RunOptions(now=NOW, dry_run=dry_run, on_retry=on_retry),
+    )
 
 
 def archives(root: Path) -> list[Path]:

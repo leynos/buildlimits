@@ -1,28 +1,33 @@
 """The archive run's bounded metrics event and the retries it reports."""
 
+import collections.abc as cabc
 import datetime as dt
 import typing as typ
 from pathlib import Path
 
 import pytest
+from archive_seal_helpers import seal_one_row
 from outcome_archive_helpers import NOW, layout, policy, records, write
 
 from buildlimits import (
     outcome_archive_active,
     outcome_archive_retain,
+    outcome_history,
     outcome_history_pin,
 )
 from buildlimits.metrics import Metrics
-from buildlimits.outcome_archive import RunOptions, run_archive
+from buildlimits.outcome_archive import RunOptions, inspect_store, run_archive
 from buildlimits.outcome_archive_active import active_history
 from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_archive_lock import ArchiveLock
 from buildlimits.outcome_archive_retain import settled_snapshot
+from buildlimits.outcome_history import read_history
 from buildlimits.outcome_history_pin import (
     HISTORY_ATTEMPTS,
     HistoryFaultError,
     pin_history,
 )
+from buildlimits.outcome_record_format import StoreHeader
 from buildlimits.outcome_segments import SegmentLayout
 from buildlimits.retry_notice import report_retry
 
@@ -171,6 +176,102 @@ def test_a_history_pin_retry_names_every_attempt(
         ("history_pin", attempt, "unsettled")
         for attempt in range(1, HISTORY_ATTEMPTS + 1)
     ], "every attempt is named"
+
+
+def _seal_at_first_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[SegmentLayout, _RetryLog]:
+    """Seal one source when the first active read runs, collecting notices."""
+    write(tmp_path / "cache-outcomes.jsonl", records(NOW, 1), policy())
+    store_layout = layout(tmp_path)
+    log = _RetryLog()
+    real = outcome_archive_retain.active_history
+    sealed = False
+
+    def seal_once(
+        path: Path,
+        *,
+        cutoff: dt.datetime | None = None,
+        on_retry: cabc.Callable[[str, int, str], None] | None = None,
+    ) -> ActiveHistory:
+        """Seal one source before the first read returns."""
+        nonlocal sealed
+        if not sealed:
+            sealed = True
+            seal_one_row(store_layout, 2)
+        return real(path, cutoff=cutoff, on_retry=on_retry)
+
+    monkeypatch.setattr(outcome_archive_retain, "active_history", seal_once)
+    return store_layout, log
+
+
+def test_a_run_propagates_the_snapshot_retry_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plan that retries its settled snapshot reports the attempt."""
+    store_layout, log = _seal_at_first_read(tmp_path, monkeypatch)
+
+    report = run_archive(
+        store_layout,
+        policy(),
+        RunOptions(now=NOW, clock=lambda: _FINISHED, on_retry=log),
+    )
+
+    assert report.status == "ok", "the run settles after the retry"
+    assert ("snapshot", 1, "inventory_changed") in log.notices, (
+        "the run reports the retry it made"
+    )
+
+
+def test_an_inspection_propagates_the_snapshot_retry_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dry inspection reports the snapshot retry through its own entry."""
+    store_layout, log = _seal_at_first_read(tmp_path, monkeypatch)
+
+    report = inspect_store(
+        store_layout,
+        policy(),
+        options=RunOptions(now=NOW, clock=lambda: _FINISHED, on_retry=log),
+    )
+
+    assert report.status == "ok", "the inspection settles after the retry"
+    assert ("snapshot", 1, "inventory_changed") in log.notices, (
+        "the inspection reports the retry it made"
+    )
+
+
+class _FlakyStream:
+    """Refuse one pass as unsettled, then yield an empty history."""
+
+    def __init__(self) -> None:
+        """Start at the first pass with one header."""
+        self.passes = 0
+        self.salt_ids: tuple[str, ...] = ()
+        self.header = StoreHeader("salt", NOW)
+
+    def __iter__(self) -> cabc.Iterator[object]:
+        """Raise on the first pass and finish on the next."""
+        self.passes += 1
+        if self.passes == 1:
+            raise HistoryFaultError("unsettled")
+        return iter(())
+
+
+def test_a_history_read_reports_an_unsettled_stream_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pinned stream that moves between passes reports its retry."""
+    log = _RetryLog()
+    stream = _FlakyStream()
+    monkeypatch.setattr(outcome_history, "open_history", lambda *_a, **_k: stream)
+
+    decoded = read_history(
+        SegmentLayout.beside(tmp_path / "cache-outcomes.jsonl"), on_retry=log
+    )
+
+    assert decoded.records == (), "the second pass is the one returned"
+    assert log.notices == [("history", 1, "unsettled")], "one notice per retry"
 
 
 def test_the_retry_notice_is_one_identifier_free_line(

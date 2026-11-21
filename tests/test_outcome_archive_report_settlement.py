@@ -66,13 +66,14 @@ def _at_report_snapshot(
         floor: int | None,
         *,
         cutoff: dt.datetime | None = None,
+        on_retry: cabc.Callable[[str, int, str], None] | None = None,
     ) -> tuple[Inventory, ActiveHistory, bool]:
         """Arm the injection for the report's snapshot only."""
         nonlocal snapshots, armed
         snapshots += 1
         armed = snapshots == 2
         try:
-            return real_snapshot(store_layout, floor, cutoff=cutoff)
+            return real_snapshot(store_layout, floor, cutoff=cutoff, on_retry=on_retry)
         finally:
             armed = False
 
@@ -113,10 +114,22 @@ def test_the_final_report_retries_a_seal_at_its_active_read(
         seal_five_rows(store_layout)
 
     _at_report_snapshot(monkeypatch, seal_once)
+    notices: list[tuple[str, int, str]] = []
 
-    report = run(tmp_path, policy(segment_bytes=1_000_000, max_age_days=30))
+    def record(operation: str, attempt: int, category: str) -> None:
+        """Keep one retry notice from the final report's reading."""
+        notices.append((operation, attempt, category))
+
+    report = run(
+        tmp_path,
+        policy(segment_bytes=1_000_000, max_age_days=30),
+        on_retry=record,
+    )
 
     assert report.status == "ok", "the retried reading describes one version"
+    assert ("snapshot", 1, "inventory_changed") in notices, (
+        "the final report reports the retry it made"
+    )
     assert report.retained_records == 8, (
         "the archive, the sealed source and the new active rows all count"
     )

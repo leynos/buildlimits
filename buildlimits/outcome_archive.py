@@ -34,6 +34,7 @@ from buildlimits.outcome_archive_report import (
 )
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     import datetime as dt
 
     from buildlimits.outcome_archive_history import ActiveHistory
@@ -160,7 +161,9 @@ def _inspect(
         The settled dry-run report, or a retryable result when the writer kept
         moving across every reading.
     """
-    plan, active, inventory, settled = _plan(context.layout, policy, started)
+    plan, active, inventory, settled = _plan(
+        context.layout, policy, started, on_retry=context.on_retry
+    )
     if not settled:
         return unsettled_report(started, dry_run=True, clock=context.clock)
     return dry_report(_archive_run(context, plan), active, inventory)
@@ -182,7 +185,9 @@ def _execute_locked(
     RunReport
         The completed run's report.
     """
-    plan, _active, _inventory, settled = _plan(context.layout, policy, started)
+    plan, _active, _inventory, settled = _plan(
+        context.layout, policy, started, on_retry=context.on_retry
+    )
     if not settled:
         return unsettled_report(started, clock=context.clock)
     floor, report = _execute(_archive_run(context, plan))
@@ -191,7 +196,11 @@ def _execute_locked(
 
 
 def _plan(
-    layout: SegmentLayout, policy: RetentionPolicy, now: dt.datetime
+    layout: SegmentLayout,
+    policy: RetentionPolicy,
+    now: dt.datetime,
+    *,
+    on_retry: cabc.Callable[[str, int, str], None] | None = None,
 ) -> tuple[Plan, ActiveHistory, Inventory, bool]:
     """Read one consistent store version and plan one run from it.
 
@@ -213,7 +222,7 @@ def _plan(
     """
     floor = outcome_segment_state.read_retention_floor(layout)
     inventory, active, settled = outcome_archive_retain.settled_snapshot(
-        layout, floor.sequence, cutoff=policy.cutoff(now)
+        layout, floor.sequence, cutoff=policy.cutoff(now), on_retry=on_retry
     )
     return (
         plan_run(inventory, policy, now=now, active=active),

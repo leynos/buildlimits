@@ -42,11 +42,25 @@ def test_files_override_defaults(tmp_path: Path) -> None:
 
 
 def _rejected(tmp_path: Path, text: str, fragment: str) -> None:
-    """Write one document and assert loading it is refused as described."""
+    """Write one document and assert loading it is refused as described.
+
+    ``fragment`` is a regular expression, so a case that names a whole rule
+    message must pass ``^...``: an unanchored match would still pass against a
+    longer message that merely contains it.
+    """
     path = tmp_path / "s.toml"
     path.write_text(text)
     with pytest.raises(config.ConfigError, match=fragment):
         config.load(path)
+
+
+def _rejected_exactly(tmp_path: Path, text: str, message: str) -> None:
+    """Write one document and assert the refusal is exactly ``message``."""
+    path = tmp_path / "s.toml"
+    path.write_text(text)
+    with pytest.raises(config.ConfigError) as refusal:
+        config.load(path)
+    assert str(refusal.value) == message, "the refusal is the rule's own message"
 
 
 @pytest.mark.parametrize(
@@ -58,16 +72,34 @@ def _rejected(tmp_path: Path, text: str, fragment: str) -> None:
         ("colour = 1\n", "unknown setting"),
         ('compilers_slice = "x.service"\n', "slice"),
         ("slots = [\n", "cannot read"),
+    ],
+    ids=[
+        "slots",
+        "cache-mode",
+        "slot-type",
+        "unknown-key",
+        "slice",
+        "unparsable",
+    ],
+)
+def test_invalid_files_are_rejected(tmp_path: Path, text: str, fragment: str) -> None:
+    """Invalid configuration is reported, never half-applied."""
+    _rejected(tmp_path, text, fragment)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
         (
             'cache_outcomes = "record"\ncache_outcomes_max_bytes = 1\n',
-            "replacement store header",
+            "cache_outcomes_max_bytes cannot hold the replacement store header",
         ),
         (
             (
                 'cache_outcomes = "record"\n'
                 f"cache_outcomes_max_bytes = {header_floor_bytes() - 1}\n"
             ),
-            "replacement store header",
+            "cache_outcomes_max_bytes cannot hold the replacement store header",
         ),
         (
             'cache_outcomes = "record"\ncache_outcomes_archive_preset = -1\n',
@@ -77,31 +109,42 @@ def _rejected(tmp_path: Path, text: str, fragment: str) -> None:
             'cache_outcomes = "record"\ncache_outcomes_archive_preset = 10\n',
             "cache_outcomes_archive_preset must be between 0 and 9",
         ),
+        (
+            (
+                'cache_outcomes = "record"\n'
+                f"cache_outcomes_archive_headroom_bytes = {SEGMENT_BYTES - 1}\n"
+            ),
+            "cache_outcomes_archive_headroom_bytes must hold at least one segment",
+        ),
+        (
+            (
+                'cache_outcomes = "record"\n'
+                f"cache_outcomes_max_age_days = {MAX_AGE_DAYS + 1}\n"
+            ),
+            f"cache_outcomes_max_age_days must be between 0 and {MAX_AGE_DAYS}",
+        ),
     ],
     ids=[
-        "slots",
-        "cache-mode",
-        "slot-type",
-        "unknown-key",
-        "slice",
-        "unparsable",
         "budget-one",
         "budget-below-floor",
         "preset-low",
         "preset-high",
+        "headroom-below-segment",
+        "age-above-span",
     ],
 )
-def test_invalid_files_are_rejected(tmp_path: Path, text: str, fragment: str) -> None:
-    """Invalid configuration is reported, never half-applied.
+def test_a_retention_rule_refuses_the_document_with_its_own_message(
+    tmp_path: Path, text: str, message: str
+) -> None:
+    """Each retention rule states exactly what the operator must change.
 
-    A retention bound is part of the document for the same reason: the
-    supervisor catches a construction failure and disables recording, so a
-    byte budget below the replacement header would silently leave the operator
-    with no history at all, and an XZ preset outside 0 to 9 could never encode
-    an archive. The budget floor is checked at both ends so a change to one
-    layer cannot silently widen the other.
+    A retention bound is part of the document because the supervisor catches a
+    construction failure and disables recording: a byte budget below the
+    replacement header, or headroom below one segment, would silently leave
+    the operator with no history at all. The messages are asserted whole, so a
+    rule that grew a suffix could not hide behind a partial match.
     """
-    _rejected(tmp_path, text, fragment)
+    _rejected_exactly(tmp_path, text, message)
 
 
 @pytest.mark.parametrize(

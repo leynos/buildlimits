@@ -249,7 +249,10 @@ def settled_report(
     """
     layout = run.context.layout
     final, final_active, snapshot_settled = outcome_archive_retain.settled_snapshot(
-        layout, floor, cutoff=run.context.policy.cutoff(run.started_at)
+        layout,
+        floor,
+        cutoff=run.context.policy.cutoff(run.started_at),
+        on_retry=run.context.on_retry,
     )
     if not snapshot_settled:
         # The writer kept sealing across every reading, so the report cannot

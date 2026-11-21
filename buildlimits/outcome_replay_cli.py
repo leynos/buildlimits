@@ -108,7 +108,7 @@ def _history_report(
         If the store never settles, or a selected segment is corrupt.
     """
     last: outcome_history.HistoryFaultError | None = None
-    for _attempt in range(outcome_history.HISTORY_ATTEMPTS):
+    for attempt in range(outcome_history.HISTORY_ATTEMPTS):
         stream = outcome_history.open_history_beside(
             path, selection, on_retry=report_retry
         )
@@ -118,6 +118,7 @@ def _history_report(
             if error.reason != "unsettled":
                 raise
             last = error
+            report_retry("history", attempt + 1, "unsettled")
     if last is not None:
         raise last
     raise outcome_history.HistoryFaultError("unsettled")

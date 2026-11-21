@@ -91,7 +91,7 @@ def read_history(
     """
     chosen = HistorySelection() if selection is None else selection
     last: HistoryFaultError | None = None
-    for _attempt in range(HISTORY_ATTEMPTS):
+    for attempt in range(HISTORY_ATTEMPTS):
         stream = open_history(layout, chosen, on_retry=on_retry)
         try:
             records = tuple(stream)
@@ -99,6 +99,8 @@ def read_history(
             if error.reason != "unsettled":
                 raise
             last = error
+            if on_retry is not None:
+                on_retry("history", attempt + 1, "unsettled")
             continue
         salts = stream.salt_ids if chosen.all_salts else ()
         return DecodedStore(stream.header, records, salts)

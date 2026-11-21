@@ -19,6 +19,8 @@ from buildlimits.outcome_archive import RunOptions, inspect_store, run_archive
 from buildlimits.outcome_archive_lock import ArchiveLock
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     import pytest
 
     from buildlimits.outcome_archive_history import ActiveHistory
@@ -73,9 +75,12 @@ def test_an_unsettled_run_stamps_the_injected_clock(
         floor: int | None,
         *,
         cutoff: dt.datetime | None = None,
+        on_retry: cabc.Callable[[str, int, str], None] | None = None,
     ) -> tuple[Inventory, ActiveHistory, bool]:
         """Return the real reading marked as never having settled."""
-        inventory, active, _settled = settle(store_layout, floor, cutoff=cutoff)
+        inventory, active, _settled = settle(
+            store_layout, floor, cutoff=cutoff, on_retry=on_retry
+        )
         return inventory, active, False
 
     monkeypatch.setattr(outcome_archive_retain, "settled_snapshot", report_unsettled)
