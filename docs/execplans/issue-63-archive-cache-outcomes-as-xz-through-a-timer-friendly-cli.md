@@ -670,7 +670,7 @@ verified archive is published, and leaves compile admission untouched.
   without its newline and asserts the stream omits it; it fails against the
   previous reader. All seven commit gates pass on the final tree.
 
-- [ ] CodeRabbit review 6000304047 remediation (2026-11-21), 26 inline
+- [x] CodeRabbit review 6000304047 remediation (2026-11-21), 26 inline
   findings on head `db26169`. Group 1, sealing and directory durability
   (findings 5, 16, 17): `_descend` now syncs the retained parent descriptor
   after `os.mkdir`, before the walk descends into a directory it created, so a
@@ -683,7 +683,7 @@ verified archive is published, and leaves compile admission untouched.
   rename-despite-failed-install paths; `tests/test_outcome_store_sealing.py`
   and the archive filesystem tests pass. The remaining 23 findings are grouped
   for later commits.
-- [ ] CodeRabbit review 6000304047 remediation, group 2 (2026-11-21):
+- [x] CodeRabbit review 6000304047 remediation, group 2 (2026-11-21):
   unsafe and out-of-range store paths (findings 6, 15). `regular_files` now
   validates the whole directory chain with `require_private_chain_when_present`
   before listing, so an inventory never follows a symlinked sealed or archive
@@ -697,7 +697,7 @@ verified archive is published, and leaves compile admission untouched.
   Regressions cover a symlinked sealed directory, a symlinked archive
   directory, a symlinked parent, an external file surviving a run, an
   out-of-range counter and the last nameable sequence.
-- [ ] CodeRabbit review 6000304047 remediation, group 3 (2026-11-21): walk
+- [x] CodeRabbit review 6000304047 remediation, group 3 (2026-11-21): walk
   settlement and the planner oracle (findings 4, 22). `_BudgetWalk.evict` now
   reports whether the pass decided everything the bound needs: an excess no
   whole deletion covers, that only the active rows create, and that no planned
@@ -714,7 +714,7 @@ verified archive is published, and leaves compile admission untouched.
   archive with no trustworthy sidecar makes `budget_totals_are_unsettled` true,
   so the walk never trims a sealed source or an unmeasured archive. The
   planner, active-budget and settlement tests pass.
-- [ ] CodeRabbit review 6000304047 remediation, group 4 (2026-11-21): the byte
+- [x] CodeRabbit review 6000304047 remediation, group 4 (2026-11-21): the byte
   budget floor at load (findings 1, 13). `header_floor_bytes` is now public and
   measured from a header whose timestamp carries one microsecond, because the
   encoder preserves fractional seconds and a whole-second header is shorter.
@@ -724,7 +724,7 @@ verified archive is published, and leaves compile admission untouched.
   into silent non-recording. Zero still means unlimited. Regressions pin the
   floor as accepted, one byte less as refused, in both the policy validator and
   the document loader.
-- [ ] CodeRabbit review 6000304047 remediation, group 5 (2026-11-21): inverted
+- [x] CodeRabbit review 6000304047 remediation, group 5 (2026-11-21): inverted
   spans and duplicate indexing (findings 7, 14). A sidecar whose
   `first_observed_at` follows its `last_observed_at` is `corrupt`, and writer
   metadata for a sealed source with the same contradiction is withheld, so the
@@ -732,7 +732,7 @@ verified archive is published, and leaves compile admission untouched.
   it ended before it started. `plan_run` pairs sealed sources with archives
   through one sequence-keyed lookup rather than comparing every pair, which
   keeps a large store's plan linear.
-- [ ] CodeRabbit review 6000304047 remediation, group 6 (2026-11-21): an
+- [x] CodeRabbit review 6000304047 remediation, group 6 (2026-11-21): an
   eviction a quarantine suppressed (finding 8). `perform` returns before its
   trim and delete steps when a quarantine removed history the plan counted, and
   `reconcile_duplicate` can return that quarantine action without recording a
@@ -743,7 +743,7 @@ verified archive is published, and leaves compile admission untouched.
   recording its trims or deletions. The regression archives a sealed source,
   leaves a corrupt copy behind so the follow-up reconcile quarantines it, and
   asserts an expired archive beside it is still deleted by a later pass.
-- [ ] CodeRabbit review 6000304047 remediation, group 7 (2026-11-21): history
+- [x] CodeRabbit review 6000304047 remediation, group 7 (2026-11-21): history
   pin settlement (findings 10, 11). An empty-looking store is now raised as
   `FileNotFoundError` only when a second scan still finds no closed segment and
   the active path is still absent, so a seal between the scan and that check
@@ -754,7 +754,7 @@ verified archive is published, and leaves compile admission untouched.
   `_pinned_or_retry`, which keeps the loop inside the complexity bound.
   Regressions seal the active rows after the empty scan and seal domain B
   during the pin; both fail against the previous module.
-- [ ] CodeRabbit review 6000304047 remediation, group 8 (2026-11-21): a
+- [x] CodeRabbit review 6000304047 remediation, group 8 (2026-11-21): a
   non-repeatable replay input (finding 12). `reiterable` passed any object that
   was not its own iterator straight to H2's two passes, so a wrapper whose
   `__iter__` hands back one shared internal iterator was drained by the survey
@@ -764,7 +764,7 @@ verified archive is published, and leaves compile admission untouched.
   The regression wraps a full history in such a wrapper and asserts the report
   still counts every evaluable row; it fails against the previous body with
   `evaluable_records == 0`.
-- [ ] CodeRabbit review 6000304047 remediation, group 9 (2026-11-21): the
+- [x] CodeRabbit review 6000304047 remediation, group 9 (2026-11-21): the
   benchmark's trace and its generated input (findings 2, 3). `measure` no
   longer calls `tracemalloc.reset_peak` when the caller was already tracing:
   that discarded the caller's earlier maximum, and reading the shared peak
@@ -775,7 +775,7 @@ verified archive is published, and leaves compile admission untouched.
   rejects as `corrupt`; `generate_segment` is public, and a regression reads
   the generated file with `read_store` and asserts every row decodes. Both
   regressions fail against the previous module.
-- [ ] CodeRabbit review 6000304047 remediation, group 10 (2026-11-21): the
+- [x] CodeRabbit review 6000304047 remediation, group 10 (2026-11-21): the
   dataset command's future archive path and the migration example (findings 18,
   19). `_read_inputs` now protects `archive_dir / archive_name(sequence)` for
   every effective sealed segment as well as every existing archive, so an
@@ -787,7 +787,7 @@ verified archive is published, and leaves compile admission untouched.
   guide's archiving step now sets `cache_outcomes = "record"`, which the
   configuration validator requires before any `cache_outcomes_*` key is
   accepted.
-- [ ] CodeRabbit review 6000304047 remediation, group 11 (2026-11-21): the
+- [x] CodeRabbit review 6000304047 remediation, group 11 (2026-11-21): the
   model's age cutoff and a single-chunk tail scan (findings 25, 26). The state
   machine's model compared the cutoff with `expected[0]`, but the writer asks
   `oldest_observed` over every retained row, so a row appended after a backward
@@ -802,7 +802,7 @@ verified archive is published, and leaves compile admission untouched.
   tail regression's fragment was 80 bytes, shorter than the 64 KiB scan chunk,
   so a scan that read one chunk and stopped still passed; it now writes 280 KB
   of unterminated fragment, and the single-chunk scan reports a clean store.
-- [ ] CodeRabbit review 6000304047 remediation, group 12 (2026-11-21): fixture
+- [x] CodeRabbit review 6000304047 remediation, group 12 (2026-11-21): fixture
   appends and the measured process group (findings 20, 21). `write` no longer
   retries a row because `results()` showed a discard: aggregate results cannot
   say which row a discard belongs to, and an earlier row's worker failure was
@@ -871,6 +871,21 @@ verified archive is published, and leaves compile admission untouched.
   wrong JSON value cannot hide behind the placeholder. The developers' guide
   inventory names `outcome_store_files` and `outcome_archive_replace`, which
   the save-time check had reported missing since revision 25.
+- [x] Revision-29 assessment disposition (2026-11-21): the whole-plan
+  assessment found no new correctness defect and left three dispositions. The
+  Progress section is reconciled: remediation groups 1 to 12 were implemented
+  in the tree but still unticked, and every group is now marked done, leaving
+  no unchecked item. The lifecycle-coverage warning is answered with the
+  generated property module
+  `tests/test_outcome_archive_lifecycle_properties.py`, which drives the real
+  archiver over generated multi-segment histories, withholds a middle sealed
+  source before the run, and asserts replay is exactly the surviving rows in
+  order, the inventory reports the withheld sequence as its only gap, and a
+  second firing changes neither. Two mutations were observed and reverted:
+  dropping the last replayed row fails the replay assertion and suppressing gap
+  enumeration fails the gap assertion. The Rohga criterion remains a maintainer
+  decision; the host is unreachable and the measured substitute is recorded as
+  evidence, not as the issue's measurement.
 
 ## Surprises & discoveries
 
@@ -1177,6 +1192,14 @@ verified archive is published, and leaves compile admission untouched.
   nothing" had no test of its own. The two new regressions assert the mode
   after the command, and both fail against the old guard with the exact
   `0700`-against-`0755` mismatch the assessment predicted.
+- A gap is only visible between two survivors. The lifecycle property first
+  withheld the last sealed source and expected it to be reported, but gap
+  enumeration stops at the highest surviving sequence, so a lost tail reads
+  exactly like a store that ended there. Withholding the first sequence failed
+  for the opposite reason: a fresh store derives its retention floor from the
+  lowest sequence it still holds, so a missing head reads as a late start. Only
+  a middle sequence is unambiguously loss, which is why the generated history
+  withholds one of those and leaves shorter histories whole.
 
 ## Decision log
 
@@ -1577,7 +1600,12 @@ verified archive is published, and leaves compile admission untouched.
   against the issue's figure, and says how to point the benchmark at another
   segment with `SEGMENT=`. A generated segment is still measured as well,
   because only it can be built at 12 MiB and 100 MiB to show that the peak does
-  not follow the history. Neither row claims to be Rohga's own data.
+  not follow the history. Neither row claims to be Rohga's own data. The
+  criterion itself is left to the maintainer: no decision on whether the
+  recorded-host measurement satisfies it has been recorded, and this change
+  does not claim one. If the maintainer requires Rohga's own store, the
+  benchmark's `SEGMENT=` input makes the measurement a single command once that
+  host is reachable.
 - A snapshot pins the report's field names, not the fixture's byte counts.
   Both the CLI report and the plan summary carried numbers that follow the
   fixture's encoding, so a record that gained a field would fail a snapshot
@@ -1784,6 +1812,16 @@ Methods and evidence:
   (`test_a_read_only_walk_leaves_every_mode_alone`) asserts the same at the
   walk, including that the returned descriptor names the mode it found.
   Restoring the unconditional `fchmod` fails both with `448 == 493`.
+- Generated lifecycle transitions in
+  `tests/test_outcome_archive_lifecycle_properties.py`: fifteen generated
+  multi-segment histories, each built from real encoded documents, are archived
+  by the real run and read back. One branch withholds a middle sealed source;
+  the property asserts replay equals exactly the surviving rows in sequence
+  order, the inventory's only gap is that sequence with no truncation, no
+  source survives the archive, and a second firing leaves replay and gaps
+  unchanged. The negative controls drop the last replayed row (the replay
+  assertion fails) and suppress gap enumeration (the gap assertion fails); both
+  mutations were reverted.
 - A benchmark target reporting compression ratio, elapsed time, child peak RSS
   and peak temporary disk use on generated representative data.
 
@@ -1821,7 +1859,12 @@ the size with a fresh `stat` makes the replacement test report 4349 bytes
 beside the two rows of the 1319-byte opened version, and replacing the retrying
 snapshot with a single read makes both report tests fail (the sealed source is
 undercounted, and the persistent seal reports `ok` instead of `unsettled`).
-Each mutation was reverted and the focused suite passed again.
+Each mutation was reverted and the focused suite passed again. The generated
+lifecycle property has both branches reached by explicit examples as well as
+generated ones, and its two assertions were each checked against a mutation:
+dropping the last replayed record fails the replay assertion, and returning an
+empty gap tuple fails the gap assertion. Both mutations were reverted and the
+property passed again.
 
 ## Revision note
 
@@ -2113,3 +2156,12 @@ Each mutation was reverted and the focused suite passed again.
   which the save-time check had reported missing since revision 25. The
   revision also marks the group-13 and group-14 Progress entries done: both
   were already implemented in the tree.
+- Revision 30 records the revision-29 assessment's disposition. No correctness
+  defect was found; the Progress section is reconciled so groups 1 to 12 are
+  marked done rather than left unticked beside prose describing their
+  implementation. The lifecycle-coverage warning is answered with a generated
+  property over real archive runs, replay and gap enumeration, with two
+  mutations proving it is not vacuous. Discovering the gap boundary changed the
+  property's design: only a withheld middle sequence is reportable, since a
+  missing head reads as a late start under the retention floor's own rule and a
+  missing tail as a store that ended.
