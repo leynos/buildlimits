@@ -345,36 +345,21 @@ class StoreFiles:
         )
         return True
 
-    def wall_now(self) -> dt.datetime:
-        """Read the current UTC wall time without changing the writer's state.
-
-        Returns
-        -------
-        datetime
-            The current aware UTC wall-clock value.
-
-        Examples
-        --------
-        A seal stamps its metadata with the time this returns, because the
-        timestamp must not decide whether the next compaction skips ageing.
-        """
-        return self.clocks.wall()
-
     def record_clock_observation(self) -> dt.datetime:
         """Read UTC time and retain a skew flag when wall time jumps by a day.
 
         The name states the effect: the reading becomes the baseline the next
         observation is compared with, and a jump of more than a day raises
         ``clock_skew_pending``, which makes the next compaction keep its rows
-        rather than age them. A caller that only needs a timestamp calls
-        ``wall_now`` instead.
+        rather than age them. A caller that only needs a timestamp reads
+        ``clocks.wall()`` directly, which changes nothing.
 
         Returns
         -------
         datetime
             The current aware UTC wall-clock value.
         """
-        now = self.wall_now()
+        now = self.clocks.wall()
         monotonic = self.clocks.monotonic()
         if self._last_wall is not None and self._last_monotonic is not None:
             wall_elapsed = (now - self._last_wall).total_seconds()

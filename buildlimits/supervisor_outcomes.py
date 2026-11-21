@@ -103,16 +103,11 @@ class OutcomeShell:
             self._wall_clock = dependencies.wall_clock
         reaper = ChildReaper() if dependencies.reaper is None else dependencies.reaper
         path = outcome_store_salt.store_path(env)
-        writer = (
-            StoreWriter(
-                path,
-                policy=policy_from_settings(
-                    supervisor.settings, header_floor=header_floor_bytes()
-                ),
-            )
-            if dependencies.writer is None
-            else dependencies.writer
-        )
+        writer = dependencies.writer
+        if writer is None:
+            floor = header_floor_bytes()
+            policy = policy_from_settings(supervisor.settings, header_floor=floor)
+            writer = StoreWriter(path, policy=policy)
         self._resources = outcome_resources.OutcomeResources(
             reaper, writer, supervisor.clock
         )

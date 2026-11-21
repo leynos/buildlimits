@@ -217,8 +217,9 @@ configuration), `snapshot_store` (parses and writes a snapshot document),
 `report_writer` (writes a report to a directory), `records` (decodes the
 outcome store into events), `provenance` (`git_revision`: the commit that
 tracks the module), `paths` (`same_file`: whether two paths name one file),
-`dataset_journal` (the journal lookback option and the provenance note) and the
-two commands `dataset_cli` and `benchmark_cli`.
+`dataset_inputs` (every file a snapshot reads, and whether its output would
+replace or sit beside one), `dataset_journal` (the journal lookback option and
+the provenance note) and the two commands `dataset_cli` and `benchmark_cli`.
 
 `tests/test_predict_boundaries.py` enforces the rule. It parses each listed
 domain module's imports, resolves relative forms against the module's package
@@ -330,6 +331,7 @@ Each module owns one decision. This table is the single module inventory.
 | `predict`                                                                          | Snapshot, predictors, walk-forward harness and the cache-hit comparison report; its domain modules import no file-system, JSON or command module (see §2.3) |
 | `predict.predictors`                                                               | The `Predictor` protocol: predict at one admission moment, learn from a delivered label                                                                     |
 | `predict.paths`                                                                    | `same_file`: whether two paths name one file, including through a symbolic link                                                                             |
+| `predict.dataset_inputs`                                                           | The files a dataset snapshot reads, and whether the output would replace or sit beside one                                                                  |
 | `predict.provenance`                                                               | `git_revision`: the commit that tracks the benchmark module, or `unknown` when none does                                                                    |
 | `predict.dataset_journal`                                                          | The dataset command's journal lookback option and its best-effort provenance note                                                                           |
 | `predict.render_tables`                                                            | The held-out comparison, calibration, ablation and origin tables in the prediction report                                                                   |

@@ -64,7 +64,10 @@ def seal(files: StoreFiles, *, salt_id: str | None = None) -> bool:
         # file still has to exist, because appends open it.
         return restart_active(files)
     try:
-        now = files.wall_now()
+        # A seal only needs a timestamp for its metadata. Reading the clock
+        # port directly leaves the skew baseline and flag to the compaction
+        # that owns them.
+        now = files.clocks.wall()
         ensure_directory(files.sealed_dir)
         layout = outcome_segments.SegmentLayout.beside(files.path)
         sequence = next_sequence(

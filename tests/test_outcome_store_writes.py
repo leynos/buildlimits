@@ -122,13 +122,13 @@ def test_worker_survives_clock_overflow_during_startup_compaction(
     assert stored_records(path) == (record,), "the retried append remains readable"
 
 
-def test_wall_now_reads_the_clock_without_recording_a_skew(tmp_path: Path) -> None:
+def test_a_seal_reads_the_clock_without_recording_a_skew(tmp_path: Path) -> None:
     """A timestamp-only read never changes what the next compaction decides.
 
     ``record_clock_observation`` updates the comparison baseline and raises the
     skew flag, which makes the next compaction keep its rows. A seal only needs
-    the time for its metadata, so it reads ``wall_now`` and leaves that
-    decision alone.
+    the time for its metadata, so it reads the clock port directly and leaves
+    that decision to the compaction that owns it.
     """
     wall = [NOW]
     monotonic = [100.0]
@@ -143,7 +143,7 @@ def test_wall_now_reads_the_clock_without_recording_a_skew(tmp_path: Path) -> No
     wall[0] += dt.timedelta(days=2)
     monotonic[0] += 1.0
 
-    assert files.wall_now() == wall[0], "the read returns the wall clock"
+    assert files.clocks.wall() == wall[0], "the read returns the wall clock"
     assert not files.clock_skew_pending, "a read-only call records no skew"
 
     files.record_clock_observation()
