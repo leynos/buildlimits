@@ -6,9 +6,13 @@ recovery, a pinned checker, and a `modelcheck` command that judges the model's
 results. It also adds an opt-in, offline benchmark that compares cache-hit
 predictors against the outcomes this host has already recorded; where that
 history holds no admission times, so no predictor can be scored, it reports
-insufficient data rather than a result. The wheel still contains only
-`buildlimits`, and no threshold, configuration key, status document or metric
-field moves.
+insufficient data rather than a result. A timer-facing archiver,
+`build-limits-outcome-archive`, moves closed cache-outcome history into
+verified XZ archives and applies the retention policy; it too is opt-in, and a
+host that writes none of its keys keeps the single-file store it has today. The
+wheel still contains only `buildlimits`, and no existing threshold,
+configuration key, status document or metric field changes; the retention and
+archive keys are new and optional.
 
 The supervisor's journal does change. A plain line per admission and per clean
 finish is no longer written by default, and repeated drain successes are
@@ -25,18 +29,20 @@ behaviour is described under
 
 ## What changes
 
-| Area           | In 0.1.0                                      | In 0.2.0                                               |
-| -------------- | --------------------------------------------- | ------------------------------------------------------ |
-| Wheel contents | `buildlimits`                                 | `buildlimits` (unchanged)                              |
-| Source tree    | `buildlimits/`, `tests/`                      | Adds `modelcheck/` and `models/`                       |
-| Make targets   | Build, test, lint, release                    | Adds `fizzbee`, `model-fidelity` and `model-check`     |
-| Command line   | `build-limits-*` scripts                      | Adds `python -m modelcheck check` and `drift`          |
-| Dependencies   | Runtime and development set                   | Unchanged; the checker is an external pinned binary    |
-| CI             | Pull-request and release                      | Adds a fidelity job per pull request and a nightly run |
-| Journal lines  | One line per admission and per finish         | Routine lines only when requested                      |
-| Drain progress | One `drain_progress` record per drain success | Repeated successes summarized                          |
-| Journal switch | None                                          | Adds `BUILD_LIMITS_ROUTINE_LINES`                      |
-| Prediction     | None                                          | Adds opt-in `predict-dataset` and `predict-benchmark`  |
+| Area           | In 0.1.0                                      | In 0.2.0                                                                          |
+| -------------- | --------------------------------------------- | --------------------------------------------------------------------------------- |
+| Wheel contents | `buildlimits`                                 | `buildlimits` (unchanged)                                                         |
+| Source tree    | `buildlimits/`, `tests/`                      | Adds `modelcheck/` and `models/`                                                  |
+| Make targets   | Build, test, lint, release                    | Adds `fizzbee`, `model-fidelity`, `model-check` and `outcome-archive-bench`       |
+| Command line   | `build-limits-*` scripts                      | Adds `python -m modelcheck check` and `drift`, and `build-limits-outcome-archive` |
+| Configuration  | Supervisor keys as documented                 | Adds optional `cache_outcomes_max_*` and `cache_outcomes_archive_*` keys          |
+| Store layout   | One active `cache-outcomes.jsonl`             | Adds sealed and archive segments when archiving is enabled                        |
+| Dependencies   | Runtime and development set                   | Unchanged; the checker is an external pinned binary                               |
+| CI             | Pull-request and release                      | Adds a fidelity job per pull request and a nightly run                            |
+| Journal lines  | One line per admission and per finish         | Routine lines only when requested                                                 |
+| Drain progress | One `drain_progress` record per drain success | Repeated successes summarized                                                     |
+| Journal switch | None                                          | Adds `BUILD_LIMITS_ROUTINE_LINES`                                                 |
+| Prediction     | None                                          | Adds opt-in `predict-dataset` and `predict-benchmark`                             |
 
 _Table 1: What 0.2.0 adds._
 
@@ -145,13 +151,51 @@ the first time, unless the pinned version or digest changes.
    token-accounting behaviour, and no operator action is required. See
    [Compare offline hit predictors](users-guide.md#compare-offline-hit-predictors).
 
+8. Optionally provision the outcome archiver and its timer. Recording must
+   already be enabled: every `cache_outcomes_*` retention key requires
+   `cache_outcomes = "record"`, and validation rejects one written while
+   recording is off. Set the recording setting and the history budget the
+   archiver should retain before enabling the timer:
+
+   ```toml
+   # ~/.config/buildlimits/supervisor.toml
+   cache_outcomes = "record"
+   cache_outcomes_max_bytes = 15000000000
+   ```
+
+   Restart the supervisor so its writer reads the new policy. The settings are
+   loaded at startup, so a supervisor already running with the legacy policy
+   keeps compacting in place instead of sealing segments for the archiver:
+
+   ```bash
+   systemctl --user restart buildlimits-supervisor.service
+   ```
+
+   Then install the user service and timer described under
+   [Archive cache-outcome history](users-guide.md#archive-cache-outcome-history).
+   A budget above the 12 MiB legacy bound, or a budget of `0` that disables
+   the byte bound, turns on the segmented store: the writer seals the active
+   file at the segment bound instead of compacting it in place, and the
+   archiver turns each closed segment into a verified XZ archive. Neither
+   changes admission or token accounting, and a host that writes none of the
+   retention keys keeps its single-file store.
+
 ## What does not need to change
 
 Admission, FIFO order, token accounting, cache composition, recovery,
 cancellation and the supervisor's configuration are unchanged. The offline
 predictors read recorded outcomes and write report files of their own, so the
 prediction targets change nothing at all unless they are run. The journal
-change described above is the only change an operator sees without opting in.
+change described above is the only change an operator sees without opting in;
+the segmented store and the archiver start only when the history budget is
+raised above its 12 MiB default or set to `0`, which disables the byte bound.
+
+Resetting recorded outcomes is unchanged while the store keeps its default
+shape: stop the supervisor and delete `cache-outcomes.jsonl`. Once archiving is
+enabled, a complete reset also removes `cache-outcomes.seq`,
+`cache-outcomes.sealed/` and `cache-outcomes.archive/`, as
+[Archive cache-outcome history](users-guide.md#archive-cache-outcome-history)
+describes.
 
 ## Exit statuses
 

@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 from outcome_store_fixture_helpers import seed_replay_store
 
-from buildlimits import outcome_evidence, outcome_replay_cli
+from buildlimits import (
+    outcome_evidence,
+    outcome_history,
+    outcome_replay,
+    outcome_replay_cli,
+)
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
@@ -77,4 +82,35 @@ def test_unimplemented_hypothesis_exits_two(capsys: pytest.CaptureFixture[str]) 
     assert status == 2, "unimplemented hypotheses are bad options"
     assert "usage:" in capsys.readouterr().err, (
         'unimplemented_hypothesis_ex...: "usage:" in capsys.readouterr().err'
+    )
+
+
+def test_a_replay_pass_reports_an_unsettled_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A pinned stream that moves is retried with one bounded notice."""
+    attempts: list[int] = []
+
+    def evaluate(_hypothesis: str, _records: object) -> outcome_replay.H3Report:
+        """Fail the first pass as unsettled, then report an empty history."""
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise outcome_history.HistoryFaultError("unsettled")
+        return outcome_replay.evaluate_h3([])
+
+    monkeypatch.setattr(outcome_replay_cli, "_evaluate", evaluate)
+    monkeypatch.setattr(
+        outcome_replay_cli.outcome_history,
+        "open_history_beside",
+        lambda *_args, **_kwargs: object(),
+    )
+
+    outcome_replay_cli._history_report(
+        tmp_path / "store.jsonl", outcome_history.HistorySelection(), "h3"
+    )
+
+    assert capsys.readouterr().err == "retry: history attempt 1 reason unsettled\n", (
+        "the replay pass reports the retry it made"
     )

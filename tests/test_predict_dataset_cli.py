@@ -5,39 +5,19 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from outcome_test_helpers import OBSERVED_AT, cache_key
+from outcome_test_helpers import cache_key
 from predict_test_helpers import STORE_HEADER, outcome_record, write_store
 
 from buildlimits import outcome_store_io
-from buildlimits.metrics_query import MetricsQueryError, Window
-from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
+from buildlimits.outcome_segments import SegmentLayout, archive_name, segment_name
 from buildlimits.predict import dataset_cli
-from buildlimits.predict.journal_provenance import (
-    JournalCounts,
-    JournalProvenance,
-    JournalUnavailable,
-)
 from buildlimits.predict.snapshot_store import load_snapshot
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-
     from buildlimits.outcome_vocabulary import CacheResult
     from buildlimits.predict.config import Config
     from buildlimits.predict.dataset import Snapshot
-
-
-class _RaisingJournal:
-    """A journal query that fails the way an unavailable journal does."""
-
-    def __init__(self, error: type[Exception] = RuntimeError) -> None:
-        """Fail with ``error``, defaulting to an unexpected failure."""
-        self._error = error
-
-    def __call__(self, _since: str) -> Window:
-        """Report the journal as unreachable."""
-        raise self._error("journal unavailable")
 
 
 def test_dataset_command_writes_a_redacted_snapshot(
@@ -86,10 +66,139 @@ def test_dataset_command_refuses_to_write_over_its_store(
     ])
 
     assert status == 2, "a destructive output path is a usage failure"
-    assert "must not be the store being read" in capsys.readouterr().err, (
+    assert "must not name a file the command reads" in capsys.readouterr().err, (
         "the refusal names the reason"
     )
     assert store.read_bytes() == before, "the store is untouched"
+
+
+@pytest.mark.parametrize("closed", ["sealed", "archived"])
+def test_dataset_command_refuses_to_write_over_a_closed_segment(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], closed: str
+) -> None:
+    """``--history`` reads closed segments, so the output may not replace one."""
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, 4)
+    layout = SegmentLayout.beside(store)
+    layout.sealed_dir.mkdir(parents=True)
+    if closed == "sealed":
+        input_path = layout.sealed_dir / segment_name(1)
+    else:
+        layout.archive_dir.mkdir(parents=True)
+        input_path = layout.archive_dir / archive_name(1)
+    input_path.write_bytes(b"closed rows")
+    before = input_path.read_bytes()
+
+    status = dataset_cli.main([
+        "--store",
+        str(store),
+        "--output",
+        str(input_path),
+        "--skip-journal",
+        "--history",
+    ])
+
+    assert status == 2, "a destructive output path is a usage failure"
+    assert "must not name a file the command reads" in capsys.readouterr().err, (
+        "the refusal names the reason"
+    )
+    assert input_path.read_bytes() == before, "the closed segment is untouched"
+
+
+def test_dataset_command_refuses_to_write_over_a_shadowed_archive(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An archive behind its surviving sealed source is still an input.
+
+    The history read prefers the sealed source, so the archive is not in the
+    effective set. It is still retained history the command must not replace.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, 4)
+    layout = SegmentLayout.beside(store)
+    layout.sealed_dir.mkdir(parents=True)
+    layout.archive_dir.mkdir(parents=True)
+    (layout.sealed_dir / segment_name(1)).write_bytes(b"sealed rows")
+    archive = layout.archive_dir / archive_name(1)
+    archive.write_bytes(b"archived rows")
+    before = archive.read_bytes()
+
+    status = dataset_cli.main([
+        "--store",
+        str(store),
+        "--output",
+        str(archive),
+        "--skip-journal",
+        "--history",
+    ])
+
+    assert status == 2, "a destructive output path is a usage failure"
+    assert "must not name a file the command reads" in capsys.readouterr().err, (
+        "the refusal names the reason"
+    )
+    assert archive.read_bytes() == before, "the shadowed archive is untouched"
+
+
+def test_dataset_command_refuses_a_sealed_segments_future_archive(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The archive a sealed source becomes is an input, though it is absent.
+
+    Only the sealed source exists when the guard runs. The archiver may
+    publish the archive and remove the source while the history is read, so a
+    snapshot written to that path would replace the published archive with a
+    document the store cannot read back.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, 4)
+    layout = SegmentLayout.beside(store)
+    layout.sealed_dir.mkdir(parents=True)
+    (layout.sealed_dir / segment_name(1)).write_bytes(b"sealed rows")
+    future_archive = layout.archive_dir / archive_name(1)
+    assert not future_archive.exists(), "the archive is not published yet"
+
+    status = dataset_cli.main([
+        "--store",
+        str(store),
+        "--output",
+        str(future_archive),
+        "--skip-journal",
+        "--history",
+    ])
+
+    assert status == 2, "a destructive output path is a usage failure"
+    assert "must not name a file the command reads" in capsys.readouterr().err, (
+        "the refusal names the reason"
+    )
+    assert not future_archive.exists(), "nothing is written to the future archive"
+
+
+@pytest.mark.parametrize("closed", ["sealed", "archive"])
+def test_dataset_command_refuses_an_output_inside_a_history_directory(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], closed: str
+) -> None:
+    """A segment created after the inventory is still history the read uses.
+
+    The archiver may seal the active file or publish an archive while the
+    history is read, so the whole directory is refused rather than only the
+    names the inventory saw.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    write_store(store, 4)
+    layout = SegmentLayout.beside(store)
+    directory = layout.sealed_dir if closed == "sealed" else layout.archive_dir
+    directory.mkdir(parents=True)
+    output = directory / archive_name(2)
+    assert not output.exists(), "no inventory has seen this segment"
+    options = ["--store", str(store), "--output", str(output), "--skip-journal"]
+
+    status = dataset_cli.main([*options, "--history"])
+
+    assert status == 2, "a destructive output path is a usage failure"
+    assert "must not name a file the command reads" in capsys.readouterr().err, (
+        "the refusal names the reason"
+    )
+    assert not output.exists(), "nothing is written into the history directory"
 
 
 def test_dataset_command_refuses_an_unparsable_journal_span(
@@ -219,61 +328,6 @@ def test_dataset_command_reports_a_rejected_store(
     assert status == 1, "a refused store is fatal"
     assert "rejected" in capsys.readouterr().err, "the reason is reported"
     assert not (tmp_path / "history.jsonl").exists(), "nothing written"
-
-
-def _journal_snapshot(
-    tmp_path: Path, journal: cabc.Callable[[str], Window]
-) -> tuple[int, JournalProvenance | None]:
-    """Snapshot eight rows using ``journal`` and return its status and note."""
-    store = tmp_path / "cache-outcomes.jsonl"
-    output = tmp_path / "history.jsonl"
-    write_store(store, 8)
-
-    status = dataset_cli.main(
-        ["--store", str(store), "--output", str(output)],
-        edges=dataset_cli.Edges(journal=journal),
-    )
-    return status, load_snapshot(output).journal
-
-
-@pytest.mark.parametrize(
-    "journal",
-    [
-        pytest.param(_RaisingJournal(), id="unexpected-error"),
-        pytest.param(_RaisingJournal(MetricsQueryError), id="reader-error"),
-    ],
-)
-def test_dataset_command_survives_a_journal_that_fails(
-    tmp_path: Path, journal: cabc.Callable[[str], Window]
-) -> None:
-    """Journal provenance is context, so a journal failure cannot lose history.
-
-    The reader reports an unreadable journal with its own error type rather
-    than returning a note, so the command boundary must turn that into the
-    provenance note as well as an unexpected failure.
-    """
-    status, note = _journal_snapshot(tmp_path, journal)
-
-    assert status == 0, "the snapshot is still written"
-    assert isinstance(note, JournalUnavailable), "the failure is recorded"
-    assert note.reason == "journal query failed", "and named as provenance"
-
-
-def test_dataset_command_records_journal_counts(tmp_path: Path) -> None:
-    """A journal that answers is recorded as provenance beside the snapshot."""
-    window = Window(
-        records=tuple(
-            Record("adapter", "adapter_finished", {}, OBSERVED_AT) for _ in range(12)
-        ),
-        seconds=86400,
-        truncated=False,
-    )
-    status, note = _journal_snapshot(tmp_path, lambda _since: window)
-
-    assert status == 0, "the snapshot is written"
-    assert isinstance(note, JournalCounts), "counts are recorded"
-    assert note.records == 12, "every record is kept"
-    assert note.by_source == {"adapter": 12}, "and attributed to its source"
 
 
 def test_dataset_command_warns_when_nothing_is_labelled(

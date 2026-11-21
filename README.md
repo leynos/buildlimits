@@ -91,6 +91,9 @@ ______________________________________________________________________
 - Opt-in sccache outcome recording into a private local store, with
   `build-limits-cache-replay` for read-only H2 and H3 evidence over that
   history.
+- `build-limits-outcome-archive` to seal closed cache-outcome history into
+  verified XZ archives and apply the configured age and logical-byte retention
+  policy, driven by a systemd user timer.
 
 ______________________________________________________________________
 

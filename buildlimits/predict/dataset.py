@@ -49,7 +49,12 @@ class Source:
     Attributes
     ----------
     salt_id : str
-        The store's non-secret key identifier.
+        The newest store header's non-secret key identifier.
+    salt_ids : tuple[str, ...]
+        Every domain the snapshot spans, oldest first. The counts below cover
+        all of them, while ``salt_id`` names only the newest; an empty tuple
+        means the snapshot came from one domain and ``salt_id`` is the whole
+        story.
     written_at : datetime
         The store header's write time.
     records_total : int
@@ -65,6 +70,7 @@ class Source:
     records_total: int
     outcome_records: int
     summary_records: int
+    salt_ids: tuple[str, ...] = ()
 
 
 @dc.dataclass(frozen=True, slots=True)

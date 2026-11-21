@@ -21,6 +21,7 @@ from buildlimits.nonblocking_child import ChildReaper
 from buildlimits.outcome_gate import quiet_point
 from buildlimits.outcome_ports import SampleFailure
 from buildlimits.outcome_queries import PeerServerProcess, SccacheStatistics
+from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_recorder_driver import OutcomeRecorder
 from buildlimits.outcome_recorder_types import (
     Disabled,
@@ -33,6 +34,7 @@ from buildlimits.outcome_recorder_types import (
     SampleFailed,
     Stopping,
 )
+from buildlimits.outcome_retention import policy_from_settings
 from buildlimits.outcome_sampling import ChildSampler
 from buildlimits.outcome_sightings import request_metadata
 from buildlimits.outcome_store import StoreWriter
@@ -101,9 +103,11 @@ class OutcomeShell:
             self._wall_clock = dependencies.wall_clock
         reaper = ChildReaper() if dependencies.reaper is None else dependencies.reaper
         path = outcome_store_salt.store_path(env)
-        writer = (
-            StoreWriter(path) if dependencies.writer is None else dependencies.writer
-        )
+        writer = dependencies.writer
+        if writer is None:
+            floor = header_floor_bytes()
+            policy = policy_from_settings(supervisor.settings, header_floor=floor)
+            writer = StoreWriter(path, policy=policy)
         self._resources = outcome_resources.OutcomeResources(
             reaper, writer, supervisor.clock
         )

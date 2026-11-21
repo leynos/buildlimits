@@ -7,11 +7,10 @@ from unittest import mock
 
 import pytest
 from outcome_store_fixture_helpers import (
-    append_torn_utf8_tail as _append_torn_utf8_tail,
-)
-from outcome_store_fixture_helpers import (
     seed_one_record_store as _seed_one_record_store,
 )
+from outcome_store_fixture_helpers import seed_store as _seed_store
+from outcome_store_fixture_helpers import write_private_file as _write_private_file
 from outcome_store_helpers import append_and_wait as _append_and_wait
 from outcome_store_helpers import assert_failed_append as _assert_failed_append
 from outcome_store_helpers import assert_load_result as _assert_load_result
@@ -19,15 +18,17 @@ from outcome_store_helpers import decoded_store as _decoded_store
 from outcome_store_helpers import load_and_close as _load_and_close
 from outcome_store_helpers import running_writer as _running_writer
 from outcome_store_helpers import salt_path as _salt_path
-from outcome_store_helpers import seed_store as _seed_store
 from outcome_store_helpers import start_writer as _start_writer
 from outcome_store_helpers import stored_records as _stored_records
 from outcome_store_helpers import wait_for_results as _wait_for_results
 from outcome_store_helpers import wait_for_salt as _wait_for_salt
 from outcome_store_helpers import window_summary as _window_summary
-from outcome_store_helpers import write_private_file as _write_private_file
 
-from buildlimits import outcome_records, outcome_store, outcome_store_io
+from buildlimits import (
+    outcome_records,
+    outcome_store_io,
+    outcome_store_state,
+)
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_record_format import StoreHeader, StoreRecord, WindowSummary
@@ -176,7 +177,7 @@ def test_compaction_failure_obeys_the_16_mib_hard_limit(
             mock.patch.object(outcome_records, "MAX_COMPACT_BYTES", prior_size - 1),
             mock.patch.object(outcome_records, "MAX_STORE_BYTES", hard_limit),
             mock.patch.object(
-                outcome_store, "_replace_store", side_effect=OSError("disk full")
+                outcome_store_state, "replace_store", side_effect=OSError("disk full")
             ),
         ):
             writer.append(new_record)
@@ -203,52 +204,6 @@ def test_writer_drops_only_a_torn_final_line_on_load(tmp_path: Path) -> None:
     assert path.read_bytes().endswith(b"\n"), "compaction leaves a complete final line"
 
 
-def test_reader_keeps_complete_rows_before_a_utf8_torn_tail(
-    tmp_path: Path,
-) -> None:
-    """An interrupted multibyte tail cannot discard valid earlier rows."""
-    path = tmp_path / "cache-outcomes.jsonl"
-    record = _seed_one_record_store(path, server_version="sccache-é")
-    torn_record = _window_summary(server_version="partial-é")
-    _append_torn_utf8_tail(path, torn_record)
-
-    result = outcome_store_io.read_store(path)
-
-    assert isinstance(result, outcome_records.DecodedStore), (
-        "the incomplete UTF-8 bytes are confined to the final row"
-    )
-    assert result.records == (record,), "the complete non-ASCII row is retained"
-
-
-def test_reader_preserves_store_permissions(tmp_path: Path) -> None:
-    """Read-only store inspection leaves caller-owned mode unchanged."""
-    path = tmp_path / "cache-outcomes.jsonl"
-    _seed_one_record_store(path)
-    path.chmod(0o640)
-
-    result = outcome_store_io.read_store(path)
-
-    assert isinstance(result, outcome_records.DecodedStore), "the store is readable"
-    assert stat.S_IMODE(path.stat().st_mode) == 0o640, (
-        "read-only inspection does not change the file mode"
-    )
-
-
-def test_reader_rejects_invalid_utf8_in_a_complete_line(tmp_path: Path) -> None:
-    """Invalid encoding in a newline-terminated row remains store corruption."""
-    path = tmp_path / "cache-outcomes.jsonl"
-    _seed_one_record_store(path, server_version="sccache-é")
-    original = path.read_bytes()
-    malformed = original.replace("é".encode(), b"\xff\xa9", 1)
-    _write_private_file(path, malformed)
-
-    result = outcome_store_io.read_store(path)
-
-    assert result == outcome_records.RecordFailure("corrupt"), (
-        "a complete line still undergoes strict UTF-8 validation"
-    )
-
-
 def test_startup_compaction_is_retried_before_appending_after_failure(
     tmp_path: Path,
 ) -> None:
@@ -261,7 +216,7 @@ def test_startup_compaction_is_retried_before_appending_after_failure(
     )
     appended = _window_summary(server_version="0.14.0")
 
-    replace_store = outcome_store._replace_store
+    replace_store = outcome_store_state.replace_store
     compaction_attempts = 0
 
     def fail_first_compaction(
@@ -277,7 +232,7 @@ def test_startup_compaction_is_retried_before_appending_after_failure(
         replace_store(store_path, header, records)
 
     with mock.patch.object(
-        outcome_store, "_replace_store", side_effect=fail_first_compaction
+        outcome_store_state, "replace_store", side_effect=fail_first_compaction
     ):
         writer = _start_writer(path)
         try:

@@ -7,9 +7,16 @@ import sys
 import typing as typ
 from pathlib import Path
 
-from buildlimits import outcome_records, outcome_replay
+from buildlimits import outcome_history, outcome_records, outcome_replay
+from buildlimits.outcome_history_args import add_history_arguments, selection_from
 from buildlimits.outcome_store_io import read_store
 from buildlimits.outcome_store_salt import store_path
+from buildlimits.retry_notice import report_retry
+
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
+    from buildlimits import outcome_record_format
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -25,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("hypothesis", choices=("h2", "h3"))
     parser.add_argument("--store", type=Path, help="read this store instead")
     parser.add_argument("--json", action="store_true", help="print JSON output")
+    add_history_arguments(parser)
     try:
         options = parser.parse_args(argv)
     except SystemExit as error:
@@ -33,23 +41,87 @@ def main(argv: list[str] | None = None) -> int:
         path = options.store if options.store is not None else store_path(os.environ)
     except OSError, ValueError:
         return _write_failure("unreadable", as_json=options.json)
+    return _run(options, path)
+
+
+def _run(options: argparse.Namespace, path: Path) -> int:
+    """Read one history and print its report or its closed failure.
+
+    Returns
+    -------
+    int
+        Zero for a report, otherwise the bounded unreadable-store status.
+    """
+    selection = selection_from(options)
     try:
-        decoded = read_store(path)
+        if selection is None:
+            decoded = read_store(path)
+            if isinstance(decoded, outcome_records.RecordFailure):
+                return _write_failure(decoded.reason, as_json=options.json)
+            report = _evaluate(options.hypothesis, decoded.records)
+        else:
+            report = _history_report(path, selection, options.hypothesis)
     except FileNotFoundError:
         report = _empty_report(options.hypothesis)
-        _write_report(report, as_json=options.json)
-        return 0
+    except outcome_history.HistoryFaultError as error:
+        return _write_failure(error.reason, as_json=options.json)
     except OSError:
         return _write_failure("unreadable", as_json=options.json)
-    if isinstance(decoded, outcome_records.RecordFailure):
-        return _write_failure(decoded.reason, as_json=options.json)
-    report = (
-        outcome_replay.evaluate_h2(decoded.records)
-        if options.hypothesis == "h2"
-        else outcome_replay.evaluate_h3(decoded.records)
-    )
     _write_report(report, as_json=options.json)
     return 0
+
+
+def _evaluate(
+    hypothesis: str, records: cabc.Iterable[outcome_record_format.StoreRecord]
+) -> outcome_replay.H2Report | outcome_replay.H3Report:
+    """Evaluate one hypothesis over an iterable of rows.
+
+    Returns
+    -------
+    H2Report | H3Report
+        The selected hypothesis's report.
+    """
+    if hypothesis == "h2":
+        return outcome_replay.evaluate_h2(records)
+    return outcome_replay.evaluate_h3(records)
+
+
+def _history_report(
+    path: Path,
+    selection: outcome_history.HistorySelection,
+    hypothesis: str,
+) -> outcome_replay.H2Report | outcome_replay.H3Report:
+    """Stream retained history into one report, retrying a moved snapshot.
+
+    A pass that finds the store changed after the stream pinned it is
+    discarded whole and retried from a fresh snapshot, so H2's two passes
+    always compare the same rows.
+
+    Returns
+    -------
+    H2Report | H3Report
+        The selected hypothesis's report.
+
+    Raises
+    ------
+    HistoryFaultError
+        If the store never settles, or a selected segment is corrupt.
+    """
+    last: outcome_history.HistoryFaultError | None = None
+    for attempt in range(outcome_history.HISTORY_ATTEMPTS):
+        stream = outcome_history.open_history_beside(
+            path, selection, on_retry=report_retry
+        )
+        try:
+            return _evaluate(hypothesis, stream)
+        except outcome_history.HistoryFaultError as error:
+            if error.reason != "unsettled":
+                raise
+            last = error
+            report_retry("history", attempt + 1, "unsettled")
+    if last is not None:
+        raise last
+    raise outcome_history.HistoryFaultError("unsettled")
 
 
 def _empty_report(

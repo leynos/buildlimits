@@ -44,6 +44,8 @@ type StoreReason = typ.Literal[
     "expired",
     "salt_changed",
     "clock_skew",
+    "seal_failed",
+    "archive_backlog",
 ]
 type EvaluationReason = typ.Literal[
     "none",
@@ -51,7 +53,7 @@ type EvaluationReason = typ.Literal[
     "store_unavailable",
     "ineligible",
 ]
-type StoreOperation = typ.Literal["load", "append", "compact", "salt"]
+type StoreOperation = typ.Literal["load", "append", "compact", "seal", "salt"]
 type GateReason = typ.Literal[
     "queued",
     "cached_moving",
