@@ -125,17 +125,21 @@ def test_a_backend_setting_is_inert_in_direct_mode(tmp_path: Path) -> None:
     )
 
 
-def test_a_byte_budget_below_the_header_floor_is_rejected(tmp_path: Path) -> None:
+@pytest.mark.parametrize("budget", [1, header_floor_bytes() - 1])
+def test_a_byte_budget_below_the_header_floor_is_rejected(
+    tmp_path: Path, budget: int
+) -> None:
     """Loading refuses a budget that no compacted store could ever meet.
 
     ``policy_from_settings`` refused this after loading, but the supervisor
     catches that construction failure and disables recording, so the operator
     who asked for a history silently got none. The configuration check now
-    refuses the document instead.
+    refuses the document instead. The largest rejected value is checked as
+    well as ``1``, so a change to one layer cannot silently widen the other.
     """
     _rejected(
         tmp_path,
-        'cache_outcomes = "record"\ncache_outcomes_max_bytes = 1\n',
+        f'cache_outcomes = "record"\ncache_outcomes_max_bytes = {budget}\n',
         "replacement store header",
     )
 
@@ -152,18 +156,4 @@ def test_a_byte_budget_at_the_header_floor_is_accepted(tmp_path: Path) -> None:
 
     assert settings.cache_outcomes_max_bytes == header_floor_bytes(), (
         "a budget that holds one maximal header is accepted"
-    )
-
-
-def test_a_byte_budget_one_below_the_header_floor_is_rejected(tmp_path: Path) -> None:
-    """The loader refuses the exact value below the floor, not merely ``1``.
-
-    The policy layer pins this boundary already. Checking the loader at the
-    same value keeps a change to one layer from silently widening the other.
-    """
-    _rejected(
-        tmp_path,
-        'cache_outcomes = "record"\n'
-        f"cache_outcomes_max_bytes = {header_floor_bytes() - 1}\n",
-        "replacement store header",
     )

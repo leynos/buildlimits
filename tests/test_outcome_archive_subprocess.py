@@ -224,16 +224,15 @@ def _reap(first: subprocess.Popen[bytes]) -> None:
     """End one run without an unbounded wait on any path.
 
     A ``Popen`` context manager waits for the process on exit with no timeout.
-    This does the bounded equivalent: an already-finished run is left alone,
-    and a live one is killed and waited for with a deadline.
+    This does the bounded equivalent. ``kill`` reports rather than signals a
+    process that has already exited, so a finished run is left alone, and the
+    wait that follows has a deadline.
 
     Raises
     ------
     RuntimeError
         If the process is still running after a kill and a bounded wait.
     """
-    if first.poll() is not None:
-        return
     first.kill()
     try:
         first.wait(timeout=10)

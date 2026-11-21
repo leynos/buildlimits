@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 
 import pytest
-from segment_test_helpers import mode
+from segment_test_helpers import mode, swap_after_validation
 
 from buildlimits import outcome_archive_fs
 from buildlimits.outcome_archive_fs import (
@@ -352,18 +352,15 @@ def test_a_removal_follows_the_validated_directory_after_its_path_is_replaced(
     elsewhere.mkdir()
     decoy = elsewhere / doomed.name
     decoy.write_bytes(b"decoy")
-    original = outcome_archive_fs.open_private_chain_when_present
-
-    def replace_after_validation(path: Path) -> int | None:
-        """Validate the path, then swap it before the caller can use it."""
-        descriptor = original(path)
-        if descriptor is not None and path == archive_dir:
-            archive_dir.rename(moved)
-            archive_dir.symlink_to(elsewhere, target_is_directory=True)
-        return descriptor
-
     monkeypatch.setattr(
-        outcome_archive_fs, "open_private_chain_when_present", replace_after_validation
+        outcome_archive_fs,
+        "open_private_chain_when_present",
+        swap_after_validation(
+            outcome_archive_fs.open_private_chain_when_present,
+            directory=archive_dir,
+            moved=moved,
+            elsewhere=elsewhere,
+        ),
     )
 
     remove_private_files(archive_dir, [doomed.name])

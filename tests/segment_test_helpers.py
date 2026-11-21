@@ -16,6 +16,7 @@ from buildlimits.outcome_segment_sidecar import Sidecar
 from buildlimits.outcome_segments import ARCHIVE_DIR_NAME, SegmentLayout, sidecar_name
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
@@ -29,6 +30,7 @@ __all__ = [
     "mode",
     "sidecar_document",
     "store_layout",
+    "swap_after_validation",
     "write_private",
     "write_sidecar",
 ]
@@ -65,6 +67,50 @@ def mode(path: Path) -> int:
         The ``st_mode`` permission bits without the file type.
     """
     return stat.S_IMODE(path.lstat().st_mode)
+
+
+def swap_after_validation(
+    validate: cabc.Callable[[Path], int | None],
+    *,
+    directory: Path,
+    moved: Path,
+    elsewhere: Path,
+) -> cabc.Callable[[Path], int | None]:
+    """Wrap a chain validator so it swaps the directory after validating it.
+
+    A scan or removal that validated a path and then re-opened it would act on
+    whatever now occupies that path. The wrapper performs the swap inside the
+    validation seam, so a test can prove the operation followed the descriptor
+    rather than the path.
+
+    Parameters
+    ----------
+    validate : collections.abc.Callable[[Path], int | None]
+        The chain validator to wrap, typically
+        ``open_private_chain_when_present``.
+    directory : pathlib.Path
+        The directory the wrapper renames once it has been validated.
+    moved : pathlib.Path
+        Where the validated directory is moved to.
+    elsewhere : pathlib.Path
+        The directory that a symlink in the validated directory's place points
+        to.
+
+    Returns
+    -------
+    collections.abc.Callable[[Path], int | None]
+        A validator with the same contract that swaps ``directory`` before
+        returning the descriptor it validated.
+    """
+
+    def replace_after_validation(path: Path) -> int | None:
+        descriptor = validate(path)
+        if descriptor is not None and path == directory:
+            directory.rename(moved)
+            directory.symlink_to(elsewhere, target_is_directory=True)
+        return descriptor
+
+    return replace_after_validation
 
 
 def document(rows: tuple[StoreRecord, ...], salt_id: str = "salt-1") -> bytes:

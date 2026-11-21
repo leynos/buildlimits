@@ -8,7 +8,7 @@ so a scan that re-opened the path would report files from another directory.
 import typing as typ
 from pathlib import Path
 
-from segment_test_helpers import store_layout, write_private
+from segment_test_helpers import store_layout, swap_after_validation, write_private
 
 from buildlimits import outcome_segment_scan
 
@@ -27,20 +27,15 @@ def test_a_scan_lists_the_validated_directory_after_its_path_is_replaced(
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     write_private(elsewhere / "segment-000000000002.jsonl.xz", b"decoy")
-    original = outcome_segment_scan.open_private_chain_when_present
-
-    def replace_after_validation(path: Path) -> int | None:
-        """Validate the path, then swap it before the caller can use it."""
-        descriptor = original(path)
-        if descriptor is not None and path == archive_dir:
-            archive_dir.rename(moved)
-            archive_dir.symlink_to(elsewhere, target_is_directory=True)
-        return descriptor
-
     monkeypatch.setattr(
         outcome_segment_scan,
         "open_private_chain_when_present",
-        replace_after_validation,
+        swap_after_validation(
+            outcome_segment_scan.open_private_chain_when_present,
+            directory=archive_dir,
+            moved=moved,
+            elsewhere=elsewhere,
+        ),
     )
 
     files = outcome_segment_scan.regular_files(archive_dir)
