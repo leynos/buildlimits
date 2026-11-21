@@ -10,7 +10,10 @@ import dataclasses as dc
 import typing as typ
 
 from buildlimits.outcome_archive_context import ignore_retry
-from buildlimits.outcome_archive_history import observed_history
+from buildlimits.outcome_archive_history import (
+    observed_history,
+    retained_logical_bytes,
+)
 from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
@@ -170,7 +173,7 @@ def dry_report(
         finished_at=run.context.clock(),
         dry_run=True,
         active_bytes=active.bytes,
-        retained_bytes=run.plan.retained_bytes,
+        retained_bytes=retained_logical_bytes(inventory, active),
         retained_records=observed.records,
         observed_from=observed.observed_from,
         observed_until=observed.observed_until,
@@ -259,13 +262,7 @@ def settled_report(
     """
     inventory = settled.inventory
     active = settled.active
-    # A crash between publication and source removal leaves both copies until
-    # reconciliation, and only the sealed source is the effective copy then.
-    # Summing every sealed and every archived entry would count that sequence
-    # twice, so the retained bytes follow the same one-entry-per-sequence view
-    # the record count and span already use.
-    closed = sum(entry.logical_bytes for entry in inventory.effective)
-    retained = active.bytes + closed
+    retained = retained_logical_bytes(inventory, active)
     observed = observed_history(inventory, active)
     return RunReport(
         status=_run_status(outcome, retention_unsettled=settled.retention_unsettled),

@@ -377,6 +377,10 @@ history: 1240 records, observed 2026-11-01T08:00:00+00:00..2026-11-19T17:30:00+0
 history: 1240 records, 2 unmeasured, observed 2026-11-01T08:00:00+00:00..2026-11-19T17:30:00+00:00
 ```
 
+An inspection or dry run reports the bytes the store still holds, not the
+estimate after the eviction it plans; the JSON plan carries that post-eviction
+estimate as its own `retained_logical_bytes`.
+
 The count covers the closed rows that segment metadata describes and every row
 still in the active file, including rows the age rule has already expired and
 the writer has not yet compacted. Those rows are not retained history, so the

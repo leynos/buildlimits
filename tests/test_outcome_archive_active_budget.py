@@ -197,8 +197,11 @@ def test_an_append_during_planning_is_budgeted_from_its_version(
     assert inspection.plan is not None and inspection.plan.trim, (
         "the appended row is counted before the budget decides"
     )
-    assert inspection.retained_bytes <= inspection.budget_bytes, (
-        "the planned store meets the byte budget"
+    assert inspection.retained_bytes > inspection.budget_bytes, (
+        "an inspection reports the bytes the store still holds"
+    )
+    assert inspection.plan.retained_bytes <= inspection.budget_bytes, (
+        "the plan's estimate meets the byte budget"
     )
 
     grew = False

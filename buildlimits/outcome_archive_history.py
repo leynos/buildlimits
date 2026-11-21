@@ -17,7 +17,13 @@ if typ.TYPE_CHECKING:
 
     from buildlimits.outcome_segment_inventory import Inventory
 
-__all__ = ["ActiveHistory", "Observed", "SettledStore", "observed_history"]
+__all__ = [
+    "ActiveHistory",
+    "Observed",
+    "SettledStore",
+    "observed_history",
+    "retained_logical_bytes",
+]
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -120,6 +126,21 @@ class Observed:
     observed_from: dt.datetime | None
     observed_until: dt.datetime | None
     unmeasured: int
+
+
+def retained_logical_bytes(inventory: Inventory, active: ActiveHistory) -> int:
+    """Return the logical bytes the settled store currently holds.
+
+    A sequence is counted once: ``Inventory.effective`` prefers a sealed source
+    over its archive, so a publication whose source removal failed does not
+    count both copies. The active file contributes the bytes it holds now.
+
+    Returns
+    -------
+    int
+        Logical bytes in the active file plus one entry per closed sequence.
+    """
+    return active.bytes + sum(entry.logical_bytes for entry in inventory.effective)
 
 
 def observed_history(inventory: Inventory, active: ActiveHistory) -> Observed:

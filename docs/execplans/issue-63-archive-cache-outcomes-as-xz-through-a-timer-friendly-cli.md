@@ -2427,3 +2427,14 @@ after each revert.
   remaining items are dispositions: the archive domain modules beyond trim and
   retention await the value-type split, and the Rohga measurement stays
   unverified.
+- Revision 40 records the revision-39 assessment's inspection-byte finding.
+  `dry_report` no longer takes its `retained_bytes` from the plan's
+  post-eviction estimate; both the settled report and the dry report use
+  `retained_logical_bytes(inventory, active)`, which counts the current
+  effective inventory once. The plan's estimate remains in the plan summary.
+  `tests/test_outcome_archive_inspect_estimate.py` asserts that plain and JSON
+  inspections report the current bytes while the plan reports the projected
+  deletion, and the budget regression now asserts the inspection exceeds the
+  budget precisely because eviction has not run. Reverting the dry report to
+  the plan estimate fails both inspection tests, and the users' guide states
+  the distinction.
