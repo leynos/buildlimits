@@ -20,10 +20,14 @@ _Table 1: Differences between the dev-env-rocky copy and this repository._
 
 These are unchanged:
 
-- The six console scripts: `build-limits-rustc`, `build-limits-rustdoc`,
-  `build-limits-supervisor`, `build-limits-status`, `build-limits-recover` and
-  `build-limits-metrics`. Systemd units and Cargo's `rustc-wrapper` and
-  `rustdoc` settings that name them keep working.
+- The console scripts: `build-limits-rustc`, `build-limits-rustdoc`,
+  `build-limits-supervisor`, `build-limits-status`, `build-limits-recover`,
+  `build-limits-metrics`, `build-limits-cache-replay`,
+  `build-limits-outcome-archive`, `build-limits-predict-dataset` and
+  `build-limits-predict-benchmark`. The six scripts the dev-env-rocky copy
+  provided, and the systemd units and Cargo `rustc-wrapper` and `rustdoc`
+  settings that name them, keep working; the replay, archive and prediction
+  commands are additions.
 - The `~/.config/buildlimits/supervisor.toml` file and its keys, and the
   `BUILD_LIMITS_*` environment variables, as listed under
   [Configuration](users-guide.md#configuration) in the user's guide.

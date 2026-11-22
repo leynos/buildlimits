@@ -188,6 +188,72 @@ def attributed_record(
     )
 
 
+def records_at(observed: dt.datetime, count: int) -> tuple[OutcomeRecord, ...]:
+    """Build ``count`` records one minute apart from ``observed``.
+
+    Parameters
+    ----------
+    observed : datetime.datetime
+        The first record's observation time.
+    count : int
+        How many records to build.
+
+    Returns
+    -------
+    tuple[OutcomeRecord, ...]
+        The records, oldest first.
+    """
+    return tuple(
+        attributed_record(observed_at=observed + dt.timedelta(minutes=index))
+        for index in range(count)
+    )
+
+
+def records_around_a_cutoff(
+    now: dt.datetime,
+) -> tuple[tuple[OutcomeRecord, ...], dt.datetime]:
+    """Build *at cutoff, expired, fresh* records and the cutoff between them.
+
+    The expired record sits between two eligible ones, so a byte allowance
+    that counts policy drops has to measure a row it has not reached yet.
+
+    Parameters
+    ----------
+    now : datetime.datetime
+        The instant the expired record was observed.
+
+    Returns
+    -------
+    tuple[tuple[OutcomeRecord, ...], datetime.datetime]
+        The records in stored order and the cutoff that expires only the
+        second of them.
+    """
+    records = (
+        attributed_record(observed_at=now + dt.timedelta(minutes=1)),
+        attributed_record(observed_at=now),
+        attributed_record(observed_at=now + dt.timedelta(minutes=2)),
+    )
+    return records, now + dt.timedelta(minutes=1)
+
+
+STORE_EPOCH = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
+
+
+def record_after(minute: int, *, now: dt.datetime = STORE_EPOCH) -> OutcomeRecord:
+    """Build one attributed record observed ``minute`` minutes after ``now``.
+
+    Returns
+    -------
+    OutcomeRecord
+        A cacheable record observed at the offset.
+
+    Examples
+    --------
+    ``record_after(0).observed_at`` is ``STORE_EPOCH``.
+    """
+    return attributed_record(observed_at=now + dt.timedelta(minutes=minute))
+
+
 def launch_payload(recorder: ModuleType, key: object) -> object:
     """Build the immutable metadata retained for one cached launch.
 

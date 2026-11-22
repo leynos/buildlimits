@@ -129,5 +129,6 @@ def decode_history(decoded: DecodedStore) -> StoreHistory:
             records_total=len(records),
             outcome_records=outcomes,
             summary_records=len(records) - outcomes,
+            salt_ids=decoded.salt_ids,
         ),
     )

@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 
 from buildlimits import config
+from buildlimits.outcome_record_encode import header_floor_bytes
+from buildlimits.outcome_retention import MAX_AGE_DAYS, SEGMENT_BYTES
 
 
 def test_defaults_load_without_a_file(tmp_path: Path) -> None:
@@ -40,11 +42,25 @@ def test_files_override_defaults(tmp_path: Path) -> None:
 
 
 def _rejected(tmp_path: Path, text: str, fragment: str) -> None:
-    """Write one document and assert loading it is refused as described."""
+    """Write one document and assert loading it is refused as described.
+
+    ``fragment`` is a regular expression, so a case that names a whole rule
+    message must pass ``^...``: an unanchored match would still pass against a
+    longer message that merely contains it.
+    """
     path = tmp_path / "s.toml"
     path.write_text(text)
     with pytest.raises(config.ConfigError, match=fragment):
         config.load(path)
+
+
+def _rejected_exactly(tmp_path: Path, text: str, message: str) -> None:
+    """Write one document and assert the refusal is exactly ``message``."""
+    path = tmp_path / "s.toml"
+    path.write_text(text)
+    with pytest.raises(config.ConfigError) as refusal:
+        config.load(path)
+    assert str(refusal.value) == message, "the refusal is the rule's own message"
 
 
 @pytest.mark.parametrize(
@@ -57,10 +73,78 @@ def _rejected(tmp_path: Path, text: str, fragment: str) -> None:
         ('compilers_slice = "x.service"\n', "slice"),
         ("slots = [\n", "cannot read"),
     ],
+    ids=[
+        "slots",
+        "cache-mode",
+        "slot-type",
+        "unknown-key",
+        "slice",
+        "unparsable",
+    ],
 )
 def test_invalid_files_are_rejected(tmp_path: Path, text: str, fragment: str) -> None:
     """Invalid configuration is reported, never half-applied."""
     _rejected(tmp_path, text, fragment)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        (
+            'cache_outcomes = "record"\ncache_outcomes_max_bytes = 1\n',
+            "cache_outcomes_max_bytes cannot hold the replacement store header",
+        ),
+        (
+            (
+                'cache_outcomes = "record"\n'
+                f"cache_outcomes_max_bytes = {header_floor_bytes() - 1}\n"
+            ),
+            "cache_outcomes_max_bytes cannot hold the replacement store header",
+        ),
+        (
+            'cache_outcomes = "record"\ncache_outcomes_archive_preset = -1\n',
+            "cache_outcomes_archive_preset must be between 0 and 9",
+        ),
+        (
+            'cache_outcomes = "record"\ncache_outcomes_archive_preset = 10\n',
+            "cache_outcomes_archive_preset must be between 0 and 9",
+        ),
+        (
+            (
+                'cache_outcomes = "record"\n'
+                f"cache_outcomes_archive_headroom_bytes = {SEGMENT_BYTES - 1}\n"
+            ),
+            "cache_outcomes_archive_headroom_bytes must hold at least one segment",
+        ),
+        (
+            (
+                'cache_outcomes = "record"\n'
+                f"cache_outcomes_max_age_days = {MAX_AGE_DAYS + 1}\n"
+            ),
+            f"cache_outcomes_max_age_days must be between 0 and {MAX_AGE_DAYS}",
+        ),
+    ],
+    ids=[
+        "budget-one",
+        "budget-below-floor",
+        "preset-low",
+        "preset-high",
+        "headroom-below-segment",
+        "age-above-span",
+    ],
+)
+def test_a_retention_rule_refuses_the_document_with_its_own_message(
+    tmp_path: Path, text: str, message: str
+) -> None:
+    """Each retention rule states exactly what the operator must change.
+
+    A retention bound is part of the document because the supervisor catches a
+    construction failure and disables recording: a byte budget below the
+    replacement header, or headroom below one segment, would silently leave
+    the operator with no history at all. The messages are asserted whole, so a
+    rule that grew a suffix could not hide behind a partial match.
+    """
+    _rejected_exactly(tmp_path, text, message)
 
 
 @pytest.mark.parametrize(
@@ -121,4 +205,70 @@ def test_a_backend_setting_is_inert_in_direct_mode(tmp_path: Path) -> None:
 
     assert config.load(path).cache_mode == "direct", (
         "direct names no backend and so has no key to clash with"
+    )
+
+
+def test_a_byte_budget_at_the_header_floor_is_accepted(tmp_path: Path) -> None:
+    """The floor itself is usable, so the boundary is not off by one."""
+    path = tmp_path / "s.toml"
+    path.write_text(
+        'cache_outcomes = "record"\n'
+        f"cache_outcomes_max_bytes = {header_floor_bytes()}\n"
+    )
+
+    settings = config.load(path)
+
+    assert settings.cache_outcomes_max_bytes == header_floor_bytes(), (
+        "a budget that holds one maximal header is accepted"
+    )
+
+
+def test_the_slowest_archive_preset_is_accepted(tmp_path: Path) -> None:
+    """The upper bound loads, so the preset rule is not off by one."""
+    path = tmp_path / "s.toml"
+    path.write_text('cache_outcomes = "record"\ncache_outcomes_archive_preset = 9\n')
+
+    assert config.load(path).cache_outcomes_archive_preset == 9, (
+        "preset 9 is inside the supported range"
+    )
+
+
+def test_archive_headroom_below_one_segment_is_rejected(tmp_path: Path) -> None:
+    """Headroom that cannot hold one temporary archive is refused.
+
+    Archive work writes a replacement beside its source, so a headroom below
+    one segment could never be honoured and would fail every run instead.
+    """
+    _rejected(
+        tmp_path,
+        'cache_outcomes = "record"\n'
+        f"cache_outcomes_archive_headroom_bytes = {SEGMENT_BYTES - 1}\n",
+        "cache_outcomes_archive_headroom_bytes must hold at least one segment",
+    )
+
+
+def test_archive_headroom_of_one_segment_is_accepted(tmp_path: Path) -> None:
+    """The smallest usable headroom loads, so the floor is not off by one."""
+    path = tmp_path / "s.toml"
+    path.write_text(
+        'cache_outcomes = "record"\n'
+        f"cache_outcomes_archive_headroom_bytes = {SEGMENT_BYTES}\n"
+    )
+
+    settings = config.load(path)
+
+    assert settings.cache_outcomes_archive_headroom_bytes == SEGMENT_BYTES, (
+        "a headroom that holds one segment is accepted"
+    )
+
+
+def test_a_retention_age_beyond_the_supported_span_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """The age rule names its own range, so the operator can see the limit."""
+    _rejected(
+        tmp_path,
+        'cache_outcomes = "record"\n'
+        f"cache_outcomes_max_age_days = {MAX_AGE_DAYS + 1}\n",
+        f"cache_outcomes_max_age_days must be between 0 and {MAX_AGE_DAYS}",
     )

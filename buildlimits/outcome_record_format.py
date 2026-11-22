@@ -22,6 +22,10 @@ FORMAT_NAME = "buildlimits-cache-outcomes"
 FORMAT_VERSION = 1
 MAX_RECORD_BYTES = 16 * 1024
 MAX_STORE_BYTES = 16 * 1024 * 1024
+# The largest document an in-place compaction may write. A policy that lets
+# the active file grow past this bound cannot compact it in legacy mode, so
+# the retention policy refuses such a segment size.
+MAX_COMPACT_BYTES = 12 * 1024 * 1024
 _DIGEST_HEX_LENGTH = 64
 _ORIGINS = frozenset({"registry", "git", "path", "unknown"})
 _CHILD_SIGHTINGS = frozenset({"seen", "ambiguous", "not_seen", "unavailable"})
@@ -76,10 +80,22 @@ class RecordFailure:
 
 @dc.dataclass(frozen=True, slots=True)
 class DecodedStore:
-    """A validated header and records in append order."""
+    """A validated header and records in append order.
+
+    Attributes
+    ----------
+    header : StoreHeader
+        The newest header represented.
+    records : tuple[StoreRecord, ...]
+        Every record, in append order.
+    salt_ids : tuple[str, ...]
+        Every record domain the history spans, oldest first. Empty for a store
+        read from a single file, where ``header.salt_id`` is the only domain.
+    """
 
     header: StoreHeader
     records: tuple[StoreRecord, ...]
+    salt_ids: tuple[str, ...] = ()
 
 
 _KEY_FIELDS = {field.name for field in dc.fields(CacheKey)}

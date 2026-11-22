@@ -1,6 +1,10 @@
-"""Asynchronous writer for the bounded cache-outcome JSON Lines store."""
+"""Asynchronous writer for the bounded cache-outcome JSON Lines store.
 
-import datetime as dt
+``StoreWriter`` owns the queue and the worker thread; the file state machine it
+drives lives in ``outcome_store_state`` and the segmented-mode transition in
+``outcome_store_sealing``.
+"""
+
 import math
 import queue
 import threading
@@ -10,22 +14,23 @@ import typing as typ
 from buildlimits import outcome_records
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import OutcomeStorePort, StoreFailure, StoreResult
-from buildlimits.outcome_store_io import append_line as _append_line
-from buildlimits.outcome_store_io import read_store as _read_store
-from buildlimits.outcome_store_io import replace_store as _replace_store
-from buildlimits.outcome_store_io import store_size as _store_size
 from buildlimits.outcome_store_salt import file_salt as file_salt
 from buildlimits.outcome_store_salt import store_path as store_path
+from buildlimits.outcome_store_state import Clocks, StoreFiles
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
     from pathlib import Path
 
     from buildlimits.outcome_record_format import StoreRecord
+    from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
 
 MAX_APPEND_QUEUE = 4_096
-_CLOCK_SKEW_SECONDS = 24 * 60 * 60
+IDLE_TICK_SECONDS = 60.0
+"""How long an idle worker waits before re-checking the age bound."""
+
 _STOP = None
 
 
@@ -42,6 +47,13 @@ class StoreWriter(OutcomeStorePort):
         UTC clock used by the file header and pure compactor.
     monotonic_clock : Callable[[], float]
         Monotonic clock paired with wall time to detect a large clock jump.
+    policy : RetentionPolicy or None
+        The effective retention policy. A policy that requires segmentation
+        makes the writer seal the active file at ``segment_bytes`` instead of
+        compacting it in place; the legacy default keeps in-place compaction.
+    idle_tick : float
+        Seconds an idle worker waits before re-checking the age bound, so a
+        store that receives no appends still lets aged rows leave.
 
     Examples
     --------
@@ -49,25 +61,34 @@ class StoreWriter(OutcomeStorePort):
     the caller; ``writer.close(1.0)`` bounds the shutdown wait.
     """
 
-    def __init__(
+    # The constructor is the one seam switchboard every caller configures, so it
+    # names each collaborator separately rather than hiding it in a settings
+    # object a reader would have to look up. The arity is the interface, not an
+    # accident, so both limits are waived permanently.
+    def __init__(  # ruff: ignore[too-many-arguments]  # one keyword per seam, permanent; pylint: disable=too-many-arguments
         self,
         path: Path,
         *,
         queue_capacity: int = MAX_APPEND_QUEUE,
         wall_clock: cabc.Callable[[], dt.datetime] | None = None,
         monotonic_clock: cabc.Callable[[], float] = time.monotonic,
+        policy: RetentionPolicy | None = None,
+        idle_tick: float = IDLE_TICK_SECONDS,
     ) -> None:
         """Start the sole file-owning worker without waiting for its setup.
 
         Raises
         ------
         ValueError
-            If the append queue capacity is not positive.
+            If the append queue capacity or the idle tick is not positive.
         """
         if queue_capacity < 1:
             msg = "append queue capacity must be positive"
             raise ValueError(msg)
-        self._path = path
+        if not (math.isfinite(idle_tick) and idle_tick > 0):
+            msg = "idle tick must be a positive number of seconds"
+            raise ValueError(msg)
+        self._idle_tick = idle_tick
         self._salt_path = path.with_name("cache-outcomes.salt")
         self._queue_capacity = queue_capacity
         self._work: queue.Queue[tuple[bytes, StoreRecord] | None] = queue.Queue(
@@ -80,16 +101,12 @@ class StoreWriter(OutcomeStorePort):
         ] = {}
         self._state_lock = threading.Lock()
         self._closing = False
-        self._wall_clock = _utc_now if wall_clock is None else wall_clock
-        self._monotonic_clock = monotonic_clock
-        self._last_wall: dt.datetime | None = None
-        self._last_monotonic: float | None = None
-        self._clock_skew_pending = False
-        self._salt: Salt | None = None
-        self._header: outcome_records.StoreHeader | None = None
-        self._records: list[StoreRecord] = []
-        self._needs_compaction = False
-        self._ready = False
+        self._files = StoreFiles(
+            path,
+            self._publish,
+            Clocks(wall_clock, monotonic_clock),
+            policy,
+        )
         self._thread = threading.Thread(
             target=self._run, name="buildlimits-outcome-store", daemon=True
         )
@@ -163,7 +180,7 @@ class StoreWriter(OutcomeStorePort):
             return None
 
     def close(self, timeout: float) -> None:
-        """Queue final compaction and join the worker within one second.
+        """Queue the final flush and join the worker within one second.
 
         Parameters
         ----------
@@ -172,7 +189,7 @@ class StoreWriter(OutcomeStorePort):
 
         Examples
         --------
-        ``close(1.0)`` gives the final compaction one second to finish.
+        ``close(1.0)`` gives the final compaction or seal one second to finish.
         """
         wait = min(max(timeout, 0.0), 1.0) if math.isfinite(timeout) else 0.0
         with self._state_lock:
@@ -185,28 +202,36 @@ class StoreWriter(OutcomeStorePort):
         """Initialize once, then serialize every queued operation."""
         self._initialize()
         while True:
-            item = self._work.get()
+            try:
+                item = self._work.get(timeout=self._idle_tick)
+            except queue.Empty:
+                # A quiet store must still let aged rows leave. Without this
+                # wake-up a writer that receives no appends would keep them
+                # until shutdown, however long that takes.
+                if self._files.ready:
+                    self._files.expire_if_aged()
+                continue
             if item is _STOP:
-                if self._ready:
-                    self._compact()
+                if self._files.ready:
+                    self._files.final_flush()
                 return
-            if not self._ready:
+            if not self._files.ready:
                 self._publish("append", "save_failed", discarded=1)
                 continue
             line, record = item
-            self._append_record(line, record)
+            self._files.append(line, record)
 
     def _initialize(self) -> None:
-        """Acquire the salt, load bounded state and compact before appending."""
+        """Acquire the salt, load bounded state and settle it before appending."""
         salt = self._read_initial_salt()
         if salt is None:
             return
         try:
-            now = self._observe_clock()
+            now = self._files.record_clock_observation()
         except TypeError, ValueError, OverflowError:
             self._publish("load", "unreadable")
             return
-        self._load_store(salt, now)
+        self._files.load_and_settle(salt, now)
 
     def _read_initial_salt(self) -> Salt | None:
         """Publish the one-shot result of creating or loading the local salt.
@@ -226,150 +251,9 @@ class StoreWriter(OutcomeStorePort):
                 self._publish("salt", failure.reason)
                 return None
             case Salt() as active_salt:
-                self._salt = active_salt
+                self._files.salt = active_salt
                 self._publish("salt", "none")
                 return active_salt
-
-    def _load_store(self, salt: Salt, now: dt.datetime) -> None:
-        """Load validated rows, initialize an empty store, then compact it."""
-        try:
-            decoded = _read_store(self._path)
-        except FileNotFoundError:
-            decoded = None
-        except OSError, ValueError:
-            self._publish("load", "unreadable")
-            return
-        self._restore_loaded_store(decoded, salt, now)
-        if self._ready:
-            self._compact()
-
-    def _restore_loaded_store(
-        self,
-        decoded: outcome_records.DecodedStore | outcome_records.RecordFailure | None,
-        salt: Salt,
-        now: dt.datetime,
-    ) -> None:
-        """Choose which validated rows can belong to the active salt."""
-        match decoded:
-            case outcome_records.RecordFailure() as failure:
-                if not self._move_aside():
-                    self._publish("load", failure.reason)
-                    return
-                self._publish("load", failure.reason)
-                self._header = outcome_records.StoreHeader(salt.salt_id, now)
-                self._records = []
-            case None:
-                self._publish("load", "none")
-                self._header = outcome_records.StoreHeader(salt.salt_id, now)
-                self._records = []
-            case outcome_records.DecodedStore() as store if (
-                store.header.salt_id != salt.salt_id
-            ):
-                self._publish("load", "salt_changed", discarded=len(store.records))
-                self._header = outcome_records.StoreHeader(salt.salt_id, now)
-                self._records = []
-            case outcome_records.DecodedStore() as store:
-                self._publish("load", "none", records=len(store.records))
-                self._header = store.header
-                self._records = list(store.records)
-        self._ready = True
-
-    def _move_aside(self) -> bool:
-        """Move one rejected store without replacing an earlier backup.
-
-        Returns
-        -------
-        bool
-            Whether the rejected file was moved aside.
-        """
-        backup = self._path.with_name(f"{self._path.name}.bad")
-        try:
-            backup.lstat()
-        except FileNotFoundError:
-            pass
-        else:
-            return False
-        try:
-            self._path.replace(backup)
-        except OSError:
-            return False
-        return True
-
-    def _append_record(self, line: bytes, record: StoreRecord) -> None:
-        """Compact at high water, preserve the hard bound and append one row."""
-        if self._header is None:
-            self._publish("append", "save_failed", discarded=1)
-            return
-        if self._needs_compaction and not self._compact():
-            self._publish("append", "save_failed", discarded=1)
-            return
-        try:
-            size = _store_size(self._path)
-            if size + len(line) + 1 > outcome_records.MAX_COMPACT_BYTES:
-                self._compact()
-                size = _store_size(self._path)
-            if size + len(line) + 1 > outcome_records.MAX_STORE_BYTES:
-                self._publish("append", "save_failed", discarded=1)
-                return
-            _append_line(self._path, line)
-        except OSError:
-            self._needs_compaction = True
-            self._publish("append", "save_failed", discarded=1)
-            return
-        self._records.append(record)
-        self._publish("append", "none", records=1)
-
-    def _compact(self) -> bool:
-        """Apply retention, atomically replace the file and report success.
-
-        Returns
-        -------
-        bool
-            Whether the compacted store was installed successfully.
-        """
-        if self._header is None or self._salt is None:
-            return False
-        try:
-            now = self._observe_clock()
-            decoded = outcome_records.DecodedStore(self._header, tuple(self._records))
-            compacted = outcome_records.compact(
-                decoded, now=now, clock_skew=self._clock_skew_pending
-            )
-            _replace_store(self._path, compacted.header, compacted.records)
-        except OSError, ValueError, TypeError, UnicodeError, OverflowError:
-            self._needs_compaction = True
-            self._publish("compact", "save_failed")
-            return False
-        self._header = compacted.header
-        self._records = list(compacted.records)
-        self._clock_skew_pending = False
-        self._needs_compaction = False
-        self._publish(
-            "compact",
-            compacted.store_reason,
-            records=len(compacted.records),
-            discarded=compacted.discarded,
-        )
-        return True
-
-    def _observe_clock(self) -> dt.datetime:
-        """Read UTC time and retain a skew flag when wall time jumps by a day.
-
-        Returns
-        -------
-        datetime
-            The current aware UTC wall-clock value.
-        """
-        now = self._wall_clock()
-        monotonic = self._monotonic_clock()
-        if self._last_wall is not None and self._last_monotonic is not None:
-            wall_elapsed = (now - self._last_wall).total_seconds()
-            monotonic_elapsed = monotonic - self._last_monotonic
-            if abs(wall_elapsed - monotonic_elapsed) > _CLOCK_SKEW_SECONDS:
-                self._clock_skew_pending = True
-        self._last_wall = now
-        self._last_monotonic = monotonic
-        return now
 
     def _publish(
         self,
@@ -387,14 +271,3 @@ class StoreWriter(OutcomeStorePort):
                 previous[0] + records,
                 previous[1] + discarded,
             )
-
-
-def _utc_now() -> dt.datetime:
-    """Read the total system wall clock as an aware UTC value.
-
-    Returns
-    -------
-    datetime
-        The current aware UTC wall-clock value.
-    """
-    return dt.datetime.now(dt.UTC)

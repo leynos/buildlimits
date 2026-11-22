@@ -185,7 +185,30 @@ def _source_from(path: Path, value: cabc.Mapping[str, object]) -> Source:
         records_total=records_total,
         outcome_records=outcome_records,
         summary_records=summary_records,
+        salt_ids=_salt_ids_from(path, value.get("salt_ids")),
     )
+
+
+def _salt_ids_from(path: Path, value: object) -> tuple[str, ...]:
+    """Rebuild the domains a snapshot spans, defaulting to the newest one.
+
+    Returns
+    -------
+    tuple[str, ...]
+        The recorded identifiers, or an empty tuple for a document written
+        before the field existed.
+
+    Raises
+    ------
+    TypeError
+        If the field is present but is not a list of strings.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        msg = f"{path} source salt_ids must be a list of strings"
+        raise TypeError(msg)
+    return tuple(value)
 
 
 def _gaps_from(path: Path, stats: object) -> tuple[Gap, ...]:

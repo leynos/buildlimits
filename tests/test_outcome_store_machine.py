@@ -1,9 +1,12 @@
 """Generated append, compaction, reload, clock and salt store contracts."""
 
+import collections.abc as cabc
 import datetime as dt
+import threading
 import typing as typ
 from pathlib import Path
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import (
@@ -14,6 +17,7 @@ from hypothesis.stateful import (
 )
 from outcome_store_fixture_helpers import append_torn_utf8_tail
 from outcome_store_helpers import (
+    append_completion_barrier,
     salt_path,
     stored_records,
     wait_for_results,
@@ -29,6 +33,14 @@ from buildlimits.outcome_store import StoreWriter
 
 _BASE_TIME = dt.datetime(2026, 10, 25, tzinfo=dt.UTC)
 _DAY_SECONDS = 24 * 60 * 60
+_APPEND_FINISHED = threading.Event()
+
+
+@pytest.fixture(autouse=True)
+def _append_completion_barrier() -> cabc.Iterator[None]:
+    """Keep the clock still until the writer's post-append ageing finishes."""
+    with append_completion_barrier(_APPEND_FINISHED):
+        yield
 
 
 class OutcomeStoreMachine(RuleBasedStateMachine):
@@ -108,12 +120,46 @@ class OutcomeStoreMachine(RuleBasedStateMachine):
     def _append(self, version: str) -> None:
         """Append one generated row and update the model after writer success."""
         record = window_summary(server_version=version, observed_at=self.wall_time)
+        _APPEND_FINISHED.clear()
         self.writer.append(record)
         results = wait_for_results(self.writer, operation="append", reason="none")
         assert StoreResult("append", "none", 1, 0) in results, (
             "the generated append is acknowledged"
         )
+        if not _APPEND_FINISHED.wait(2.0):
+            pytest.fail("the writer's append did not finish after its result")
         self.expected.append(record)
+        self._model_append_ageing()
+
+    def _model_append_ageing(self) -> None:
+        """Mirror the age check the writer runs after every append.
+
+        The check reads the clock, so the model advances its skew baseline
+        here too. A jump detected on this append is passed to the compaction
+        through the same pending flag the writer uses, which makes that
+        compaction preserve rows rather than age them.
+        """
+        if not self.expected:
+            return
+        self._observe_model_clock()
+        cutoff = self.wall_time - dt.timedelta(days=outcome_records.RETENTION_DAYS)
+        # The writer asks its oldest retained observation, not its first row.
+        # A clock that steps back can append a row older than every row already
+        # there, and that row expires while the first row is still fresh.
+        oldest = min(record.observed_at for record in self.expected)
+        if oldest >= cutoff:
+            return
+        wait_for_results(self.writer, operation="compact")
+        self._compact_model()
+
+    def _observe_model_clock(self) -> None:
+        """Mirror ``StoreFiles.record_clock_observation`` and the flag it retains."""
+        wall_elapsed = (self.wall_time - self.last_wall_time).total_seconds()
+        monotonic_elapsed = self.monotonic_time - self.last_monotonic_time
+        if abs(wall_elapsed - monotonic_elapsed) > _DAY_SECONDS:
+            self.clock_skew_pending = True
+        self.last_wall_time = self.wall_time
+        self.last_monotonic_time = self.monotonic_time
 
     def _advance_in_sync(self, days: int) -> None:
         """Move wall and monotonic clocks together by the generated interval."""
@@ -128,17 +174,12 @@ class OutcomeStoreMachine(RuleBasedStateMachine):
 
     def _compact_model(self) -> bool:
         """Apply the writer's retention, insertion-order and clock rules."""
-        wall_elapsed = (self.wall_time - self.last_wall_time).total_seconds()
-        monotonic_elapsed = self.monotonic_time - self.last_monotonic_time
-        if abs(wall_elapsed - monotonic_elapsed) > _DAY_SECONDS:
-            self.clock_skew_pending = True
+        self._observe_model_clock()
         skipped_ageing = self.clock_skew_pending
-        if self.clock_skew_pending:
+        if skipped_ageing:
             self._mark("clock-skew")
         self._apply_model_retention(should_age=not skipped_ageing)
         self.clock_skew_pending = False
-        self.last_wall_time = self.wall_time
-        self.last_monotonic_time = self.monotonic_time
         return skipped_ageing
 
     def _apply_model_retention(self, *, should_age: bool) -> None:
@@ -301,34 +342,44 @@ def test_generated_store_operations_reach_required_branches(tmp_path: Path) -> N
     )
 
 
-def test_generated_compaction_reaches_the_retention_bound() -> None:
-    """Generated compact input evicts only the oldest row at the real bound."""
-    reached: set[str] = set()
+def test_the_model_ages_by_the_oldest_row_after_a_backward_jump(
+    tmp_path: Path,
+) -> None:
+    """A backward clock jump can append a row older than the first one.
+
+    The writer asks its oldest retained observation, so the older row expires
+    while the first row is still fresh. A model that asks only its first row
+    keeps the expired row, and the next comparison with the real store fails.
+    """
+    OutcomeStoreMachine.root = tmp_path
+    OutcomeStoreMachine.next_example = 0
 
     @settings(max_examples=1, deadline=None)
     @given(seed=st.integers(min_value=0, max_value=10_000))
     def verify(seed: int) -> None:
-        """Generate a valid store just beyond its real retention bound."""
-        now = _BASE_TIME
-        header = outcome_records.StoreHeader("generated-salt", now)
-        records = tuple(
-            window_summary(server_version=f"{seed}-{index}", observed_at=now)
-            for index in range(outcome_records.MAX_COMPACT_RECORDS + 1)
-        )
+        """Drive one real writer through the backward jump and its aftermath."""
+        machine = OutcomeStoreMachine()
+        try:
+            machine._append(f"first-{seed}")
+            machine._advance_with_skew(40, backwards=True)
+            machine._append(f"older-{seed}")
+            machine._advance_in_sync(31)
+            machine._append(f"middle-{seed}")
+            machine._append(f"last-{seed}")
 
-        compacted = outcome_records.compact(
-            outcome_records.DecodedStore(header, records), now=now
-        )
+            stored = stored_records(machine.path)
+            expected = tuple(machine.expected)
+            wall_time = machine.wall_time
+        finally:
+            machine._close_writer()
 
-        assert compacted.records == records[1:], (
-            "the count bound retains the newest rows in insertion order"
+        assert stored == expected, (
+            "the model drops the row the writer's oldest-observation check expired"
         )
-        assert compacted.discarded == 1, "only the oldest row is counted as evicted"
-        reached.add("retention-bound")
-        record_generated_case("retention-bound")
+        assert all(
+            record.observed_at
+            > wall_time - dt.timedelta(days=outcome_records.RETENTION_DAYS)
+            for record in stored
+        ), "the row appended during the backward jump is gone"
 
     verify()
-
-    assert reached == {"retention-bound"}, (
-        "generation crossed the actual 10,000-row cap"
-    )

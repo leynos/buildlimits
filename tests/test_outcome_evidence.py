@@ -72,3 +72,32 @@ def test_the_stated_limits_name_the_bias_rather_than_a_count() -> None:
         "solo and unanimous" in outcome_evidence.QUIET_WINDOW_CAVEAT
         and "busy, mixed" in outcome_evidence.QUIET_WINDOW_CAVEAT
     ), "the label limit names the selection and the traffic it misses (R2)"
+
+
+def test_the_streaming_builder_keeps_the_outermost_observations() -> None:
+    """The builder states the same span however the rows are ordered."""
+    later = OBSERVED_AT + dt.timedelta(hours=3)
+    builder = outcome_evidence.CoverageBuilder()
+    for when in (later, OBSERVED_AT, OBSERVED_AT, later):
+        builder.observe(when)
+
+    assert builder.coverage() == outcome_evidence.Coverage(OBSERVED_AT, later), (
+        "the first and last bounds do not follow the input order"
+    )
+
+
+def test_an_unfed_builder_states_no_span() -> None:
+    """No observation means no bounds, not a fabricated zero-width span."""
+    assert (
+        outcome_evidence.CoverageBuilder().coverage() == outcome_evidence.Coverage()
+    ), "an empty builder reports both bounds absent"
+
+
+def test_one_observation_is_a_zero_width_span() -> None:
+    """A single row covers the instant it was observed."""
+    builder = outcome_evidence.CoverageBuilder()
+    builder.observe(OBSERVED_AT)
+
+    assert builder.coverage() == outcome_evidence.Coverage(OBSERVED_AT, OBSERVED_AT), (
+        "the two bounds are the one observed time"
+    )

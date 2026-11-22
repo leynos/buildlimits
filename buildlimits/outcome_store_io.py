@@ -1,22 +1,32 @@
-"""Internal bounded file operations for cache-outcome storage.
+"""Internal store-document operations for cache-outcome storage.
 
-These shared filesystem primitives are package implementation support for the
-store writer and salt adapter, not a standalone public API.
+These operations write and replace whole store documents and their sidecars.
+The private-file primitives they build on, including the bounded reader, live
+in :mod:`buildlimits.outcome_store_files`. Both are package implementation
+support for the store writer and salt adapter, not a standalone public API.
 """
 
 import contextlib
+import json
 import os
-import stat
 import typing as typ
 
 from buildlimits import outcome_records
+from buildlimits.outcome_store_files import (
+    FILE_MODE,
+    OversizedFileError,
+    open_private_regular,
+    read_private_bytes,
+    require_regular,
+)
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
     from buildlimits.outcome_record_format import StoreRecord
 
-_FILE_MODE = 0o600
+_DIRECTORY_MODE = 0o700
 _TEMP_SUFFIX = ".tmp"
 
 
@@ -52,14 +62,9 @@ def read_store(
         Validated store rows or the closed corruption/version result.
 
     """
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor, metadata = open_private_regular(path, flags, enforce_mode=False)
-    if metadata.st_size > outcome_records.MAX_STORE_BYTES:
-        os.close(descriptor)
-        return outcome_records.RecordFailure("corrupt")
-    with os.fdopen(descriptor, "rb") as source:
-        document = source.read(outcome_records.MAX_STORE_BYTES + 1)
-    if len(document) > outcome_records.MAX_STORE_BYTES:
+    try:
+        document = read_private_bytes(path, limit=outcome_records.MAX_STORE_BYTES)
+    except OversizedFileError:
         return outcome_records.RecordFailure("corrupt")
     try:
         complete_document = document[: document.rfind(b"\n") + 1]
@@ -83,7 +88,7 @@ def store_size(path: Path) -> int:
         metadata = path.lstat()
     except FileNotFoundError:
         return 0
-    _require_regular(metadata)
+    require_regular(metadata)
     return metadata.st_size
 
 
@@ -105,53 +110,7 @@ def replace_store(
     if len(document) > outcome_records.MAX_COMPACT_BYTES:
         msg = "compacted document exceeds its byte bound"
         raise ValueError(msg)
-    temporary = path.with_name(f".{path.name}{_TEMP_SUFFIX}")
-    temporary.unlink(missing_ok=True)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(temporary, flags, _FILE_MODE)
-    write_private_temp(temporary, descriptor, document)
-    replace_temp(temporary, path)
-
-
-def open_private_regular(
-    path: Path, flags: int, *, enforce_mode: bool = True
-) -> tuple[int, os.stat_result]:
-    """Open a regular file without following links, optionally enforcing mode.
-
-    Returns
-    -------
-    tuple[int, os.stat_result]
-        The open descriptor and the metadata captured from it.
-
-    Raises
-    ------
-    OSError
-        If opening, validating or enforcing the private file mode fails.
-    """
-    descriptor = os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
-    try:
-        metadata = os.fstat(descriptor)
-        _require_regular(metadata)
-        if enforce_mode:
-            os.fchmod(descriptor, _FILE_MODE)
-    except OSError:
-        with contextlib.suppress(OSError):
-            os.close(descriptor)
-        raise
-    return descriptor, metadata
-
-
-def _require_regular(metadata: os.stat_result) -> None:
-    """Reject filesystem objects that are not regular files.
-
-    Raises
-    ------
-    OSError
-        If the supplied metadata describes another filesystem object.
-    """
-    if not stat.S_ISREG(metadata.st_mode):
-        msg = "outcome store is not a regular file"
-        raise OSError(msg)
+    replace_temp(write_private_temporary(path, document), path)
 
 
 def write_private_temp(temporary: Path, descriptor: int, data: bytes) -> None:
@@ -163,7 +122,7 @@ def write_private_temp(temporary: Path, descriptor: int, data: bytes) -> None:
         If writing, syncing or closing fails; the temporary file is removed.
     """
     try:
-        os.fchmod(descriptor, _FILE_MODE)
+        os.fchmod(descriptor, FILE_MODE)
         write_all(descriptor, data)
         os.fsync(descriptor)
     except OSError:
@@ -191,6 +150,159 @@ def replace_temp(temporary: Path, destination: Path) -> None:
     except OSError:
         temporary.unlink(missing_ok=True)
         raise
+
+
+def prepare_store(path: Path, header: outcome_records.StoreHeader) -> Path:
+    """Write a header-only store beside ``path`` without installing it.
+
+    Returns
+    -------
+    Path
+        The synced temporary file the caller may rename into place.
+    """
+    document = (outcome_records.encode_line(header) + "\n").encode("utf-8")
+    return write_private_temporary(path, document, suffix=".new")
+
+
+def move_aside(path: Path) -> bool:
+    """Move a rejected store to its ``.bad`` sibling without replacing one.
+
+    Parameters
+    ----------
+    path : Path
+        The unreadable store.
+
+    Returns
+    -------
+    bool
+        Whether the file was moved aside. ``False`` means a backup already
+        exists or the rename failed, so the rejected data must be reported
+        rather than silently overwritten.
+    """
+    backup = path.with_name(f"{path.name}.bad")
+    try:
+        backup.lstat()
+    except FileNotFoundError:
+        pass
+    else:
+        return False
+    try:
+        path.replace(backup)
+    except OSError:
+        return False
+    return True
+
+
+def sync_rename(first: Path, second: Path) -> None:
+    """Make a completed cross-directory rename durable in both directories.
+
+    Filesystem failures propagate as ``OSError``. The rename itself has
+    already happened, so the caller reports the durability fault without
+    pretending the rows are still active.
+    """
+    fsync_directory(first)
+    fsync_directory(second)
+
+
+def sync_file(path: Path) -> None:
+    """Make one private file's contents durable.
+
+    An append leaves its bytes in the page cache, so a rename that publishes
+    the file does not make them survive a power failure on its own. Syncing
+    the file before its directory entry is what orders the contents ahead of
+    the name that refers to them. Filesystem failures propagate as ``OSError``.
+
+    Parameters
+    ----------
+    path : Path
+        The private regular file whose contents must reach the disk.
+
+    Examples
+    --------
+    ``sync_file(store)`` is what a seal calls before it renames the active
+    file into the sealed directory.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor, _metadata = open_private_regular(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def ensure_directory(path: Path) -> None:
+    """Create a private directory if it does not exist.
+
+    Filesystem failures propagate as ``OSError``.
+    """
+    path.mkdir(mode=_DIRECTORY_MODE, parents=True, exist_ok=True)
+    path.chmod(_DIRECTORY_MODE)
+
+
+def fsync_directory(path: Path) -> None:
+    """Make a directory's entries durable.
+
+    Filesystem failures propagate as ``OSError``.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def write_sequence(path: Path, value: int) -> None:
+    """Atomically store the next sealed sequence number.
+
+    The counter is written before a segment is moved, so a crash leaves a gap
+    the inventory reports rather than a sequence two segments can share.
+    Filesystem failures propagate as ``OSError``.
+    """
+    _replace_document(path, f"{value}\n".encode("ascii"))
+
+
+def write_metadata(path: Path, document: cabc.Mapping[str, object]) -> None:
+    """Atomically store one JSON metadata document beside a sealed source.
+
+    Filesystem failures propagate as ``OSError``.
+    """
+    encoded = json.dumps(
+        document, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    _replace_document(path, encoded + b"\n")
+
+
+def write_private_temporary(path: Path, data: bytes, *, suffix: str = "") -> Path:
+    """Write ``data`` into a new private temporary beside ``path``.
+
+    Parameters
+    ----------
+    path : Path
+        The destination the temporary will later replace.
+    data : bytes
+        The complete contents to write.
+    suffix : str
+        An extra infix before the temporary suffix, used when a caller needs a
+        name distinct from the one a replacement uses.
+
+    Returns
+    -------
+    Path
+        The synced temporary file; the caller installs or removes it.
+    """
+    temporary = path.with_name(f".{path.name}{suffix}{_TEMP_SUFFIX}")
+    temporary.unlink(missing_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(temporary, flags, FILE_MODE)
+    write_private_temp(temporary, descriptor, data)
+    return temporary
+
+
+def _replace_document(path: Path, data: bytes) -> None:
+    """Write bytes through one private temporary file and replace ``path``."""
+    replace_temp(write_private_temporary(path, data), path)
+    fsync_directory(path.parent)
 
 
 def write_all(descriptor: int, data: bytes) -> None:

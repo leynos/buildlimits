@@ -4,7 +4,7 @@ import datetime as dt
 import typing as typ
 
 import pytest
-from outcome_store_helpers import salt_path, seed_store, window_summary
+from outcome_store_helpers import salt_path, window_summary
 from outcome_test_helpers import OBSERVED_AT, attributed_record
 
 from buildlimits import outcome_records, outcome_store, outcome_store_io
@@ -14,7 +14,7 @@ from buildlimits.outcome_record_format import StoreHeader
 if typ.TYPE_CHECKING:
     from pathlib import Path
 
-    from buildlimits.outcome_record_format import WindowSummary
+    from buildlimits.outcome_record_format import StoreRecord, WindowSummary
 
 
 def seed_replay_store(path: Path) -> None:
@@ -84,3 +84,44 @@ def seed_one_record_store(
     record = window_summary(server_version=server_version)
     seed_store(path, salt, (record,), torn_tail=torn_tail)
     return record
+
+
+def write_private_file(path: Path, contents: bytes) -> None:
+    """Create one mode-0600 file for store fixtures.
+
+    Parameters
+    ----------
+    path : Path
+        Destination for the fixture.
+    contents : bytes
+        Exact bytes the test needs at that path.
+    """
+    path.write_bytes(contents)
+    path.chmod(0o600)
+
+
+def seed_store(
+    path: Path,
+    salt: Salt,
+    records: tuple[StoreRecord, ...],
+    *,
+    torn_tail: str | None = None,
+) -> outcome_records.StoreHeader:
+    """Write a valid fixture header and rows, with an optional torn tail.
+
+    Returns
+    -------
+    StoreHeader
+        The header used for the fixture.
+    """
+    header = outcome_records.StoreHeader(
+        salt.salt_id, dt.datetime(2026, 10, 25, tzinfo=dt.UTC)
+    )
+    lines = [outcome_records.encode_line(header)]
+    lines.extend(outcome_records.encode_line(record) for record in records)
+    document = "\n".join(lines) + "\n"
+    if torn_tail is not None:
+        document += torn_tail
+    path.write_text(document, encoding="utf-8")
+    path.chmod(0o600)
+    return header

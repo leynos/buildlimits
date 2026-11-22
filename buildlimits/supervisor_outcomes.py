@@ -21,6 +21,8 @@ from buildlimits.nonblocking_child import ChildReaper
 from buildlimits.outcome_gate import quiet_point
 from buildlimits.outcome_ports import SampleFailure
 from buildlimits.outcome_queries import PeerServerProcess, SccacheStatistics
+from buildlimits.outcome_record_encode import header_floor_bytes
+from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_recorder_driver import OutcomeRecorder
 from buildlimits.outcome_recorder_types import (
     Disabled,
@@ -33,6 +35,7 @@ from buildlimits.outcome_recorder_types import (
     SampleFailed,
     Stopping,
 )
+from buildlimits.outcome_retention import policy_from_settings
 from buildlimits.outcome_sampling import ChildSampler
 from buildlimits.outcome_sightings import request_metadata
 from buildlimits.outcome_store import StoreWriter
@@ -101,27 +104,28 @@ class OutcomeShell:
             self._wall_clock = dependencies.wall_clock
         reaper = ChildReaper() if dependencies.reaper is None else dependencies.reaper
         path = outcome_store_salt.store_path(env)
-        writer = (
-            StoreWriter(path) if dependencies.writer is None else dependencies.writer
-        )
+        writer = dependencies.writer
+        if writer is None:
+            floor = header_floor_bytes()
+            limit = MAX_COMPACT_BYTES
+            policy = policy_from_settings(
+                supervisor.settings, header_floor=floor, segment_limit=limit
+            )
+            writer = StoreWriter(path, policy=policy)
         self._resources = outcome_resources.OutcomeResources(
             reaper, writer, supervisor.clock
         )
-        self._server = (
-            PeerServerProcess(supervisor.settings.sccache_socket)
-            if dependencies.server is None
-            else dependencies.server
-        )
-        self._statistics = (
-            SccacheStatistics(
+        self._server = dependencies.server
+        if self._server is None:
+            self._server = PeerServerProcess(supervisor.settings.sccache_socket)
+        self._statistics = dependencies.statistics
+        if self._statistics is None:
+            self._statistics = SccacheStatistics(
                 supervisor.settings.sccache_executable,
                 env,
                 supervisor.settings.sccache_socket,
                 reaper=reaper,
             )
-            if dependencies.statistics is None
-            else dependencies.statistics
-        )
         self._recorder = OutcomeRecorder(self._statistics, self._server)
         self._child_sampler = ChildSampler(self._server)
         self._telemetry = outcome_telemetry.OutcomeTelemetry(

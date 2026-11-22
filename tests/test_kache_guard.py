@@ -138,6 +138,7 @@ def test_an_unreadable_slice_does_not_fail_the_reading(
     slice_dir.mkdir()
 
     def _vanish(_path: Path) -> list[int]:
+        """Stand in for a slice directory removed after it was listed."""
         msg = "the slice went away"
         raise OSError(msg)
 

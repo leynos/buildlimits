@@ -75,6 +75,42 @@ class Coverage:
         }
 
 
+@dc.dataclass(slots=True)
+class CoverageBuilder:
+    """Accumulate one span without holding the times that make it up.
+
+    A streaming reader yields rows once, so it cannot hand their times to
+    ``Coverage.over``, which materializes them. This builder keeps only the
+    two bounds and is the streaming counterpart of that classmethod.
+    """
+
+    _first: dt.datetime | None = None
+    _last: dt.datetime | None = None
+
+    def observe(self, when: dt.datetime) -> None:
+        """Widen the span to include one observation time.
+
+        Parameters
+        ----------
+        when : datetime
+            One record's observation time.
+        """
+        if self._first is None or when < self._first:
+            self._first = when
+        if self._last is None or when > self._last:
+            self._last = when
+
+    def coverage(self) -> Coverage:
+        """Return the span observed so far.
+
+        Returns
+        -------
+        Coverage
+            The earliest and latest times, or both None before any call.
+        """
+        return Coverage(self._first, self._last)
+
+
 def coverage_of(records: cabc.Iterable[ObservedRecord]) -> Coverage:
     """Return the span covered by the observation time of each record.
 
@@ -97,6 +133,7 @@ __all__ = [
     "H3_LIMITS",
     "QUIET_WINDOW_CAVEAT",
     "Coverage",
+    "CoverageBuilder",
     "ObservedRecord",
     "coverage_of",
 ]

@@ -10,13 +10,13 @@ from pathlib import Path
 
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreFailure
-from buildlimits.outcome_store_io import open_private_regular, write_private_temp
+from buildlimits.outcome_store_files import open_private_regular
+from buildlimits.outcome_store_io import ensure_directory, write_private_temp
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 _SALT_BYTES = 32
-_DIRECTORY_MODE = 0o700
 _TEMP_SUFFIX = ".tmp"
 
 
@@ -75,7 +75,7 @@ def file_salt(path: Path) -> Salt | StoreFailure:
     if not path.is_absolute():
         return StoreFailure("salt_unavailable")
     try:
-        _secure_directory(path.parent)
+        ensure_directory(path.parent)
         existing = _read_salt(path)
         if existing is not None:
             return existing
@@ -151,9 +151,3 @@ def _create_salt(path: Path) -> Salt | StoreFailure:
         return _salt(key)
     finally:
         temporary.unlink(missing_ok=True)
-
-
-def _secure_directory(path: Path) -> None:
-    """Create the store directory and set its exact private mode."""
-    path.mkdir(mode=_DIRECTORY_MODE, parents=True, exist_ok=True)
-    path.chmod(_DIRECTORY_MODE)
