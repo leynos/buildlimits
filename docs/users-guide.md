@@ -629,7 +629,9 @@ holds crate names, arguments or paths. The benchmark replays the snapshot at
 each event's admission time, so a predictor is scored only for events whose
 admission time was recorded no later than their own outcome; a prediction never
 reads a label observed after the moment it was made. Its tables are written to
-`build/predict`.
+`build/predict`. The snapshot holds every selected record, so its memory
+follows the selected history; the bounded-memory guarantee applies to archiving
+and streaming replay, not to dataset export.
 
 The commands behind those targets take explicit paths:
 

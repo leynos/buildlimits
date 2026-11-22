@@ -2457,3 +2457,16 @@ after each revert.
   asserts the exact size too. Removing the settled report's assignment fails
   the executed regression, and removing the dry report's fails the inspection
   pair.
+- Revision 43 records the final pre-merge refresh's Testing items. The
+  benchmark's chunk-peak oracle now counts the newlines in each chunk directly
+  instead of calling the production `peak_rows`, so the test no longer checks
+  the function against itself; the quarantine-token test keeps its output
+  assertions and drops the `os.urandom` call-argument assertion. The opt-in 320
+  MiB memory test was run at this head and passed (4 passed, 171 s), and the
+  users' guide states that dataset export materialises the selected history
+  rather than claiming the archiver's bounded-memory bound for it. The Unit
+  Architecture concentration items and the Domain Architecture serialisation
+  and path-in-entity items are recorded as follow-ups: they are cohesive-unit
+  and boundary redesigns, not defects, and the four successive whole-plan
+  assessments found no new production correctness defect. The Out of Scope row
+  remains accepted as gate-enabling repairs.

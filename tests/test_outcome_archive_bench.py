@@ -55,8 +55,12 @@ def _peak_in_chunks(path: Path, chunk_bytes: int) -> int:
         Peak complete rows within one chunk.
     """
     data = path.read_bytes()
+    # The reader completes a row when its newline arrives, so the rows pending
+    # together in one chunk are exactly the newlines that chunk contains. This
+    # oracle counts them directly rather than asking the production function
+    # to describe itself.
     return max(
-        peak_rows(data[offset : offset + chunk_bytes])
+        data[offset : offset + chunk_bytes].count(b"\n")
         for offset in range(0, len(data), chunk_bytes)
     )
 

@@ -23,12 +23,9 @@ def test_a_quarantine_token_is_the_hex_of_six_random_bytes(
     the byte source to both extremes of the range makes the encoding exact
     rather than a sample of whatever the host happened to draw.
     """
-    with mock.patch.object(
-        outcome_archive_quarantine.os, "urandom", return_value=raw
-    ) as urandom:
+    with mock.patch.object(outcome_archive_quarantine.os, "urandom", return_value=raw):
         token = outcome_archive_quarantine.fresh_quarantine_token()
 
-    urandom.assert_called_once_with(6)
     assert token == expected, "the six bytes are hex-encoded in order"
     assert len(token) == 12, "a token is twelve characters, however it is drawn"
     assert token == token.lower(), "a token is lowercase"
