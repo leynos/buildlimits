@@ -2463,9 +2463,9 @@ after each revert.
   the function against itself; the quarantine-token test keeps its output
   assertions and drops the `os.urandom` call-argument assertion. The opt-in 320
   MiB memory test was run at this head and passed (4 passed, 171 s), and the
-  users' guide states that dataset export materialises the selected history
+  users' guide states that dataset export materializes the selected history
   rather than claiming the archiver's bounded-memory bound for it. The Unit
-  Architecture concentration items and the Domain Architecture serialisation
+  Architecture concentration items and the Domain Architecture serialization
   and path-in-entity items are recorded as follow-ups: they are cohesive-unit
   and boundary redesigns, not defects, and the four successive whole-plan
   assessments found no new production correctness defect. The Out of Scope row
