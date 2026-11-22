@@ -416,8 +416,10 @@ either component's private counters.
   bytes, the closed-segment count, the observation span and a `complete` flag.
   The flag is false when a segment's metadata is missing, the active file could
   not be read, or the writer replaced the active file while the run or a dry
-  run's planning reads observed it, so a lower bound is never presented as
-  exact.
+  run's planning reads observed it. An unmeasured entry leaves the count a
+  lower bound; a replacement can leave the same rows in both the active file
+  and a sealed source, so the count can instead overstate and is never
+  presented as exact.
 - `evictions` counts trims and deletions under `age`, `bytes`, `records` and
   every combination of those bounds, and each action carries the same reason. A
   bound that is configured but did not cause an eviction is never named.

@@ -695,12 +695,14 @@ is never mistaken for "retain nothing".
 `active_records`, the first and last observation times, the `span_seconds`
 between them, and `complete`. `complete` is `false` when a closed segment's
 metadata is missing, the active file could not be read, or the writer replaced
-the active file while the run or an inspection was measuring it; the counts are
-then lower bounds, not a claim that history was lost. A run or inspection that
-could not count the active file also names the closed `reason` in its report,
-so the status and the fault behind it are readable from the same document.
-Retained counts are not the recorder's cumulative `attributed` and `readings`
-counters, and neither is a journal reader's `--max-records` query cap.
+the active file while the run or an inspection was measuring it. The counts are
+then not exact: an unmeasured entry leaves a lower bound, while a replacement
+can count rows in both sources and overstate the total. Neither is a claim that
+history was lost. A run or inspection that could not count the active file also
+names the closed `reason` in its report, so the status and the fault behind it
+are readable from the same document. Retained counts are not the recorder's
+cumulative `attributed` and `readings` counters, and neither is a journal
+reader's `--max-records` query cap.
 
 `evictions` counts the trims and deletions a run performed under `age`, `bytes`,
 `records`, `age_and_bytes`, `age_and_records`, `bytes_and_records` and

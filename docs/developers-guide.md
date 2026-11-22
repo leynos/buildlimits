@@ -1212,12 +1212,13 @@ history and one active snapshot into a `RetainedHistory`; it owns the one
 inventory dependency so the pure shapes do not acquire it. The status document,
 `retention.json` and `last-run.json` all carry these shapes, so they cannot
 disagree about a policy. Neither shape is a cumulative recorder counter or a
-journal query cap, and `complete=False` marks a lower bound rather than an
-exact count. `outcome_archive_active.read_active_history` performs the one
-bounded, read-only read of the active file. Its measured length is the file's
-contribution to the byte budget and its row count is the contribution to the
-record cap; the same snapshot feeds the archiver's diagnostic `retained`
-document.
+journal query cap, and `complete=False` marks a count that is not exact: an
+unmeasured entry leaves a lower bound, while a replaced active file can leave
+rows counted in both sources. `outcome_archive_active.read_active_history`
+performs the one bounded, read-only read of the active file. Its measured
+length is the file's contribution to the byte budget and its row count is the
+contribution to the record cap; the same snapshot feeds the archiver's
+diagnostic `retained` document.
 
 `outcome_archive_cli` is the timer-facing surface. `inspect` is a dry run by
 definition; `run --dry-run` plans without taking the lock or writing state; and

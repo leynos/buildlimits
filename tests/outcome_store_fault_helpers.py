@@ -35,7 +35,7 @@ def stalled_append() -> cabc.Generator[tuple[threading.Event, threading.Event]]:
         """Delay the first append before calling the underlying writer."""
         if not entered.is_set():
             entered.set()
-            release.wait(5.0)
+            release.wait()
         append_line(store, line)
 
     try:
