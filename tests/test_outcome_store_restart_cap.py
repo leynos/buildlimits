@@ -8,6 +8,7 @@ from outcome_store_helpers import (
     close_writer,
     decoded_store,
     segment_writer,
+    wait_for_results,
 )
 from outcome_test_helpers import window_summary
 
@@ -57,6 +58,11 @@ def test_a_reduced_cap_seals_an_idle_segmented_store_at_restart(
 
     writer = segment_writer(store, _segmented_policy(max_records=2), NOW)
     try:
+        # Startup publishes its load result before the settle pass seals the
+        # file, so the seal result is the one that says the new active file is
+        # in place. Reading the directory after only the load result races the
+        # worker between its rename and the fresh header.
+        wait_for_results(writer, operation="seal", reason="none")
         sealed = sorted(layout.sealed_dir.glob("*.jsonl"))
         assert [path.name for path in sealed] == [segment_name(1)], (
             "the over-cap active file is sealed at restart"
