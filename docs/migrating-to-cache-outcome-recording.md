@@ -34,8 +34,8 @@ The store and snapshot formats are version 2. An outcome row adds the UTC
 `outcome_attribution`; a snapshot adds the bounded label-loss diagnostics.
 Version 1 stores and snapshots remain readable, and their rows report the new
 evidence as `unrecorded` or absent, so they contribute no labels or admission
-times to the prediction benchmark. Upgrade the readers before the supervisor.
-A release that predates version 2 treats the store as a version mismatch and
+times to the prediction benchmark. Upgrade the readers before the supervisor. A
+release that predates version 2 treats the store as a version mismatch and
 moves it aside, so archive or migrate the history before a downgrade; the new
 code never rewrites an old document merely to read it.
 

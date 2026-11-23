@@ -13,7 +13,8 @@ complete. The proposed backend-neutral evolution is documented separately in
 [ADR 007](adr-0007-cache-outcome-observation-port.md), which does not replace
 this W1 decision.
 
-Amended by [ADR 011](adr-0011-cache-outcome-admission-time-and-label-loss-accounting.md)
+Amended by
+[ADR 011](adr-0011-cache-outcome-admission-time-and-label-loss-accounting.md)
 (2026-11-23): the store format now records an admission time and the
 classification evidence, the quiet-point gate no longer requires an empty
 queue, a first baseline may be read while work moves, and a window overflow

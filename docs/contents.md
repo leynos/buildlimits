@@ -97,9 +97,9 @@
   and the verification plan.
 
 - [Restore trustworthy cache hit/miss label coverage ExecPlan](execplans/issue-68-restore-trustworthy-cache-hit-miss-label-coverage-and-admission-time-evidence-for-the-prediction-benchmark.md)
-  records the issue #68 measured label loss, the admission-time and
-  diagnostics implementation, the controlled real-sccache evidence and the
-  host before/after limits.
+  records the issue #68 measured label loss, the admission-time and diagnostics
+  implementation, the controlled real-sccache evidence and the host
+  before/after limits.
 
 - [Roadmap](roadmap.md) sequences the delivery of accepted RFCs as phases,
   steps and tasks with dependencies and success criteria.

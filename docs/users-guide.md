@@ -763,27 +763,26 @@ missing admission times, the closed-history gaps, and the observer's own
 journal counts: admitted requests by cache path and backend, published
 outcomes, writer appends and evictions, and reading skips and failures. The
 benchmark's `results.md` carries the same sufficiency block. The counts keep
-their denominators separate—all admitted requests, cache-eligible
-compilations, retained outcome rows and scored outcomes—so a small labelled
-share is visible rather than hidden behind one ratio.
+their denominators separate—all admitted requests, cache-eligible compilations,
+retained outcome rows and scored outcomes—so a small labelled share is visible
+rather than hidden behind one ratio.
 
 An outcome row records the UTC wall-clock moment the supervisor admitted the
-compilation. That time is read where admission is decided, not derived from
-the later label time; a row without one, including every row written before
-the version 2 store, remains unscorable. The store and snapshot formats are
+compilation. That time is read where admission is decided, not derived from the
+later label time; a row without one, including every row written before the
+version 2 store, remains unscorable. The store and snapshot formats are
 versioned: version 1 documents still load, with the new evidence reported as
 `unrecorded` or absent rather than guessed. A history whose rows predate the
-admission field therefore reports `insufficient admission times` until new
-rows are recorded.
+admission field therefore reports `insufficient admission times` until new rows
+are recorded.
 
 The recorder reads statistics at a quiet point. It no longer requires an empty
 queue, and it may take a first baseline while work is moving, because a
-baseline only snapshots the counters. An attributing window still requires
-that no cached group is moving and no detached cache work is draining, and a
-launch during the query discards the reading. sccache 0.14 exposes only
-aggregate counters, so a mixed window of concurrent requests stays `unknown`;
-the host's label rate is a property of its workload, not a number the recorder
-can promise.
+baseline only snapshots the counters. An attributing window still requires that
+no cached group is moving and no detached cache work is draining, and a launch
+during the query discards the reading. sccache 0.14 exposes only aggregate
+counters, so a mixed window of concurrent requests stays `unknown`; the host's
+label rate is a property of its workload, not a number the recorder can promise.
 
 The commands behind those targets take explicit paths:
 
