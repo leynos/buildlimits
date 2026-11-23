@@ -275,6 +275,44 @@ def _policy_value(settings: SupervisorConfig | None, name: str, default: int) ->
     return default if settings is None else int(getattr(settings, name))
 
 
+def _world_settings(tmp_path: Path, options: OutcomeWorldOptions) -> SimpleNamespace:
+    """Build the retention settings the fake supervisor exposes.
+
+    Returns
+    -------
+    SimpleNamespace
+        A complete policy beside the paths and mode the shell reads.
+    """
+    policy_settings = options.policy_settings
+    return SimpleNamespace(
+        sccache_socket=tmp_path / "sccache.sock",
+        sccache_executable="sccache",
+        recovery_marker=(
+            tmp_path / "barrier"
+            if options.recovery_marker is None
+            else options.recovery_marker
+        ),
+        cache_outcomes="record" if options.recording else "off",
+        cache_mode="sccache",
+        # The status retention section derives its limits from these fields,
+        # so the fake settings must carry a complete policy.
+        cache_outcomes_max_age_days=_policy_value(
+            policy_settings, "cache_outcomes_max_age_days", DEFAULT_MAX_AGE_DAYS
+        ),
+        cache_outcomes_max_bytes=_policy_value(
+            policy_settings, "cache_outcomes_max_bytes", LEGACY_MAX_BYTES
+        ),
+        cache_outcomes_max_records=_policy_value(
+            policy_settings, "cache_outcomes_max_records", 0
+        ),
+        cache_outcomes_archive_headroom_bytes=_policy_value(
+            policy_settings,
+            "cache_outcomes_archive_headroom_bytes",
+            DEFAULT_HEADROOM_BYTES,
+        ),
+    )
+
+
 def make_outcome_world(
     tmp_path: Path,
     options: OutcomeWorldOptions = _DEFAULT_OUTCOME_WORLD_OPTIONS,
@@ -298,35 +336,8 @@ def make_outcome_world(
         else options.statistics_port
     )
     writer = FakeWriter() if options.writer is None else options.writer
-    policy_settings = options.policy_settings
     supervisor = SimpleNamespace(
-        settings=SimpleNamespace(
-            sccache_socket=tmp_path / "sccache.sock",
-            sccache_executable="sccache",
-            recovery_marker=(
-                tmp_path / "barrier"
-                if options.recovery_marker is None
-                else options.recovery_marker
-            ),
-            cache_outcomes="record" if options.recording else "off",
-            cache_mode="sccache",
-            # The status retention section derives its limits from these
-            # fields, so the fake settings must carry a complete policy.
-            cache_outcomes_max_age_days=_policy_value(
-                policy_settings, "cache_outcomes_max_age_days", DEFAULT_MAX_AGE_DAYS
-            ),
-            cache_outcomes_max_bytes=_policy_value(
-                policy_settings, "cache_outcomes_max_bytes", LEGACY_MAX_BYTES
-            ),
-            cache_outcomes_max_records=_policy_value(
-                policy_settings, "cache_outcomes_max_records", 0
-            ),
-            cache_outcomes_archive_headroom_bytes=_policy_value(
-                policy_settings,
-                "cache_outcomes_archive_headroom_bytes",
-                DEFAULT_HEADROOM_BYTES,
-            ),
-        ),
+        settings=_world_settings(tmp_path, options),
         metrics=metrics,
         tracer=options.tracer,
         clock=lambda: 0.0,

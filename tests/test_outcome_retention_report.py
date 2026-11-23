@@ -206,27 +206,35 @@ def test_an_unmeasured_active_file_leaves_the_result_incomplete() -> None:
     assert history.complete is False, "the missing measurement is disclosed"
 
 
+def _assert_closed_json(
+    rendered: dict[str, object],
+    snapshot: SnapshotAssertion,
+    message: str,
+) -> None:
+    """Assert one document round-trips as JSON with its documented keys."""
+    assert json.loads(json.dumps(rendered, sort_keys=True)) == rendered, (
+        "every reported field is JSON-compatible"
+    )
+    assert sorted(rendered) == snapshot, message
+
+
 def test_the_retained_document_is_closed_json(
     snapshot: SnapshotAssertion,
 ) -> None:
     """The retained view round-trips as JSON with exactly its documented keys."""
-    history = retained_history(Inventory())
-
-    rendered = history.as_dict()
-
-    assert json.loads(json.dumps(rendered, sort_keys=True)) == rendered, (
-        "every reported field is JSON-compatible"
+    _assert_closed_json(
+        retained_history(Inventory()).as_dict(),
+        snapshot,
+        "the retained schema is closed",
     )
-    assert sorted(rendered) == snapshot, "the retained schema is closed"
 
 
 def test_the_limits_document_is_closed_json(
     tmp_path: Path, snapshot: SnapshotAssertion
 ) -> None:
     """The limits view round-trips as JSON with exactly its documented keys."""
-    rendered = _limits(settings(tmp_path)).as_dict()
-
-    assert json.loads(json.dumps(rendered, sort_keys=True)) == rendered, (
-        "every reported field is JSON-compatible"
+    _assert_closed_json(
+        _limits(settings(tmp_path)).as_dict(),
+        snapshot,
+        "the limits schema is closed",
     )
-    assert sorted(rendered) == snapshot, "the limits schema is closed"

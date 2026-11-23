@@ -209,9 +209,7 @@ def load(path: Path | None, *, header_floor: int | None = None) -> SupervisorCon
         The TOML file, or ``None`` for defaults only. A missing file also
         yields the defaults.
     header_floor : int | None
-        The encoder's smallest replacement header, injected by the caller so
-        this module never imports the encoding adapter; None omits only the
-        serialization-dependent retention rule.
+        The encoder's smallest replacement header, or None to omit its rule.
 
     Returns
     -------
@@ -324,8 +322,7 @@ def validate(
     config : SupervisorConfig
         The configuration to check.
     header_floor : int | None
-        The encoder's smallest replacement header, or None to omit the
-        serialization-dependent retention rule.
+        The encoder's smallest replacement header, or None to omit its rule.
 
     Returns
     -------
@@ -337,12 +334,23 @@ def validate(
     ConfigError
         If a value is out of range.
     """
-    broken = [
-        message for holds, message in _range_rules(header_floor) if not holds(config)
-    ]
+    broken = _failed_rules(config, header_floor)
     if broken:
         raise ConfigError(broken[0])
     return config
+
+
+def _failed_rules(config: SupervisorConfig, header_floor: int | None) -> list[str]:
+    """Return the messages of every range rule this configuration fails.
+
+    Returns
+    -------
+    list[str]
+        One message per failed rule, in rule order.
+    """
+    return [
+        message for holds, message in _range_rules(header_floor) if not holds(config)
+    ]
 
 
 def _range_rules(

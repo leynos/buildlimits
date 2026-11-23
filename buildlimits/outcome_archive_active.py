@@ -208,6 +208,35 @@ def _measure(
     """
     reader = DocumentReader(stream)
     tally = _Tally(cutoff)
+    pending = _scan_rows(reader, tally)
+    if not tally.saw_header:
+        raise SegmentFaultError("corrupt")
+    # Termination is settled only once iteration ends. A final row without its
+    # newline is the writer's append in flight, and an interrupted write
+    # truncates it back out, so it must not decide a budget. A row before a
+    # dropped fragment is different: it was terminated and is committed.
+    if pending is not None and reader.last_record_terminated:
+        tally.record(pending)
+    return tally.as_history(size)
+
+
+def _scan_rows(reader: DocumentReader, tally: _Tally) -> RecordRow | None:
+    """Count every row whose termination the stream has already proved.
+
+    The final record row is returned instead of counted, because only the end
+    of iteration and the reader's termination flag decide whether it was
+    committed or is an append still in flight.
+
+    Returns
+    -------
+    RecordRow | None
+        The last record row seen, for the caller to settle or discard.
+
+    Raises
+    ------
+    SegmentFaultError
+        If the stream itself fails while being read.
+    """
     pending: RecordRow | None = None
     try:
         for row in reader:
@@ -219,15 +248,7 @@ def _measure(
             pending = row
     except StreamFaultError as fault:
         raise SegmentFaultError(fault.reason) from fault
-    if not tally.saw_header:
-        raise SegmentFaultError("corrupt")
-    # Termination is settled only once iteration ends. A final row without its
-    # newline is the writer's append in flight, and an interrupted write
-    # truncates it back out, so it must not decide a budget. A row before a
-    # dropped fragment is different: it was terminated and is committed.
-    if pending is not None and reader.last_record_terminated:
-        tally.record(pending)
-    return tally.as_history(size)
+    return pending
 
 
 @dc.dataclass(slots=True)
