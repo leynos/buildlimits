@@ -2,6 +2,7 @@
 
 import datetime as dt
 import lzma
+import typing as typ
 from pathlib import Path
 
 from outcome_archive_helpers import policy as archive_policy
@@ -18,6 +19,9 @@ from outcome_test_helpers import attributed_record, window_summary
 from buildlimits import outcome_records
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segments import SegmentLayout, archive_name, segment_name
+
+if typ.TYPE_CHECKING:
+    from buildlimits.outcome_record_format import StoreRecord
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 _SEGMENT_BYTES = 10_000_000
@@ -40,6 +44,49 @@ def _segmented_policy(*, max_records: int | None) -> RetentionPolicy:
     )
 
 
+def _seed_store(
+    store: Path, rows: tuple[StoreRecord, ...], retention: RetentionPolicy
+) -> None:
+    """Append rows through a real writer and close it before the restart.
+
+    Parameters
+    ----------
+    store : Path
+        The active store path.
+    rows : tuple[StoreRecord, ...]
+        The rows to append in order.
+    retention : RetentionPolicy
+        The policy the first writer starts with.
+    """
+    writer = segment_writer(store, retention, NOW)
+    try:
+        for row in rows:
+            append_and_wait(writer, row)
+    finally:
+        close_writer(writer, 1.0)
+
+
+def _restart_and_wait_for_seal(store: Path, retention: RetentionPolicy) -> None:
+    """Reopen the store and close it once the startup settle has sealed.
+
+    Parameters
+    ----------
+    store : Path
+        The active store path.
+    retention : RetentionPolicy
+        The reduced-cap policy the restart applies.
+    """
+    writer = segment_writer(store, retention, NOW)
+    try:
+        # Startup publishes its load result before the settle pass seals the
+        # file, so the seal result is the one that says the new active file is
+        # in place. Reading the directory after only the load result races the
+        # worker between its rename and the fresh header.
+        wait_for_results(writer, operation="seal", reason="none")
+    finally:
+        close_writer(writer, 1.0)
+
+
 def test_a_reduced_cap_seals_an_idle_segmented_store_at_restart(
     tmp_path: Path,
 ) -> None:
@@ -52,29 +99,20 @@ def test_a_reduced_cap_seals_an_idle_segmented_store_at_restart(
     """
     store = tmp_path / "cache-outcomes.jsonl"
     layout = SegmentLayout.beside(store)
-    writer = segment_writer(store, _segmented_policy(max_records=None), NOW)
-    try:
-        for _ in range(3):
-            append_and_wait(writer, window_summary(observed_at=NOW))
-    finally:
-        close_writer(writer, 1.0)
+    _seed_store(
+        store,
+        tuple(window_summary(observed_at=NOW) for _ in range(3)),
+        _segmented_policy(max_records=None),
+    )
     assert decoded_store(store).records, "the fixture wrote rows to the active file"
 
-    writer = segment_writer(store, _segmented_policy(max_records=2), NOW)
-    try:
-        # Startup publishes its load result before the settle pass seals the
-        # file, so the seal result is the one that says the new active file is
-        # in place. Reading the directory after only the load result races the
-        # worker between its rename and the fresh header.
-        wait_for_results(writer, operation="seal", reason="none")
-        sealed = sorted(layout.sealed_dir.glob("*.jsonl"))
-        assert [path.name for path in sealed] == [segment_name(1)], (
-            "the over-cap active file is sealed at restart"
-        )
-        assert len(decoded_store(sealed[0]).records) == 3, "every row reaches the seal"
-        assert decoded_store(store).records == (), "the active file restarts empty"
-    finally:
-        close_writer(writer, 1.0)
+    _restart_and_wait_for_seal(store, _segmented_policy(max_records=2))
+    sealed = sorted(layout.sealed_dir.glob("*.jsonl"))
+    assert [path.name for path in sealed] == [segment_name(1)], (
+        "the over-cap active file is sealed at restart"
+    )
+    assert len(decoded_store(sealed[0]).records) == 3, "every row reaches the seal"
+    assert decoded_store(store).records == (), "the active file restarts empty"
 
 
 def test_a_restart_seal_is_trimmed_by_a_settled_archive_run(tmp_path: Path) -> None:
@@ -91,18 +129,8 @@ def test_a_restart_seal_is_trimmed_by_a_settled_archive_run(tmp_path: Path) -> N
         attributed_record(observed_at=NOW - dt.timedelta(minutes=2)),
         attributed_record(observed_at=NOW - dt.timedelta(minutes=3)),
     )
-    writer = segment_writer(store, _segmented_policy(max_records=None), NOW)
-    try:
-        for row in rows:
-            append_and_wait(writer, row)
-    finally:
-        close_writer(writer, 1.0)
-
-    writer = segment_writer(store, _segmented_policy(max_records=2), NOW)
-    try:
-        wait_for_results(writer, operation="seal", reason="none")
-    finally:
-        close_writer(writer, 1.0)
+    _seed_store(store, rows, _segmented_policy(max_records=None))
+    _restart_and_wait_for_seal(store, _segmented_policy(max_records=2))
 
     report = archive_run(tmp_path, archive_policy(1_000_000, max_records=2))
 
@@ -112,6 +140,7 @@ def test_a_restart_seal_is_trimmed_by_a_settled_archive_run(tmp_path: Path) -> N
             "utf-8"
         )
     )
+    assert isinstance(archived, outcome_records.DecodedStore), "the archive decodes"
     assert archived.records == rows[1:], (
         "the archive keeps the two later rows and drops the leading one"
     )

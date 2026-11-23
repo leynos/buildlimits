@@ -19,7 +19,10 @@ from buildlimits.outcome_segment_inventory import read_inventory
 from buildlimits.outcome_segments import archive_name, segment_name
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
     from buildlimits.outcome_record_format import StoreRecord
+    from buildlimits.outcome_retention import RetentionPolicy
 
 
 def _straddling_rows() -> tuple[dt.datetime, tuple[StoreRecord, ...]]:
@@ -227,14 +230,23 @@ def test_a_byte_budget_waits_for_age_eviction_across_segments(tmp_path: Path) ->
     assert report.retained_bytes == budget, "the settled store fits the budget"
 
 
-def test_a_record_cap_trims_closed_history_in_append_order(tmp_path: Path) -> None:
-    """Closed history follows the same append-order rule as the writer.
+def _assert_a_capacity_trim_follows_append_order(
+    tmp_path: Path,
+    make_policy: cabc.Callable[[StoreRecord], RetentionPolicy],
+    *,
+    expect_budget: bool = False,
+) -> None:
+    """Assert one capacity bound trims the leading closed-history row.
 
-    A producer can write a row observed earlier after one observed later, so
-    the two orders can disagree. The record cap removes the leading row in
-    file order, keeping the later-appended row even though its observation is
-    older. The archive is compared exactly, so a change to observation-time
-    ordering would fail here rather than stay implicit.
+    Parameters
+    ----------
+    tmp_path : Path
+        The store root the archiver reads.
+    make_policy : Callable[[StoreRecord], RetentionPolicy]
+        Builds the policy from the older observation, so a byte budget can
+        size itself against the row that must survive.
+    expect_budget : bool
+        Whether the byte budget is expected to be met exactly.
     """
     newer_observation = attributed_record(observed_at=NOW - dt.timedelta(hours=1))
     older_observation = attributed_record(observed_at=NOW - dt.timedelta(hours=2))
@@ -244,11 +256,30 @@ def test_a_record_cap_trims_closed_history_in_append_order(tmp_path: Path) -> No
         sealed / segment_name(1), document((newer_observation, older_observation))
     )
 
-    report = run(tmp_path, policy(1_000_000, max_records=1))
+    retention = make_policy(older_observation)
+    report = run(tmp_path, retention)
 
     assert report.status == "ok", "the trim is not a failure"
     assert _archived_document(tmp_path, 1) == document((older_observation,)), (
         "the later-appended row survives the capacity trim"
+    )
+    if expect_budget:
+        assert report.retained_bytes == retention.max_bytes, (
+            "the archive meets the budget exactly"
+        )
+
+
+def test_a_record_cap_trims_closed_history_in_append_order(tmp_path: Path) -> None:
+    """Closed history follows the same append-order rule as the writer.
+
+    A producer can write a row observed earlier after one observed later, so
+    the two orders can disagree. The record cap removes the leading row in
+    file order, keeping the later-appended row even though its observation is
+    older. The archive is compared exactly, so a change to observation-time
+    ordering would fail here rather than stay implicit.
+    """
+    _assert_a_capacity_trim_follows_append_order(
+        tmp_path, lambda _older: policy(1_000_000, max_records=1)
     )
 
 
@@ -260,19 +291,8 @@ def test_a_byte_budget_trims_closed_history_in_append_order(tmp_path: Path) -> N
     archive is compared exactly, so observation-time ordering would fail here
     rather than stay implicit.
     """
-    newer_observation = attributed_record(observed_at=NOW - dt.timedelta(hours=1))
-    older_observation = attributed_record(observed_at=NOW - dt.timedelta(hours=2))
-    sealed = layout(tmp_path).sealed_dir
-    sealed.mkdir(parents=True)
-    write_private(
-        sealed / segment_name(1), document((newer_observation, older_observation))
+    _assert_a_capacity_trim_follows_append_order(
+        tmp_path,
+        lambda older: policy(1_000_000, max_bytes=len(document((older,)))),
+        expect_budget=True,
     )
-    budget = len(document((older_observation,)))
-
-    report = run(tmp_path, policy(1_000_000, max_bytes=budget))
-
-    assert report.status == "ok", "the trim is not a failure"
-    assert _archived_document(tmp_path, 1) == document((older_observation,)), (
-        "the later-appended row survives the byte trim"
-    )
-    assert report.retained_bytes == budget, "the archive meets the budget exactly"

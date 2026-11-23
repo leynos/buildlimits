@@ -69,9 +69,11 @@ def test_a_large_history_keeps_the_status_read_bounded_during_maintenance(
 
     report = _inspection_report(store, config)
     limits = report["limits"]
+    retained_bytes = typ.cast("int", report["retained_logical_bytes"])
+    retained_records = typ.cast("int", report["retained_records"])
     assert report["status"] == "ok", "the large history is reportable"
-    assert report["retained_logical_bytes"] > 0, "the report names retained bytes"
-    assert report["retained_records"] > 0, "the report names retained records"
+    assert retained_bytes > 0, "the report names retained bytes"
+    assert retained_records > 0, "the report names retained records"
     assert isinstance(limits, dict), "the report names the effective limits"
     assert limits["max_bytes"] == 15_000_000_000, "the configured budget is reported"
     assert limits["max_records"] is None, "the disabled count cap is reported"

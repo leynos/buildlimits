@@ -2655,3 +2655,11 @@ reason = "The two helpers answer opposite questions over the same lookup: the ar
 unit = "buildlimits/outcome_archive_verify.py"
 reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."
 
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_archive.py",
+    "tests/test_outcome_archive_settlement.py",
+    "tests/test_outcome_retention_compaction.py",
+]
+reason = "Matching type-checking preludes: each module annotates archive history, so each names ActiveHistory and the retention policy for the checker only, and sharing the prelude through a re-export module would hide each module's real dependencies."
+

@@ -45,6 +45,9 @@ from buildlimits.outcome_store import StoreWriter
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_archive_history import ActiveHistory
+    from buildlimits.outcome_record_format import StoreRecord
+    from buildlimits.outcome_retention import RetentionPolicy
+    from buildlimits.outcome_vocabulary import StoreReason
 
 
 def test_a_row_exactly_at_the_age_cutoff_is_kept() -> None:
@@ -321,6 +324,32 @@ def test_a_status_snapshot_never_pairs_a_row_with_an_earlier_state(
     )
 
 
+def _out_of_order_rows() -> tuple[StoreRecord, StoreRecord]:
+    """Return a later-appended row observed earlier than the leading one."""
+    older_observation = records(NOW - dt.timedelta(hours=2), 1)[0]
+    newer_observation = records(NOW - dt.timedelta(hours=1), 1)[0]
+    return newer_observation, older_observation
+
+
+def _assert_the_later_row_survives_capacity_trim(
+    newer_observation: StoreRecord,
+    older_observation: StoreRecord,
+    retention: RetentionPolicy,
+    reason: StoreReason,
+) -> None:
+    """Assert one capacity bound keeps the later-appended older observation."""
+    compacted = outcome_records.compact(
+        decoded((newer_observation, older_observation)),
+        now=NOW,
+        policy=retention,
+    )
+
+    assert compacted.records == (older_observation,), (
+        "the later-appended row survives, whatever its observation time"
+    )
+    assert compacted.store_reason == reason, "the bound names itself"
+
+
 def test_a_byte_or_record_trim_removes_the_oldest_appended_rows() -> None:
     """The bound trims by append order, and keeps the later-rowed observation.
 
@@ -330,18 +359,14 @@ def test_a_byte_or_record_trim_removes_the_oldest_appended_rows() -> None:
     surviving row is the one written last even when it is the older
     observation. This pins the decision rather than leaving it implicit.
     """
-    older_observation = records(NOW - dt.timedelta(hours=2), 1)[0]
-    newer_observation = records(NOW - dt.timedelta(hours=1), 1)[0]
-    rows = (newer_observation, older_observation)
+    newer_observation, older_observation = _out_of_order_rows()
 
-    compacted = outcome_records.compact(
-        decoded(rows), now=NOW, policy=policy(max_records=1)
+    _assert_the_later_row_survives_capacity_trim(
+        newer_observation,
+        older_observation,
+        policy(max_records=1),
+        "records",
     )
-
-    assert compacted.records == (older_observation,), (
-        "the later-appended row survives, whatever its observation time"
-    )
-    assert compacted.store_reason == "records", "the cap names itself"
 
 
 def test_a_byte_trim_removes_the_leading_row_whatever_its_observation() -> None:
@@ -351,16 +376,12 @@ def test_a_byte_trim_removes_the_leading_row_whatever_its_observation() -> None:
     even though that leading row carries the newer observation. The reason
     names the byte bound, so clock order cannot be mistaken for the trim rule.
     """
-    older_observation = records(NOW - dt.timedelta(hours=2), 1)[0]
-    newer_observation = records(NOW - dt.timedelta(hours=1), 1)[0]
-    rows = (newer_observation, older_observation)
+    newer_observation, older_observation = _out_of_order_rows()
     budget = encoded_size((older_observation,))
 
-    compacted = outcome_records.compact(
-        decoded(rows), now=NOW, policy=policy(max_bytes=budget)
+    _assert_the_later_row_survives_capacity_trim(
+        newer_observation,
+        older_observation,
+        policy(max_bytes=budget),
+        "bytes",
     )
-
-    assert compacted.records == (older_observation,), (
-        "the later-appended row survives, whatever its observation time"
-    )
-    assert compacted.store_reason == "bytes", "the byte bound names itself"
