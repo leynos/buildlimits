@@ -57,6 +57,13 @@ def settle_loaded_store(store: StoreFiles) -> None:
         # indefinitely just because it stayed small.
         store.compact()
         return
+    if store.over_record_cap():
+        # A reduced cap reaches a segmented store at its next start. Sealing
+        # hands the rows to the archiver even though the file is below the
+        # segment size, so an idle store cannot hold more rows than the cap
+        # merely because it received no further appends.
+        seal(store)
+        return
     # Appends never create the active file, so a fresh or emptied store must be
     # given its header at startup. Otherwise the first record fails with
     # ``save_failed`` and is lost, and only the second row, whose retry seals an

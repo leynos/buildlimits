@@ -200,7 +200,7 @@ class StoreFiles:
             return False
         if self.needs_compaction and not self.settle():
             return False
-        return not (self.exceeds_record_cap() and not self.settle())
+        return not (self.over_record_cap() and not self.settle())
 
     def append(self, line: bytes, record: StoreRecord) -> None:
         """Compact at high water, preserve the hard bound and append one row."""
@@ -235,18 +235,13 @@ class StoreFiles:
         self.publish("append", "none", records=1)
         self.expire_if_aged()
 
-    def exceeds_record_cap(self) -> bool:
-        """Whether one more row would take the active file past its record cap.
-
-        The cap bounds retained history, and only a closed segment can be
-        archived and evicted. Sealing at the cap hands the rows to the
-        archiver instead of letting a small active file hold more rows than
-        the policy allows.
+    def over_record_cap(self) -> bool:
+        """Whether the loaded active file already holds the record cap.
 
         Returns
         -------
         bool
-            Whether the active file must be closed before the next append.
+            Whether a segmented store's active rows reach its configured cap.
         """
         policy = self.policy
         return (
