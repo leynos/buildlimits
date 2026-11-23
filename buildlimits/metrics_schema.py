@@ -181,7 +181,13 @@ VOCABULARIES = {
         "no_headroom",
         "unsettled",
     }),
-    "archive_reason": frozenset({"none", "busy", "no_headroom", "unreadable"}),
+    "archive_reason": frozenset({
+        "none",
+        "busy",
+        "no_headroom",
+        "unreadable",
+        "state_write_failed",
+    }),
 }
 DURATIONS = frozenset({
     "wait_seconds",

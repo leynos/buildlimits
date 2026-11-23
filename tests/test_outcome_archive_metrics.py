@@ -23,7 +23,7 @@ from buildlimits.outcome_archive_events import publish_run
 from buildlimits.outcome_archive_evictions import EVICTION_CAUSES
 from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_archive_lock import ArchiveLock
-from buildlimits.outcome_archive_report import RunReport
+from buildlimits.outcome_archive_report import Maintenance, RunReport
 from buildlimits.outcome_archive_retain import settled_snapshot
 from buildlimits.outcome_history import read_history
 from buildlimits.outcome_history_pin import (
@@ -175,6 +175,27 @@ def test_a_busy_firing_publishes_its_retryable_status(
     (record,) = metric_sink.records
     assert record["BUILD_LIMITS_ARCHIVE_STATUS"] == "busy", "the status is published"
     assert record["BUILD_LIMITS_ARCHIVE_REASON"] == "busy", "the reason is published"
+
+
+def test_a_state_write_failure_publishes_its_category(
+    metric_sink: RecordingSink,
+) -> None:
+    """A failed state write is reportable under its own archive reason."""
+    report = RunReport(
+        status="failed",
+        started_at=NOW,
+        finished_at=_FINISHED,
+        reason="state_write_failed",
+        maintenance=Maintenance(state_written=False, reason="state_write_failed"),
+    )
+
+    publish_run(Metrics(metric_sink, source="adapter"), report)
+
+    (record,) = metric_sink.records
+    assert record["BUILD_LIMITS_ARCHIVE_STATUS"] == "failed", "the status is published"
+    assert record["BUILD_LIMITS_ARCHIVE_REASON"] == "state_write_failed", (
+        "the failure category reaches the validated event"
+    )
 
 
 def test_an_active_scan_retry_names_its_attempt(

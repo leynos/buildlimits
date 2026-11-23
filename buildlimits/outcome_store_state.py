@@ -183,28 +183,25 @@ class StoreFiles:
             (record.observed_at for record in records), default=None
         )
 
-    def _accepts_append(self) -> bool:
-        """Whether this writer can take another row after settling what it may.
+    def _settle_for_append(self) -> bool:
+        """Settle what the next append needs, reporting whether it may proceed.
 
-        A writer with no header cannot append at all. One whose file needs
-        compaction or has reached its record cap settles first: a seal that
-        failed before its rename leaves rows the archiver cannot evict, so
-        accepting another row would hold history past the cap.
+        A file that needs compaction or has reached its record cap settles
+        first: a seal that failed before its rename leaves rows the archiver
+        cannot evict, so accepting another row would hold history past the cap.
 
         Returns
         -------
         bool
             Whether the writer is ready for the row.
         """
-        if self.header is None:
-            return False
         if self.needs_compaction and not self.settle():
             return False
         return not (self.over_record_cap() and not self.settle())
 
     def append(self, line: bytes, record: StoreRecord) -> None:
         """Compact at high water, preserve the hard bound and append one row."""
-        if not self._accepts_append():
+        if self.header is None or not self._settle_for_append():
             self.publish("append", "save_failed", discarded=1)
             return
         try:
