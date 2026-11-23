@@ -63,7 +63,9 @@ def test_an_injected_generation_port_answers_without_reading_proc(
     tmp_path: Path,
 ) -> None:
     """The test seam returns the supplied generation or failure unchanged."""
-    answers: list[object] = [Generation("run-test", 1, 2)]
+    answers: list[Generation | GenerationFailure | None] = [
+        Generation("run-test", 1, 2)
+    ]
     server = PeerServerProcess(tmp_path / "socket", generation_port=lambda: answers[0])
 
     assert server.generation() == Generation("run-test", 1, 2), (

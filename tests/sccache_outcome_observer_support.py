@@ -42,6 +42,8 @@ from buildlimits.predict.records import decode_history
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_attribution import Generation
+    from buildlimits.outcome_ports import GenerationFailure
+    from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_recorder_driver import OutcomeRecorder
 
 SALT = Salt(b"o" * 32, "observer-test")
@@ -62,11 +64,13 @@ class Reading(typ.NamedTuple):
     """One completed reading and every effect it produced."""
 
     events: tuple[object, ...]
-    records: tuple[object, ...]
+    records: tuple[StoreRecord, ...]
     reason: str
 
 
-def switchable_server(socket_path: Path) -> tuple[PeerServerProcess, list[object]]:
+def switchable_server(
+    socket_path: Path,
+) -> tuple[PeerServerProcess, list[Generation | GenerationFailure | None]]:
     """Return a real port whose generation answer a test can change.
 
     Returns
@@ -76,7 +80,7 @@ def switchable_server(socket_path: Path) -> tuple[PeerServerProcess, list[object
         changes what the next boundary observes.
     """
     real = PeerServerProcess(socket_path)
-    slot: list[object] = [real.generation()]
+    slot: list[Generation | GenerationFailure | None] = [real.generation()]
     server = PeerServerProcess(socket_path, generation_port=lambda: slot[0])
     return server, slot
 
@@ -118,7 +122,7 @@ def payload(
     )
 
 
-def _collect(outputs: Outputs, events: list[object], records: list[object]) -> str:
+def _collect(outputs: Outputs, events: list[object], records: list[StoreRecord]) -> str:
     """Fold one output into the collected effects and return its reason."""
     events.extend(outputs.events)
     records.extend(outputs.records)
@@ -128,7 +132,7 @@ def _collect(outputs: Outputs, events: list[object], records: list[object]) -> s
 def poll(recorder: OutcomeRecorder) -> Reading:
     """Poll an already-started query to its terminal result."""
     events: list[object] = []
-    records: list[object] = []
+    records: list[StoreRecord] = []
     deadline = time.monotonic() + READ_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         reason = _collect(recorder.poll(time.monotonic()), events, records)
@@ -179,12 +183,12 @@ def finish(recorder: OutcomeRecorder, group_id: str) -> None:
     )
 
 
-def outcomes(records: tuple[object, ...]) -> tuple[OutcomeRecord, ...]:
+def outcomes(records: tuple[StoreRecord, ...]) -> tuple[OutcomeRecord, ...]:
     """Return the outcome rows from a reading, excluding its summary."""
     return tuple(record for record in records if isinstance(record, OutcomeRecord))
 
 
-def summaries(records: tuple[object, ...]) -> tuple[WindowSummary, ...]:
+def summaries(records: tuple[StoreRecord, ...]) -> tuple[WindowSummary, ...]:
     """Return the window summaries from a reading."""
     return tuple(record for record in records if isinstance(record, WindowSummary))
 
@@ -315,7 +319,9 @@ def run_timeout(recorder: OutcomeRecorder, tools: Toolchain) -> Outputs:
 
 
 def run_restart(
-    recorder: OutcomeRecorder, slot: list[object], tools: Toolchain
+    recorder: OutcomeRecorder,
+    slot: list[Generation | GenerationFailure | None],
+    tools: Toolchain,
 ) -> Reading:
     """Run one launch whose query spans a server generation change."""
     launch(recorder, "restart", payload(tools, "observer-restart"))
@@ -326,7 +332,7 @@ def run_restart(
     return poll(recorder)
 
 
-def assert_extraction(records: list[object]) -> None:
+def assert_extraction(records: list[StoreRecord]) -> None:
     """Prove the retained rows encode, decode and extract without loss."""
     header = StoreHeader(SALT.salt_id, dt.datetime.now(dt.UTC))
     snapshot = build_snapshot(

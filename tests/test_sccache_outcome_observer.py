@@ -6,6 +6,7 @@ footprints, labels and admission times are evidence from the supported binary
 rather than from a fixture's model of it.
 """
 
+import typing as typ
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,9 @@ from sccache_outcome_observer_support import (
 from buildlimits.outcome_queries import SccacheStatistics
 from buildlimits.outcome_recorder_driver import OutcomeRecorder
 
+if typ.TYPE_CHECKING:
+    from buildlimits.outcome_record_format import StoreRecord
+
 pytestmark = [
     *sccache_host_marks(),
     pytest.mark.timeout(180),
@@ -38,7 +42,7 @@ pytestmark = [
 def test_the_real_sccache_observer_labels_controlled_windows(tmp_path: Path) -> None:
     """Miss, hit, mixed, declined and timeout are told apart exactly."""
     tools = toolchain(tmp_path)
-    records: list[object] = []
+    records: list[StoreRecord] = []
 
     with _private_server(
         tools.executable, tools.environment, tmp_path / "server.log"
