@@ -45,7 +45,7 @@ def encode_line(value: StoreHeader | StoreRecord) -> str:
     --------
     >>> import datetime as dt
     >>> encode_line(StoreHeader("salt-1", dt.datetime(2026, 1, 1, tzinfo=dt.UTC)))
-    '{"format":"buildlimits-cache-outcomes","version":1,"salt_id":"salt-1","written_at":"2026-01-01T00:00:00Z"}'
+    '{"format":"buildlimits-cache-outcomes","version":2,"salt_id":"salt-1","written_at":"2026-01-01T00:00:00Z"}'
     """
     document = _document(value)
     line = json.dumps(
