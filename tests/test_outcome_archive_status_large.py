@@ -1,8 +1,8 @@
-"""The status read stays bounded while a large archive run holds its lock.
+"""The status report stays bounded while a large archive run holds its lock.
 
 Retention maintenance for closed history runs in the archiver, never in the
-supervisor, so the supervisor's status path must not walk the archived
-history. This is the supervisor-side half of the large-history acceptance
+supervisor, so the inspection command must report retained history without
+decoding it. This is the diagnostics half of the large-history acceptance
 validation: it is opt-in because generating the store takes minutes.
 """
 
@@ -29,14 +29,12 @@ from buildlimits.outcome_segments import SegmentLayout
 def test_a_large_history_keeps_the_status_read_bounded_during_maintenance(
     tmp_path: Path,
 ) -> None:
-    """The status read stays cheap while a large archive run holds its lock.
+    """The inspection command stays cheap while a large run holds its lock.
 
-    Retention maintenance runs in the archiver, never in the supervisor, so
-    the supervisor's status path must not walk the archived history. This
-    measures the status command against the same large store: its peak stays
-    far below the history it describes, and it completes while another
-    process holds the archive lock, which is what keeps admission progress
-    alive during maintenance.
+    The command reports the effective limits and retained totals from
+    metadata rather than by decoding the archived history, and it takes no
+    archive lock, so it completes while another process is maintaining that
+    history. The measured peak stays far below the history it describes.
     """
     store, config = large_store_and_config(tmp_path)
     layout = SegmentLayout.beside(store)
