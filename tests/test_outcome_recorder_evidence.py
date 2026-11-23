@@ -53,6 +53,7 @@ def test_a_label_record_carries_the_admission_moment_from_its_launch() -> None:
 
     record = output.records[0]
     assert isinstance(record, OutcomeRecord), record
+    assert record.admitted_at is not None, "the row carries an admission time"
     assert record.admitted_at == admitted_at, "the row carries the launch's time"
     assert record.observed_at == OBSERVED_AT, "the label time is unchanged"
     assert record.admitted_at <= record.observed_at, (

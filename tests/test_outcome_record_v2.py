@@ -12,6 +12,7 @@ from buildlimits.outcome_record_codec import decode_lines
 from buildlimits.outcome_record_encode import encode_line
 from buildlimits.outcome_record_format import (
     DecodedStore,
+    OutcomeRecord,
     RecordFailure,
     StoreHeader,
 )
@@ -94,6 +95,7 @@ def test_a_version_two_row_round_trips_its_evidence() -> None:
 
     assert isinstance(loaded, DecodedStore), loaded
     assert loaded.records == (record,), "every field survives the round trip"
+    assert isinstance(loaded.records[0], OutcomeRecord), loaded.records[0]
     assert loaded.records[0].admitted_at == ADMITTED_AT, "admission is preserved"
     assert loaded.records[0].outcome_reason == "none", "reason is preserved"
     assert loaded.records[0].outcome_attribution == "solo", "attribution is preserved"

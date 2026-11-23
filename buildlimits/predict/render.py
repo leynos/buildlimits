@@ -18,7 +18,12 @@ from buildlimits.predict.evaluation import (
     STATUS_INSUFFICIENT_ADMISSION,
     STATUS_INSUFFICIENT_HELDOUT,
 )
-from buildlimits.predict.formatting import MISSING, as_count, as_percent
+from buildlimits.predict.formatting import (
+    MISSING,
+    admission_line,
+    as_count,
+    as_percent,
+)
 from buildlimits.predict.render_tables import (
     UNDERPOWERED,
     ablation_table,
@@ -135,12 +140,7 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
             f"delivered before a prediction, {as_count(replay['unapplied_labels'])} "
             "labels too late to inform one"
         ),
-        (
-            f"- Admission times: {as_count(stats['admission_recorded'])} recorded, "
-            f"{as_count(stats['admission_usable'])} usable for a prediction, "
-            f"{as_count(stats['admission_missing'])} missing, "
-            f"{as_count(stats['admission_unusable'])} recorded after their own label"
-        ),
+        admission_line(stats),
         (
             f"- Store: {as_count(source['records_total'])} rows from salt "
             f"`{source['salt_id']}`{_domain_note(source.get('salt_ids'))} written "

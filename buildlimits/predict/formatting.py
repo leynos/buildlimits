@@ -6,6 +6,9 @@ measurement is never mistaken for a zero.
 
 import typing as typ
 
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+
 MISSING = "-"
 
 
@@ -61,6 +64,29 @@ def as_percent(value: object) -> str:
     '-'
     """
     return MISSING if value is None else f"{100 * typ.cast('float', value):.1f}%"
+
+
+def admission_line(stats: cabc.Mapping[str, object]) -> str:
+    """Return the admission-time coverage bullet shared by both reports.
+
+    Returns
+    -------
+    str
+        The recorded, usable, missing and late-admission counts in one line.
+
+    Examples
+    --------
+    >>> admission_line({"admission_recorded": 2, "admission_usable": 2,
+    ...                 "admission_missing": 0,
+    ...                 "admission_unusable": 0})  # doctest: +ELLIPSIS
+    '- Admission times: 2 recorded, 2 usable for a prediction, ...'
+    """
+    return (
+        f"- Admission times: {as_count(stats['admission_recorded'])} recorded, "
+        f"{as_count(stats['admission_usable'])} usable for a prediction, "
+        f"{as_count(stats['admission_missing'])} missing, "
+        f"{as_count(stats['admission_unusable'])} recorded after their own label"
+    )
 
 
 def as_counts(value: object) -> str:

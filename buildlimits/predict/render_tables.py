@@ -10,6 +10,7 @@ import typing as typ
 
 from buildlimits.predict.formatting import (
     MISSING,
+    admission_line,
     as_count,
     as_counts,
     as_percent,
@@ -49,12 +50,7 @@ def data_sufficiency(document: cabc.Mapping[str, object]) -> list[str]:
             f"({as_percent(stats['labelled_fraction'])}), "
             f"{as_count(stats['identities'])} distinct identities"
         ),
-        (
-            f"- Admission times: {as_count(stats['admission_recorded'])} recorded, "
-            f"{as_count(stats['admission_usable'])} usable for a prediction, "
-            f"{as_count(stats['admission_missing'])} missing, "
-            f"{as_count(stats['admission_unusable'])} after their own label"
-        ),
+        admission_line(stats),
     ]
     diagnostics = data.get("diagnostics")
     if diagnostics is None:

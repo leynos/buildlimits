@@ -45,7 +45,6 @@ _STORE_MAP_FIELDS = (
     "by_child_sighting",
     "by_server_version",
 )
-_HISTORY_COUNT_FIELDS = ("archived", "sealed", "gaps", "quarantined")
 
 
 def config_to_dict(config: Config) -> dict[str, object]:

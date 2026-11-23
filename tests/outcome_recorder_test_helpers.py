@@ -82,6 +82,8 @@ class _OutcomeRecord(typ.Protocol):
     """The stable keyed value checked on persisted outcome records."""
 
     key: object
+    outcome_reason: str
+    outcome_attribution: str
 
 
 class _Outputs(typ.Protocol):

@@ -51,6 +51,24 @@ def test_benchmark_command_writes_both_result_files(
     assert document["latency"]["file"] == "timings.json", "the pointer is explicit"
 
 
+def _run_store_benchmark(
+    tmp_path: Path, snapshot: Path
+) -> tuple[int, dict[str, typ.Any], str]:
+    """Run the benchmark over one store-derived snapshot.
+
+    Returns
+    -------
+    tuple[int, dict[str, object], str]
+        The status, the result document and the rendered Markdown.
+    """
+    output = tmp_path / "out"
+    status = benchmark_cli.main(
+        benchmark_argv(snapshot, output, write_fast_config(tmp_path))
+    )
+    document, markdown = read_results(output)
+    return status, document, markdown
+
+
 def test_a_store_snapshot_without_admission_times_predicts_nothing(
     tmp_path: Path,
 ) -> None:
@@ -59,14 +77,10 @@ def test_a_store_snapshot_without_admission_times_predicts_nothing(
     The honest answer is the count of what is missing, not a prediction made
     from a label that had already arrived.
     """
-    output = tmp_path / "out"
-    snapshot = write_snapshot(tmp_path, 400)
-
-    status = benchmark_cli.main(
-        benchmark_argv(snapshot, output, write_fast_config(tmp_path))
+    status, document, markdown = _run_store_benchmark(
+        tmp_path, write_snapshot(tmp_path, 400)
     )
 
-    document, markdown = read_results(output)
     assert status == 0, "the run still produces both files"
     assert document["status"] == "insufficient admission times", (
         "the missing admission times set the status"
@@ -89,14 +103,10 @@ def test_a_store_snapshot_with_admission_times_can_be_predicted(
     the time at admission is what lets the benchmark walk the history without
     using a label that arrived later.
     """
-    output = tmp_path / "out"
-    snapshot = write_admitted_store_snapshot(tmp_path, 400)
-
-    status = benchmark_cli.main(
-        benchmark_argv(snapshot, output, write_fast_config(tmp_path))
+    status, document, markdown = _run_store_benchmark(
+        tmp_path, write_admitted_store_snapshot(tmp_path, 400)
     )
 
-    document, markdown = read_results(output)
     assert status == 0, "the run completes"
     assert document["status"] not in {
         "insufficient data",
