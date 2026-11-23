@@ -198,6 +198,24 @@ def test_a_state_write_failure_publishes_its_category(
     )
 
 
+def test_a_failed_state_write_publishes_its_reason(
+    tmp_path: Path, metric_sink: RecordingSink
+) -> None:
+    """A run whose state cannot be saved publishes the closed failure reason."""
+    write(tmp_path / "cache-outcomes.jsonl", records(NOW, 1), policy())
+    layout(tmp_path).retention_file.mkdir(parents=True)
+
+    report = _run(tmp_path, Metrics(metric_sink, source="adapter"))
+
+    assert report.status == "failed", "the timer must retry"
+    assert report.reason == "state_write_failed", "the write failure is closed"
+    (record,) = metric_sink.records
+    assert record["BUILD_LIMITS_ARCHIVE_STATUS"] == "failed", "the status is published"
+    assert record["BUILD_LIMITS_ARCHIVE_REASON"] == "state_write_failed", (
+        "the failed write reaches the validated event"
+    )
+
+
 def test_an_active_scan_retry_names_its_attempt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
