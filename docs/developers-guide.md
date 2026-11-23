@@ -879,13 +879,14 @@ records the decision.
 The outcome event schema is registered before the supervisor integration is
 enabled. `cache_outcome` carries one bounded classification per cached launch;
 `outcome_reading` and `outcome_store` carry aggregate failure and operation
-counts, and `archive_run` carries one closed status, reason, action counts,
-failed sequences and runtime for a timer firing of the archive command.
-`metrics_report` leaves `cache_outcomes` empty until one of these event types
-is present, and computes attributed coverage from `outcome_attribution` over
-cached `request_admitted` records rather than trusting a separate count field.
-`tracing_export` reserves `statistics_read` and the three store operations with
-the fixed `statistics_query`, `store_io` and `salt` failure categories.
+counts, and `archive_run` carries one closed status, reason, action and
+eviction-cause counts, retained totals, failed sequences and runtime for a
+timer firing of the archive command. `metrics_report` leaves `cache_outcomes`
+empty until one of these event types is present, and computes attributed
+coverage from `outcome_attribution` over cached `request_admitted` records
+rather than trusting a separate count field. `tracing_export` reserves
+`statistics_read` and the three store operations with the fixed
+`statistics_query`, `store_io` and `salt` failure categories.
 
 `OutcomeTelemetry` maps reducer outputs to those metrics and owns the bounded
 `statistics_read` span. `outcome_reading` is transition-only: it carries a

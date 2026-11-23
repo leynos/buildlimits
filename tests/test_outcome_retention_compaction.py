@@ -60,7 +60,7 @@ def test_a_row_exactly_at_the_age_cutoff_is_kept() -> None:
 
     assert compacted.records == rows[1:], "the row exactly at the cutoff survives"
     assert compacted.discarded == 1, "only the older row is evicted"
-    assert compacted.store_reason == "expired", "the eviction cause is reported"
+    assert compacted.store_reason == "expired", "the age bound names itself"
 
 
 def test_history_below_both_bounds_is_untouched() -> None:
@@ -88,8 +88,10 @@ def test_the_byte_bound_is_exact() -> None:
     )
 
     assert above.records == rows, "a store exactly at its budget is retained"
+    assert above.store_reason == "none", "a store inside its budget names no bound"
     assert below.records == rows[1:], "one byte over evicts exactly one row"
     assert below.discarded == 1, "exactly the one row is discarded"
+    assert below.store_reason == "bytes", "the byte bound names itself"
 
 
 def test_the_oldest_rows_are_evicted_first() -> None:
@@ -102,6 +104,7 @@ def test_the_oldest_rows_are_evicted_first() -> None:
 
     assert compacted.records == rows[2:], "the newest rows survive"
     assert compacted.discarded == 2, "one row went for each unit over the cap"
+    assert compacted.store_reason == "records", "the record cap names itself"
 
 
 def test_the_default_settings_still_cap_the_active_history(tmp_path: Path) -> None:
@@ -119,7 +122,7 @@ def test_the_default_settings_still_cap_the_active_history(tmp_path: Path) -> No
         timeout=LARGE_STORE_TIMEOUT,
     )
 
-    assert StoreResult("compact", "none", LEGACY_MAX_RECORDS, 1) in results, (
+    assert StoreResult("compact", "records", LEGACY_MAX_RECORDS, 1) in results, (
         "the legacy policy reports the one row it discarded"
     )
     assert stored_records(path) == rows[1:], "the oldest row is the one evicted"
@@ -204,7 +207,7 @@ def test_a_reduced_budget_trims_on_the_next_startup_and_settles(
     assert StoreResult("compact", "none", 6, 0) in generous, (
         "a generous cap leaves the store alone"
     )
-    assert StoreResult("compact", "none", 3, 3) in reduced, (
+    assert StoreResult("compact", "records", 3, 3) in reduced, (
         "the next startup trims to the reduced cap"
     )
     assert stored_records(path) == rows[3:], "the newest rows are the survivors"

@@ -370,9 +370,11 @@ a store the writer keeps changing is visible in the timer's journal.
 
 Each firing also publishes one `archive_run` metric record: its status and
 reason, the archived, trimmed, deleted and quarantined action counts, the
-number of failed sequences, and the elapsed seconds. Records go to the native
-journal only when systemd started the command, because a shell session has no
-journal stream to address; they never include a path.
+closed eviction cause each trim or deletion served, the retained logical bytes,
+row count and unmeasured entries, the number of failed sequences, and the
+elapsed seconds. Records go to the native journal only when systemd started the
+command, because a shell session has no journal stream to address; they never
+include a path.
 
 The plain report's `retained:` line gives the logical bytes against the budget,
 and its `history:` line gives the rows the store retains, the observed span
@@ -1585,8 +1587,9 @@ data is inferred for an empty window.
 
 The archive command's `archive_run` record carries the firing's status and
 reason, its archived, trimmed, deleted and quarantined action counts, the
-number of failed sequences and the elapsed time. It is a closed-vocabulary
-adapter record and names no path.
+closed cause each eviction served, the retained logical bytes, row count and
+unmeasured entries, the number of failed sequences and the elapsed time. It is
+a closed-vocabulary adapter record and names no path.
 
 The supervisor also writes OpenTelemetry `scope_placement` spans to the native
 journal. An adapter writes `adapter_restart_retry` only when it has to retry

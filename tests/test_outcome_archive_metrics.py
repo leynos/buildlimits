@@ -18,8 +18,12 @@ from buildlimits import (
 from buildlimits.metrics import Metrics
 from buildlimits.outcome_archive import RunOptions, inspect_store, run_archive
 from buildlimits.outcome_archive_active import active_history
+from buildlimits.outcome_archive_context import ActionResult
+from buildlimits.outcome_archive_events import publish_run
+from buildlimits.outcome_archive_evictions import EVICTION_CAUSES
 from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_archive_lock import ArchiveLock
+from buildlimits.outcome_archive_report import RunReport
 from buildlimits.outcome_archive_retain import settled_snapshot
 from buildlimits.outcome_history import read_history
 from buildlimits.outcome_history_pin import (
@@ -34,7 +38,6 @@ from buildlimits.retry_notice import report_retry
 if typ.TYPE_CHECKING:
     from conftest import RecordingSink
 
-    from buildlimits.outcome_archive_report import RunReport
     from buildlimits.outcome_segment_inventory import Inventory
 
 _FINISHED = NOW + dt.timedelta(seconds=2)
@@ -107,6 +110,56 @@ def test_a_run_publishes_one_bounded_archive_event(
     assert record["BUILD_LIMITS_FAILURES"] == "0", "no sequence failed"
     assert record["BUILD_LIMITS_RUNTIME_SECONDS"] == "2.000", "the span is published"
     assert str(tmp_path) not in " ".join(record.values()), "no path is published"
+    assert record["BUILD_LIMITS_RETAINED_LOGICAL_BYTES"] == str(
+        report.retained_bytes
+    ), "the retained bytes are published"
+    assert record["BUILD_LIMITS_RETAINED_RECORDS"] == str(report.retained_records), (
+        "the retained row count is published"
+    )
+    assert record["BUILD_LIMITS_RETAINED_UNMEASURED_ENTRIES"] == "0", (
+        "a measured run names no unmeasured entries"
+    )
+    for cause in EVICTION_CAUSES:
+        assert record[f"BUILD_LIMITS_EVICTED_{cause.upper()}"] == "0", (
+            f"the closed {cause} cause is published even at zero"
+        )
+
+
+def test_the_event_names_the_bound_that_caused_each_eviction(
+    metric_sink: RecordingSink,
+) -> None:
+    """A trim and a deletion publish the closed cause each served."""
+    report = RunReport(
+        status="ok",
+        started_at=NOW,
+        finished_at=_FINISHED,
+        actions=(
+            ActionResult("deleted", 1, reason="age"),
+            ActionResult("trimmed", 2, reason="bytes"),
+        ),
+        retained_bytes=11,
+        retained_records=3,
+        unmeasured_entries=1,
+    )
+
+    publish_run(Metrics(metric_sink, source="adapter"), report)
+
+    (record,) = metric_sink.records
+    assert record["BUILD_LIMITS_EVICTED_AGE"] == "1", "the deletion names age"
+    assert record["BUILD_LIMITS_EVICTED_BYTES"] == "1", "the trim names bytes"
+    assert record["BUILD_LIMITS_EVICTED_RECORDS"] == "0", "an unused cause is zero"
+    assert record["BUILD_LIMITS_EVICTED_AGE_AND_BYTES"] == "0", (
+        "a combined cause is published even at zero"
+    )
+    assert record["BUILD_LIMITS_RETAINED_LOGICAL_BYTES"] == "11", (
+        "the retained bytes are published"
+    )
+    assert record["BUILD_LIMITS_RETAINED_RECORDS"] == "3", (
+        "the retained row count is published"
+    )
+    assert record["BUILD_LIMITS_RETAINED_UNMEASURED_ENTRIES"] == "1", (
+        "an unmeasured entry is disclosed"
+    )
 
 
 def test_a_busy_firing_publishes_its_retryable_status(

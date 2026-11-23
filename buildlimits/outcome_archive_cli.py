@@ -62,7 +62,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         return int(error.code) if isinstance(error.code, int) else EXIT_USAGE
     config_path = _default_config() if options.config is None else options.config
     try:
-        settings = config.load(config_path)
+        settings = config.load(config_path, header_floor=header_floor_bytes())
         layout = SegmentLayout.beside(_store(options.store, os.environ))
         policy = policy_from_settings(
             settings,

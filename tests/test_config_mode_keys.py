@@ -5,6 +5,7 @@ describe the written document rather than a systemd or cache port, and because
 the per-backend key rules grow with each backend.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,15 @@ def test_files_override_defaults(tmp_path: Path) -> None:
     )
 
 
+def _refusal(tmp_path: Path, text: str) -> config.ConfigError:
+    """Write one document and return the refusal loading it raises."""
+    path = tmp_path / "s.toml"
+    path.write_text(text)
+    with pytest.raises(config.ConfigError) as refusal:
+        config.load(path, header_floor=header_floor_bytes())
+    return refusal.value
+
+
 def _rejected(tmp_path: Path, text: str, fragment: str) -> None:
     """Write one document and assert loading it is refused as described.
 
@@ -48,19 +58,14 @@ def _rejected(tmp_path: Path, text: str, fragment: str) -> None:
     message must pass ``^...``: an unanchored match would still pass against a
     longer message that merely contains it.
     """
-    path = tmp_path / "s.toml"
-    path.write_text(text)
-    with pytest.raises(config.ConfigError, match=fragment):
-        config.load(path)
+    assert re.search(fragment, str(_refusal(tmp_path, text))), fragment
 
 
 def _rejected_exactly(tmp_path: Path, text: str, message: str) -> None:
     """Write one document and assert the refusal is exactly ``message``."""
-    path = tmp_path / "s.toml"
-    path.write_text(text)
-    with pytest.raises(config.ConfigError) as refusal:
-        config.load(path)
-    assert str(refusal.value) == message, "the refusal is the rule's own message"
+    assert str(_refusal(tmp_path, text)) == message, (
+        "the refusal is the rule's own message"
+    )
 
 
 @pytest.mark.parametrize(

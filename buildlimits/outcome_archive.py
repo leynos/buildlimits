@@ -325,6 +325,7 @@ def _execute(
             run.context.layout,
             outcome_segment_state.read_retention_floor(run.context.layout).sequence,
             outcome_archive_run.deleted_sequences(outcome.actions),
+            now=run.context.clock(),
         )
         return (
             None,

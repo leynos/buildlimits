@@ -8,6 +8,8 @@ vocabularies, and the event names no path and carries no exception text.
 import collections
 import typing as typ
 
+from buildlimits.outcome_archive_evictions import EVICTION_CAUSES
+
 if typ.TYPE_CHECKING:
     from buildlimits.metrics import MetricsPort
     from buildlimits.outcome_archive_report import RunReport
@@ -45,4 +47,28 @@ def publish_run(metrics: MetricsPort | None, report: RunReport) -> None:
         quarantined=counts["quarantined"],
         failures=len(report.failures),
         runtime_seconds=elapsed,
+        retained_logical_bytes=report.retained_bytes,
+        retained_records=report.retained_records,
+        retained_unmeasured_entries=report.unmeasured_entries,
+        **{
+            f"evicted_{cause}": count
+            for cause, count in _archive_evictions(report).items()
+        },
     )
+
+
+def _archive_evictions(report: RunReport) -> dict[str, int]:
+    """Count this run's trims and deletions under their closed causes.
+
+    Returns
+    -------
+    dict[str, int]
+        One count per closed eviction cause, including the causes that did
+        not act, so a dashboard can compare two firings directly.
+    """
+    counts = dict.fromkeys(EVICTION_CAUSES, 0)
+    for action in report.actions:
+        cause = action.reason
+        if action.action in {"trimmed", "deleted"} and cause in counts:
+            counts[cause] += 1
+    return counts

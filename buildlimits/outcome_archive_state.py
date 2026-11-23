@@ -17,6 +17,7 @@ from buildlimits.utc_text import optional_utc_text, utc_now, utc_text
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
     from buildlimits.outcome_archive_report import RunReport
     from buildlimits.outcome_archive_run import RunOutcome
@@ -248,7 +249,11 @@ def contiguous_floor(start: int, deleted: cabc.Iterable[int]) -> int:
 
 
 def write_deleted_floor(
-    layout: SegmentLayout, previous: int | None, deleted: tuple[int, ...]
+    layout: SegmentLayout,
+    previous: int | None,
+    deleted: tuple[int, ...],
+    *,
+    now: dt.datetime | None = None,
 ) -> None:
     """Persist the floor implied by deletions from an unmeasurable run.
 
@@ -272,6 +277,9 @@ def write_deleted_floor(
         The floor the last successful run recorded, if any.
     deleted : tuple[int, ...]
         The sequences this run removed.
+    now : datetime | None
+        The run's wall clock, so the state it writes carries the time the run
+        read. None reads the system clock for a caller that has no run.
     """
     if not deleted:
         return
@@ -279,12 +287,13 @@ def write_deleted_floor(
     floor = contiguous_floor(start, deleted)
     if floor <= start:
         return
+    recorded_at = utc_now() if now is None else now
     _keep_floor(
         layout,
         {
             "schema": _STATE_SCHEMA,
             "floor_sequence": floor,
-            "updated_at": utc_text(utc_now()),
+            "updated_at": utc_text(recorded_at),
         },
     )
 

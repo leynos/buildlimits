@@ -132,15 +132,15 @@ def test_append_compacts_at_the_high_water_mark(tmp_path: Path) -> None:
         with mock.patch.object(outcome_records, "MAX_COMPACT_BYTES", compact_limit):
             writer.append(newer)
             compact_results = _wait_for_results(
-                writer, operation="compact", reason="none"
+                writer, operation="compact", reason="bytes"
             )
             if not any(result.operation == "append" for result in compact_results):
                 compact_results += _wait_for_results(
                     writer, operation="append", reason="none"
                 )
 
-    assert StoreResult("compact", "none", 0, 1) in compact_results, (
-        "the old row is counted as byte-budget eviction"
+    assert StoreResult("compact", "bytes", 0, 1) in compact_results, (
+        "the old row is counted as a byte-budget eviction"
     )
     decoded = _decoded_store(path)
     assert decoded.records == (newer,), "the new row fits the compacted byte budget"

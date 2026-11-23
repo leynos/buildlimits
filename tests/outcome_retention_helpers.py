@@ -215,7 +215,7 @@ def settings(tmp_path: Path, extra: str = "") -> config.SupervisorConfig:
     """
     path = tmp_path / "supervisor.toml"
     path.write_text(f'cache_outcomes = "record"\n{extra}', encoding="utf-8")
-    return config.load(path)
+    return config.load(path, header_floor=header_floor_bytes())
 
 
 def rohga_settings(tmp_path: Path) -> config.SupervisorConfig:
