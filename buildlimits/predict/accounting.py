@@ -161,25 +161,13 @@ def store_accounting(records: cabc.Iterable[StoreRecord]) -> StoreAccounting:
     StoreAccounting
         Exact counts with every breakdown summing to ``outcome_records``.
     """
-    by_result: collections.Counter[str] = collections.Counter()
-    by_reason: collections.Counter[str] = collections.Counter()
-    by_attribution: collections.Counter[str] = collections.Counter()
-    by_origin: collections.Counter[str] = collections.Counter()
-    by_parser: collections.Counter[str] = collections.Counter()
-    by_sighting: collections.Counter[str] = collections.Counter()
-    by_version: collections.Counter[str] = collections.Counter()
+    counters = _DimensionCounters()
     outcomes = summaries = admitted = 0
     cacheable = cacheable_labels = 0
     for record in records:
         if isinstance(record, OutcomeRecord):
             outcomes += 1
-            by_result[record.outcome] += 1
-            by_reason[record.outcome_reason or UNRECORDED] += 1
-            by_attribution[record.outcome_attribution or UNRECORDED] += 1
-            by_origin[record.origin] += 1
-            by_parser[record.parser_class] += 1
-            by_sighting[record.child_sighting] += 1
-            by_version[record.key.toolchain_identity.server_version] += 1
+            counters.add(record)
             admitted += int(record.admitted_at is not None)
             if record.parser_class == "cacheable":
                 cacheable += 1
@@ -190,19 +178,44 @@ def store_accounting(records: cabc.Iterable[StoreRecord]) -> StoreAccounting:
         records_total=outcomes + summaries,
         outcome_records=outcomes,
         summary_records=summaries,
-        by_result=_frozen(by_result),
-        by_reason=_frozen(by_reason),
-        by_attribution=_frozen(by_attribution),
-        by_origin=_frozen(by_origin),
-        by_parser_class=_frozen(by_parser),
-        by_child_sighting=_frozen(by_sighting),
-        by_server_version=_frozen(by_version),
+        by_result=_frozen(counters.result),
+        by_reason=_frozen(counters.reason),
+        by_attribution=_frozen(counters.attribution),
+        by_origin=_frozen(counters.origin),
+        by_parser_class=_frozen(counters.parser),
+        by_child_sighting=_frozen(counters.sighting),
+        by_server_version=_frozen(counters.version),
         admission_recorded=admitted,
         admission_missing=outcomes - admitted,
-        labels=by_result["hit"] + by_result["miss"],
+        labels=counters.result["hit"] + counters.result["miss"],
         cacheable_records=cacheable,
         cacheable_labels=cacheable_labels,
     )
+
+
+@dc.dataclass(slots=True)
+class _DimensionCounters:
+    """One accumulator per closed diagnostic dimension."""
+
+    result: collections.Counter[str] = dc.field(default_factory=collections.Counter)
+    reason: collections.Counter[str] = dc.field(default_factory=collections.Counter)
+    attribution: collections.Counter[str] = dc.field(
+        default_factory=collections.Counter
+    )
+    origin: collections.Counter[str] = dc.field(default_factory=collections.Counter)
+    parser: collections.Counter[str] = dc.field(default_factory=collections.Counter)
+    sighting: collections.Counter[str] = dc.field(default_factory=collections.Counter)
+    version: collections.Counter[str] = dc.field(default_factory=collections.Counter)
+
+    def add(self, record: OutcomeRecord) -> None:
+        """Count one outcome row on every dimension."""
+        self.result[record.outcome] += 1
+        self.reason[record.outcome_reason or UNRECORDED] += 1
+        self.attribution[record.outcome_attribution or UNRECORDED] += 1
+        self.origin[record.origin] += 1
+        self.parser[record.parser_class] += 1
+        self.sighting[record.child_sighting] += 1
+        self.version[record.key.toolchain_identity.server_version] += 1
 
 
 def _frozen(counts: collections.Counter[str]) -> dict[str, int]:
