@@ -334,6 +334,30 @@ def test_a_timed_out_measurement_kills_the_measured_command(
     assert not outlived.exists(), "the measured command's worker was killed with it"
 
 
+def large_store_and_config(tmp_path: Path) -> tuple[Path, Path]:
+    """Generate the opt-in history and the supervisor configuration it uses.
+
+    Returns
+    -------
+    tuple[Path, Path]
+        The store path and the configuration path.
+    """
+    store, sealed = _generate_large_store(tmp_path, _LARGE_HISTORY_BYTES)
+    assert sealed >= _LARGE_HISTORY_BYTES, "the generated history is large enough"
+    return store, write_config(tmp_path / "supervisor.toml")
+
+
+def measure_large_command(store: Path, config: Path, verb: str) -> tuple[int, int]:
+    """Run one archive command against the generated history and measure it.
+
+    Returns
+    -------
+    tuple[int, int]
+        The command's exit status and peak resident set size in KiB.
+    """
+    return _measure_command([str(SCRIPT), verb, *command_arguments(store, config)])
+
+
 @pytest.mark.skipif(
     os.environ.get(_LARGE_ENV) != "1",
     reason=f"set {_LARGE_ENV}=1 to run the several-hundred-megabyte test",
@@ -343,16 +367,10 @@ def test_a_large_history_archives_and_replays_in_bounded_memory(
     tmp_path: Path,
 ) -> None:
     """A several-hundred-megabyte history costs a fixed peak resident size."""
-    store, sealed = _generate_large_store(tmp_path, _LARGE_HISTORY_BYTES)
-    assert sealed >= _LARGE_HISTORY_BYTES, "the generated history is large enough"
-    config = write_config(tmp_path / "supervisor.toml")
+    store, config = large_store_and_config(tmp_path)
     layout = SegmentLayout.beside(store)
 
-    archived, archive_rss = _measure_command([
-        str(SCRIPT),
-        "run",
-        *command_arguments(store, config),
-    ])
+    archived, archive_rss = measure_large_command(store, config, "run")
     replayed, replay_rss = _measure_command([
         sys.executable,
         "-m",
