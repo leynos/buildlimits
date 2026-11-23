@@ -225,3 +225,28 @@ def test_a_byte_budget_waits_for_age_eviction_across_segments(tmp_path: Path) ->
         "no whole deletion is chosen before the age trim is measured"
     )
     assert report.retained_bytes == budget, "the settled store fits the budget"
+
+
+def test_a_record_cap_trims_closed_history_in_append_order(tmp_path: Path) -> None:
+    """Closed history follows the same append-order rule as the writer.
+
+    A producer can write a row observed earlier after one observed later, so
+    the two orders can disagree. The record cap removes the leading row in
+    file order, keeping the later-appended row even though its observation is
+    older. The archive is compared exactly, so a change to observation-time
+    ordering would fail here rather than stay implicit.
+    """
+    newer_observation = attributed_record(observed_at=NOW - dt.timedelta(hours=1))
+    older_observation = attributed_record(observed_at=NOW - dt.timedelta(hours=2))
+    sealed = layout(tmp_path).sealed_dir
+    sealed.mkdir(parents=True)
+    write_private(
+        sealed / segment_name(1), document((newer_observation, older_observation))
+    )
+
+    report = run(tmp_path, policy(1_000_000, max_records=1))
+
+    assert report.status == "ok", "the trim is not a failure"
+    assert _archived_document(tmp_path, 1) == document((older_observation,)), (
+        "the later-appended row survives the capacity trim"
+    )

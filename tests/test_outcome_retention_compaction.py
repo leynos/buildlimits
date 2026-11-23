@@ -319,3 +319,26 @@ def test_a_status_snapshot_never_pairs_a_row_with_an_earlier_state(
     assert writer.retention().records == len(rows) + 1, (
         "the final snapshot counts the appended row"
     )
+
+
+def test_a_byte_or_record_trim_removes_the_oldest_appended_rows() -> None:
+    """The bound trims by append order, and keeps the later-rowed observation.
+
+    Append order and observation order can disagree when a producer writes a
+    row observed earlier after one observed later. The documented rule is that
+    a byte or record trim removes the leading rows the writer appended, so the
+    surviving row is the one written last even when it is the older
+    observation. This pins the decision rather than leaving it implicit.
+    """
+    older_observation = records(NOW - dt.timedelta(hours=2), 1)[0]
+    newer_observation = records(NOW - dt.timedelta(hours=1), 1)[0]
+    rows = (newer_observation, older_observation)
+
+    compacted = outcome_records.compact(
+        decoded(rows), now=NOW, policy=policy(max_records=1)
+    )
+
+    assert compacted.records == (older_observation,), (
+        "the later-appended row survives, whatever its observation time"
+    )
+    assert compacted.store_reason == "records", "the cap names itself"

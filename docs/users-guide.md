@@ -430,7 +430,11 @@ history view. Whichever bound is reached first evicts the oldest history:
   not committed and may roll back. The run reports `unsettled` and exits 75,
   and the next firing retries.
 - Eviction is oldest-first. A record whose observation time equals the age
-  cutoff is retained; one older than the cutoff is not.
+  cutoff is retained; one older than the cutoff is not. For the byte and record
+  bounds, oldest means earliest in append order: the active file and each
+  archive are logs, so the leading rows are the ones the writer received first.
+  Clock movement can make append order and observation order disagree; only the
+  age bound reads observation time.
 
 A single firing may apply retention over more than one pass. The byte and
 record walks act on the rows that survive the age rule, so while an age trim is
