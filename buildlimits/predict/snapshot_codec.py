@@ -16,7 +16,11 @@ import typing as typ
 
 from buildlimits.predict.events import LABELS, ORIGINS, Event
 from buildlimits.predict.journal_codec import journal_to_dict
-from buildlimits.predict.report_codec import source_to_dict, stats_to_dict
+from buildlimits.predict.report_codec import (
+    diagnostics_to_dict,
+    source_to_dict,
+    stats_to_dict,
+)
 from buildlimits.utc_text import (
     optional_utc_moment,
     optional_utc_text,
@@ -31,7 +35,8 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.dataset import Snapshot
     from buildlimits.predict.events import Label
 
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
+SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, SNAPSHOT_VERSION})
 _EVENT_FIELDS = frozenset({
     "identity",
     "origin",
@@ -75,6 +80,7 @@ def snapshot_to_dict(snapshot: Snapshot) -> dict[str, object]:
         "source": source_to_dict(snapshot.source),
         "journal": journal_to_dict(snapshot.journal),
         "stats": stats_to_dict(snapshot.stats()),
+        "diagnostics": diagnostics_to_dict(snapshot.diagnostics),
         "events": [event_to_dict(event) for event in snapshot.events],
     }
 

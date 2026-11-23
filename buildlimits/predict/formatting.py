@@ -61,3 +61,27 @@ def as_percent(value: object) -> str:
     '-'
     """
     return MISSING if value is None else f"{100 * typ.cast('float', value):.1f}%"
+
+
+def as_counts(value: object) -> str:
+    """Format a closed-vocabulary count map as stable key/count pairs.
+
+    Returns
+    -------
+    str
+        Sorted ``key=count`` pairs, or ``none`` for an empty map.
+
+    Examples
+    --------
+    >>> as_counts({"miss": 2, "hit": 10})
+    'hit=10, miss=2'
+    >>> as_counts({})
+    'none'
+    """
+    if not isinstance(value, dict):
+        return MISSING
+    counts = typ.cast("dict[str, object]", value)
+    return (
+        ", ".join(f"{name}={as_count(count)}" for name, count in sorted(counts.items()))
+        or "none"
+    )

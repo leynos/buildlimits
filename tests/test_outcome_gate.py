@@ -26,6 +26,7 @@ def ready_inputs() -> QuietInputs:
         is_recovery_idle=True,
         has_barrier=False,
         has_query_in_flight=False,
+        has_baseline=True,
     )
 
 
@@ -34,10 +35,42 @@ def test_all_quiet_point_clauses_allow_a_reading(ready_inputs: QuietInputs) -> N
     assert quiet_point(ready_inputs) is None, "all clear gate clauses permit a reading"
 
 
+def test_queued_work_does_not_block_a_reading(ready_inputs: QuietInputs) -> None:
+    """A deep queue is not a gate: a straddling launch is refused separately."""
+    busy_queue = dc.replace(
+        ready_inputs, counts=dc.replace(ready_inputs.counts, queued=647)
+    )
+
+    assert quiet_point(busy_queue) is None, (
+        "queued work may run while no cached group is moving"
+    )
+
+
+def test_a_first_baseline_may_run_while_work_moves(ready_inputs: QuietInputs) -> None:
+    """A baseline snapshots counters, so moving work does not make it unsafe."""
+    first = dc.replace(
+        ready_inputs,
+        has_baseline=False,
+        counts=dc.replace(
+            ready_inputs.counts,
+            queued=647,
+            cached_moving=3,
+            server_drain=1,
+        ),
+    )
+
+    assert quiet_point(first) is None, (
+        "a baseline reading needs only the safety clauses"
+    )
+    blocked = dc.replace(first, is_reachable=False)
+    assert quiet_point(blocked) == "unreachable", (
+        "the safety clauses still block a baseline"
+    )
+
+
 @pytest.mark.parametrize(
     ("change", "reason"),
     [
-        ({"counts": Counts(1, 0, 0, 0, 0, 1, 0)}, "queued"),
         ({"counts": Counts(0, 1, 1, 0, 0, 1, 1)}, "cached_moving"),
         ({"counts": Counts(0, 1, 0, 1, 1, 1, 0)}, "server_drain"),
         ({"is_reachable": False}, "unreachable"),
@@ -47,7 +80,6 @@ def test_all_quiet_point_clauses_allow_a_reading(ready_inputs: QuietInputs) -> N
         ({"has_query_in_flight": True}, "in_flight"),
     ],
     ids=(
-        "queued",
         "cached-moving",
         "server-drain",
         "unreachable",
@@ -88,6 +120,6 @@ def test_first_false_clause_wins(ready_inputs: QuietInputs) -> None:
         has_query_in_flight=True,
     )
 
-    assert quiet_point(blocked) == "queued", (
-        "the earliest false clause takes precedence"
+    assert quiet_point(blocked) == "cached_moving", (
+        "the earliest remaining false clause takes precedence"
     )

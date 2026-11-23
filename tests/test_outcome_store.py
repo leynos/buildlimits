@@ -279,7 +279,7 @@ def test_writer_moves_a_version_mismatch_aside_once(tmp_path: Path) -> None:
     salt = file_salt(_salt_path(path))
     assert isinstance(salt, Salt), "the fixture uses a readable salt"
     future = (
-        '{"format":"buildlimits-cache-outcomes","version":2,'
+        '{"format":"buildlimits-cache-outcomes","version":3,'
         f'"salt_id":"{salt.salt_id}","written_at":"2026-10-25T00:00:00Z"}}\n'
     ).encode()
     _write_private_file(path, future)
@@ -305,7 +305,7 @@ def test_writer_preserves_both_files_when_bad_backup_already_exists(
     """A second invalid store cannot overwrite the one permitted backup."""
     path = tmp_path / "cache-outcomes.jsonl"
     file_salt(_salt_path(path))
-    future = b'{"format":"buildlimits-cache-outcomes","version":2}\n'
+    future = b'{"format":"buildlimits-cache-outcomes","version":3}\n'
     backup = path.with_name(path.name + _BAD_SUFFIX)
     _write_private_file(backup, b"previous backup")
     _write_private_file(path, future)

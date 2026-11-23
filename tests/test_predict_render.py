@@ -52,6 +52,65 @@ def test_a_scored_report_prints_its_tables_exactly() -> None:
     }, "the documented formats, row by row"
 
 
+def test_the_report_states_its_label_loss_denominators() -> None:
+    """The sufficiency block names the rows, labels and refusal reasons."""
+    # pylint: disable=prefer-snapshot-substring  # each assertion names a distinct contract.
+    document = empty_document()
+    data = data_section(document)
+    typ.cast("dict[str, object]", data["source"]).update(
+        records_total=9,
+        outcome_records=8,
+        summary_records=1,
+    )
+    data["diagnostics"] = {
+        "store": {
+            "records_total": 9,
+            "outcome_records": 8,
+            "summary_records": 1,
+            "by_result": {"hit": 2, "miss": 1, "unattributed": 5},
+            "by_reason": {"none": 3, "mixed_window": 5},
+            "by_attribution": {"solo": 3, "none": 5},
+            "by_origin": {"registry": 8},
+            "by_parser_class": {"cacheable": 8},
+            "by_child_sighting": {"unavailable": 8},
+            "by_server_version": {"0.14.0": 8},
+            "admission_recorded": 3,
+            "admission_missing": 5,
+            "labels": 3,
+            "cacheable_records": 6,
+            "cacheable_labels": 3,
+        },
+        "history": {
+            "active_only": False,
+            "archived": 4,
+            "sealed": 1,
+            "gaps": 2,
+            "gaps_truncated": False,
+            "retention_floor": 7,
+            "quarantined": 0,
+        },
+    }
+
+    markdown = render_markdown(document)
+
+    assert "## Data sufficiency" in markdown, "the block is rendered"
+    assert "8 outcome rows" in markdown, "the denominator is named"
+    assert "- By cache result: hit=2, miss=1, unattributed=5" in markdown, (
+        "the result breakdown is exact"
+    )
+    assert "- Label coverage among cacheable compilations: 3 of 6" in markdown, (
+        "the eligible denominator is named"
+    )
+    assert "- Unknown by outcome reason: mixed_window=5, none=3" in markdown, (
+        "the reason breakdown is exact"
+    )
+    assert "gap list truncated" not in markdown, "an untruncated list says nothing"
+    assert "archived 4" in markdown, "the closed-history loss is reported"
+    assert "An ambiguous or unavailable window remains `unknown`" in markdown, (
+        "the report states that unknown is never a miss"
+    )
+
+
 def test_an_unranked_report_omits_the_detail_tables() -> None:
     """With no scored predictor there is no calibration or origin table."""
     markdown = render_markdown(empty_document())

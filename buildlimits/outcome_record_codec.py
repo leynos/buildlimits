@@ -12,6 +12,7 @@ from buildlimits.outcome_record_format import (
     _OUTCOME_FIELDS,
     _SUMMARY_COUNTS,
     _SUMMARY_FIELDS,
+    _V1_OUTCOME_FIELDS,
     FORMAT_NAME,
     MAX_RECORD_BYTES,
     MAX_STORE_BYTES,
@@ -30,10 +31,12 @@ from buildlimits.outcome_record_format import (
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
     from buildlimits.outcome_parser import ParserClass
     from buildlimits.outcome_record_format import ChildSighting, Origin
-    from buildlimits.outcome_vocabulary import CacheResult
+    from buildlimits.outcome_recorder_types import AttributionKind
+    from buildlimits.outcome_vocabulary import CacheResult, OutcomeReason
 
 
 def decode_header_line(line: bytes) -> StoreHeader | RecordFailure:
@@ -290,16 +293,24 @@ def _decode_record(raw: object) -> StoreRecord | RecordFailure:
 def _decode_outcome(value: cabc.Mapping[str, object]) -> OutcomeRecord | RecordFailure:
     """Decode one validated outcome mapping.
 
+    A version 1 row has no admission or classification fields, and its absent
+    evidence decodes as None. A present but malformed timestamp is corruption,
+    not an absent time.
+
     Returns
     -------
     OutcomeRecord or RecordFailure
         The typed outcome, or a corruption reason.
     """
-    if set(value) != _OUTCOME_FIELDS:
+    fields = set(value)
+    if fields not in (_OUTCOME_FIELDS, _V1_OUTCOME_FIELDS):
         return RecordFailure("corrupt")
     key = _decode_key(value.get("key"))
     observed = _parse_timestamp(value.get("observed_at"))
+    admitted = _optional_timestamp(value.get("admitted_at"))
     if isinstance(key, RecordFailure) or observed is None:
+        return RecordFailure("corrupt")
+    if admitted is _INVALID:
         return RecordFailure("corrupt")
     if not _valid_outcome_fields(value):
         return RecordFailure("corrupt")
@@ -312,7 +323,32 @@ def _decode_outcome(value: cabc.Mapping[str, object]) -> OutcomeRecord | RecordF
         typ.cast("ParserClass", value["parser_class"]),
         typ.cast("ChildSighting", value["child_sighting"]),
         typ.cast("int", value["child_samples"]),
+        typ.cast("OutcomeReason | None", value.get("outcome_reason")),
+        typ.cast("AttributionKind | None", value.get("outcome_attribution")),
+        typ.cast("dt.datetime | None", admitted),
     )
+
+
+class _Invalid:
+    """Sentinel separating a malformed optional timestamp from an absent one."""
+
+
+_INVALID = _Invalid()
+
+
+def _optional_timestamp(value: object) -> dt.datetime | _Invalid | None:
+    """Parse an optional UTC timestamp, distinguishing absence from corruption.
+
+    Returns
+    -------
+    datetime | _Invalid | None
+        The parsed time, the invalid sentinel for a present value that is not
+        a UTC timestamp, or None for an explicit null or an absent field.
+    """
+    if value is None:
+        return None
+    parsed = _parse_timestamp(value)
+    return _INVALID if parsed is None else parsed
 
 
 def _decode_summary(value: cabc.Mapping[str, object]) -> WindowSummary | RecordFailure:

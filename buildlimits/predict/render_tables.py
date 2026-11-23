@@ -8,12 +8,148 @@ prints, and so the prose that introduces the report stays in one place.
 
 import typing as typ
 
-from buildlimits.predict.formatting import MISSING, as_count, as_percent, as_score
+from buildlimits.predict.formatting import (
+    MISSING,
+    as_count,
+    as_counts,
+    as_percent,
+    as_score,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 UNDERPOWERED = "under-powered"
+
+
+def data_sufficiency(document: cabc.Mapping[str, object]) -> list[str]:
+    """Return the counts that explain what the labels rest on.
+
+    The block is deliberately about the input, not the scores: it names the
+    observer's denominators, the retained rows, the labelled share, the
+    admission-time coverage and the closed-history loss. A reader can then tell
+    a negative result from a history that never carried enough evidence.
+
+    Returns
+    -------
+    list[str]
+        Markdown lines.
+    """
+    data = typ.cast("dict[str, object]", document["data"])
+    stats = typ.cast("dict[str, object]", data["stats"])
+    source = typ.cast("dict[str, object]", data["source"])
+    journal = typ.cast("dict[str, object]", data["journal"])
+    lines = [
+        "## Data sufficiency",
+        "",
+        _rows_read_line(stats, source),
+        (
+            f"- Labels: {as_count(stats['labelled'])} of "
+            f"{as_count(stats['events'])} events "
+            f"({as_percent(stats['labelled_fraction'])}), "
+            f"{as_count(stats['identities'])} distinct identities"
+        ),
+        (
+            f"- Admission times: {as_count(stats['admission_recorded'])} recorded, "
+            f"{as_count(stats['admission_usable'])} usable for a prediction, "
+            f"{as_count(stats['admission_missing'])} missing, "
+            f"{as_count(stats['admission_unusable'])} after their own label"
+        ),
+    ]
+    diagnostics = data.get("diagnostics")
+    if diagnostics is None:
+        lines += [
+            (
+                "- Label-loss diagnostics: unavailable; this snapshot predates "
+                "the retained-store accounting."
+            ),
+            "",
+        ]
+        return lines
+    store = typ.cast("dict[str, object]", typ.cast("dict", diagnostics)["store"])
+    history = typ.cast("dict[str, object]", typ.cast("dict", diagnostics)["history"])
+    lines += [
+        (
+            f"- Label coverage among outcome rows: {as_count(store['labels'])} of "
+            f"{as_count(store['outcome_records'])}"
+        ),
+        (
+            f"- Label coverage among cacheable compilations: "
+            f"{as_count(store.get('cacheable_labels'))} of "
+            f"{as_count(store.get('cacheable_records'))}"
+        ),
+        f"- By cache result: {as_counts(store['by_result'])}",
+        f"- Unknown by outcome reason: {as_counts(store['by_reason'])}",
+        f"- By attribution: {as_counts(store['by_attribution'])}",
+        f"- By origin: {as_counts(store['by_origin'])}",
+        f"- By parser class: {as_counts(store['by_parser_class'])}",
+        (
+            f"- Closed history: archived {as_count(history['archived'])}, "
+            f"sealed {as_count(history['sealed'])}, "
+            f"gaps {as_count(history['gaps'])}"
+            + (" (gap list truncated)" if history.get("gaps_truncated") else "")
+            + (", active file only" if history.get("active_only") else "")
+        ),
+    ]
+    lines += _observer_lines(journal)
+    lines += [
+        "",
+        (
+            "An ambiguous or unavailable window remains `unknown`; the report "
+            "never turns a missing hit into a miss."
+        ),
+        "",
+    ]
+    return lines
+
+
+def _rows_read_line(
+    stats: cabc.Mapping[str, object], source: cabc.Mapping[str, object]
+) -> str:
+    """Return the row-count line, tolerating a document without source counts.
+
+    Returns
+    -------
+    str
+        The Markdown bullet naming outcome and summary rows.
+    """
+    events = stats.get("events")
+    return (
+        f"- Rows read: {as_count(source.get('records_total', events))} "
+        f"({as_count(source.get('outcome_records', events))} outcome rows, "
+        f"{as_count(source.get('summary_records', 0))} window summaries)"
+    )
+
+
+def _observer_lines(journal: cabc.Mapping[str, object]) -> list[str]:
+    """Return the recorder's own counts from the journal note.
+
+    Returns
+    -------
+    list[str]
+        Markdown lines, or an explicit absence note.
+    """
+    observer = journal.get("observer")
+    if not isinstance(observer, dict):
+        return ["- Observer counts: unavailable; no journal window was read."]
+    block = typ.cast("dict[str, object]", observer)
+    return [
+        (
+            f"- Observer: {as_count(block.get('requests'))} admitted requests, "
+            f"{as_count(block.get('outcomes'))} published outcomes, "
+            f"{as_count(block.get('store_records'))} records appended, "
+            f"{as_count(block.get('store_discarded'))} dropped or evicted"
+        ),
+        (
+            f"- Observer readings: {as_count(block.get('readings'))} completed, "
+            f"{as_count(block.get('readings_skipped'))} skipped, "
+            f"{as_count(block.get('readings_failed'))} failed"
+        ),
+        f"- Observer by cache path: {as_counts(block.get('by_cache_path'))}",
+        f"- Observer by result: {as_counts(block.get('by_result'))}",
+        f"- Observer by reason: {as_counts(block.get('by_reason'))}",
+        (f"- Observer by gate reason: {as_counts(block.get('by_gate_reason'))}"),
+    ]
 
 
 def comparison_table(

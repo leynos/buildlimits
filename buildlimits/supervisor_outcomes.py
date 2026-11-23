@@ -233,6 +233,7 @@ class OutcomeShell:
                     is_cached=True,
                     payload=payload,
                     now=self._supervisor.clock(),
+                    admitted_at=entry.admitted_at,
                 )
             )
         )

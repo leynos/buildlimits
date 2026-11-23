@@ -16,6 +16,7 @@ import json
 import typing as typ
 
 from buildlimits.outcome_record_format import OutcomeRecord
+from buildlimits.predict.accounting import store_accounting
 from buildlimits.predict.dataset import Source, StoreHistory
 from buildlimits.predict.events import Event, Label
 
@@ -64,9 +65,10 @@ def label_of(outcome: CacheResult) -> Label:
 def event_of(record: OutcomeRecord) -> Event:
     """Convert one attributed store record into a benchmark event.
 
-    The admission time is absent because the store does not record one.
+    The admission time is copied only when the row carries one. A version 1
+    row, or a launch that never reached admission, has none, and
     ``observed_at - runtime_seconds`` is not a substitute: ``observed_at`` is
-    when the row was written, which can be later than the compilation
+    when the label became known, which can be later than the compilation
     finished, so the subtraction only bounds the admission from above. Using
     that bound as the decision time would count labels that arrived after the
     real admission, which is the leak the walk-forward order exists to stop.
@@ -75,12 +77,12 @@ def event_of(record: OutcomeRecord) -> Event:
     Returns
     -------
     Event
-        The redacted event, without an admission time.
+        The redacted event, with its recorded admission time when present.
     """
     return Event(
         identity=identity_of(record.key),
         origin=record.origin,
-        admitted_at=None,
+        admitted_at=record.admitted_at,
         observed_at=record.observed_at,
         label=label_of(record.outcome),
         runtime_seconds=record.runtime_seconds,
@@ -131,4 +133,5 @@ def decode_history(decoded: DecodedStore) -> StoreHistory:
             summary_records=len(records) - outcomes,
             salt_ids=decoded.salt_ids,
         ),
+        accounting=store_accounting(records),
     )

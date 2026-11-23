@@ -23,9 +23,11 @@ from buildlimits.drain_metrics import DrainMetrics
 from buildlimits.effects import Exit
 from buildlimits.journal import log
 from buildlimits.systemd import SystemdError
+from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
     from buildlimits.config import SupervisorConfig
     from buildlimits.requesters import Pending
@@ -106,6 +108,7 @@ class Groups:
     running: dict[str, Running] = dc.field(default_factory=dict)
     slice_dir: Path | None = None
     guard: kache_guard.Strays = dc.field(default_factory=kache_guard.Strays)
+    wall_clock: cabc.Callable[[], dt.datetime] = utc_now
 
     def place(self, entry: Pending, group_id: str, *, cached: bool) -> Running | None:
         """Start a held launch child for a request and move it into a scope.
@@ -138,7 +141,11 @@ class Groups:
             msg = "groups cannot be placed before the supervisor has started"
             raise RuntimeError(msg)
         entry.group_id = group_id
+        # The two clocks are read together at the one moment admission is
+        # decided. A later wall-clock read would timestamp the release, not the
+        # decision, and no arithmetic can recover the decision time from it.
         entry.admitted = self.clock()
+        entry.admitted_at = self.wall_clock()
         spec = self.launch_spec(entry, cached=cached)
         try:
             child = launch.spawn_held(spec)

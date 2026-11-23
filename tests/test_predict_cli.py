@@ -9,6 +9,7 @@ from predict_test_helpers import (
     benchmark_argv,
     read_results,
     write_admitted_snapshot,
+    write_admitted_store_snapshot,
     write_fast_config,
     write_snapshot,
 )
@@ -77,6 +78,39 @@ def test_a_store_snapshot_without_admission_times_predicts_nothing(
         "every event is counted as unpredictable"
     )
     assert "Insufficient admission times" in markdown, "the report explains why"
+
+
+def test_a_store_snapshot_with_admission_times_can_be_predicted(
+    tmp_path: Path,
+) -> None:
+    """A retained row with a recorded admission moment becomes a prediction.
+
+    The same store shape without admission times predicts nothing. Carrying
+    the time at admission is what lets the benchmark walk the history without
+    using a label that arrived later.
+    """
+    output = tmp_path / "out"
+    snapshot = write_admitted_store_snapshot(tmp_path, 400)
+
+    status = benchmark_cli.main(
+        benchmark_argv(snapshot, output, write_fast_config(tmp_path))
+    )
+
+    document, markdown = read_results(output)
+    assert status == 0, "the run completes"
+    assert document["status"] not in {
+        "insufficient data",
+        "insufficient admission times",
+    }, "the labels and admission times now meet the gate"
+    assert document["data"]["stats"]["admission_usable"] == 400, (
+        "every retained row has a usable admission time"
+    )
+    assert document["replay"]["moments"] > 0, "the replay answers admission moments"
+    assert document["data"]["diagnostics"]["store"]["admission_recorded"] == 400, (
+        "the diagnostics agree with the events"
+    )
+    assert "Admission times" in markdown, "the report states the coverage"
+    assert "Data sufficiency" in markdown, "the report states its denominators"
 
 
 def test_benchmark_defaults_report_insufficient_data_honestly(

@@ -8,6 +8,7 @@ import dataclasses as dc
 import typing as typ
 
 if typ.TYPE_CHECKING:
+    import datetime as dt
     import socket
 
     from buildlimits import attributes
@@ -35,13 +36,18 @@ class Pending:
     group_id : str | None
         The group serving the request, once admitted.
     admitted : float | None
-        When it was admitted.
+        When it was admitted, on the monotonic clock.
+    admitted_at : datetime | None
+        The same admission moment on the UTC wall clock, captured where
+        admission is decided so an outcome row can name a trustworthy time.
     exec_error : str | None
         Why the compiler could not start, if it could not.
     cancellation : str
         The bounded first cancellation cause, or ``none``.
     cache_path : str
         The composition selected at successful admission.
+    admitted_at : datetime | None
+        The UTC wall-clock admission moment, or None until admission decides.
     """
 
     request_id: int
@@ -55,3 +61,4 @@ class Pending:
     exec_error: str | None = None
     cancellation: str = "none"
     cache_path: str = "direct"
+    admitted_at: dt.datetime | None = None

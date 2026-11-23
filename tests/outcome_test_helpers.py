@@ -321,5 +321,6 @@ def clear_gate_event(recorder: ModuleType, now: float) -> _TimedGateEvent:
         is_recovery_idle=True,
         has_barrier=False,
         has_query_in_flight=False,
+        has_baseline=True,
     )
     return recorder.GateOpen(inputs=inputs, now=now)

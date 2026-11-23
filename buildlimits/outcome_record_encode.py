@@ -83,7 +83,8 @@ def _document(value: StoreHeader | StoreRecord) -> dict[str, object]:
         case OutcomeRecord() as record:
             _validate_key(record.key)
             if not _valid_outcome(record):
-                raise ValueError
+                msg = "outcome record fields are invalid"
+                raise ValueError(msg)
             return _record_document(record, "outcome")
         case WindowSummary() as summary:
             _require_text(summary.server_version)
@@ -96,7 +97,10 @@ def _document(value: StoreHeader | StoreRecord) -> dict[str, object]:
 
 
 def _record_document(record: StoreRecord, kind: str) -> dict[str, object]:
-    """Map one validated record and canonicalize its observation time.
+    """Map one validated record and canonicalize its timestamps.
+
+    An absent optional timestamp is written as an explicit JSON null, so a row
+    states that no admission moment is known rather than omitting the field.
 
     Returns
     -------
@@ -105,6 +109,10 @@ def _record_document(record: StoreRecord, kind: str) -> dict[str, object]:
     """
     fields = dc.asdict(record)
     fields["observed_at"] = _timestamp(record.observed_at)
+    if isinstance(record, OutcomeRecord):
+        fields["admitted_at"] = (
+            None if record.admitted_at is None else _timestamp(record.admitted_at)
+        )
     return {"kind": kind, **fields}
 
 

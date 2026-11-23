@@ -15,8 +15,9 @@ from pathlib import Path
 
 from buildlimits.predict.dataset import Gap, Snapshot, Source
 from buildlimits.predict.journal_codec import journal_from_dict
+from buildlimits.predict.report_codec import diagnostics_from_dict
 from buildlimits.predict.snapshot_codec import (
-    SNAPSHOT_VERSION,
+    SUPPORTED_SNAPSHOT_VERSIONS,
     event_from_dict,
     snapshot_to_dict,
 )
@@ -26,6 +27,7 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
 
+    from buildlimits.predict.accounting import Diagnostics
     from buildlimits.predict.events import Event
 
 _SOURCE_COUNT_FIELDS = ("records_total", "outcome_records", "summary_records")
@@ -92,7 +94,7 @@ def load_snapshot(path: Path) -> Snapshot:
         # type is checked before the value or a corrupt version would pass.
         msg = f"{path} must hold an integer snapshot version"
         raise TypeError(msg)
-    if version != SNAPSHOT_VERSION:
+    if version not in SUPPORTED_SNAPSHOT_VERSIONS:
         msg = f"{path} has an unsupported snapshot version"
         raise ValueError(msg)
     events = document.get("events")
@@ -116,7 +118,25 @@ def load_snapshot(path: Path) -> Snapshot:
         journal=journal_from_dict(journal, label=str(path)),
         events=decoded_events,
         gaps=_gaps_from(path, document.get("stats")),
+        diagnostics=_diagnostics_from(path, document.get("diagnostics")),
     )
+
+
+def _diagnostics_from(path: Path, value: object) -> Diagnostics | None:
+    """Rebuild the optional label-loss diagnostics.
+
+    A version 1 snapshot has no block, and a version 2 snapshot may carry an
+    explicit null when its writer had no counts. Both mean "unavailable", not
+    "empty".
+
+    Returns
+    -------
+    Diagnostics | None
+        The validated diagnostics, or None when the document carries none.
+    """
+    if value is None:
+        return None
+    return diagnostics_from_dict(value, label=str(path))
 
 
 def _require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:

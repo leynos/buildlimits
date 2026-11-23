@@ -15,6 +15,7 @@ import pytest
 PACKAGE = Path(__file__).resolve().parent.parent / "buildlimits" / "predict"
 
 DOMAIN_MODULES = (
+    "accounting",
     "bootstrap",
     "comparison",
     "config",

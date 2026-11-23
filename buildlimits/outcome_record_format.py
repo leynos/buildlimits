@@ -7,19 +7,22 @@ import typing as typ
 
 from buildlimits.json_values import nonnegative_integer
 from buildlimits.metrics_schema import CACHE_RESULTS as _CACHE_RESULTS
+from buildlimits.metrics_schema import OUTCOME_REASONS as _OUTCOME_REASONS
 from buildlimits.outcome_key import CacheKey, ToolchainIdentity
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
     from buildlimits.outcome_parser import ParserClass
-    from buildlimits.outcome_vocabulary import CacheResult
+    from buildlimits.outcome_recorder_types import AttributionKind
+    from buildlimits.outcome_vocabulary import CacheResult, OutcomeReason
 
 type Origin = typ.Literal["registry", "git", "path", "unknown"]
 type ChildSighting = typ.Literal["seen", "ambiguous", "not_seen", "unavailable"]
 
 FORMAT_NAME = "buildlimits-cache-outcomes"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
+SUPPORTED_FORMAT_VERSIONS = frozenset({1, FORMAT_VERSION})
 MAX_RECORD_BYTES = 16 * 1024
 MAX_STORE_BYTES = 16 * 1024 * 1024
 # The largest document an in-place compaction may write. A policy that lets
@@ -30,6 +33,7 @@ _DIGEST_HEX_LENGTH = 64
 _ORIGINS = frozenset({"registry", "git", "path", "unknown"})
 _CHILD_SIGHTINGS = frozenset({"seen", "ambiguous", "not_seen", "unavailable"})
 _PARSER_CLASSES = frozenset({"cacheable", "not_compile", "declined"})
+_ATTRIBUTIONS = frozenset({"solo", "unanimous", "inferred", "none"})
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -42,7 +46,36 @@ class StoreHeader:
 
 @dc.dataclass(frozen=True, slots=True)
 class OutcomeRecord:
-    """One attributed request with bounded H2 and H3 evidence."""
+    """One attributed request with bounded evidence and its admission moment.
+
+    Attributes
+    ----------
+    key : CacheKey
+        The salted request identity.
+    outcome : CacheResult
+        The closed cache-result vocabulary.
+    origin : Origin
+        The crate's origin class.
+    runtime_seconds : float
+        The recorded compilation runtime.
+    observed_at : datetime
+        When the label became known.
+    parser_class : ParserClass
+        The argv parser's predicted class.
+    child_sighting : ChildSighting
+        The bounded child-process observation.
+    child_samples : int
+        Successful child samples taken while the launch ran.
+    outcome_reason : OutcomeReason | None
+        Why the window produced no label, or ``none`` for a label. ``None``
+        means the row predates reason recording and is never guessed at.
+    outcome_attribution : AttributionKind | None
+        ``solo``, ``unanimous`` or ``none``; ``None`` for a pre-v2 row.
+    admitted_at : datetime | None
+        The UTC wall-clock moment the supervisor admitted the compilation,
+        captured at admission. ``None`` means the row predates admission-time
+        recording or the launch was not admitted through the supervisor.
+    """
 
     key: CacheKey
     outcome: CacheResult
@@ -52,6 +85,9 @@ class OutcomeRecord:
     parser_class: ParserClass
     child_sighting: ChildSighting
     child_samples: int
+    outcome_reason: OutcomeReason | None = None
+    outcome_attribution: AttributionKind | None = None
+    admitted_at: dt.datetime | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -101,12 +137,19 @@ class DecodedStore:
 _KEY_FIELDS = {field.name for field in dc.fields(CacheKey)}
 _IDENTITY_FIELDS = {field.name for field in dc.fields(ToolchainIdentity)}
 _OUTCOME_FIELDS = {field.name for field in dc.fields(OutcomeRecord)} | {"kind"}
+# Version 1 rows predate admission-time and classification evidence. They stay
+# readable, and every absent field decodes as None rather than a guessed label.
+_V1_OUTCOME_FIELDS = _OUTCOME_FIELDS - {
+    "outcome_reason",
+    "outcome_attribution",
+    "admitted_at",
+}
 _SUMMARY_FIELDS = {field.name for field in dc.fields(WindowSummary)} | {"kind"}
 _SUMMARY_COUNTS = tuple(field.name for field in dc.fields(WindowSummary)[2:])
 
 
 def _valid_outcome(record: OutcomeRecord) -> bool:
-    """Check closed vocabularies and bounded measurements.
+    """Check closed vocabularies, bounded measurements and optional evidence.
 
     Returns
     -------
@@ -120,16 +163,22 @@ def _valid_outcome(record: OutcomeRecord) -> bool:
         _is_choice(record.child_sighting, _CHILD_SIGHTINGS),
         _valid_number(record.runtime_seconds),
         nonnegative_integer(record.child_samples) is not None,
+        _optional_choice(record.outcome_reason, _OUTCOME_REASONS),
+        _optional_choice(record.outcome_attribution, _ATTRIBUTIONS),
+        _optional_utc(record.admitted_at),
     ))
 
 
 def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
     """Check decoded outcome values against their closed vocabularies.
 
+    The optional evidence is absent from a version 1 row, which is valid: its
+    fields decode as None and are never filled by inference.
+
     Returns
     -------
     bool
-        Whether all required outcome values have supported types and values.
+        Whether all present outcome values have supported types and values.
     """
     return all((
         _is_choice(value.get("outcome"), _CACHE_RESULTS),
@@ -138,23 +187,25 @@ def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
         _is_choice(value.get("child_sighting"), _CHILD_SIGHTINGS),
         _valid_number(value.get("runtime_seconds")),
         nonnegative_integer(value.get("child_samples")) is not None,
+        _optional_choice(value.get("outcome_reason"), _OUTCOME_REASONS),
+        _optional_choice(value.get("outcome_attribution"), _ATTRIBUTIONS),
     ))
 
 
 def _has_supported_version(value: cabc.Mapping[str, object]) -> bool:
-    """Require the exact format name and integer version.
+    """Require the supported format name and one readable integer version.
 
     Returns
     -------
     bool
-        Whether the header identifies the supported format version.
+        Whether the header identifies a supported format version.
     """
     version = value.get("version")
     return all((
         value.get("format") == FORMAT_NAME,
         isinstance(version, int),
         not isinstance(version, bool),
-        version == FORMAT_VERSION,
+        version in SUPPORTED_FORMAT_VERSIONS,
     ))
 
 
@@ -273,6 +324,30 @@ def _is_choice(value: object, allowed: frozenset[str]) -> bool:
         Whether the string belongs to the allowed values.
     """
     return isinstance(value, str) and value in allowed
+
+
+def _optional_choice(value: object, allowed: frozenset[str]) -> bool:
+    """Check an absent value or a string from a closed vocabulary.
+
+    Returns
+    -------
+    bool
+        Whether the value is None or belongs to the allowed values.
+    """
+    return value is None or _is_choice(value, allowed)
+
+
+def _optional_utc(value: dt.datetime | None) -> bool:
+    """Check an optional timestamp is present in explicit UTC.
+
+    Returns
+    -------
+    bool
+        Whether the value is None or an aware UTC datetime.
+    """
+    return value is None or (
+        value.tzinfo is not None and value.utcoffset() == dt.timedelta(0)
+    )
 
 
 def _valid_number(value: object) -> bool:

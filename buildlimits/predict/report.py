@@ -15,6 +15,7 @@ from buildlimits.predict.journal_codec import journal_to_dict
 from buildlimits.predict.render import render_markdown
 from buildlimits.predict.report_codec import (
     config_to_dict,
+    diagnostics_to_dict,
     interval_to_dict,
     metrics_to_dict,
     source_to_dict,
@@ -114,6 +115,7 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
             "stats": stats_to_dict(provenance.snapshot.stats()),
             "source": source_to_dict(provenance.snapshot.source),
             "journal": journal_to_dict(provenance.snapshot.journal),
+            "diagnostics": diagnostics_to_dict(provenance.snapshot.diagnostics),
         },
         "split": split_to_dict(evaluation.walk.split),
         "replay": {

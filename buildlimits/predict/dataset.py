@@ -13,6 +13,8 @@ import dataclasses as dc
 import itertools
 import typing as typ
 
+from buildlimits.predict.accounting import Diagnostics, HistoryLoss
+from buildlimits.predict.accounting import StoreAccounting as StoreAccounting
 from buildlimits.predict.events import admission_moment
 
 if typ.TYPE_CHECKING:
@@ -83,10 +85,13 @@ class StoreHistory:
         Every attributed record, in the order the store appended it.
     source : Source
         The header and counts the events were read from.
+    accounting : StoreAccounting
+        Bounded counts explaining how those rows did or did not become labels.
     """
 
     events: tuple[Event, ...]
     source: Source
+    accounting: StoreAccounting
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -149,6 +154,9 @@ class Snapshot:
         Every recorded compilation, in the order the store appended it.
     gaps : tuple[Gap, ...]
         Silences longer than the configured threshold.
+    diagnostics : Diagnostics | None
+        The retained-store and history-loss counts, or None for a snapshot
+        written before those counts existed.
     """
 
     created_at: dt.datetime
@@ -156,6 +164,7 @@ class Snapshot:
     journal: JournalProvenance | None
     events: tuple[Event, ...]
     gaps: tuple[Gap, ...]
+    diagnostics: Diagnostics | None = None
 
     def stats(self) -> SnapshotStats:
         """Summarize the history the snapshot really holds.
@@ -213,12 +222,13 @@ def find_gaps(
     return tuple(gaps)
 
 
-def build_snapshot(
+def build_snapshot(  # ruff: ignore[too-many-arguments] - one explicit input per provenance source.
     history: StoreHistory,
     *,
     now: dt.datetime,
     journal: JournalProvenance | None = None,
     gap_threshold_seconds: float = 3600.0,
+    history_loss: HistoryLoss | None = None,
 ) -> Snapshot:
     """Assemble the snapshot document from a decoded history.
 
@@ -233,11 +243,14 @@ def build_snapshot(
         The journal provenance to keep, or None when no journal was queried.
     gap_threshold_seconds : float
         The shortest silence that the snapshot reports as a gap.
+    history_loss : HistoryLoss | None
+        The closed-history loss statement, or None when the reader did not
+        inspect it. The snapshot reports that absence rather than guessing.
 
     Returns
     -------
     Snapshot
-        The redacted history with provenance, counts and gaps.
+        The redacted history with provenance, counts, gaps and diagnostics.
     """
     return Snapshot(
         created_at=now,
@@ -245,4 +258,10 @@ def build_snapshot(
         journal=journal,
         events=history.events,
         gaps=find_gaps(history.events, threshold_seconds=gap_threshold_seconds),
+        diagnostics=Diagnostics(
+            store=history.accounting,
+            history=(
+                HistoryLoss.active_file_only() if history_loss is None else history_loss
+            ),
+        ),
     )

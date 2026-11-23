@@ -13,6 +13,7 @@ from buildlimits.predict.journal_provenance import (
     JournalCounts,
     JournalRestarts,
     JournalUnavailable,
+    ObserverAccounting,
 )
 from buildlimits.utc_text import optional_utc_moment, optional_utc_text
 
@@ -21,6 +22,26 @@ if typ.TYPE_CHECKING:
     import datetime as dt
 
     from buildlimits.predict.journal_provenance import JournalProvenance
+
+_OBSERVER_COUNT_FIELDS = (
+    "requests",
+    "outcomes",
+    "store_records",
+    "store_discarded",
+    "readings",
+    "readings_skipped",
+    "readings_failed",
+)
+_OBSERVER_MAP_FIELDS = (
+    "by_cache_path",
+    "by_backend",
+    "by_result",
+    "by_reason",
+    "by_attribution",
+    "by_origin",
+    "by_gate_reason",
+    "by_reading_reason",
+)
 
 
 def journal_to_dict(provenance: JournalProvenance | None) -> dict[str, object]:
@@ -52,6 +73,21 @@ def journal_to_dict(provenance: JournalProvenance | None) -> dict[str, object]:
         },
         "retention": provenance.retention,
         "correlation": provenance.correlation,
+        "observer": _observer_to_dict(provenance.observer),
+    }
+
+
+def _observer_to_dict(observer: ObserverAccounting) -> dict[str, object]:
+    """Return the snapshot shape for the recorder's own counts.
+
+    Returns
+    -------
+    dict[str, object]
+        Counts and their closed-vocabulary breakdowns.
+    """
+    return {
+        **{name: getattr(observer, name) for name in _OBSERVER_COUNT_FIELDS},
+        **{name: dict(getattr(observer, name)) for name in _OBSERVER_MAP_FIELDS},
     }
 
 
@@ -147,6 +183,62 @@ def _counts_from(note: cabc.Mapping[str, object], label: str) -> JournalCounts:
         restarts=restarts,
         retention=retention,
         correlation=correlation,
+        observer=_observer_from(note.get("observer"), label),
+    )
+
+
+def _observer_from(value: object, label: str) -> ObserverAccounting:
+    """Decode the optional recorder-count block.
+
+    A snapshot written before the block existed carries none, and every count
+    decodes as zero. That is reported as "no counts", never as a measured
+    absence of outcomes.
+
+    Returns
+    -------
+    ObserverAccounting
+        The validated counts.
+
+    Raises
+    ------
+    TypeError
+        If the block or one of its values has the wrong Python type.
+    ValueError
+        If a count is negative.
+    """
+    if value is None:
+        return ObserverAccounting()
+    if not isinstance(value, dict):
+        msg = f"{label} journal observer must be an object"
+        raise TypeError(msg)
+    block = typ.cast("dict[str, object]", value)
+    counts = {
+        name: _journal_count(block.get(name, 0), label, f"observer {name}")
+        for name in _OBSERVER_COUNT_FIELDS
+    }
+    if any(count < 0 for count in counts.values()):
+        msg = f"{label} journal observer counts must not be negative"
+        raise ValueError(msg)
+    maps = {
+        name: _tally_from(block.get(name, {}), label, f"observer {name}")
+        for name in _OBSERVER_MAP_FIELDS
+    }
+    return ObserverAccounting(
+        requests=counts["requests"],
+        outcomes=counts["outcomes"],
+        store_records=counts["store_records"],
+        store_discarded=counts["store_discarded"],
+        readings=counts["readings"],
+        readings_skipped=counts["readings_skipped"],
+        readings_failed=counts["readings_failed"],
+        by_cache_path=maps["by_cache_path"],
+        by_backend=maps["by_backend"],
+        by_result=maps["by_result"],
+        by_reason=maps["by_reason"],
+        by_attribution=maps["by_attribution"],
+        by_origin=maps["by_origin"],
+        by_gate_reason=maps["by_gate_reason"],
+        by_reading_reason=maps["by_reading_reason"],
     )
 
 

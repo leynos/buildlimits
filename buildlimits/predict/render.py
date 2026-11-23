@@ -24,6 +24,7 @@ from buildlimits.predict.render_tables import (
     ablation_table,
     calibration_table,
     comparison_table,
+    data_sufficiency,
     origin_table,
 )
 
@@ -71,6 +72,7 @@ def render_markdown(document: cabc.Mapping[str, object]) -> str:
     predictors = _predictors(document)
     ranking = typ.cast("list[str]", document["ranking"])
     lines = _header(document, len(predictors))
+    lines += data_sufficiency(document)
     lines += comparison_table(predictors, ranking, document)
     lines += calibration_table(predictors)
     lines += ablation_table(document)
@@ -230,6 +232,11 @@ def _limitations(predictors: cabc.Mapping[str, dict[str, object]]) -> list[str]:
             "- The journal supplies counts and a retention span, not a "
             "joinable per-compilation admission record, so admission times "
             "come only from the outcome store."
+        ),
+        (
+            "- A row whose window could not be attributed stays `unknown`; a "
+            "missing hit is never read as a miss, and an ambiguous counter "
+            "change is never split between concurrent requests."
         ),
         "",
     ])

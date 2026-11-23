@@ -209,6 +209,9 @@ def _record_for(
         parser_class=launch.payload.parser_class,
         child_sighting=launch.sightings.sighting(),
         child_samples=launch.sightings.samples,
+        outcome_reason=details.reason,
+        outcome_attribution=details.attribution,
+        admitted_at=launch.admitted_at,
     )
 
 

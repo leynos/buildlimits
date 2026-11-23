@@ -231,6 +231,7 @@ def quiet_inputs(
         is_recovery_idle=recovery["phase"] == "idle",
         has_barrier=exists_or_unknown(supervisor.settings.recovery_marker),
         has_query_in_flight=isinstance(state, Querying),
+        has_baseline=state.progress.baseline is not None,
     )
 
 

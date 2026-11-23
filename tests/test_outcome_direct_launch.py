@@ -79,3 +79,21 @@ def test_cached_launch_control_opens_the_window(tmp_path: Path) -> None:
     assert len(progress.window.entries) == 1, "a cached launch opens one window entry"
     assert progress.active != (), "a cached launch is an active recorder launch"
     shell.close(timeout=0.1)
+
+
+def test_a_first_baseline_starts_while_a_cached_group_moves(tmp_path: Path) -> None:
+    """A host that never idles can still establish the first baseline."""
+    world = make_outcome_world(tmp_path)
+    shell = typ.cast("OutcomeShell", world.shell)
+    launch = admitted_launch(world.admission, 1)
+    shell.launched(cached_entry(), launch.group_id)
+
+    shell.on_tick(0.0)
+
+    assert world.statistics.starts, (
+        "the baseline query starts while a cached group is still moving"
+    )
+    assert shell._recorder.state.progress.baseline is None, (
+        "the query has not completed yet"
+    )
+    shell.close(timeout=0.1)

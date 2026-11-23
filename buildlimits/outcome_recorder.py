@@ -115,6 +115,7 @@ def _launch(state: RecorderState, event: Launched) -> tuple[RecorderState, Outpu
         event.payload,
         event.now,
         sightings=ChildSightings(has_metadata=event.payload.metadata is not None),
+        admitted_at=event.admitted_at,
     )
     progress = state.progress
     window = progress.window.append(launch)
@@ -133,6 +134,12 @@ def _launch(state: RecorderState, event: Launched) -> tuple[RecorderState, Outpu
             progress,
             active=tuple(item for item in active if item.group_id not in ids),
             window=OutcomeWindow(),
+            # The overflowed launches were accounted as unattributed, but the
+            # statistics counters still include them. Keeping the old baseline
+            # would make the next window's delta include requests that are no
+            # longer in it, so every later window would fail to balance. The
+            # next reading establishes a fresh baseline instead.
+            baseline=None,
         )
         next_state = _with_progress(state, progress, straddled=True)
         return next_state, outputs

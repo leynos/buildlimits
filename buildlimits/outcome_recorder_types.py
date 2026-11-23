@@ -53,12 +53,19 @@ class OutcomeEvent:
 
 @dc.dataclass(frozen=True, slots=True)
 class Launched:
-    """A process group began, with key metadata only for cached launches."""
+    """A process group began, with key metadata only for cached launches.
+
+    ``admitted_at`` is the wall-clock moment the supervisor admitted the
+    group, captured where admission is decided. It is not derived from the
+    later observation time, so a row that carries it can be predicted from
+    before its outcome was known.
+    """
 
     group_id: str
     is_cached: bool
     payload: LaunchPayload
     now: float
+    admitted_at: dt.datetime | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -186,6 +193,7 @@ class _Launch:
     runtime_seconds: float | None = None
     is_clean: bool = False
     observed_at: dt.datetime | None = None
+    admitted_at: dt.datetime | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)

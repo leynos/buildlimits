@@ -11,11 +11,16 @@ import sys
 import typing as typ
 from pathlib import Path
 
-from buildlimits import outcome_history
+from buildlimits import (
+    outcome_history,
+    outcome_segment_inventory,
+)
 from buildlimits.outcome_history_args import add_history_arguments, selection_from
 from buildlimits.outcome_record_format import RecordFailure
+from buildlimits.outcome_segments import SegmentLayout
 from buildlimits.outcome_store_read import read_store
 from buildlimits.outcome_store_salt import store_path
+from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.config_loader import load_config as _read_config
 from buildlimits.predict.dataset import Snapshot, build_snapshot
 from buildlimits.predict.dataset_inputs import output_is_an_input, read_inputs
@@ -24,7 +29,16 @@ from buildlimits.predict.dataset_journal import (
     journal_span,
     journal_window,
 )
+from buildlimits.predict.formatting import as_counts
 from buildlimits.predict.journal_provenance import (
+    JournalCounts,
+    JournalProvenance,
+    JournalUnavailable,
+)
+from buildlimits.predict.records import decode_history
+from buildlimits.predict.snapshot_store import save_snapshot
+from buildlimits.retry_notice import report_retry
+from buildlimits.utc_text import utc_now, utc_text
     JournalProvenance,
     JournalUnavailable,
 )
@@ -118,15 +132,27 @@ def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
     )
     if isinstance(decoded, int):
         return decoded
-    snapshot = _snapshot(decoded, config, options, chosen)
+    snapshot = _snapshot(
+        decoded,
+        config,
+        options,
+        chosen,
+        history_loss=(
+            HistoryLoss.active_file_only()
+            if selection is None
+            else chosen.read_inventory(store)
+        ),
+    )
     return chosen.write_snapshot(snapshot, options.output)
 
 
-def _snapshot(
+def _snapshot(  # ruff: ignore[too-many-arguments] - one explicit input per provenance source.
     decoded: DecodedStore,
     config: Config,
     options: argparse.Namespace,
     chosen: Edges,
+    *,
+    history_loss: HistoryLoss,
 ) -> Snapshot:
     """Build the snapshot from the decoded history and its provenance.
 
@@ -140,6 +166,8 @@ def _snapshot(
         The parsed command line.
     chosen : Edges
         The journal and clock this run uses.
+    history_loss : HistoryLoss
+        What the inventory says an extraction could not see.
 
     Returns
     -------
@@ -156,6 +184,7 @@ def _snapshot(
         now=chosen.now(),
         journal=note,
         gap_threshold_seconds=config.gap_threshold_seconds,
+        history_loss=history_loss,
     )
 
 
@@ -221,6 +250,34 @@ def _store_path(store: Path | None) -> Path:
     return store_path(os.environ) if store is None else store
 
 
+def _read_inventory(store: Path) -> HistoryLoss:
+    """Describe the closed history an extraction could not see.
+
+    A scan failure is not a reason to lose the snapshot, so it is reported as
+    "closed history not considered" rather than as an empty history.
+
+    Returns
+    -------
+    HistoryLoss
+        The inventory counts, or the active-file-only statement on failure.
+    """
+    try:
+        inventory = outcome_segment_inventory.read_inventory(
+            SegmentLayout.beside(store)
+        )
+    except OSError:
+        return HistoryLoss.active_file_only()
+    return HistoryLoss(
+        active_only=False,
+        archived=len(inventory.archived),
+        sealed=len(inventory.sealed),
+        gaps=len(inventory.gaps),
+        gaps_truncated=inventory.gaps_truncated,
+        retention_floor=inventory.retention_floor,
+        quarantined=len(inventory.quarantined),
+    )
+
+
 def _read(store: Path) -> DecodedStore | int:
     """Read the store, reporting the reason a refusal is fatal.
 
@@ -274,7 +331,7 @@ def _read_history(store: Path, selection: HistorySelection) -> DecodedStore | in
 
 
 def _report(snapshot: Snapshot, output: Path) -> None:
-    """Print what the snapshot holds, including its gaps."""
+    """Print what the snapshot holds, including its gaps and label loss."""
     stats = snapshot.stats()
     print(f"wrote {output}")
     print(
@@ -290,6 +347,7 @@ def _report(snapshot: Snapshot, output: Path) -> None:
         f"usable={stats.admission_usable} missing={stats.admission_missing} "
         f"after their own label={stats.admission_unusable}"
     )
+    _report_diagnostics(snapshot)
     if stats.labelled == 0:
         print(
             "no attributed hit or miss was recorded, so the benchmark will "
@@ -303,6 +361,63 @@ def _report(snapshot: Snapshot, output: Path) -> None:
             "insufficient admission times rather than use the label time",
             file=sys.stderr,
         )
+
+
+def _report_diagnostics(snapshot: Snapshot) -> None:
+    """Print the bounded label-loss counts behind the snapshot's labels."""
+    diagnostics = snapshot.diagnostics
+    if diagnostics is None:
+        print("label loss: no diagnostics recorded in this snapshot")
+        return
+    store = diagnostics.store
+    print(
+        f"store rows: total={store.records_total} "
+        f"outcomes={store.outcome_records} summaries={store.summary_records} "
+        f"labels={store.labels} labelled fraction="
+        f"{store.labelled_fraction:.4f} of outcome rows; cacheable rows="
+        f"{store.cacheable_records} with {store.cacheable_labels} labels"
+    )
+    for label, counts in (
+        ("cache result", store.by_result),
+        ("outcome reason", store.by_reason),
+        ("attribution", store.by_attribution),
+        ("origin", store.by_origin),
+        ("parser class", store.by_parser_class),
+        ("server version", store.by_server_version),
+    ):
+        print(f"by {label}: {as_counts(counts)}")
+    if snapshot.journal is not None:
+        _report_journal(snapshot.journal)
+    history = diagnostics.history
+    if history.active_only:
+        print("closed history: not considered (the active file alone was read)")
+        return
+    print(
+        f"closed history: archived={history.archived} sealed={history.sealed} "
+        f"gaps={history.gaps} quarantined={history.quarantined} "
+        f"retention floor={history.retention_floor}"
+        + (" (gap list truncated)" if history.gaps_truncated else "")
+    )
+
+
+def _report_journal(note: JournalProvenance) -> None:
+    """Print the recorder's own counts, which the store cannot provide."""
+    if not isinstance(note, JournalCounts):
+        return
+    observer = note.observer
+    if not observer.requests and not observer.outcomes:
+        print("observer: the journal window held no admission or outcome events")
+        return
+    print(
+        f"observer: requests={observer.requests} outcomes={observer.outcomes} "
+        f"store appends={observer.store_records} "
+        f"dropped={observer.store_discarded} readings={observer.readings} "
+        f"skipped={observer.readings_skipped} failed={observer.readings_failed}"
+    )
+    print(f"observer by cache path: {as_counts(observer.by_cache_path)}")
+    print(f"observer by result: {as_counts(observer.by_result)}")
+    print(f"observer by reason: {as_counts(observer.by_reason)}")
+    print(f"observer by gate reason: {as_counts(observer.by_gate_reason)}")
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -334,6 +449,8 @@ class Edges:
     load_config : Callable[[], Config]
         Reads the pinned parameters the gap threshold comes from, so a test
         can refuse an unreadable file without patching the module.
+    read_inventory : Callable[[Path], HistoryLoss]
+        Describes the closed history the extraction could not see.
     """
 
     journal: cabc.Callable[[str], Window] = journal_window
@@ -345,3 +462,5 @@ class Edges:
     write_snapshot: cabc.Callable[[Snapshot, Path], int] = _write
     resolve_store: cabc.Callable[[Path | None], Path] = _store_path
     load_config: cabc.Callable[[], Config] = _read_config
+    read_inventory: cabc.Callable[[Path], HistoryLoss] = _read_inventory
+# weave: run 'weave explain buildlimits/predict/dataset_cli.py' for per-hunk detail, 'weave check' to verify your resolution

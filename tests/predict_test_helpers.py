@@ -134,6 +134,55 @@ def write_store(path: Path, count: int) -> None:
     outcome_store_io.replace_store(path, STORE_HEADER, typ.cast("typ.Any", records))
 
 
+def write_admitted_store(path: Path, count: int) -> None:
+    """Write a store whose rows each carry their own admission time.
+
+    The label times keep their fixed spacing, and every admission time is two
+    seconds earlier, so each row is a genuine pre-admission observation rather
+    than a time derived from when the row was written.
+    """
+    records = []
+    for index in range(count):
+        labelled = index % 7 != 0
+        record = outcome_record(
+            index,
+            "unattributed" if not labelled else ("hit" if index % 2 else "miss"),
+            dc.replace(cache_key(), argument_digest=f"{index:064x}"),
+        )
+        records.append(
+            dc.replace(
+                record,
+                outcome_reason="none" if labelled else "mixed_window",
+                outcome_attribution="solo" if labelled else "none",
+                admitted_at=record.observed_at - dt.timedelta(seconds=2),
+            )
+        )
+    outcome_store_io.replace_store(
+        path, STORE_HEADER, typ.cast("typ.Any", tuple(records))
+    )
+
+
+def write_admitted_store_snapshot(tmp_path: Path, count: int) -> Path:
+    """Snapshot a store whose retained rows carry admission times.
+
+    Returns
+    -------
+    Path
+        The snapshot the benchmark can be pointed at.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    snapshot = tmp_path / "history.jsonl"
+    write_admitted_store(store, count)
+    dataset_cli.main([
+        "--store",
+        str(store),
+        "--output",
+        str(snapshot),
+        "--skip-journal",
+    ])
+    return snapshot
+
+
 def write_snapshot(tmp_path: Path, count: int) -> Path:
     """Write a store of ``count`` records and snapshot it without the journal.
 
