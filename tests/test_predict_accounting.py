@@ -18,6 +18,7 @@ from buildlimits.predict.accounting import (
 )
 
 if typ.TYPE_CHECKING:
+    from buildlimits.outcome_record_format import OutcomeRecord
     from buildlimits.outcome_vocabulary import CacheResult, OutcomeReason
 
 ADMITTED_AT = OBSERVED_AT - dt.timedelta(seconds=2)
@@ -39,15 +40,13 @@ def _record(
     reason: str | None,
     attribution: str | None,
     admitted_at: dt.datetime | None,
-    origin: str = "registry",
-) -> object:
-    """Return one record with the supplied closed-vocabulary evidence."""
+) -> OutcomeRecord:
+    """Return one registry record with the supplied closed-vocabulary evidence."""
     return dc.replace(
         attributed_record(outcome=typ.cast("CacheResult", outcome)),
         outcome_reason=typ.cast("OutcomeReason | None", reason),
         outcome_attribution=typ.cast("typ.Any", attribution),
         admitted_at=admitted_at,
-        origin=typ.cast("typ.Any", origin),
     )
 
 
@@ -60,18 +59,22 @@ def test_every_breakdown_sums_to_the_outcome_rows() -> None:
             attribution="solo",
             admitted_at=ADMITTED_AT,
         ),
-        _record(
-            outcome="miss",
-            reason="none",
-            attribution="unanimous",
-            admitted_at=ADMITTED_AT,
+        dc.replace(
+            _record(
+                outcome="miss",
+                reason="none",
+                attribution="unanimous",
+                admitted_at=ADMITTED_AT,
+            ),
             origin="git",
         ),
-        _record(
-            outcome="unattributed",
-            reason="mixed_window",
-            attribution="none",
-            admitted_at=None,
+        dc.replace(
+            _record(
+                outcome="unattributed",
+                reason="mixed_window",
+                attribution="none",
+                admitted_at=None,
+            ),
             origin="path",
         ),
         _record(

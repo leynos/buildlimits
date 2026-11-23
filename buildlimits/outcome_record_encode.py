@@ -20,10 +20,10 @@ from buildlimits.outcome_record_format import (
     StoreRecord,
     WindowSummary,
     _require_text,
-    _timestamp,
     _valid_outcome,
     _validate_key,
 )
+from buildlimits.outcome_record_time import timestamp_text
 
 __all__ = ["encode_line", "header_floor_bytes"]
 
@@ -78,7 +78,7 @@ def _document(value: StoreHeader | StoreRecord) -> dict[str, object]:
                 "format": FORMAT_NAME,
                 "version": FORMAT_VERSION,
                 "salt_id": value.salt_id,
-                "written_at": _timestamp(value.written_at),
+                "written_at": timestamp_text(value.written_at),
             }
         case OutcomeRecord() as record:
             _validate_key(record.key)
@@ -108,10 +108,10 @@ def _record_document(record: StoreRecord, kind: str) -> dict[str, object]:
         JSON-compatible fields prefixed with the record kind.
     """
     fields = dc.asdict(record)
-    fields["observed_at"] = _timestamp(record.observed_at)
+    fields["observed_at"] = timestamp_text(record.observed_at)
     if isinstance(record, OutcomeRecord):
         fields["admitted_at"] = (
-            None if record.admitted_at is None else _timestamp(record.admitted_at)
+            None if record.admitted_at is None else timestamp_text(record.admitted_at)
         )
     return {"kind": kind, **fields}
 

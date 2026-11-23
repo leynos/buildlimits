@@ -222,7 +222,7 @@ def find_gaps(
     return tuple(gaps)
 
 
-def build_snapshot(  # ruff: ignore[too-many-arguments] - one explicit input per provenance source.
+def build_snapshot(  # ruff: ignore[too-many-arguments] - one explicit input per provenance source; pylint: disable=too-many-arguments
     history: StoreHistory,
     *,
     now: dt.datetime,

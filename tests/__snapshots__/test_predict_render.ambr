@@ -1,0 +1,21 @@
+# serializer version: 1
+# name: test_the_report_states_its_label_loss_denominators
+  '''
+  ## Data sufficiency
+  
+  - Rows read: 9 (8 outcome rows, 1 window summaries)
+  - Labels: 0 of 0 events (0.0%), 0 distinct identities
+  - Admission times: 0 recorded, 0 usable for a prediction, 0 missing, 0 after their own label
+  - Label coverage among outcome rows: 3 of 8
+  - Label coverage among cacheable compilations: 3 of 6
+  - By cache result: hit=2, miss=1, unattributed=5
+  - By outcome reason: mixed_window=5, none=3
+  - By attribution: none=5, solo=3
+  - By origin: registry=8
+  - By parser class: cacheable=8
+  - Closed history: archived 4, sealed 1, gaps 2
+  - Observer counts: unavailable; no journal window was read.
+  
+  An ambiguous or unavailable window remains `unknown`; the report never turns a missing hit into a miss.
+  '''
+# ---

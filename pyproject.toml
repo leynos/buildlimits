@@ -163,6 +163,19 @@ extend-ignore = [
 # systemd tools with fixed argv. Its guards state the fixture preconditions a
 # scenario depends on, so they fail the scenario rather than debug it.
 "tests/cache_recovery_systemd_world.py" = ["assert", "suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# The opt-in real-sccache observer helper drives fixed argv and asserts the
+# controlled window's contract once, so both tests read the same evidence.
+# Its assertions are the check, not debugging aids.
+"tests/sccache_outcome_observer_support.py" = [
+    "assert",
+    "docstring-missing-exception",
+    "docstring-missing-returns",
+    "magic-value-comparison",
+    "raise-vanilla-args",
+    "start-process-with-partial-path",
+    "subprocess-without-shell-equals-true",
+    "suspicious-subprocess-import",
+]
 # The end-to-end support module runs ``uv run python -m modelcheck`` with a
 # fixed argv, the way a maintainer does. The launcher path is found on PATH
 # because that is where ``uv`` is installed on every host the suite runs on.

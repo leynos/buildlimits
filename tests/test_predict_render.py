@@ -6,6 +6,9 @@ from render_helpers import data_section, empty_document, entry, scored_document
 
 from buildlimits.predict.render import UNDERPOWERED, render_markdown
 
+if typ.TYPE_CHECKING:
+    from syrupy.assertion import SnapshotAssertion
+
 # The note a run without admission times must print, kept whole so a dropped
 # clause fails the test rather than sliding past a substring check.
 _ADMISSION_NOTE = (
@@ -52,9 +55,10 @@ def test_a_scored_report_prints_its_tables_exactly() -> None:
     }, "the documented formats, row by row"
 
 
-def test_the_report_states_its_label_loss_denominators() -> None:
+def test_the_report_states_its_label_loss_denominators(
+    snapshot: SnapshotAssertion,
+) -> None:
     """The sufficiency block names the rows, labels and refusal reasons."""
-    # pylint: disable=prefer-snapshot-substring  # each assertion names a distinct contract.
     document = empty_document()
     data = data_section(document)
     typ.cast("dict[str, object]", data["source"]).update(
@@ -93,22 +97,31 @@ def test_the_report_states_its_label_loss_denominators() -> None:
 
     markdown = render_markdown(document)
 
-    assert "## Data sufficiency" in markdown, "the block is rendered"
-    assert "8 outcome rows" in markdown, "the denominator is named"
-    assert "- By cache result: hit=2, miss=1, unattributed=5" in markdown, (
-        "the result breakdown is exact"
+    assert _data_sufficiency_section(markdown) == snapshot, (
+        "the sufficiency block is a stable input contract"
     )
-    assert "- Label coverage among cacheable compilations: 3 of 6" in markdown, (
-        "the eligible denominator is named"
+
+
+def _data_sufficiency_section(markdown: str) -> str:
+    """Return the report's data-sufficiency block as one bounded string.
+
+    Returns
+    -------
+    str
+        The heading and bullets up to the next top-level heading. The block is
+        a stable input contract, so a formatting or count change is visible.
+    """
+    lines = markdown.splitlines()
+    start = lines.index("## Data sufficiency")
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if lines[index].startswith("## ")
+        ),
+        len(lines),
     )
-    assert "- Unknown by outcome reason: mixed_window=5, none=3" in markdown, (
-        "the reason breakdown is exact"
-    )
-    assert "gap list truncated" not in markdown, "an untruncated list says nothing"
-    assert "archived 4" in markdown, "the closed-history loss is reported"
-    assert "An ambiguous or unavailable window remains `unknown`" in markdown, (
-        "the report states that unknown is never a miss"
-    )
+    return "\n".join(lines[start:end]).strip()
 
 
 def test_an_unranked_report_omits_the_detail_tables() -> None:

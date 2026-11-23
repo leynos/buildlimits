@@ -23,10 +23,14 @@ from buildlimits.outcome_record_format import (
     StoreRecord,
     WindowSummary,
     _has_supported_version,
-    _parse_timestamp,
     _text,
     _valid_outcome_fields,
     _validate_key,
+)
+from buildlimits.outcome_record_time import (
+    INVALID_TIMESTAMP,
+    optional_timestamp,
+    parse_timestamp,
 )
 
 if typ.TYPE_CHECKING:
@@ -266,7 +270,7 @@ def _decode_header(raw: object) -> StoreHeader | RecordFailure:
     if set(value) != {"format", "version", "salt_id", "written_at"}:
         return RecordFailure("corrupt")
     salt_id = _text(value.get("salt_id"))
-    written_at = _parse_timestamp(value.get("written_at"))
+    written_at = parse_timestamp(value.get("written_at"))
     if salt_id is None or written_at is None:
         return RecordFailure("corrupt")
     return StoreHeader(salt_id, written_at)
@@ -306,11 +310,11 @@ def _decode_outcome(value: cabc.Mapping[str, object]) -> OutcomeRecord | RecordF
     if fields not in (_OUTCOME_FIELDS, _V1_OUTCOME_FIELDS):
         return RecordFailure("corrupt")
     key = _decode_key(value.get("key"))
-    observed = _parse_timestamp(value.get("observed_at"))
-    admitted = _optional_timestamp(value.get("admitted_at"))
+    observed = parse_timestamp(value.get("observed_at"))
+    admitted = optional_timestamp(value.get("admitted_at"))
     if isinstance(key, RecordFailure) or observed is None:
         return RecordFailure("corrupt")
-    if admitted is _INVALID:
+    if admitted is INVALID_TIMESTAMP:
         return RecordFailure("corrupt")
     if not _valid_outcome_fields(value):
         return RecordFailure("corrupt")
@@ -329,28 +333,6 @@ def _decode_outcome(value: cabc.Mapping[str, object]) -> OutcomeRecord | RecordF
     )
 
 
-class _Invalid:
-    """Sentinel separating a malformed optional timestamp from an absent one."""
-
-
-_INVALID = _Invalid()
-
-
-def _optional_timestamp(value: object) -> dt.datetime | _Invalid | None:
-    """Parse an optional UTC timestamp, distinguishing absence from corruption.
-
-    Returns
-    -------
-    datetime | _Invalid | None
-        The parsed time, the invalid sentinel for a present value that is not
-        a UTC timestamp, or None for an explicit null or an absent field.
-    """
-    if value is None:
-        return None
-    parsed = _parse_timestamp(value)
-    return _INVALID if parsed is None else parsed
-
-
 def _decode_summary(value: cabc.Mapping[str, object]) -> WindowSummary | RecordFailure:
     """Decode one validated window-summary mapping.
 
@@ -361,7 +343,7 @@ def _decode_summary(value: cabc.Mapping[str, object]) -> WindowSummary | RecordF
     """
     if set(value) != _SUMMARY_FIELDS:
         return RecordFailure("corrupt")
-    observed = _parse_timestamp(value.get("observed_at"))
+    observed = parse_timestamp(value.get("observed_at"))
     version = _text(value.get("server_version"))
     if observed is None or version is None:
         return RecordFailure("corrupt")

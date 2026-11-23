@@ -79,7 +79,7 @@ def data_sufficiency(document: cabc.Mapping[str, object]) -> list[str]:
             f"{as_count(store.get('cacheable_records'))}"
         ),
         f"- By cache result: {as_counts(store['by_result'])}",
-        f"- Unknown by outcome reason: {as_counts(store['by_reason'])}",
+        f"- By outcome reason: {as_counts(store['by_reason'])}",
         f"- By attribution: {as_counts(store['by_attribution'])}",
         f"- By origin: {as_counts(store['by_origin'])}",
         f"- By parser class: {as_counts(store['by_parser_class'])}",

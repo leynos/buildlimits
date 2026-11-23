@@ -203,7 +203,8 @@ class OutcomeShell:
         try:
             return action(*args)
         except Exception:  # ruff: ignore[blind-except] - keep recorder faults outside token and admission decisions.
-            # The shield keeps even a defective fault path inside D19's bound.
+            # The shield keeps a defective fault path inside this boundary, so
+            # D19's totality does not depend on _disable being perfect.
             with contextlib.suppress(Exception):
                 self._disable()
             return None
@@ -359,10 +360,10 @@ class OutcomeShell:
     def _disable(self) -> None:
         """Request cancellation once, without waiting, and make calls inert.
 
-        This runs under a fault on the selector thread, so it may only ask
-        owned work to stop: D17 bounds a join during supervisor shutdown, not
-        during an ordinary launch, tick or status call. Later ticks finish the
-        reaping and writer shutdown through ``OutcomeResources.service_failed``.
+        This runs under a fault on the selector thread, so it may only ask owned
+        work to stop. D17 bounds a join during supervisor shutdown, not during
+        an ordinary launch, tick or status call; later ticks finish the reaping
+        and writer shutdown through ``OutcomeResources.service_failed``.
         """
         if self._disabled:
             return
@@ -399,3 +400,4 @@ class OutcomeShell:
             self._telemetry.flush(self._supervisor.clock(), force=True)
         self._resources.close(timeout)
         self._closed = True
+# weave: run 'weave explain buildlimits/supervisor_outcomes.py' for per-hunk detail, 'weave check' to verify your resolution
