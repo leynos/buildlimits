@@ -782,7 +782,10 @@ baseline only snapshots the counters. An attributing window still requires that
 no cached group is moving and no detached cache work is draining, and a launch
 during the query discards the reading. sccache 0.14 exposes only aggregate
 counters, so a mixed window of concurrent requests stays `unknown`; the host's
-label rate is a property of its workload, not a number the recorder can promise.
+label rate is a property of its workload, not a number the recorder can
+promise. Its debug log can be configured to print per-compilation hit or miss
+lines, but that log is not a supported API and names compiler outputs, so the
+recorder does not parse it.
 
 The commands behind those targets take explicit paths:
 

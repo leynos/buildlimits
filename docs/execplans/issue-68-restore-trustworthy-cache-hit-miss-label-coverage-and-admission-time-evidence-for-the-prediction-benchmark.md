@@ -179,8 +179,11 @@ bounded by its own retention policy.
 
 ## Limitations
 
-- sccache 0.14 exposes no supported per-request hit/miss signal. A future
-  backend with one may be added behind the observation port in
+- sccache 0.14 exposes no supported per-request hit/miss signal. Its
+  `SCCACHE_LOG=debug` output can print `Cache hit` and `Cache miss` lines, but
+  that is a debug log, not a versioned API, and it names the compiler output;
+  the recorder does not parse it. A future backend with a supported signal may
+  be added behind the observation port in
   [ADR 007](../adrs/adr-0007-cache-outcome-observation-port.md).
 - The live supervisor still runs the previous recorder. New rows with
   admission times and reason evidence require an operator upgrade and restart;

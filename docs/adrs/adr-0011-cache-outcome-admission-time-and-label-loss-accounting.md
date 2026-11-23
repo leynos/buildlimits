@@ -86,9 +86,12 @@ row then claims an admission time it did not observe.
 
 Version 1 rows remain readable and decode every new field as `None`. A `None`
 admission time is not a zero and not a guess: the benchmark event keeps it
-absent, `admission_moment` returns `None`, and the row is never scored. The
-snapshot format becomes version 2 as well; a version 1 snapshot loads with
-diagnostics unavailable.
+absent, `admission_moment` returns `None`, and the row is never scored. A
+writer that compacts an old store writes a version 2 header while preserving
+the old rows, so a version 2 file may contain version 1 rows; the decoder
+validates each row's shape, not a header-wide assumption. The snapshot format
+becomes version 2 as well; a version 1 snapshot loads with diagnostics
+unavailable.
 
 ### D2: keep label-loss accounting in the snapshot, not in per-request logs
 
@@ -163,9 +166,12 @@ window stays `unknown` with its own reason.
 - **Split a mixed counter delta between concurrent requests.** Rejected:
   sccache 0.14 exposes no per-request identity, so any split would be a guess.
 - **Parse sccache server logs or child sightings as per-request labels.**
-  Rejected: neither is a supported per-request signal, and child sightings miss
-  short-lived work. A backend that offers a supported per-request signal can be
-  added behind the observation port in ADR 007.
+  Rejected: sccache can print `Cache hit` and `Cache miss` lines at
+  `SCCACHE_LOG=debug`, but that is a debug log rather than a supported API, its
+  wording is not part of the version contract, and it names the compiler
+  output. Child sightings also miss short-lived work. A backend that offers a
+  supported per-request signal can be added behind the observation port in ADR
+  007.
 - **Keep `queued == 0`.** Rejected: the measured host never satisfies it, and
   the straddle rule already provides the safety the clause was thought to add.
 - **Flush the overflowed window and keep its baseline.** Rejected: the
