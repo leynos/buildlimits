@@ -342,3 +342,25 @@ def test_a_byte_or_record_trim_removes_the_oldest_appended_rows() -> None:
         "the later-appended row survives, whatever its observation time"
     )
     assert compacted.store_reason == "records", "the cap names itself"
+
+
+def test_a_byte_trim_removes_the_leading_row_whatever_its_observation() -> None:
+    """The byte bound trims by append order, not by observation time.
+
+    A budget that fits only the later-appended row discards the leading row,
+    even though that leading row carries the newer observation. The reason
+    names the byte bound, so clock order cannot be mistaken for the trim rule.
+    """
+    older_observation = records(NOW - dt.timedelta(hours=2), 1)[0]
+    newer_observation = records(NOW - dt.timedelta(hours=1), 1)[0]
+    rows = (newer_observation, older_observation)
+    budget = encoded_size((older_observation,))
+
+    compacted = outcome_records.compact(
+        decoded(rows), now=NOW, policy=policy(max_bytes=budget)
+    )
+
+    assert compacted.records == (older_observation,), (
+        "the later-appended row survives, whatever its observation time"
+    )
+    assert compacted.store_reason == "bytes", "the byte bound names itself"

@@ -250,3 +250,29 @@ def test_a_record_cap_trims_closed_history_in_append_order(tmp_path: Path) -> No
     assert _archived_document(tmp_path, 1) == document((older_observation,)), (
         "the later-appended row survives the capacity trim"
     )
+
+
+def test_a_byte_budget_trims_closed_history_in_append_order(tmp_path: Path) -> None:
+    """A byte trim removes the leading row, whichever observation it holds.
+
+    The budget fits only the later-appended row's document, so the trim must
+    drop the leading row even though it carries the newer observation. The
+    archive is compared exactly, so observation-time ordering would fail here
+    rather than stay implicit.
+    """
+    newer_observation = attributed_record(observed_at=NOW - dt.timedelta(hours=1))
+    older_observation = attributed_record(observed_at=NOW - dt.timedelta(hours=2))
+    sealed = layout(tmp_path).sealed_dir
+    sealed.mkdir(parents=True)
+    write_private(
+        sealed / segment_name(1), document((newer_observation, older_observation))
+    )
+    budget = len(document((older_observation,)))
+
+    report = run(tmp_path, policy(1_000_000, max_bytes=budget))
+
+    assert report.status == "ok", "the trim is not a failure"
+    assert _archived_document(tmp_path, 1) == document((older_observation,)), (
+        "the later-appended row survives the byte trim"
+    )
+    assert report.retained_bytes == budget, "the archive meets the budget exactly"

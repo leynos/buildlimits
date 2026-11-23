@@ -6,10 +6,14 @@ decoding it. This is the diagnostics half of the large-history acceptance
 validation: it is opt-in because generating the store takes minutes.
 """
 
+import json
 import os
+import subprocess
+import typing as typ
 from pathlib import Path
 
 import pytest
+from archive_cli_helpers import SCRIPT, command_arguments
 from test_outcome_archive_memory import (
     _LARGE_ENV,
     _RSS_KIB,
@@ -19,6 +23,24 @@ from test_outcome_archive_memory import (
 
 from buildlimits.outcome_archive_lock import ArchiveLock
 from buildlimits.outcome_segments import SegmentLayout
+
+
+def _inspection_report(store: Path, config: Path) -> dict[str, object]:
+    """Return the JSON diagnostic an inspection prints for the large store.
+
+    Returns
+    -------
+    dict[str, object]
+        The report fields the command publishes.
+    """
+    completed = subprocess.run(
+        [str(SCRIPT), "inspect", *command_arguments(store, config), "--json"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return typ.cast("dict[str, object]", json.loads(completed.stdout))
 
 
 @pytest.mark.skipif(
@@ -44,3 +66,12 @@ def test_a_large_history_keeps_the_status_read_bounded_during_maintenance(
 
     assert status == 0, "the inspection completes while an archive run holds the lock"
     assert status_rss < _RSS_KIB, f"the status read peaked at {status_rss} KiB"
+
+    report = _inspection_report(store, config)
+    limits = report["limits"]
+    assert report["status"] == "ok", "the large history is reportable"
+    assert report["retained_logical_bytes"] > 0, "the report names retained bytes"
+    assert report["retained_records"] > 0, "the report names retained records"
+    assert isinstance(limits, dict), "the report names the effective limits"
+    assert limits["max_bytes"] == 15_000_000_000, "the configured budget is reported"
+    assert limits["max_records"] is None, "the disabled count cap is reported"

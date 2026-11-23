@@ -497,9 +497,11 @@ it loaded at start, so a reduced bound reaches it at the next supervisor start.
 A changed bound takes effect where its owner next acts. A running supervisor
 keeps the policy it loaded when it started, so clean shutdown applies the
 bounds it started with rather than any edited ones. Reducing the byte, age or
-record bound therefore compacts the active file at the next supervisor start,
-and evicts closed history at the next archive run. No running process rewrites
-history merely because the configuration changed.
+record bound therefore compacts or seals the active file at the next supervisor
+start, and evicts closed history at the next archive run. A reduced record cap
+seals a segmented active file so the archiver can trim the closed rows; a byte
+or age bound compacts it in place. No running process rewrites history merely
+because the configuration changed.
 
 A wall-clock jump of more than a day, in either direction, is treated as
 suspect. The writer then skips age eviction for that pass, reports `clock_skew`
