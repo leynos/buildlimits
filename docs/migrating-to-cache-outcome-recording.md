@@ -29,6 +29,16 @@ incompatible configuration fails before any compiler is admitted. The sccache
 version is not checked at startup: an unsupported version is detected on a
 later statistics reading, which disables recording while admission continues.
 
+The store and snapshot formats are version 2. An outcome row adds the UTC
+`admitted_at` moment captured at admission, `outcome_reason` and
+`outcome_attribution`; a snapshot adds the bounded label-loss diagnostics.
+Version 1 stores and snapshots remain readable, and their rows report the new
+evidence as `unrecorded` or absent, so they contribute no labels or admission
+times to the prediction benchmark. Upgrade the readers before the supervisor.
+A release that predates version 2 treats the store as a version mismatch and
+moves it aside, so archive or migrate the history before a downgrade; the new
+code never rewrites an old document merely to read it.
+
 ## Upgrade steps
 
 1. Install the release that contains the feature, but leave the configuration

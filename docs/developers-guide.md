@@ -196,10 +196,18 @@ with status 1 rather than a traceback.
 
 `buildlimits.predict` follows the same dependency rule as the admission core:
 values and decisions sit in domain modules, and everything that reaches outside
-the process is an adapter at its edge. The domain modules are `bootstrap`,
-`comparison`, `config`, `dataset`, `ensemble_runs`, `ensembles`, `evaluation`,
-`events`, `fitting`, `harness`, `journal_codec`, `journal_provenance`,
-`metrics`, `predictors`, `probability`, `report`, `report_codec` and `scoring`.
+the process is an adapter at its edge. The domain modules are `accounting`,
+`bootstrap`, `comparison`, `config`, `dataset`, `ensemble_runs`, `ensembles`,
+`evaluation`, `events`, `fitting`, `harness`, `journal_codec`,
+`journal_provenance`, `metrics`, `predictors`, `probability`, `report`,
+`report_codec` and `scoring`.
+
+`accounting` is the bounded label-loss value: it folds decoded store rows into
+counts by cache result, outcome reason, attribution, origin, parser class,
+child sighting and sccache version, and reports the labelled and cacheable
+denominators plus admission-time coverage. It holds no store reader and no
+journal reader, so the same value describes a snapshot taken by the command and
+a document read back by the benchmark.
 
 None of those modules imports a file-system, JSON, process or command module,
 and none imports an adapter. `journal_codec` and `report_codec` are domain
@@ -889,6 +897,27 @@ coverage from `outcome_attribution` over cached `request_admitted` records
 rather than trusting a separate count field. `tracing_export` reserves
 `statistics_read` and the three store operations with the fixed
 `statistics_query`, `store_io` and `salt` failure categories.
+
+The outcome store is version 2. `OutcomeRecord` carries `admitted_at`,
+`outcome_reason` and `outcome_attribution` beside the version 1 fields; a
+version 1 row decodes the three as `None`, and a present but malformed
+admission time is corruption rather than absence. `Groups.place` reads the UTC
+wall clock at the same point as the monotonic `entry.admitted`, `Launched`
+carries the value, and the recorder copies it onto every row emitted for that
+launch. `observed_at` remains the time the label became known; it is never
+reduced by `runtime_seconds` to manufacture an admission time. The dataset
+adapter maps the value onto `Event.admitted_at`, and `Snapshot.stats()` counts
+the rows whose admission is at or before their own label.
+
+`buildlimits.predict.accounting` folds decoded rows into the bounded
+`StoreAccounting` value stored once in the snapshot's `diagnostics` block.
+`journal_provenance.ObserverAccounting` folds the recorder's journal events
+into the matching observer denominators. The snapshot loader reconciles the
+stored counts before a report can print them, so a corrupted or hand-edited
+block is refused. The quiet-point gate in `outcome_gate` no longer requires an
+empty queue and allows a first baseline while work moves; an attributing
+reading still requires no cached movement or detached drain. A window overflow
+resets the baseline in `outcome_recorder`.
 
 `OutcomeTelemetry` maps reducer outputs to those metrics and owns the bounded
 `statistics_read` span. `outcome_reading` is transition-only: it carries a

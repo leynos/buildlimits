@@ -4155,3 +4155,23 @@ Consult these documents:
   extraction and equivalence evidence, and separate deferred EP-K1 to EP-K3 for
   adoption trials. Preserved completed W1 history, outstanding quiet-host
   acceptance, unrun G1 and unstarted EP-M9. No runtime changes.
+
+- 2026-11-23: issue #68 measured why the benchmark had only 10 labels from
+  10,159 events. A copy of the host store held 15,846 rows, all `unattributed`,
+  and a fifteen-minute journal window held 3,835 `cache_outcome` events, all
+  `window_overflow` at 65 groups, with no completed statistics readings. The
+  quiet gate required `queued == 0`, which a host with a queue several hundred
+  deep never satisfies; the bounded window then flushed, and the flush kept the
+  old baseline, so later windows could not balance. The recorder could not even
+  establish a first baseline while work moved. ADR 011 removes the queue
+  clause, allows a baseline while work moves, resets the baseline on overflow,
+  and adds a version 2 store row with `admitted_at`, `outcome_reason` and
+  `outcome_attribution`. The snapshot now carries bounded store, history-loss
+  and observer diagnostics, and the dataset and benchmark commands report the
+  labels, eligible cacheable rows, unknown reasons and admission coverage. The
+  opt-in real-sccache check drives the actual statistics and generation ports
+  and produces exact cold/warm labels, a mixed-window `unknown`, a declined
+  probe, a timeout and a generation change. Sccache 0.14 has no supported
+  per-request signal, so continuous mixed load still yields a low label rate;
+  the host service is not upgraded by this change. See
+  [the issue #68 ExecPlan](issue-68-restore-trustworthy-cache-hit-miss-label-coverage-and-admission-time-evidence-for-the-prediction-benchmark.md).
