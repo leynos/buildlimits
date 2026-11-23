@@ -59,6 +59,21 @@ def test_peer_server_returns_metadata_from_its_cached_server_group(
         )
 
 
+def test_an_injected_generation_port_answers_without_reading_proc(
+    tmp_path: Path,
+) -> None:
+    """The test seam returns the supplied generation or failure unchanged."""
+    answers: list[object] = [Generation("run-test", 1, 2)]
+    server = PeerServerProcess(tmp_path / "socket", generation_port=lambda: answers[0])
+
+    assert server.generation() == Generation("run-test", 1, 2), (
+        "the injected generation is returned verbatim"
+    )
+    failure = GenerationFailure("generation_unavailable")
+    answers[0] = failure
+    assert server.generation() == failure, "a failure is returned verbatim"
+
+
 def test_generation_does_not_wait_for_a_pending_socket_connection(
     tmp_path: Path,
 ) -> None:

@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 from sccache_host import _private_server, sccache_host_marks
 from sccache_outcome_observer_support import (
-    SwitchableServer,
     assert_cold_miss,
     assert_extraction,
     assert_mixed,
@@ -23,6 +22,7 @@ from sccache_outcome_observer_support import (
     run_restart,
     run_timeout,
     single_compile,
+    switchable_server,
     toolchain,
 )
 
@@ -43,9 +43,10 @@ def test_the_real_sccache_observer_labels_controlled_windows(tmp_path: Path) -> 
     with _private_server(
         tools.executable, tools.environment, tmp_path / "server.log"
     ) as (_server, _scoped):
+        server, _slot = switchable_server(tmp_path / "s.sock")
         recorder = OutcomeRecorder(
             SccacheStatistics(tools.executable, tools.environment, tmp_path / "s.sock"),
-            SwitchableServer(tmp_path / "s.sock"),
+            server,
         )
         baseline = read(recorder)
         assert baseline.reason == "none", "the fresh generation is the baseline"
@@ -99,13 +100,13 @@ def test_the_real_sccache_observer_refuses_a_restart_window(tmp_path: Path) -> N
     with _private_server(
         tools.executable, tools.environment, tmp_path / "server.log"
     ) as (_server, _scoped):
-        server = SwitchableServer(tmp_path / "s.sock")
+        server, slot = switchable_server(tmp_path / "s.sock")
         recorder = OutcomeRecorder(
             SccacheStatistics(tools.executable, tools.environment, tmp_path / "s.sock"),
             server,
         )
         assert read(recorder).reason == "none", "the baseline is accepted"
-        restarted = run_restart(recorder, server, tools)
+        restarted = run_restart(recorder, slot, tools)
 
     assert restarted.reason == "generation_changed", (
         "a server restart inside the query is refused"

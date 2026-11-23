@@ -66,17 +66,19 @@ class Reading(typ.NamedTuple):
     reason: str
 
 
-class SwitchableServer(PeerServerProcess):
-    """A generation port whose answer can be changed during a query."""
+def switchable_server(socket_path: Path) -> tuple[PeerServerProcess, list[object]]:
+    """Return a real port whose generation answer a test can change.
 
-    def __init__(self, socket_path: Path) -> None:
-        """Retain the current generation after the real port resolves it."""
-        super().__init__(socket_path)
-        self.current: object = super().generation()
-
-    def generation(self) -> object:
-        """Return the generation the next boundary will observe."""
-        return self.current
+    Returns
+    -------
+    tuple[PeerServerProcess, list[object]]
+        The port and its one-element generation slot. Assigning ``slot[0]``
+        changes what the next boundary observes.
+    """
+    real = PeerServerProcess(socket_path)
+    slot: list[object] = [real.generation()]
+    server = PeerServerProcess(socket_path, generation_port=lambda: slot[0])
+    return server, slot
 
 
 def inputs() -> QuietInputs:
@@ -313,16 +315,14 @@ def run_timeout(recorder: OutcomeRecorder, tools: Toolchain) -> Outputs:
 
 
 def run_restart(
-    recorder: OutcomeRecorder, server: SwitchableServer, tools: Toolchain
+    recorder: OutcomeRecorder, slot: list[object], tools: Toolchain
 ) -> Reading:
     """Run one launch whose query spans a server generation change."""
     launch(recorder, "restart", payload(tools, "observer-restart"))
     finish(recorder, "restart")
     start(recorder)
-    current = typ.cast("Generation", server.current)
-    server.current = dc.replace(
-        current, pid=current.pid + 1, starttime=current.starttime + 1
-    )
+    current = typ.cast("Generation", slot[0])
+    slot[0] = dc.replace(current, pid=current.pid + 1, starttime=current.starttime + 1)
     return poll(recorder)
 
 
