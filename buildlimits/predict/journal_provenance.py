@@ -163,8 +163,10 @@ class JournalCounts:
         How far back the query is reliable, in words.
     correlation : str
         The join the journal cannot support.
-    observer : ObserverAccounting
-        The recorder's own bounded counts from the same window.
+    observer : ObserverAccounting | None
+        The recorder's own bounded counts from the same window, or None when
+        an older snapshot carries no observer block. None is not a measured
+        zero: it means the evidence was not recorded.
     """
 
     span: str
@@ -177,7 +179,7 @@ class JournalCounts:
     restarts: JournalRestarts
     retention: str
     correlation: str
-    observer: ObserverAccounting = dc.field(default_factory=ObserverAccounting)
+    observer: ObserverAccounting | None = None
 
     @property
     def available(self) -> bool:
@@ -280,9 +282,10 @@ def observer_accounting(  # ruff: ignore[too-many-locals] - one accumulator per 
     """Count the recorder's own bounded events in one journal window.
 
     The maps are summed from the closed vocabularies the events already carry.
-    A periodic ``outcome_reading`` summary repeats cumulative counters, so its
-    counters are summed while its transition reasons are counted separately;
-    the two grains never double-count each other.
+    A periodic ``outcome_reading`` summary reports the counts accumulated since
+    the previous summary and then resets them, so its counters are summed
+    across summaries while its transition reasons are counted separately; the
+    two grains never double-count each other.
 
     Parameters
     ----------

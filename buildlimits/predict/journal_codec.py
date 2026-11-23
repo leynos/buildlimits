@@ -73,7 +73,11 @@ def journal_to_dict(provenance: JournalProvenance | None) -> dict[str, object]:
         },
         "retention": provenance.retention,
         "correlation": provenance.correlation,
-        "observer": _observer_to_dict(provenance.observer),
+        "observer": (
+            None
+            if provenance.observer is None
+            else _observer_to_dict(provenance.observer)
+        ),
     }
 
 
@@ -187,17 +191,17 @@ def _counts_from(note: cabc.Mapping[str, object], label: str) -> JournalCounts:
     )
 
 
-def _observer_from(value: object, label: str) -> ObserverAccounting:
+def _observer_from(value: object, label: str) -> ObserverAccounting | None:
     """Decode the optional recorder-count block.
 
-    A snapshot written before the block existed carries none, and every count
-    decodes as zero. That is reported as "no counts", never as a measured
-    absence of outcomes.
+    A snapshot written before the block existed carries none. Absence is kept
+    distinct from a measured zero: None means the evidence was not recorded,
+    while a present block with zero counts means the queried window held none.
 
     Returns
     -------
-    ObserverAccounting
-        The validated counts.
+    ObserverAccounting | None
+        The validated counts, or None when the block is absent.
 
     Raises
     ------
@@ -207,7 +211,7 @@ def _observer_from(value: object, label: str) -> ObserverAccounting:
         If a count is negative.
     """
     if value is None:
-        return ObserverAccounting()
+        return None
     if not isinstance(value, dict):
         msg = f"{label} journal observer must be an object"
         raise TypeError(msg)

@@ -570,11 +570,14 @@ the run at exit 1 with `reason: unreadable` instead of being counted as an
 empty store. A run with a record cap also exits 1 when the active file's rows
 cannot be decoded, because it cannot show that the store is within the cap.
 
-An archive preserves the version-1 record schema and the salt identifier, so
-decompressing one yields the segment's JSON Lines content byte for byte apart
-from a repaired torn tail. Archived records keep the same privacy boundary as
-the active store: they contain the same redacted fields and no raw arguments,
-paths or compiler output.
+An archive preserves the source segment's record schema and the salt
+identifier, so decompressing one yields the segment's JSON Lines content byte
+for byte apart from a repaired torn tail. A segment written by the current
+release therefore archives its version 2 fields unchanged, while a segment that
+still holds version 1 rows archives those rows unchanged; readers must accept
+both, and a version 1 reader cannot read every archive. Archived records keep
+the same privacy boundary as the active store: they contain the same redacted
+fields and no raw arguments, paths or compiler output.
 
 `build-limits-cache-replay` and `build-limits-predict-dataset` can read the
 whole retained history. `--history` reads archived, sealed and active history

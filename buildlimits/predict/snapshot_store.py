@@ -14,8 +14,8 @@ import typing as typ
 from pathlib import Path
 
 from buildlimits.predict.dataset import Gap, Snapshot, Source
+from buildlimits.predict.diagnostics_codec import diagnostics_from_dict
 from buildlimits.predict.journal_codec import journal_from_dict
-from buildlimits.predict.report_codec import diagnostics_from_dict
 from buildlimits.predict.snapshot_codec import (
     SUPPORTED_SNAPSHOT_VERSIONS,
     event_from_dict,
@@ -110,7 +110,7 @@ def load_snapshot(path: Path) -> Snapshot:
     if not isinstance(created, str):
         msg = f"{path} must hold a created_at timestamp"
         raise TypeError(msg)
-    decoded_events = tuple(event_from_dict(row) for row in events)
+    decoded_events = tuple(event_from_dict(row, version=version) for row in events)
     _require_ordered_clock(path, decoded_events)
     return Snapshot(
         created_at=_parse_stamp(created),

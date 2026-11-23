@@ -11,11 +11,11 @@ belongs to the output adapter in
 import dataclasses as dc
 import typing as typ
 
+from buildlimits.predict.diagnostics_codec import diagnostics_to_dict
 from buildlimits.predict.journal_codec import journal_to_dict
 from buildlimits.predict.render import render_markdown
 from buildlimits.predict.report_codec import (
     config_to_dict,
-    diagnostics_to_dict,
     interval_to_dict,
     metrics_to_dict,
     source_to_dict,

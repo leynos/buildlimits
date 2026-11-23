@@ -195,18 +195,21 @@ def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
 def _has_supported_version(value: cabc.Mapping[str, object]) -> bool:
     """Require the supported format name and one readable integer version.
 
+    The version is checked before the set lookup. A list or object version is
+    not hashable, and constructing a tuple of checks would evaluate the lookup
+    before ``all`` could short-circuit, turning malformed input into a crash.
+
     Returns
     -------
     bool
         Whether the header identifies a supported format version.
     """
+    if value.get("format") != FORMAT_NAME:
+        return False
     version = value.get("version")
-    return all((
-        value.get("format") == FORMAT_NAME,
-        isinstance(version, int),
-        not isinstance(version, bool),
-        version in SUPPORTED_FORMAT_VERSIONS,
-    ))
+    if isinstance(version, bool) or not isinstance(version, int):
+        return False
+    return version in SUPPORTED_FORMAT_VERSIONS
 
 
 def _validate_key(key: CacheKey) -> None:

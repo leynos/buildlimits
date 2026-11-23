@@ -14,7 +14,7 @@
   - By origin: registry=8
   - By parser class: cacheable=8
   - Closed history: archived 4, sealed 1, gaps 2
-  - Observer counts: unavailable; no journal window was read.
+  - Observer counts: unavailable; the snapshot carries no observer-count block.
   
   An ambiguous or unavailable window remains `unknown`; the report never turns a missing hit into a miss.
   '''

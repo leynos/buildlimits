@@ -126,10 +126,15 @@ def _observer_lines(journal: cabc.Mapping[str, object]) -> list[str]:
         Markdown lines, or an explicit absence note.
     """
     observer = journal.get("observer")
-    if not isinstance(observer, dict):
-        return ["- Observer counts: unavailable; no journal window was read."]
+    if observer is None or not isinstance(observer, dict):
+        return [
+            (
+                "- Observer counts: unavailable; the snapshot carries no "
+                "observer-count block."
+            )
+        ]
     block = typ.cast("dict[str, object]", observer)
-    return [
+    lines = [
         (
             f"- Observer: {as_count(block.get('requests'))} admitted requests, "
             f"{as_count(block.get('outcomes'))} published outcomes, "
@@ -146,6 +151,12 @@ def _observer_lines(journal: cabc.Mapping[str, object]) -> list[str]:
         f"- Observer by reason: {as_counts(block.get('by_reason'))}",
         (f"- Observer by gate reason: {as_counts(block.get('by_gate_reason'))}"),
     ]
+    if journal.get("truncated"):
+        lines.append(
+            "- Observer counts cover only the retained journal window; the "
+            "query reached its record cap."
+        )
+    return lines
 
 
 def comparison_table(

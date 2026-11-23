@@ -17,12 +17,15 @@ import typing as typ
 from pathlib import Path
 
 import pytest
+from host_check_marks import end_process
 from sccache_host import _base_environment, _compile_command, _run_compile
 
 from buildlimits.admission_state import Counts
 from buildlimits.outcome_gate import QuietInputs
 from buildlimits.outcome_key import CacheKey, Salt, toolchain_identity
 from buildlimits.outcome_queries import PeerServerProcess
+from buildlimits.outcome_record_codec import decode_lines
+from buildlimits.outcome_record_encode import encode_line
 from buildlimits.outcome_record_format import (
     DecodedStore,
     OutcomeRecord,
@@ -282,10 +285,14 @@ def run_mixed(recorder: OutcomeRecorder, tools: Toolchain) -> Reading:
                 )
             )
             processes.append((group_id, process))
-        for group_id, process in processes:
-            _stdout, stderr = process.communicate(timeout=30)
-            assert process.returncode == 0, stderr
-            finish(recorder, group_id)
+        try:
+            for group_id, process in processes:
+                _stdout, stderr = process.communicate(timeout=30)
+                assert process.returncode == 0, stderr
+                finish(recorder, group_id)
+        finally:
+            for _group_id, process in processes:
+                end_process(process, 5.0)
     return read(recorder)
 
 
@@ -335,9 +342,14 @@ def run_restart(
 def assert_extraction(records: list[StoreRecord]) -> None:
     """Prove the retained rows encode, decode and extract without loss."""
     header = StoreHeader(SALT.salt_id, dt.datetime.now(dt.UTC))
-    snapshot = build_snapshot(
-        decode_history(DecodedStore(header, tuple(records))), now=header.written_at
+    document = (
+        "\n".join((encode_line(header), *(encode_line(record) for record in records)))
+        + "\n"
     )
+    decoded = decode_lines(document)
+    if not isinstance(decoded, DecodedStore):
+        pytest.fail(f"the retained rows did not decode: {decoded.reason}")
+    snapshot = build_snapshot(decode_history(decoded), now=header.written_at)
     stats = snapshot.stats()
 
     assert stats.labelled == 2, "the controlled miss and hit are the labels"

@@ -221,12 +221,19 @@ class _DimensionCounters:
 def _frozen(counts: collections.Counter[str]) -> dict[str, int]:
     """Return a deterministically ordered plain mapping.
 
+    The map is capped at the loader's entry bound. A real vocabulary is small;
+    if a corrupted or hostile stream produced more distinct values, the
+    largest counts are kept so the writer can never emit a block its own
+    loader would refuse. A cap that bites is visible because the dropped
+    entries are no longer reported.
+
     Returns
     -------
     dict[str, int]
-        Counts sorted by key so a snapshot is stable across runs.
+        Counts sorted by key, at most ``_MAX_MAP_ENTRIES`` entries.
     """
-    return dict(sorted(counts.items()))
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return dict(sorted(ordered[:_MAX_MAP_ENTRIES]))
 
 
 def checked_counts(value: object, *, label: str) -> dict[str, int]:

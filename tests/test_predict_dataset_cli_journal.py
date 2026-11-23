@@ -119,9 +119,11 @@ def test_observer_counts_survive_the_snapshot_round_trip(tmp_path: Path) -> None
 
     assert status == 0, "the snapshot is written"
     assert isinstance(note, JournalCounts), note
-    assert note.observer.requests == 1, "the admission survives the file"
-    assert note.observer.by_result == {"hit": 1}, "the outcome survives the file"
-    assert note.observer.by_cache_path == {"cached": 1}, "the cache path survives"
+    observer = note.observer
+    assert observer is not None, "the counts survive the file"
+    assert observer.requests == 1, "the admission survives the file"
+    assert observer.by_result == {"hit": 1}, "the outcome survives the file"
+    assert observer.by_cache_path == {"cached": 1}, "the cache path survives"
 
 
 def test_observer_accounting_keeps_its_denominators_distinct() -> None:
@@ -217,6 +219,7 @@ def test_observer_accounting_keeps_its_denominators_distinct() -> None:
 
     note = count_journal(records, since="1h", cap=1000, truncated=False)
     observer = note.observer
+    assert observer is not None, "the observer counts are present"
 
     assert observer.requests == 3, "every admission is a request"
     assert observer.by_cache_path == {

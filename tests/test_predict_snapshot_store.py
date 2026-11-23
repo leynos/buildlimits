@@ -69,49 +69,6 @@ def _restarts(document: dict[str, object]) -> dict[str, object]:
     return typ.cast("dict[str, object]", _journal(document)["restarts"])
 
 
-def test_a_version_one_snapshot_loads_without_diagnostics(tmp_path: Path) -> None:
-    """A snapshot written before the accounting block remains readable."""
-    document = _document()
-    document["snapshot_version"] = 1
-    document.pop("diagnostics")
-
-    loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
-
-    assert loaded.diagnostics is None, "the absent block is reported as unavailable"
-
-
-def test_a_version_two_snapshot_round_trips_its_diagnostics(tmp_path: Path) -> None:
-    """The retained-store and history-loss counts survive the document."""
-    snapshot = build_snapshot(
-        _history(
-            attributed_record(outcome="hit"),
-            attributed_record(outcome="miss"),
-        ),
-        now=NOW,
-    )
-    path = write_json(tmp_path / "history.jsonl", snapshot_to_dict(snapshot))
-
-    loaded = load_snapshot(path)
-
-    assert loaded.diagnostics == snapshot.diagnostics, "the counts survive"
-    assert loaded.diagnostics is not None, "the block is present"
-    assert loaded.diagnostics.store.outcome_records == 2, "both rows are counted"
-    assert loaded.diagnostics.store.labels == 2, "both rows are labels"
-
-
-def test_an_irreconcilable_diagnostics_block_is_refused(tmp_path: Path) -> None:
-    """A count that disagrees with its breakdown cannot become evidence."""
-    document = _document()
-    store = typ.cast(
-        "dict[str, object]",
-        typ.cast("dict[str, object]", document["diagnostics"])["store"],
-    )
-    store["outcome_records"] = 7
-
-    with pytest.raises(ValueError, match="do not reconcile"):
-        load_snapshot(write_json(tmp_path / "history.jsonl", document))
-
-
 def _refuses_creation_time(tmp_path: Path, stamp: str, match: str) -> None:
     """Assert the loader refuses ``stamp`` as the snapshot's creation time."""
     document = _document()

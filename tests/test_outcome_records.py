@@ -105,8 +105,19 @@ def test_decoder_drops_only_a_torn_final_line() -> None:
             '{"format":"buildlimits-cache-outcomes","version":3}\n',
             "version_mismatch",
         ),
+        (
+            '{"format":"buildlimits-cache-outcomes","version":[2]}\n',
+            "version_mismatch",
+        ),
     ],
-    ids=("empty", "wrong-shape", "missing-format", "wrong-format", "newer-version"),
+    ids=(
+        "empty",
+        "wrong-shape",
+        "missing-format",
+        "wrong-format",
+        "newer-version",
+        "unhashable-version",
+    ),
 )
 def test_malformed_or_incompatible_documents_fail_closed(
     document: str, expected_reason: str

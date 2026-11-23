@@ -17,7 +17,11 @@ from buildlimits.metrics_query import Window
 from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.dataset import StoreHistory, build_snapshot, find_gaps
-from buildlimits.predict.journal_provenance import JournalRestarts, count_journal
+from buildlimits.predict.journal_provenance import (
+    JournalRestarts,
+    count_journal,
+    JournalCounts,
+)
 from buildlimits.predict.records import decode_history, identity_of, label_of
 from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
 
@@ -25,6 +29,17 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_vocabulary import CacheResult
     from buildlimits.predict.dataset import Snapshot
 
+NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
+DATED = OBSERVED_AT + dt.timedelta(hours=1)
+
+
+from outcome_store_helpers import window_summary
+from buildlimits.predict.journal_codec import journal_from_dict, journal_to_dict
+
+"""Snapshot extraction, redaction and journal-provenance contracts."""
+if typ.TYPE_CHECKING:
+    from buildlimits.outcome_vocabulary import CacheResult
+    from buildlimits.predict.dataset import Snapshot
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
 DATED = OBSERVED_AT + dt.timedelta(hours=1)
 
@@ -305,6 +320,31 @@ def test_an_empty_journal_window_reports_no_span() -> None:
 
     assert note.available is False, "nothing is available"
     assert note.span_start is None and note.span_end is None, "no span"
+
+
+def test_an_older_journal_block_has_no_observer_counts() -> None:
+    """A journal note without the observer block decodes as unrecorded, not zero."""
+    note = count_journal(
+        (Record("supervisor", "cache_outcome", {}, OBSERVED_AT),),
+        since="4w",
+        cap=1000,
+        truncated=False,
+    )
+    encoded = journal_to_dict(note)
+    encoded.pop("observer")
+
+    decoded = journal_from_dict(encoded, label="test")
+
+    assert isinstance(decoded, JournalCounts), decoded
+    assert decoded.observer is None, "absence is distinct from a measured zero"
+
+
+def test_a_measured_empty_journal_keeps_its_zero_counts() -> None:
+    """A queried window with no records still has observer evidence."""
+    note = count_journal((), since="4w", cap=1000, truncated=False)
+
+    assert note.observer is not None, "the query measured an empty window"
+    assert note.observer.requests == 0, "the zero is a measured count"
 
 
 def test_source_provenance_records_the_store_header() -> None:

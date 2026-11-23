@@ -30,7 +30,9 @@ if typ.TYPE_CHECKING:
 VERSION_TIMEOUT_SECONDS = 10.0
 
 
-def end_process(process: subprocess.Popen[bytes], timeout: float) -> None:
+def end_process(
+    process: subprocess.Popen[bytes] | subprocess.Popen[str], timeout: float
+) -> None:
     """End a private backend process, bounding both the polite and forced wait.
 
     The caller has already asked the backend to stop through its own client, so
@@ -40,8 +42,8 @@ def end_process(process: subprocess.Popen[bytes], timeout: float) -> None:
 
     Parameters
     ----------
-    process : subprocess.Popen[bytes]
-        The backend process to end.
+    process : subprocess.Popen[bytes] | subprocess.Popen[str]
+        The backend or client process to end, in either output mode.
     timeout : float
         Seconds to allow each of the terminate and kill waits.
     """

@@ -170,8 +170,13 @@ apart:
   `insufficient admission times`.
 
 The 355-outcome difference between the observer's published events and the
-writer's 3,480 appends in the quarter hour is explained by launches without a
-key or a label time, which are published as events but cannot form a store row.
+writer's 3,480 appends in the quarter hour is not attributable from the
+evidence retained here. Two causes are consistent with the counts: a launch
+without a key or a label time is published as an event but cannot form a store
+row, and an append that was queued inside the sampled window may complete after
+it. The journal records neither case as a separate field, so this report treats
+the difference as a hypothesis rather than a measured cause; a future
+diagnostic would need a per-cause counter beside the writer's appended total.
 Across the wider span, compaction reported 28,030 discarded rows; those rows
 are outside the retained file and cannot be recovered by extraction. The
 journal query is capped and says when its cap was reached; the store read is

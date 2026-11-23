@@ -124,6 +124,80 @@ def _data_sufficiency_section(markdown: str) -> str:
     return "\n".join(lines[start:end]).strip()
 
 
+def test_a_truncated_journal_marks_its_observer_counts() -> None:
+    """Partial observer counts say that the journal cap was reached."""
+    document = empty_document()
+    data = data_section(document)
+    typ.cast("dict[str, object]", data["source"]).update(
+        records_total=2,
+        outcome_records=2,
+        summary_records=0,
+    )
+    data["diagnostics"] = {
+        "store": {
+            "records_total": 2,
+            "outcome_records": 2,
+            "summary_records": 0,
+            "by_result": {"hit": 2},
+            "by_reason": {"none": 2},
+            "by_attribution": {"solo": 2},
+            "by_origin": {"registry": 2},
+            "by_parser_class": {"cacheable": 2},
+            "by_child_sighting": {"unavailable": 2},
+            "by_server_version": {"0.14.0": 2},
+            "admission_recorded": 2,
+            "admission_missing": 0,
+            "labels": 2,
+            "cacheable_records": 2,
+            "cacheable_labels": 2,
+        },
+        "history": {
+            "active_only": True,
+            "archived": 0,
+            "sealed": 0,
+            "gaps": 0,
+            "gaps_truncated": False,
+            "retention_floor": None,
+            "quarantined": 0,
+        },
+    }
+    data["journal"] = {
+        "available": True,
+        "truncated": True,
+        "records": 10,
+        "span_start": "2026-11-01T00:00:00+00:00",
+        "span_end": "2026-11-02T00:00:00+00:00",
+        "restarts": {"count": 0, "first": None, "last": None},
+        "correlation": "no joinable per-compilation admission record",
+        "observer": {
+            "requests": 2,
+            "outcomes": 2,
+            "store_records": 2,
+            "store_discarded": 0,
+            "readings": 1,
+            "readings_skipped": 0,
+            "readings_failed": 0,
+            "by_cache_path": {"cached": 2},
+            "by_backend": {"sccache": 2},
+            "by_result": {"hit": 2},
+            "by_reason": {"none": 2},
+            "by_attribution": {"solo": 2},
+            "by_origin": {"registry": 2},
+            "by_gate_reason": {},
+            "by_reading_reason": {"none": 1},
+        },
+    }
+
+    markdown = render_markdown(document)
+
+    assert "the query reached its record cap" in markdown, (
+        "the journal note states the cap"
+    )
+    assert "Observer counts cover only the retained journal window" in markdown, (
+        "the observer block warns that its counts are partial"
+    )
+
+
 def test_an_unranked_report_omits_the_detail_tables() -> None:
     """With no scored predictor there is no calibration or origin table."""
     markdown = render_markdown(empty_document())

@@ -94,6 +94,9 @@ def _report_journal(note: JournalProvenance) -> None:
     if not isinstance(note, JournalCounts):
         return
     observer = note.observer
+    if observer is None:
+        print("observer: the snapshot carries no observer-count block")
+        return
     if not observer.requests and not observer.outcomes:
         print("observer: the journal window held no admission or outcome events")
         return

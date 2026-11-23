@@ -14,13 +14,10 @@ import json
 import math
 import typing as typ
 
+from buildlimits.predict.diagnostics_codec import diagnostics_to_dict
 from buildlimits.predict.events import LABELS, ORIGINS, Event
 from buildlimits.predict.journal_codec import journal_to_dict
-from buildlimits.predict.report_codec import (
-    diagnostics_to_dict,
-    source_to_dict,
-    stats_to_dict,
-)
+from buildlimits.predict.report_codec import source_to_dict, stats_to_dict
 from buildlimits.utc_text import (
     optional_utc_moment,
     optional_utc_text,
@@ -45,6 +42,9 @@ _EVENT_FIELDS = frozenset({
     "label",
     "runtime_seconds",
 })
+# A version 1 row written before the admission field existed omits it. The
+# loader accepts that shape only for version 1; version 2 keeps it exact.
+_V1_EVENT_FIELDS = _EVENT_FIELDS - {"admitted_at"}
 _IDENTITY_LENGTH = 64
 
 
@@ -106,13 +106,17 @@ def fingerprint(events: cabc.Iterable[Event]) -> str:
     return digest.hexdigest()
 
 
-def event_from_dict(value: object) -> Event:
+def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
     """Validate one snapshot line as an event.
 
     Parameters
     ----------
     value : object
         One decoded JSON line, of any shape.
+    version : int
+        The snapshot version that supplied the line. A version 1 row may omit
+        ``admitted_at`` because that field was not always written; a version 2
+        row must name it.
 
     Returns
     -------
@@ -130,7 +134,8 @@ def event_from_dict(value: object) -> Event:
         msg = "an event line must be a JSON object"
         raise TypeError(msg)
     row = typ.cast("dict[str, object]", value)
-    if set(row) != _EVENT_FIELDS:
+    accepted = {_EVENT_FIELDS, _V1_EVENT_FIELDS} if version == 1 else {_EVENT_FIELDS}
+    if set(row) not in accepted:
         msg = "an event line must name exactly the snapshot fields"
         raise ValueError(msg)
     identity = row["identity"]
@@ -151,7 +156,7 @@ def event_from_dict(value: object) -> Event:
     return Event(
         identity=identity,
         origin=typ.cast("Origin", origin),
-        admitted_at=_parse_stamp(row["admitted_at"]),
+        admitted_at=_parse_stamp(row.get("admitted_at")),
         observed_at=observed,
         label=typ.cast("Label", label),
         runtime_seconds=runtime_seconds,

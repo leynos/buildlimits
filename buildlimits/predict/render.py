@@ -201,6 +201,8 @@ def _journal_note(journal: cabc.Mapping[str, object]) -> str:
             else f", {as_count(count)} supervisor starts between "
             f"{restarts['first']} and {restarts['last']}"
         )
+    if journal.get("truncated"):
+        note += "; the query reached its record cap, so older records are outside it"
     return f"{note}; {journal.get('correlation', 'no correlation available')}"
 
 
