@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 from archive_seal_helpers import seal_five_rows_once
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from outcome_archive_helpers import NOW, layout, policy, records, write
 
 from buildlimits import (
@@ -20,7 +22,7 @@ from buildlimits.outcome_archive import RunOptions, inspect_store, run_archive
 from buildlimits.outcome_archive_active import active_history
 from buildlimits.outcome_archive_context import ActionResult
 from buildlimits.outcome_archive_events import publish_run
-from buildlimits.outcome_archive_evictions import EVICTION_CAUSES
+from buildlimits.outcome_archive_evictions import EVICTION_CAUSES, eviction_counts
 from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_archive_lock import ArchiveLock
 from buildlimits.outcome_archive_report import Maintenance, RunReport
@@ -175,6 +177,35 @@ def test_a_busy_firing_publishes_its_retryable_status(
     (record,) = metric_sink.records
     assert record["BUILD_LIMITS_ARCHIVE_STATUS"] == "busy", "the status is published"
     assert record["BUILD_LIMITS_ARCHIVE_REASON"] == "busy", "the reason is published"
+
+
+@given(
+    actions=st.lists(
+        st.builds(
+            ActionResult,
+            action=st.sampled_from(["deleted", "trimmed", "archived", "quarantined"]),
+            sequence=st.integers(min_value=0, max_value=10_000),
+            reason=st.one_of(st.none(), st.sampled_from(EVICTION_CAUSES)),
+        ),
+        max_size=40,
+    )
+)
+@settings(deadline=None)
+def test_eviction_counts_always_name_every_closed_cause(
+    actions: list[ActionResult],
+) -> None:
+    """Every closed cause is present, and each names its own actions' count."""
+    counts = eviction_counts(tuple(actions))
+
+    assert list(counts) == list(EVICTION_CAUSES), "every closed cause is present"
+    for cause in EVICTION_CAUSES:
+        named = sum(
+            1
+            for action in actions
+            if action.action in {"deleted", "trimmed"} and action.reason == cause
+        )
+        assert counts[cause] == named, f"the {cause} count matches its actions"
+    assert sum(counts.values()) <= len(actions), "no action is counted twice"
 
 
 def test_a_state_write_failure_publishes_its_category(
