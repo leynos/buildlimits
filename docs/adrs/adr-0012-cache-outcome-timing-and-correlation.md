@@ -144,12 +144,19 @@ different generations are never joined as one attempt.
 records with a usable decision time, records with recorded and usable
 availability, usable scored records, and exclusions by closed reason
 (`unknown_outcome`, `no_admission_time`, `no_availability_time`,
-`admission_after_availability`, `duplicate_attempt`, `conflicting_attempt`).
-The dataset command and the benchmark's sufficiency block both print those
-counts. The benchmark adds an `insufficient label-availability times` status
-distinct from `insufficient admission times`, and the verdict keeps the
-existing strict-before rule: a decision at exactly the availability instant
-does not see that label.
+`admission_after_availability`, `completion_after_availability`,
+`duplicate_attempt`, `conflicting_attempt`). The dataset command and the
+benchmark's sufficiency block both print those counts. The benchmark adds an
+`insufficient label-availability times` status distinct from
+`insufficient admission times`, and the verdict keeps the existing
+strict-before rule: a decision at exactly the availability instant does not see
+that label.
+
+Availability is verified as a whole group. A row that names an availability
+moment without its attempt and generation cannot be correlated to one
+invocation, so `predict.events.label_moment` returns nothing for it and it
+releases no label. The same rule decides what a duplicate or a conflict is: two
+rows join only within one generation.
 
 ## Consequences
 
