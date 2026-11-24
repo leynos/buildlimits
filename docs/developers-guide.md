@@ -559,6 +559,14 @@ Each module owns one decision. This table is the single module inventory.
 | `predict.dataset_inputs`                                                           | The files a dataset snapshot reads, and whether the output would replace or sit beside one                                                                  |
 | `predict.provenance`                                                               | `git_revision`: the commit that tracks the benchmark module, or `unknown` when none does                                                                    |
 | `predict.dataset_journal`                                                          | The dataset command's journal lookback option and its best-effort provenance note                                                                           |
+<<<<<<< HEAD
+||||||| parent of a8ea036 (Remove the duplication this change introduced and record the rest)
+| `predict.timing`                                                                   | Closed timing, availability and attempt-correlation audit over one event stream                                                                             |
+=======
+| `predict.timing`                                                                   | Closed timing, availability and attempt-correlation audit, with `exclusions` and `scored` derivations                                                       |
+| `outcome_record_privacy`, `outcome_record_timing`                                  | Path-free cache-key validation; the version 3 timing group and its two validators                                                                           |
+| `outcome_recorder_emission`, `outcome_shell_effects`                               | Window-to-row and window-to-event emission; the shell's writer handoff and effect publication                                                               |
+>>>>>>> a8ea036 (Remove the duplication this change introduced and record the rest)
 | `predict.render_tables`                                                            | The held-out comparison, calibration, ablation and origin tables in the prediction report                                                                   |
 | `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                                                                      |
 | `utc_text`                                                                         | The wall clock as aware UTC, the canonical ISO 8601 text with a trailing `Z`, and its parser                                                                |

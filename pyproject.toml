@@ -2689,6 +2689,128 @@ reason = "Both restart cases build a small unexpired segmented store before asse
 unit = "buildlimits/outcome_archive_verify.py"
 reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."
 
+# The timing work's structural duplication, recorded after the rebase onto the
+# issue #68 label-reading fix regenerated the families from a real scan.
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/outcome_shell_test_support.py",
+    "buildlimits/outcome_recorder_outputs.py",
+    "tests/archive_seal_helpers.py",
+    "tests/modelcheck_cases.py",
+    "buildlimits/outcome_archive_report.py",
+    "buildlimits/outcome_shell_dependencies.py",
+    "buildlimits/outcome_archive.py",
+    "buildlimits/outcome_recorder_effects.py",
+    "buildlimits/predict/scoring.py",
+    "buildlimits/server_watch.py",
+    "tests/modelcheck_service_cases.py",
+    "tests/outcome_store_helpers.py",
+    "tests/test_outcome_archive_report_settlement.py",
+    "buildlimits/cache_recovery.py",
+    "buildlimits/outcome_archive_plan.py",
+    "buildlimits/outcome_store.py",
+    "buildlimits/predict/dataset_report.py",
+    "buildlimits/predict/ensemble_runs.py",
+    "buildlimits/predict/harness.py",
+    "buildlimits/supervisor_wiring.py",
+    "tests/test_group_drain_metrics.py",
+    "tests/test_outcome_archive_clock.py",
+    "buildlimits/groups.py",
+    "buildlimits/outcome_archive_run.py",
+    "buildlimits/outcome_store_state.py",
+    "buildlimits/predict/evaluation.py",
+    "buildlimits/predict/report.py",
+    "buildlimits/predict/snapshot_codec.py",
+    "modelcheck/cli_outputs.py",
+    "modelcheck/expectations.py",
+    "modelcheck/records.py",
+    "modelcheck/report.py",
+    "tests/groups_helpers.py",
+    "tests/outcome_append_helpers.py",
+    "tests/outcome_sealing_helpers.py",
+    "tests/predict_test_helpers.py",
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_outcome_archive_interleaving.py",
+    "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "buildlimits/outcome_archive_files.py",
+    "buildlimits/outcome_history_files.py",
+    "buildlimits/outcome_record_format.py",
+    "buildlimits/predict/report_codec.py",
+    "buildlimits/predict/snapshot_diagnostics_join.py",
+    "buildlimits/supervisor_outcome_setup.py",
+    "tests/differential_trace_test_helpers.py",
+    "tests/outcome_archive_helpers.py",
+    "tests/test_outcome_archive_run_faults.py",
+    "tests/test_outcome_totality.py",
+    "tests/test_predict_evaluation.py",
+    "tests/test_sccache_outcome_observer.py",
+    "buildlimits/outcome_archive_state.py",
+    "modelcheck/cli.py",
+    "tests/test_kache_detached_events.py",
+]
+reason = "Matching import and type-checking preludes across the package and its tests: each module names exactly the symbols its own signatures annotate, and the shared shape stops at the guard itself. A re-export module would hide which dependency each module really has."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_recorder.py",
+    "tests/test_outcome_recorder_failures.py",
+    "tests/test_outcome_recorder_evidence.py",
+    "tests/test_outcome_timing_producer.py",
+]
+reason = "Matching test preludes: each recorder test module names the same shared fixtures from outcome_recorder_test_helpers and the same recorder types under test. Sharing the prelude through a re-export module would hide which fixtures each module actually relies on."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_record_format.py::OutcomeRecord",
+    "buildlimits/predict/events.py::Event",
+]
+reason = "The store row and the redacted replay event are deliberately separate values: the row carries the salted key, argv class and child evidence a report may never see, while the event carries only the hashed identity, origin, label and times. They share field names because the event is the row's redaction, not its copy; merging them would put path-bearing fields into the replay domain."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_record_time.py",
+    "buildlimits/predict/diagnostics_codec.py",
+    "buildlimits/predict/journal_codec.py",
+    "buildlimits/predict/snapshot_codec.py",
+    "buildlimits/utc_text.py",
+]
+reason = "Five decoders state the same two-line absent-or-null guard for their own boundary. Each converts a different value into a different type under a different refusal contract, so the shared line is the null check, not a shared rule; one helper would have to take both the parser and the refusal as arguments and would save no logic."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/dataset.py::SnapshotStats",
+    "tests/rustc_linter_acceptance.py::LinterAcceptance",
+]
+reason = "Frozen slots records describing independent value types: a snapshot's sufficiency counts and a real-linter run's configuration. Their declaration shape matches; no behaviour or field is shared."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_recorder_reading.py",
+    "buildlimits/outcome_recorder_reading.py",
+]
+reason = "Two docstrings in one module state the same constraint on the same value: one describes the module's contract, the other the helper that implements it. Sharing them would mean deleting one of the two readers' guidance."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/harness.py",
+    "buildlimits/predict/history.py",
+]
+reason = "Matching import lists: both name the timing audit and the event accessors they use, and the harness additionally names the predictors it drives. Sharing the prelude through a re-export module would hide each module's real dependency on the timing contract."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_predict_snapshot_clock.py::_backward",
+    "tests/test_predict_snapshot_clock.py::_forward",
+]
+reason = "Two fixture builders in one module: one returns a history whose verified availability decreases, the other a history that legitimately advances. They share only their two-event shape, and the pair exists precisely because one must be refused where the other is accepted."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_timing_producer.py::exhausted",
+    "tests/test_groups.py::exhausted",
+]
+reason = "Two one-line OSError raises standing in for fork exhaustion in unrelated tests: one checks that placement records a pre-execution decision time, the other that a failed spawn fails the launch. Sharing a raise helper would couple two test modules for a single statement."
 
 [[tool.duplication_gate.allow]]
 members = ["tests/test_outcome_recorder.py", "tests/test_outcome_recorder_failures.py", "tests/outcome_reading_test_helpers.py", "tests/test_outcome_recorder_evidence.py", "tests/test_predict_loss_accounting_properties.py"]

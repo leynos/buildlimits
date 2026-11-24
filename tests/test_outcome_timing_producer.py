@@ -40,12 +40,34 @@ from buildlimits.outcome_recorder_types import LaunchPayload
 from buildlimits.supervisor_outcome_setup import mint_generation
 
 if typ.TYPE_CHECKING:
+    from buildlimits.pending_request import Pending
     from buildlimits.supervisor import Supervisor
 
 __all__ = ["supervisor"]  # Re-exported so pytest finds the fixture here.
 
 DECISION_AT = dt.datetime(2026, 11, 24, 9, 0, tzinfo=dt.UTC)
 LATER_AT = DECISION_AT + dt.timedelta(minutes=5)
+
+
+def _admitted_group(supervisor: Supervisor, *, clock: list[float]) -> Pending:
+    """Register one request whose group admission already placed.
+
+    Returns
+    -------
+    Pending
+        The admitted request the launch handler will read.
+    """
+    from buildlimits.admission import Group, GroupState
+
+    supervisor.clock = lambda: clock[0]
+    entry = crate_pending(1)
+    entry.admitted = None
+    entry.admitted_at = None
+    supervisor.requests.pending[1] = entry
+    supervisor.admission.groups["g1"] = Group(
+        "g1", request_id=1, token=b"a", cached=False, state=GroupState.RUNNING
+    )
+    return entry
 
 
 def test_a_queue_delay_does_not_move_the_recorded_decision(
@@ -59,22 +81,12 @@ def test_a_queue_delay_does_not_move_the_recorded_decision(
     """
     arrived_at = DECISION_AT - dt.timedelta(minutes=30)
     clock = [1800.0]
-
-    supervisor.clock = lambda: clock[0]
     supervisor.groups = typ.cast(
         "Groups", FakeGroups(order=[], placed=None, terminate=lambda _g: None)
     )
     supervisor.groups.wall_clock = lambda: DECISION_AT
-    entry = crate_pending(1)
+    entry = _admitted_group(supervisor, clock=clock)
     entry.arrived = 0.0
-    entry.admitted = None
-    entry.admitted_at = None
-    supervisor.requests.pending[1] = entry
-    from buildlimits.admission import Group, GroupState
-
-    supervisor.admission.groups["g1"] = Group(
-        "g1", request_id=1, token=b"a", cached=False, state=GroupState.RUNNING
-    )
 
     supervisor._launch(1, "g1", cached=False)
 
@@ -100,20 +112,12 @@ def test_the_decision_moment_is_read_before_any_placement_work(
         observed.append((supervisor.clock(), supervisor.groups.wall_clock()))
         clock[0] += 10.0
 
-    supervisor.clock = lambda: clock[0]
     supervisor.groups = typ.cast(
         "Groups",
         FakeGroups(order=[], placed=None, on_place=record_and_advance),
     )
     supervisor.groups.wall_clock = lambda: DECISION_AT + dt.timedelta(seconds=clock[0])
-    entry = crate_pending(1)
-    entry.admitted = None
-    supervisor.requests.pending[1] = entry
-    from buildlimits.admission import Group, GroupState
-
-    supervisor.admission.groups["g1"] = Group(
-        "g1", request_id=1, token=b"a", cached=False, state=GroupState.RUNNING
-    )
+    entry = _admitted_group(supervisor, clock=clock)
 
     supervisor._launch(1, "g1", cached=False)
 
@@ -281,11 +285,11 @@ def test_a_launch_row_carries_the_attempt_and_generation() -> None:
     assert record.attempt == "g7", "the attempt is the admission group"
     assert record.supervisor_generation == "generation-a", "the clock domain is named"
     assert record.completed_at == OBSERVED_AT, "its own completion time is retained"
-    assert record.label_available_at == OBSERVED_AT + dt.timedelta(seconds=45), (
-        "availability is the poll boundary, not the launch's completion time"
-    )
     assert record.observed_at == record.label_available_at, (
         "the row's observation time is the reading that justified it"
+    )
+    assert record.label_available_at == OBSERVED_AT + dt.timedelta(seconds=45), (
+        "availability is the poll boundary, not the launch's completion time"
     )
     assert record.admitted_at == DECISION_AT, "the decision time is unchanged"
 
@@ -304,8 +308,8 @@ def test_a_payload_without_a_generation_writes_no_correlation() -> None:
     assert record.observed_at == OBSERVED_AT, "the reading moment is still recorded"
 
 
-def test_an_unpaired_poll_writes_no_verified_availability() -> None:
-    """A caller that cannot pair the clocks leaves the row unverified."""
+def test_an_unpaired_poll_still_dates_the_row_at_its_reading() -> None:
+    """A reading with no paired wall clock still dates its row at itself."""
     (record,) = _window_output(
         launches=(("g8", OBSERVED_AT),),
         generation="generation-a",
@@ -400,3 +404,6 @@ def test_a_complete_timing_group_is_written_and_read_back() -> None:
 
     assert isinstance(decoded, DecodedStore), "the document decodes"
     assert decoded.records == (record,), "every timing field round-trips exactly"
+
+
+# weave: run 'weave explain tests/test_outcome_timing_producer.py' for per-hunk detail, 'weave check' to verify your resolution

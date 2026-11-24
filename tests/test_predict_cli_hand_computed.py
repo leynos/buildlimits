@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from predict_test_helpers import benchmark_argv, read_results, write_json
+from predict_timing_helpers import at
 
 from buildlimits.predict import benchmark_cli
 from buildlimits.predict.config_loader import load_config
@@ -38,10 +39,6 @@ def _hand_events() -> tuple[Event, ...]:
         The four events, in admission order.
     """
 
-    def stamp(seconds: int) -> dt.datetime:
-        """Return the epoch plus ``seconds``."""
-        return EPOCH + dt.timedelta(seconds=seconds)
-
     def event(
         identity: str, moments: tuple[int, int], label: str, attempt: str
     ) -> Event:
@@ -50,12 +47,12 @@ def _hand_events() -> tuple[Event, ...]:
         return Event(
             identity,
             "git",
-            stamp(admitted),
-            stamp(observed),
+            at(admitted),
+            at(observed),
             typ.cast("Label", label),
             1.0,
             label_observed_verified=True,
-            completed_at=stamp(observed),
+            completed_at=at(observed),
             attempt=attempt,
             supervisor_generation="hand-generation",
         )

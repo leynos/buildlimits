@@ -79,6 +79,21 @@ def _legacy(index: int) -> OutcomeRecord:
     )
 
 
+def _archive_bytes(rows: tuple[OutcomeRecord, ...], *, preset: int = 0) -> bytes:
+    """Return the archive bytes for ``rows``.
+
+    Returns
+    -------
+    bytes
+        The XZ archive ``write_archive`` produced.
+    """
+    sink = io.BytesIO()
+    write_archive(
+        LineStream(io.BytesIO(document(rows))), sink, preset=preset, trim=Trim()
+    )
+    return sink.getvalue()
+
+
 def _round_trip(rows: tuple[OutcomeRecord, ...]) -> DecodedStore:
     """Archive and decompress ``rows``, then decode the result.
 
@@ -87,9 +102,7 @@ def _round_trip(rows: tuple[OutcomeRecord, ...]) -> DecodedStore:
     DecodedStore
         The decoded archive contents.
     """
-    sink = io.BytesIO()
-    write_archive(LineStream(io.BytesIO(document(rows))), sink, preset=0, trim=Trim())
-    decompressed = lzma.decompress(sink.getvalue())
+    decompressed = lzma.decompress(_archive_bytes(rows))
     decoded = decode_lines(decompressed.decode("utf-8"))
     assert isinstance(decoded, DecodedStore), "the archive decodes"
     return decoded
@@ -166,23 +179,12 @@ def test_archive_facts_use_the_observation_span_not_the_acceptance_span(
     )
 
 
-def _archive_bytes(rows: tuple[OutcomeRecord, ...]) -> bytes:
-    """Return the archive bytes for ``rows``."""
-    sink = io.BytesIO()
-    write_archive(LineStream(io.BytesIO(document(rows))), sink, preset=0, trim=Trim())
-    return sink.getvalue()
-
-
 @pytest.mark.parametrize("preset", [0, 1])
 def test_compression_preserves_the_document_bytes_exactly(preset: int) -> None:
     """Archival copies original row bytes, so a decoder sees the same document."""
     rows = (_verified(1), _legacy(1))
-    source = document(rows)
-    sink = io.BytesIO()
 
-    write_archive(LineStream(io.BytesIO(source)), sink, preset=preset, trim=Trim())
-
-    assert lzma.decompress(sink.getvalue()) == source, (
+    assert lzma.decompress(_archive_bytes(rows, preset=preset)) == document(rows), (
         "the archived document is byte-identical to its source"
     )
 

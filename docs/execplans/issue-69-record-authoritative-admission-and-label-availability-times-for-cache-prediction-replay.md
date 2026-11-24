@@ -72,8 +72,9 @@ attempt, and nothing could tell a retried append from a contradictory one.
 
 ## Acceptance evidence
 
-The issue's regressions are covered by `tests/test_predict_timing_contract.py`,
-which uses only injected clocks:
+The issue's regressions are covered by `tests/test_predict_timing_causal.py` and
+`tests/test_predict_timing_roundtrip.py`, which use only injected clocks and
+share one helper module:
 
 | Scenario                                            | Assertion                                                            |
 | --------------------------------------------------- | -------------------------------------------------------------------- |
