@@ -151,6 +151,31 @@ def test_a_failed_reading_is_reported_without_admissions(
     assert "held no observer counts" not in output, "the window is not called empty"
 
 
+def test_a_gate_only_window_reports_its_reason(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A window whose only record is a gate transition still reports it."""
+    note = count_journal(
+        (
+            Record(
+                "supervisor",
+                "outcome_reading",
+                {"readings": "0", "readings_skipped": "0", "gate_reason": "queued"},
+                OBSERVED_AT,
+            ),
+        ),
+        since="4w",
+        cap=1000,
+        truncated=False,
+    )
+
+    dataset_report._report_journal(note)
+
+    output = capsys.readouterr().out
+    assert "gate reason: queued=1" in output, "the transition is printed"
+    assert "held no observer counts" not in output, "the window is not called empty"
+
+
 def test_observer_accounting_keeps_its_denominators_distinct() -> None:
     """Requests, outcomes, readings and store writes stay separate counts."""
     records = (

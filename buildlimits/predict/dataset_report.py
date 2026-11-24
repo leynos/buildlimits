@@ -28,13 +28,17 @@ def _observer_measured_anything(observer: ObserverAccounting) -> bool:
     The scalar counters are the denominators every map is drawn from. A window
     that recorded only a failed reading, for example, has zero requests and
     outcomes but a non-zero failure count, and that failure must not be hidden.
+    A window that recorded only a gate transition is the same kind of case:
+    every scalar is zero, but the gate reason map holds the transition, and
+    the maps are printed beside the scalars.
 
     Returns
     -------
     bool
-        True when at least one observer counter was recorded.
+        True when at least one observer count or closed-vocabulary map was
+        recorded.
     """
-    return any((
+    scalars = (
         observer.requests,
         observer.outcomes,
         observer.store_records,
@@ -42,7 +46,18 @@ def _observer_measured_anything(observer: ObserverAccounting) -> bool:
         observer.readings,
         observer.readings_skipped,
         observer.readings_failed,
-    ))
+    )
+    maps = (
+        observer.by_cache_path,
+        observer.by_backend,
+        observer.by_result,
+        observer.by_reason,
+        observer.by_attribution,
+        observer.by_origin,
+        observer.by_gate_reason,
+        observer.by_reading_reason,
+    )
+    return any(scalars) or any(maps)
 
 
 def report_snapshot(snapshot: Snapshot, output: Path) -> None:

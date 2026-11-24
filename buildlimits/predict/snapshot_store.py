@@ -21,6 +21,10 @@ from buildlimits.predict.snapshot_codec import (
     event_from_dict,
     snapshot_to_dict,
 )
+from buildlimits.predict.snapshot_diagnostics_join import (
+    require_diagnostics_match,
+    require_event_labels_match,
+)
 from buildlimits.utc_text import utc_moment, utc_text
 
 if typ.TYPE_CHECKING:
@@ -120,55 +124,36 @@ def load_snapshot(path: Path) -> Snapshot:
         events=decoded_events,
         gaps=_gaps_from(path, document.get("stats")),
         diagnostics=_diagnostics_from(
-            path, document.get("diagnostics"), source=decoded_source
+            path,
+            document.get("diagnostics"),
+            source=decoded_source,
+            events=decoded_events,
         ),
     )
 
 
-def _require_diagnostics_match(
-    path: Path, source: Source, diagnostics: Diagnostics
-) -> None:
-    """Require the diagnostics block to describe the same store as its source.
-
-    Both blocks state the row totals, and the report prints both. A document
-    where they disagree cannot be evidence of any one history, so it is
-    refused before either count reaches a reader.
-
-    Raises
-    ------
-    ValueError
-        If the retained-store counts disagree with the source counts.
-    """
-    store = diagnostics.store
-    if (store.records_total, store.outcome_records, store.summary_records) != (
-        source.records_total,
-        source.outcome_records,
-        source.summary_records,
-    ):
-        msg = f"{path} diagnostics store counts disagree with its source counts"
-        raise ValueError(msg)
-
-
 def _diagnostics_from(
-    path: Path, value: object, *, source: Source
+    path: Path, value: object, *, source: Source, events: cabc.Sequence[Event]
 ) -> Diagnostics | None:
-    """Rebuild the optional label-loss diagnostics and join them to its source.
+    """Rebuild the optional label-loss diagnostics and join them to the history.
 
     A version 1 snapshot has no block, and a version 2 snapshot may carry an
     explicit null when its writer had no counts. Both mean "unavailable", not
     "empty". A present block must describe the same store its source block
-    does, because the report prints both row totals.
+    does and the same labels its events carry, because the report prints all
+    three figures for one snapshot.
 
     Returns
     -------
     Diagnostics | None
         The validated diagnostics, or None when the document carries none.
-        The join to the source is enforced by ``_require_diagnostics_match``.
+        Both joins are enforced by the helpers this calls.
     """
     if value is None:
         return None
     diagnostics = diagnostics_from_dict(value, label=str(path))
-    _require_diagnostics_match(path, source, diagnostics)
+    require_diagnostics_match(path, source, diagnostics)
+    require_event_labels_match(path, events, diagnostics)
     return diagnostics
 
 

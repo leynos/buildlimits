@@ -38,8 +38,8 @@ clause never held. The bounded window then filled to its 64-entry limit and
 flushed every launch as unattributed. Because a flush left the old statistics
 baseline in place, the overflowed requests remained in sccache's cumulative
 counters and the next window could not balance either. The recorder could not
-even establish a first baseline while the host was busy, although a baseline is
-only a counter snapshot and needs no motionless host.
+even establish a first baseline while the host was busy, because the queue
+clause was applied to a baseline as well as to an attributing reading.
 
 The second gap is independent of label coverage. `OutcomeRecord` carried the
 label time (`observed_at`) and a runtime, but no admission time. The benchmark

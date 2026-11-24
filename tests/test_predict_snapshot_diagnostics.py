@@ -124,6 +124,25 @@ def test_an_irreconcilable_diagnostics_block_is_refused(tmp_path: Path) -> None:
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
 
+def test_diagnostics_labels_must_describe_the_events(tmp_path: Path) -> None:
+    """A label count that disagrees with the events names no single history.
+
+    The block stays internally consistent — one outcome row, no labels — so
+    only the join to the event stream can refuse it.
+    """
+    document = _document()
+    store = typ.cast(
+        "dict[str, object]",
+        typ.cast("dict[str, object]", document["diagnostics"])["store"],
+    )
+    store["labels"] = 0
+    store["cacheable_labels"] = 0
+    store["by_result"] = {"unattributed": 1}
+
+    with pytest.raises(ValueError, match="labelled events"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
 def test_diagnostics_must_describe_the_source_store(tmp_path: Path) -> None:
     """The two row totals in one snapshot cannot name different stores."""
     document = _document()
