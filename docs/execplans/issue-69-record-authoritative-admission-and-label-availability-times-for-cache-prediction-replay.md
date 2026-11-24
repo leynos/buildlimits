@@ -14,8 +14,8 @@ this is bounded instrumentation, schema and replay-integration work.
 
 ## Status
 
-Implemented on the issue #69 branch, stacked on the issue #68 branch. The live
-host service has not been upgraded; a controlled real-sccache run is the
+Implemented on the issue #69 branch, rebased onto the issue #68 branch. The
+live host service has not been upgraded; a controlled real-sccache run is the
 evidence that new rows carry the timing group, and no historical row is
 retroactively repaired.
 
@@ -31,41 +31,48 @@ see an example that the format change invalidated. Four examples needed the
 current version and a complete timing group; they are part of the commit that
 fixed them, not a follow-up.
 
-### Open: reconcile with the issue #68 label-reading fix
+### Resolved: reconciled with the issue #68 label-reading fix
 
 After this branch was cut, the issue #68 branch gained its own fix for the same
-`observed_at` defect: `Launched`, `Ended`, `GateOpen` and `PollResult` now
-carry an `observed_at`, and the recorder stamps each row from the event that
-produced it, so `observed_at` itself becomes the moment the reading returned.
-That is the same boundary this branch calls `label_available_at`.
+`observed_at` defect: `Launched`, `Ended`, `GateOpen` and `PollResult` carry an
+`observed_at`, and the recorder stamps each row from the event that produced
+it, so `observed_at` itself becomes the moment the reading returned. That is
+the same boundary this branch calls `label_available_at`.
 
-The two designs are not interchangeable, and the difference matters:
+The two designs are not interchangeable. The issue #68 fix reinterprets
+`observed_at` for every row that already exists, and rows the earlier build
+wrote carry a completion stamp there, so the field can no longer distinguish a
+verified reading moment from a historical completion stamp. This branch keeps
+every moment distinct: `observed_at` keeps its historical provenance,
+`label_available_at` is written only when the observer accepted the reading, and
+`attempt` plus `supervisor_generation` say which invocation the row belongs
+to. A version 1 or 2 row is then explicitly unscorable rather than
+reinterpreted.
 
-- The issue #68 fix reinterprets `observed_at` for every row that already
-  exists. Rows the earlier build wrote carry a completion stamp there, so a
-  label may become scorable on a time that preceded true knowledge. Their
-  commit says so and keeps the benchmark releasing no earlier than the recorded
-  time, which is the conservative direction, but the field can no longer
-  distinguish a verified reading moment from a historical completion stamp.
-- This branch keeps every moment distinct. `observed_at` retains its historical
-  provenance, `label_available_at` is written only when the observer accepted
-  the reading, and `attempt` plus `supervisor_generation` say which invocation
-  the row belongs to. A version 1 or 2 row is then explicitly unscorable rather
-  than reinterpreted.
+The branch is now rebased onto the issue #68 fix, and the resolution keeps both
+intentions:
 
-Rebasing this branch replays 16 commits across seven files that the issue #68
-fix rewrote, and a plain merge conflicts in 30 files. Both were attempted and
-abandoned rather than resolved blindly. The reconciliation that preserves both
-intentions is to take the issue #68 fix as the base, keep its `observed_at`
-reading moment as the *release* boundary, and re-apply only what it does not
-provide: the correlation identity, the duplicate and conflict contract, the
-closed `completion_after_availability` reason, the scored-versus-labelled
-reporting split, and the `insufficient label-availability times` status. That
-work is not done here.
+- The issue #68 plumbing is adopted rather than duplicated. `_EmissionMoment`,
+  `_row_time`, `_emit_unattributed` and `_emit_attribution` in
+  `outcome_recorder_outputs` remain the single place a row's moment is chosen,
+  and the shell's `observed_at` stamps on every recorder event remain the
+  moment source. This branch adds only the provenance the fix does not carry:
+  the `_TimingEvidence` value holding `completed_at`, `attempt` and
+  `supervisor_generation`.
+- `label_available_at` is written as the reading's own moment, so the release
+  boundary is the same one the issue #68 fix intends, while a row without a
+  supervisor generation keeps the version 2 shape and stays unscorable. That is
+  what preserves the "never backdate" rule for history the fix cannot vouch for.
+- The shared helpers the base introduced are reused rather than reimplemented:
+  `StoreHeader.version` (the file's own format, so a writer knows an older file
+  must be settled first), `outcome_recorder_effects`, and
+  `outcome_shell_dependencies`. The decoder, the recorder and the replay all
+  read one definition of the timing group from `outcome_record_timing`.
 
-Until it is, this branch's pull request conflicts with its base and GitHub does
-not schedule Continuous Integration for it. Every gate above was therefore run
-locally, and the branch is published as a draft.
+Nothing from the issue #68 fix was dropped: its tests
+(`test_launches_that_finish_out_of_order_load_without_a_clock_refusal` and the
+recorder evidence suite) pass, with the shared `launch_payload` fixture
+modelling the generation a real supervisor always mints.
 
 ## The problem
 
@@ -145,8 +152,19 @@ The producer path is covered by `tests/test_outcome_timing_producer.py`, which
 drives the supervisor's launch handler, the real reducer and the encoder. It
 pins that both clocks are read at the decision before placement advances them,
 that placement never re-stamps a marked entry, and that a poll without a UTC
-pairing leaves the row unverified. `tests/test_outcome_timing_archive.py` pins
-archival preservation and the retention span.
+pairing leaves the row unverified. `tests/test_outcome_timing_rows.py` covers
+the row itself: that the timing group is written whole, that a payload without
+a generation keeps the version 2 shape, and that encode and decode round trip.
+`tests/test_outcome_timing_archive.py` pins archival preservation and the
+retention span.
+
+One fixture decision is worth recording. A test that writes an older store
+format by stripping fields from a current row silently stops modelling that
+format once the row gains a field, and the resulting document is a hybrid no
+decoder accepts. `outcome_test_helpers.older_document_row` therefore derives
+each older shape from the timing group's own definition, so adding a timing
+field cannot leave a fixture behind, and both the upgrade fixtures and the
+benchmark-threshold history write their old rows through it.
 
 ### Controlled real-sccache evidence
 
