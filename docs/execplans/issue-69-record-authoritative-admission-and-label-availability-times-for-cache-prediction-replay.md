@@ -25,6 +25,12 @@ action linters), `typecheck`, `test`, `markdownlint` and `nixie`. The opt-in
 host checks also pass: `test-sccache-host` against the real sccache 0.14.0, and
 `test-systemd-user` for the systemd cache-outcome scenarios.
 
+One lesson worth recording: `make test` collects the package's doctests as well
+as `tests/`, so a focused `pytest tests/...` run during development does not
+see an example that the format change invalidated. Four examples needed the
+current version and a complete timing group; they are part of the commit that
+fixed them, not a follow-up.
+
 ## The problem
 
 Two independent gates must hold before the offline benchmark may score a
