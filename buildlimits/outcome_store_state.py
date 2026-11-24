@@ -7,64 +7,35 @@ starting a thread. Sealing lives in ``outcome_store_sealing``.
 """
 
 import datetime as dt
-import time
 import typing as typ
 
-from buildlimits import outcome_records, outcome_segments, outcome_store_restart
+from buildlimits import (
+    outcome_records,
+    outcome_segments,
+    outcome_store_restart,
+    outcome_store_status,
+)
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_store_io import (
+    TornTailError,
     append_line,
-    read_store,
     replace_store,
     store_size,
 )
+from buildlimits.outcome_store_read import read_store
 from buildlimits.outcome_store_sealing import seal
-from buildlimits.utc_text import utc_now
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     from pathlib import Path
 
+    from buildlimits.outcome_archive_history import ActiveHistory
     from buildlimits.outcome_key import Salt
+    from buildlimits.outcome_ports import StorePublisher as Publisher
     from buildlimits.outcome_record_format import StoreRecord
-    from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
+    from buildlimits.outcome_store_clock import Clocks
+    from buildlimits.outcome_store_status import _Published
 
 _CLOCK_SKEW_SECONDS = 24 * 60 * 60
-
-
-class Publisher(typ.Protocol):
-    """The writer's coalescing sink for closed operation outcomes."""
-
-    def __call__(
-        self,
-        operation: StoreOperation,
-        reason: StoreReason,
-        *,
-        records: int = 0,
-        discarded: int = 0,
-    ) -> None:
-        """Record one outcome under its operation and reason."""
-
-
-class Clocks:
-    """The wall and monotonic clocks the writer reads as a pair.
-
-    Parameters
-    ----------
-    wall : Callable[[], datetime] or None
-        UTC clock, defaulting to the system wall clock.
-    monotonic : Callable[[], float] or None
-        Monotonic clock, defaulting to ``time.monotonic``.
-    """
-
-    def __init__(
-        self,
-        wall: cabc.Callable[[], dt.datetime] | None = None,
-        monotonic: cabc.Callable[[], float] | None = None,
-    ) -> None:
-        """Bind the clocks, falling back to the system's own."""
-        self.wall = utc_now if wall is None else wall
-        self.monotonic = time.monotonic if monotonic is None else monotonic
 
 
 class StoreFiles:
@@ -110,7 +81,9 @@ class StoreFiles:
         self.oldest_observed: dt.datetime | None = None
         self.needs_compaction = False
         self.clock_skew_pending = False
+        self.torn_tail = False
         self.ready = False
+        self._published: _Published | None = None
         self._last_wall: dt.datetime | None = None
         self._last_monotonic: float | None = None
 
@@ -178,6 +151,32 @@ class StoreFiles:
         """Choose which validated rows can belong to the active salt."""
         outcome_store_restart.restore_loaded_store(self, decoded, salt, now)
 
+    def publish_snapshot(self) -> None:
+        """Publish the rows and byte size of one completed store state."""
+        outcome_store_status.publish_snapshot(self)
+
+    def publish_snapshot_state(self, published: _Published) -> None:
+        """Record one completed store state for status readers.
+
+        Parameters
+        ----------
+        published : _Published
+            The rows, count, size and reason describing one completed
+            transition. Only the worker's publish path constructs it; the
+            status read returns the recorded state without replacing it.
+        """
+        self._published = published
+
+    def retention(self) -> ActiveHistory:
+        """Describe the rows the writer currently holds in the active file.
+
+        Returns
+        -------
+        ActiveHistory
+            The published active snapshot, or an incomplete one with a reason.
+        """
+        return outcome_store_status.retention_snapshot(self)
+
     def set_records(self, records: list[StoreRecord]) -> None:
         """Replace the active rows and cache their oldest observation.
 
@@ -196,18 +195,25 @@ class StoreFiles:
             (record.observed_at for record in records), default=None
         )
 
+    def _settle_for_append(self) -> bool:
+        """Settle what the next append needs, reporting whether it may proceed.
+
+        A file that needs compaction or has reached its record cap settles
+        first: a seal that failed before its rename leaves rows the archiver
+        cannot evict, so accepting another row would hold history past the cap.
+
+        Returns
+        -------
+        bool
+            Whether the writer is ready for the row.
+        """
+        if self.needs_compaction and not self.settle():
+            return False
+        return not (self.over_record_cap() and not self.settle())
+
     def append(self, line: bytes, record: StoreRecord) -> None:
         """Compact at high water, preserve the hard bound and append one row."""
-        if self.header is None:
-            self.publish("append", "save_failed", discarded=1)
-            return
-        if self.needs_compaction and not self.settle():
-            self.publish("append", "save_failed", discarded=1)
-            return
-        if self.exceeds_record_cap() and not self.settle():
-            # A seal that failed before its rename leaves the rows in the
-            # active file, which the archiver cannot evict. Accepting another
-            # row would hold history past the cap that nothing can remove.
+        if self.header is None or not self._settle_for_append():
             self.publish("append", "save_failed", discarded=1)
             return
         try:
@@ -220,6 +226,14 @@ class StoreFiles:
                 self.publish("append", "save_failed", discarded=1)
                 return
             append_line(self.path, line)
+        except TornTailError:
+            # The rollback that removes a partial line failed, so the file now
+            # holds bytes this row list does not account for. Compaction
+            # repairs them; until then the snapshot must not pair the two.
+            self.needs_compaction = True
+            self.torn_tail = True
+            self.publish("append", "save_failed", discarded=1)
+            return
         except OSError:
             self.needs_compaction = True
             self.publish("append", "save_failed", discarded=1)
@@ -230,18 +244,13 @@ class StoreFiles:
         self.publish("append", "none", records=1)
         self.expire_if_aged()
 
-    def exceeds_record_cap(self) -> bool:
-        """Whether one more row would take the active file past its record cap.
-
-        The cap bounds retained history, and only a closed segment can be
-        archived and evicted. Sealing at the cap hands the rows to the
-        archiver instead of letting a small active file hold more rows than
-        the policy allows.
+    def over_record_cap(self) -> bool:
+        """Whether the loaded active file already holds the record cap.
 
         Returns
         -------
         bool
-            Whether the active file must be closed before the next append.
+            Whether a segmented store's active rows reach its configured cap.
         """
         policy = self.policy
         return (
@@ -250,7 +259,7 @@ class StoreFiles:
             and len(self.records) >= policy.max_records
         )
 
-    def expire_if_aged(self) -> None:
+    def expire_if_aged(self) -> bool:
         """Compact once the oldest retained row has aged past the cutoff.
 
         A segmented store seals only when the active file reaches
@@ -262,13 +271,19 @@ class StoreFiles:
         not its first row. A caller may append a row observed before every row
         it follows, and that older row must not survive until some later row
         happens to age past the cutoff.
+
+        Returns
+        -------
+        bool
+            Whether the age bound rewrote the file.
         """
         policy = self.policy
         if not policy.has_age_limit or self.oldest_observed is None:
-            return
+            return False
         cutoff = policy.cutoff(self.record_clock_observation())
         if cutoff is not None and self.oldest_observed < cutoff:
-            self.compact()
+            return self.compact()
+        return False
 
     def settle_bytes(self) -> int:
         """Return the active size that triggers compaction or sealing.
@@ -337,6 +352,7 @@ class StoreFiles:
         self.set_records(list(compacted.records))
         self.clock_skew_pending = False
         self.needs_compaction = False
+        self.torn_tail = False
         self.publish(
             "compact",
             compacted.store_reason,

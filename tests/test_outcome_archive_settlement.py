@@ -304,7 +304,12 @@ def test_inspection_retries_a_seal_at_its_active_read(
     seal_five_rows_once(store_layout, monkeypatch)
 
     report = inspect_store(
-        layout(tmp_path), policy(segment_bytes=1_000_000, max_age_days=30)
+        layout(tmp_path),
+        policy(
+            segment_bytes=1_000_000,
+            max_age_days=30,
+            max_bytes=15_000_000_000,
+        ),
     )
 
     assert report.dry_run, "inspection never changes the store"
@@ -372,10 +377,22 @@ def test_inspection_reports_unsettled_when_no_snapshot_holds(
     monkeypatch.setattr(outcome_archive_retain, "active_history", seal_on_every_read)
 
     report = inspect_store(
-        layout(tmp_path), policy(segment_bytes=1_000_000, max_age_days=30)
+        layout(tmp_path),
+        policy(
+            segment_bytes=1_000_000,
+            max_age_days=30,
+            max_bytes=15_000_000_000,
+        ),
     )
 
     assert report.status == "unsettled", "no reading describes the whole store"
     assert exit_status(report.status) == EXIT_TEMPFAIL, "the timer retries the run"
     assert report.dry_run, "inspection is still a dry run"
     assert report.plan is None, "no torn pair is reported as a plan"
+    assert report.limits is not None, "the configured limits are still reported"
+    assert report.limits.max_bytes == 15_000_000_000, (
+        "the configured budget is not replaced by an unset value"
+    )
+    assert report.budget_bytes == 15_000_000_000, (
+        "the report budget matches the reported limits"
+    )

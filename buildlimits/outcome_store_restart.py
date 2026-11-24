@@ -47,15 +47,7 @@ def settle_loaded_store(store: StoreFiles) -> None:
     if size is None:
         store.publish("load", "unreadable")
         return
-    if size > store.policy.segment_bytes:
-        seal(store)
-        return
-    if active_expired(store):
-        # A restart is the one moment a writer can enforce the age bound on
-        # rows that never crossed the segment size. Compaction drops what the
-        # cutoff excludes, so the active file cannot hold expired history
-        # indefinitely just because it stayed small.
-        store.compact()
+    if _settle_existing_file(store, size):
         return
     # Appends never create the active file, so a fresh or emptied store must be
     # given its header at startup. Otherwise the first record fails with
@@ -63,6 +55,59 @@ def settle_loaded_store(store: StoreFiles) -> None:
     # empty segment, opens the file.
     if size == 0 and not restart_active(store):
         store.publish("load", "save_failed")
+
+
+def _settle_existing_file(store: StoreFiles, size: int) -> bool:
+    """Apply the restart rule for a segmented file that holds rows.
+
+    An oversized file is sealed before the age and record rules are
+    considered, and an age trim is preferred over a seal because compaction
+    drops expired rows from the active file directly.
+
+    Parameters
+    ----------
+    store : StoreFiles
+        The writer's file machine, whose rows are already loaded.
+    size : int
+        The active file's measured size in bytes.
+
+    Returns
+    -------
+    bool
+        Whether the store was sealed or compacted. On ``False`` the caller
+        installs the header.
+    """
+    if size > store.policy.segment_bytes:
+        _seal_or_hold_pending(store)
+        return True
+    if active_expired(store):
+        # A restart is the one moment a writer can enforce the age bound on
+        # rows that never crossed the segment size. Compaction drops what the
+        # cutoff excludes, so the active file cannot hold expired history
+        # indefinitely just because it stayed small.
+        store.compact()
+        return True
+    if store.over_record_cap():
+        # A reduced cap reaches a segmented store at its next start. Sealing
+        # hands the rows to the archiver even though the file is below the
+        # segment size, so an idle store cannot hold more rows than the cap
+        # merely because it received no further appends.
+        _seal_or_hold_pending(store)
+        return True
+    return False
+
+
+def _seal_or_hold_pending(store: StoreFiles) -> None:
+    """Seal the active file, keeping pending recovery when the seal failed.
+
+    A seal that renamed the source but could not install a fresh active file
+    returns ``False`` with the rows already released. Without a pending mark
+    the writer would take the next row and lose it to ``save_failed``, and only
+    the append after that would repair the store. The mark makes the next
+    append settle first, so the header is recreated before a row is consumed.
+    """
+    if not seal(store):
+        store.needs_compaction = True
 
 
 def restore_loaded_store(

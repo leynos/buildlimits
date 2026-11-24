@@ -1,27 +1,25 @@
-"""Internal store-document operations for cache-outcome storage.
+"""Write-side and durable file operations for cache-outcome storage.
 
-These operations write and replace whole store documents and their sidecars.
-The private-file primitives they build on, including the bounded reader, live
-in :mod:`buildlimits.outcome_store_files`. Both are package implementation
-support for the store writer and salt adapter, not a standalone public API.
+Appending a row, replacing the active document, installing a temporary file and
+keeping a rename durable all live here. The private-file primitives these
+operations build on, including the bounded reader the read side uses, live in
+:mod:`buildlimits.outcome_store_files`, and the store's bounded reads live in
+``outcome_store_read``. These are package implementation support for the store
+writer and salt adapter, not a standalone public API.
 """
 
 import contextlib
-import json
 import os
 import typing as typ
 
 from buildlimits import outcome_records
 from buildlimits.outcome_store_files import (
     FILE_MODE,
-    OversizedFileError,
     open_private_regular,
-    read_private_bytes,
     require_regular,
 )
 
 if typ.TYPE_CHECKING:
-    import collections.abc as cabc
     from pathlib import Path
 
     from buildlimits.outcome_record_format import StoreRecord
@@ -30,49 +28,61 @@ _DIRECTORY_MODE = 0o700
 _TEMP_SUFFIX = ".tmp"
 
 
+class TornTailError(OSError):
+    """A refused append left bytes on disk that the caller must repair.
+
+    Raised when a partial line reached the file and the rollback that should
+    have removed it failed. The caller's rows no longer account for the file's
+    bytes, so it must not report the measured size beside its row count as one
+    state until a compaction rewrites the file.
+    """
+
+
 def append_line(path: Path, line: bytes) -> None:
     """Append one encoded record and roll back a partial final write.
 
+    Whether the append succeeded is decided by the write alone. A close that
+    fails after the whole line reached the file must not turn a landed row
+    into a refused one: the caller would keep a row list shorter than the
+    file, and its next compaction would drop the row it never counted. The
+    same suppression keeps a close failure from replacing the error of a
+    write that did fail, which is the one the caller must act on.
+
     Raises
     ------
+    TornTailError
+        If the line could not be written whole and the rollback that removes
+        the fragment also failed.
     OSError
-        If the file cannot be opened or the append cannot be completed.
+        If the file cannot be opened or the line cannot be written whole.
     """
     flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
     descriptor, metadata = open_private_regular(path, flags)
     try:
-        try:
-            write_all(descriptor, line + b"\n")
-        except OSError:
-            with contextlib.suppress(OSError):
-                os.ftruncate(descriptor, metadata.st_size)
-            raise
+        write_all(descriptor, line + b"\n")
+    except OSError as fault:
+        if not _roll_back(descriptor, metadata.st_size):
+            msg = "a refused append left a partial line on disk"
+            raise TornTailError(msg) from fault
+        raise
     finally:
-        os.close(descriptor)
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
 
 
-def read_store(
-    path: Path,
-) -> outcome_records.DecodedStore | outcome_records.RecordFailure:
-    """Read a private JSON Lines file; filesystem failures propagate as OSError.
+def _roll_back(descriptor: int, size: int) -> bool:
+    """Truncate a refused append back to the size the file had before it.
 
     Returns
     -------
-    DecodedStore or RecordFailure
-        Validated store rows or the closed corruption/version result.
-
+    bool
+        Whether the partial line was removed.
     """
     try:
-        document = read_private_bytes(path, limit=outcome_records.MAX_STORE_BYTES)
-    except OversizedFileError:
-        return outcome_records.RecordFailure("corrupt")
-    try:
-        complete_document = document[: document.rfind(b"\n") + 1]
-        # An interrupted append can end inside a multibyte character. Discard
-        # that unterminated byte sequence before strict UTF-8 decoding.
-        return outcome_records.decode_lines(complete_document.decode("utf-8"))
-    except UnicodeError:
-        return outcome_records.RecordFailure("corrupt")
+        os.ftruncate(descriptor, size)
+    except OSError:
+        return False
+    return True
 
 
 def store_size(path: Path) -> int:
@@ -84,10 +94,30 @@ def store_size(path: Path) -> int:
         The regular file size, or zero when the file does not exist.
 
     """
+    size = store_size_if_present(path)
+    return 0 if size is None else size
+
+
+def store_size_if_present(path: Path) -> int | None:
+    """Return a regular store's size, or None when no file exists.
+
+    ``store_size`` reports an absent store as zero for callers that go on to
+    create it. A caller that describes an existing store must be able to tell
+    an empty file from no file at all, so this stricter measurement keeps that
+    difference.
+
+    Returns
+    -------
+    int or None
+        The regular file size, or None when the path does not exist.
+
+    A path that exists but is not a regular file, or cannot be measured,
+    raises ``OSError``.
+    """
     try:
         metadata = path.lstat()
     except FileNotFoundError:
-        return 0
+        return None
     require_regular(metadata)
     return metadata.st_size
 
@@ -252,27 +282,6 @@ def fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def write_sequence(path: Path, value: int) -> None:
-    """Atomically store the next sealed sequence number.
-
-    The counter is written before a segment is moved, so a crash leaves a gap
-    the inventory reports rather than a sequence two segments can share.
-    Filesystem failures propagate as ``OSError``.
-    """
-    _replace_document(path, f"{value}\n".encode("ascii"))
-
-
-def write_metadata(path: Path, document: cabc.Mapping[str, object]) -> None:
-    """Atomically store one JSON metadata document beside a sealed source.
-
-    Filesystem failures propagate as ``OSError``.
-    """
-    encoded = json.dumps(
-        document, sort_keys=True, separators=(",", ":"), allow_nan=False
-    ).encode("utf-8")
-    _replace_document(path, encoded + b"\n")
-
-
 def write_private_temporary(path: Path, data: bytes, *, suffix: str = "") -> Path:
     """Write ``data`` into a new private temporary beside ``path``.
 
@@ -297,12 +306,6 @@ def write_private_temporary(path: Path, data: bytes, *, suffix: str = "") -> Pat
     descriptor = os.open(temporary, flags, FILE_MODE)
     write_private_temp(temporary, descriptor, data)
     return temporary
-
-
-def _replace_document(path: Path, data: bytes) -> None:
-    """Write bytes through one private temporary file and replace ``path``."""
-    replace_temp(write_private_temporary(path, data), path)
-    fsync_directory(path.parent)
 
 
 def write_all(descriptor: int, data: bytes) -> None:

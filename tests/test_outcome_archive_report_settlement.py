@@ -198,6 +198,10 @@ def test_a_writer_that_keeps_sealing_leaves_the_report_unsettled(
 
     assert report.status == "unsettled", "no reading describes the whole store"
     assert exit_status(report.status) == EXIT_TEMPFAIL, "the timer retries the run"
+    assert report.retained is not None, "the report still describes the estimate"
+    assert report.retained.complete is False, (
+        "a mixed pair is not presented as a complete count"
+    )
 
 
 def _report_after_an_append(

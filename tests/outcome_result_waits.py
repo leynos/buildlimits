@@ -45,15 +45,31 @@ def wait_for_results(
     *,
     operation: str,
     reason: str | None = None,
+    timeout: float = _WAIT_SECONDS,
 ) -> tuple[StoreResult, ...]:
     """Wait for one result and retain concurrently drained unrelated results.
+
+    A test that seeds a multi-megabyte store passes a longer ``timeout``: the
+    startup pass over ten thousand rows can outlast the default wait when the
+    host is busy, which is load, not a writer fault.
+
+    Parameters
+    ----------
+    writer : StoreWriter
+        The writer whose published results are drained.
+    operation : str
+        The result operation to wait for.
+    reason : str | None
+        A required closed reason, or None to accept any reason.
+    timeout : float
+        Seconds to allow the writer to publish the result.
 
     Returns
     -------
     tuple[StoreResult, ...]
         The collected results, including unrelated values drained meanwhile.
     """
-    deadline = time.monotonic() + _WAIT_SECONDS
+    deadline = time.monotonic() + timeout
     observed = _RESULT_BACKLOG.pop(writer, [])
     while time.monotonic() < deadline:
         observed.extend(writer.results())

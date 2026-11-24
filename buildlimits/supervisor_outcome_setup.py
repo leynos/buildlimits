@@ -6,11 +6,23 @@ import typing as typ
 
 from buildlimits.journal import log
 from buildlimits.outcome_gate import QuietInputs
+from buildlimits.outcome_record_encode import header_floor_bytes
+from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
 from buildlimits.outcome_recorder_types import Querying, RecorderState
+from buildlimits.outcome_retention import policy_from_settings
+from buildlimits.outcome_retention_report import RetentionLimits
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+    import datetime as dt
     from pathlib import Path
 
+    from buildlimits.nonblocking_child import ChildReaper
+    from buildlimits.outcome_ports import (
+        OutcomeStorePort,
+        ServerProcessPort,
+        StatisticsPort,
+    )
     from buildlimits.pending_request import Pending
     from buildlimits.supervisor import Supervisor
 
@@ -19,6 +31,44 @@ _ORIGIN_PREFIXES: tuple[tuple[str, typ.Literal["registry", "git"]], ...] = (
     ("registry:", "registry"),
     ("git:", "git"),
 )
+
+
+@dc.dataclass(slots=True)
+class OutcomeDependencies:
+    """Optional collaborators used to test the shell's resource boundaries."""
+
+    environment: cabc.Mapping[str, str] | None = None
+    writer: OutcomeStorePort | None = None
+    statistics: StatisticsPort | None = None
+    server: ServerProcessPort | None = None
+    reaper: ChildReaper | None = None
+    wall_clock: cabc.Callable[[], dt.datetime] | None = None
+
+
+def retention_document(
+    supervisor: Supervisor, writer: OutcomeStorePort
+) -> dict[str, object]:
+    """Describe the effective policy and the writer's active snapshot.
+
+    The limits are derived from the same validated settings the writer uses,
+    so a status reader cannot see a different policy from the one the writer
+    enforces. Closed history is reported by the archive command, which is the
+    component that owns it.
+
+    Returns
+    -------
+    dict[str, object]
+        ``limits`` and ``active`` mappings, both JSON-compatible.
+    """
+    policy = policy_from_settings(
+        supervisor.settings,
+        header_floor=header_floor_bytes(),
+        segment_limit=MAX_COMPACT_BYTES,
+    )
+    return {
+        "limits": RetentionLimits.of(policy).as_dict(),
+        "active": writer.retention().as_dict(),
+    }
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -68,6 +118,17 @@ class NullOutcomeShell:
         return None
 
     @staticmethod
+    def retention() -> dict[str, object] | None:
+        """Omit retention state while no outcome store exists.
+
+        Returns
+        -------
+        None
+            No retention section is exposed while recording is disabled.
+        """
+        return None
+
+    @staticmethod
     def close(_timeout: float = OUTCOME_CLOSE_SECONDS, /) -> None:
         """Close no resources because the null shell owns none."""
 
@@ -92,6 +153,9 @@ class OutcomeShellPort(typ.Protocol):
 
     def describe(self) -> dict[str, object] | None:
         """Return an optional status section."""
+
+    def retention(self) -> dict[str, object] | None:
+        """Return the effective retention limits and active history."""
 
     def close(self, timeout: float = OUTCOME_CLOSE_SECONDS, /) -> None:
         """Release all optional resources within the supplied bound."""

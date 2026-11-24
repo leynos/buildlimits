@@ -1,0 +1,188 @@
+"""A reduced record cap reaches a segmented store at its next start."""
+
+import datetime as dt
+import lzma
+import typing as typ
+from pathlib import Path
+from unittest import mock
+
+from outcome_archive_helpers import policy as archive_policy
+from outcome_archive_helpers import run as archive_run
+from outcome_store_helpers import (
+    append_and_wait,
+    close_writer,
+    decoded_store,
+    segment_writer,
+    wait_for_results,
+)
+from outcome_test_helpers import attributed_record, window_summary
+
+from buildlimits import outcome_records, outcome_store_sealing
+from buildlimits.outcome_retention import RetentionPolicy
+from buildlimits.outcome_segments import SegmentLayout, archive_name, segment_name
+
+if typ.TYPE_CHECKING:
+    import pytest
+
+    from buildlimits.outcome_record_format import StoreRecord
+
+NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
+_SEGMENT_BYTES = 10_000_000
+
+
+def _segmented_policy(*, max_records: int | None) -> RetentionPolicy:
+    """Return a segmented policy that keeps the active file below one segment.
+
+    Returns
+    -------
+    RetentionPolicy
+        An unlimited byte budget with the requested record cap.
+    """
+    return RetentionPolicy(
+        max_age=dt.timedelta(days=30),
+        max_bytes=0,
+        max_records=max_records,
+        headroom_bytes=_SEGMENT_BYTES * 4,
+        segment_bytes=_SEGMENT_BYTES,
+    )
+
+
+def _seed_store(
+    store: Path, rows: tuple[StoreRecord, ...], retention: RetentionPolicy
+) -> None:
+    """Append rows through a real writer and close it before the restart.
+
+    Parameters
+    ----------
+    store : Path
+        The active store path.
+    rows : tuple[StoreRecord, ...]
+        The rows to append in order.
+    retention : RetentionPolicy
+        The policy the first writer starts with.
+    """
+    writer = segment_writer(store, retention, NOW)
+    try:
+        for row in rows:
+            append_and_wait(writer, row)
+    finally:
+        close_writer(writer, 1.0)
+
+
+def _restart_and_wait_for_seal(store: Path, retention: RetentionPolicy) -> None:
+    """Reopen the store and close it once the startup settle has sealed.
+
+    Parameters
+    ----------
+    store : Path
+        The active store path.
+    retention : RetentionPolicy
+        The reduced-cap policy the restart applies.
+    """
+    writer = segment_writer(store, retention, NOW)
+    try:
+        # Startup publishes its load result before the settle pass seals the
+        # file, so the seal result is the one that says the new active file is
+        # in place. Reading the directory after only the load result races the
+        # worker between its rename and the fresh header.
+        wait_for_results(writer, operation="seal", reason="none")
+    finally:
+        close_writer(writer, 1.0)
+
+
+def test_a_reduced_cap_seals_an_idle_segmented_store_at_restart(
+    tmp_path: Path,
+) -> None:
+    """An idle store cannot hold more rows than its reduced cap allows.
+
+    The active file is below the segment size and holds no expired row, so a
+    restart would previously leave it untouched. The archiver cannot trim the
+    active file, so a store that never appends again would stay over the cap;
+    the restart must seal it and hand the rows to the archiver.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    layout = SegmentLayout.beside(store)
+    _seed_store(
+        store,
+        tuple(window_summary(observed_at=NOW) for _ in range(3)),
+        _segmented_policy(max_records=None),
+    )
+    assert decoded_store(store).records, "the fixture wrote rows to the active file"
+
+    _restart_and_wait_for_seal(store, _segmented_policy(max_records=2))
+    sealed = sorted(layout.sealed_dir.glob("*.jsonl"))
+    assert [path.name for path in sealed] == [segment_name(1)], (
+        "the over-cap active file is sealed at restart"
+    )
+    assert len(decoded_store(sealed[0]).records) == 3, "every row reaches the seal"
+    assert decoded_store(store).records == (), "the active file restarts empty"
+
+
+def test_a_restart_seal_is_trimmed_by_a_settled_archive_run(tmp_path: Path) -> None:
+    """A sealed over-cap file reaches the cap once the archiver has run.
+
+    A restart can only seal the rows the writer holds; the archiver applies the
+    cap to closed history. Run both in sequence and assert that the archived
+    segment keeps the two later rows, so the enforced end state meets the cap.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    layout = SegmentLayout.beside(store)
+    rows = (
+        attributed_record(observed_at=NOW - dt.timedelta(minutes=1)),
+        attributed_record(observed_at=NOW - dt.timedelta(minutes=2)),
+        attributed_record(observed_at=NOW - dt.timedelta(minutes=3)),
+    )
+    _seed_store(store, rows, _segmented_policy(max_records=None))
+    _restart_and_wait_for_seal(store, _segmented_policy(max_records=2))
+
+    report = archive_run(tmp_path, archive_policy(1_000_000, max_records=2))
+
+    assert report.status == "ok", "the settled archive run is not a failure"
+    archived = outcome_records.decode_lines(
+        lzma.decompress((layout.archive_dir / archive_name(1)).read_bytes()).decode(
+            "utf-8"
+        )
+    )
+    assert isinstance(archived, outcome_records.DecodedStore), "the archive decodes"
+    assert archived.records == rows[1:], (
+        "the archive keeps the two later rows and drops the leading one"
+    )
+    assert report.retained_records == 2, "the settled store meets the reduced cap"
+
+
+def test_a_restart_seal_that_cannot_reopen_keeps_the_row_after_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A restart seal whose fresh header failed retries before consuming a row.
+
+    The seal renames the source and releases its rows before installing the new
+    active file. When that install fails at startup, the writer must mark the
+    store as needing repair: the next append settles first and keeps its row,
+    rather than failing because no active file exists.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    _seed_store(
+        store,
+        tuple(window_summary(observed_at=NOW) for _ in range(3)),
+        _segmented_policy(max_records=None),
+    )
+    with mock.patch.object(outcome_store_sealing, "restart_active", return_value=False):
+        writer = segment_writer(store, _segmented_policy(max_records=2), NOW)
+        failed = wait_for_results(writer, operation="seal", reason="save_failed")
+        assert any(result.records == 3 for result in failed), (
+            "the failed restart seal reports the rows it released"
+        )
+
+    try:
+        writer.append(window_summary(observed_at=NOW))
+        wait_for_results(writer, operation="append", reason="none")
+    finally:
+        close_writer(writer, 1.0)
+
+    assert [
+        len(decoded_store(path).records)
+        for path in SegmentLayout.beside(store).sealed_dir.glob("*.jsonl")
+    ] == [3], "the released source is the only sealed segment"
+    assert len(decoded_store(store).records) == 1, (
+        "the append after the fault settles first and keeps its row"
+    )

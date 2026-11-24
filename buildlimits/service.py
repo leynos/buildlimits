@@ -24,6 +24,7 @@ from buildlimits.journal import log
 from buildlimits.journal_native import JournalSink
 from buildlimits.journal_policy import journal_writer
 from buildlimits.metrics import Metrics
+from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.supervisor import Supervisor, SupervisorTelemetry
 from buildlimits.systemd import SystemdError
 from buildlimits.tracing import JournalTracer
@@ -55,7 +56,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
     )
     options = parser.parse_args(argv)
     try:
-        settings = config.load(options.config)
+        settings = config.load(options.config, header_floor=header_floor_bytes())
         lock = startup.acquire_lock(settings.lock_path)
     except (config.ConfigError, startup.StartupError) as error:
         log(str(error))

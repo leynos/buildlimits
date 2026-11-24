@@ -283,3 +283,25 @@ def require_private_regular(metadata: os.stat_result) -> None:
     if metadata.st_uid != os.getuid():
         msg = "archive file is not owned by this user"
         raise UnsafePathError(msg, errno.EPERM)
+
+
+def is_proven_absent(path: Path) -> bool:
+    """Return whether a lookup proves the path does not exist.
+
+    ``Path.exists`` answers ``False`` for every ``OSError``, so it cannot tell
+    an absent file from one the process may not inspect. Only a lookup that
+    names the file as missing is evidence of absence; any other failure leaves
+    the answer unknown.
+
+    Returns
+    -------
+    bool
+        Whether the path is confirmed absent.
+    """
+    try:
+        path.stat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False

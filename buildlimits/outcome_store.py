@@ -14,15 +14,17 @@ import typing as typ
 from buildlimits import outcome_records
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import OutcomeStorePort, StoreFailure, StoreResult
+from buildlimits.outcome_store_clock import Clocks
 from buildlimits.outcome_store_salt import file_salt as file_salt
 from buildlimits.outcome_store_salt import store_path as store_path
-from buildlimits.outcome_store_state import Clocks, StoreFiles
+from buildlimits.outcome_store_state import StoreFiles
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
     import datetime as dt
     from pathlib import Path
 
+    from buildlimits.outcome_archive_history import ActiveHistory
     from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_retention import RetentionPolicy
     from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
@@ -142,6 +144,22 @@ class StoreWriter(OutcomeStorePort):
             except queue.Full:
                 self._publish("append", "save_failed", discarded=1)
 
+    # The writer is the port's adapter: status holds only the port, while the
+    # rows stay owned by the worker-side state machine. Declaring the override
+    # records that this forwarding *is* the port boundary, rather than an
+    # indirection a reader could collapse.
+    @typ.override
+    def retention(self) -> ActiveHistory:
+        """Describe the active file's retained rows for a status snapshot.
+
+        Returns
+        -------
+        ActiveHistory
+            The active count, logical size and observation span. A concurrent
+            append is observed as a whole row or not at all.
+        """
+        return self._files.retention()
+
     def results(self) -> tuple[StoreResult, ...]:
         """Drain aggregated writer outcomes without waiting for I/O.
 
@@ -199,8 +217,14 @@ class StoreWriter(OutcomeStorePort):
         self._thread.join(wait)
 
     def _run(self) -> None:
-        """Initialize once, then serialize every queued operation."""
+        """Initialize once, then serialize every queued operation.
+
+        The worker publishes a status snapshot after each transition it
+        completes, so a diagnostic read never pairs one state's rows with
+        another state's byte size.
+        """
         self._initialize()
+        self._files.publish_snapshot()
         while True:
             try:
                 item = self._work.get(timeout=self._idle_tick)
@@ -208,18 +232,23 @@ class StoreWriter(OutcomeStorePort):
                 # A quiet store must still let aged rows leave. Without this
                 # wake-up a writer that receives no appends would keep them
                 # until shutdown, however long that takes.
-                if self._files.ready:
-                    self._files.expire_if_aged()
+                if self._files.ready and self._files.expire_if_aged():
+                    # The compaction replaced the retained rows and their
+                    # bytes, so a status read must see the compacted state
+                    # rather than the one published before it.
+                    self._files.publish_snapshot()
                 continue
             if item is _STOP:
                 if self._files.ready:
                     self._files.final_flush()
+                    self._files.publish_snapshot()
                 return
             if not self._files.ready:
                 self._publish("append", "save_failed", discarded=1)
                 continue
             line, record = item
             self._files.append(line, record)
+            self._files.publish_snapshot()
 
     def _initialize(self) -> None:
         """Acquire the salt, load bounded state and settle it before appending."""

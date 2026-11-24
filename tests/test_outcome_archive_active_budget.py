@@ -26,7 +26,7 @@ from outcome_archive_helpers import (
 from segment_test_helpers import document, write_private
 
 from buildlimits import outcome_archive_active, outcome_record_encode
-from buildlimits.outcome_archive_exit import EXIT_TEMPFAIL, exit_status
+from buildlimits.outcome_archive_exit import EXIT_CORRUPT, EXIT_TEMPFAIL, exit_status
 from buildlimits.outcome_retention import RetentionPolicy
 
 if typ.TYPE_CHECKING:
@@ -286,9 +286,9 @@ def test_an_unmeasurable_active_file_defers_an_age_aware_byte_budget(
     With an age cutoff the budget counts only the active bytes retention
     keeps, and those cannot be read from an undecodable file. Evicting closed
     history against the whole file could discard an archive the settled store
-    keeps, so the budget is deferred and the run reports that the timer should
-    retry. A record cap configured beside it remains an operational failure,
-    which the active-file tests cover.
+    keeps, so the budget is deferred. The run also reports ``corrupt`` rather
+    than ``ok``: the store holds a file that is not a cache-outcome document,
+    which an operator has to look at.
     """
     store_layout = archived_store(tmp_path, retained=5, active=records(_EXPIRED, 4))
     archive = archives(tmp_path)[0]
@@ -307,8 +307,8 @@ def test_an_unmeasurable_active_file_defers_an_age_aware_byte_budget(
     )
 
     assert archive.read_bytes() == before, "no eviction without a measurement"
-    assert report.status == "unsettled", "the deferred budget is retryable"
-    assert exit_status(report.status) == EXIT_TEMPFAIL, "the timer retries the run"
+    assert report.status == "corrupt", "an undecodable active file needs an operator"
+    assert exit_status(report.status) == EXIT_CORRUPT, "the timer sees a fault"
     evictions = [action for action in report.actions if action.action != "archived"]
     assert not evictions, "nothing is evicted against an unread active file"
 

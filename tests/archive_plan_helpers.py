@@ -119,15 +119,18 @@ def plan(
     inventory: Inventory,
     retention: RetentionPolicy,
     *,
-    active_bytes: int = 0,
-    active_records: int = 0,
+    active: ActiveHistory | None = None,
 ) -> Plan:
     """Plan one run at a fixed wall time.
+
+    The active measurement is passed whole, so a test states the size, row
+    count and completeness of the read it describes without a switch for
+    each. An omitted measurement is an empty, complete active file.
 
     Returns
     -------
     Plan
         The planner's decision.
     """
-    active = ActiveHistory(bytes=active_bytes, records=active_records)
-    return plan_run(inventory, retention, now=NOW, active=active)
+    measured = ActiveHistory() if active is None else active
+    return plan_run(inventory, retention, now=NOW, active=measured)

@@ -7,6 +7,7 @@ import typing as typ
 from buildlimits.outcome_key import Salt as Salt
 
 if typ.TYPE_CHECKING:
+    from buildlimits.outcome_active_history import ActiveHistory
     from buildlimits.outcome_attribution import Generation
     from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_vocabulary import StoreOperation, StoreReason
@@ -71,6 +72,21 @@ class StoreResult:
 
 
 type SaltSource = cabc.Callable[[], Salt | StoreFailure]
+
+
+class StorePublisher(typ.Protocol):
+    """Coalescing sink for one writer operation's outcome."""
+
+    def __call__(
+        self,
+        operation: StoreOperation,
+        reason: StoreReason,
+        *,
+        records: int = 0,
+        discarded: int = 0,
+    ) -> None:
+        """Record one outcome under its operation and reason."""
+        ...
 
 
 class StatisticsPort(typ.Protocol):
@@ -151,6 +167,15 @@ class OutcomeStorePort(typ.Protocol):
 
         Example:
             An idle writer returns ``()``.
+        """
+        ...
+
+    def retention(self) -> ActiveHistory:
+        """Describe the active file's retained rows without waiting.
+
+        Example:
+            A writer still loading reports an incomplete snapshot rather than
+            an empty store.
         """
         ...
 

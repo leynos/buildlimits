@@ -23,7 +23,7 @@ from buildlimits.outcome_record_format import (
     WindowSummary,
 )
 from buildlimits.outcome_segments import SegmentLayout
-from buildlimits.outcome_store_io import read_store
+from buildlimits.outcome_store_read import read_store
 
 if typ.TYPE_CHECKING:
     from pathlib import Path

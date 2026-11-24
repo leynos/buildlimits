@@ -23,6 +23,7 @@ from buildlimits.outcome_archive import (
     run_archive,
 )
 from buildlimits.outcome_archive_codec import report_dict
+from buildlimits.outcome_archive_evictions import eviction_counts
 from buildlimits.outcome_archive_exit import EXIT_USAGE, exit_status
 from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_record_format import MAX_COMPACT_BYTES
@@ -61,7 +62,7 @@ def main(argv: cabc.Sequence[str] | None = None) -> int:
         return int(error.code) if isinstance(error.code, int) else EXIT_USAGE
     config_path = _default_config() if options.config is None else options.config
     try:
-        settings = config.load(config_path)
+        settings = config.load(config_path, header_floor=header_floor_bytes())
         layout = SegmentLayout.beside(_store(options.store, os.environ))
         policy = policy_from_settings(
             settings,
@@ -243,9 +244,53 @@ def _write_report(report: RunReport, *, as_json: bool) -> None:
     _write_history(report)
     print(f"active: {report.active_bytes} logical bytes")
     print(f"cutoff: {_cutoff_text(report)}")
+    _write_limits(report)
     _write_plan(report)
     _write_actions(report)
+    _write_evictions(report)
     _write_diagnostics(report)
+    _write_maintenance(report)
+
+
+def _write_limits(report: RunReport) -> None:
+    """Print the effective policy in the same units the JSON report uses."""
+    limits = report.limits
+    if limits is None:
+        return
+    age = f"{limits.max_age_days} days" if limits.age_eviction else "disabled"
+    logical = str(limits.max_bytes) if limits.byte_eviction else "unlimited"
+    records = "none" if limits.max_records is None else str(limits.max_records)
+    mode = "segmented" if limits.segmented else "in-place"
+    print(
+        f"limits: age {age}, {logical} logical bytes, {records} record cap, "
+        f"{limits.headroom_bytes} headroom bytes, {mode}"
+    )
+
+
+def _write_evictions(report: RunReport) -> None:
+    """Print how many trims and deletions each bound caused."""
+    counts = eviction_counts(report.actions)
+    if not any(counts.values()):
+        return
+    # Only the bounds that removed something are printed, so a run under an age
+    # limit alone does not read as though a byte or record bound acted.
+    performed = ", ".join(
+        f"{cause.replace('_and_', ' and ')} {count}"
+        for cause, count in counts.items()
+        if count
+    )
+    print(f"evictions: {performed}")
+
+
+def _write_maintenance(report: RunReport) -> None:
+    """Print a state-persistence failure an operator may need to act on.
+
+    A run that never expected to install state, such as a dry run, carries no
+    maintenance reason and is already labelled above; only a fault is printed.
+    """
+    reason = report.maintenance.reason
+    if reason is not None:
+        print(f"state: not written ({reason})")
 
 
 def _elapsed(report: RunReport) -> str:

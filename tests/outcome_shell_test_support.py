@@ -6,9 +6,15 @@ from types import SimpleNamespace
 
 from buildlimits.admission import Admission, Launch
 from buildlimits.metrics import Metrics
+from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_attribution import Generation
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import Pending, StatisticsText, StoreResult, Ticket
+from buildlimits.outcome_retention import (
+    DEFAULT_HEADROOM_BYTES,
+    DEFAULT_MAX_AGE_DAYS,
+    LEGACY_MAX_BYTES,
+)
 from buildlimits.supervisor_outcome_setup import NullOutcomeShell, OutcomeShellPort
 from buildlimits.supervisor_outcomes import (
     OutcomeDependencies,
@@ -19,6 +25,7 @@ if typ.TYPE_CHECKING:
     import collections.abc as cabc
     from pathlib import Path
 
+    from buildlimits.config import SupervisorConfig
     from buildlimits.nonblocking_child import ChildReaper
     from buildlimits.outcome_ports import (
         OutcomeStorePort,
@@ -156,6 +163,17 @@ class FakeWriter:
         """
         return ()
 
+    @staticmethod
+    def retention() -> ActiveHistory:
+        """Return an empty active snapshot for retention status tests.
+
+        Returns
+        -------
+        ActiveHistory
+            A complete snapshot with no retained rows.
+        """
+        return ActiveHistory()
+
     def append(self, record: StoreRecord) -> None:
         """Retain an immutable record for the surrounding test.
 
@@ -204,6 +222,7 @@ class OutcomeWorldOptions:
     writer: OutcomeStorePort | None = None
     clock: cabc.Callable[[], float] | None = None
     tracer: JournalTracer | None = None
+    policy_settings: SupervisorConfig | None = None
 
 
 _DEFAULT_OUTCOME_WORLD_OPTIONS = OutcomeWorldOptions()
@@ -244,6 +263,56 @@ def admitted_launch(
     return launch
 
 
+def _policy_value(settings: SupervisorConfig | None, name: str, default: int) -> int:
+    """Read one retention field from optional settings.
+
+    Returns
+    -------
+    int
+        The configured value, or the documented default when the caller
+        supplied no settings.
+    """
+    return default if settings is None else int(getattr(settings, name))
+
+
+def _world_settings(tmp_path: Path, options: OutcomeWorldOptions) -> SimpleNamespace:
+    """Build the retention settings the fake supervisor exposes.
+
+    Returns
+    -------
+    SimpleNamespace
+        A complete policy beside the paths and mode the shell reads.
+    """
+    policy_settings = options.policy_settings
+    return SimpleNamespace(
+        sccache_socket=tmp_path / "sccache.sock",
+        sccache_executable="sccache",
+        recovery_marker=(
+            tmp_path / "barrier"
+            if options.recovery_marker is None
+            else options.recovery_marker
+        ),
+        cache_outcomes="record" if options.recording else "off",
+        cache_mode="sccache",
+        # The status retention section derives its limits from these fields,
+        # so the fake settings must carry a complete policy.
+        cache_outcomes_max_age_days=_policy_value(
+            policy_settings, "cache_outcomes_max_age_days", DEFAULT_MAX_AGE_DAYS
+        ),
+        cache_outcomes_max_bytes=_policy_value(
+            policy_settings, "cache_outcomes_max_bytes", LEGACY_MAX_BYTES
+        ),
+        cache_outcomes_max_records=_policy_value(
+            policy_settings, "cache_outcomes_max_records", 0
+        ),
+        cache_outcomes_archive_headroom_bytes=_policy_value(
+            policy_settings,
+            "cache_outcomes_archive_headroom_bytes",
+            DEFAULT_HEADROOM_BYTES,
+        ),
+    )
+
+
 def make_outcome_world(
     tmp_path: Path,
     options: OutcomeWorldOptions = _DEFAULT_OUTCOME_WORLD_OPTIONS,
@@ -268,17 +337,7 @@ def make_outcome_world(
     )
     writer = FakeWriter() if options.writer is None else options.writer
     supervisor = SimpleNamespace(
-        settings=SimpleNamespace(
-            sccache_socket=tmp_path / "sccache.sock",
-            sccache_executable="sccache",
-            recovery_marker=(
-                tmp_path / "barrier"
-                if options.recovery_marker is None
-                else options.recovery_marker
-            ),
-            cache_outcomes="record" if options.recording else "off",
-            cache_mode="sccache",
-        ),
+        settings=_world_settings(tmp_path, options),
         metrics=metrics,
         tracer=options.tracer,
         clock=lambda: 0.0,

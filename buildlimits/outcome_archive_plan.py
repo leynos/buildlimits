@@ -22,7 +22,7 @@ from buildlimits.outcome_archive_budget import (
     require_measurable_active,
 )
 from buildlimits.outcome_archive_sizes import retained_estimate
-from buildlimits.utc_text import optional_utc_text
+from buildlimits.outcome_archive_summary import PlanSummary as PlanSummary
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -53,7 +53,13 @@ class Plan:
     trims : tuple[tuple[SegmentEntry, Trim], ...]
         Archives to rewrite with a prefix trim.
     deletes : tuple[SegmentEntry, ...]
-        Archives and sealed sources to remove entirely.
+        Archives to remove entirely.
+    eviction_causes : tuple[tuple[int, str], ...]
+        The closed bound (``age``, ``bytes`` or ``records``) that made each
+        planned deletion eligible, sorted by sequence. The cause is recorded
+        as the planner applies each bound, so a report never attributes an
+        eviction to a bound that is disabled. A trim names its own bounds
+        through the fields it carries.
     retained_bytes : int
         Conservative logical bytes that will remain after the plan runs.
     cutoff : datetime | None
@@ -69,93 +75,10 @@ class Plan:
     orphans: tuple[int, ...] = ()
     trims: tuple[tuple[SegmentEntry, Trim], ...] = ()
     deletes: tuple[SegmentEntry, ...] = ()
+    eviction_causes: tuple[tuple[int, str], ...] = ()
     retained_bytes: int = 0
     cutoff: dt.datetime | None = None
     retention_deferred: bool = False
-
-
-@dc.dataclass(frozen=True, slots=True)
-class PlanSummary:
-    """Counts and estimates that describe a plan without naming paths.
-
-    Attributes
-    ----------
-    reconcile : int
-        Sources whose existing archive will be checked.
-    archive : int
-        Sources that will be compressed.
-    heal : int
-        Sidecars that will be rebuilt.
-    orphan : int
-        Sidecars that will be quarantined.
-    trim : int
-        Archives that will be rewritten.
-    delete : int
-        Archives and sealed sources that will be removed.
-    retained_bytes : int
-        Conservative logical bytes remaining after the plan.
-    cutoff : datetime | None
-        The age cutoff applied.
-    retention_deferred : bool
-        Whether a configured budget is decided by a follow-up plan, so the trim
-        and delete counts are not final.
-    """
-
-    reconcile: int = 0
-    archive: int = 0
-    heal: int = 0
-    orphan: int = 0
-    trim: int = 0
-    delete: int = 0
-    retained_bytes: int = 0
-    cutoff: dt.datetime | None = None
-    retention_deferred: bool = False
-
-    @classmethod
-    def of(cls, plan: Plan) -> PlanSummary:
-        """Summarize one plan.
-
-        Parameters
-        ----------
-        plan : Plan
-            The plan to summarize.
-
-        Returns
-        -------
-        PlanSummary
-            The counts and estimates.
-        """
-        return cls(
-            reconcile=len(plan.reconcile),
-            archive=len(plan.archive),
-            heal=len(plan.heal),
-            orphan=len(plan.orphans),
-            trim=len(plan.trims),
-            delete=len(plan.deletes),
-            retained_bytes=plan.retained_bytes,
-            cutoff=plan.cutoff,
-            retention_deferred=plan.retention_deferred,
-        )
-
-    def as_dict(self) -> dict[str, object]:
-        """Return the stable JSON fields for a report.
-
-        Returns
-        -------
-        dict[str, object]
-            A JSON-compatible mapping of counts and estimates.
-        """
-        return {
-            "reconcile": self.reconcile,
-            "archive": self.archive,
-            "heal": self.heal,
-            "orphan": self.orphan,
-            "trim": self.trim,
-            "delete": self.delete,
-            "retained_logical_bytes": self.retained_bytes,
-            "cutoff": optional_utc_text(self.cutoff),
-            "retention_deferred": self.retention_deferred,
-        }
 
 
 def plan_run(
@@ -201,17 +124,15 @@ def plan_run(
     duplicated_sequences = {sealed.sequence for sealed, _archived in duplicates}
     heal = _heal_steps(inventory, duplicated_sequences)
     budget = Budget(policy=policy, cutoff=policy.cutoff(now), active=active)
-    deletes, trims, deferred = _retention_steps(inventory, budget, duplicated_sequences)
-    evicted = {entry.sequence for entry in deletes}
-    # A source retention evicts is removed whole instead of being compressed
-    # and then deleted: compression would only defer the same removal.
-    archive = tuple(
-        entry
-        for entry in inventory.sealed
-        if entry.sequence not in duplicated_sequences and entry.sequence not in evicted
+    deletes, trims, causes, deferred = _retention_steps(
+        inventory, budget, duplicated_sequences
     )
+    archive = _archive_steps(inventory, duplicated_sequences, deletes)
     retained = retained_estimate(
-        inventory, active_bytes=active.budget_bytes, deletes=deletes, trims=trims
+        inventory,
+        active_bytes=active.budget_bytes,
+        deletes=deletes,
+        trims=trims,
     )
     return Plan(
         reconcile=duplicates,
@@ -220,9 +141,34 @@ def plan_run(
         orphans=inventory.orphan_sidecars,
         trims=trims,
         deletes=deletes,
+        eviction_causes=causes,
         retained_bytes=retained,
         cutoff=budget.cutoff,
         retention_deferred=deferred,
+    )
+
+
+def _archive_steps(
+    inventory: Inventory,
+    duplicated: set[int],
+    deletes: tuple[SegmentEntry, ...],
+) -> tuple[SegmentEntry, ...]:
+    """Return the sealed sources this run still has to compress.
+
+    A source retention evicts is removed whole instead of being compressed and
+    then deleted: compression would only defer the same removal. A duplicated
+    source is settled by reconciliation instead.
+
+    Returns
+    -------
+    tuple[SegmentEntry, ...]
+        The sources to archive.
+    """
+    evicted = {entry.sequence for entry in deletes}
+    return tuple(
+        entry
+        for entry in inventory.sealed
+        if entry.sequence not in duplicated and entry.sequence not in evicted
     )
 
 
@@ -268,8 +214,13 @@ def _retention_steps(
     inventory: Inventory,
     budget: Budget,
     duplicated: set[int],
-) -> tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...], bool]:
-    """Decide age and byte eviction over closed history, oldest first.
+) -> tuple[
+    tuple[SegmentEntry, ...],
+    tuple[tuple[SegmentEntry, Trim], ...],
+    tuple[tuple[int, str], ...],
+    bool,
+]:
+    """Decide age, byte and record eviction over closed history, oldest first.
 
     Sealed sources are candidates as well as archives, and both count towards
     the budgets: excluding a sealed source would make the plan delete newer
@@ -285,19 +236,27 @@ def _retention_steps(
     re-plans the budgets. A walk that stops at an entry it cannot yet settle
     defers its budget the same way.
 
+    Each bound is applied in turn and the deletions it plans are attributed to
+    it, so the report names the bound that actually removed an entry. Age runs
+    first, then bytes, then the record cap: an entry the age plan already
+    removed keeps ``age`` even if a later bound would also have removed it.
+
     Returns
     -------
-    tuple[tuple[SegmentEntry, ...], tuple[tuple[SegmentEntry, Trim], ...], bool]
-        Entries to delete, archives to rewrite with a trim, and whether a
-        configured budget was left to the follow-up plan.
+    tuple
+        Entries to delete, archives to rewrite with a trim, the closed cause of
+        each deletion as ``(sequence, cause)`` pairs, and whether a configured
+        budget was left to the follow-up plan.
     """
     candidates = tuple(
         entry for entry in inventory.effective if entry.sequence not in duplicated
     )
     deletes: dict[int, SegmentEntry] = {}
+    causes: dict[int, str] = {}
     if budget.cutoff is not None:
         for entry in candidates:
             plan_age_step(entry, budget.cutoff, deletes)
+    _attribute(deletes, causes, "age")
     trims = age_trims(candidates, budget.cutoff, deletes)
     measurable = _budgets_are_measurable(candidates, budget, deletes, duplicated)
     settled = True
@@ -305,7 +264,9 @@ def _retention_steps(
         # Both walks always run: the record walk composes with the byte walk's
         # decisions, so a stopped byte walk must not skip the cap.
         settled = plan_byte_steps(candidates, budget, deletes, trims)
+        _attribute(deletes, causes, "bytes")
         settled = plan_record_steps(candidates, budget, deletes, trims) and settled
+        _attribute(deletes, causes, "records")
     else:
         # An unmeasurable cap is a run invariant rather than a planning
         # decision: even a pass that defers its walk has to report it.
@@ -320,7 +281,20 @@ def _retention_steps(
     )
     bounded = budget.policy.has_byte_limit or budget.policy.max_records is not None
     deferred = bounded and (not measurable or not settled)
-    return tuple(deletes[sequence] for sequence in sorted(deletes)), trimmed, deferred
+    return (
+        tuple(deletes[sequence] for sequence in sorted(deletes)),
+        trimmed,
+        tuple(sorted(causes.items())),
+        deferred,
+    )
+
+
+def _attribute(
+    deletes: dict[int, SegmentEntry], causes: dict[int, str], cause: str
+) -> None:
+    """Attribute every deletion not yet explained to the bound just applied."""
+    for sequence in deletes:
+        causes.setdefault(sequence, cause)
 
 
 def _budgets_are_measurable(

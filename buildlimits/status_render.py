@@ -8,6 +8,8 @@ function of the document, so every variant can be pinned by a snapshot.
 import typing as typ
 
 from buildlimits.cache_modes import is_cache, mode_name, mode_unavailable
+from buildlimits.status_render_retention import retention_lines
+from buildlimits.status_sections import section_of
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -72,6 +74,7 @@ def render(state: cabc.Mapping[str, object]) -> str:
         *_stray_lines(state),
         *_recovery_lines(state),
         *_outcome_lines(state),
+        *retention_lines(state),
         *([_waiting_line(item) for item in queued] or ["no requests waiting"]),
         *([_group_line(item) for item in groups] or ["no compiler groups"]),
     ])
@@ -86,7 +89,7 @@ def _admission_lines(state: cabc.Mapping[str, object]) -> list[str]:
         One diagnostic for a known non-ready state, or no line for a ready,
         saturated, absent or legacy non-dictionary admission section.
     """
-    admission = _section(state, "admission")
+    admission = section_of(state, "admission")
     if admission is None:
         return []
     admission_state = admission.get("state")
@@ -109,7 +112,7 @@ def _outcome_lines(state: cabc.Mapping[str, object]) -> list[str]:
     list[str]
         The fixed optional section, or an empty list when absent.
     """
-    section = _section(state, "cache_outcomes")
+    section = section_of(state, "cache_outcomes")
     if section is None:
         return []
     if section.get("enabled") is not True:
@@ -187,25 +190,6 @@ def _action_label(state: cabc.Mapping[str, object]) -> str:
     return "fallback recovery action" if is_fallback else "required recovery action"
 
 
-def _section(
-    state: cabc.Mapping[str, object], key: str
-) -> cabc.Mapping[str, object] | None:
-    """Read an optional nested section of the status document.
-
-    Returns
-    -------
-    Mapping[str, object] | None
-        The section, or None when a legacy document omits it or it is not a
-        mapping.
-    """
-    section = state.get(key)
-    return (
-        typ.cast("cabc.Mapping[str, object]", section)
-        if isinstance(section, dict)
-        else None
-    )
-
-
 def _descriptor_lines(state: cabc.Mapping[str, object]) -> list[str]:
     """Render fixed descriptor gauges when a supervisor supplies them.
 
@@ -214,7 +198,7 @@ def _descriptor_lines(state: cabc.Mapping[str, object]) -> list[str]:
     list[str]
         One gauge summary, or no lines for a legacy document.
     """
-    gauges = _section(state, "descriptors")
+    gauges = section_of(state, "descriptors")
     if gauges is None:
         return []
     count = gauges.get("open")
@@ -291,7 +275,7 @@ def _recovery_lines(state: cabc.Mapping[str, object]) -> list[str]:
         refused restart ended on; a clean one adds nothing once its rest has
         passed, so a healthy document renders as it always did.
     """
-    transaction = _section(state, "cache_recovery")
+    transaction = section_of(state, "cache_recovery")
     if transaction is None:
         return []
     phase = transaction.get("phase")

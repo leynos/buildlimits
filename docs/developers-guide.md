@@ -336,14 +336,17 @@ Each module owns one decision. This table is the single module inventory.
 | `predict.dataset_journal`                                                          | The dataset command's journal lookback option and its best-effort provenance note                                                                           |
 | `predict.render_tables`                                                            | The held-out comparison, calibration, ablation and origin tables in the prediction report                                                                   |
 | `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                                                                      |
-| `utc_text`                                                                         | The wall clock as aware UTC, the canonical ISO 8601 text with a trailing `Z`, and its parser                                                                |
+| `utc_text`                                                                         | The system wall clock as aware UTC, re-exporting the canonical text helpers from `utc_format`                                                               |
+| `utc_format`                                                                       | Pure canonical ISO 8601 UTC text with a trailing `Z`, and its parser, with no clock reads                                                                   |
 | `retry_notice`                                                                     | The bounded line a command writes when it retries an unsettled reading                                                                                      |
 | `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper                                                                   |
 | `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar                                                            |
 | `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                                                                             |
-| `config_retention`                                                                 | Retention settings and validation rules shared by the supervisor loader and the archive command                                                             |
+| `config_retention`                                                                 | Retention settings, the `RetentionRule` alias and `retention_rules(header_floor)`; the old module-level `RETENTION_RULES` tuple is gone                     |
 | `config_values`                                                                    | Type coercion from parsed TOML values to supervisor field types                                                                                             |
 | `status`, `status_client`, `status_render`, `status_cli`                           | The status document, its transport, rendering and command                                                                                                   |
+| `status_sections`                                                                  | Reading an optional nested status section, treating an absent or malformed one as empty                                                                     |
+| `status_render_retention`                                                          | The retention line of the rendered status, naming the same bounds as the archive report                                                                     |
 | `admission_readiness`                                                              | Pure admission-progress classification from health, ledger counts and recovery outlook                                                                      |
 | `document_cli`                                                                     | Shared raw `--json` parser for status and recovery document commands                                                                                        |
 | `recover_client`, `recover_cli`                                                    | The recovery request and the `build-limits-recover` command                                                                                                 |
@@ -364,13 +367,19 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_records`                                                                  | Public record API and pure age, count and byte compaction                                                                                                   |
 | `outcome_store`                                                                    | Queue and worker plumbing for the non-blocking writer; bounded result reporting                                                                             |
 | `outcome_store_state`                                                              | The writer's file state machine: compaction and bounded appends                                                                                             |
+| `outcome_store_read`                                                               | Bounded, read-only snapshot and decode entry point for the cache-outcome store                                                                              |
+| `outcome_store_files`                                                              | Private-file primitives: no-follow opens, bounded reads and exclusive temporaries                                                                           |
+| `outcome_store_io`                                                                 | Write-side and durable operations: append, replace, temporary install and rename sync                                                                       |
+| `outcome_store_status`                                                             | Coherent active-file snapshots the writer publishes for status and retention reads                                                                          |
 | `outcome_store_restart`                                                            | What a restart settles before the first append: a torn tail, an oversized segment, an expired file and a replaced salt domain                               |
+| `outcome_store_clock`                                                              | The wall and monotonic clock pair the writer reads together                                                                                                 |
 | `outcome_store_sealing`                                                            | The writer's sealing transition into a closed segment                                                                                                       |
-| `outcome_store_files`                                                              | Private regular-file primitives shared by the store, the sidecars and the history pin: no-follow opens, mode checks and bounded reads                       |
-| `outcome_store_io`                                                                 | Regular-file checks, bounded reads, append writes, atomic replacement and the seal rename                                                                   |
+| `outcome_store_documents`                                                          | The sequence counter and segment metadata documents, each replaced atomically                                                                               |
 | `outcome_store_tail`                                                               | Backward-chunked removal of an unterminated final row a stopped writer left                                                                                 |
 | `outcome_store_salt`                                                               | XDG state-path resolution and private per-host salt creation                                                                                                |
 | `outcome_retention`                                                                | Validated age, byte, record and headroom policy shared by the writer and archiver                                                                           |
+| `outcome_retention_report`                                                         | Pure effective limits, active-history and retained-history value shapes, with one in-memory measurement                                                     |
+| `outcome_retention_history`                                                        | Combining the closed-history inventory with the active snapshot into one retained view                                                                      |
 | `outcome_segments`                                                                 | Segment naming and layout derivation only                                                                                                                   |
 | `outcome_segment_inventory`, `outcome_segment_scan`                                | Read-only, content-free inventory of sealed and archived segments, and the filesystem walk that lists them                                                  |
 | `outcome_segment_sidecar`                                                          | One verified archive or sealed source's sidecar record, with strict validation                                                                              |
@@ -381,15 +390,18 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_history_settle`                                                           | File identity and a repeated scan, used to detect a store that moved under a pin                                                                            |
 | `outcome_history_stream`, `outcome_history_args`                                   | Re-iterable, salt-filtered stream over a pinned snapshot and the shared replay and dataset options                                                          |
 | `outcome_archive`                                                                  | One archive run's planning, execution and retained state                                                                                                    |
-| `outcome_archive_state`                                                            | Deriving the retention floor and persisting the floor and run report                                                                                        |
 | `outcome_archive_context`                                                          | Shared context and result values for one archive run                                                                                                        |
+| `outcome_archive_active`                                                           | Bounded, read-only measurement of the active file for the byte budget, record cap and diagnostics                                                           |
 | `outcome_archive_plan`                                                             | Pure retention and repair plan from the inventory                                                                                                           |
-| `outcome_archive_active`                                                           | Lock-free bounded read of the writer's active file through one descriptor, and the non-regular path it refuses                                              |
+| `outcome_archive_summary`                                                          | The plan summary a report carries, kept apart from the planner's own steps                                                                                  |
 | `outcome_archive_age`                                                              | Which closed history the age rule evicts whole, and which straddling archive it trims                                                                       |
 | `outcome_archive_history`                                                          | The active-file snapshot and the retained-history summary the run report carries                                                                            |
+| `outcome_active_history`                                                           | The pure active-file snapshot and measured-history construction shared by the planner, writer status and report                                             |
 | `outcome_archive_budget`                                                           | Logical-byte and record budgets: oldest-first archive deletion, then one straddling trim                                                                    |
 | `outcome_archive_sizes`                                                            | Planned entry and retained-store sizes shared by the budget walk and the run report                                                                         |
 | `outcome_archive_run`                                                              | Executing one archive plan operation by operation                                                                                                           |
+| `outcome_archive_evict`                                                            | Applying one plan's trims and deletions oldest-first, with quarantine and fault reporting                                                                   |
+| `outcome_archive_evictions`                                                        | The closed eviction-cause vocabulary and the counters a report renders                                                                                      |
 | `outcome_archive_retain`                                                           | Bounded follow-up passes that settle a store the writer may change mid-run                                                                                  |
 | `outcome_archive_verify`                                                           | Streaming XZ write and verification, and the closed segment-fault reasons                                                                                   |
 | `outcome_archive_trim`                                                             | Prefix-trim policy and the policy-drop measurement a byte allowance composes with                                                                           |
@@ -401,10 +413,14 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_lock`                                                             | The archive lock and the disk-headroom guard for one run                                                                                                    |
 | `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication, descriptor-relative removal and atomic state writes                |
 | `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates, syncs and validates each private path component, and returns the descriptor it validated                   |
-| `outcome_archive_report`                                                           | Bounded run report and status vocabulary                                                                                                                    |
+| `outcome_archive_report`                                                           | Bounded run report shape and closed status vocabulary                                                                                                       |
+| `outcome_archive_report_builders`                                                  | The dry, unsettled, unfinished and post-work-failure builders, each taking its clock at the boundary                                                        |
+| `outcome_archive_settled`                                                          | Building one settled run's report, classifying its status and testing whether retention still owes work                                                     |
+| `outcome_archive_report_fields`                                                    | The shared report fields both settled-report builders derive from one store view                                                                            |
 | `outcome_archive_events`                                                           | One bounded `archive_run` metrics event per timer firing                                                                                                    |
 | `outcome_archive_codec`                                                            | Stable JSON rendering of one run report                                                                                                                     |
 | `outcome_archive_exit`                                                             | Mapping a run status to the process exit code a timer records                                                                                               |
+| `outcome_archive_state`                                                            | The retention-floor rule and the state writers, including the pending fallback record                                                                       |
 | `outcome_archive_cli`                                                              | The `build-limits-outcome-archive` timer-facing command                                                                                                     |
 | `outcome_archive_bench`                                                            | Bounded-memory archive benchmark behind `make outcome-archive-bench`                                                                                        |
 | `nonblocking_child`                                                                | Non-blocking helper-process pipes and bounded child reaping for supervisor-loop work                                                                        |
@@ -865,13 +881,14 @@ records the decision.
 The outcome event schema is registered before the supervisor integration is
 enabled. `cache_outcome` carries one bounded classification per cached launch;
 `outcome_reading` and `outcome_store` carry aggregate failure and operation
-counts, and `archive_run` carries one closed status, reason, action counts,
-failed sequences and runtime for a timer firing of the archive command.
-`metrics_report` leaves `cache_outcomes` empty until one of these event types
-is present, and computes attributed coverage from `outcome_attribution` over
-cached `request_admitted` records rather than trusting a separate count field.
-`tracing_export` reserves `statistics_read` and the three store operations with
-the fixed `statistics_query`, `store_io` and `salt` failure categories.
+counts, and `archive_run` carries one closed status, reason, action and
+eviction-cause counts, retained totals, failed sequences and runtime for a
+timer firing of the archive command. `metrics_report` leaves `cache_outcomes`
+empty until one of these event types is present, and computes attributed
+coverage from `outcome_attribution` over cached `request_admitted` records
+rather than trusting a separate count field. `tracing_export` reserves
+`statistics_read` and the three store operations with the fixed
+`statistics_query`, `store_io` and `salt` failure categories.
 
 `OutcomeTelemetry` maps reducer outputs to those metrics and owns the bounded
 `statistics_read` span. `outcome_reading` is transition-only: it carries a
@@ -1012,9 +1029,6 @@ oversized active file is sealed, and an active file whose oldest record
 predates the age cutoff is compacted, so a store that stayed small is not
 exempt from the age bound.
 
-The archiver in `outcome_archive` reads the active file once per plan through
-the bounded no-follow reader, to count the rows and span the writer currently
-holds. It never writes or replaces the file and never takes its queue.
 `outcome_archive_lock` takes a non-blocking exclusive `flock` on
 `cache-outcomes.archive/archive.lock` for the whole run, and its headroom guard
 refuses a run whose temporary files cannot fit; a second invocation reports
@@ -1081,47 +1095,6 @@ redirect the listing or the removal to another directory.
 `outcome_archive_files` owns the per-segment operations: archive, reconcile,
 heal, trim, delete and quarantine. `outcome_archive_quarantine` performs the
 quarantine moves for files a run cannot trust, and `outcome_archive_run`
-executes one plan operation by operation. `outcome_archive_retain` makes the
-bounded follow-up passes: each re-reads the store, performs the archive,
-reconcile, heal and orphan work it finds, and plans the budget over the settled
-inventory, narrowing the pass to work the run has not already applied. It
-detects a seal between its inventory and active-file reads by scanning the
-inventory a second time, suppresses a trim only against the archive measurement
-it was planned for, and confirms settlement with a final plan that mutates
-nothing. The same module owns `settled_snapshot`, the reading a plan and a
-report share: the inventory is scanned on both sides of the active-file read
-and the reading is retried while the two disagree, so a seal cannot leave
-either copy out of a count. `outcome_archive` builds its plan, its dry-run
-report and its run report from that reading, and reports `unsettled` rather
-than a plan when none settles. A run's final report also re-plans retention
-from its own settled reading: the writer can append or seal after the last
-retention pass, and a report that claimed `ok` would tell the timer the store
-is within its bounds while the next firing still has to evict. The re-plan
-ignores archival work, which the next firing picks up as normal, and only
-`trims`, `deletes` or a deferred budget make the run unsettled.
-`outcome_archive_active` reads the writer's active file as a snapshot without
-the archive lock, through one opened descriptor, so its size and rows describe
-the same version even when the writer replaces the path mid-scan. It reads the
-size immediately before the rows and confirms it immediately after them,
-retrying a version the writer appended to, and excludes a final row whose
-newline was not written: the writer truncates a failed append back out, so an
-uncommitted row is not retained history. It refuses any existing path that is
-not a regular file; only an absent file is empty history. Its scan also reports
-the rows and bytes the age rule keeps when it is given a cutoff, and
-`outcome_archive_history` carries that snapshot plus the summary of retained
-rows the report describes. An unmeasured active file leaves a configured byte
-budget without the committed bytes it must count, with or without an age
-cutoff, so `plan_run` defers that walk rather than evicting closed history
-against a whole-file size that includes an append the writer may roll back.
-`outcome_archive_age` owns the age decisions themselves: which entries are
-wholly older than the cutoff and which archive straddles it and is trimmed.
-`outcome_archive_budget` owns the byte budget: it counts an archive's
-uncompressed size from its sidecar plus the active rows the age rule keeps,
-deletes whole archives oldest first, and then trims the single archive that
-straddles the remaining allowance. `plan_record_steps` applies the configured
-record cap to segmented history in the same shape: whole oldest archives are
-deleted while they fit the excess, then the straddling archive is trimmed
-rather than left to break the cap.
 
 The segment contract is defined by `outcome_segments`, which owns naming and
 layout only; `outcome_segment_sidecar` defines the record that describes one
@@ -1150,11 +1123,14 @@ so a gap below the first survivor is still reported instead of being silently
 raised over. `outcome_archive_state.retention_floor` derives the floor a run
 records: it advances only past a contiguous deleted prefix, and its
 `write_state` replaces `retention.json` and the run report together once the
-final snapshot is read. The floor is why evicting old history does not look
-like corruption, so the inventory reports a missing sequence only at or above
-it. `outcome_segment_gaps.retained_gaps` names those sequences for an operator;
-it stops at `MAX_GAP_SEQUENCES` and flags the list as truncated, because a
-restarted counter would otherwise leave no ceiling on one report.
+final snapshot is read. A run that could not replace `retention.json` leaves
+`retention-pending.json` instead, and every read merges the two records and
+uses the higher valid floor, so a fault local to one file does not turn
+completed deletions into reported gaps. The floor is why evicting old history
+does not look like corruption, so the inventory reports a missing sequence only
+at or above it. `outcome_segment_gaps.retained_gaps` names those sequences for
+an operator; it stops at `MAX_GAP_SEQUENCES` and flags the list as truncated,
+because a restarted counter would otherwise leave no ceiling on one report.
 
 `outcome_history` is the read port over all three states.
 `outcome_history_pin.pin_history` takes one consistent snapshot: it walks the
@@ -1191,18 +1167,42 @@ the newest header. `outcome_history_args` defines the shared `--history`,
 `--salt-id` and `--all-salts` imply history mode, and no flag keeps the
 active-store-only behaviour.
 
-`outcome_archive_report` defines the closed report vocabulary. Statuses are
-`ok`, `failed`, `corrupt`, `busy`, `no_headroom` and `unsettled`. The module
-also owns the four report builders the runner uses: `dry_report` from a settled
-inventory and active snapshot, `settled_report` for an executed run's final
-measurement, and `unsettled_report` and `unfinished_report` for a store that
-never held still or a run that could not start. Every builder takes its finish
-time from the same injected clock, which `RunOptions.clock` carries into
+`outcome_archive_report` defines the closed report vocabulary and the report
+shape. Statuses are `ok`, `failed`, `corrupt`, `busy`, `no_headroom` and
+`unsettled`. `outcome_archive_report_builders` owns the builders for
+inspections and runs that could not complete: `dry_report` from a settled
+inventory and active snapshot, `unsettled_report` for a store that never held
+still, and `unfinished_report` and `after_work_failure` for a run that could
+not start or measure its result. Each standalone builder takes the clock that
+reads its finish time as a keyword argument; the two builders that already
+receive the run's context read the clock that context carries.
+`outcome_archive_settled` owns `settled_report`, which maps the `SettledStore`
+an executed run measured into the same report, classifies the run's status and
+tests whether retention still owes work. Every builder takes its finish time
+from the same injected clock, which `RunOptions.clock` carries into
 `ArchiveContext.clock`; `ArchiveContext.quarantine_token` likewise supplies the
 random tag a quarantine name records, so both the report's timing and the
 evidence naming are ports a test can substitute. The report names no path and
 carries no raw exception text; the only path a run prints is an unreadable
 configuration file, on standard error before the report exists.
+
+### 9.1.1. The header floor is injected, not imported
+
+The byte-budget rule rejects a `cache_outcomes_max_bytes` that could not hold
+even the store's replacement header. `config_retention` takes the floor as an
+argument instead of importing the serialization size itself:
+`retention_rules(header_floor)` inserts the header rule when a floor is
+supplied and omits it otherwise, and `config.load` and `config.validate` accept
+the same keyword-only `header_floor`.
+
+The composition edge supplies the value. `buildlimits/service.py` and
+`buildlimits/outcome_archive_cli.py` both pass `header_floor_bytes()` from the
+record encoder, so a supervisor start and a timer firing validate against the
+same figure and neither configuration module depends on the record format.
+
+The consequence is deliberate: a caller that omits `header_floor` gets every
+other rule but not the header check. Tests and tools that construct a
+configuration directly may omit it; production entry points must not.
 
 `outcome_archive_codec` owns the JSON document a report is published in, and
 `outcome_archive_exit` owns the process status: 0 for success, 1 for an
@@ -1225,6 +1225,24 @@ sequences and elapsed seconds, all from the closed vocabularies.
 `outcome_archive_cli` builds the port from the native journal sink only when
 systemd supplies `JOURNAL_STREAM`, so a shell run stays silent and a test run
 never writes to the host journal.
+
+`outcome_retention_report` is the single derivation every diagnostic surface
+uses. `RetentionLimits.of(policy)` describes the effective bounds, and
+`measured_history(records, logical_bytes=...)` summarizes rows a caller already
+holds. Both value shapes are pure and import no clock, filesystem or inventory
+module, so they stay inside the domain's import closure.
+`outcome_retention_history.retained_history(inventory, active)` combines closed
+history and one active snapshot into a `RetainedHistory`; it owns the one
+inventory dependency so the pure shapes do not acquire it. The status document,
+`retention.json` and `last-run.json` all carry these shapes, so they cannot
+disagree about a policy. Neither shape is a cumulative recorder counter or a
+journal query cap, and `complete=False` marks a count that is not exact: an
+unmeasured entry leaves a lower bound, while a replaced active file can leave
+rows counted in both sources. `outcome_archive_active.active_history` performs
+the one bounded, read-only read of the active file. Its measured length is the
+file's contribution to the byte budget and its row count is the contribution to
+the record cap; the same snapshot feeds the archiver's diagnostic `retained`
+document.
 
 `outcome_archive_cli` is the timer-facing surface. `inspect` is a dry run by
 definition; `run --dry-run` plans without taking the lock or writing state; and
@@ -1249,8 +1267,12 @@ The archive tests are `tests/test_outcome_archive.py`,
 `test_outcome_segment_inventory.py`, `test_outcome_segment_scan.py`,
 `test_outcome_segment_sidecar_faults.py`, `test_outcome_segment_state.py`,
 `test_outcome_record_stream.py`, `test_outcome_sealing_bounds.py`,
-`test_outcome_store_tail.py`, `test_outcome_store_sealing.py` and
-`test_outcome_store_sealing_durability.py`.
+`test_outcome_store_tail.py`, `test_outcome_store_sealing.py`,
+`test_outcome_store_sealing_durability.py`, `test_outcome_retention_config.py`,
+`test_outcome_retention_compaction.py`, `test_outcome_retention_report.py`,
+`test_outcome_retention_diagnostics.py`, `test_outcome_archive_reporting.py` and
+`test_outcome_store_snapshot.py`; the store and startup fixtures the retention
+tests share live in `tests/outcome_retention_helpers.py`.
 `test_outcome_archive_subprocess.py` runs the installed console script, and the
 `python -m` form, as separate processes, including two overlapping runs, and
 shares its launcher and configuration with `tests/archive_cli_helpers.py`.

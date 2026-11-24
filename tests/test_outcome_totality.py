@@ -159,6 +159,22 @@ def test_describe_failure_reports_without_disabling_recording(tmp_path: Path) ->
     )
 
 
+def test_a_retention_snapshot_failure_names_the_failed_read(tmp_path: Path) -> None:
+    """A status read names the failed retention snapshot rather than omitting it."""
+    writer = FakeWriter()
+    world = make_outcome_world(tmp_path, OutcomeWorldOptions(writer=writer))
+    shell = typ.cast("OutcomeShell", world.shell)
+
+    with mock.patch.object(writer, "retention", side_effect=OSError("unreadable")):
+        assert shell.retention() == {
+            "limits": None,
+            "active": None,
+            "reason": "snapshot_unavailable",
+        }, "the failed read is named, not raised"
+
+    assert shell.describe()["enabled"] is True, "recording continues unchanged"
+
+
 class _StickyReaper:
     """Own one helper that never settles, so a reap loop cannot empty it."""
 

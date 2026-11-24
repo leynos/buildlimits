@@ -109,35 +109,42 @@ by `build-limits-supervisor --config PATH`. Every key is optional; a missing
 file yields the defaults. Unknown keys and wrongly typed values stop start-up
 with exit status 2, and nothing is half-applied.
 
-| Key                                     | Default                                        | Meaning                                                                                                                                                                                                     |
-| --------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `device`                                | `/dev/guild`                                   | The guildmaster token device                                                                                                                                                                                |
-| `slots`                                 | `2`                                            | The pool's configured capacity, reported by status                                                                                                                                                          |
-| `socket_path`                           | `$XDG_RUNTIME_DIR/buildlimits/supervisor.sock` | Where the supervisor listens                                                                                                                                                                                |
-| `lock_path`                             | `$XDG_RUNTIME_DIR/buildlimits/supervisor.lock` | The singleton lock                                                                                                                                                                                          |
-| `compilers_slice`                       | `buildlimits-compilers.slice`                  | The slice that holds every compiler scope; must end in `.slice`                                                                                                                                             |
-| `cancel_grace_seconds`                  | `10.0`                                         | Seconds between `SIGTERM` and `SIGKILL` for a terminated group                                                                                                                                              |
-| `drain_timeout_seconds`                 | `120.0`                                        | The longest start-up waits for surviving groups to drain                                                                                                                                                    |
-| `cache_mode`                            | `sccache`                                      | `sccache` composes admitted compilers with the managed cache; `kache` composes them with an unowned kache daemon; `direct` runs them without a cache. See [Choose a cache backend](#choose-a-cache-backend) |
-| `cache_outcomes`                        | `off`                                          | `record` opts in to observation-only cache outcome recording; it requires `cache_mode = "sccache"`                                                                                                          |
-| `cache_outcomes_max_age_days`           | `30`                                           | Oldest retained outcome age in days; `0` disables age eviction                                                                                                                                              |
-| `cache_outcomes_max_bytes`              | `12582912` (12 MiB)                            | Logical uncompressed bytes retained across active, sealed and archived history; `0` disables the byte bound and requires segmentation. The default is the legacy 12 MiB bound                               |
-| `cache_outcomes_max_records`            | `0`                                            | Retained-record cap; `0` leaves segmented history uncapped and keeps the legacy 10,000-row cap otherwise                                                                                                    |
-| `cache_outcomes_archive_headroom_bytes` | `25165824` (24 MiB)                            | Temporary disk space an archive run may use; never counted against retained bytes. Must hold at least one 12 MiB segment                                                                                    |
-| `cache_outcomes_archive_preset`         | `6`                                            | XZ preset from 0 (fastest) to 9 (smallest)                                                                                                                                                                  |
-| `sccache_executable`                    | `sccache`                                      | The sccache client used in `sccache` mode                                                                                                                                                                   |
-| `sccache_unit`                          | `buildlimits-sccache.service`                  | The managed cache's user unit                                                                                                                                                                               |
-| `sccache_socket`                        | `$XDG_RUNTIME_DIR/buildlimits/sccache.sock`    | The managed cache's socket                                                                                                                                                                                  |
-| `cache_recovery`                        | `starved`                                      | `starved` or `manual`; see [Recover a retained managed cache](#recover-a-retained-managed-cache)                                                                                                            |
-| `recovery_marker`                       | `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`  | The restart barrier the managed cache unit honours                                                                                                                                                          |
-| `kache_executable`                      | `kache`                                        | The kache client used in `kache` mode; see [Choose a cache backend](#choose-a-cache-backend)                                                                                                                |
-| `kache_socket`                          | **required** in `kache` mode                   | The separately managed kache daemon's socket, exported as `KACHE_SOCKET_PATH`; there is no default                                                                                                          |
-| `kache_cache_dir`                       | unset                                          | The kache store, exported as `KACHE_CACHE_DIR` and checked by health                                                                                                                                        |
+| Key                                     | Default                                        | Meaning                                                                                                                                                                                                                                                                                               |
+| --------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `device`                                | `/dev/guild`                                   | The guildmaster token device                                                                                                                                                                                                                                                                          |
+| `slots`                                 | `2`                                            | The pool's configured capacity, reported by status                                                                                                                                                                                                                                                    |
+| `socket_path`                           | `$XDG_RUNTIME_DIR/buildlimits/supervisor.sock` | Where the supervisor listens                                                                                                                                                                                                                                                                          |
+| `lock_path`                             | `$XDG_RUNTIME_DIR/buildlimits/supervisor.lock` | The singleton lock                                                                                                                                                                                                                                                                                    |
+| `compilers_slice`                       | `buildlimits-compilers.slice`                  | The slice that holds every compiler scope; must end in `.slice`                                                                                                                                                                                                                                       |
+| `cancel_grace_seconds`                  | `10.0`                                         | Seconds between `SIGTERM` and `SIGKILL` for a terminated group                                                                                                                                                                                                                                        |
+| `drain_timeout_seconds`                 | `120.0`                                        | The longest start-up waits for surviving groups to drain                                                                                                                                                                                                                                              |
+| `cache_mode`                            | `sccache`                                      | `sccache` composes admitted compilers with the managed cache; `kache` composes them with an unowned kache daemon; `direct` runs them without a cache. See [Choose a cache backend](#choose-a-cache-backend)                                                                                           |
+| `cache_outcomes`                        | `off`                                          | `record` opts in to observation-only cache outcome recording; it requires `cache_mode = "sccache"`                                                                                                                                                                                                    |
+| `cache_outcomes_max_age_days`           | `30`                                           | Oldest retained outcome age in days; `0` disables age eviction                                                                                                                                                                                                                                        |
+| `cache_outcomes_max_bytes`              | `12582912` (12 MiB)                            | Logical uncompressed bytes retained across active, sealed and archived history; `0` disables the byte bound and requires segmentation. The default is the legacy 12 MiB bound                                                                                                                         |
+| `cache_outcomes_max_records`            | `0`                                            | Cap on retained rows across active and archived history: the planner counts the active file's rows and evicts the oldest closed history to meet it, and the writer applies it to the active file on compaction. `0` keeps the legacy 10,000-row cap in legacy mode and means no cap in segmented mode |
+| `cache_outcomes_archive_headroom_bytes` | `25165824` (24 MiB)                            | Temporary disk space an archive run may use; never counted against retained bytes. Must hold at least one 12 MiB segment                                                                                                                                                                              |
+| `cache_outcomes_archive_preset`         | `6`                                            | XZ preset from 0 (fastest) to 9 (smallest)                                                                                                                                                                                                                                                            |
+| `sccache_executable`                    | `sccache`                                      | The sccache client used in `sccache` mode                                                                                                                                                                                                                                                             |
+| `sccache_unit`                          | `buildlimits-sccache.service`                  | The managed cache's user unit                                                                                                                                                                                                                                                                         |
+| `sccache_socket`                        | `$XDG_RUNTIME_DIR/buildlimits/sccache.sock`    | The managed cache's socket                                                                                                                                                                                                                                                                            |
+| `cache_recovery`                        | `starved`                                      | `starved` or `manual`; see [Recover a retained managed cache](#recover-a-retained-managed-cache)                                                                                                                                                                                                      |
+| `recovery_marker`                       | `$XDG_RUNTIME_DIR/buildlimits/cache-recovery`  | The restart barrier the managed cache unit honours                                                                                                                                                                                                                                                    |
+| `kache_executable`                      | `kache`                                        | The kache client used in `kache` mode; see [Choose a cache backend](#choose-a-cache-backend)                                                                                                                                                                                                          |
+| `kache_socket`                          | **required** in `kache` mode                   | The separately managed kache daemon's socket, exported as `KACHE_SOCKET_PATH`; there is no default                                                                                                                                                                                                    |
+| `kache_cache_dir`                       | unset                                          | The kache store, exported as `KACHE_CACHE_DIR` and checked by health                                                                                                                                                                                                                                  |
 
 _Table 2: Supervisor configuration keys._
 
 Every `cache_outcomes_*` retention key requires `cache_outcomes = "record"`;
 validation rejects one written while recording is off.
+
+Every retention value is a non-negative integer. A boolean, a string, a
+fractional value or one outside the supported range is a configuration error
+rather than a value to coerce: age is limited to 365,000 days, the byte and
+record bounds to 2^63 - 1, the archive preset to 0 to 9, and the headroom to at
+least one 12 MiB segment. Start-up fails with exit status 2 before any recorded
+history is read, moved or deleted, so a mistyped policy never costs records.
 
 Sockets live under `$XDG_RUNTIME_DIR/buildlimits`, falling back to
 `/run/user/UID/buildlimits` when the variable is unset, because Unix socket
@@ -363,9 +370,11 @@ a store the writer keeps changing is visible in the timer's journal.
 
 Each firing also publishes one `archive_run` metric record: its status and
 reason, the archived, trimmed, deleted and quarantined action counts, the
-number of failed sequences, and the elapsed seconds. Records go to the native
-journal only when systemd started the command, because a shell session has no
-journal stream to address; they never include a path.
+closed eviction cause each trim or deletion served, the retained logical bytes,
+row count and unmeasured entries, the number of failed sequences, and the
+elapsed seconds. Records go to the native journal only when systemd started the
+command, because a shell session has no journal stream to address; they never
+include a path.
 
 The plain report's `retained:` line gives the logical bytes against the budget,
 and its `history:` line gives the rows the store retains, the observed span
@@ -401,49 +410,31 @@ retained history. The JSON carries the same figures as `retained_records`,
 `observed_from`, `observed_until` and `unmeasured_entries`.
 
 The writer seals the active file when an append would take it past 12 MiB, so
-the archiver only ever rewrites closed segments. The archiver compresses each
-sealed segment to XZ, verifies the archive against its source, publishes it,
-and only then removes the plain source. A segment that retention has placed
-wholly outside the bounds is the exception: it is removed without being
-compressed, so a run never spends its scratch space archiving history the same
-plan deletes. It holds a private lock of its own and never writes or replaces
-the active file. It does read the active file to measure the rows and span the
-writer currently holds; the read is bounded and refuses a path that is not a
-regular file. The size and the rows come from the same opened version, so a
-writer that replaces the path mid-read cannot pair one version's bytes with
-another's rows. A writer that appends while the scan runs is detected by
-comparing the size immediately before and after it, and the scan is retried so
-both figures describe the same version; a final row whose newline has not been
-written is the writer's append in flight, which a failed write truncates back
-out, so it is not counted.
 
 Retention is one policy shared by the writer, the archiver and the read-only
-history view:
+history view. Whichever bound is reached first evicts the oldest history:
 
+- Age is counted from each row's observation time. A row whose observation
+  time equals the cutoff is retained; one older than the cutoff is not.
 - The byte budget counts logical uncompressed bytes across active, sealed and
-  archived history. An archive's contribution is its sidecar's `logical_bytes`,
-  so compression does not move the boundary. The active file contributes only
-  the bytes of the rows the age rule keeps, because a row the writer will
-  compact away is not retained history; counting it would evict closed history
-  to make room for bytes retention has already released. When the active file
-  cannot be decoded, its committed bytes are unknown, so the byte budget is
-  deferred rather than decided from the whole file, whether or not an age
-  cutoff applies: the whole file includes any append the writer has not
-  committed and may roll back. The run reports `unsettled` and exits 75, and
-  the next firing retries.
+  archived history. The header row and every row's terminating newline are
+  included, and an archive contributes its sidecar's `logical_bytes`, so
+  compression never moves the boundary. The archives' physical XZ size is
+  reported beside that figure but is not compared with the budget. The active
+  file contributes only the bytes of the rows the age rule keeps, because a row
+  the writer will compact away is not retained history; counting it would evict
+  closed history to make room for bytes retention has already released. When
+  the active file cannot be decoded, its committed bytes are unknown, so the
+  byte budget is deferred rather than decided from the whole file, whether or
+  not an age cutoff applies: the whole file includes any append the writer has
+  not committed and may roll back. The run reports `unsettled` and exits 75,
+  and the next firing retries.
 - Eviction is oldest-first. A record whose observation time equals the age
-  cutoff is retained; one older than the cutoff is not.
-- The record cap bounds the retained record count across active, sealed and
-  archived history. The archiver streams the active file once per plan to count
-  the rows the age rule keeps, and counts each sealed source's recorded count,
-  so a store cannot hold the cap in archives while the writer fills another cap
-  beside it. It removes whole oldest archives while they fit inside the excess,
-  then trims the archive that straddles the boundary, so a segmented history is
-  capped rather than exempt. A sealed source is closed history too and is
-  evicted whole when the cap reaches it before the run has compressed it; a
-  source that straddles the boundary is archived first, and the next plan trims
-  its archive. Only the writer's active file is never trimmed, because the
-  writer owns it. A cap of zero leaves segmented history uncapped.
+  cutoff is retained; one older than the cutoff is not. For the byte and record
+  bounds, oldest means earliest in append order: the active file and each
+  archive are logs, so the leading rows are the ones the writer received first.
+  Clock movement can make append order and observation order disagree; only the
+  age bound reads observation time.
 
 A single firing may apply retention over more than one pass. The byte and
 record walks act on the rows that survive the age rule, so while an age trim is
@@ -491,11 +482,65 @@ one that only receives old observations, therefore does not carry its expired
 rows forward indefinitely. An oversized file is sealed first, and the
 archiver's next run applies the age policy to that segment.
 
+Temporary disk use is separate from the budget. Each sealed segment is
+compressed and verified whole before any eviction, and a trim needs room for
+the archive it is rewriting, so `cache_outcomes_archive_headroom_bytes` is a
+floor on free space beside the archive directory rather than part of the
+retained total. Retained bytes can exceed the budget between runs by the
+history sealed since the last one. The run replans after archiving, so one
+successful run brings closed history within the budget unless a failure stops
+it. The archiver evicts closed history only and never rewrites the active file,
+so when the active file alone is over the budget the retained total stays above
+it until the writer next compacts or seals. A running writer keeps the policy
+it loaded at start, so a reduced bound reaches it at the next supervisor start.
+
+A changed bound takes effect where its owner next acts. A running supervisor
+keeps the policy it loaded when it started, so clean shutdown applies the
+bounds it started with rather than any edited ones. Reducing the byte, age or
+record bound therefore compacts or seals the active file at the next supervisor
+start, and evicts closed history at the next archive run. A reduced record cap
+seals a segmented active file so the archiver can trim the closed rows; a byte
+or age bound compacts it in place. No running process rewrites history merely
+because the configuration changed.
+
+A wall-clock jump of more than a day, in either direction, is treated as
+suspect. The writer then skips age eviction for that pass, reports `clock_skew`
+rather than `expired`, and still applies the byte and record bounds; the next
+undisturbed pass applies the real age bound. Future-dated rows stay until the
+clock agrees with them, so moving the clock back does not expire them by age;
+the byte and record bounds still apply.
+
 The retention keys and their defaults are in [Table 2](#supervisor-settings).
 The 12 MiB default is the legacy bound, so a host that writes none of the keys
 keeps its current store shape. Set `cache_outcomes_max_bytes` to a larger
-logical budget to retain more history. Every retention key requires
-`cache_outcomes = "record"`.
+logical budget to retain more history; a budget larger than one 12 MiB segment,
+or `0`, switches the store to segmentation so the active file stays bounded.
+Every retention key requires `cache_outcomes = "record"`.
+
+To retain up to 30 days or 15,000,000,000 logical bytes, whichever is reached
+first, with no hidden row cap:
+
+<!-- tested-example: buildlimits-cache-outcomes-retention -->
+```toml
+cache_outcomes = "record"
+cache_outcomes_max_age_days = 30
+cache_outcomes_max_bytes = 15000000000
+cache_outcomes_max_records = 0
+cache_outcomes_archive_headroom_bytes = 25165824
+```
+
+The same text can be written by an Ansible `copy` or `template` task for
+`~/.config/buildlimits/supervisor.toml`; the supervisor needs no other change
+to honour it.
+
+Configure the retention keys before enabling the archive timer. The archiver
+applies the same policy from the same file, so a timer enabled while the file
+still holds the legacy 12 MiB default evicts archived history down to that
+budget. A deployment that writes none of the keys keeps its pre-timer
+behaviour: one active document, in-place compaction, the 10,000-row cap and no
+archived history. Adding a larger `cache_outcomes_max_bytes` moves the existing
+store into segmented mode at the next start, without rewriting the history
+already on disk.
 
 The 15,000,000,000-byte budget this design targets is not the default. Write
 `cache_outcomes_max_bytes = 15000000000` in `supervisor.toml` before enabling
@@ -510,8 +555,8 @@ The writer and archiver keep their state beside the store:
   `segment-NNNNNNNNNNNN.jsonl`, with `segment-NNNNNNNNNNNN.jsonl.meta.json`
   sidecars.
 - `cache-outcomes.archive/` holds `segment-NNNNNNNNNNNN.jsonl.xz` archives
-  with `.jsonl.xz.json` sidecars, plus `retention.json`, `last-run.json`,
-  `archive.lock` and `quarantine/`.
+  with `.jsonl.xz.json` sidecars, plus `retention.json`,
+  `retention-pending.json`, `last-run.json`, `archive.lock` and `quarantine/`.
 
 The archiver refuses a store whose directories, or any directory above them,
 are symlinks, are not directories, or are writable by another user; such a run
@@ -610,6 +655,84 @@ reservation, so another writer that fills the filesystem after the check still
 stops the pass. A run that meets a full filesystem reports the retryable
 status: nothing is corrupted, and the next timer firing picks the work up once
 space returns.
+
+### Read the retention diagnostics
+
+Three surfaces answer the same two questions separately: what policy is in
+force, and what history it currently retains.
+
+- `build-limits-status` adds a `cache outcomes retention` line while recording
+  is enabled. It names the effective age, byte and record bounds and the active
+  file's row and logical-byte count; an incomplete read says so rather than
+  showing a partial count as exact, and a complete read's count and byte total
+  describe the same state. A snapshot reports `repair_pending` when a refused
+  append left a fragment the writer has not yet compacted away, so the size it
+  measures covers bytes no row accounts for. Its JSON form carries the same
+  `limits` and `active` documents.
+- `retention.json` records the retention floor, the retained logical bytes,
+  the budget, the cutoff, and the `limits` and `retained` documents. The floor
+  advances only across a contiguous run of deletions from its recorded value,
+  so an archive removed beyond a sequence that is already missing does not
+  excuse that missing sequence: it keeps being reported as a gap. With no
+  recorded floor, the walk starts at the lowest sequence the run can account
+  for, counting both surviving history and the archives it deleted itself, so a
+  lost record does not hide a hole below this run's own deletions. A run that
+  cannot replace this file writes its floor to `retention-pending.json`
+  instead; every later read merges the two records and uses the higher valid
+  floor, so a fault local to one file does not turn a completed deletion into a
+  reported gap. A removal counts as completed once the archive itself is
+  confirmed gone: a sidecar cleanup or directory sync that fails afterwards is
+  still reported as a failure, but the deletion advances the floor rather than
+  leaving the sequence to be reported as lost history. A lookup that fails for
+  any other reason, such as an archive the process may no longer inspect,
+  proves neither outcome, so the failure is reported without advancing the
+  floor.
+- `last-run.json` is the full run report. Its `limits`, `retained`,
+  `evictions` and `maintenance` sections are the documents the `--json` form
+  prints.
+
+`limits` describes the policy: `max_age_days`, `max_age_seconds`, `max_bytes`,
+`max_records` (`null` when count is unbounded), `headroom_bytes`,
+`segment_bytes`, `segmented`, `age_eviction` and `byte_eviction`. A zero age or
+byte bound is reported as `0` with its `*_eviction` flag `false`, so "disabled"
+is never mistaken for "retain nothing".
+
+`retained` describes the history those bounds produced: total `record_count` and
+`logical_bytes`, the split across `active_bytes`, `sealed_bytes`,
+`archived_logical_bytes` and `archived_physical_bytes`, `closed_segments`,
+`active_records`, the first and last observation times, the `span_seconds`
+between them, and `complete`. `complete` is `false` when a closed segment's
+metadata is missing, the active file could not be read, or the writer replaced
+the active file while the run or an inspection was measuring it. The counts are
+then not exact: an unmeasured entry leaves a lower bound, while a replacement
+can count rows in both sources and overstate the total. Neither is a claim that
+history was lost. A run or inspection that could not count the active file also
+names the closed `reason` in its report, so the status and the fault behind it
+are readable from the same document. Retained counts are not the recorder's
+cumulative `attributed` and `readings` counters, and neither is a journal
+reader's `--max-records` query cap.
+
+`evictions` counts the trims and deletions a run performed under `age`, `bytes`,
+`records`, `age_and_bytes`, `age_and_records`, `bytes_and_records` and
+`age_and_bytes_and_records`; every key is always present, and only the bounds
+that acted are non-zero. Each action in `actions` also names its reason, and
+`failures`, `gaps`, `missing_sidecars`, `corrupt_sidecars` and
+`orphan_sidecars` identify history that could not be processed. `maintenance`
+reports whether `retention.json` and `last-run.json` were installed, with
+`state_write_failed` when they were not: archives and evictions already
+published stay in place, and the next firing rewrites the state from what is on
+disk. A failed write still gives the retention floor its own attempt, so a
+deletion the run completed is not later reported as a missing sequence when the
+fault was transient. A retry that still cannot replace `retention.json` falls
+back to `retention-pending.json`, which every later read merges with the
+primary record; only when both records refuse the write is the completed
+deletion later reported as a gap. A dry run, a deferred run and a run that
+could not start install no state and report `state_written` as false. A run
+that published archives and then could not measure the result reports
+`retained` as `null` and `reason` as `unreadable`, and still lists the actions
+it performed, so the evictions it did are not hidden by the missing total. Its
+completed deletions are recorded in the floor as well, so a failed measurement
+does not leave permanent gaps unless no state record can be written.
 
 ### Compare offline hit predictors
 
@@ -935,8 +1058,16 @@ the high-water mark and the budget. These are point-in-time diagnostics, not
 history; `build-limits-metrics` summarizes history.
 
 When `cache_outcomes = "record"`, status also shows the number of attributed
-outcomes and completed readings. That optional object and line are absent when
-recording is off.
+outcomes and completed readings, and a `cache outcomes retention` line naming
+the effective age, byte and record bounds with the active file's retained rows.
+Its `retention` object carries the same `limits` document the archive report
+uses, beside an `active` snapshot of the writer's current file. The archive
+report pairs those limits with a `retained` document instead, whose
+`active_records` and `active_bytes` fields describe the same file as the run
+left it. Those optional objects and lines are absent when recording is off; the
+`retention` object is also omitted when the writer cannot supply its snapshot,
+so a status read never fails because history could not be measured. See
+[Read the retention diagnostics](#read-the-retention-diagnostics).
 
 | Exit status | Default: health check                         | With `--ready`                                  |
 | ----------- | --------------------------------------------- | ----------------------------------------------- |
@@ -1462,8 +1593,9 @@ data is inferred for an empty window.
 
 The archive command's `archive_run` record carries the firing's status and
 reason, its archived, trimmed, deleted and quarantined action counts, the
-number of failed sequences and the elapsed time. It is a closed-vocabulary
-adapter record and names no path.
+closed cause each eviction served, the retained logical bytes, row count and
+unmeasured entries, the number of failed sequences and the elapsed time. It is
+a closed-vocabulary adapter record and names no path.
 
 The supervisor also writes OpenTelemetry `scope_placement` spans to the native
 journal. An adapter writes `adapter_restart_retry` only when it has to retry

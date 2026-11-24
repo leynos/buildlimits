@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from outcome_process_test_helpers import sampler_tree
 from outcome_shell_test_support import make_outcome_world
-from outcome_store_helpers import window_summary
+from outcome_test_helpers import window_summary
 
 from buildlimits import proc_trees
 from buildlimits.outcome_attribution import Generation

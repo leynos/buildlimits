@@ -1,7 +1,6 @@
 """Shared factories for outcome-store tests, with the result waits re-exported."""
 
 import contextlib
-import datetime as dt
 import threading
 import time
 import typing as typ
@@ -11,14 +10,15 @@ import pytest
 from outcome_result_waits import wait_for_records as wait_for_records
 from outcome_result_waits import wait_for_results as wait_for_results
 from outcome_store_clock import FIXED_NOW as _NOW
+from outcome_test_helpers import window_summary as window_summary
 
 from buildlimits import outcome_records, outcome_store_state
 from buildlimits.outcome_ports import StoreResult
-from buildlimits.outcome_record_format import WindowSummary
 from buildlimits.outcome_store import StoreWriter
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
     from pathlib import Path
 
     from buildlimits.outcome_key import Salt
@@ -31,43 +31,24 @@ _SALT_NAME = "cache-outcomes.salt"
 _WAIT_SECONDS = 2.0
 
 
-def window_summary(
-    *,
-    server_version: str = "0.14.0",
-    observed_at: dt.datetime = dt.datetime(2026, 10, 25, tzinfo=dt.UTC),
-) -> WindowSummary:
-    """Build one small valid row for store-writer contracts.
-
-    Returns
-    -------
-    WindowSummary
-        A balanced one-group summary with fixed test values.
-
-    Examples
-    --------
-    ``window_summary().window_groups`` is one.
-    """
-    return WindowSummary(
-        observed_at=observed_at,
-        server_version=server_version,
-        window_groups=1,
-        requests_not_compile=0,
-        requests_not_cacheable=0,
-        predicted_not_compile=0,
-        predicted_declined=0,
-        predicted_cacheable=1,
-    )
-
-
-def wait_for_salt(writer: StoreWriter) -> Salt | StoreFailure:
+def wait_for_salt(
+    writer: StoreWriter, timeout: float = _WAIT_SECONDS
+) -> Salt | StoreFailure:
     """Wait for the writer's startup salt handoff during a test.
+
+    Parameters
+    ----------
+    writer : StoreWriter
+        The writer whose startup result is awaited.
+    timeout : float
+        Seconds to allow the worker to publish its salt.
 
     Returns
     -------
     Salt or StoreFailure
         The writer's startup result.
     """
-    deadline = time.monotonic() + _WAIT_SECONDS
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         result = writer.salt_result()
         if result is not None:
@@ -144,7 +125,12 @@ def salt_path(path: Path) -> Path:
     return path.with_name(_SALT_NAME)
 
 
-def start_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
+def start_writer(
+    path: Path,
+    *,
+    queue_capacity: int = 4096,
+    wall_clock: cabc.Callable[[], dt.datetime] | None = None,
+) -> StoreWriter:
     """Start a writer for one isolated temporary store.
 
     Returns
@@ -152,10 +138,19 @@ def start_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
     StoreWriter
         The new asynchronous writer.
     """
-    return StoreWriter(path, queue_capacity=queue_capacity, wall_clock=lambda: _NOW)
+    return StoreWriter(
+        path,
+        queue_capacity=queue_capacity,
+        wall_clock=(lambda: _NOW) if wall_clock is None else wall_clock,
+    )
 
 
-def ready_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
+def ready_writer(
+    path: Path,
+    *,
+    queue_capacity: int = 4096,
+    wall_clock: cabc.Callable[[], dt.datetime] | None = None,
+) -> StoreWriter:
     """Start a writer after its startup salt and compaction have completed.
 
     Returns
@@ -167,12 +162,12 @@ def ready_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
     --------
     ``ready_writer(path)`` returns only after startup compaction completes.
     """
-    writer = start_writer(path, queue_capacity=queue_capacity)
+    writer = start_writer(path, queue_capacity=queue_capacity, wall_clock=wall_clock)
     try:
         wait_for_salt(writer)
         wait_for_results(writer, operation="compact", reason="none")
     except BaseException:
-        writer.close(1.0)
+        close_writer(writer, 1.0)
         raise
     return writer
 
@@ -196,16 +191,58 @@ def segment_writer(
         wait_for_salt(writer)
         wait_for_results(writer, operation="load")
     except BaseException:
-        writer.close(1.0)
+        close_writer(writer, 1.0)
         raise
     return writer
 
 
 @contextlib.contextmanager
+def append_completion_barrier(finished: threading.Event) -> cabc.Generator[None]:
+    """Mark an event once a writer append, post-append ageing included, returns.
+
+    ``StoreFiles.append`` publishes its success result before it reads the
+    clock to decide whether the oldest row has aged. A test that advanced the
+    clock on the result could move it before that read, so the worker would
+    observe a different skew or cutoff. The event is set after the append.
+
+    Parameters
+    ----------
+    finished : threading.Event
+        The event the test clears before each append and waits on afterwards.
+
+    Yields
+    ------
+    None
+        While the writer's append publishes ``finished`` when it returns.
+    """
+    append = outcome_store_state.StoreFiles.append
+
+    def append_and_signal(
+        files: outcome_store_state.StoreFiles,
+        line: bytes,
+        record: StoreRecord,
+    ) -> None:
+        """Run the writer's append, then mark its post-append ageing done."""
+        try:
+            append(files, line, record)
+        finally:
+            finished.set()
+
+    with mock.patch.object(outcome_store_state.StoreFiles, "append", append_and_signal):
+        yield
+
+
+@contextlib.contextmanager
 def running_writer(
-    path: Path, *, queue_capacity: int = 4096
+    path: Path,
+    *,
+    queue_capacity: int = 4096,
+    wall_clock: cabc.Callable[[], dt.datetime] | None = None,
 ) -> cabc.Generator[StoreWriter]:
     """Yield an initialized writer and always close its worker afterwards.
+
+    A test that asserts against a fixed instant passes ``wall_clock`` so the
+    writer's retention decisions do not depend on when the test runs.
 
     Yields
     ------
@@ -216,11 +253,16 @@ def running_writer(
     --------
     ``with running_writer(path) as writer`` closes the worker on exit.
     """
-    writer = ready_writer(path, queue_capacity=queue_capacity)
+    writer = ready_writer(path, queue_capacity=queue_capacity, wall_clock=wall_clock)
     try:
         yield writer
-    finally:
+    except BaseException:
+        # Never mask the test's own failure with a shutdown assertion, but
+        # still wait for the worker so a write cannot outlive the test.
         writer.close(1.0)
+        worker_exited(writer, 1.0)
+        raise
+    close_writer(writer, 1.0)
 
 
 def load_and_close(
@@ -334,66 +376,3 @@ def assert_load_result(
     """
     if StoreResult("load", reason, 0, discarded) not in results:
         pytest.fail(f"load reason {reason!r} reports {discarded} discarded rows")
-
-
-@contextlib.contextmanager
-def append_completion_barrier(finished: threading.Event) -> cabc.Generator[None]:
-    """Mark an event once a writer append, post-append ageing included, returns.
-
-    ``StoreFiles.append`` publishes its success result before it reads the
-    clock to decide whether the oldest row has aged. A test that advanced the
-    clock on the result could move it before that read, so the worker would
-    observe a different skew or cutoff. The event is set after the append.
-
-    Parameters
-    ----------
-    finished : threading.Event
-        The event the test clears before each append and waits on afterwards.
-
-    Yields
-    ------
-    None
-        While the writer's append publishes ``finished`` when it returns.
-    """
-    append = outcome_store_state.StoreFiles.append
-
-    def append_and_signal(
-        files: outcome_store_state.StoreFiles,
-        line: bytes,
-        record: StoreRecord,
-    ) -> None:
-        """Run the writer's append, then mark its post-append ageing done."""
-        try:
-            append(files, line, record)
-        finally:
-            finished.set()
-
-    with mock.patch.object(outcome_store_state.StoreFiles, "append", append_and_signal):
-        yield
-
-
-@contextlib.contextmanager
-def stalled_append() -> cabc.Generator[tuple[threading.Event, threading.Event]]:
-    """Pause the first writer append until the test releases it.
-
-    Yields
-    ------
-    tuple[Event, Event]
-        An entered signal and a release signal for deterministic queue tests.
-    """
-    entered = threading.Event()
-    release = threading.Event()
-    append_line = outcome_store_state.append_line
-
-    def stall(store: Path, line: bytes) -> None:
-        """Delay the first append before calling the underlying writer."""
-        if not entered.is_set():
-            entered.set()
-            release.wait(5.0)
-        append_line(store, line)
-
-    try:
-        with mock.patch.object(outcome_store_state, "append_line", side_effect=stall):
-            yield entered, release
-    finally:
-        release.set()

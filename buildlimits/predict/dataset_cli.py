@@ -11,9 +11,10 @@ import sys
 import typing as typ
 from pathlib import Path
 
-from buildlimits import outcome_history, outcome_store_io
+from buildlimits import outcome_history
 from buildlimits.outcome_history_args import add_history_arguments, selection_from
 from buildlimits.outcome_record_format import RecordFailure
+from buildlimits.outcome_store_read import read_store
 from buildlimits.outcome_store_salt import store_path
 from buildlimits.predict.config_loader import load_config as _read_config
 from buildlimits.predict.dataset import Snapshot, build_snapshot
@@ -229,7 +230,7 @@ def _read(store: Path) -> DecodedStore | int:
         An exit status on failure, otherwise the decoded store.
     """
     try:
-        decoded = outcome_store_io.read_store(store)
+        decoded = read_store(store)
     except (OSError, ValueError) as error:
         print(f"build-limits-predict-dataset: {error}", file=sys.stderr)
         return 1

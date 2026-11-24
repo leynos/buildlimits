@@ -11,6 +11,7 @@ import typing as typ
 
 from buildlimits import outcome_records, outcome_segments
 from buildlimits.outcome_segment_state import read_sequence
+from buildlimits.outcome_store_documents import write_metadata, write_sequence
 from buildlimits.outcome_store_io import (
     ensure_directory,
     prepare_store,
@@ -18,8 +19,6 @@ from buildlimits.outcome_store_io import (
     store_size,
     sync_file,
     sync_rename,
-    write_metadata,
-    write_sequence,
 )
 from buildlimits.utc_text import optional_utc_text, utc_text
 
@@ -277,6 +276,10 @@ def store_has_rows(path: Path) -> bool:
 def restart_active(files: StoreFiles) -> bool:
     """Install a fresh header-only active file.
 
+    The replacement carries nothing from the file it replaces, so any fragment
+    a failed append left behind is gone with it and the writer's rows and byte
+    size describe the new file exactly.
+
     Returns
     -------
     bool
@@ -289,6 +292,7 @@ def restart_active(files: StoreFiles) -> bool:
         replace_temp(prepare_store(files.path, header), files.path)
     except OSError:
         return False
+    files.torn_tail = False
     return True
 
 

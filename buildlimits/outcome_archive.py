@@ -12,11 +12,12 @@ import typing as typ
 
 from buildlimits import (
     outcome_archive_events,
+    outcome_archive_evict,
     outcome_archive_fs,
     outcome_archive_lock,
-    outcome_archive_report,
     outcome_archive_retain,
     outcome_archive_run,
+    outcome_archive_settled,
     outcome_archive_state,
     outcome_segment_inventory,
     outcome_segment_state,
@@ -27,13 +28,21 @@ from buildlimits.outcome_archive_history import SettledStore
 from buildlimits.outcome_archive_plan import PlanSummary, plan_run
 from buildlimits.outcome_archive_quarantine import fresh_quarantine_token
 from buildlimits.outcome_archive_report import (
+    BUSY,
+    NO_HEADROOM,
+    UNREADABLE,
+    Maintenance,
     RunOptions,
     RunReport,
     RunStatus,
+    Unfinished,
+)
+from buildlimits.outcome_archive_report_builders import (
     dry_report,
     unfinished_report,
     unsettled_report,
 )
+from buildlimits.outcome_archive_unmeasured import unmeasured_after_work
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -137,23 +146,28 @@ def _attempt_run(context: ArchiveContext, selected: RunOptions) -> RunReport:
         with outcome_archive_lock.ArchiveLock(context.layout.lock_file):
             return _execute_locked(context, context.policy, started)
     except outcome_archive_lock.ArchiveBusyError:
-        return unfinished_report(started, "busy", "busy", clock=context.clock)
+        return unfinished_report(started, BUSY, context, dry_run=selected.dry_run)
     except outcome_archive_lock.NoHeadroomError:
         return unfinished_report(
-            started, "no_headroom", "no_headroom", clock=context.clock
+            started, NO_HEADROOM, context, dry_run=selected.dry_run
         )
     except UnknownActiveHistoryError:
         # The record cap counts the writer's unsealed rows. A run that cannot
         # read them cannot show the store is within the cap, so it reports an
         # operational failure rather than counting the active file as empty.
-        return unfinished_report(started, "failed", "unreadable", clock=context.clock)
+        return unfinished_report(started, UNREADABLE, context, dry_run=selected.dry_run)
     except OSError as error:
         # The headroom check reads free space once, before the pass, so the
         # filesystem can still fill while this run works. A full filesystem is
         # retryable; anything else needs an operator.
-        reason = outcome_archive_run.failure_reason(error)
+        reason = outcome_archive_evict.failure_reason(error)
         status: RunStatus = "no_headroom" if reason == "no_headroom" else "failed"
-        return unfinished_report(started, status, reason, clock=context.clock)
+        return unfinished_report(
+            started,
+            Unfinished(status, reason),
+            context,
+            dry_run=selected.dry_run,
+        )
 
 
 def _inspect(
@@ -171,8 +185,10 @@ def _inspect(
         context.layout, policy, started, on_retry=context.on_retry
     )
     if not settled:
-        return unsettled_report(started, dry_run=True, clock=context.clock)
-    return dry_report(_archive_run(context, plan), active, inventory)
+        return unsettled_report(started, context, dry_run=True)
+    return dry_report(
+        _archive_run(context, plan), active, inventory, clock=context.clock
+    )
 
 
 def _execute_locked(
@@ -195,9 +211,23 @@ def _execute_locked(
         context.layout, policy, started, on_retry=context.on_retry
     )
     if not settled:
-        return unsettled_report(started, clock=context.clock)
+        return unsettled_report(started, context)
     floor, report = _execute(_archive_run(context, plan))
-    outcome_archive_state.write_state(context.layout, floor, report)
+    if floor is None:
+        return report
+    try:
+        outcome_archive_state.write_state(context.layout, floor, report)
+    except OSError:
+        # The archive and its evictions are real even when the state could not
+        # be replaced. The floor gets its own attempt, so completed deletions
+        # are not reported as gaps later.
+        outcome_archive_state.write_floor_after_failure(context.layout, floor, report)
+        return dc.replace(
+            report,
+            status="failed",
+            reason="state_write_failed",
+            maintenance=Maintenance(state_written=False, reason="state_write_failed"),
+        )
     return report
 
 
@@ -256,25 +286,47 @@ def _archive_run(context: ArchiveContext, plan: Plan) -> outcome_archive_run.Arc
 
 def _execute(
     run: outcome_archive_run.ArchiveRun,
-) -> tuple[int, RunReport]:
+) -> tuple[int | None, RunReport]:
     """Prepare the store, perform the plan and report what settled.
 
     Persisting the report is left to the locked caller: writing state is a
     separate effect from deciding what the run achieved.
 
+    A state write that fails does not discard the report of work already done:
+    the archive and its evictions are real even when ``retention.json`` could
+    not be replaced. The run reports ``failed`` with ``state_write_failed``,
+    so a timer retries and the next run rewrites the state from disk.
+
+    The floor gets its own attempt before that failure is returned: a later
+    run that deletes nothing learns about this run's deletions only from the
+    recorded floor, so a transient failure must not turn them into permanent
+    gaps. A retry that still cannot replace ``retention.json`` falls back to
+    ``retention-pending.json``, which readers merge with the primary record;
+    only when both refuse the write is the loss reported as a gap.
+
     Returns
     -------
-    tuple[int, RunReport]
-        The retention floor the run recorded, and its report.
+    tuple[int | None, RunReport]
+        The recorded floor, when measured, and the report.
     """
     _prepare(run.context.layout, run.context.policy)
-    outcome = _perform(run)
-    floor = outcome_archive_state.retention_floor(
-        outcome_segment_inventory.read_inventory(run.context.layout),
-        outcome_segment_state.read_retention_floor(run.context.layout),
-        outcome,
-    )
-    return floor, _report(run, outcome, floor)
+    outcome = outcome_archive_run.RunOutcome()
+    try:
+        _perform(run, outcome)
+        floor = outcome_archive_state.retention_floor(
+            outcome_segment_inventory.read_inventory(run.context.layout),
+            outcome_segment_state.read_retention_floor(run.context.layout),
+            outcome,
+        )
+        return floor, _report(run, outcome, floor)
+    except UnknownActiveHistoryError:
+        return unmeasured_after_work(run, outcome, "unreadable")
+    except OSError as error:
+        # A full filesystem stays retryable even though the work succeeded, so
+        # the reason keeps the classification the earlier headroom check uses.
+        return unmeasured_after_work(
+            run, outcome, outcome_archive_evict.failure_reason(error)
+        )
 
 
 def _report(
@@ -304,7 +356,7 @@ def _report(
         # bind rows to one version of the store. Report it as retryable rather
         # than recording an undercount as success.
         outcome.retention_unsettled = True
-    elif _retention_owes_work(final, final_active, run):
+    elif outcome_archive_settled.retention_owes_work(final, final_active, run):
         # The writer can append or seal between the last retention pass and
         # this read. The report must not claim the store is within its bounds
         # when the next firing still has history to evict.
@@ -313,29 +365,9 @@ def _report(
         inventory=final,
         active=final_active,
         retention_unsettled=outcome.retention_unsettled,
+        is_settled=snapshot_settled,
     )
-    return outcome_archive_report.settled_report(run, outcome, settled)
-
-
-def _retention_owes_work(
-    inventory: Inventory, active: ActiveHistory, run: outcome_archive_run.ArchiveRun
-) -> bool:
-    """Whether the final snapshot still calls for retention work.
-
-    The writer never takes the archive lock, so it can append or seal between
-    the last retention pass and this read. A report that claimed success over
-    that store would tell the timer the budget is met while the next firing
-    still has to trim or delete. Only retention decides this: a source sealed
-    just before the read is archival work the next firing picks up, and the
-    report already counts its bytes.
-
-    Returns
-    -------
-    bool
-        True when the plan still evicts history or defers a budget.
-    """
-    pending = plan_run(inventory, run.context.policy, now=run.started_at, active=active)
-    return bool(pending.trims or pending.deletes or pending.retention_deferred)
+    return outcome_archive_settled.settled_report(run, outcome, settled)
 
 
 def _prepare(layout: SegmentLayout, policy: RetentionPolicy) -> None:
@@ -345,16 +377,15 @@ def _prepare(layout: SegmentLayout, policy: RetentionPolicy) -> None:
     outcome_archive_lock.require_headroom(layout.archive_dir, policy.headroom_bytes)
 
 
-def _perform(run: outcome_archive_run.ArchiveRun) -> outcome_archive_run.RunOutcome:
+def _perform(
+    run: outcome_archive_run.ArchiveRun, outcome: outcome_archive_run.RunOutcome
+) -> None:
     """Perform the plan and the retention passes it enables.
 
-    Returns
-    -------
-    RunOutcome
-        The actions and failures the run recorded, including whether its
-        retention passes still owe work.
+    Both phases run inside the caller's completed-work recovery: a retention
+    pass re-plans from the store this run has just published, so a file it
+    cannot read must record the deletions ``perform`` already made rather
+    than escape as a report that omits them.
     """
-    outcome = outcome_archive_run.RunOutcome()
     outcome_archive_run.perform(run, outcome)
     outcome.retention_unsettled = not outcome_archive_retain.retain(run, outcome)
-    return outcome

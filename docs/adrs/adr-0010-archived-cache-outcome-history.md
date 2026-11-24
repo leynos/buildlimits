@@ -114,7 +114,8 @@ already gone. Rejected.
 The writer seals the active document at a fixed high-water mark by atomic
 rename. A separate archiver compresses each sealed source to XZ, verifies the
 archive, publishes it without clobbering, then removes the source. It holds a
-private lock of its own and never opens the active file. Chosen.
+private lock of its own, never writes the active file, and reads it once,
+bounded, to report the retained history. Chosen.
 
 Table 1 compares the options on the properties the decision drivers name.
 
@@ -141,59 +142,22 @@ disagree about a bound.
   one older than the cutoff is not.
 - The byte budget is `cache_outcomes_max_bytes`. It counts logical uncompressed
   bytes across active, sealed and archived history: a sealed file by its
-  `stat`, an archive by its sidecar's `logical_bytes`. The active file
-  contributes only the bytes of the rows the age rule keeps, measured in the
-  same scan that counts them: a row the writer will compact away is not
-  retained history, and counting it would evict closed history to make room for
-  bytes retention has already released. When the active file cannot be decoded,
-  the committed bytes are unknown, so the byte walk is deferred rather than
-  decided from the whole file, whether or not an age cutoff applies: the whole
-  file includes any append the writer has not committed and may roll back, so
-  evicting against it could discard an archive the settled store keeps. Zero
-  disables the byte bound.
+  `stat`, an archive by its sidecar's `logical_bytes`. The header row and each
+  row's terminating newline are part of that total. The active file contributes
+  only the bytes of the rows the age rule keeps, measured in the same scan that
+  counts them: a row the writer will compact away is not retained history, and
+  counting it would evict closed history to make room for bytes retention has
+  already released. When the active file cannot be decoded, the committed bytes
+  are unknown, so the byte walk is deferred rather than decided from the whole
+  file, whether or not an age cutoff applies: the whole file includes any
+  append the writer has not committed and may roll back, so evicting against it
+  could discard an archive the settled store keeps. Zero disables the byte
+  bound, and is reported as a disabled bound rather than a zero-byte target.
 - The record cap is `cache_outcomes_max_records`. A positive value applies in
   either mode. When it is omitted, a segmented store has no count cap and a
   legacy store keeps the historical 10,000-record cap. The cap bounds the whole
   store, so the archiver counts the active rows the age rule keeps and each
   sealed source's recorded count as well as the surviving archives.
-  Oldest-first eviction considers archives and sealed sources together: a
-  sealed source outside the budget is deleted whole rather than compressed into
-  an archive the same run would remove, while the writer's active file stays
-  outside the archiver's reach, and a sealed source that straddles the age or
-  byte cutoff is archived untrimmed and trimmed by the run's follow-up plan.
-  The walks act only on measured history: while a surviving sealed source has
-  no writer metadata, or an archive has no trustworthy sidecar, the plan cannot
-  tell which rows will survive and leaves the whole budget to its follow-up
-  pass rather than choose a deletion from a partial total. A source the writer
-  seals during the run is discovered by that follow-up pass and archived before
-  the budget is planned over it, so a cap can still be met in one firing. A
-  pass does not repeat a trim against the archive version it already rewrote,
-  but the same allowance proposed for a re-measured archive is a new decision,
-  because the active file can re-grow the store past the cap after a rewrite. A
-  pass that quarantines an archive or a source also stops before eviction: the
-  quarantined rows were part of the total the budget was planned over, so
-  eviction waits for a fresh plan. A seal that lands between a pass's inventory
-  and active-file reads is detected by reading the inventory again, and the
-  pass is replanned rather than counting neither copy. The final report is
-  bounded the same way: the inventory is scanned on both sides of the
-  active-file read and the reading is retried until the two scans agree, so a
-  seal cannot leave either copy out of the reported count and span. `inspect`
-  and `run --dry-run` plan and report from that same settled reading, so a plan
-  and its figures describe one version of the store, and its `active_bytes`
-  comes from the reading its row count came from. If new seals keep the bounded
-  follow-up passes, or the plan's or report's readings, from settling the
-  store, the run reports `unsettled` and exits 75 rather than claiming success;
-  the next firing retries.
-- The active file is measured through one opened descriptor, so its size and
-  its rows describe the same version even when the writer replaces the path
-  with a compacted or sealed file mid-scan. The size is read immediately before
-  the scan and confirmed immediately after it, and a scan whose version changed
-  is retried, so an append during the scan cannot pair the longer file's rows
-  with the earlier size. An append is committed by its newline, so a final row
-  without one is the writer's append in flight, which a failed write truncates
-  back out; it is excluded from the rows a budget counts. A path that is not a
-  regular file is refused rather than counted, because following a link would
-  let a file outside the store decide retention.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
   segment, or a budget of zero, makes the writer seal closed segments. The
   default budget remains the legacy 12 MiB, so a deployment that writes none of
@@ -222,20 +186,7 @@ Ownership follows file state, not a shared lock.
   next sequence counter and the segment metadata durably, then renames the
   active file into the sealed directory and installs a fresh header-only active
   file. An empty store installs a header-only active file instead of claiming a
-  sequence, so the sequence series has no artificial first gap. The age bound
-  is applied on ordinary appends as well: once the oldest retained row is older
-  than the cutoff, the writer compacts the active file, so a quiet store cannot
-  keep expired rows until the next restart. Compaction drops every row observed
-  before the cutoff, which makes the check self-limiting: it costs a clock read
-  per append and a rewrite only when the bound is crossed.
-- The archiver never appends to the active file and never takes the writer's
-  queue. It reads the file's size with `lstat` to include those bytes in the
-  retained total, and streams its rows once per plan to count them against the
-  record cap. Because the writer may be mid-append, an unterminated final row
-  is dropped exactly as a torn tail is dropped from a sealed source; a file
-  that cannot be read at all contributes its size alone to the diagnostic
-  totals, a configured byte budget is deferred until the next firing can read
-  its committed bytes, and that firing counts its rows again.
+  sequence that never produces a source, so an idle seal leaves no gap.
 - Every archiver mutation runs under a non-blocking exclusive `flock` on
   `cache-outcomes.archive/archive.lock`. A second invocation reports `busy` and
   exits 75 instead of waiting. The writer never takes that lock, so there is no
@@ -380,9 +331,10 @@ Each completed run writes two documents into the archive directory:
 
 - `retention.json` records the schema, the lowest intentionally retained
   sequence (the retention floor), retained logical bytes, the budget, the
-  cutoff and the update time.
+  cutoff, the update time, and the `limits` and `retained` documents.
 - `last-run.json` is the run's report document, carrying the fields `--json`
-  prints.
+  prints, including `limits`, `retained`, `evictions`, `maintenance` and the
+  per-action reasons.
 
 Both are written by atomic replacement. The retention floor is why evicting old
 history does not look like corruption: the inventory reports a missing sequence
@@ -451,6 +403,66 @@ archive.
 
 Compression is an encoding change, never a schema change. No record is
 re-encoded, reordered or re-timestamped.
+
+### D9: diagnostics separate the effective policy from retained history
+
+One report shape answers two questions an operator must keep apart, so
+`outcome_retention_report` derives both from validated values rather than from
+either component's private counters.
+
+- `limits` names the effective policy: the age in days and seconds, the
+  logical byte budget, the record cap (`null` when unbounded), the headroom,
+  the segment size, whether the store is segmented, and whether age or byte
+  eviction is active. A zero age or byte bound appears as zero with its
+  eviction flag false.
+- `retained` names what the store holds now: total rows and logical bytes,
+  the split across active, sealed and archived history, the archives' physical
+  bytes, the closed-segment count, the observation span and a `complete` flag.
+  The flag is false when a segment's metadata is missing, the active file could
+  not be read, or the writer replaced the active file while the run or a dry
+  run's planning reads observed it. An unmeasured entry leaves the count a
+  lower bound; a replacement can leave the same rows in both the active file
+  and a sealed source, so the count can instead overstate and is never
+  presented as exact.
+- `evictions` counts trims and deletions under `age`, `bytes`, `records` and
+  every combination of those bounds, and each action carries the same reason. A
+  bound that is configured but did not cause an eviction is never named.
+  `maintenance` reports whether the state documents were installed, so a failed
+  write is a retryable `failed` status rather than silent success. A dry run, a
+  deferred run and a run that could not start install no state and report
+  `state_written` false.
+- The supervisor's status document carries the same `limits` derivation and
+  the writer's active snapshot, which the renderer prints as one line. The
+  worker publishes each state's row count and byte size together, so a status
+  read never pairs one state's rows with another state's size. A refused append
+  whose rollback cannot remove the partial line leaves bytes no row accounts
+  for; that snapshot reports `repair_pending` and stays incomplete until a
+  compaction or a fresh active file removes the fragment. A snapshot the writer
+  cannot supply is reported as a bounded `snapshot_unavailable` marker rather
+  than failing or omitting the status read. Closed history is reported by the
+  archive command, which owns it.
+
+None of these figures is a cumulative recorder counter or a journal-reader
+query cap: `record_count` counts rows retained on disk, not outcomes seen since
+start-up, and `--max-records` limits a query rather than the store.
+
+### D10: the header floor is injected at load and validation time
+
+The byte-budget rule must reject a bound that could not hold the replacement
+store header, but the configuration layer must not import the record
+serialization size to learn that floor. `config_retention.retention_rules`
+therefore takes the floor as an argument, and `config.load` and
+`config.validate` accept it as a keyword-only `header_floor`. The composition
+edge supplies `header_floor_bytes()`: the supervisor entry point and the
+archive command each pass it, so both consumers validate against the same
+figure.
+
+The consequence is explicit: a caller that omits `header_floor` still gets the
+range, relationship and retention rules, but not the header check. Direct
+construction in tests may omit it to exercise the legacy defaults; a production
+entry point must pass it. This keeps the policy contract usable without the
+serialization format while making the missing check a caller-visible choice
+rather than a silent import.
 
 ## Goals and non-goals
 

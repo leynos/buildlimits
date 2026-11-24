@@ -2,19 +2,29 @@
 
 import datetime as dt
 import typing as typ
+from unittest import mock
 
 import pytest
-from outcome_store_helpers import salt_path, window_summary
-from outcome_test_helpers import OBSERVED_AT, attributed_record
+from outcome_store_helpers import salt_path
+from outcome_test_helpers import OBSERVED_AT, attributed_record, window_summary
 
-from buildlimits import outcome_records, outcome_store, outcome_store_io
+from buildlimits import (
+    outcome_records,
+    outcome_store,
+    outcome_store_io,
+    outcome_store_state,
+)
 from buildlimits.outcome_key import Salt
 from buildlimits.outcome_record_format import StoreHeader
+from buildlimits.outcome_store_clock import Clocks
+from buildlimits.outcome_store_salt import file_salt
 
 if typ.TYPE_CHECKING:
+    import collections.abc as cabc
     from pathlib import Path
 
     from buildlimits.outcome_record_format import StoreRecord, WindowSummary
+    from buildlimits.outcome_retention import RetentionPolicy
 
 
 def seed_replay_store(path: Path) -> None:
@@ -125,3 +135,49 @@ def seed_store(
     path.write_text(document, encoding="utf-8")
     path.chmod(0o600)
     return header
+
+
+def loaded_store_files(
+    path: Path,
+    *,
+    policy: RetentionPolicy,
+    now: dt.datetime,
+    wall_clock: cabc.Callable[[], dt.datetime] | None = None,
+) -> outcome_store_state.StoreFiles:
+    """Return writer state loaded from a fresh salted store at ``path``.
+
+    A synchronous test that drives the writer's transitions needs the same
+    salted, loaded state its worker builds. Loading also installs the header,
+    so the returned state is ready for appends and measurements.
+
+    Parameters
+    ----------
+    path : Path
+        The store path.
+    policy : RetentionPolicy
+        The retention bounds the state applies.
+    now : datetime
+        The instant the initial load and settle use.
+    wall_clock : Callable[[], datetime] | None
+        The clock the state reads later, or None to keep returning ``now``.
+
+    Returns
+    -------
+    StoreFiles
+        The loaded writer state.
+
+    Examples
+    --------
+    ``loaded_store_files(path, policy=policy, now=NOW)`` loads an empty store
+    and leaves ``files.records`` empty.
+    """
+    salted = file_salt(salt_path(path))
+    if not isinstance(salted, Salt):
+        pytest.fail(f"the salt fixture failed: {salted.reason}")
+    clock = (lambda: now) if wall_clock is None else wall_clock
+    files = outcome_store_state.StoreFiles(
+        path, mock.Mock(), Clocks(wall=clock), policy=policy
+    )
+    files.salt = salted
+    files.load_and_settle(salted, now)
+    return files

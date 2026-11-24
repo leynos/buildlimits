@@ -7,7 +7,6 @@ the supervisor share one definition of what a valid retention policy is.
 
 import typing as typ
 
-from buildlimits.outcome_record_encode import header_floor_bytes
 from buildlimits.outcome_retention import (
     MAX_AGE_DAYS,
     MAX_POLICY_VALUE,
@@ -81,41 +80,69 @@ def reject_written_keys(values: cabc.Mapping[str, object]) -> str | None:
     return f"setting {min(written)!r} is only valid when cache_outcomes is 'record'"
 
 
-RETENTION_RULES: tuple[tuple[cabc.Callable[[RetentionSettings], bool], str], ...] = (
-    (
-        lambda config: 0 <= config.cache_outcomes_max_age_days <= MAX_AGE_DAYS,
-        f"cache_outcomes_max_age_days must be between 0 and {MAX_AGE_DAYS}",
-    ),
-    (
-        lambda config: 0 <= config.cache_outcomes_max_bytes <= MAX_POLICY_VALUE,
-        "cache_outcomes_max_bytes is outside the supported range",
-    ),
-    (
-        # A positive byte budget below one replacement header can never be met:
-        # compaction writes a header whatever it removes, and the supervisor
-        # would otherwise disable recording when policy construction failed.
-        lambda config: (
-            config.cache_outcomes_max_bytes == 0
-            or config.cache_outcomes_max_bytes >= header_floor_bytes()
+type RetentionRule = tuple[cabc.Callable[[RetentionSettings], bool], str]
+
+
+def retention_rules(header_floor: int | None = None) -> tuple[RetentionRule, ...]:
+    """Return the closed retention rules for one validation pass.
+
+    The byte rule needs the smallest replacement header the encoder can write.
+    That is a serialization fact, so it is supplied by the composition edge
+    instead of importing the encoding adapter here; a caller that passes None
+    omits only that rule, keeping this module free of the adapter.
+
+    Parameters
+    ----------
+    header_floor : int | None
+        The encoder's smallest replacement header, or None to leave the
+        serialization-dependent rule out of the check.
+
+    Returns
+    -------
+    tuple[RetentionRule, ...]
+        Ordered rules and the message each reports when it fails.
+    """
+    rules: list[RetentionRule] = [
+        (
+            lambda config: 0 <= config.cache_outcomes_max_age_days <= MAX_AGE_DAYS,
+            f"cache_outcomes_max_age_days must be between 0 and {MAX_AGE_DAYS}",
         ),
-        "cache_outcomes_max_bytes cannot hold the replacement store header",
-    ),
-    (
-        lambda config: 0 <= config.cache_outcomes_max_records <= MAX_POLICY_VALUE,
-        "cache_outcomes_max_records is outside the supported range",
-    ),
-    (
-        lambda config: (
-            SEGMENT_BYTES
-            <= config.cache_outcomes_archive_headroom_bytes
-            <= MAX_POLICY_VALUE
+        (
+            lambda config: 0 <= config.cache_outcomes_max_bytes <= MAX_POLICY_VALUE,
+            "cache_outcomes_max_bytes is outside the supported range",
         ),
-        "cache_outcomes_archive_headroom_bytes must hold at least one segment",
-    ),
-    (
-        lambda config: (
-            MIN_XZ_PRESET <= config.cache_outcomes_archive_preset <= MAX_XZ_PRESET
+        (
+            lambda config: 0 <= config.cache_outcomes_max_records <= MAX_POLICY_VALUE,
+            "cache_outcomes_max_records is outside the supported range",
         ),
-        "cache_outcomes_archive_preset must be between 0 and 9",
-    ),
-)
+        (
+            lambda config: (
+                SEGMENT_BYTES
+                <= config.cache_outcomes_archive_headroom_bytes
+                <= MAX_POLICY_VALUE
+            ),
+            "cache_outcomes_archive_headroom_bytes must hold at least one segment",
+        ),
+        (
+            lambda config: (
+                MIN_XZ_PRESET <= config.cache_outcomes_archive_preset <= MAX_XZ_PRESET
+            ),
+            "cache_outcomes_archive_preset must be between 0 and 9",
+        ),
+    ]
+    if header_floor is not None:
+        # A positive byte budget below one replacement header can never be
+        # met: compaction writes a header whatever it removes, and the
+        # supervisor would otherwise disable recording when policy
+        # construction failed.
+        rules.insert(
+            2,
+            (
+                lambda config: (
+                    config.cache_outcomes_max_bytes == 0
+                    or config.cache_outcomes_max_bytes >= header_floor
+                ),
+                "cache_outcomes_max_bytes cannot hold the replacement store header",
+            ),
+        )
+    return tuple(rules)

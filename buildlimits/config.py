@@ -200,7 +200,7 @@ class SupervisorConfig:
     kache_cache_dir: Path | None = None
 
 
-def load(path: Path | None) -> SupervisorConfig:
+def load(path: Path | None, *, header_floor: int | None = None) -> SupervisorConfig:
     """Load the supervisor configuration.
 
     Parameters
@@ -208,6 +208,8 @@ def load(path: Path | None) -> SupervisorConfig:
     path : Path | None
         The TOML file, or ``None`` for defaults only. A missing file also
         yields the defaults.
+    header_floor : int | None
+        The encoder's smallest replacement header, or None to omit its rule.
 
     Returns
     -------
@@ -225,13 +227,13 @@ def load(path: Path | None) -> SupervisorConfig:
     'sccache'
     """
     if path is None or not path.exists():
-        return validate(SupervisorConfig())
+        return validate(SupervisorConfig(), header_floor=header_floor)
     try:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as error:
         msg = f"cannot read {path}: {error}"
         raise ConfigError(msg) from error
-    return validate(from_mapping(raw))
+    return validate(from_mapping(raw), header_floor=header_floor)
 
 
 def from_mapping(raw: cabc.Mapping[str, object]) -> SupervisorConfig:
@@ -310,13 +312,17 @@ def _reject_foreign_keys(values: cabc.Mapping[str, object]) -> None:
             raise ConfigError(msg)
 
 
-def validate(config: SupervisorConfig) -> SupervisorConfig:
+def validate(
+    config: SupervisorConfig, *, header_floor: int | None = None
+) -> SupervisorConfig:
     """Check value ranges.
 
     Parameters
     ----------
     config : SupervisorConfig
         The configuration to check.
+    header_floor : int | None
+        The encoder's smallest replacement header, or None to omit its rule.
 
     Returns
     -------
@@ -328,42 +334,67 @@ def validate(config: SupervisorConfig) -> SupervisorConfig:
     ConfigError
         If a value is out of range.
     """
-    broken = [message for holds, message in _RANGE_RULES if not holds(config)]
+    broken = _failed_rules(config, header_floor)
     if broken:
         raise ConfigError(broken[0])
     return config
 
 
-_RANGE_RULES: tuple[tuple[cabc.Callable[[SupervisorConfig], bool], str], ...] = (
-    (lambda config: config.slots >= 1, "slots must be a positive integer"),
-    (lambda config: config.cache_mode in CACHE_MODES, _CACHE_MODE_ERROR),
-    (
-        lambda config: config.cache_mode != "kache" or config.kache_socket is not None,
-        _KACHE_SOCKET_ERROR,
-    ),
-    (
-        lambda config: config.cache_recovery in CACHE_RECOVERY_POLICIES,
-        (f"cache_recovery must be one of {', '.join(CACHE_RECOVERY_POLICIES)}"),
-    ),
-    (
-        lambda config: config.cache_outcomes in CACHE_OUTCOMES,
-        f"cache_outcomes must be one of {', '.join(CACHE_OUTCOMES)}",
-    ),
-    (
-        lambda config: (
-            config.cache_outcomes != "record" or config.cache_mode == "sccache"
+def _failed_rules(config: SupervisorConfig, header_floor: int | None) -> list[str]:
+    """Return the messages of every range rule this configuration fails.
+
+    Returns
+    -------
+    list[str]
+        One message per failed rule, in rule order.
+    """
+    return [
+        message for holds, message in _range_rules(header_floor) if not holds(config)
+    ]
+
+
+def _range_rules(
+    header_floor: int | None,
+) -> tuple[tuple[cabc.Callable[[SupervisorConfig], bool], str], ...]:
+    """Return the closed validation rules for one pass.
+
+    Returns
+    -------
+    tuple[tuple[Callable[[SupervisorConfig], bool], str], ...]
+        The ordered rules and the message each reports when it fails.
+    """
+    return (
+        (lambda config: config.slots >= 1, "slots must be a positive integer"),
+        (lambda config: config.cache_mode in CACHE_MODES, _CACHE_MODE_ERROR),
+        (
+            lambda config: (
+                config.cache_mode != "kache" or config.kache_socket is not None
+            ),
+            _KACHE_SOCKET_ERROR,
         ),
-        'cache_outcomes="record" requires cache_mode="sccache"',
-    ),
-    *config_retention.RETENTION_RULES,
-    (
-        lambda config: (
-            min(config.cancel_grace_seconds, config.drain_timeout_seconds) > 0
+        (
+            lambda config: config.cache_recovery in CACHE_RECOVERY_POLICIES,
+            (f"cache_recovery must be one of {', '.join(CACHE_RECOVERY_POLICIES)}"),
         ),
-        "grace and drain timeouts must be positive",
-    ),
-    (
-        lambda config: config.compilers_slice.endswith(".slice"),
-        "compilers_slice must name a slice unit",
-    ),
-)
+        (
+            lambda config: config.cache_outcomes in CACHE_OUTCOMES,
+            f"cache_outcomes must be one of {', '.join(CACHE_OUTCOMES)}",
+        ),
+        (
+            lambda config: (
+                config.cache_outcomes != "record" or config.cache_mode == "sccache"
+            ),
+            'cache_outcomes="record" requires cache_mode="sccache"',
+        ),
+        *config_retention.retention_rules(header_floor),
+        (
+            lambda config: (
+                min(config.cancel_grace_seconds, config.drain_timeout_seconds) > 0
+            ),
+            "grace and drain timeouts must be positive",
+        ),
+        (
+            lambda config: config.compilers_slice.endswith(".slice"),
+            "compilers_slice must name a slice unit",
+        ),
+    )

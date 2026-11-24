@@ -121,15 +121,17 @@ def read_sequence(path: Path) -> int | None:
 def read_retention_floor(layout: SegmentLayout) -> RetentionFloor:
     """Read the retention floor recorded by the last successful run.
 
-    A missing record is not the same fact as a damaged one, so the two are
-    reported separately rather than both collapsing into "no floor": a fresh
-    store has never recorded one, while an unreadable or invalid record is
-    state the archiver wrote and can no longer trust.
+    ``retention.json`` is the record every run installs. When a run cannot
+    replace it, that run leaves ``retention-pending.json`` instead, so both
+    files are read and the higher valid floor wins. The floor is evidence
+    that a sequence was removed on purpose, and the fallback record is only
+    ever written for a floor the run has already computed, so preferring the
+    higher value cannot excuse a hole the run did not remove.
 
     Parameters
     ----------
     layout : SegmentLayout
-        The layout whose ``retention.json`` is read.
+        The layout whose retention records are read.
 
     Returns
     -------
@@ -137,8 +139,37 @@ def read_retention_floor(layout: SegmentLayout) -> RetentionFloor:
         The lowest retained sequence and how it was read, or the state that
         kept it from being read.
     """
+    # Read the fallback first. A run installs the primary record before it
+    # removes the fallback, so a primary read after the fallback either sees
+    # the installed value or a fallback that still holds it. The reverse
+    # order can observe an old primary and a removed fallback, lowering the
+    # floor below a deletion the run had already recorded.
+    pending = _floor_in(layout.pending_retention_file)
+    primary = _floor_in(layout.retention_file)
+    recorded = [floor for floor in (primary, pending) if floor.state == "recorded"]
+    if recorded:
+        # The fallback record is only ever written for a floor the run has
+        # already computed, so the higher valid value cannot excuse a hole the
+        # run did not remove.
+        return max(recorded, key=lambda floor: floor.sequence or 0)
+    for floor in (primary, pending):
+        # A record this code wrote but cannot trust outranks an absent one:
+        # damage is state the archiver has to report, not a fresh store.
+        if floor.state in {"unreadable", "invalid"}:
+            return RetentionFloor(state=floor.state)
+    return RetentionFloor(state="missing")
+
+
+def _floor_in(path: Path) -> RetentionFloor:
+    """Read one retention record's floor, naming how it could not be read.
+
+    Returns
+    -------
+    RetentionFloor
+        The recorded floor, or the state that kept it from being read.
+    """
     try:
-        raw = read_private_bytes(layout.retention_file, limit=_MAX_STATE_BYTES)
+        raw = read_private_bytes(path, limit=_MAX_STATE_BYTES)
     except FileNotFoundError:
         return RetentionFloor(state="missing")
     except OversizedFileError:

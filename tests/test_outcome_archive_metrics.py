@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 from archive_seal_helpers import seal_five_rows_once
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from outcome_archive_helpers import NOW, layout, policy, records, write
 
 from buildlimits import (
@@ -18,8 +20,12 @@ from buildlimits import (
 from buildlimits.metrics import Metrics
 from buildlimits.outcome_archive import RunOptions, inspect_store, run_archive
 from buildlimits.outcome_archive_active import active_history
+from buildlimits.outcome_archive_context import ActionResult
+from buildlimits.outcome_archive_events import publish_run
+from buildlimits.outcome_archive_evictions import EVICTION_CAUSES, eviction_counts
 from buildlimits.outcome_archive_history import ActiveHistory
 from buildlimits.outcome_archive_lock import ArchiveLock
+from buildlimits.outcome_archive_report import Maintenance, RunReport
 from buildlimits.outcome_archive_retain import settled_snapshot
 from buildlimits.outcome_history import read_history
 from buildlimits.outcome_history_pin import (
@@ -34,7 +40,6 @@ from buildlimits.retry_notice import report_retry
 if typ.TYPE_CHECKING:
     from conftest import RecordingSink
 
-    from buildlimits.outcome_archive_report import RunReport
     from buildlimits.outcome_segment_inventory import Inventory
 
 _FINISHED = NOW + dt.timedelta(seconds=2)
@@ -107,6 +112,56 @@ def test_a_run_publishes_one_bounded_archive_event(
     assert record["BUILD_LIMITS_FAILURES"] == "0", "no sequence failed"
     assert record["BUILD_LIMITS_RUNTIME_SECONDS"] == "2.000", "the span is published"
     assert str(tmp_path) not in " ".join(record.values()), "no path is published"
+    assert record["BUILD_LIMITS_RETAINED_LOGICAL_BYTES"] == str(
+        report.retained_bytes
+    ), "the retained bytes are published"
+    assert record["BUILD_LIMITS_RETAINED_RECORDS"] == str(report.retained_records), (
+        "the retained row count is published"
+    )
+    assert record["BUILD_LIMITS_RETAINED_UNMEASURED_ENTRIES"] == "0", (
+        "a measured run names no unmeasured entries"
+    )
+    for cause in EVICTION_CAUSES:
+        assert record[f"BUILD_LIMITS_EVICTED_{cause.upper()}"] == "0", (
+            f"the closed {cause} cause is published even at zero"
+        )
+
+
+def test_the_event_names_the_bound_that_caused_each_eviction(
+    metric_sink: RecordingSink,
+) -> None:
+    """A trim and a deletion publish the closed cause each served."""
+    report = RunReport(
+        status="ok",
+        started_at=NOW,
+        finished_at=_FINISHED,
+        actions=(
+            ActionResult("deleted", 1, reason="age"),
+            ActionResult("trimmed", 2, reason="bytes"),
+        ),
+        retained_bytes=11,
+        retained_records=3,
+        unmeasured_entries=1,
+    )
+
+    publish_run(Metrics(metric_sink, source="adapter"), report)
+
+    (record,) = metric_sink.records
+    assert record["BUILD_LIMITS_EVICTED_AGE"] == "1", "the deletion names age"
+    assert record["BUILD_LIMITS_EVICTED_BYTES"] == "1", "the trim names bytes"
+    assert record["BUILD_LIMITS_EVICTED_RECORDS"] == "0", "an unused cause is zero"
+    assert record["BUILD_LIMITS_EVICTED_AGE_AND_BYTES"] == "0", (
+        "a combined cause is published even at zero"
+    )
+    assert record["BUILD_LIMITS_RETAINED_LOGICAL_BYTES"] == "11", (
+        "the retained bytes are published"
+    )
+    assert record["BUILD_LIMITS_RETAINED_RECORDS"] == "3", (
+        "the retained row count is published"
+    )
+    assert record["BUILD_LIMITS_RETAINED_UNMEASURED_ENTRIES"] == "1", (
+        "an unmeasured entry is disclosed"
+    )
 
 
 def test_a_busy_firing_publishes_its_retryable_status(
@@ -122,6 +177,74 @@ def test_a_busy_firing_publishes_its_retryable_status(
     (record,) = metric_sink.records
     assert record["BUILD_LIMITS_ARCHIVE_STATUS"] == "busy", "the status is published"
     assert record["BUILD_LIMITS_ARCHIVE_REASON"] == "busy", "the reason is published"
+
+
+@given(
+    actions=st.lists(
+        st.builds(
+            ActionResult,
+            action=st.sampled_from(["deleted", "trimmed", "archived", "quarantined"]),
+            sequence=st.integers(min_value=0, max_value=10_000),
+            reason=st.one_of(st.none(), st.sampled_from(EVICTION_CAUSES)),
+        ),
+        max_size=40,
+    )
+)
+@settings(deadline=None)
+def test_eviction_counts_always_name_every_closed_cause(
+    actions: list[ActionResult],
+) -> None:
+    """Every closed cause is present, and each names its own actions' count."""
+    counts = eviction_counts(tuple(actions))
+
+    assert list(counts) == list(EVICTION_CAUSES), "every closed cause is present"
+    for cause in EVICTION_CAUSES:
+        named = sum(
+            1
+            for action in actions
+            if action.action in {"deleted", "trimmed"} and action.reason == cause
+        )
+        assert counts[cause] == named, f"the {cause} count matches its actions"
+    assert sum(counts.values()) <= len(actions), "no action is counted twice"
+
+
+def test_a_state_write_failure_publishes_its_category(
+    metric_sink: RecordingSink,
+) -> None:
+    """A failed state write is reportable under its own archive reason."""
+    report = RunReport(
+        status="failed",
+        started_at=NOW,
+        finished_at=_FINISHED,
+        reason="state_write_failed",
+        maintenance=Maintenance(state_written=False, reason="state_write_failed"),
+    )
+
+    publish_run(Metrics(metric_sink, source="adapter"), report)
+
+    (record,) = metric_sink.records
+    assert record["BUILD_LIMITS_ARCHIVE_STATUS"] == "failed", "the status is published"
+    assert record["BUILD_LIMITS_ARCHIVE_REASON"] == "state_write_failed", (
+        "the failure category reaches the validated event"
+    )
+
+
+def test_a_failed_state_write_publishes_its_reason(
+    tmp_path: Path, metric_sink: RecordingSink
+) -> None:
+    """A run whose state cannot be saved publishes the closed failure reason."""
+    write(tmp_path / "cache-outcomes.jsonl", records(NOW, 1), policy())
+    layout(tmp_path).retention_file.mkdir(parents=True)
+
+    report = _run(tmp_path, Metrics(metric_sink, source="adapter"))
+
+    assert report.status == "failed", "the timer must retry"
+    assert report.reason == "state_write_failed", "the write failure is closed"
+    (record,) = metric_sink.records
+    assert record["BUILD_LIMITS_ARCHIVE_STATUS"] == "failed", "the status is published"
+    assert record["BUILD_LIMITS_ARCHIVE_REASON"] == "state_write_failed", (
+        "the failed write reaches the validated event"
+    )
 
 
 def test_an_active_scan_retry_names_its_attempt(

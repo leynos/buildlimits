@@ -2203,20 +2203,26 @@ reason = "Three-line fault stubs that raise through different seams: one replace
 members = [
     "buildlimits/outcome_recorder_types.py",
     "buildlimits/outcome_recorder_outputs.py",
-    "tests/outcome_shell_test_support.py",
+    "buildlimits/supervisor_outcome_setup.py",
+    "tests/archive_seal_helpers.py",
     "tests/modelcheck_cases.py",
+    "buildlimits/outcome_archive_report.py",
+    "tests/outcome_store_helpers.py",
+    "buildlimits/outcome_store.py",
+    "buildlimits/outcome_store_state.py",
     "buildlimits/server_watch.py",
     "tests/modelcheck_service_cases.py",
-    "tests/outcome_store_helpers.py",
+    "tests/test_outcome_archive_report_settlement.py",
     "buildlimits/cache_recovery.py",
-    "buildlimits/outcome_store.py",
+    "buildlimits/outcome_archive.py",
+    "buildlimits/outcome_archive_plan.py",
     "buildlimits/predict/dataset_cli.py",
     "buildlimits/predict/ensemble_runs.py",
     "buildlimits/predict/harness.py",
     "buildlimits/supervisor_wiring.py",
     "tests/test_group_drain_metrics.py",
     "buildlimits/outcome_archive_run.py",
-    "buildlimits/outcome_store_state.py",
+    "buildlimits/outcome_archive_state.py",
     "buildlimits/predict/evaluation.py",
     "buildlimits/predict/report.py",
     "buildlimits/predict/scoring.py",
@@ -2225,20 +2231,23 @@ members = [
     "modelcheck/expectations.py",
     "modelcheck/records.py",
     "modelcheck/report.py",
+    "tests/outcome_append_helpers.py",
+    "tests/outcome_sealing_helpers.py",
     "tests/predict_test_helpers.py",
     "tests/test_cache_recovery_telemetry.py",
+    "tests/test_outcome_archive_interleaving.py",
+    "tests/test_outcome_archive_settlement.py",
     "tests/test_recovery_roots_deadline.py",
     "buildlimits/group_recovery.py",
+    "buildlimits/outcome_archive_evict.py",
     "buildlimits/outcome_archive_files.py",
+    "buildlimits/outcome_history_files.py",
     "buildlimits/predict/report_codec.py",
     "tests/differential_trace_test_helpers.py",
-    "tests/test_outcome_archive_run_faults.py",
-    "tests/test_outcome_totality.py",
-    "tests/test_predict_evaluation.py",
-    "buildlimits/outcome_archive.py",
-    "buildlimits/outcome_history_pin.py",
+    "buildlimits/outcome_ports.py",
     "modelcheck/cli.py",
     "tests/outcome_archive_helpers.py",
+    "tests/outcome_store_fixture_helpers.py",
     "tests/test_kache_detached_events.py",
 ]
 reason = "Matching type-checking and import preambles: every module guards its own standard-library aliases and the annotation, port and value symbols it reads behind a TYPE_CHECKING block, so a re-export module would hide what each file depends on without sharing any behaviour. The archive modules join the group through that shared block shape, and the members come from unrelated production, model-check and test-support modules."
@@ -2483,10 +2492,224 @@ reason = "Two parallel public entry points share the beside-the-store shape: eac
 members = ["buildlimits/outcome_archive_events.py", "tests/test_kache_admission_properties.py"]
 reason = "The matched lines belong to unrelated contracts: the archive event emits its closed field set, and the kache property asserts a group left admission. They share an outline, not logic, and neither gains a helper from the other."
 [[tool.duplication_gate.allow]]
-members = ["buildlimits/outcome_recorder_types.py", "buildlimits/outcome_recorder_outputs.py", "tests/outcome_shell_test_support.py", "tests/archive_seal_helpers.py", "tests/modelcheck_cases.py", "buildlimits/outcome_archive_report.py", "buildlimits/outcome_archive.py", "buildlimits/server_watch.py", "tests/modelcheck_service_cases.py", "tests/outcome_store_helpers.py", "tests/test_outcome_archive_report_settlement.py", "buildlimits/cache_recovery.py", "buildlimits/outcome_archive_plan.py", "buildlimits/outcome_store.py", "buildlimits/predict/dataset_cli.py", "buildlimits/predict/ensemble_runs.py", "buildlimits/predict/harness.py", "buildlimits/supervisor_wiring.py", "tests/test_group_drain_metrics.py", "tests/test_outcome_archive_clock.py", "buildlimits/outcome_archive_run.py", "buildlimits/outcome_store_state.py", "buildlimits/predict/evaluation.py", "buildlimits/predict/report.py", "buildlimits/predict/scoring.py", "buildlimits/predict/snapshot_codec.py", "modelcheck/cli_outputs.py", "modelcheck/expectations.py", "modelcheck/records.py", "modelcheck/report.py", "tests/outcome_append_helpers.py", "tests/outcome_sealing_helpers.py", "tests/predict_test_helpers.py", "tests/test_cache_recovery_telemetry.py", "tests/test_outcome_archive_interleaving.py", "tests/test_recovery_roots_deadline.py", "buildlimits/group_recovery.py", "buildlimits/outcome_archive_files.py", "buildlimits/outcome_history_files.py", "buildlimits/outcome_record_codec.py", "buildlimits/predict/report_codec.py", "tests/differential_trace_test_helpers.py", "tests/outcome_archive_helpers.py", "tests/test_outcome_archive_run_faults.py", "tests/test_outcome_totality.py", "tests/test_predict_evaluation.py", "buildlimits/outcome_archive_state.py", "modelcheck/cli.py", "tests/test_kache_detached_events.py"]
+members = [
+    "buildlimits/outcome_recorder_types.py",
+    "buildlimits/outcome_recorder_outputs.py",
+    "buildlimits/supervisor_outcome_setup.py",
+    "tests/archive_seal_helpers.py",
+    "buildlimits/outcome_archive_report.py",
+    "tests/modelcheck_cases.py",
+    "tests/outcome_store_helpers.py",
+    "buildlimits/outcome_store.py",
+    "buildlimits/outcome_store_state.py",
+    "buildlimits/server_watch.py",
+    "tests/modelcheck_service_cases.py",
+    "tests/test_outcome_archive_report_settlement.py",
+    "buildlimits/cache_recovery.py",
+    "buildlimits/outcome_archive_plan.py",
+    "buildlimits/outcome_archive_report_fields.py",
+    "buildlimits/predict/dataset_cli.py",
+    "buildlimits/predict/ensemble_runs.py",
+    "buildlimits/predict/harness.py",
+    "buildlimits/supervisor_wiring.py",
+    "tests/test_group_drain_metrics.py",
+    "tests/test_outcome_archive_clock.py",
+    "buildlimits/outcome_archive_run.py",
+    "buildlimits/outcome_archive_state.py",
+    "buildlimits/predict/evaluation.py",
+    "buildlimits/predict/report.py",
+    "buildlimits/predict/scoring.py",
+    "buildlimits/predict/snapshot_codec.py",
+    "modelcheck/cli_outputs.py",
+    "modelcheck/expectations.py",
+    "modelcheck/records.py",
+    "modelcheck/report.py",
+    "tests/outcome_append_helpers.py",
+    "tests/outcome_sealing_helpers.py",
+    "tests/predict_test_helpers.py",
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_outcome_archive_interleaving.py",
+    "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "buildlimits/outcome_archive_evict.py",
+    "buildlimits/outcome_archive_files.py",
+    "buildlimits/outcome_history_files.py",
+    "buildlimits/outcome_record_codec.py",
+    "buildlimits/predict/report_codec.py",
+    "tests/differential_trace_test_helpers.py",
+    "tests/outcome_archive_helpers.py",
+    "tests/outcome_store_fixture_helpers.py",
+    "tests/test_outcome_totality.py",
+    "tests/test_predict_evaluation.py",
+    "buildlimits/outcome_ports.py",
+    "modelcheck/cli.py",
+    "tests/test_kache_detached_events.py",
+]
 reason = "Matching type-checking preludes: every module guards the standard-library and domain types its own signatures annotate behind if typ.TYPE_CHECKING. The guard is the shared idiom, not shared logic, and a re-export module would hide which types each file annotates."
-[[tool.duplication_gate.unit]]
-unit = "buildlimits/outcome_archive_verify.py"
-reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_store_reader.py",
+    "tests/test_outcome_store_snapshot.py",
+]
+reason = "Matching fixture import preludes: both reader tests alias the same store fixtures, and a re-export module would hide which fixture each test actually uses rather than sharing any test logic."
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/dataset.py::SnapshotStats",
+    "buildlimits/outcome_archive_report_fields.py::SettledFields",
+]
+reason = "Matching data shapes, not shared logic: one is a prediction snapshot's statistics value and the other a TypedDict of report fields. Sharing a type would couple prediction to archiving for no behaviour."
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/cache_backend.py::CacheBackend",
+    "buildlimits/outcome_ports.py::OutcomeStorePort",
+]
+reason = "Two independent cache ports whose method shapes coincide: CacheBackend serves the managed-cache control path, while OutcomeStorePort serves the asynchronous outcome writer. Each names its own operations, and merging them would couple an admission-side port to a diagnostic store."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/fizzbee_spike.py::read_graph",
+    "tests/test_outcome_retention_diagnostics.py::_document",
+]
+reason = "Two independent readers of two different JSON artefacts: the model-checker spike decodes an error graph the checker wrote, and the retention diagnostics decode the timer's own state files. They share the one-line parse and nothing else, so a shared reader would name neither document."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_archive_run_faults.py",
+    "tests/test_outcome_retention_diagnostics.py",
+]
+reason = "Matching import lists: both drive a real archive run through the store, policy, clock and record fixtures in ``outcome_archive_helpers``, and both name the buildlimits modules they read individually. Sharing the list through a re-export module would hide each module's real dependencies from the checker and couple two unrelated test families."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/predict/dataset_cli.py",
+    "buildlimits/outcome_archive.py",
+    "tests/test_kache_detached_events.py",
+]
+reason = "Matching import lists: each module names the protocol or port symbols it uses, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/supervisor_outcome_setup.py",
+    "tests/modelcheck_cases.py",
+    "tests/outcome_store_helpers.py",
+    "buildlimits/outcome_archive_report.py",
+    "buildlimits/outcome_store.py",
+    "buildlimits/server_watch.py",
+    "tests/modelcheck_service_cases.py",
+    "buildlimits/cache_recovery.py",
+    "buildlimits/outcome_store_state.py",
+    "buildlimits/predict/ensemble_runs.py",
+    "buildlimits/predict/harness.py",
+    "buildlimits/supervisor_wiring.py",
+    "tests/test_group_drain_metrics.py",
+    "buildlimits/outcome_archive_run.py",
+    "buildlimits/predict/evaluation.py",
+    "buildlimits/predict/report.py",
+    "buildlimits/predict/scoring.py",
+    "buildlimits/predict/snapshot_codec.py",
+    "modelcheck/cli_outputs.py",
+    "modelcheck/expectations.py",
+    "modelcheck/records.py",
+    "modelcheck/report.py",
+    "tests/predict_test_helpers.py",
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "buildlimits/predict/report_codec.py",
+    "tests/differential_trace_test_helpers.py",
+    "buildlimits/outcome_ports.py",
+    "modelcheck/cli.py",
+]
+reason = "Matching type-checking preludes: every one of these modules declares the standard-library and package names its own annotations need under `if typ.TYPE_CHECKING`, so the blocks coincide without sharing meaning. A common prelude module would hide each module's real dependencies from a reader and from the checker."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/supervisor_outcome_setup.py",
+    "tests/outcome_shell_test_support.py",
+]
+reason = "Matching import lists: both name the same three outcome ports because the test double set mirrors the collaborators the setup module constructs, and sharing them through a re-export module would hide each module's real dependencies."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "tests/test_outcome_archive_reporting.py::seal_then_read",
+    "tests/test_outcome_archive_reporting.py::read_then_seal",
+]
+reason = "These local readers are deliberate mirror images: one seals the active file immediately before the final inventory scan and the other immediately after it, so each test exercises one side of the same measurement window. The shared seal condition already lives in seal_on_final_scan; folding the remaining ordering into a parameterized factory would hide which side of the window each test depends on."
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_archive_run_plan_faults.py", "tests/test_outcome_archive_retention.py", "tests/test_outcome_archive_active.py"]
+reason = "Matching test import lists: each module names the archive helpers, record builders and policy fixtures its own scenarios use, and a re-export module would hide which operations each suite actually exercises."
+[[tool.duplication_gate.allow]]
+members = ["tests/outcome_retention_helpers.py", "tests/test_outcome_store_sealing.py"]
+reason = "Matching import preambles: both name the store-writer helpers and record builders their own fixture scenarios need; the shared lines are standard imports, and a re-export module would hide each module real dependencies."
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_archive_retention.py::refuse_first", "tests/test_outcome_archive_run_plan_faults.py::refuse_older"]
+reason = "Two independent fault stubs with different signatures and patched seams: one refuses a rewrite through the encode adapter, the other refuses an older deletion through the file adapter. A shared stub would hide which seam each test forces to fail."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/outcome_archive_fs.py::is_proven_absent", "buildlimits/supervisor_outcome_setup.py::exists_or_unknown"]
+reason = "The two helpers answer opposite questions over the same lookup: the archiver needs to know an archive is proven absent before advancing the floor, while the supervisor barrier must treat an unreadable marker as present. Sharing one function would hide which answer each caller needs, and the supervisor must not import archive I/O into the domain closure."
+
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_archive.py",
+    "tests/test_outcome_archive_settlement.py",
+    "tests/test_outcome_retention_compaction.py",
+]
+reason = "Matching type-checking preludes: each module annotates archive history, so each names ActiveHistory and the retention policy for the checker only, and sharing the prelude through a re-export module would hide each module's real dependencies."
 
 
+[[tool.duplication_gate.allow]]
+members = [
+    "buildlimits/outcome_recorder_types.py",
+    "buildlimits/outcome_recorder_outputs.py",
+    "buildlimits/supervisor_outcome_setup.py",
+    "tests/archive_seal_helpers.py",
+    "tests/modelcheck_cases.py",
+    "tests/outcome_store_helpers.py",
+    "buildlimits/outcome_store.py",
+    "buildlimits/outcome_store_state.py",
+    "buildlimits/server_watch.py",
+    "tests/modelcheck_service_cases.py",
+    "tests/test_outcome_archive_report_settlement.py",
+    "buildlimits/cache_recovery.py",
+    "buildlimits/outcome_archive_plan.py",
+    "buildlimits/outcome_archive_report.py",
+    "buildlimits/outcome_archive_report_builders.py",
+    "buildlimits/outcome_archive_report_fields.py",
+    "buildlimits/outcome_archive_state.py",
+    "buildlimits/predict/dataset_cli.py",
+    "buildlimits/predict/ensemble_runs.py",
+    "buildlimits/predict/harness.py",
+    "buildlimits/supervisor_wiring.py",
+    "tests/test_group_drain_metrics.py",
+    "tests/test_outcome_archive_clock.py",
+    "buildlimits/outcome_archive_run.py",
+    "buildlimits/predict/evaluation.py",
+    "buildlimits/predict/report.py",
+    "buildlimits/predict/scoring.py",
+    "buildlimits/predict/snapshot_codec.py",
+    "modelcheck/cli_outputs.py",
+    "modelcheck/expectations.py",
+    "modelcheck/records.py",
+    "modelcheck/report.py",
+    "tests/outcome_append_helpers.py",
+    "tests/outcome_sealing_helpers.py",
+    "tests/predict_test_helpers.py",
+    "tests/test_cache_recovery_telemetry.py",
+    "tests/test_outcome_archive_interleaving.py",
+    "tests/test_recovery_roots_deadline.py",
+    "buildlimits/group_recovery.py",
+    "buildlimits/outcome_archive_evict.py",
+    "buildlimits/outcome_archive_files.py",
+    "buildlimits/outcome_history_files.py",
+    "buildlimits/outcome_record_codec.py",
+    "buildlimits/predict/report_codec.py",
+    "tests/differential_trace_test_helpers.py",
+    "tests/outcome_archive_helpers.py",
+    "tests/outcome_store_fixture_helpers.py",
+    "tests/test_outcome_totality.py",
+    "tests/test_predict_evaluation.py",
+    "buildlimits/outcome_ports.py",
+    "modelcheck/cli.py",
+    "tests/test_kache_detached_events.py",
+]
+reason = "Matching import preludes across unrelated modules: each names the standard typing, collections and datetime helpers its own annotations need, plus the concrete collaborators it uses. The family is the same shape repeated by design (every module states its imports), and sharing it through a re-export module would hide each module's real dependencies."

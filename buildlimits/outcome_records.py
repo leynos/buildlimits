@@ -123,18 +123,87 @@ def compact(
         cutoff = active.cutoff(now)
         if cutoff is not None:
             records = [record for record in records if record.observed_at >= cutoff]
-        reason = "expired" if len(records) < len(decoded.records) else "none"
-    discarded = len(decoded.records) - len(records)
+        reason = "none"
+    expired_count = len(decoded.records) - len(records)
     record_sizes = [len(encode_line(record).encode("utf-8")) + 1 for record in records]
     total_size = len(encode_line(header).encode("utf-8")) + 1 + sum(record_sizes)
+    first_retained, bounds = _trim_prefix(records, record_sizes, total_size, active)
+    if not clock_skew:
+        reason = _discard_reason(expired=expired_count > 0, bounds=bounds)
+    return Compacted(
+        header,
+        tuple(records[first_retained:]),
+        expired_count + first_retained,
+        reason,
+    )
+
+
+def _trim_prefix(
+    records: list[StoreRecord],
+    record_sizes: list[int],
+    total_size: int,
+    active: RetentionPolicy,
+) -> tuple[int, frozenset[str]]:
+    """Discard the leading rows a byte or record bound still rejects.
+
+    Returns
+    -------
+    tuple[int, frozenset[str]]
+        The number of leading rows dropped, and which bounds caused a drop.
+    """
     first_retained = 0
+    bounds: set[str] = set()
     while first_retained < len(records) and _exceeds_compaction_limits(
         first_retained, len(records), total_size, active
     ):
+        bounds |= _exceeded_bounds(len(records) - first_retained, total_size, active)
         total_size -= record_sizes[first_retained]
         first_retained += 1
-    discarded += first_retained
-    return Compacted(header, tuple(records[first_retained:]), discarded, reason)
+    return first_retained, frozenset(bounds)
+
+
+def _exceeded_bounds(
+    retained: int, total_size: int, active: RetentionPolicy
+) -> set[str]:
+    """Return the bound names this row count and size still exceed.
+
+    Returns
+    -------
+    set[str]
+        The subset of ``bytes`` and ``records`` that is over its bound.
+    """
+    bounds: set[str] = set()
+    if active.has_byte_limit and total_size > active.max_bytes:
+        bounds.add("bytes")
+    if active.max_records is not None and retained > active.max_records:
+        bounds.add("records")
+    return bounds
+
+
+# The closed reasons naming each combination of bounds that discarded rows.
+_DISCARD_REASONS: dict[frozenset[str], StoreReason] = {
+    frozenset(): "none",
+    frozenset({"expired"}): "expired",
+    frozenset({"bytes"}): "bytes",
+    frozenset({"records"}): "records",
+    frozenset({"expired", "bytes"}): "expired_and_bytes",
+    frozenset({"expired", "records"}): "expired_and_records",
+    frozenset({"bytes", "records"}): "bytes_and_records",
+    frozenset({"expired", "bytes", "records"}): "expired_and_bytes_and_records",
+}
+
+
+def _discard_reason(*, expired: bool, bounds: frozenset[str]) -> StoreReason:
+    """Return the closed reason naming every bound that discarded rows.
+
+    Returns
+    -------
+    StoreReason
+        ``none`` when nothing was dropped, ``expired`` for an age-only drop,
+        and the bound names joined by ``_and_`` when a prefix trim also ran.
+    """
+    named = bounds | {"expired"} if expired else bounds
+    return _DISCARD_REASONS[named]
 
 
 def _legacy_policy() -> RetentionPolicy:

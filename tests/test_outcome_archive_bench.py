@@ -18,7 +18,7 @@ from buildlimits import outcome_archive_bench
 from buildlimits.outcome_archive_bench import CHUNK_BYTES, measure, peak_rows
 from buildlimits.outcome_record_format import DecodedStore
 from buildlimits.outcome_record_stream import LineStream
-from buildlimits.outcome_store_io import read_store
+from buildlimits.outcome_store_read import read_store
 
 if typ.TYPE_CHECKING:
     from syrupy.assertion import SnapshotAssertion
