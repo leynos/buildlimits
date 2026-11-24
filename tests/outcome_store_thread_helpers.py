@@ -70,10 +70,16 @@ def stalled_append() -> cabc.Generator[tuple[threading.Event, threading.Event]]:
     append_line = outcome_store_state.append_line
 
     def stall(store: Path, line: bytes) -> None:
-        """Delay the first append before calling the underlying writer."""
+        """Delay the first append before calling the underlying writer.
+
+        The wait has no timeout: a bound that expired would let the worker
+        write and drain the queue while the test still believed it was stalled,
+        which turns a slow host into a spurious failure. The context's teardown
+        always sets ``release``, so a failing test cannot wedge the worker.
+        """
         if not entered.is_set():
             entered.set()
-            release.wait(5.0)
+            release.wait()
         append_line(store, line)
 
     try:

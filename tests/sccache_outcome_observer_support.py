@@ -21,6 +21,7 @@ from host_check_marks import end_process
 from sccache_host import _base_environment, _compile_command, _run_compile
 
 from buildlimits.admission_state import Counts
+from buildlimits.outcome_attribution import Generation
 from buildlimits.outcome_gate import QuietInputs
 from buildlimits.outcome_key import CacheKey, Salt, toolchain_identity
 from buildlimits.outcome_queries import PeerServerProcess
@@ -45,7 +46,6 @@ from buildlimits.predict.dataset import build_snapshot
 from buildlimits.predict.records import decode_history
 
 if typ.TYPE_CHECKING:
-    from buildlimits.outcome_attribution import Generation
     from buildlimits.outcome_ports import GenerationFailure
     from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_recorder_driver import OutcomeRecorder
@@ -337,7 +337,9 @@ def run_restart(
     launch(recorder, "restart", payload(tools, "observer-restart"))
     finish(recorder, "restart")
     start(recorder)
-    current = typ.cast("Generation", slot[0])
+    current = slot[0]
+    if not isinstance(current, Generation):
+        pytest.fail(f"the peer read no server generation before the restart: {current}")
     slot[0] = dc.replace(current, pid=current.pid + 1, starttime=current.starttime + 1)
     return poll(recorder)
 
@@ -358,7 +360,11 @@ def assert_extraction(records: list[StoreRecord]) -> None:
         history_loss=HistoryLoss.active_file_only(),
     )
     stats = snapshot.stats()
+    outcome_rows = len(outcomes(tuple(records)))
 
+    assert stats.events == outcome_rows, (
+        "every recorded outcome row reaches the snapshot, declined rows included"
+    )
     assert stats.labelled == 2, "the controlled miss and hit are the labels"
     assert stats.admission_recorded == stats.events, (
         "every retained outcome carries its admission time"

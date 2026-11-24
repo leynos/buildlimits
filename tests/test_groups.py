@@ -183,13 +183,28 @@ def test_placement_captures_the_admission_wall_clock(
     monkeypatch: pytest.MonkeyPatch,
     selector: selectors.BaseSelector,
 ) -> None:
-    """The UTC admission moment is read where admission is decided."""
-    moment = dt.datetime(2026, 10, 24, 12, 30, tzinfo=dt.UTC)
+    """The UTC admission moment is read where admission is decided.
+
+    The clock advances once placement gets past the admission decision, so a
+    timestamp read any later would carry the wrong moment and fail here.
+    """
+    admission_moment = dt.datetime(2026, 10, 24, 12, 30, tzinfo=dt.UTC)
+    later_moment = admission_moment + dt.timedelta(minutes=5)
+    # Placement advances the wall clock once it gets past the admission
+    # decision. A timestamp read any later than that decision carries the
+    # release moment instead, and the assertion below catches it.
+    clock = [admission_moment]
     manager = _Manager()
-    monkeypatch.setattr(launch, "spawn_held", lambda _spec: _Child())
+
+    def spawn_after_the_decision(_spec: object) -> _Child:
+        """Start the child, then move the wall clock on."""
+        clock[0] = later_moment
+        return _Child()
+
+    monkeypatch.setattr(launch, "spawn_held", spawn_after_the_decision)
     monkeypatch.setattr(cgroups, "wait_for_membership", lambda *_args: True)
     groups = _placing_groups(selector, manager)
-    groups.wall_clock = lambda: moment
+    groups.wall_clock = lambda: clock[0]
     entry = _entry(cacheable=False)
 
     running = groups.place(entry, "g1", cached=False)
@@ -198,7 +213,9 @@ def test_placement_captures_the_admission_wall_clock(
     assert entry.admitted == pytest.approx(0.0), (
         "the monotonic admission time is unchanged"
     )
-    assert entry.admitted_at == moment, "the wall-clock admission time is recorded"
+    assert entry.admitted_at == admission_moment, (
+        "the wall-clock admission time is the decision moment, not the release"
+    )
     assert manager.calls, "the manager created the scope"
 
 

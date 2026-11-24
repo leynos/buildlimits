@@ -96,7 +96,7 @@ def _end_cached_group(world: OutcomeWorld, shell: OutcomeShell, group_id: str) -
     """End one cached group and release the token its detached cache retained."""
     world.admission.leader_exited(group_id, Exit(code=0))
     world.admission.group_emptied(group_id)
-    shell.emptied(GroupEnding(group_id, False, True))
+    shell.emptied(GroupEnding(group_id, True, True))
     world.admission.server_activity(active_compiles=0)
 
 

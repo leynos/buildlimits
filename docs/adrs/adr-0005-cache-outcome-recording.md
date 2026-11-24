@@ -17,9 +17,10 @@ Amended by
 [ADR 011](adr-0011-cache-outcome-admission-time-and-label-loss-accounting.md)
 (2026-11-23): the store format now records an admission time and the
 classification evidence, the quiet-point gate no longer requires an empty
-queue, a first baseline may be read while work moves, and a window overflow
-resets the baseline. The attribution rules in D3 and D12 are otherwise
-unchanged.
+queue, and a window overflow resets the baseline. The movement clauses still
+apply to every reading, a first baseline included, because a compilation in
+flight at the boundary would move counters into the next window. The
+attribution rules in D3 and D12 are otherwise unchanged.
 
 ## Date
 

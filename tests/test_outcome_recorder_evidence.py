@@ -87,6 +87,20 @@ def test_window_overflow_resets_the_baseline_for_the_next_window() -> None:
     assert overflowed.baseline is None, "the stale baseline is dropped"
     assert overflowed.window.entries == (), "the overflowed window is cleared"
 
+    # The overflowed groups were already emitted, so the recorder no longer
+    # tracks them; their endings must still be tolerated, and the recovery
+    # reading must follow the same completion sequence production would see.
+    for index in range(65):
+        state, _ = recorder.advance(
+            state,
+            recorder.Ended(
+                group_id=f"overflow-{index}",
+                is_clean=True,
+                now=65.0 + index * 0.1,
+                observed_at=OBSERVED_AT,
+            ),
+        )
+
     state, _ = begin_query(state, recorder, clear_gate_event(recorder, 100.0))
     state, baseline = complete_query(
         state,
