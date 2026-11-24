@@ -31,6 +31,42 @@ see an example that the format change invalidated. Four examples needed the
 current version and a complete timing group; they are part of the commit that
 fixed them, not a follow-up.
 
+### Open: reconcile with the issue #68 label-reading fix
+
+After this branch was cut, the issue #68 branch gained its own fix for the same
+`observed_at` defect: `Launched`, `Ended`, `GateOpen` and `PollResult` now
+carry an `observed_at`, and the recorder stamps each row from the event that
+produced it, so `observed_at` itself becomes the moment the reading returned.
+That is the same boundary this branch calls `label_available_at`.
+
+The two designs are not interchangeable, and the difference matters:
+
+- The issue #68 fix reinterprets `observed_at` for every row that already
+  exists. Rows the earlier build wrote carry a completion stamp there, so a
+  label may become scorable on a time that preceded true knowledge. Their
+  commit says so and keeps the benchmark releasing no earlier than the recorded
+  time, which is the conservative direction, but the field can no longer
+  distinguish a verified reading moment from a historical completion stamp.
+- This branch keeps every moment distinct. `observed_at` retains its historical
+  provenance, `label_available_at` is written only when the observer accepted
+  the reading, and `attempt` plus `supervisor_generation` say which invocation
+  the row belongs to. A version 1 or 2 row is then explicitly unscorable rather
+  than reinterpreted.
+
+Rebasing this branch replays 16 commits across seven files that the issue #68
+fix rewrote, and a plain merge conflicts in 30 files. Both were attempted and
+abandoned rather than resolved blindly. The reconciliation that preserves both
+intentions is to take the issue #68 fix as the base, keep its `observed_at`
+reading moment as the *release* boundary, and re-apply only what it does not
+provide: the correlation identity, the duplicate and conflict contract, the
+closed `completion_after_availability` reason, the scored-versus-labelled
+reporting split, and the `insufficient label-availability times` status. That
+work is not done here.
+
+Until it is, this branch's pull request conflicts with its base and GitHub does
+not schedule Continuous Integration for it. Every gate above was therefore run
+locally, and the branch is published as a draft.
+
 ## The problem
 
 Two independent gates must hold before the offline benchmark may score a
