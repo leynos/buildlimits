@@ -39,6 +39,31 @@ release that predates version 2 treats the store as a version mismatch and
 moves it aside, so archive or migrate the history before a downgrade; the new
 code never rewrites an old document merely to read it.
 
+### Upgrading an active file at restart
+
+The writer appends only the format it emits, so a restart settles an active
+file whose header names an older version before the first append:
+
+- A segmented store seals the old active file through the normal sealing path.
+  Its rows are kept together under the header they were written with, one
+  sequence number is claimed, and the new active file starts with a current
+  header. No history is dropped, and the sealed source remains readable.
+- The legacy single-file store compacts in place, which rewrites the document
+  with a current header while keeping its rows.
+- If sealing or compaction fails, recording refuses appends rather than writing
+  a current row beneath the old header, and reports the save failure.
+
+This is why a downgrade is a clean failure. A version 1 reader now meets a
+version 2 header first and reports `version_mismatch`, which moves the store
+aside for an operator. Before this rule, a version 1 header could stay in place
+while version 2 rows were appended beneath it, and that reader reported the new
+row as `corrupt` — indistinguishable from damage to the history the store
+really holds.
+
+The first restart after an upgrade therefore creates one extra closed segment
+in segmented mode. Account for that segment when budgeting archive runs, and
+expect the sequence counter to advance by one even if the store was quiet.
+
 ## Upgrade steps
 
 1. Install the release that contains the feature, but leave the configuration
@@ -102,6 +127,13 @@ A corrupt or version-mismatched store is moved to `cache-outcomes.jsonl.bad`
 during recording startup, but only when that backup does not already exist;
 otherwise recording remains unavailable. Read-only replay leaves the store
 untouched and reports the decoding failure.
+
+A version 2 store written before the label-time fix records an observation time
+that may precede the moment its label was really known, and the format version
+cannot identify those rows. They stay readable and scorable, and the benchmark
+releases each label no earlier than the moment the row records. A history that
+must be strictly ordered from the start is best begun after the upgraded
+supervisor has run; no historical row is repaired or re-stamped.
 
 ## Reading the status line
 

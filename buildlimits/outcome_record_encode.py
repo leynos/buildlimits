@@ -13,8 +13,8 @@ import json
 from buildlimits.json_values import nonnegative_integer
 from buildlimits.outcome_record_format import (
     FORMAT_NAME,
-    FORMAT_VERSION,
     MAX_RECORD_BYTES,
+    SUPPORTED_FORMAT_VERSIONS,
     OutcomeRecord,
     StoreHeader,
     StoreRecord,
@@ -74,9 +74,14 @@ def _document(value: StoreHeader | StoreRecord) -> dict[str, object]:
     match value:
         case StoreHeader():
             _require_text(value.salt_id)
+            if isinstance(value.version, bool) or (
+                value.version not in SUPPORTED_FORMAT_VERSIONS
+            ):
+                msg = "store header version is not supported"
+                raise ValueError(msg)
             return {
                 "format": FORMAT_NAME,
-                "version": FORMAT_VERSION,
+                "version": value.version,
                 "salt_id": value.salt_id,
                 "written_at": timestamp_text(value.written_at),
             }

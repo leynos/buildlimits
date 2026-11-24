@@ -153,7 +153,7 @@ def start(recorder: OutcomeRecorder) -> None:
     delay = now - time.monotonic()
     if delay > 0:
         time.sleep(delay)
-    recorder.advance(GateOpen(inputs(), now))
+    recorder.advance(GateOpen(inputs(), now, dt.datetime.now(dt.UTC)))
     if not isinstance(recorder.state, Querying):
         pytest.fail("the quiet gate did not open a statistics query")
 
@@ -173,12 +173,17 @@ def launch(recorder: OutcomeRecorder, group_id: str, item: LaunchPayload) -> Non
             payload=item,
             now=time.monotonic(),
             admitted_at=dt.datetime.now(dt.UTC),
+            observed_at=dt.datetime.now(dt.UTC),
         )
     )
 
 
 def finish(recorder: OutcomeRecorder, group_id: str) -> None:
-    """Record one clean ending after its compilation returned."""
+    """Record one clean ending after its compilation returned.
+
+    The completion moment is evidence only: the label's observation time comes
+    from the statistics reading that produces it.
+    """
     recorder.advance(
         Ended(
             group_id=group_id,
@@ -244,7 +249,10 @@ def assert_cold_miss(reading: Reading) -> OutcomeRecord:
     assert record.admitted_at <= record.observed_at, (
         "the decision moment precedes the label"
     )
-    assert summaries(reading.records), "the window summary is persisted"
+    (summary,) = summaries(reading.records)
+    assert summary.observed_at == record.observed_at, (
+        "one reading dates both the row and its summary"
+    )
     return record
 
 

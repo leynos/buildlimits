@@ -160,14 +160,15 @@ def _diagnostics_from(
 def _require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:
     """Refuse a history whose recorded clock ran backwards under admissions.
 
-    The store stamps ``observed_at`` when it appends a record, so a later
-    position carrying an earlier stamp means the clock stepped backwards. No
-    monotonic sequence is stored beside the times, so the two sides of a step
-    cannot be separated: an event admitted later could sort before a label
-    observed earlier, and the schedule would predict with a label not yet
-    observed. A history carrying admission times that crosses a step is
-    refused rather than scored; one with no admission times is unaffected,
-    because it is already reported as unpredicted.
+    The recorder stamps every row of one reading with that reading's own
+    completion moment, so rows a store appended together share a time and a
+    later position carrying an earlier stamp means the wall clock stepped
+    backwards. No monotonic sequence is stored beside the times, so the two
+    sides of a step cannot be separated: an event admitted later could sort
+    before a label observed earlier, and the schedule would predict with a
+    label not yet observed. A history carrying admission times that crosses a
+    step is refused rather than scored; one with no admission times is
+    unaffected, because it is already reported as unpredicted.
 
     Raises
     ------

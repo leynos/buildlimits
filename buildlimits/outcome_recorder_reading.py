@@ -9,13 +9,16 @@ from buildlimits.outcome_attribution import (
     attribute,
 )
 from buildlimits.outcome_ports import GenerationFailure
-from buildlimits.outcome_recorder_outputs import (
-    _attribution_window,
+from buildlimits.outcome_recorder_effects import (
     _emission,
-    _emit_attribution,
-    _emit_unattributed,
     _finish_state,
     _with_reading_reason,
+)
+from buildlimits.outcome_recorder_outputs import (
+    _attribution_window,
+    _EmissionMoment,
+    _emit_attribution,
+    _emit_unattributed,
 )
 from buildlimits.outcome_recorder_types import (
     CloseQuery,
@@ -48,12 +51,16 @@ _RETRYABLE_READING_REASONS = frozenset({
 
 def _finish_failure(
     state: Querying,
-    now: float,
+    moment: _EmissionMoment,
     reason: OutcomeReason,
     *,
     disable: bool = False,
 ) -> tuple[RecorderState, Outputs]:
     """Refuse an unusable reading and apply reason-specific back-off.
+
+    ``moment`` carries the tick and the wall-clock moment the port answered
+    with this refusal, so a refused label is released only once its reading
+    returned.
 
     Returns
     -------
@@ -62,14 +69,14 @@ def _finish_failure(
 
     Examples
     --------
-    ``_finish_failure(querying, 4.0, "timeout")[1].reading_reasons`` is
-    ``("timeout",)``.
+    ``_finish_failure(querying, _EmissionMoment(4.0), "timeout")`` names
+    ``"timeout"`` as its reading reason.
     """
+    now = moment.now
     emitted = _emit_unattributed(
         state.progress.window.entries,
         reason,
-        now,
-        None,
+        moment,
     )
     progress = _schedule_next_read(
         _clear_window(state.progress),
@@ -139,8 +146,7 @@ def _refuse_generation(
     emitted = _emit_unattributed(
         state.progress.window.entries,
         reason,
-        event.now,
-        None,
+        _EmissionMoment(event.now, event.observed_at),
     )
     progress = _schedule_next_read(
         _clear_window(state.progress),
@@ -207,8 +213,7 @@ def _baseline_emission(
     emitted = _emit_unattributed(
         state.progress.window.entries,
         "no_baseline",
-        event.now,
-        None,
+        _EmissionMoment(event.now, event.observed_at),
     )
     return emitted, "no_baseline"
 
@@ -230,7 +235,7 @@ def _attribute_window(
     emitted = _emit_attribution(
         state.progress.window.entries,
         attribution,
-        event.now,
+        _EmissionMoment(event.now, event.observed_at),
         (baseline.stats, after.stats),
     )
     progress = _schedule_next_read(

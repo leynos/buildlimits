@@ -904,10 +904,28 @@ version 1 row decodes the three as `None`, and a present but malformed
 admission time is corruption rather than absence. `Groups.place` reads the UTC
 wall clock at the same point as the monotonic `entry.admitted`, `Launched`
 carries the value, and the recorder copies it onto every row emitted for that
-launch. `observed_at` remains the time the label became known; it is never
+launch. `observed_at` is the time the label or refusal became known, and the
+recorder takes it from the event that caused the emission: the poll result
+whose query returned, the gate that opened, or the stop that closed recording.
+A group's completion time is carried on `Ended` and on the retained launch as
+evidence, and is never a row's label time, because sccache exposes no label
+until the statistics query that reads it returns. Every row one reading emits,
+its window summary included, shares that reading's moment, so two launches
+finishing out of order cannot produce a store whose recorded clock runs
+backwards. `_row_time` falls back to the launch's completion only for a purely
+synthetic event that carries no wall clock at all. `observed_at` is never
 reduced by `runtime_seconds` to manufacture an admission time. The dataset
 adapter maps the value onto `Event.admitted_at`, and `Snapshot.stats()` counts
 the rows whose admission is at or before their own label.
+
+`StoreHeader` carries the `version` its document was read at or will be written
+with, defaulting to `FORMAT_VERSION`, and decoding preserves the file's own
+value. A restart that loads a header older than the current format settles the
+file before the writer becomes ready: a segmented store seals the old active
+file through `outcome_store_sealing.seal`, and a compaction or seal always
+installs a current header. A failed seal clears readiness rather than appending
+above the old header, so no current-format row is ever written beneath a header
+that says the file cannot hold one.
 
 `buildlimits.predict.accounting` folds decoded rows into the bounded
 `StoreAccounting` value stored once in the snapshot's `diagnostics` block.
@@ -1055,9 +1073,11 @@ out. `outcome_store_sealing` reports `archive_backlog` each time the sealed
 directory reaches eight entries. `settle_loaded_store` is where a restart
 enforces what an append cannot: a torn tail it cannot remove clears readiness
 and publishes `save_failed` rather than appending above the fragment, an
-oversized active file is sealed, and an active file whose oldest record
-predates the age cutoff is compacted, so a store that stayed small is not
-exempt from the age bound.
+oversized active file is sealed, an active file whose oldest record predates
+the age cutoff is compacted, and a file whose loaded header predates the
+current format is sealed in segmented mode (or compacted in legacy mode) so no
+current-format row is appended beneath an older header. A store that stayed
+small is not exempt from the age bound.
 
 `outcome_archive_lock` takes a non-blocking exclusive `flock` on
 `cache-outcomes.archive/archive.lock` for the whole run, and its headroom guard

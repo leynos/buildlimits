@@ -36,6 +36,7 @@ __all__ = (
 )
 
 if typ.TYPE_CHECKING:
+    import datetime as dt
     from types import ModuleType
 
 
@@ -235,6 +236,7 @@ def begin_query(
             now=query_at,
             result=ports.Ticket(serial=1, deadline=query_at + 2.0),
             before_generation=before_generation,
+            observed_at=gate_event.observed_at,
         ),
     )
     return state, started
@@ -278,10 +280,18 @@ def begin_fresh_recorder_query() -> tuple[ModuleType, object, _Outputs]:
     return recorder, state, output
 
 
-def complete_query(
-    state: object, recorder: ModuleType, text: str, now: float
+def complete_query(  # ruff: ignore[too-many-arguments]  # one argument per reading value; this helper is the packet's own contract; pylint: disable=too-many-arguments
+    state: object,
+    recorder: ModuleType,
+    text: str,
+    now: float,
+    *,
+    observed_at: dt.datetime = OBSERVED_AT,
 ) -> tuple[object, _Outputs]:
     """Submit one completed statistics query from the same generation.
+
+    ``observed_at`` is the moment the port returned the reading, which is the
+    moment its labels or refusals became known.
 
     Returns
     -------
@@ -300,5 +310,6 @@ def complete_query(
             now=now,
             result=ports.StatisticsText(text),
             after_generation=GENERATION,
+            observed_at=observed_at,
         ),
     )

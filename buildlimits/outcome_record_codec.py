@@ -273,7 +273,9 @@ def _decode_header(raw: object) -> StoreHeader | RecordFailure:
     written_at = parse_timestamp(value.get("written_at"))
     if salt_id is None or written_at is None:
         return RecordFailure("corrupt")
-    return StoreHeader(salt_id, written_at)
+    # The file's own version travels with its header: a writer needs it to
+    # know whether a current-format row may be appended beneath this one.
+    return StoreHeader(salt_id, written_at, typ.cast("int", value["version"]))
 
 
 def _decode_record(raw: object) -> StoreRecord | RecordFailure:

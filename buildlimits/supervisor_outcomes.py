@@ -66,6 +66,22 @@ __all__ = [
 ]
 
 
+from buildlimits.outcome_shell_dependencies import (
+    OutcomeDependencies as OutcomeDependencies,
+)
+
+"""Isolate cache-outcome recording from supervisor admission decisions."""
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+    from buildlimits.outcome_ports import StoreResult
+    from buildlimits.outcome_recorder_types import Outputs
+    from buildlimits.pending_request import Pending
+    from buildlimits.supervisor import Supervisor
+OUTCOME_TICK_SECONDS = 1.0
+__all__ = [
+]
+
+
 class OutcomeShell:
     """Record outcomes after admission without owning tokens or compilers."""
 
@@ -109,7 +125,9 @@ class OutcomeShell:
                 supervisor.settings.sccache_socket,
                 reaper=reaper,
             )
-        self._recorder = OutcomeRecorder(self._statistics, self._server)
+        self._recorder = OutcomeRecorder(
+            self._statistics, self._server, wall_clock=self._wall_clock
+        )
         self._child_sampler = ChildSampler(self._server)
         self._telemetry = outcome_telemetry.OutcomeTelemetry(
             supervisor.metrics, supervisor.tracer
@@ -235,22 +253,23 @@ class OutcomeShell:
                     payload=payload,
                     now=self._supervisor.clock(),
                     admitted_at=entry.admitted_at,
+                    observed_at=self._wall_clock(),
                 )
             )
         )
 
     def _emptied(self, ending: GroupEnding) -> None:
-        """Fold an admitted group's completion into the recorder."""
+        """Fold an admitted group's completion into the recorder.
+
+        No label time is supplied here. A group finishing is not a label: the
+        reading that produces one stamps every row it emits with its own
+        completion moment.
+        """
         if not ending.is_cached:
             return
         self._publish(
             self._recorder.advance(
-                Ended(
-                    ending.group_id,
-                    ending.is_clean,
-                    self._supervisor.clock(),
-                    self._wall_clock(),
-                )
+                Ended(ending.group_id, ending.is_clean, self._supervisor.clock())
             )
         )
 
@@ -299,7 +318,8 @@ class OutcomeShell:
         self._telemetry.selection(is_quiet=reason is None)
         self._next_gate_at = now + OUTCOME_TICK_SECONDS
         if reason is None:
-            self._publish(self._recorder.advance(GateOpen(inputs, now)))
+            observed_at = self._wall_clock()
+            self._publish(self._recorder.advance(GateOpen(inputs, now, observed_at)))
             return
         self._counters.skip_reading()
         self._telemetry.reading_skipped(reason)

@@ -779,6 +779,21 @@ versioned: version 1 documents still load, with the new evidence reported as
 admission field therefore reports `insufficient admission times` until new rows
 are recorded.
 
+A hit or miss label is dated when the statistics reading that produced it
+returned, not when the compilation finished. sccache exposes no label before
+that reading, so the recorded time is the earliest moment the label could have
+been known, and the benchmark never releases it earlier than that. Rows written
+by an earlier build of the version 2 store may carry a completion-derived time
+instead; they still load and score, but their recorded time is a lower bound on
+when the label was really known.
+
+When a restart finds an active store whose header names an older format, it
+closes or rewrites that file before recording resumes, so no new-format row is
+ever written beneath an older header. A downgraded release therefore reports
+`version_mismatch` for the store rather than a corrupt row. The upgrade keeps
+the old rows and, in segmented mode, costs one extra closed segment on the
+first restart.
+
 The recorder reads statistics at a quiet point. It no longer requires an empty
 queue, but every boundary, including a baseline, waits until no cached group is
 moving and no detached cache work is draining. A compilation still in flight

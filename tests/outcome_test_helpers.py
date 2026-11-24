@@ -19,9 +19,10 @@ if typ.TYPE_CHECKING:
 
 
 class _TimedGateEvent(typ.Protocol):
-    """The monotonic time carried by a fake recorder gate event."""
+    """The times carried by a fake recorder gate event."""
 
     now: float
+    observed_at: dt.datetime | None
 
 
 def window_summary(
@@ -298,8 +299,16 @@ def launch_payload(recorder: ModuleType, key: object) -> object:
     return recorder.LaunchPayload(key=key, origin="registry", parser_class="cacheable")
 
 
-def clear_gate_event(recorder: ModuleType, now: float) -> _TimedGateEvent:
+def clear_gate_event(
+    recorder: ModuleType,
+    now: float,
+    *,
+    observed_at: dt.datetime = OBSERVED_AT,
+) -> _TimedGateEvent:
     """Build a gate event with every quiet-point clause satisfied.
+
+    ``observed_at`` is the wall-clock moment the gate opened, which the
+    supervisor shell always supplies.
 
     Returns
     -------
@@ -322,4 +331,4 @@ def clear_gate_event(recorder: ModuleType, now: float) -> _TimedGateEvent:
         has_barrier=False,
         has_query_in_flight=False,
     )
-    return recorder.GateOpen(inputs=inputs, now=now)
+    return recorder.GateOpen(inputs=inputs, now=now, observed_at=observed_at)

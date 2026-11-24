@@ -10,10 +10,12 @@ The benchmark algorithms in
 
 ## Status
 
-Implemented on the issue branch. The live host service has not been upgraded:
-the before/after report below distinguishes the old recorder's retained history
-from the new code's controlled evidence, and says plainly where an operator
-action is still required.
+Implemented on the issue branch, including the review follow-up recorded in
+[Label timing and the store-format upgrade](#label-timing-and-the-store-format-upgrade)
+below. The live host service has not been upgraded: the before/after report
+below distinguishes the old recorder's retained history from the new code's
+controlled evidence, and says plainly where an operator action is still
+required.
 
 ## The problem, measured
 
@@ -103,6 +105,69 @@ The approved attribution rules are unchanged: a solo or unanimous window
 produces a label, and a mixed, unbalanced, ineligible or straddled window stays
 `unknown` with its reason.
 
+## Label timing and the store-format upgrade
+
+Two review findings changed the recorder and the store restart. Both are
+recorded as decisions D4 and D5 in
+[ADR 011](../adrs/adr-0011-cache-outcome-admission-time-and-label-loss-accounting.md).
+
+### A label is dated when its reading returned
+
+`observed_at` was stamped when the process group emptied, then copied onto
+every row the later statistics reading emitted. sccache exposes no label until
+that reading returns, so the recorded time could precede the moment the label
+was really known. `admission_schedule` releases labels at the recorded time, so
+a prediction admitted in between could read a label that had not been observed
+yet. The same per-launch stamps, written in launch order, let two launches
+finishing out of order produce decreasing observation times, which the snapshot
+loader refuses as a backwards clock.
+
+The recorder now takes the observation time from the event that caused the
+emission: the `PollResult` whose query returned for attributed, refused and
+straddled windows, the overflowing `Launched` event for a window overflow, and
+the `Stopping` event at shutdown. Every row of one window, its summary
+included, shares that moment. The launch's own completion time remains on
+`Ended` as evidence and is used only by the documented fallback for a purely
+synthetic event that carries no wall clock.
+
+New unit evidence covers both defects. A delayed-query test proves a label is
+not released before its query returned, and a reverse-completion test proves
+rows from two launches finishing out of order share one reading moment, load
+through the snapshot, and remain scorable.
+`tests/test_predict_snapshot_clock.py` adds the same statement at the snapshot
+boundary: two rows sharing one reading moment load and score instead of being
+refused, while a genuine backward step is still refused.
+
+Rows already written with a version 2 header by the earlier build keep their
+launch-derived `observed_at`. They stay readable and scorable, but their
+recorded time may precede the true knowledge time, and the format version
+cannot identify them. No new timestamp field was added for old rows. The
+benchmark releases a label no earlier than the moment its row records, which
+for those rows is a lower bound rather than proof.
+
+### An older header is settled before the writer appends
+
+`settle_loaded_store` left a same-salt, non-expired, below-limit segmented
+active file in place. After an upgrade, the writer appended version 2 rows
+beneath its version 1 header; a version 1 reader then reported the new row as
+`corrupt` rather than the file as a `version_mismatch`.
+
+`StoreHeader` now carries the format version its document was read at or will
+be written with, and decoding preserves the file's own value. A restart whose
+loaded header is older than `FORMAT_VERSION` seals the active file through the
+existing sealing path in segmented mode (or compacts it in place on the legacy
+path), and both transitions install a current header. A failed seal or
+compaction clears readiness rather than appending. Migration behaviour is in
+[the migration guide](../migrating-to-cache-outcome-recording.md).
+
+`tests/test_outcome_store_upgrade.py` pins the behaviour: a small, unexpired,
+same-salt version 1 file is sealed on a segmented restart and no version 1
+header remains above the appended row; a current reader decodes the upgraded
+file; a version 1 decoder reports `version_mismatch` rather than `corrupt`; and
+the legacy path rewrites the header in place. `tests/segment_test_helpers.py`
+gained `version_one_document`, which reproduces the bytes an older release
+really wrote, because a version 2 encoder cannot emit them.
+
 ## Controlled evidence
 
 The opt-in check `tests/test_sccache_outcome_observer.py` drives the real
@@ -178,7 +243,10 @@ their inventory.
 The opt-in real-sccache checks pass at this commit:
 `tests/test_sccache_outcome_observer.py` labels the controlled cold/warm pair,
 the concurrent mixed pair, the declined probe, the timeout and the generation
-change exactly as the table above records.
+change exactly as the table above records. That check now drives its recorder
+through a wall clock, and asserts that the cold miss's row and its window
+summary carry the same reading moment, so the controlled evidence covers the
+label-timing fix as well as the attribution rules.
 
 ### Load mix and the limit of aggregate counters
 
@@ -233,6 +301,13 @@ bounded by its own retention policy.
   this change does not modify the service.
 - Version 1 history remains unscorable by design. No admission time is derived
   from `observed_at - runtime_seconds`, and no missing hit is read as a miss.
+- Version 2 rows written by the earlier build of this branch carry a
+  launch-derived `observed_at` that may precede the label's true knowledge
+  time. They remain readable and scorable, and the store format version cannot
+  identify them, so the benchmark releases each label no earlier than the
+  recorded time. That is a lower bound, not proof, for those rows. No timestamp
+  field was invented to mark them; a strictly ordered history is best started
+  after the upgraded supervisor has run.
 - The archive byte budget sees larger rows. A policy sized exactly to the old
   row size will retain fewer rows; the retention tests and the documented
   budget are updated accordingly.
@@ -243,8 +318,13 @@ bounded by its own retention policy.
 make check-fmt
 make lint
 make typecheck
-make test
-BUILD_LIMITS_SCCACHE_HOST_CHECK=1 make test-sccache-host
+make test PYTEST_XDIST_WORKERS=8
+make markdownlint
+make nixie
+make validate
+make audit
+BUILD_LIMITS_SCCACHE_HOST_CHECK=1 uv run pytest -v -m sccache_host_check \
+  tests/test_sccache_outcome_observer.py
 make predict-dataset
 make predict-benchmark
 ```

@@ -1,8 +1,14 @@
 """Fake statistics-port sequences for the recorder state machine."""
 
+import datetime as dt
 import typing as typ
 
 from outcome_recorder_test_helpers import OBSERVED_AT, recorder_progress, stats_text
+
+# A group's own completion moment, deliberately distinct from the reading
+# moment, so the machine can prove a row takes its label time from the reading
+# and never from the launch.
+COMPLETION_AT = OBSERVED_AT + dt.timedelta(hours=1)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -133,7 +139,7 @@ class RecorderReadings:
                 group_id=group_id,
                 is_clean=is_clean,
                 now=self.machine.now,
-                observed_at=OBSERVED_AT,
+                observed_at=COMPLETION_AT,
             )
         )
 
@@ -204,7 +210,9 @@ class RecorderReadings:
             has_barrier=False,
             has_query_in_flight=isinstance(machine.state, machine.recorder.Querying),
         )
-        return machine.recorder.GateOpen(inputs=inputs, now=machine.now)
+        return machine.recorder.GateOpen(
+            inputs=inputs, now=machine.now, observed_at=OBSERVED_AT
+        )
 
     def start_query(self) -> bool:
         """Open a fake ticket only after the model gate reaches a quiet point.
@@ -245,6 +253,7 @@ class RecorderReadings:
                         serial=machine.ticket_serial, deadline=deadline
                     ),
                     before_generation=machine.generation,
+                    observed_at=OBSERVED_AT,
                 )
             )
         return getattr(machine.state, "ticket", None) is not None
@@ -287,6 +296,7 @@ class RecorderReadings:
                 now=machine.now,
                 result=result,
                 after_generation=machine.generation,
+                observed_at=OBSERVED_AT,
             )
         )
 

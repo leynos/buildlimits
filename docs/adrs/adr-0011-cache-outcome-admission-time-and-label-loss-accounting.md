@@ -138,6 +138,61 @@ The approved attribution rules are otherwise unchanged. A solo or unanimous
 window can still produce a label; a mixed, ineligible, unbalanced or straddled
 window stays `unknown` with its own reason.
 
+### D4: a label is dated when its reading returned
+
+`observed_at` is the moment the label or refusal became known, and nothing
+else. The recorder takes that wall-clock moment from the event that caused the
+emission:
+
+- `PollResult` carries it for an attributed, refused or straddled window: the
+  statistics query has returned, so its labels can now be read.
+- `Launched` carries it for a window that overflows, because the refusal is
+  known the moment the overflowing launch arrives.
+- `Stopping` carries it for the launches a supervisor stop leaves unattributed.
+
+Every row of one window, including its `WindowSummary`, shares that single
+moment. A launch's own completion time is still recorded (`Ended`, and the
+retained launch's `completed_at`) as evidence, and is used only as the
+documented fallback for a purely synthetic event that carries no wall clock at
+all. The supervisor shell stamps every launch, gate, poll and stop, so no real
+row takes that fallback.
+
+Two consequences follow. First, a prediction admitted between a launch's
+completion and the reading that labels it can no longer see that label, so the
+walk-forward schedule cannot leak it backwards. Second, two launches finishing
+out of order no longer produce descending observation times in store order:
+they share the reading's moment, so the snapshot loader's backwards-clock
+refusal fires only on a genuine wall-clock step.
+
+Rows written by an earlier build of this branch carry the old, launch-derived
+`observed_at`. They remain readable and scorable, but their recorded time may
+precede the label's true knowledge time, and the same store format version
+cannot separate them from corrected rows. No timestamp field was invented to
+mark them. The snapshot and benchmark therefore treat the recorded time as the
+label-release boundary: a label is released no earlier than the moment its row
+records, which for those rows is a lower bound rather than proof. That residual
+risk is documented, not guessed away; a history that mixes pre-fix and fixed
+rows carries it for the pre-fix rows only.
+
+### D5: an older active file is settled before the writer appends
+
+`StoreHeader` carries the `version` the document was read at or will be written
+with, defaulting to `FORMAT_VERSION`; decoding preserves the file's own value.
+On a segmented restart, a loaded header older than the current format seals the
+old active file through the existing sealing path, which closes the old
+document intact and installs a fresh current-format header. A compaction or a
+seal always writes the current version. The legacy single-file path rewrites
+the document in place through compaction, which also installs a current header;
+a compaction or seal that fails clears readiness instead of allowing an append,
+so no current-format row is ever written beneath an older header.
+
+This is what lets a downgraded reader classify the store correctly. Before the
+change, a version 1 header could stay in place while version 2 rows were
+appended beneath it, so a version 1 reader decoded the header happily and then
+reported the first new row as `corrupt`. After the change, the only header the
+writer leaves in place is current, so that reader reports `version_mismatch` at
+the header before it reads any row.
+
 ## Consequences
 
 - A controlled run against real sccache 0.14 produces exactly one `miss` and
@@ -155,9 +210,16 @@ window stays `unknown` with its own reason.
 - Existing version 1 history remains readable but contributes no labels or
   admission times to the benchmark. An operator who wants new evidence must run
   the updated supervisor; no historical row is retroactively repaired.
-- The store row grows by about 71 bytes, so segment boundaries and archive
-  sizes move. Archive tests and byte budgets that assumed the version 1 row
-  size are updated.
+- Version 2 rows written before this decision's label-time fix remain readable
+  and scorable, but their `observed_at` may precede the true knowledge time;
+  see D4. An operator who needs a strictly ordered history can start it after
+  the upgraded supervisor has run, because the format version cannot identify
+  the older rows.
+- A restart settles an active file written under an older header before the
+  first append. In segmented mode this costs one extra closed segment and one
+  sequence number; no row is dropped. The store row grows by about 71 bytes, so
+  segment boundaries and archive sizes move. Archive tests and byte budgets
+  that assumed the version 1 row size are updated.
 - The live service is not modified by this decision. Deploying the code and
   observing the new rows on the host remain operator actions.
 

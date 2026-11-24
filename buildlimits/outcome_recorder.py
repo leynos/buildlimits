@@ -4,9 +4,10 @@ import dataclasses as dc
 
 from buildlimits.outcome_gate import quiet_point
 from buildlimits.outcome_ports import Pending, QueryFailure, StatisticsText, Ticket
+from buildlimits.outcome_recorder_effects import _join_outputs
 from buildlimits.outcome_recorder_outputs import (
+    _EmissionMoment,
     _emit_unattributed,
-    _join_outputs,
     _with_progress,
 )
 from buildlimits.outcome_recorder_reading import _finish_failure, _finish_reading
@@ -126,8 +127,7 @@ def _launch(state: RecorderState, event: Launched) -> tuple[RecorderState, Outpu
         outputs = _emit_unattributed(
             overflowed,
             "window_overflow",
-            event.now,
-            None,
+            _EmissionMoment(event.now, event.observed_at),
         )
         ids = {item.group_id for item in overflowed}
         progress = dc.replace(
@@ -172,7 +172,7 @@ def _ended(state: RecorderState, event: Ended) -> tuple[RecorderState, Outputs]:
         active,
         runtime_seconds=max(0.0, event.now - active.started_at),
         is_clean=event.is_clean,
-        observed_at=event.observed_at,
+        completed_at=event.observed_at,
     )
     progress = dc.replace(
         state.progress,
@@ -263,7 +263,9 @@ def _poll_result(
         state.ticket.deadline,
         state.started_at + OUTCOME_QUERY_SECONDS,
     ):
-        return _finish_failure(state, event.now, "timeout")
+        return _finish_failure(
+            state, _EmissionMoment(event.now, event.observed_at), "timeout"
+        )
     return _complete_result(state, event)
 
 
@@ -285,15 +287,24 @@ def _complete_result(
         case Pending() if state.ticket is not None:
             return state, Outputs()
         case QueryFailure(reason=reason):
-            return _finish_failure(state, event.now, reason)
+            return _finish_failure(
+                state, _EmissionMoment(event.now, event.observed_at), reason
+            )
         case StatisticsText(text=text):
             parsed = parse_statistics(text, supported=SUPPORTED_SCCACHE_VERSIONS)
             if isinstance(parsed, ReadFailure):
                 if parsed.reason == "unsupported_version":
                     return _finish_failure(
-                        state, event.now, parsed.reason, disable=True
+                        state,
+                        _EmissionMoment(event.now, event.observed_at),
+                        parsed.reason,
+                        disable=True,
                     )
-                return _finish_failure(state, event.now, parsed.reason)
+                return _finish_failure(
+                    state,
+                    _EmissionMoment(event.now, event.observed_at),
+                    parsed.reason,
+                )
             return _finish_reading(state, event, parsed)
         case _:
             return state, Outputs()
@@ -316,8 +327,7 @@ def _stop(state: RecorderState, event: Stopping) -> tuple[RecorderState, Outputs
     emission = _emit_unattributed(
         state.progress.window.entries,
         "supervisor_stopped",
-        event.now,
-        event.observed_at,
+        _EmissionMoment(event.now, event.observed_at),
     )
     progress = dc.replace(state.progress, window=OutcomeWindow(), active=())
     commands = (

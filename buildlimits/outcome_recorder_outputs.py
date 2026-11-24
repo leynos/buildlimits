@@ -1,4 +1,10 @@
-"""Build immutable outcome effects from completed recorder windows."""
+"""Build immutable outcome effects from completed recorder windows.
+
+The effect combinations one transition needs — joining a reducer step to its
+port response, attaching a reading reason, closing a terminal ticket — live in
+:mod:`buildlimits.outcome_recorder_effects`. This module owns the mapping from
+a retained launch to a journal event, a store row and a window summary.
+"""
 
 import dataclasses as dc
 import typing as typ
@@ -6,12 +12,10 @@ import typing as typ
 from buildlimits.outcome_attribution import WindowEntry
 from buildlimits.outcome_record_format import OutcomeRecord, WindowSummary
 from buildlimits.outcome_recorder_types import (
-    CloseQuery,
     Disabled,
     Idle,
     OutcomeEvent,
     Outputs,
-    QueryFinished,
     Querying,
     RecorderState,
 )
@@ -20,17 +24,26 @@ if typ.TYPE_CHECKING:
     import datetime as dt
 
     from buildlimits.outcome_attribution import Attribution
-    from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.outcome_recorder_types import (
         AttributionKind,
-        PollResult,
         Progress,
-        SpanTransition,
         _Launch,
     )
     from buildlimits.outcome_stats import StatsReading
     from buildlimits.outcome_vocabulary import CacheResult, OutcomeReason
     from buildlimits.outcome_window import OutcomeWindow
+
+
+@dc.dataclass(frozen=True, slots=True)
+class _EmissionMoment:
+    """The monotonic tick and wall-clock moment one emission is caused at.
+
+    ``observed_at`` is when the label or refusal became known. It is ``None``
+    only for a purely synthetic event, which supplies no wall clock.
+    """
+
+    now: float
+    observed_at: dt.datetime | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -47,10 +60,14 @@ class _EventDetails:
 def _emit_unattributed(
     launches: tuple[_Launch, ...],
     reason: OutcomeReason,
-    now: float,
-    observed_at: dt.datetime | None,
+    moment: _EmissionMoment,
 ) -> Outputs:
     """Build one refusal event for each buffered launch without splitting.
+
+    ``moment.observed_at`` is the moment the refusal became known, carried by
+    the event that caused this emission: a completed reading, a stopped
+    supervisor or an overflowing launch. Every row in the window shares it, so
+    a label can never be released before the evidence that produced it existed.
 
     Returns
     -------
@@ -61,16 +78,14 @@ def _emit_unattributed(
     --------
     An empty launch tuple returns ``Outputs()``.
     """
-    details = _EventDetails("unattributed", "none", reason, len(launches), now)
+    details = _EventDetails("unattributed", "none", reason, len(launches), moment.now)
     events = tuple(_event_for(launch, details) for launch in launches)
     records = tuple(
         record
         for launch in launches
         if (
             record := _record_for(
-                launch,
-                details,
-                observed_at or launch.observed_at,
+                launch, details, _row_time(launch, moment.observed_at)
             )
         )
         is not None
@@ -81,10 +96,16 @@ def _emit_unattributed(
 def _emit_attribution(
     launches: tuple[_Launch, ...],
     attribution: Attribution,
-    now: float,
+    moment: _EmissionMoment,
     readings: tuple[StatsReading, StatsReading],
 ) -> Outputs:
     """Build labels, records and a summary for one valid statistics window.
+
+    ``moment.observed_at`` is the moment the reading that produced these
+    labels completed, and every row and the summary share it. A per-launch
+    completion time is never substituted: a label does not exist until its
+    query returns, so releasing it at the launch's own stamp would let a
+    prediction read a label that had not been observed yet.
 
     Returns
     -------
@@ -96,6 +117,7 @@ def _emit_attribution(
     An accepted attribution is copied to each emitted event.
     """
     labels = dict(attribution.labels)
+    now = moment.now
 
     def details_for(launch: _Launch) -> _EventDetails:
         """Build one event's classification from the shared window result.
@@ -119,10 +141,6 @@ def _emit_attribution(
         )
 
     events = tuple(_event_for(launch, details_for(launch)) for launch in launches)
-    observed_at = next(
-        (launch.observed_at for launch in reversed(launches) if launch.observed_at),
-        None,
-    )
     records = tuple(
         record
         for launch in launches
@@ -130,13 +148,13 @@ def _emit_attribution(
             record := _record_for(
                 launch,
                 details_for(launch),
-                observed_at or launch.observed_at,
+                _row_time(launch, moment.observed_at),
             )
         )
         is not None
     )
     summary = (
-        _window_summary(launches, readings, observed_at)
+        _window_summary(launches, readings, moment.observed_at)
         if attribution.reason in {"none", "mixed_window"}
         else None
     )
@@ -175,6 +193,26 @@ def _event_for(launch: _Launch, details: _EventDetails) -> OutcomeEvent:
         child_sighting=launch.sightings.sighting(),
         child_samples=launch.sightings.samples,
     )
+
+
+def _row_time(launch: _Launch, observed_at: dt.datetime | None) -> dt.datetime | None:
+    """Return the wall-clock moment one row's label or refusal became known.
+
+    Every row a reading emits shares the reading's own moment, never a
+    launch's completion time: a label does not exist until its query returns.
+    Only a purely synthetic event, which carries no wall clock at all, falls
+    back to the launch's own completion time, so a unit test can still assert
+    the row shape. The shell stamps every gate, launch, poll and stop, so a
+    real row never takes that path.
+
+    Returns
+    -------
+    datetime or None
+        The window's moment, or the launch's completion when none was given.
+    """
+    if observed_at is not None:
+        return observed_at
+    return launch.completed_at
 
 
 def _record_for(
@@ -298,100 +336,3 @@ def _with_progress(
             return dc.replace(state, progress=progress)
         case Idle():
             return Idle(progress)
-
-
-def _emission(
-    events: tuple[OutcomeEvent, ...],
-    records: tuple[StoreRecord, ...],
-    spans: tuple[SpanTransition, ...],
-    reason: OutcomeReason,
-) -> Outputs:
-    """Create a terminal reading output with its reason in one place.
-
-    Returns
-    -------
-    Outputs
-        The supplied effects with exactly one reading reason.
-
-    Examples
-    --------
-    An empty emission for a baseline read carries reason ``"none"``.
-    """
-    return Outputs(
-        events=events, records=records, spans=spans, reading_reasons=(reason,)
-    )
-
-
-def _join_outputs(first: Outputs, second: Outputs) -> Outputs:
-    """Combine effects from one reducer transition and its port response.
-
-    Returns
-    -------
-    Outputs
-        A new value containing each effect in original order.
-
-    Examples
-    --------
-    Joining two empty outputs returns ``Outputs()``.
-    """
-    return Outputs(
-        commands=(*first.commands, *second.commands),
-        events=(*first.events, *second.events),
-        records=(*first.records, *second.records),
-        spans=(*first.spans, *second.spans),
-        reading_reasons=(*first.reading_reasons, *second.reading_reasons),
-    )
-
-
-def _with_reading_reason(outputs: Outputs, reason: OutcomeReason) -> Outputs:
-    """Attach a reading result when its event and record builder omitted it.
-
-    Returns
-    -------
-    Outputs
-        The existing output, or a copy with the supplied reason.
-
-    Examples
-    --------
-    Adding ``"timeout"`` to an empty output sets its reading reason.
-    """
-    if outputs.reading_reasons:
-        return outputs
-    return dc.replace(outputs, reading_reasons=(reason,))
-
-
-def _finish_state(
-    state: Querying,
-    progress: Progress,
-    event: PollResult,
-    emitted: Outputs,
-) -> tuple[RecorderState, Outputs]:
-    """Close a terminal ticket and join its span and classification effects.
-
-    Returns
-    -------
-    tuple[RecorderState, Outputs]
-        The idle state and terminal outputs, including a closed ticket.
-
-    Raises
-    ------
-    RuntimeError
-        If the terminal reading did not produce a reason.
-
-    Examples
-    --------
-    Finishing a ticket with reason ``"none"`` closes it with that span reason.
-    """
-    if not emitted.reading_reasons:
-        msg = "a terminal reading must carry its reason"
-        raise RuntimeError(msg)
-    reason = emitted.reading_reasons[-1]
-    commands = () if state.ticket is None else (CloseQuery(state.ticket),)
-    output = _join_outputs(
-        emitted,
-        Outputs(
-            commands=commands,
-            spans=(QueryFinished(event.now, reason),),
-        ),
-    )
-    return Idle(progress), output

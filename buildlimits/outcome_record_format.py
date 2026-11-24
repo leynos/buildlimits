@@ -38,10 +38,17 @@ _ATTRIBUTIONS = frozenset({"solo", "unanimous", "inferred", "none"})
 
 @dc.dataclass(frozen=True, slots=True)
 class StoreHeader:
-    """Store format identity and explicit write time."""
+    """Store format identity, write time and the file's own format version.
+
+    ``version`` is the version the document was read at or will be written
+    with. It defaults to the current format, and decoding preserves whatever
+    the file itself carried, so a writer can tell that the file it loaded is
+    older than the rows it is about to append and settle it first.
+    """
 
     salt_id: str
     written_at: dt.datetime
+    version: int = FORMAT_VERSION
 
 
 @dc.dataclass(frozen=True, slots=True)

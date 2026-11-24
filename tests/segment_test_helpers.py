@@ -22,6 +22,11 @@ if typ.TYPE_CHECKING:
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
 DIGEST = "a" * 64
 
+# The fields a version 2 outcome row added. A version 1 release wrote rows
+# without them, so a faithful old document must omit them rather than emit
+# nulls.
+_V1_OMITTED_FIELDS = ("outcome_reason", "outcome_attribution", "admitted_at")
+
 __all__ = [
     "DIGEST",
     "NOW",
@@ -31,9 +36,40 @@ __all__ = [
     "sidecar_document",
     "store_layout",
     "swap_after_validation",
+    "version_one_document",
     "write_private",
     "write_sidecar",
 ]
+
+
+def version_one_document(
+    rows: tuple[StoreRecord, ...], salt_id: str = "salt-1"
+) -> bytes:
+    """Encode one header and rows as a version 1 document.
+
+    A version 1 release wrote its header with ``"version": 1`` and its
+    outcome rows without the admission and classification fields, so a
+    restart fixture must reproduce those bytes to exercise the upgrade rules
+    on a document an older release really produced.
+
+    Returns
+    -------
+    bytes
+        The complete, newline-terminated version 1 document.
+    """
+    header = {
+        "format": "buildlimits-cache-outcomes",
+        "version": 1,
+        "salt_id": salt_id,
+        "written_at": "2026-11-19T00:00:00Z",
+    }
+    lines = [json.dumps(header, separators=(",", ":"))]
+    for row in rows:
+        record = json.loads(outcome_record_encode.encode_line(row))
+        for field in _V1_OMITTED_FIELDS:
+            record.pop(field, None)
+        lines.append(json.dumps(record, separators=(",", ":"), sort_keys=True))
+    return ("\n".join(lines) + "\n").encode()
 
 
 def history_policy(
