@@ -283,3 +283,48 @@ def test_an_unreadable_lookup_is_not_a_completed_deletion(
     assert read_retention_floor(layout(tmp_path)).sequence == 1, (
         "the floor does not advance over an entry the run still holds"
     )
+
+
+def _deflate_after_the_work(monkeypatch: pytest.MonkeyPatch, errno_value: int) -> None:
+    """Make the post-work measurement fail with the supplied filesystem error."""
+    from buildlimits import outcome_archive
+
+    def refuse_report(*_args: object, **_kwargs: object) -> typ.NoReturn:
+        """Fail the report measurement after the archives were published."""
+        raise OSError(errno_value, "injected failure")
+
+    monkeypatch.setattr(outcome_archive, "_report", refuse_report)
+
+
+def test_a_full_filesystem_after_the_work_stays_retryable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full disk after archivalling reports no_headroom, not a failure.
+
+    The archives and evictions are already published when the result cannot be
+    measured. A full filesystem is temporary, so it keeps the retryable
+    classification the earlier headroom check gives it.
+    """
+    write(tmp_path / "cache-outcomes.jsonl", records(NOW, 1), policy())
+    _deflate_after_the_work(monkeypatch, errno.ENOSPC)
+
+    report = run(tmp_path, policy())
+
+    assert report.status == "no_headroom", "a full disk is retried by the timer"
+    assert report.reason == "no_headroom", "the closed reason names the fault"
+    assert [(action.action, action.sequence) for action in report.actions] == [
+        ("archived", 1)
+    ], "the work the run completed is still reported"
+
+
+def test_another_filesystem_fault_after_the_work_is_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Any other filesystem fault stays a failure for an operator to read."""
+    write(tmp_path / "cache-outcomes.jsonl", records(NOW, 1), policy())
+    _deflate_after_the_work(monkeypatch, errno.EIO)
+
+    report = run(tmp_path, policy())
+
+    assert report.status == "failed", "an unexplained fault is not retryable"
+    assert report.reason == "unreadable", "the reason names the closed category"

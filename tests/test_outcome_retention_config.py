@@ -163,3 +163,64 @@ def test_a_refused_policy_leaves_recorded_history_intact(
         "the operator is told which bound is wrong"
     )
     assert str(store) not in captured.err, "no host path reaches the journal"
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [(header_floor_bytes() - 1, "cannot hold"), (header_floor_bytes(), None)],
+    ids=["below-the-floor", "at-the-floor"],
+)
+def test_the_header_floor_rule_needs_the_supplied_floor(
+    tmp_path: Path,
+    configured: int,
+    expected: str | None,
+) -> None:
+    """A budget below the supplied header floor is refused, and only then."""
+    path = tmp_path / "supervisor.toml"
+    path.write_text(
+        "\n".join([
+            'cache_outcomes = "record"',
+            f"cache_outcomes_max_bytes = {configured}",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    floor = header_floor_bytes()
+
+    if expected is None:
+        accepted = config.load(path, header_floor=floor)
+        assert accepted.cache_outcomes_max_bytes == configured, (
+            "a budget that holds the header is accepted"
+        )
+        return
+
+    with pytest.raises(config.ConfigError) as refusal:
+        config.load(path, header_floor=floor)
+
+    assert "cache_outcomes_max_bytes" in str(refusal.value), (
+        "the refusal names the setting the operator must change"
+    )
+    assert expected in str(refusal.value), "the refusal names the header floor"
+
+
+def test_a_budget_below_the_floor_is_accepted_when_no_floor_is_supplied(
+    tmp_path: Path,
+) -> None:
+    """A caller that supplies no floor gets every other rule unchecked.
+
+    This is the documented consequence of the injected floor: direct
+    construction may omit it, and the header check is then absent rather than
+    guessed.
+    """
+    path = tmp_path / "supervisor.toml"
+    configured = header_floor_bytes() - 1
+    path.write_text(
+        f'cache_outcomes = "record"\ncache_outcomes_max_bytes = {configured}\n',
+        encoding="utf-8",
+    )
+
+    accepted = config.load(path)
+
+    assert accepted.cache_outcomes_max_bytes == configured, (
+        "no floor means no header rule to break"
+    )

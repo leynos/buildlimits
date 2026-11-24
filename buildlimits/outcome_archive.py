@@ -38,11 +38,11 @@ from buildlimits.outcome_archive_report import (
     Unfinished,
 )
 from buildlimits.outcome_archive_report_builders import (
-    after_work_failure,
     dry_report,
     unfinished_report,
     unsettled_report,
 )
+from buildlimits.outcome_archive_unmeasured import unmeasured_after_work
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -319,21 +319,13 @@ def _execute(
             outcome,
         )
         return floor, _report(run, outcome, floor)
-    except OSError, UnknownActiveHistoryError:
-        # The archives and evictions are already published. The deletions
-        # are the only record the floor has, so they are written before the
-        # unmeasurable result is reported. The retention passes and the final
-        # plan both re-read the active file, so a cap either cannot settle
-        # takes this path.
-        outcome_archive_state.write_deleted_floor(
-            run.context.layout,
-            outcome_segment_state.read_retention_floor(run.context.layout).sequence,
-            outcome_archive_run.deleted_sequences(outcome.actions),
-            now=run.context.clock(),
-        )
-        return (
-            None,
-            after_work_failure(run, outcome, "unreadable"),
+    except UnknownActiveHistoryError:
+        return unmeasured_after_work(run, outcome, "unreadable")
+    except OSError as error:
+        # A full filesystem stays retryable even though the work succeeded, so
+        # the reason keeps the classification the earlier headroom check uses.
+        return unmeasured_after_work(
+            run, outcome, outcome_archive_evict.failure_reason(error)
         )
 
 

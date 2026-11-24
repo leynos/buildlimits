@@ -161,10 +161,11 @@ def after_work_failure(
     Returns
     -------
     RunReport
-        A failed report that still records the work the run completed.
+        A report that still records the work the run completed. A full
+        filesystem stays retryable; every other reason is a failure.
     """
     return RunReport(
-        status="failed",
+        status="no_headroom" if reason == "no_headroom" else "failed",
         started_at=run.started_at,
         finished_at=run.context.clock(),
         budget_bytes=run.context.policy.max_bytes,
