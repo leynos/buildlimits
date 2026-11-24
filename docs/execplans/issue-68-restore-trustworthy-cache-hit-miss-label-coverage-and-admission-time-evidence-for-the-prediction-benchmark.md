@@ -151,6 +151,35 @@ their reason and attribution are `unrecorded` and their admission time is
 absent. The extraction now states that explicitly instead of presenting one
 undifferentiated `unknown` bucket. Historic rows are not relabelled.
 
+The same command was run again over the live store after the final review
+round, at 2026-11-24T02:40Z:
+
+```text
+events=12209 labelled=0 identities=10821 gaps=0
+admission times: recorded=0 usable=0 missing=12209 after their own label=0
+store rows: total=12209 outcomes=12209 summaries=0 labels=0
+labelled fraction=0.0000 of outcome rows; cacheable rows=3825 with 0 labels
+by cache result: unattributed=12,209
+by outcome reason: unrecorded=12,209
+by attribution: unrecorded=12,209
+by parser class: cacheable=3,825, declined=8,384
+closed history: not considered (the active file alone was read)
+```
+
+The live host still runs the pre-change supervisor, so its rows carry neither
+the version 2 fields nor an admission time. Every count above is `unrecorded`
+because the recorder that wrote the rows never recorded it. That is the last
+honest reading this plan can take before the service is upgraded; the
+controlled real-sccache check is the evidence that new rows carry the fields.
+The earlier "closed history: not considered" line is the active-file read the
+`--store` flag performs; `--history` would read closed segments and report
+their inventory.
+
+The opt-in real-sccache checks pass at this commit:
+`tests/test_sccache_outcome_observer.py` labels the controlled cold/warm pair,
+the concurrent mixed pair, the declined probe, the timeout and the generation
+change exactly as the table above records.
+
 ### Load mix and the limit of aggregate counters
 
 The managed sccache server's cumulative counters at the same period were 11,834
