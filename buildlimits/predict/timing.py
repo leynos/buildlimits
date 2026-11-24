@@ -33,10 +33,6 @@ _MINIMUM_GROUP = 2
 """A repeated attempt needs at least two rows to be a duplicate or a conflict."""
 
 
-_MINIMUM_GROUP = 2
-"""A repeated attempt needs at least two rows to be a duplicate or a conflict."""
-
-
 @dc.dataclass(frozen=True, slots=True)
 class TimingAudit:
     """Which events may be predicted, scored, and why the rest may not.
