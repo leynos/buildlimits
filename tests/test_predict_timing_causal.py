@@ -325,3 +325,49 @@ def test_the_events_in_a_stream_keep_their_own_identity() -> None:
     assert typ.cast("dt.datetime", first.label_available_at) > EPOCH, (
         "each row's availability is a real recorded moment"
     )
+
+
+def test_a_label_unavailable_at_its_prediction_never_trains_a_predictor() -> None:
+    """A late label cannot move an earlier answer, in tuning or held-out.
+
+    The stream is built so one identity repeats. Its first row is admitted
+    before its own reading is accepted, and the second row is admitted after;
+    only the second prediction may reflect the first outcome.
+    """
+    early = event(0, admitted=1.0, available=9.0, label="hit", attempt="early")
+    later = event(0, admitted=4.0, available=12.0, label="miss", attempt="later")
+    after = event(0, admitted=13.0, available=20.0, label="miss", attempt="after")
+
+    walk = walk_forward((early, later, after), config())
+    last_outcome = walk.series["last-outcome"].probabilities
+
+    assert last_outcome[0] is None, "the first row has no earlier outcome"
+    assert last_outcome[1] is None, (
+        "the first label is accepted at 9, after the second row decides at 4"
+    )
+    assert last_outcome[2] == pytest.approx(0.0), (
+        "by the third decision both labels are released, and the miss is the "
+        "identity's newest"
+    )
+    assert walk.applied_labels == 2, "two labels informed a later prediction"
+    assert walk.unapplied_labels == 1, "the final label informs no prediction"
+
+
+def test_an_unverified_label_cannot_train_either() -> None:
+    """An unverified row supplies no training example, even with a label."""
+    unverified = dc.replace(
+        event(0, admitted=1.0, available=5.0, label="hit"),
+        attempt=None,
+        supervisor_generation=None,
+    )
+    verifiable = event(0, admitted=10.0, available=20.0, label="miss", attempt="b")
+
+    walk = walk_forward((unverified, verifiable), config())
+
+    assert walk.applied_labels == 0, (
+        "the unverified label is never released, so it trains nothing"
+    )
+    assert walk.rows[0] is None, "and it supplies no prediction moment either"
+    assert walk.series["last-outcome"].probabilities[1] is None, (
+        "the later prediction sees no earlier outcome"
+    )

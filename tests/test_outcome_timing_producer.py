@@ -407,3 +407,4 @@ def test_a_complete_timing_group_is_written_and_read_back() -> None:
 
 
 # weave: run 'weave explain tests/test_outcome_timing_producer.py' for per-hunk detail, 'weave check' to verify your resolution
+# weave: run 'weave explain tests/test_outcome_timing_producer.py' for per-hunk detail, 'weave check' to verify your resolution
