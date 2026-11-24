@@ -43,9 +43,10 @@ def _hand_events() -> tuple[Event, ...]:
         return EPOCH + dt.timedelta(seconds=seconds)
 
     def event(
-        identity: str, admitted: int, observed: int, label: str, attempt: str
+        identity: str, moments: tuple[int, int], label: str, attempt: str
     ) -> Event:
-        """Return one verified event at the supplied moments."""
+        """Return one verified event at its admission and label moments."""
+        admitted, observed = moments
         return Event(
             identity,
             "git",
@@ -60,10 +61,10 @@ def _hand_events() -> tuple[Event, ...]:
         )
 
     return (
-        event(IDENTITY_A, 0, 10, "hit", "g1"),
-        event(IDENTITY_A, 20, 30, "miss", "g2"),
-        event(IDENTITY_B, 40, 50, "hit", "g3"),
-        event(IDENTITY_A, 60, 70, "miss", "g4"),
+        event(IDENTITY_A, (0, 10), "hit", "g1"),
+        event(IDENTITY_A, (20, 30), "miss", "g2"),
+        event(IDENTITY_B, (40, 50), "hit", "g3"),
+        event(IDENTITY_A, (60, 70), "miss", "g4"),
     )
 
 

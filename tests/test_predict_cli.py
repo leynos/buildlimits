@@ -8,6 +8,7 @@ import pytest
 from predict_test_helpers import (
     benchmark_argv,
     read_results,
+    write_admission_only_snapshot,
     write_admitted_snapshot,
     write_admitted_store_snapshot,
     write_fast_config,
