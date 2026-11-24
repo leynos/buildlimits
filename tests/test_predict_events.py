@@ -21,8 +21,13 @@ if typ.TYPE_CHECKING:
 ORIGIN = typ.cast("Origin", "registry")
 
 
-def _causal(seconds: int, label: str) -> Event:
-    """Return one event for identity ``a`` admitted five seconds before its label."""
+def _causal(seconds: int, label: str, attempt: str | None = None) -> Event:
+    """Return one event for identity ``a`` admitted five seconds before its label.
+
+    A test that builds two events at the same instant passes distinct attempts,
+    because two rows sharing one attempt identity would be a duplicate rather
+    than two observations.
+    """
     moment = EPOCH + dt.timedelta(seconds=seconds)
     return Event(
         "a" * 64,
@@ -32,6 +37,9 @@ def _causal(seconds: int, label: str) -> Event:
         typ.cast("Label", label),
         1.0,
         label_observed_verified=True,
+        completed_at=moment,
+        attempt=f"g{seconds}" if attempt is None else attempt,
+        supervisor_generation="test-generation",
     )
 
 
@@ -46,6 +54,9 @@ def _admitted(identity: str, *, admitted: int, observed: int) -> Event:
         "hit",
         1.0,
         label_observed_verified=True,
+        completed_at=moment,
+        attempt=f"g{identity[:4]}-{admitted}-{observed}",
+        supervisor_generation="test-generation",
     )
 
 
@@ -159,8 +170,8 @@ def test_load_counts_only_released_events_strictly_before_the_admission() -> Non
         (
             _causal(0, "hit"),
             _causal(30, "hit"),
-            _causal(60, "miss"),
-            _causal(60, "miss"),
+            _causal(60, "miss", attempt="g60-a"),
+            _causal(60, "miss", attempt="g60-b"),
         ),
         load_window_seconds=60.0,
     )
@@ -198,8 +209,15 @@ def test_a_load_window_before_the_earliest_moment_counts_nothing() -> None:
     """
     earliest = dt.datetime.min.replace(tzinfo=dt.UTC)
     event = Event(
-        "d" * 64, ORIGIN, earliest, earliest, "hit", 1.0,
+        "d" * 64,
+        ORIGIN,
+        earliest,
+        earliest,
+        "hit",
+        1.0,
         label_observed_verified=True,
+        attempt="g0",
+        supervisor_generation="test-generation",
     )
 
     rows = features((event,), load_window_seconds=60.0)
@@ -219,6 +237,9 @@ def test_batches_follow_store_order_when_a_timestamp_steps_back() -> None:
         "hit",
         1.0,
         label_observed_verified=True,
+        completed_at=stepped_at,
+        attempt="g-stepped",
+        supervisor_generation="test-generation",
     )
     third = _causal(20, "miss")
 

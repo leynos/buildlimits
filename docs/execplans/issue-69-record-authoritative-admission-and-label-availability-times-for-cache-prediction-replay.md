@@ -88,6 +88,7 @@ which uses only injected clocks:
 | Availability before decision                        | excluded with `admission_after_availability`                         |
 | Old-format snapshot round trip                      | loads, gains no timing and is unscorable                             |
 | Archive round trip                                  | version 3 fields and append order survive byte for byte              |
+| Version 2 store through dataset and benchmark       | reports `insufficient label-availability times`, scores nothing      |
 
 The producer path is covered by `tests/test_outcome_timing_producer.py`, which
 drives the supervisor's launch handler, the real reducer and the encoder. It
