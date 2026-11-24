@@ -46,6 +46,7 @@ def empty_document() -> dict[str, object]:
                 "admission_usable": 0,
                 "admission_missing": 0,
                 "admission_unusable": 0,
+                "unverified_label_time": 0,
             },
             "source": {
                 "records_total": 0,

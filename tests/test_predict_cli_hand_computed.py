@@ -42,11 +42,22 @@ def _hand_events() -> tuple[Event, ...]:
         """Return the epoch plus ``seconds``."""
         return EPOCH + dt.timedelta(seconds=seconds)
 
-    return (
-        Event(IDENTITY_A, "git", stamp(0), stamp(10), "hit", 1.0),
-        Event(IDENTITY_A, "git", stamp(20), stamp(30), "miss", 1.0),
-        Event(IDENTITY_B, "git", stamp(40), stamp(50), "hit", 1.0),
-        Event(IDENTITY_A, "git", stamp(60), stamp(70), "miss", 1.0),
+    return tuple(
+        Event(
+            identity,
+            "git",
+            stamp(admitted),
+            stamp(observed),
+            label,
+            1.0,
+            label_observed_verified=True,
+        )
+        for identity, admitted, observed, label in (
+            (IDENTITY_A, 0, 10, "hit"),
+            (IDENTITY_A, 20, 30, "miss"),
+            (IDENTITY_B, 40, 50, "hit"),
+            (IDENTITY_A, 60, 70, "miss"),
+        )
     )
 
 

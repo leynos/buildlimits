@@ -45,6 +45,7 @@ def _observer_measured_anything(observer: ObserverAccounting) -> bool:
     scalars = (
         observer.requests,
         observer.outcomes,
+        observer.record_omitted,
         observer.store_records,
         observer.store_discarded,
         observer.readings,
@@ -58,6 +59,8 @@ def _observer_measured_anything(observer: ObserverAccounting) -> bool:
         observer.by_reason,
         observer.by_attribution,
         observer.by_origin,
+        observer.by_omission_reason,
+        observer.by_store_operation,
         observer.by_store_reason,
         observer.by_gate_reason,
         observer.by_reading_reason,
@@ -82,11 +85,19 @@ def report_snapshot(snapshot: Snapshot, output: Path) -> None:
         f"usable={stats.admission_usable} missing={stats.admission_missing} "
         f"after their own label={stats.admission_unusable}"
     )
+    print(f"unverified label times: {stats.unverified_label_time}")
     _report_diagnostics(snapshot)
     if stats.labelled == 0:
         print(
             "no attributed hit or miss was recorded, so the benchmark will "
             "report insufficient data rather than invent any",
+            file=sys.stderr,
+        )
+    if stats.unverified_label_time:
+        print(
+            f"{stats.unverified_label_time} labelled rows carry no proof of when "
+            "their label became known, so the benchmark withholds them instead "
+            "of releasing them early",
             file=sys.stderr,
         )
     if stats.admission_usable == 0:
@@ -158,6 +169,7 @@ def _report_journal(note: JournalProvenance) -> None:
         return
     print(
         f"observer: requests={observer.requests} outcomes={observer.outcomes} "
+        f"record omitted={observer.record_omitted} "
         f"store appends={observer.store_records} "
         f"dropped={observer.store_discarded} readings={observer.readings} "
         f"skipped={observer.readings_skipped} failed={observer.readings_failed}"
@@ -165,6 +177,8 @@ def _report_journal(note: JournalProvenance) -> None:
     print(f"observer by cache path: {as_counts(observer.by_cache_path)}")
     print(f"observer by result: {as_counts(observer.by_result)}")
     print(f"observer by reason: {as_counts(observer.by_reason)}")
+    print(f"observer by omission reason: {as_counts(observer.by_omission_reason)}")
+    print(f"observer by store operation: {as_counts(observer.by_store_operation)}")
     print(f"observer by store reason: {as_counts(observer.by_store_reason)}")
     print(f"observer by gate reason: {as_counts(observer.by_gate_reason)}")
     if note.truncated:

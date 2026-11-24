@@ -121,6 +121,16 @@ EVALUATION_REASONS = frozenset({
     "store_unavailable",
     "ineligible",
 })
+# Why a published outcome did not become a store row. ``key_unavailable`` names
+# a launch whose salt or crate identity was missing, and
+# ``label_time_unavailable`` names one with no wall-clock label moment. An
+# omitted outcome is measured loss, not a silent gap: the observer sums this
+# vocabulary and reconciles it against the events it published.
+RECORD_OMISSIONS = frozenset({
+    "none",
+    "key_unavailable",
+    "label_time_unavailable",
+})
 STORE_OPERATIONS = frozenset({"load", "append", "compact", "seal", "salt"})
 GATE_REASONS = frozenset({
     "queued",
@@ -168,6 +178,7 @@ VOCABULARIES = {
     "evaluation_reason": EVALUATION_REASONS,
     "store_operation": STORE_OPERATIONS,
     "gate_reason": GATE_REASONS,
+    "record_omission": RECORD_OMISSIONS,
     "child_sighting": frozenset({"seen", "not_seen", "ambiguous", "unavailable"}),
     # A timer-fired archive run, reported once per firing through
     # ``run_archive``. The statuses mirror ``RunStatus``; the reasons are
@@ -230,6 +241,7 @@ COUNTERS = frozenset({
     "window_groups",
     "store_records",
     "store_discarded",
+    "record_omitted",
     "child_samples",
     "child_samples_taken",
     "child_sample_failures",

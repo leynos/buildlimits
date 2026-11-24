@@ -26,6 +26,7 @@ if typ.TYPE_CHECKING:
 _OBSERVER_COUNT_FIELDS = (
     "requests",
     "outcomes",
+    "record_omitted",
     "store_records",
     "store_discarded",
     "readings",
@@ -39,6 +40,8 @@ _OBSERVER_MAP_FIELDS = (
     "by_reason",
     "by_attribution",
     "by_origin",
+    "by_omission_reason",
+    "by_store_operation",
     "by_store_reason",
     "by_gate_reason",
     "by_reading_reason",
@@ -209,8 +212,9 @@ def _observer_from(value: object, label: str) -> ObserverAccounting | None:
     TypeError
         If the block or one of its values has the wrong Python type.
     ValueError
-        If a count is negative, or the store-reason breakdown does not sum to
-        the discarded total it explains.
+        If a count is negative, the store-reason breakdown does not sum to the
+        discarded total it explains, or the omission-reason breakdown does not
+        sum to the omitted total it explains.
     """
     if value is None:
         return None
@@ -223,7 +227,7 @@ def _observer_from(value: object, label: str) -> ObserverAccounting | None:
     # there. Defaulting a missing field to zero would report an absent count as
     # a measured one, which is the error this block exists to prevent. The
     # observer block is part of this branch's unreleased snapshot format, so
-    # requiring ``by_store_reason`` refuses no document a release wrote.
+    # requiring the omission fields refuses no document a release wrote.
     if set(block) != expected:
         msg = f"{label} journal observer must hold exactly the recorded fields"
         raise TypeError(msg)
@@ -241,24 +245,10 @@ def _observer_from(value: object, label: str) -> ObserverAccounting | None:
     if sum(maps["by_store_reason"].values()) != counts["store_discarded"]:
         msg = f"{label} journal observer store reasons do not sum to its discards"
         raise ValueError(msg)
-    return ObserverAccounting(
-        requests=counts["requests"],
-        outcomes=counts["outcomes"],
-        store_records=counts["store_records"],
-        store_discarded=counts["store_discarded"],
-        readings=counts["readings"],
-        readings_skipped=counts["readings_skipped"],
-        readings_failed=counts["readings_failed"],
-        by_cache_path=maps["by_cache_path"],
-        by_backend=maps["by_backend"],
-        by_result=maps["by_result"],
-        by_reason=maps["by_reason"],
-        by_attribution=maps["by_attribution"],
-        by_origin=maps["by_origin"],
-        by_store_reason=maps["by_store_reason"],
-        by_gate_reason=maps["by_gate_reason"],
-        by_reading_reason=maps["by_reading_reason"],
-    )
+    if sum(maps["by_omission_reason"].values()) != counts["record_omitted"]:
+        msg = f"{label} journal observer omissions do not sum to its omitted total"
+        raise ValueError(msg)
+    return ObserverAccounting.from_parts(counts, maps)
 
 
 def _reason_from(note: cabc.Mapping[str, object], label: str) -> str:

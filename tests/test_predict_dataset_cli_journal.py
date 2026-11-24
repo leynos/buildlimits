@@ -363,8 +363,12 @@ def test_observer_accounting_keeps_its_denominators_distinct() -> None:
     assert observer.by_reason == {"mixed_window": 1, "none": 2}, "reasons are named"
     assert observer.by_attribution == {"none": 1, "solo": 2}, "attribution is named"
     assert observer.by_origin == {"git": 1, "path": 1, "registry": 1}, "origins"
-    assert observer.store_records == 10, "appended rows are summed"
+    assert observer.store_records == 10, "only appended rows are summed"
     assert observer.store_discarded == 10, "dropped or evicted rows are summed"
+    assert observer.by_store_operation == {
+        "append": 2,
+        "compact": 1,
+    }, "each operation is counted once, beside the appends"
     assert observer.by_store_reason == {"expired": 7, "save_failed": 3}, (
         "retention loss and failed writes are told apart"
     )

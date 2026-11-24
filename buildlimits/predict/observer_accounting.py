@@ -46,10 +46,6 @@ _EVENT_DIMENSIONS: dict[str, tuple[tuple[str, str], ...]] = {
 _EVENT_COUNTERS: dict[str, tuple[tuple[str | None, str], ...]] = {
     "request_admitted": ((None, "requests"),),
     "cache_outcome": ((None, "outcomes"),),
-    "outcome_store": (
-        ("store_records", "store_records"),
-        ("store_discarded", "store_discarded"),
-    ),
     "outcome_reading": (
         ("readings", "readings"),
         ("readings_skipped", "readings_skipped"),
@@ -61,11 +57,18 @@ _COUNT_FIELDS = (
     "outcomes",
     "store_records",
     "store_discarded",
+    "record_omitted",
     "readings",
     "readings_skipped",
     "readings_failed",
 )
-"""The scalar totals the observer block states."""
+"""The scalar totals the observer block states.
+
+``store_records`` counts appended rows only, and ``store_discarded`` counts
+rows a result dropped. A compaction reports the rows it retained and a seal
+the rows it released, but neither appends a row, so counting them would report
+a row more than once. They are kept apart in the per-operation map instead.
+"""
 
 _MAP_FIELDS = (
     "by_cache_path",
@@ -74,7 +77,9 @@ _MAP_FIELDS = (
     "by_reason",
     "by_attribution",
     "by_origin",
+    "by_store_operation",
     "by_store_reason",
+    "by_omission_reason",
     "by_gate_reason",
     "by_reading_reason",
 )
@@ -95,6 +100,29 @@ def _count_store_discard(
     discarded = _integer(fields.get("store_discarded"))
     if discarded:
         by_store[_reason_bucket(fields.get("store_reason"))] += discarded
+
+
+def _store_record_total(
+    fields: cabc.Mapping[str, str],
+) -> tuple[str, int]:
+    """Return one writer result's operation and the rows it truly appended.
+
+    Only ``append`` adds a row to the store. A ``compact`` reports the rows it
+    retained and a ``seal`` the rows it released into a closed segment; neither
+    wrote a row the store did not already hold, so summing their ``store_records``
+    as appends would count the same row several times over. The operation is
+    returned so its own map can record the result, and the returned total is
+    zero for any operation but ``append``.
+
+    Returns
+    -------
+    tuple[str, int]
+        The operation token, and the rows appended by it.
+    """
+    operation = fields.get("store_operation") or "unrecorded"
+    if operation != "append":
+        return operation, 0
+    return operation, _integer(fields.get("store_records"))
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -123,10 +151,24 @@ class ObserverAccounting:
         Published outcomes by attribution kind.
     by_origin : Mapping[str, int]
         Published outcomes by crate origin.
+    record_omitted : int
+        Published outcomes that produced no store row, because the launch had
+        no cache key or no wall-clock label moment. An omitted outcome is
+        measured loss the writer never sees, so it is counted here from the
+        event that carried the reason.
+    by_omission_reason : Mapping[str, int]
+        Those omitted outcomes by their closed reason. It sums to
+        ``record_omitted``, so published outcomes reconcile as stored rows
+        plus omitted ones by cause.
     store_records : int
-        Records the writer reported appended.
+        Rows the writer reported appended. Only an ``append`` result counts;
+        the rows a compaction retained or a seal released were written once and
+        are not appends.
     store_discarded : int
         Records the writer reported dropped or evicted.
+    by_store_operation : Mapping[str, int]
+        Writer results by the closed ``StoreOperation``, so the append total can
+        be read beside the compactions and seals that also reported rows.
     by_store_reason : Mapping[str, int]
         Dropped or evicted rows by the writer's closed ``StoreReason``, whose
         values include ``expired`` for retention loss and ``save_failed``,
@@ -153,14 +195,64 @@ class ObserverAccounting:
     by_reason: cabc.Mapping[str, int] = dc.field(default_factory=dict)
     by_attribution: cabc.Mapping[str, int] = dc.field(default_factory=dict)
     by_origin: cabc.Mapping[str, int] = dc.field(default_factory=dict)
+    record_omitted: int = 0
+    by_omission_reason: cabc.Mapping[str, int] = dc.field(default_factory=dict)
     store_records: int = 0
     store_discarded: int = 0
+    by_store_operation: cabc.Mapping[str, int] = dc.field(default_factory=dict)
     by_store_reason: cabc.Mapping[str, int] = dc.field(default_factory=dict)
     readings: int = 0
     readings_skipped: int = 0
     readings_failed: int = 0
     by_gate_reason: cabc.Mapping[str, int] = dc.field(default_factory=dict)
     by_reading_reason: cabc.Mapping[str, int] = dc.field(default_factory=dict)
+
+    @classmethod
+    def from_parts(
+        cls,
+        counts: cabc.Mapping[str, int],
+        maps: cabc.Mapping[str, cabc.Mapping[str, int]],
+    ) -> ObserverAccounting:
+        """Build the value from the scalar totals and the closed-vocabulary maps.
+
+        The fold and the journal decoder both assemble this value from the same
+        two field families, so the mapping from those families to the fields
+        lives here once. A new count is then named in one place rather than in
+        both readers.
+
+        Parameters
+        ----------
+        counts : Mapping[str, int]
+            Every scalar total, keyed by its field name.
+        maps : Mapping[str, Mapping[str, int]]
+            Every closed-vocabulary map, keyed by its field name.
+
+        Returns
+        -------
+        ObserverAccounting
+            The value with every named field set.
+        """
+        return cls(
+            requests=counts["requests"],
+            outcomes=counts["outcomes"],
+            record_omitted=counts["record_omitted"],
+            store_records=counts["store_records"],
+            store_discarded=counts["store_discarded"],
+            readings=counts["readings"],
+            readings_skipped=counts["readings_skipped"],
+            readings_failed=counts["readings_failed"],
+            by_cache_path=maps["by_cache_path"],
+            by_backend=maps["by_backend"],
+            by_result=maps["by_result"],
+            by_reason=maps["by_reason"],
+            by_attribution=maps["by_attribution"],
+            by_origin=maps["by_origin"],
+            by_omission_reason=maps["by_omission_reason"],
+            by_store_operation=maps["by_store_operation"],
+            by_store_reason=maps["by_store_reason"],
+            by_gate_reason=maps["by_gate_reason"],
+            by_reading_reason=maps["by_reading_reason"],
+        )
 
 
 def observer_accounting(
@@ -182,7 +274,9 @@ def observer_accounting(
     Returns
     -------
     ObserverAccounting
-        Exact counts for the events the window held.
+        Exact counts for the events the window held. The store total counts
+        append results only, and an outcome the recorder published without
+        storing it is counted by its closed omission reason.
     """
     maps: dict[str, collections.Counter[str]] = {
         name: collections.Counter() for name in _MAP_FIELDS
@@ -194,27 +288,51 @@ def observer_accounting(
             _count(maps[bucket], fields.get(field))
         for field, bucket in _EVENT_COUNTERS.get(record.event, ()):
             counters[bucket] += 1 if field is None else _integer(fields.get(field))
+        if record.event == "cache_outcome":
+            _count_omission(maps["by_omission_reason"], fields)
         if record.event == "outcome_store":
-            _count_store_discard(maps["by_store_reason"], fields)
+            _count_store_result(maps, counters, fields)
     ordered = {name: dict(sorted(counts.items())) for name, counts in maps.items()}
-    return ObserverAccounting(
-        requests=counters["requests"],
-        outcomes=counters["outcomes"],
-        store_records=counters["store_records"],
-        store_discarded=counters["store_discarded"],
-        readings=counters["readings"],
-        readings_skipped=counters["readings_skipped"],
-        readings_failed=counters["readings_failed"],
-        by_cache_path=ordered["by_cache_path"],
-        by_backend=ordered["by_backend"],
-        by_result=ordered["by_result"],
-        by_reason=ordered["by_reason"],
-        by_attribution=ordered["by_attribution"],
-        by_origin=ordered["by_origin"],
-        by_store_reason=ordered["by_store_reason"],
-        by_gate_reason=ordered["by_gate_reason"],
-        by_reading_reason=ordered["by_reading_reason"],
-    )
+    # The omitted total is the sum of its reason map rather than a separately
+    # incremented counter, so the two cannot drift apart. An event that carries
+    # no omission field (one an older recorder wrote) adds nothing to either,
+    # which keeps absence from reading as a measured zero.
+    counters["record_omitted"] = sum(ordered["by_omission_reason"].values())
+    return ObserverAccounting.from_parts(counters, ordered)
+
+
+def _count_omission(
+    by_reason: collections.Counter[str], fields: cabc.Mapping[str, str]
+) -> None:
+    """Count one published outcome that produced no store row.
+
+    An outcome stored normally reports ``none`` and adds nothing, so the map
+    sums to ``record_omitted`` instead of counting every stored outcome under a
+    reason of its own. A malformed or absent value is treated the same way: the
+    event says nothing about an omission, so there is none to count.
+    """
+    reason = fields.get("record_omitted")
+    if reason not in {None, "", "none"}:
+        by_reason[typ.cast("str", reason)] += 1
+
+
+def _count_store_result(
+    maps: dict[str, collections.Counter[str]],
+    counters: dict[str, int],
+    fields: cabc.Mapping[str, str],
+) -> None:
+    """Fold one writer result into the store totals and its operation map.
+
+    ``store_records`` counts appended rows only, so a compaction's retained
+    rows and a seal's released rows are not added to it a second time. The
+    operation map still records every result, so a reader can see the
+    compactions and seals beside the appends rather than losing them.
+    """
+    operation, appended = _store_record_total(fields)
+    counters["store_records"] += appended
+    counters["store_discarded"] += _integer(fields.get("store_discarded"))
+    maps["by_store_operation"][operation] += 1
+    _count_store_discard(maps["by_store_reason"], fields)
 
 
 def _count(counts: collections.Counter[str], value: object) -> None:

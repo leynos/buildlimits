@@ -22,7 +22,11 @@ if typ.TYPE_CHECKING:
         Ticket,
     )
     from buildlimits.outcome_record_format import ChildSighting, Origin, StoreRecord
-    from buildlimits.outcome_vocabulary import CacheResult, OutcomeReason
+    from buildlimits.outcome_vocabulary import (
+        CacheResult,
+        OutcomeReason,
+        RecordOmission,
+    )
 
 type AttributionKind = typ.Literal["solo", "unanimous", "inferred", "none"]
 
@@ -39,7 +43,14 @@ class LaunchPayload:
 
 @dc.dataclass(frozen=True, slots=True)
 class OutcomeEvent:
-    """One journal-ready classification for a cached launch."""
+    """One journal-ready classification for a cached launch.
+
+    ``record_omitted`` names why this published outcome produced no store row,
+    or ``none`` when it was stored. The event and the row are built from the
+    same launch in one transition, so the pair reconciles by construction: an
+    event that cannot be stored says so instead of leaving a gap the writer's
+    own discard counts can never see.
+    """
 
     cache_result: CacheResult
     outcome_attribution: AttributionKind
@@ -49,6 +60,7 @@ class OutcomeEvent:
     window_groups: int
     child_sighting: ChildSighting = "unavailable"
     child_samples: int = 0
+    record_omitted: RecordOmission = "none"
 
 
 @dc.dataclass(frozen=True, slots=True)

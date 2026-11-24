@@ -32,8 +32,8 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.dataset import Snapshot
     from buildlimits.predict.events import Label
 
-SNAPSHOT_VERSION = 2
-SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, SNAPSHOT_VERSION})
+SNAPSHOT_VERSION = 3
+SUPPORTED_SNAPSHOT_VERSIONS = frozenset({1, 2, SNAPSHOT_VERSION})
 _EVENT_FIELDS = frozenset({
     "identity",
     "origin",
@@ -41,15 +41,30 @@ _EVENT_FIELDS = frozenset({
     "observed_at",
     "label",
     "runtime_seconds",
+    "label_observed_verified",
 })
-# A version 1 row written before the admission field existed omits it. The
-# loader accepts that shape only for version 1; version 2 keeps it exact.
-_V1_EVENT_FIELDS = _EVENT_FIELDS - {"admitted_at"}
+# A version 1 row written before the admission field existed omits it, and a
+# version 1 or 2 row predates the label-time provenance marker. The loader
+# accepts those shapes only for the versions that wrote them: version 3 keeps
+# the event shape exact, so a row that omits the marker cannot masquerade as
+# current-format evidence.
+_V2_EVENT_FIELDS = _EVENT_FIELDS - {"label_observed_verified"}
+_V1_EVENT_FIELDS = _V2_EVENT_FIELDS - {"admitted_at"}
+# Each version's accepted event shapes. A lookup keeps the loader from chaining
+# version comparisons, so adding a version means adding one row.
+_ACCEPTED_SHAPES: dict[int, frozenset[frozenset[str]]] = {
+    1: frozenset({_V1_EVENT_FIELDS, _V2_EVENT_FIELDS}),
+    2: frozenset({_V2_EVENT_FIELDS}),
+    SNAPSHOT_VERSION: frozenset({_EVENT_FIELDS}),
+}
 _IDENTITY_LENGTH = 64
 
 
 def event_to_dict(event: Event) -> dict[str, object]:
     """Return the stable snapshot shape for one event.
+
+    The label-time provenance marker is written for every row, so a document
+    the current writer produces always says whether its times are proof.
 
     Returns
     -------
@@ -63,6 +78,7 @@ def event_to_dict(event: Event) -> dict[str, object]:
         "observed_at": optional_utc_text(event.observed_at),
         "label": event.label,
         "runtime_seconds": round(event.runtime_seconds, 6),
+        "label_observed_verified": event.label_observed_verified,
     }
 
 
@@ -116,7 +132,9 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
     version : int
         The snapshot version that supplied the line. A version 1 row may omit
         ``admitted_at`` because that field was not always written; a version 2
-        row must name it.
+        row must name it. Neither may name the label-time provenance marker,
+        because neither format defined it: their events decode as unverified,
+        never as proof the row does not carry.
 
     Returns
     -------
@@ -134,8 +152,7 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
         msg = "an event line must be a JSON object"
         raise TypeError(msg)
     row = typ.cast("dict[str, object]", value)
-    accepted = {_EVENT_FIELDS, _V1_EVENT_FIELDS} if version == 1 else {_EVENT_FIELDS}
-    if set(row) not in accepted:
+    if frozenset(row) not in _ACCEPTED_SHAPES[version]:
         msg = "an event line must name exactly the snapshot fields"
         raise ValueError(msg)
     identity = row["identity"]
@@ -160,7 +177,30 @@ def event_from_dict(value: object, *, version: int = SNAPSHOT_VERSION) -> Event:
         observed_at=observed,
         label=typ.cast("Label", label),
         runtime_seconds=runtime_seconds,
+        label_observed_verified=_verified(row.get("label_observed_verified", False)),
     )
+
+
+def _verified(value: object) -> bool:
+    """Read one event's label-time provenance flag.
+
+    An older document carries no marker, so its default is unverified: the
+    absence of proof is never read as proof.
+
+    Returns
+    -------
+    bool
+        The flag, or ``False`` when the document predates it.
+
+    Raises
+    ------
+    TypeError
+        If a present marker is not a boolean.
+    """
+    if not isinstance(value, bool):
+        msg = "label_observed_verified must be a boolean"
+        raise TypeError(msg)
+    return value
 
 
 def _runtime_seconds(value: object) -> float:

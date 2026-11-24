@@ -5,6 +5,7 @@
   
   - Rows read: 9 (8 outcome rows, 1 window summaries)
   - Labels: 0 of 0 events (0.0%), 0 distinct identities
+  - Labels withheld for an unverified label time: 0; they are neither released nor scored.
   - Admission times: 0 recorded, 0 usable for a prediction, 0 missing, 0 recorded after their own label
   - Label coverage among outcome rows: 3 of 8
   - Label coverage among cacheable compilations: 3 of 8

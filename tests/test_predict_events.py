@@ -24,6 +24,7 @@ def _causal(seconds: int, label: str) -> Event:
         EPOCH + dt.timedelta(seconds=seconds),
         typ.cast("Label", label),
         1.0,
+        label_observed_verified=True,
     )
 
 
@@ -36,6 +37,7 @@ def _admitted(identity: str, *, admitted: int, observed: int) -> Event:
         EPOCH + dt.timedelta(seconds=observed),
         "hit",
         1.0,
+        label_observed_verified=True,
     )
 
 
@@ -187,7 +189,9 @@ def test_a_load_window_before_the_earliest_moment_counts_nothing() -> None:
     window's start is clamped to that boundary, and nothing precedes it.
     """
     earliest = dt.datetime.min.replace(tzinfo=dt.UTC)
-    event = Event("d" * 64, ORIGIN, earliest, earliest, "hit", 1.0)
+    event = Event(
+        "d" * 64, ORIGIN, earliest, earliest, "hit", 1.0, label_observed_verified=True
+    )
 
     rows = features((event,), load_window_seconds=60.0)
 
@@ -204,6 +208,7 @@ def test_batches_follow_store_order_when_a_timestamp_steps_back() -> None:
         EPOCH + dt.timedelta(seconds=5),
         "hit",
         1.0,
+        label_observed_verified=True,
     )
     third = _causal(20, "miss")
 
@@ -237,6 +242,7 @@ def test_only_an_admission_at_or_before_its_label_is_a_decision_time(
         EPOCH + dt.timedelta(seconds=observed),
         "hit",
         1.0,
+        label_observed_verified=True,
     )
 
     assert admission_moment(event) == expected, (

@@ -89,9 +89,9 @@ admission time is not a zero and not a guess: the benchmark event keeps it
 absent, `admission_moment` returns `None`, and the row is never scored. A
 writer that compacts an old store writes a version 2 header while preserving
 the old rows, so a version 2 file may contain version 1 rows; the decoder
-validates each row's shape, not a header-wide assumption. The snapshot format
-becomes version 2 as well; a version 1 snapshot loads with diagnostics
-unavailable.
+validates each row's shape, not a header-wide assumption. The snapshot gains
+this evidence at version 2, and D6 raises it to version 3; a version 1 snapshot
+loads with diagnostics unavailable.
 
 ### D2: keep label-loss accounting in the snapshot, not in per-request logs
 
@@ -189,14 +189,10 @@ they share the reading's moment, so the snapshot loader's backwards-clock
 refusal fires only on a genuine wall-clock step.
 
 Rows written by an earlier build of this branch carry the old, launch-derived
-`observed_at`. They remain readable and scorable, but their recorded time may
-precede the label's true knowledge time, and the same store format version
-cannot separate them from corrected rows. No timestamp field was invented to
-mark them. The snapshot and benchmark therefore treat the recorded time as the
-label-release boundary: a label is released no earlier than the moment its row
-records, which for those rows is a lower bound rather than proof. That residual
-risk is documented, not guessed away; a history that mixes pre-fix and fixed
-rows carries it for the pre-fix rows only.
+`observed_at`. They remain readable, but their recorded time may precede the
+label's true knowledge time, and the same store format version cannot separate
+them from corrected rows. No timestamp field was invented to mark them. D6
+records how the snapshot and benchmark handle that residual risk.
 
 ### D5: an older active file is settled before the writer appends
 
@@ -217,6 +213,67 @@ reported the first new row as `corrupt`. After the change, the only header the
 writer leaves in place is current, so that reader reports `version_mismatch` at
 the header before it reads any row.
 
+### D6: a snapshot event carries whether its label time is proven
+
+The snapshot format becomes version 3, and each event carries an explicit
+`label_observed_verified` boolean. The marker is per event rather than a
+snapshot-wide `label_time_provenance` name, because the property is a fact
+about one row, not about a document: a snapshot built from a store that later
+gains a provenance-carrying row format would otherwise have to claim one level
+of proof for every row it holds. A per-row field composes with that future
+without a second format change, and the reconciliation checks compare like with
+like.
+
+The snapshot writer always emits the marker for the rows it derives now. The
+dataset command cannot distinguish a pre-fix version 2 row from a fixed version
+2 row — both are version 2 store rows — so it emits them **unverified**.
+Claiming verification for a version 2 row would silently release an old label
+before the reading that produced it, which is exactly the leak D4 closed. A
+future version 3 store row that carries its own provenance marker is the first
+source that can emit a verified event.
+
+The loader treats a version 1 or 2 snapshot's events as unverified, and refuses
+a version 3 event that omits the marker or sets it to a non-boolean. Absence is
+therefore never read as proof.
+
+An unverified hit or miss is neither released nor scored: `scored_label` returns
+``None`` for it, so training, scoring and the phase schedule cannot disagree
+about which labels are usable. The replay reports the count as
+`unverified_label_time`, and both the plain dataset report and the rendered
+Markdown name it, so a withdrawn history is distinguishable from one that
+recorded few labels. A source that can prove its label times, such as the
+benchmark's own known-property synthetic streams, states
+`label_observed_verified=True`.
+
+### D7: an outcome that produced no store row is counted by cause
+
+A cached launch with no cache key or no wall-clock label moment publishes an
+outcome event but produces no `OutcomeRecord`. The store writer never sees it,
+so its discard counts can never account for it and the difference between
+published outcomes and stored rows stayed unexplained. The recorder now
+computes one closed `RecordOmission` reason per launch and copies it onto the
+event it publishes: `key_unavailable`, `label_time_unavailable` or `none`. The
+event and its row are built from the same launch in one transition, so the pair
+reconciles by construction.
+
+`ObserverAccounting.record_omitted` sums those reasons, and
+`by_omission_reason` breaks them down. The journal codec requires the map to
+sum to the total. The reconciliation rule the report states is: published
+outcomes = appended rows + omitted ones by cause. A journal record that carries
+no omission field, as an older recorder wrote it, contributes nothing to
+either, so absence is not read as a measured zero.
+
+### D8: the store total counts appends, not every operation's rows
+
+`store_records` was summed across every `outcome_store` operation. A compaction
+reports the rows it retained and a seal the rows it released, but neither wrote
+a row the store did not already hold, so the total counted some rows several
+times while reports called it "store appends". Only `operation == "append"`
+contributes to the append total now; every result still appears in
+`by_store_operation`, so the compactions and seals are visible beside the
+appends. Both the dataset report and the rendered Markdown label the number
+"rows appended" and state the rule, so no report calls a mixed total appends.
+
 ## Consequences
 
 - A controlled run against real sccache 0.14 produces exactly one `miss` and
@@ -235,10 +292,21 @@ the header before it reads any row.
   admission times to the benchmark. An operator who wants new evidence must run
   the updated supervisor; no historical row is retroactively repaired.
 - Version 2 rows written before this decision's label-time fix remain readable
-  and scorable, but their `observed_at` may precede the true knowledge time;
-  see D4. An operator who needs a strictly ordered history can start it after
-  the upgraded supervisor has run, because the format version cannot identify
-  the older rows.
+  but are not scorable through the benchmark: the dataset command emits their
+  label times as unverified, so the replay withholds them and reports the
+  count. No historical row is repaired, and no report claims a version 2 row
+  proves when its label was known; see D4 and D6. An operator who needs a
+  scored history must wait for a store format that records the row's own
+  label-time provenance.
+- The snapshot format is version 3. A version 1 or 2 snapshot still loads, with
+  its events unverified; a version 3 event that omits the marker is refused.
+- A published outcome that produced no store row is counted by its closed
+  reason, so the observer's totals reconcile as appended rows plus omissions;
+  see D7.
+- The store append total counts only `append` results, and the operations that
+  retained or released rows appear in their own map; see D8. A reader who
+  previously summed every operation's `store_records` sees a smaller, correct
+  append total.
 - A restart settles an active file written under an older header before the
   first append. In segmented mode this costs one extra closed segment and one
   sequence number; no row is dropped. The store row grows by about 71 bytes, so
@@ -279,11 +347,29 @@ the header before it reads any row.
   the floor, an absent sequence below the survivors cannot be told apart from a
   sequence retention removed on purpose, so the counts are withdrawn rather
   than printed as loss.
+- **Keep releasing labels at a version 2 row's recorded time.** Rejected: a
+  version 2 row may carry a launch-derived time that precedes the reading that
+  produced it, and the format version cannot separate those rows from corrected
+  ones. Releasing at the recorded time would score a prediction on a label it
+  could not have seen at admission; the label is withheld and counted instead.
+- **Mark verification once per snapshot rather than per event.** Rejected: the
+  fact is a property of one row's provenance, and a snapshot-wide flag would
+  force one answer onto rows of mixed provenance, which a provenance-carrying
+  store row format would immediately expose.
+- **Attribute the missing-outcome difference to an unmeasured residual.**
+  Rejected: the recorder knows why it did not key a launch, so the reason is
+  recorded on the event rather than left as a hypothesis over two totals that
+  do not reconcile.
 
 ## Follow-up
 
 - The benchmark continues to report `insufficient data` or
-  `insufficient admission times` until genuine rows meet both gates.
+  `insufficient admission times` until genuine rows meet both gates. A history
+  whose labels are all unverified reports `insufficient data` with the withheld
+  count, because an unproven label time is not scored evidence.
+- A future version 3 store row that records the provenance of its own label time
+  can emit a verified event; the dataset adapter is the one place that decision
+  would change.
 - A later observation port may add a supported per-request backend signal for a
   backend that provides one. It must keep the mixed-window `unknown` result for
   sccache 0.14.

@@ -64,6 +64,7 @@ def _diagnostics_document() -> dict[str, object]:
         "observer": {
             "requests": 2,
             "outcomes": 2,
+            "record_omitted": 0,
             "store_records": 2,
             "store_discarded": 0,
             "readings": 1,
@@ -75,6 +76,8 @@ def _diagnostics_document() -> dict[str, object]:
             "by_reason": {"none": 2},
             "by_attribution": {"solo": 2},
             "by_origin": {"registry": 2},
+            "by_omission_reason": {},
+            "by_store_operation": {"append": 1},
             "by_store_reason": {},
             "by_gate_reason": {},
             "by_reading_reason": {"none": 1},
@@ -83,10 +86,23 @@ def _diagnostics_document() -> dict[str, object]:
     return document
 
 
+def _nested(document: dict[str, object], *path: str) -> dict[str, object]:
+    """Return a mutation-friendly block reached by ``path`` from ``data``.
+
+    Returns
+    -------
+    dict[str, object]
+        The nested mapping, so a test can amend one field in place.
+    """
+    block: dict[str, object] = data_section(document)
+    for name in path:
+        block = typ.cast("dict[str, object]", block[name])
+    return block
+
+
 def _history_of(document: dict[str, object]) -> dict[str, object]:
     """Return the mutation-friendly history block of a diagnostics document."""
-    diagnostics = typ.cast("dict[str, object]", data_section(document)["diagnostics"])
-    return typ.cast("dict[str, object]", diagnostics["history"])
+    return _nested(document, "diagnostics", "history")
 
 
 def test_a_truncated_journal_marks_its_observer_counts() -> None:
@@ -129,6 +145,97 @@ def test_the_store_reason_breakdown_is_rendered() -> None:
     assert "- Observer by store reason: expired=4, save_failed=1" in markdown, (
         "each reason keeps its own count"
     )
+
+
+def test_the_report_states_how_many_label_times_it_could_not_verify() -> None:
+    """A withheld label is named with its count and its consequence."""
+    document = _diagnostics_document()
+    stats = typ.cast("dict[str, object]", data_section(document)["stats"])
+    stats["unverified_label_time"] = 3
+
+    markdown = render_markdown(document)
+
+    assert (
+        "- Labels withheld for an unverified label time: 3; they are neither "
+        "released nor scored." in markdown
+    ), "the withheld count and its consequence are printed"
+
+
+def _line_starting(markdown: str, prefix: str) -> str:
+    """Return the one report line that begins with ``prefix``.
+
+    Returns
+    -------
+    str
+        The matching line, so a test can compare it whole rather than probe
+        for a substring. A report that prints no such line raises
+        ``StopIteration``, which the test framework reports as a failure.
+    """
+    return next(line for line in markdown.splitlines() if line.startswith(prefix))
+
+
+def test_an_older_snapshot_prints_a_dash_for_the_unverified_count() -> None:
+    """A document written before the count existed is not a measured zero."""
+    document = _diagnostics_document()
+    stats = typ.cast("dict[str, object]", data_section(document)["stats"])
+    stats.pop("unverified_label_time")
+
+    line = _line_starting(
+        render_markdown(document),
+        "- Labels withheld for an unverified label time:",
+    )
+
+    assert ": -;" in line, "an absent count is a dash, never a measured zero"
+
+
+def _observer_block(document: dict[str, object]) -> dict[str, object]:
+    """Return a document's mutable observer-count block.
+
+    Returns
+    -------
+    dict[str, object]
+        The observer counts nested under ``data.journal``.
+    """
+    return _nested(document, "journal", "observer")
+
+
+def test_the_observer_states_omitted_outcomes_and_their_reasons() -> None:
+    """An outcome published without a row is counted by cause, not lost."""
+    document = _diagnostics_document()
+    observer = _observer_block(document)
+    observer["record_omitted"] = 1
+    observer["by_omission_reason"] = {"key_unavailable": 1}
+
+    line = _line_starting(
+        render_markdown(document),
+        "- Observer outcomes without a store row:",
+    )
+
+    assert line == (
+        "- Observer outcomes without a store row: 1, by reason "
+        "key_unavailable=1; a published outcome reconciles as an appended row "
+        "plus an omitted one"
+    ), "the omitted total, its reason and the reconciliation rule are stated"
+
+
+def test_the_observer_names_the_operations_that_are_not_appends() -> None:
+    """A compaction and a seal are visible without being called appends."""
+    document = _diagnostics_document()
+    _observer_block(document)["by_store_operation"] = {
+        "append": 5,
+        "compact": 2,
+        "seal": 1,
+    }
+    markdown = render_markdown(document)
+
+    line = _line_starting(markdown, "- Observer by store operation:")
+
+    assert line == (
+        "- Observer by store operation: append=5, compact=2, seal=1; only an "
+        "append adds a row, a compaction reports the rows it retained and a "
+        "seal the rows it released"
+    ), "every operation is named and the append rule is stated"
+    assert "records appended" not in markdown, "no label calls a mixed total appends"
 
 
 def test_the_missing_generation_dimension_is_named() -> None:

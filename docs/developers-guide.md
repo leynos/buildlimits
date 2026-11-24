@@ -212,8 +212,8 @@ the process is an adapter at its edge. The domain modules are `accounting`,
 `bootstrap`, `comparison`, `config`, `dataset`, `diagnostics_codec`,
 `ensemble_runs`, `ensembles`, `evaluation`, `events`, `fitting`, `harness`,
 `journal_codec`, `journal_provenance`, `metrics`, `observer_accounting`,
-`predictors`, `probability`, `report`, `report_codec`, `scoring` and
-`snapshot_diagnostics_join`.
+`predictors`, `probability`, `render_sufficiency`, `report`, `report_codec`,
+`scoring` and `snapshot_diagnostics_join`.
 
 `accounting` is the bounded label-loss value: it folds decoded store rows into
 counts by cache result, outcome reason, attribution, origin, parser class,
@@ -221,6 +221,27 @@ child sighting and sccache version, and reports the labelled and cacheable
 denominators plus admission-time coverage. It holds no store reader and no
 journal reader, so the same value describes a snapshot taken by the command and
 a document read back by the benchmark.
+
+`events` carries the label-time provenance flag, and the replay honours it in
+one place. An `Event` whose `label_observed_verified` is false has a recorded
+observation time that is only a lower bound, so `events.scored_label` returns
+None for it and neither training, scoring nor the phase schedule can use it.
+`history.released_labels` therefore withholds it, and
+`history.unverified_label_count` measures it for the report. A store-derived
+event is always unverified, because a version 2 store row cannot prove which
+code dated it; the benchmark's own synthetic streams state their times are
+verified. Changing this rule means changing `scored_label`, so the three
+consumers cannot drift apart.
+
+`observer_accounting` folds the recorder's journal events into the observer
+denominators. Its append total counts only `operation == "append"` results: a
+compaction reports the rows it retained and a seal the rows it released, so
+summing them as appends would count one row several times. Those operations
+stay visible in `by_store_operation`. `record_omitted` and `by_omission_reason`
+count the published outcomes that produced no store row, by the closed
+`RecordOmission` reason the recorder copies onto each event. The two rules are
+what make the report's denominators reconcile: published outcomes = appended
+rows + omitted ones by cause.
 
 None of those modules imports a file-system, JSON, process or command module,
 and none imports an adapter. `journal_codec`, `diagnostics_codec` and
@@ -366,6 +387,9 @@ Each module owns one decision. This table is the single module inventory.
 | `predict.provenance`                                                               | `git_revision`: the commit that tracks the benchmark module, or `unknown` when none does                                                                    |
 | `predict.dataset_journal`                                                          | The dataset command's journal lookback option and its best-effort provenance note                                                                           |
 | `predict.render_tables`                                                            | The held-out comparison, calibration, ablation and origin tables in the prediction report                                                                   |
+| `predict.render_sufficiency`                                                       | The report's data-sufficiency block: the denominators, admission coverage, withheld labels and closed-history loss a reader judges the scores against       |
+| `predict.observer_accounting`                                                      | Bounded recorder counts from the journal, with appends counted apart from compactions and seals, and omitted outcomes counted by cause                      |
+| `outcome_record_time`                                                              | The canonical UTC text with a trailing `Z`, its strict parser, and the sentinel that separates an absent optional timestamp from a corrupt one              |
 | `outcome_evidence`                                                                 | Covered history span and the sample limits every replay verdict states                                                                                      |
 | `utc_text`                                                                         | The system wall clock as aware UTC, re-exporting the canonical text helpers from `utc_format`                                                               |
 | `utc_format`                                                                       | Pure canonical ISO 8601 UTC text with a trailing `Z`, and its parser, with no clock reads                                                                   |
@@ -968,6 +992,18 @@ measured from retained history; both reports print the dimension as
 unavailable, with that reason, rather than omitting it or filling it with a
 count the history cannot support. Adding a generation field to the row was
 rejected because no report could reconcile it with the rows already written.
+
+Two more observer rules keep its denominators honest. `store_records` counts
+only `operation == "append"` results: a compaction reports the rows it retained
+and a seal the rows it released, but neither wrote a row the store did not
+already hold, so a mixed total would count some rows several times while the
+report called it appends. `by_store_operation` keeps every operation visible
+beside that total. And `record_omitted` counts the published outcomes that
+produced no store row, because the recorder knows why it did not key a launch;
+`by_omission_reason` breaks them down by the closed `RecordOmission` reason the
+event carries, and the journal codec requires the map to sum to the total. The
+report therefore states one reconciliation: published outcomes = appended rows
+plus omitted ones by cause.
 
 The quiet-point gate in `outcome_gate` no longer requires an empty queue; every
 reading, baseline included, still requires no cached movement or detached

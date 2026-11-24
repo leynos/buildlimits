@@ -9,7 +9,10 @@ of them. An event without a usable admission time is not predicted at all; a
 missing timestamp is never read as if its label had arrived before it.
 
 An unknown outcome carries no usable label, so it neither counts as load nor
-sets an age.
+sets an age. A hit or miss whose observation time is unverified is withheld for
+the same reason: the row proves a label existed, not when it became known, and
+releasing it at the recorded time could inform a prediction admitted before the
+label's true arrival. Those rows are counted rather than dropped silently.
 
 Grouping by admission moment is only meaningful while the recorded times share
 one clock. A clock that stepped backwards would let a label observed later in
@@ -23,7 +26,12 @@ import bisect
 import datetime as dt
 import typing as typ
 
-from buildlimits.predict.events import Features, admission_moment, scored_label
+from buildlimits.predict.events import (
+    Features,
+    admission_moment,
+    scored_label,
+    unverified_label,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -211,8 +219,11 @@ def released_labels(events: cabc.Sequence[Event]) -> list[tuple[dt.datetime, int
     Only an event that could itself be predicted supplies a training row: a
     label from an event with no admission time has no pre-admission feature row
     to learn from, and manufacturing one would put a fabricated measurement
-    into the model. Labels are ordered by observation time and then by store
-    position, so an update order is always reproducible.
+    into the model. A hit or miss whose observation time is unverified is
+    withheld as well, because its recorded time is a lower bound rather than
+    proof and releasing it early is exactly the leak this ordering prevents.
+    Labels are ordered by observation time and then by store position, so an
+    update order is always reproducible.
 
     Parameters
     ----------
@@ -235,6 +246,33 @@ def released_labels(events: cabc.Sequence[Event]) -> list[tuple[dt.datetime, int
         for index, event in enumerate(events)
         if admission_moment(event) is not None and scored_label(event) is not None
     )
+
+
+def unverified_label_count(events: cabc.Sequence[Event]) -> int:
+    """Count hit or miss labels whose recorded observation time is unverified.
+
+    The count measures the evidence the replay withheld, not an outcome it
+    could not attribute. A row in this count carries a real label, so reading
+    it as ``unknown`` would overstate the recorder's refusals; scoring it would
+    claim a label time the source cannot prove.
+
+    Parameters
+    ----------
+    events : Sequence[Event]
+        The events in store append order.
+
+    Returns
+    -------
+    int
+        Events carrying a hit or miss whose observation time is unverified.
+
+    Examples
+    --------
+    >>> from buildlimits.predict.events import EPOCH, Event
+    >>> unverified_label_count((Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1),))
+    1
+    """
+    return sum(1 for event in events if unverified_label(event) is not None)
 
 
 def _load_before(

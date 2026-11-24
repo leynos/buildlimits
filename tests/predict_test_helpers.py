@@ -3,24 +3,25 @@
 import dataclasses as dc
 import datetime as dt
 import json
+import tempfile
 import typing as typ
+from pathlib import Path
 
 from outcome_test_helpers import OBSERVED_AT, cache_key
 
 from buildlimits import outcome_store_io
-from buildlimits.outcome_record_format import OutcomeRecord, StoreHeader
+from buildlimits.outcome_record_format import DecodedStore, OutcomeRecord, StoreHeader
 from buildlimits.predict import dataset_cli
 from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.config_loader import load_config
-from buildlimits.predict.dataset import Snapshot, Source
+from buildlimits.predict.dataset import Snapshot, Source, build_snapshot
 from buildlimits.predict.events import Event
 from buildlimits.predict.journal_provenance import JournalUnavailable
-from buildlimits.predict.snapshot_store import save_snapshot
+from buildlimits.predict.records import decode_history
+from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
 from buildlimits.predict.synthetic import identity, stationary
 
 if typ.TYPE_CHECKING:
-    from pathlib import Path
-
     from buildlimits.outcome_record_format import Origin
     from buildlimits.outcome_vocabulary import CacheResult
     from buildlimits.predict.config import Config
@@ -38,17 +39,21 @@ never an assumed default.
 """
 
 
-def hand_event(
+def hand_event(  # ruff: ignore[too-many-arguments]  # one keyword per scenario value; pylint: disable=too-many-arguments
     index: int,
     *,
     observed_at: dt.datetime,
     admitted_at: dt.datetime | None,
     label: Label,
+    verified: bool = True,
 ) -> Event:
     """Return one hand-built event for an ordering or weighting scenario.
 
     The identity is stable for the given index, so a stream built from
-    consecutive indices never repeats one unless a test means it to.
+    consecutive indices never repeats one unless a test means it to. The
+    observation time is verified by default: a hand-built scenario states the
+    moment its label was known, so it is proof rather than a store row's lower
+    bound. A test about the unverified case passes ``verified=False``.
 
     Returns
     -------
@@ -62,6 +67,7 @@ def hand_event(
         observed_at=observed_at,
         label=label,
         runtime_seconds=1.0,
+        label_observed_verified=verified,
     )
 
 
@@ -191,6 +197,38 @@ def write_admitted_store_snapshot(tmp_path: Path, count: int) -> Path:
         "--skip-journal",
     ])
     return snapshot
+
+
+def record_events(
+    records: tuple[object, ...], *, now: dt.datetime
+) -> tuple[Event, ...]:
+    """Snapshot one reading's records and load the events back.
+
+    A test that inspects the events a recorder emitted must read them through
+    the file the dataset command writes, not through the in-memory rows: only
+    the written document states each event's label-time provenance.
+
+    Parameters
+    ----------
+    records : tuple[object, ...]
+        The records one reading emitted, outcome rows and summary included.
+    now : datetime
+        The moment the reading returned, used as the store's write time.
+
+    Returns
+    -------
+    tuple[Event, ...]
+        The loaded event stream, in store append order.
+    """
+    decoded = DecodedStore(StoreHeader("fixed-salt", now), typ.cast("typ.Any", records))
+    snapshot = build_snapshot(
+        decode_history(decoded),
+        now=now,
+        history_loss=HistoryLoss.active_file_only(),
+    )
+    path = Path(tempfile.mkdtemp()) / "history.jsonl"
+    save_snapshot(path, snapshot)
+    return load_snapshot(path).events
 
 
 def write_snapshot(tmp_path: Path, count: int) -> Path:

@@ -39,6 +39,8 @@ if typ.TYPE_CHECKING:
     import datetime as dt
     from types import ModuleType
 
+    from buildlimits.outcome_record_format import StoreRecord
+
 
 class _OutcomeWindow(typ.Protocol):
     """The bounded fields that recorder tests inspect on an outcome window."""
@@ -77,22 +79,20 @@ class _OutcomeEvent(typ.Protocol):
     cache_result: str
     outcome_attribution: str
     outcome_reason: str
-
-
-class _OutcomeRecord(typ.Protocol):
-    """The stable keyed value checked on persisted outcome records."""
-
-    key: object
-    outcome_reason: str
-    outcome_attribution: str
+    record_omitted: str
 
 
 class _Outputs(typ.Protocol):
-    """The pure reducer output fields inspected by recorder tests."""
+    """The pure reducer output fields inspected by recorder tests.
+
+    ``records`` is typed as the store's own record union rather than a
+    narrowed protocol: a test inspects both an outcome row's key and its
+    observation time, and the summary the same transition emits.
+    """
 
     commands: tuple[object, ...]
     events: tuple[_OutcomeEvent, ...]
-    records: tuple[_OutcomeRecord, ...]
+    records: tuple[StoreRecord, ...]
     reading_reasons: tuple[str, ...]
 
 
@@ -286,12 +286,13 @@ def complete_query(  # ruff: ignore[too-many-arguments]  # one argument per read
     text: str,
     now: float,
     *,
-    observed_at: dt.datetime = OBSERVED_AT,
+    observed_at: dt.datetime | None = OBSERVED_AT,
 ) -> tuple[object, _Outputs]:
     """Submit one completed statistics query from the same generation.
 
     ``observed_at`` is the moment the port returned the reading, which is the
-    moment its labels or refusals became known.
+    moment its labels or refusals became known. ``None`` models the purely
+    synthetic emission the recorder documents as its only timestamp-free path.
 
     Returns
     -------

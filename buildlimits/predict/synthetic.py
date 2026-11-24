@@ -8,6 +8,9 @@ Every stream records an admission time, because a prediction is made at
 admission and a stream without one supports no prediction at all. Unless a
 stream is testing label delay, an event is admitted :data:`LABEL_DELAY` before
 its label arrives, so each label is released before the next event is admitted.
+The label time of a synthetic event is exact by construction, so every stream
+marks its labels verified; otherwise a known-property stream would be withheld
+by the same rule that withholds an unproven store row.
 """
 
 import datetime as dt
@@ -63,6 +66,7 @@ def _event(index: int, label: Label, *, admitted_at: dt.datetime | None) -> Even
         observed_at=EPOCH + index * STEP,
         label=label,
         runtime_seconds=1.0 + (index % 7) / 10,
+        label_observed_verified=True,
     )
 
 

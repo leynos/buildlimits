@@ -49,15 +49,40 @@ def _document() -> dict[str, object]:
     )
 
 
+def _as_version(document: dict[str, object], version: int) -> dict[str, object]:
+    """Rewrite a current document as the shape one earlier version wrote.
+
+    A test that loads an older document must reproduce what that release really
+    wrote, not a current row with a downgraded header. Version 1 or 2 predates
+    the label-time provenance marker, so the marker is dropped with the header.
+    """
+    document["snapshot_version"] = version
+    for event in _events(document):
+        event.pop("label_observed_verified", None)
+    return document
+
+
 def test_a_version_one_snapshot_loads_without_diagnostics(tmp_path: Path) -> None:
     """A snapshot written before the accounting block remains readable."""
-    document = _document()
-    document["snapshot_version"] = 1
+    document = _as_version(_document(), 1)
     document.pop("diagnostics")
 
     loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
     assert loaded.diagnostics is None, "the absent block is reported as unavailable"
+
+
+def test_an_older_event_time_is_never_read_as_verified(tmp_path: Path) -> None:
+    """A version 1 or 2 snapshot carries no proof of when its label was known."""
+    for version in (1, 2):
+        document = _as_version(_document(), version)
+        document.pop("diagnostics")
+
+        loaded = load_snapshot(write_json(tmp_path / f"v{version}.jsonl", document))
+
+        assert loaded.events[0].label_observed_verified is False, (
+            f"version {version} predates the marker, so its time is a lower bound"
+        )
 
 
 def test_a_version_two_snapshot_round_trips_its_diagnostics(tmp_path: Path) -> None:
@@ -82,13 +107,9 @@ def test_a_version_two_snapshot_round_trips_its_diagnostics(tmp_path: Path) -> N
 
 def test_a_version_one_event_may_omit_admission(tmp_path: Path) -> None:
     """A version 1 row written before the field existed still loads."""
-    document = _document()
-    document["snapshot_version"] = 1
+    document = _as_version(_document(), 1)
     document.pop("diagnostics")
-    event = typ.cast(
-        "dict[str, object]", typ.cast("list[object]", document["events"])[0]
-    )
-    event.pop("admitted_at")
+    _events(document)[0].pop("admitted_at")
 
     loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
@@ -97,13 +118,32 @@ def test_a_version_one_event_may_omit_admission(tmp_path: Path) -> None:
 
 def test_a_version_two_event_must_name_admission(tmp_path: Path) -> None:
     """A version 2 row keeps the exact event shape, including admission."""
-    document = _document()
-    event = typ.cast(
-        "dict[str, object]", typ.cast("list[object]", document["events"])[0]
-    )
-    event.pop("admitted_at")
+    document = _as_version(_document(), 2)
+    _events(document)[0].pop("admitted_at")
 
     with pytest.raises(ValueError, match="snapshot fields"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_a_version_three_event_must_state_its_label_time_provenance(
+    tmp_path: Path,
+) -> None:
+    """A current row that omits the marker does not masquerade as proof."""
+    document = _document()
+    _events(document)[0].pop("label_observed_verified")
+
+    with pytest.raises(ValueError, match="snapshot fields"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_a_label_time_marker_that_is_not_a_boolean_is_refused(
+    tmp_path: Path,
+) -> None:
+    """A marker outside true/false cannot be read as either."""
+    document = _document()
+    _events(document)[0]["label_observed_verified"] = "true"
+
+    with pytest.raises(TypeError, match="must be a boolean"):
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
 

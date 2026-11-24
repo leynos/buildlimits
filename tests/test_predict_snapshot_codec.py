@@ -128,3 +128,21 @@ def test_a_missing_label_time_is_refused() -> None:
     """Every event has a label time; null is not a placeholder for one."""
     with pytest.raises(ValueError, match="observed_at must be a UTC timestamp"):
         event_from_dict(_line(observed_at=None))
+
+
+@pytest.mark.parametrize("verified", [True, False])
+def test_the_label_time_provenance_marker_round_trips(verified: bool) -> None:
+    """The marker survives encoding and decoding unchanged.
+
+    A verified event must stay verified, and an unverified one must stay
+    unverified: reading either as the other would change what the replay may
+    release.
+    """
+    event = Event(
+        "c" * 64, ORIGIN, EPOCH, EPOCH, "hit", 0.5, label_observed_verified=verified
+    )
+
+    decoded = event_from_dict(event_to_dict(event))
+
+    assert decoded.label_observed_verified is verified, "the marker survives"
+    assert decoded == event, "the whole event round trips"

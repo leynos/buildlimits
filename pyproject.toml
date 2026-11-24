@@ -2631,58 +2631,17 @@ reason = "Both spans are the same min/max update: one counts a source as it scan
 
 
 [[tool.duplication_gate.allow]]
-members = [
-    "buildlimits/outcome_recorder_types.py",
-    "buildlimits/outcome_recorder_outputs.py",
-    "buildlimits/supervisor_outcome_setup.py",
-    "tests/archive_seal_helpers.py",
-    "tests/modelcheck_cases.py",
-    "tests/outcome_store_helpers.py",
-    "buildlimits/outcome_store.py",
-    "buildlimits/outcome_store_state.py",
-    "buildlimits/server_watch.py",
-    "tests/modelcheck_service_cases.py",
-    "tests/test_outcome_archive_report_settlement.py",
-    "buildlimits/cache_recovery.py",
-    "buildlimits/outcome_archive_plan.py",
-    "buildlimits/outcome_archive_report.py",
-    "buildlimits/outcome_archive_report_builders.py",
-    "buildlimits/outcome_archive_report_fields.py",
-    "buildlimits/outcome_archive_state.py",
-    "buildlimits/predict/dataset_cli.py",
-    "buildlimits/predict/ensemble_runs.py",
-    "buildlimits/predict/harness.py",
-    "buildlimits/supervisor_wiring.py",
-    "tests/test_group_drain_metrics.py",
-    "tests/test_outcome_archive_clock.py",
-    "buildlimits/outcome_archive_run.py",
-    "buildlimits/predict/evaluation.py",
-    "buildlimits/predict/report.py",
-    "buildlimits/predict/scoring.py",
-    "buildlimits/predict/snapshot_codec.py",
-    "modelcheck/cli_outputs.py",
-    "modelcheck/expectations.py",
-    "modelcheck/records.py",
-    "modelcheck/report.py",
-    "tests/outcome_append_helpers.py",
-    "tests/outcome_sealing_helpers.py",
-    "tests/predict_test_helpers.py",
-    "tests/test_cache_recovery_telemetry.py",
-    "tests/test_outcome_archive_interleaving.py",
-    "tests/test_recovery_roots_deadline.py",
-    "buildlimits/group_recovery.py",
-    "buildlimits/outcome_archive_evict.py",
-    "buildlimits/outcome_archive_files.py",
-    "buildlimits/outcome_history_files.py",
-    "buildlimits/outcome_record_codec.py",
-    "buildlimits/predict/report_codec.py",
-    "tests/differential_trace_test_helpers.py",
-    "tests/outcome_archive_helpers.py",
-    "tests/outcome_store_fixture_helpers.py",
-    "tests/test_outcome_totality.py",
-    "tests/test_predict_evaluation.py",
-    "buildlimits/outcome_ports.py",
-    "modelcheck/cli.py",
-    "tests/test_kache_detached_events.py",
-]
-reason = "Matching import preludes across unrelated modules: each names the standard typing, collections and datetime helpers its own annotations need, plus the concrete collaborators it uses. The family is the same shape repeated by design (every module states its imports), and sharing it through a re-export module would hide each module's real dependencies."
+members = ["tests/test_outcome_recorder.py", "tests/test_outcome_recorder_failures.py", "tests/outcome_reading_test_helpers.py", "tests/test_outcome_recorder_evidence.py", "tests/test_predict_loss_accounting_properties.py"]
+reason = "Matching test preambles: five suites each list the recorder, journal and property helpers they use, and a shared re-export would hide which dependencies each suite actually needs."
+[[tool.duplication_gate.allow]]
+members = ["buildlimits/predict/records.py::build_events", "tests/outcome_reading_test_helpers.py::outcome_rows", "tests/sccache_outcome_observer_support.py::outcomes"]
+reason = "One `isinstance(record, OutcomeRecord)` filter written three times: the adapter keeps the outcome rows it decodes, and two test helpers separate outcome rows from a window summary. Each site names the value it selects from its own stream, and a shared filter would couple production decoding to test support."
+[[tool.duplication_gate.allow]]
+members = ["tests/test_predict_render_diagnostics.py::_history_of", "tests/test_predict_render_diagnostics.py::_observer_block"]
+reason = "Two thin accessors over one document shape: each names the block its own assertions amend, and a shared path reader would hide which block each test reaches into."
+[[tool.duplication_gate.unit]]
+unit = "buildlimits/predict/render_sufficiency.py"
+reason = "The two guarded reads describe the same precedence over one block: active-only is narrower than a failed inventory scan, so the first check wins. A shared predicate would obscure that the two states are mutually exclusive by construction."
+[[tool.duplication_gate.allow]]
+members = ["tests/test_outcome_recorder_evidence.py", "tests/test_predict_label_provenance.py"]
+reason = "Matching test preambles: each names the reading scaffold and prediction helpers it uses, and a shared re-export would hide which dependencies each suite actually needs."

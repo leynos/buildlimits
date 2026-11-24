@@ -123,6 +123,7 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
             "unavailable_admission": evaluation.walk.unavailable_admission,
             "applied_labels": evaluation.walk.applied_labels,
             "unapplied_labels": evaluation.walk.unapplied_labels,
+            "unverified_label_time": evaluation.walk.unverified_label_time,
         },
         "latency": {
             "file": TIMINGS,

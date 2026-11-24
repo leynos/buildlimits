@@ -3,192 +3,24 @@
 Held-out comparison, calibration, ablation and origin tables are pure
 formatting over the result document. They live apart from
 `buildlimits.predict.render` so each table can be read next to the values it
-prints, and so the prose that introduces the report stays in one place.
+prints, and so the prose that introduces the report stays in one place. The
+data-sufficiency block, which describes the input rather than the scores, is in
+:mod:`buildlimits.predict.render_sufficiency`.
 """
 
 import typing as typ
 
 from buildlimits.predict.formatting import (
     MISSING,
-    TRUNCATED_OBSERVER_NOTE,
-    admission_line,
     as_count,
-    as_counts,
     as_percent,
     as_score,
-    generation_unavailable_line,
 )
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
 
 UNDERPOWERED = "under-powered"
-
-
-def data_sufficiency(document: cabc.Mapping[str, object]) -> list[str]:
-    """Return the counts that explain what the labels rest on.
-
-    The block is deliberately about the input, not the scores: it names the
-    observer's denominators, the retained rows, the labelled share, the
-    admission-time coverage and the closed-history loss. A reader can then tell
-    a negative result from a history that never carried enough evidence.
-
-    Returns
-    -------
-    list[str]
-        Markdown lines.
-    """
-    data = typ.cast("dict[str, object]", document["data"])
-    stats = typ.cast("dict[str, object]", data["stats"])
-    source = typ.cast("dict[str, object]", data["source"])
-    journal = typ.cast("dict[str, object]", data["journal"])
-    lines = [
-        "## Data sufficiency",
-        "",
-        _rows_read_line(stats, source),
-        (
-            f"- Labels: {as_count(stats['labelled'])} of "
-            f"{as_count(stats['events'])} events "
-            f"({as_percent(stats['labelled_fraction'])}), "
-            f"{as_count(stats['identities'])} distinct identities"
-        ),
-        admission_line(stats),
-    ]
-    diagnostics = data.get("diagnostics")
-    if diagnostics is None:
-        lines.append(
-            "- Label-loss diagnostics: unavailable; this snapshot predates "
-            "the retained-store accounting."
-        )
-    else:
-        lines += _diagnostics_lines(typ.cast("dict[str, object]", diagnostics))
-    # The journal's observer counts are independent of the retained-store
-    # block, so they are still worth printing when the store counts are not.
-    lines += _observer_lines(journal)
-    lines += [
-        "",
-        (
-            "An ambiguous or unavailable window remains `unknown`; the report "
-            "never turns a missing hit into a miss."
-        ),
-        "",
-    ]
-    return lines
-
-
-def _diagnostics_lines(diagnostics: cabc.Mapping[str, object]) -> list[str]:
-    """Return the retained-store and closed-history bullets.
-
-    Returns
-    -------
-    list[str]
-        Markdown lines.
-    """
-    store = typ.cast("dict[str, object]", diagnostics["store"])
-    history = typ.cast("dict[str, object]", diagnostics["history"])
-    return [
-        (
-            f"- Label coverage among outcome rows: {as_count(store['labels'])} of "
-            f"{as_count(store['outcome_records'])}"
-        ),
-        (
-            f"- Label coverage among cacheable compilations: "
-            f"{as_count(store.get('cacheable_labels'))} of "
-            f"{as_count(store.get('cacheable_records'))}"
-        ),
-        f"- By cache result: {as_counts(store['by_result'])}",
-        f"- By outcome reason: {as_counts(store['by_reason'])}",
-        f"- By attribution: {as_counts(store['by_attribution'])}",
-        f"- By origin: {as_counts(store['by_origin'])}",
-        f"- By parser class: {as_counts(store['by_parser_class'])}",
-        f"- Label loss {generation_unavailable_line()}",
-        _closed_history_line(history),
-    ]
-
-
-def _closed_history_line(history: cabc.Mapping[str, object]) -> str:
-    """Return one honest statement of what closed history the snapshot saw.
-
-    A count that was never measured must not read as a measured zero, so the
-    two uninspected cases name themselves instead of printing counts. The
-    measured branch names the quarantined files as well, because the plain
-    command report already prints that count and a reader comparing the two
-    reports must not see one of them omit evidence the snapshot holds.
-
-    Returns
-    -------
-    str
-        A measured counts line, or the reason no count is available.
-    """
-    if history.get("active_only"):
-        return "- Closed history: not considered (the active file alone was read)"
-    if history.get("inventory_unavailable"):
-        return "- Closed history: inventory unavailable; rows already read are included"
-    return (
-        f"- Closed history: archived {as_count(history['archived'])}, "
-        f"sealed {as_count(history['sealed'])}, "
-        f"gaps {as_count(history['gaps'])}, "
-        f"quarantined {as_count(history['quarantined'])}"
-        + (" (gap list truncated)" if history.get("gaps_truncated") else "")
-    )
-
-
-def _rows_read_line(
-    stats: cabc.Mapping[str, object], source: cabc.Mapping[str, object]
-) -> str:
-    """Return the row-count line, tolerating a document without source counts.
-
-    Returns
-    -------
-    str
-        The Markdown bullet naming outcome and summary rows.
-    """
-    events = stats.get("events")
-    return (
-        f"- Rows read: {as_count(source.get('records_total', events))} "
-        f"({as_count(source.get('outcome_records', events))} outcome rows, "
-        f"{as_count(source.get('summary_records', 0))} window summaries)"
-    )
-
-
-def _observer_lines(journal: cabc.Mapping[str, object]) -> list[str]:
-    """Return the recorder's own counts from the journal note.
-
-    Returns
-    -------
-    list[str]
-        Markdown lines, or an explicit absence note.
-    """
-    observer = journal.get("observer")
-    if observer is None or not isinstance(observer, dict):
-        return [
-            (
-                "- Observer counts: unavailable; the snapshot carries no "
-                "observer-count block."
-            )
-        ]
-    block = typ.cast("dict[str, object]", observer)
-    lines = [
-        (
-            f"- Observer: {as_count(block.get('requests'))} admitted requests, "
-            f"{as_count(block.get('outcomes'))} published outcomes, "
-            f"{as_count(block.get('store_records'))} records appended, "
-            f"{as_count(block.get('store_discarded'))} dropped or evicted"
-        ),
-        (
-            f"- Observer readings: {as_count(block.get('readings'))} completed, "
-            f"{as_count(block.get('readings_skipped'))} skipped, "
-            f"{as_count(block.get('readings_failed'))} failed"
-        ),
-        f"- Observer by cache path: {as_counts(block.get('by_cache_path'))}",
-        f"- Observer by result: {as_counts(block.get('by_result'))}",
-        f"- Observer by reason: {as_counts(block.get('by_reason'))}",
-        (f"- Observer by store reason: {as_counts(block.get('by_store_reason'))}"),
-        (f"- Observer by gate reason: {as_counts(block.get('by_gate_reason'))}"),
-    ]
-    if journal.get("truncated"):
-        lines.append(f"- {TRUNCATED_OBSERVER_NOTE}")
-    return lines
 
 
 def comparison_table(

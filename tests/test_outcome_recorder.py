@@ -1,5 +1,7 @@
 """State transitions for the pure cache-outcome recording service."""
 
+import typing as typ
+
 from outcome_recorder_test_helpers import (
     GENERATION,
     OBSERVED_AT,
@@ -17,6 +19,9 @@ from outcome_recorder_test_helpers import (
     stats_reading,
     stats_text,
 )
+
+from buildlimits.outcome_record_format import OutcomeRecord
+from buildlimits.outcome_shell_stats import OutcomeCounters
 
 
 def test_zero_reading_establishes_baseline_without_label() -> None:
@@ -58,9 +63,11 @@ def test_a_solo_window_emits_one_label_record_and_summary() -> None:
     )
     assert output.events[0].outcome_reason == "none", "a sound label has no reason"
     assert len(output.records) == 2, "the outcome and window summary are persisted"
-    assert output.records[0].key == cache_key(), "the record retains the keyed identity"
-    assert output.records[0].outcome_reason == "none", "a label has no refusal reason"
-    assert output.records[0].outcome_attribution == "solo", (
+    row = output.records[0]
+    assert isinstance(row, OutcomeRecord), "the first record is the outcome row"
+    assert row.key == cache_key(), "the record retains the keyed identity"
+    assert row.outcome_reason == "none", "a label has no refusal reason"
+    assert row.outcome_attribution == "solo", (
         "the store row keeps the attribution that produced the label"
     )
     assert recorder_progress(state).window.entries == (), (
@@ -237,3 +244,108 @@ def test_stopping_closes_a_query_and_flushes_open_launches() -> None:
         "stop names why the window cannot be attributed"
     )
     assert isinstance(ticket, ports.Ticket), "close receives the opaque port ticket"
+
+
+def test_an_unkeyed_launch_publishes_the_reason_it_was_not_stored() -> None:
+    """A launch with no cache key is an omitted row, and its event says so.
+
+    The store writer never sees the launch, so its own discard counts can never
+    account for it. The published event therefore names the reason, which is
+    what lets the observer reconcile outcomes against rows instead of leaving
+    the difference unexplained.
+    """
+    recorder = outcome_module("outcome_recorder")
+    state, _ = begin_single_cached_query(recorder, None, 1.5)
+
+    _state, output = complete_query(
+        state,
+        recorder,
+        stats_text(compile_requests=1, requests_executed=1, cache_hits=1),
+        1.6,
+    )
+
+    assert len(output.events) == 1, "the outcome is still published"
+    assert output.events[0].record_omitted == "key_unavailable", (
+        "the event states why no row was written"
+    )
+    assert not [r for r in output.records if hasattr(r, "key")], (
+        "no outcome row is emitted for an unkeyed launch"
+    )
+
+
+def test_a_stored_outcome_reports_no_omission() -> None:
+    """The control: an outcome that became a row reports ``none``."""
+    recorder = outcome_module("outcome_recorder")
+    state, _ = begin_single_cached_query(recorder, cache_key(), 1.5)
+
+    _state, output = complete_query(
+        state,
+        recorder,
+        stats_text(compile_requests=1, requests_executed=1, cache_hits=1),
+        1.6,
+    )
+
+    assert output.events[0].record_omitted == "none", "the row was stored"
+    assert output.records, "and a row exists to store it"
+
+
+def test_a_launch_with_no_label_time_reports_its_own_omission_reason() -> None:
+    """A keyed launch with no wall clock is omitted for a different cause.
+
+    The reason names the missing moment, not the key, so the observer's
+    per-reason breakdown cannot merge two unrelated losses into one count.
+    """
+    recorder = outcome_module("outcome_recorder")
+    payload = launch_payload(recorder, cache_key())
+    state = baseline_state(recorder)
+    state, _ = recorder.advance(
+        state,
+        recorder.Launched(
+            group_id="undated",
+            is_cached=True,
+            payload=payload,
+            now=0.0,
+        ),
+    )
+    state, _ = recorder.advance(
+        state,
+        recorder.Ended(group_id="undated", is_clean=True, now=0.25),
+    )
+    state, _ = begin_query(state, recorder, clear_gate_event(recorder, 10.0))
+
+    _state, output = complete_query(
+        state,
+        recorder,
+        stats_text(compile_requests=1, requests_executed=1, cache_hits=1),
+        10.1,
+        observed_at=None,
+    )
+
+    assert output.events[0].record_omitted == "label_time_unavailable", (
+        "the missing moment is named, not the key"
+    )
+    assert not output.records, "a row without a label time cannot be stored"
+
+
+def test_the_status_counters_report_the_omitted_outcomes() -> None:
+    """The live status counts an omitted outcome beside the attributed ones.
+
+    The counter is the supervisor's own view, so an operator sees the loss
+    without reading the store or the journal.
+    """
+    recorder = outcome_module("outcome_recorder")
+    state, _ = begin_single_cached_query(recorder, None, 1.5)
+    _state, output = complete_query(
+        state,
+        recorder,
+        stats_text(compile_requests=1, requests_executed=1, cache_hits=1),
+        1.6,
+    )
+    counters = OutcomeCounters()
+
+    counters.record(typ.cast("typ.Any", output))
+
+    assert counters.outcomes == 1, "the outcome is still published"
+    assert counters.attributed == 1, "the label itself is attributed"
+    assert counters.record_omitted == 1, "and the row it could not store is counted"
+    assert counters.describe()["record_omitted"] == 1, "the status carries it"

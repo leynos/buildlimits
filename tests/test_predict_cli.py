@@ -75,49 +75,61 @@ def test_a_store_snapshot_without_admission_times_predicts_nothing(
     """The live store records no admission time, so no event is predicted.
 
     The honest answer is the count of what is missing, not a prediction made
-    from a label that had already arrived.
+    from a label that had already arrived. Every store-derived label is also
+    unverified, so the report names both shortages.
     """
     status, document, markdown = _run_store_benchmark(
         tmp_path, write_snapshot(tmp_path, 400)
     )
 
     assert status == 0, "the run still produces both files"
-    assert document["status"] == "insufficient admission times", (
-        "the missing admission times set the status"
-    )
     assert document["data"]["stats"]["admission_usable"] == 0, (
         "no row offers a decision time"
     )
-    assert document["replay"]["unavailable_admission"] == 400, (
-        "every event is counted as unpredictable"
+    assert document["data"]["stats"]["unverified_label_time"] == 342, (
+        "no store row proves when its label became known, so every label is "
+        "withheld rather than scored"
     )
-    assert "Insufficient admission times" in markdown, "the report explains why"
+    assert document["status"] == "insufficient data", (
+        "an unverified label is not scored evidence"
+    )
+    assert "unverified" in document["verdict"], "the verdict states what it withheld"
+    assert "withheld for an unverified label time" in markdown, (
+        "the report explains why"
+    )
 
 
-def test_a_store_snapshot_with_admission_times_can_be_predicted(
+def test_a_store_snapshot_with_admission_times_still_withholds_its_labels(
     tmp_path: Path,
 ) -> None:
-    """A retained row with a recorded admission moment becomes a prediction.
+    """A recorded admission moment does not make a store label's time proven.
 
-    The same store shape without admission times predicts nothing. Carrying
-    the time at admission is what lets the benchmark walk the history without
-    using a label that arrived later.
+    The same store shape without admission times has no predictable event at
+    all. With them the admission evidence is present and usable in the
+    diagnostics, yet the label time is still unverified, so the replay withholds
+    the labels rather than releasing each at a time the row cannot prove. That
+    is why a real host history reports `insufficient data` until a store format
+    carries its own provenance marker.
     """
     status, document, markdown = _run_store_benchmark(
         tmp_path, write_admitted_store_snapshot(tmp_path, 400)
     )
 
     assert status == 0, "the run completes"
-    assert document["status"] not in {
-        "insufficient data",
-        "insufficient admission times",
-    }, "the labels and admission times now meet the gate"
     assert document["data"]["stats"]["admission_usable"] == 400, (
         "every retained row has a usable admission time"
     )
-    assert document["replay"]["moments"] > 0, "the replay answers admission moments"
     assert document["data"]["diagnostics"]["store"]["admission_recorded"] == 400, (
         "the diagnostics agree with the events"
+    )
+    assert document["data"]["stats"]["unverified_label_time"] == 342, (
+        "every store-derived label time is unverified"
+    )
+    assert document["status"] == "insufficient data", (
+        "no label can be released, so no label is scored"
+    )
+    assert document["replay"]["unverified_label_time"] == 342, (
+        "the replay counts the withheld labels"
     )
     assert "Admission times" in markdown, "the report states the coverage"
     assert "Data sufficiency" in markdown, "the report states its denominators"

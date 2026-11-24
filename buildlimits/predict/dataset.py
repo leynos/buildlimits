@@ -15,7 +15,7 @@ import typing as typ
 
 from buildlimits.predict.accounting import Diagnostics, HistoryLoss
 from buildlimits.predict.accounting import StoreAccounting as StoreAccounting
-from buildlimits.predict.events import admission_moment
+from buildlimits.predict.events import admission_moment, unverified_label
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -120,6 +120,9 @@ class SnapshotStats:
         Events carrying no admission time at all.
     admission_unusable : int
         Events whose recorded admission time is after their label.
+    unverified_label_time : int
+        Hit or miss labels whose recorded observation time is unverified, so
+        the replay withholds them rather than scoring an unsound release time.
     gaps : tuple[Gap, ...]
         Silences longer than the configured threshold.
     """
@@ -134,6 +137,7 @@ class SnapshotStats:
     admission_usable: int
     admission_missing: int
     admission_unusable: int
+    unverified_label_time: int
     gaps: tuple[Gap, ...]
 
 
@@ -180,6 +184,9 @@ class Snapshot:
         observed = [event.observed_at for event in self.events]
         recorded = [event for event in self.events if event.admitted_at is not None]
         usable = sum(1 for event in self.events if admission_moment(event) is not None)
+        unverified = sum(
+            1 for event in self.events if unverified_label(event) is not None
+        )
         return SnapshotStats(
             events=total,
             labelled=labelled,
@@ -191,6 +198,7 @@ class Snapshot:
             admission_usable=usable,
             admission_missing=total - len(recorded),
             admission_unusable=len(recorded) - usable,
+            unverified_label_time=unverified,
             gaps=self.gaps,
         )
 

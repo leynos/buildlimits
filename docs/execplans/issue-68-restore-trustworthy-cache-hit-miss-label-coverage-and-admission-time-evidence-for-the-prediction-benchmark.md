@@ -10,10 +10,12 @@ The benchmark algorithms in
 
 ## Status
 
-Implemented on the issue branch, including the review follow-up recorded in
-[Label timing and the store-format upgrade](#label-timing-and-the-store-format-upgrade)
-and in
+Implemented on the issue branch, including the review follow-ups recorded in
+[Label timing and the store-format upgrade](#label-timing-and-the-store-format-upgrade),
+in
 [Review follow-up: inventory, quarantine and report honesty](#review-follow-up-inventory-quarantine-and-report-honesty)
+and in
+[Review follow-up: label-time provenance, omitted outcomes and append totals](#review-follow-up-label-time-provenance-omitted-outcomes-and-append-totals)
 below. The live host service has not been upgraded: the before/after report
 below distinguishes the old recorder's retained history from the new code's
 controlled evidence, and says plainly where an operator action is still
@@ -92,7 +94,9 @@ only information available before admission.
 - The snapshot carries bounded diagnostics: retained rows by result, reason,
   attribution, origin, parser class, child sighting and sccache version;
   admission-time coverage; the eligible cacheable denominator; and closed
-  history loss.
+  history loss. The snapshot format is version 3, and every event states
+  `label_observed_verified`, so an unverified label time is neither released
+  nor scored (ADR 011 D6).
 - The dataset command records the observer's own journal counts, including
   admitted requests by cache path and backend, published outcomes by result and
   reason, writer appends and evictions split by the closed `StoreReason`, and
@@ -152,11 +156,12 @@ boundary: two rows sharing one reading moment load and score instead of being
 refused, while a genuine backward step is still refused.
 
 Rows already written with a version 2 header by the earlier build keep their
-launch-derived `observed_at`. They stay readable and scorable, but their
-recorded time may precede the true knowledge time, and the format version
-cannot identify them. No new timestamp field was added for old rows. The
-benchmark releases a label no earlier than the moment its row records, which
-for those rows is a lower bound rather than proof.
+launch-derived `observed_at`. They stay readable, but their recorded time may
+precede the true knowledge time and the format version cannot identify them.
+The later review round below tightened this: rather than releasing those labels
+at a recorded time that is only a lower bound, the dataset command marks every
+version 2 row's label time unverified and the benchmark withholds it (ADR 011
+D6).
 
 ### An older header is settled before the writer appends
 
@@ -349,6 +354,81 @@ measured, and one dimension it had silently omitted:
   reading, asserting the row's admission time is the entry's and its label time
   is the reading's.
 
+## Review follow-up: label-time provenance, omitted outcomes and append totals
+
+A later review round found that the label-timing fix was not enough on its own,
+because a version 2 store row cannot say which code dated it, and that several
+reported totals could not be reconciled. ADR 011 records the decisions as D6,
+D7 and D8.
+
+### A pre-fix label can no longer leak into the replay
+
+Old version 2 rows were stamped with the launch's completion time, so their
+`observed_at` is only a lower bound on when the label became known. The dataset
+adapter copies that time, and `admission_schedule` released the label at it, so
+a prediction admitted between completion and the query could read a label it
+could not have seen. The dataset command cannot distinguish a pre-fix row from
+a fixed one — both are version 2 store rows — so it must not claim verification
+for either.
+
+The snapshot format is version 3, and each event carries an explicit
+`label_observed_verified` boolean. A per-event marker was chosen over a
+snapshot-wide `label_time_provenance` name because the fact is a property of
+one row: a snapshot that later holds rows of mixed provenance can state both,
+which a single document-wide marker cannot. The dataset command emits every
+version 2 store row as unverified; a future version 3 store row that carries
+its own marker is the first source that can emit a verified event.
+
+`events.scored_label` returns None for an unverified hit or miss, so training,
+scoring and the phase schedule all withhold it through one rule. The replay
+counts them as `unverified_label_time`, and both reports name the count. A
+store history therefore now reports `insufficient data` with the withheld count
+rather than scoring an unsound release time; that is a visible change for an
+operator, recorded in the migration guide.
+
+`tests/test_outcome_recorder_evidence.py` drives the recorder-to-replay path:
+an admission between a launch's completion and the query return sees no label
+from that reading, and a genuinely verified label at the same moment *is*
+released to a later admission, so the exclusion is measured rather than vacuous.
+
+### A published outcome that produced no row is counted
+
+`outcome_shell_keys.cache_key` can return None when the salt or the crate
+identity is unavailable, and `_record_for` then emits no store row. The
+writer's discard breakdown never saw those outcomes, so the difference between
+published events and stored rows stayed a hypothesis. The recorder now computes
+one closed `RecordOmission` reason per launch and copies it onto the event, and
+`ObserverAccounting.record_omitted` sums them by reason. The events and the
+rows are built from the same launch in one transition, so the reconciliation is
+a property of the code: published outcomes = appended rows + omitted ones by
+cause. Both reports print the total and its breakdown, and the journal codec
+requires the map to sum to it.
+
+### The append total counts appends only
+
+`observer_accounting` summed `store_records` across every `outcome_store`
+operation, so a compaction's retained rows and a seal's released rows were
+counted again while the reports called the total "store appends". Only
+`operation == "append"` contributes now, and `by_store_operation` keeps every
+operation visible. The dataset report and the rendered Markdown both say "rows
+appended" and state the rule. `metrics_report`'s store section applies the same
+rule to the host-facing report.
+
+### Further coverage
+
+`tests/test_predict_threshold.py` now holds the label count at the packaged
+2,000 and exercises a partly usable history: 2,000 verified labels with five
+usable admission times reports `insufficient held-out evidence`, so one usable
+row is never treated as enough and an all-unusable history is not the only
+shortage the report can name. A separate case proves a store-derived history is
+withheld for its unverified times whatever its admission coverage.
+
+`tests/test_predict_loss_accounting_properties.py` adds the property tests: the
+timestamp round trip and the UTC offset rules of `outcome_record_time`, the
+diagnostics decoder's accept-and-refuse contract over generated counts, and the
+recorder's rule that every completion sharing one reading moment records that
+moment.
+
 ## Limitations
 
 - sccache 0.14 exposes no supported per-request hit/miss signal. Its
@@ -364,11 +444,17 @@ measured, and one dimension it had silently omitted:
   from `observed_at - runtime_seconds`, and no missing hit is read as a miss.
 - Version 2 rows written by the earlier build of this branch carry a
   launch-derived `observed_at` that may precede the label's true knowledge
-  time. They remain readable and scorable, and the store format version cannot
-  identify them, so the benchmark releases each label no earlier than the
-  recorded time. That is a lower bound, not proof, for those rows. No timestamp
-  field was invented to mark them; a strictly ordered history is best started
-  after the upgraded supervisor has run.
+  time. They remain readable, but the dataset command emits their label times
+  as unverified and the replay withholds them, because the store format version
+  cannot identify which code dated a row. A store-derived history therefore
+  reports `insufficient data` with the withheld count until a store format
+  records each row's own label-time provenance; the snapshot's
+  `label_observed_verified` marker is the one place that decision changes. No
+  historical row is repaired.
+- A published outcome that produced no store row is counted by cause, not
+  recovered: its row is gone by design, because a launch with no key cannot be
+  correlated with its admission. The count makes the loss visible rather than
+  closing it.
 - The archive byte budget sees larger rows. A policy sized exactly to the old
   row size will retain fewer rows; the retention tests and the documented
   budget are updated accordingly.
@@ -399,9 +485,13 @@ The last two report the sufficiency counts and keep the
 `insufficient data`/`insufficient admission times` statuses until genuine rows
 meet both gates.
 
-`tests/test_predict_threshold.py` confirms the two gates are separate at the
-packaged `minimum_labelled_events=2000`: a mixed version 1/version 2 history
-with exactly 2,000 labels and no admission times reports
-`insufficient admission times`, and the same history with usable admission
-times is scored. The label gate counted the labelled rows correctly in both
-runs, so the admission gate is what prevented a false verdict.
+`tests/test_predict_threshold.py` confirms the gates are separate at the
+packaged `minimum_labelled_events=2000`. A snapshot of 2,000 verified labels
+with no usable admission time reports `insufficient admission times`, and the
+same labels with usable admission times are scored. A history with exactly five
+usable admission times reports `insufficient held-out evidence`, so a handful
+of paired rows is not treated as a verdict. A store-derived history is withheld
+as `insufficient data` whatever its admission coverage, because a version 2 row
+proves no label time; the run names the withheld count. The label gate counted
+the labelled rows correctly in every run, so a status that differs is the other
+evidence's doing.
