@@ -19,6 +19,7 @@ from outcome_store_helpers import (
     wait_for_salt,
 )
 from outcome_test_helpers import STORE_EPOCH as NOW
+from outcome_test_helpers import STORE_EPOCH as _NOW
 from outcome_test_helpers import window_summary
 from segment_test_helpers import document, history_policy, write_private
 
@@ -40,7 +41,7 @@ def test_writer_reports_queue_overflow_without_waiting_for_the_worker(
 ) -> None:
     """A full append queue reports save failure while the worker is stalled."""
     path = tmp_path / "cache-outcomes.jsonl"
-    with running_writer(path, queue_capacity=1) as writer:
+    with running_writer(path, queue_capacity=1, wall_clock=lambda: _NOW) as writer:
         # The ready context owns the worker while the queue fills behind a stall.
         with stalled_append() as (entered, release):
             writer.append(window_summary())
@@ -312,7 +313,7 @@ def test_failed_append_keeps_the_previous_store_readable(tmp_path: Path) -> None
     """A refused append reports failure and preserves complete earlier rows."""
     path = tmp_path / "cache-outcomes.jsonl"
     original = window_summary()
-    with running_writer(path) as writer:
+    with running_writer(path, wall_clock=lambda: _NOW) as writer:
         append_and_wait(writer, original)
         with mock.patch.object(
             outcome_store_state, "append_line", side_effect=OSError("disk full")

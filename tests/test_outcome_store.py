@@ -22,6 +22,7 @@ from outcome_store_helpers import start_writer as _start_writer
 from outcome_store_helpers import stored_records as _stored_records
 from outcome_store_helpers import wait_for_results as _wait_for_results
 from outcome_store_helpers import wait_for_salt as _wait_for_salt
+from outcome_test_helpers import STORE_EPOCH as _NOW
 from outcome_test_helpers import window_summary as _window_summary
 
 from buildlimits import (
@@ -64,7 +65,7 @@ def test_writer_creates_private_header_and_publishes_salt(tmp_path: Path) -> Non
 def test_writer_appends_a_record_and_compacts_on_close(tmp_path: Path) -> None:
     """Queued records reach the file before the bounded close completes."""
     path = tmp_path / "cache-outcomes.jsonl"
-    with _running_writer(path) as writer:
+    with _running_writer(path, wall_clock=lambda: _NOW) as writer:
         _append_and_wait(writer, _window_summary())
 
     decoded = _decoded_store(path)
@@ -121,7 +122,7 @@ def test_append_compacts_at_the_high_water_mark(tmp_path: Path) -> None:
     path = tmp_path / "cache-outcomes.jsonl"
     older = _window_summary(server_version="v" * 6_000)
     newer = _window_summary()
-    with _running_writer(path) as writer:
+    with _running_writer(path, wall_clock=lambda: _NOW) as writer:
         _append_and_wait(writer, older)
         header = _decoded_store(path).header
         compact_limit = sum(
@@ -151,7 +152,7 @@ def test_oversized_record_is_dropped_without_touching_the_store(
 ) -> None:
     """A record over 16 KiB is rejected before it reaches the writer queue."""
     path = tmp_path / "cache-outcomes.jsonl"
-    with _running_writer(path) as writer:
+    with _running_writer(path, wall_clock=lambda: _NOW) as writer:
         writer.append(_window_summary(server_version="v" * 16_300))
         results = _wait_for_results(writer, operation="append", reason="save_failed")
 
@@ -166,7 +167,7 @@ def test_compaction_failure_obeys_the_16_mib_hard_limit(
 ) -> None:
     """A failed compaction permits only a write within the configured hard bound."""
     path = tmp_path / "cache-outcomes.jsonl"
-    with _running_writer(path) as writer:
+    with _running_writer(path, wall_clock=lambda: _NOW) as writer:
         _append_and_wait(writer, _window_summary())
         prior_size = path.stat().st_size
         new_record = _window_summary(server_version="v" * 200)
@@ -196,7 +197,7 @@ def test_writer_drops_only_a_torn_final_line_on_load(tmp_path: Path) -> None:
     path = tmp_path / "cache-outcomes.jsonl"
     record = _seed_one_record_store(path, torn_tail='{"kind":"window_summary"')
 
-    writer = _start_writer(path)
+    writer = _start_writer(path, wall_clock=lambda: _NOW)
     _wait_for_salt(writer)
     _wait_for_results(writer, operation="compact", reason="none")
     writer.close(1.0)
@@ -235,7 +236,7 @@ def test_startup_compaction_is_retried_before_appending_after_failure(
     with mock.patch.object(
         outcome_store_state, "replace_store", side_effect=fail_first_compaction
     ):
-        writer = _start_writer(path)
+        writer = _start_writer(path, wall_clock=lambda: _NOW)
         try:
             _wait_for_salt(writer)
             startup = _wait_for_results(
