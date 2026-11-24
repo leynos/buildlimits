@@ -2558,10 +2558,6 @@ members = [
     "buildlimits/outcome_archive_report_fields.py::SettledFields",
 ]
 reason = "Matching data shapes, not shared logic: one is a prediction snapshot's statistics value and the other a TypedDict of report fields. Sharing a type would couple prediction to archiving for no behaviour."
-[[tool.duplication_gate.unit]]
-unit = "buildlimits/outcome_archive_verify.py"
-reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."
-
 [[tool.duplication_gate.allow]]
 members = [
     "buildlimits/cache_backend.py::CacheBackend",
@@ -2651,9 +2647,6 @@ reason = "Two independent fault stubs with different signatures and patched seam
 [[tool.duplication_gate.allow]]
 members = ["buildlimits/outcome_archive_fs.py::is_proven_absent", "buildlimits/supervisor_outcome_setup.py::exists_or_unknown"]
 reason = "The two helpers answer opposite questions over the same lookup: the archiver needs to know an archive is proven absent before advancing the floor, while the supervisor barrier must treat an unreadable marker as present. Sharing one function would hide which answer each caller needs, and the supervisor must not import archive I/O into the domain closure."
-[[tool.duplication_gate.unit]]
-unit = "buildlimits/outcome_archive_verify.py"
-reason = "Both spans are the same min/max update: one counts a source as it scans, the other writes a trimmed archive. They live in one module because they are the read and write halves of the same verification contract, and collecting the update behind a helper would add a call per row to the bounded-memory loop."
 
 [[tool.duplication_gate.allow]]
 members = [

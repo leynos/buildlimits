@@ -4,6 +4,7 @@ import datetime as dt
 import lzma
 import typing as typ
 from pathlib import Path
+from unittest import mock
 
 from outcome_archive_helpers import policy as archive_policy
 from outcome_archive_helpers import run as archive_run
@@ -16,11 +17,13 @@ from outcome_store_helpers import (
 )
 from outcome_test_helpers import attributed_record, window_summary
 
-from buildlimits import outcome_records
+from buildlimits import outcome_records, outcome_store_sealing
 from buildlimits.outcome_retention import RetentionPolicy
 from buildlimits.outcome_segments import SegmentLayout, archive_name, segment_name
 
 if typ.TYPE_CHECKING:
+    import pytest
+
     from buildlimits.outcome_record_format import StoreRecord
 
 NOW = dt.datetime(2026, 11, 19, tzinfo=dt.UTC)
@@ -145,3 +148,41 @@ def test_a_restart_seal_is_trimmed_by_a_settled_archive_run(tmp_path: Path) -> N
         "the archive keeps the two later rows and drops the leading one"
     )
     assert report.retained_records == 2, "the settled store meets the reduced cap"
+
+
+def test_a_restart_seal_that_cannot_reopen_keeps_the_row_after_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A restart seal whose fresh header failed retries before consuming a row.
+
+    The seal renames the source and releases its rows before installing the new
+    active file. When that install fails at startup, the writer must mark the
+    store as needing repair: the next append settles first and keeps its row,
+    rather than failing because no active file exists.
+    """
+    store = tmp_path / "cache-outcomes.jsonl"
+    _seed_store(
+        store,
+        tuple(window_summary(observed_at=NOW) for _ in range(3)),
+        _segmented_policy(max_records=None),
+    )
+    with mock.patch.object(outcome_store_sealing, "restart_active", return_value=False):
+        writer = segment_writer(store, _segmented_policy(max_records=2), NOW)
+        failed = wait_for_results(writer, operation="seal", reason="save_failed")
+        assert any(result.records == 3 for result in failed), (
+            "the failed restart seal reports the rows it released"
+        )
+
+    try:
+        writer.append(window_summary(observed_at=NOW))
+        wait_for_results(writer, operation="append", reason="none")
+    finally:
+        close_writer(writer, 1.0)
+
+    assert [
+        len(decoded_store(path).records)
+        for path in SegmentLayout.beside(store).sealed_dir.glob("*.jsonl")
+    ] == [3], "the released source is the only sealed segment"
+    assert len(decoded_store(store).records) == 1, (
+        "the append after the fault settles first and keeps its row"
+    )

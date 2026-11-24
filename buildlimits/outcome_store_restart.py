@@ -78,7 +78,7 @@ def _settle_existing_file(store: StoreFiles, size: int) -> bool:
         installs the header.
     """
     if size > store.policy.segment_bytes:
-        seal(store)
+        _seal_or_hold_pending(store)
         return True
     if active_expired(store):
         # A restart is the one moment a writer can enforce the age bound on
@@ -92,9 +92,22 @@ def _settle_existing_file(store: StoreFiles, size: int) -> bool:
         # hands the rows to the archiver even though the file is below the
         # segment size, so an idle store cannot hold more rows than the cap
         # merely because it received no further appends.
-        seal(store)
+        _seal_or_hold_pending(store)
         return True
     return False
+
+
+def _seal_or_hold_pending(store: StoreFiles) -> None:
+    """Seal the active file, keeping pending recovery when the seal failed.
+
+    A seal that renamed the source but could not install a fresh active file
+    returns ``False`` with the rows already released. Without a pending mark
+    the writer would take the next row and lose it to ``save_failed``, and only
+    the append after that would repair the store. The mark makes the next
+    append settle first, so the header is recreated before a row is consumed.
+    """
+    if not seal(store):
+        store.needs_compaction = True
 
 
 def restore_loaded_store(

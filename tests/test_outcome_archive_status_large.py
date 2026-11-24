@@ -13,9 +13,10 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from archive_cli_helpers import SCRIPT, command_arguments
+from archive_cli_helpers import SCRIPT, command_arguments, write_config
 from test_outcome_archive_memory import (
     _LARGE_ENV,
+    _LARGE_HISTORY_BYTES,
     _RSS_KIB,
     large_store_and_config,
     measure_large_command,
@@ -62,10 +63,31 @@ def test_a_large_history_keeps_the_status_read_bounded_during_maintenance(
     layout = SegmentLayout.beside(store)
 
     with ArchiveLock(layout.lock_file):
-        status, status_rss = measure_large_command(store, config, "inspect")
+        sealed_status, sealed_rss = measure_large_command(store, config, "inspect")
 
-    assert status == 0, "the inspection completes while an archive run holds the lock"
-    assert status_rss < _RSS_KIB, f"the status read peaked at {status_rss} KiB"
+    assert sealed_status == 0, "the inspection completes while the lock is held"
+    assert sealed_rss < _RSS_KIB, f"the sealed read peaked at {sealed_rss} KiB"
+
+    # The archiving run keeps every row: its budget is larger than the
+    # generated history, so the case exercises XZ archives rather than a store
+    # the run trimmed back to nothing.
+    archiving_config = write_config(
+        tmp_path / "archiving.toml", max_bytes=_LARGE_HISTORY_BYTES * 4
+    )
+    archived = subprocess.run(
+        [str(SCRIPT), "run", *command_arguments(store, archiving_config)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert archived.returncode == 0, archived.stderr
+
+    with ArchiveLock(layout.lock_file):
+        archived_status, archived_rss = measure_large_command(store, config, "inspect")
+
+    assert archived_status == 0, "the archived history is still inspectable"
+    assert archived_rss < _RSS_KIB, f"the archived read peaked at {archived_rss} KiB"
+    assert list(layout.archive_dir.glob("*.xz")), "the history is now XZ archives"
 
     report = _inspection_report(store, config)
     limits = report["limits"]

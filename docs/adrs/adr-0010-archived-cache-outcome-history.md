@@ -155,6 +155,9 @@ disagree about a bound.
   bound, and is reported as a disabled bound rather than a zero-byte target.
 - The record cap is `cache_outcomes_max_records`. A positive value applies in
   either mode. When it is omitted, a segmented store has no count cap and a
+  legacy store keeps the historical 10,000-record cap. The cap bounds the whole
+  store, so the archiver counts the active rows the age rule keeps and each
+  sealed source's recorded count as well as the surviving archives.
 - Segmentation follows the byte budget: a budget larger than one 12 MiB
   segment, or a budget of zero, makes the writer seal closed segments. The
   default budget remains the legacy 12 MiB, so a deployment that writes none of
