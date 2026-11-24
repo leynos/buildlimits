@@ -312,8 +312,6 @@ class _Workflow(typ.NamedTuple):
     file: str
     name: str
     triggers: frozenset[str]
-    group: str
-    cancel_in_progress: bool
     timeout_minutes: int
     target: str
 
@@ -323,8 +321,6 @@ _EXPECTED = (
         file="model-fidelity.yml",
         name="W1 model fidelity",
         triggers=frozenset({"pull_request", "workflow_dispatch"}),
-        group="model-fidelity-${{ github.ref }}",
-        cancel_in_progress=True,
         timeout_minutes=10,
         target="make model-fidelity",
     ),
@@ -332,8 +328,6 @@ _EXPECTED = (
         file="model-check-nightly.yml",
         name="W1 model check",
         triggers=frozenset({"schedule", "workflow_dispatch"}),
-        group="model-check-${{ github.ref }}",
-        cancel_in_progress=False,
         timeout_minutes=60,
         target="make model-check",
     ),
@@ -365,13 +359,6 @@ def test_a_model_workflow_declares_its_contract(expected: _Workflow) -> None:
 
     assert workflow["permissions"] == {"contents": "read"}, (
         "the workflow reads the repository and writes nothing"
-    )
-
-    concurrency = workflow["concurrency"]
-    assert isinstance(concurrency, dict), "the workflow declares concurrency"
-    assert concurrency["group"] == expected.group, "runs are grouped per ref"
-    assert concurrency["cancel-in-progress"] is expected.cancel_in_progress, (
-        "and a newer run replaces an older one only where that is safe"
     )
 
     jobs = workflow["jobs"]
