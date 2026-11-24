@@ -11,7 +11,7 @@ from buildlimits.outcome_record_format import (
     _KEY_FIELDS,
     _SUMMARY_COUNTS,
     _SUMMARY_FIELDS,
-_V1_OUTCOME_FIELDS,
+    _V1_OUTCOME_FIELDS,
     _V2_OUTCOME_FIELDS,
     _V3_OUTCOME_FIELDS,
     _V4_OUTCOME_FIELDS,
@@ -26,13 +26,13 @@ _V1_OUTCOME_FIELDS,
     _has_supported_version,
     _text,
     _valid_outcome_fields,
-    _validate_key,
 )
 from buildlimits.outcome_record_lines import (
     _parse_json_lines,
     _raw_json_row,
     _Unparsable,
 )
+from buildlimits.outcome_record_key import _validate_key
 from buildlimits.outcome_record_time import (
     INVALID_TIMESTAMP,
     optional_timestamp,

@@ -229,7 +229,8 @@ def timing_exclusion(event: Event) -> TimingExclusion | None:
         return "no_availability_time"
     if event.admitted_at > available:
         return "admission_after_availability"
-    if event.completed_at is not None and event.completed_at > available:
+    completed = event.completed_at
+    if completed is not None and completed > available:
         return "completion_after_availability"
     return None
 

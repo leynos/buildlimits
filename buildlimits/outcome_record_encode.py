@@ -12,7 +12,6 @@ import json
 
 from buildlimits.json_values import nonnegative_integer
 from buildlimits.outcome_record_format import (
-    _TIMING_FIELDS,
     FORMAT_NAME,
     FORMAT_VERSION,
     MAX_RECORD_BYTES,
@@ -26,6 +25,7 @@ from buildlimits.outcome_record_format import (
     _validate_key,
 )
 from buildlimits.outcome_record_time import timestamp_text
+from buildlimits.outcome_record_timing import TIMING_FIELDS
 
 __all__ = ["encode_line", "header_floor_bytes"]
 
@@ -53,7 +53,7 @@ _V1_ROW_FIELDS = _V2_ROW_FIELDS - {
 }
 _V3_ROW_FIELDS = _V2_ROW_FIELDS | {"label_time_provenance"}
 _V4_ROW_FIELDS = _V3_ROW_FIELDS | {"generation_digest"}
-_V5_ROW_FIELDS = _V4_ROW_FIELDS | _TIMING_FIELDS
+_V5_ROW_FIELDS = _V4_ROW_FIELDS | TIMING_FIELDS
 _ROW_FIELDS_BY_VERSION: dict[int, frozenset[str]] = {
     1: _V1_ROW_FIELDS,
     2: _V2_ROW_FIELDS,

@@ -25,12 +25,8 @@ from buildlimits.outcome_attribution import Generation
 from buildlimits.outcome_gate import QuietInputs
 from buildlimits.outcome_key import CacheKey, Salt, toolchain_identity
 from buildlimits.outcome_queries import PeerServerProcess
-from buildlimits.outcome_record_codec import decode_lines
-from buildlimits.outcome_record_encode import encode_line
 from buildlimits.outcome_record_format import (
-    DecodedStore,
     OutcomeRecord,
-    StoreHeader,
     WindowSummary,
 )
 from buildlimits.outcome_recorder_types import (
@@ -41,9 +37,6 @@ from buildlimits.outcome_recorder_types import (
     Outputs,
     Querying,
 )
-from buildlimits.predict.accounting import HistoryLoss
-from buildlimits.predict.dataset import build_snapshot
-from buildlimits.predict.records import decode_history
 
 if typ.TYPE_CHECKING:
     from buildlimits.outcome_ports import GenerationFailure
@@ -350,59 +343,3 @@ def run_restart(
         pytest.fail(f"the peer read no server generation before the restart: {current}")
     slot[0] = dc.replace(current, pid=current.pid + 1, starttime=current.starttime + 1)
     return poll(recorder)
-
-
-def assert_extraction(records: list[StoreRecord]) -> None:
-    """Prove the retained rows encode, decode and extract without loss."""
-    header = StoreHeader(SALT.salt_id, dt.datetime.now(dt.UTC))
-    document = (
-        "\n".join((encode_line(header), *(encode_line(record) for record in records)))
-        + "\n"
-    )
-    decoded = decode_lines(document)
-    if not isinstance(decoded, DecodedStore):
-        pytest.fail(f"the retained rows did not decode: {decoded.reason}")
-    snapshot = build_snapshot(
-        decode_history(decoded),
-        now=header.written_at,
-        history_loss=HistoryLoss.active_file_only(),
-    )
-    stats = snapshot.stats()
-    outcome_rows = len(outcomes(tuple(records)))
-
-    assert stats.events == outcome_rows, (
-        "every recorded outcome row reaches the snapshot, declined rows included"
-    )
-    assert stats.labelled == 2, "the controlled miss and hit are the labels"
-    assert stats.admission_recorded == stats.events, (
-        "every retained outcome carries its admission time"
-    )
-    assert stats.admission_usable == stats.events, (
-        "each admission precedes its own label"
-    )
-    assert stats.availability_recorded == stats.events, (
-        "every retained row records the poll boundary that accepted it"
-    )
-    assert stats.availability_usable == stats.events, (
-        "each availability follows its own admission"
-    )
-    assert stats.scored == 2, "only the controlled miss and hit are scorable"
-    unscorable = sum(
-        1
-        for record in outcomes(tuple(records))
-        if record.outcome not in {"hit", "miss"}
-    )
-    assert stats.excluded == {"unknown_outcome": unscorable}, (
-        "every excluded row names its closed reason, and no other gate rejected "
-        "a row that was verified at the poll boundary"
-    )
-    assert all(
-        record.label_available_at is not None for record in outcomes(tuple(records))
-    ), "every real row carries the acceptance boundary"
-    assert snapshot.diagnostics is not None, "the accounting block is present"
-    assert snapshot.diagnostics.store.by_result["hit"] == 1, "one real hit"
-    assert snapshot.diagnostics.store.by_result["miss"] == 1, "one real miss"
-    assert snapshot.diagnostics.store.by_reason["mixed_window"] == 2, (
-        "both mixed rows name their refusal"
-    )
-    assert snapshot.diagnostics.store.by_reason["timeout"] == 1, "the timeout is named"

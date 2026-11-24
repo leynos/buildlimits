@@ -12,9 +12,10 @@ from pathlib import Path
 
 import pytest
 from sccache_host import _private_server, sccache_host_marks
+from sccache_outcome_extraction import assert_extraction
 from sccache_outcome_observer_support import (
+    SALT,
     assert_cold_miss,
-    assert_extraction,
     assert_mixed,
     assert_warm_hit,
     outcomes,
@@ -138,7 +139,7 @@ def test_the_real_sccache_observer_labels_controlled_windows(tmp_path: Path) -> 
         recovered = read(driver)
         assert recovered.reason == "none", "the timeout leaves a fresh baseline"
 
-    assert_extraction(records)
+    assert_extraction(records, SALT)
 
 
 def test_the_real_sccache_observer_refuses_a_restart_window(tmp_path: Path) -> None:

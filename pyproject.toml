@@ -145,6 +145,10 @@ extend-ignore = [
 # CrossHair proves the ``assert`` statements in these contracts; they are the
 # specification, not debugging aids.
 "tests/crosshair_contracts.py" = ["assert"]
+# The controlled real-sccache extraction helper's assertions are the
+# specification of what one measured run proves; a failure there is the check's
+# result, not a debugging aid that ``-O`` should delete.
+"tests/sccache_outcome_extraction.py" = ["assert", "magic-value-comparison"]
 # The state machine is the specification of the recovery transaction's safety
 # contract, and Hypothesis refuses to report a counterexample against a bare
 # ``AssertionError``. Its ``assert`` statements are the contract and its guards

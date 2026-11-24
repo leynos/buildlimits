@@ -30,6 +30,10 @@ from buildlimits.outcome_record_key import (
 from buildlimits.outcome_record_key import (
     _validate_key as _validate_key,
 )
+from buildlimits.outcome_record_timing import (
+    valid_evidence as _valid_timing_evidence,
+    valid_fields as _valid_timing_fields,
+)
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -56,15 +60,6 @@ _CHILD_SIGHTINGS = frozenset({"seen", "ambiguous", "not_seen", "unavailable"})
 _PARSER_CLASSES = frozenset({"cacheable", "not_compile", "declined"})
 _ATTRIBUTIONS = frozenset({"solo", "unanimous", "inferred", "none"})
 _PROVENANCES = frozenset({"verified"})
-# A correlation identifier is bounded and path-free. The attempt names one
-# admission group within a supervisor generation; the generation names the
-# supervisor process whose clock stamped the row. Both are opaque tokens that
-# reveal no host path, process identifier or compiler argument.
-_MAX_ATTEMPT_CHARS = 32
-_MAX_GENERATION_CHARS = 64
-_TOKEN_CHARS = frozenset(
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:-"
-)
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -262,47 +257,15 @@ def _valid_outcome(record: OutcomeRecord) -> bool:
         _optional_choice(record.outcome_reason, _OUTCOME_REASONS),
         _optional_choice(record.outcome_attribution, _ATTRIBUTIONS),
         _optional_utc(record.admitted_at),
-_optional_choice(record.label_time_provenance, _PROVENANCES),
+        _optional_choice(record.label_time_provenance, _PROVENANCES),
         _optional_digest(record.generation_digest),
         _optional_utc(record.completed_at),
         _valid_timing_evidence(record),
     ))
 
 
-def _valid_timing_evidence(record: OutcomeRecord) -> bool:
-    """Check the version 5 correlation and completion evidence.
-
-    ``attempt`` and ``supervisor_generation`` are one correlation identity, so
-    a row either carries both or neither: half a pair would let a row claim a
-    correlation it cannot honour. ``completed_at`` is independently optional,
-    because a group that had not ended when its row was written has no
-    completion time, and inventing one would misuse the moment the label
-    actually became available.
-
-    Returns
-    -------
-    bool
-        Whether the correlation pair is absent, or complete and well formed.
-    """
-    if record.attempt is None and record.supervisor_generation is None:
-        return True
-    return all((
-        _bounded_token(record.attempt, _MAX_ATTEMPT_CHARS),
-        _bounded_token(record.supervisor_generation, _MAX_GENERATION_CHARS),
-    ))
 
 
-def _bounded_token(value: object, maximum: int) -> bool:
-    """Check one correlation token for its bound and safe character set.
-
-    Returns
-    -------
-    bool
-        Whether the value is a non-empty path-free token within ``maximum``.
-    """
-    if not isinstance(value, str) or not 0 < len(value) <= maximum:
-        return False
-    return all(character in _TOKEN_CHARS for character in value)
 
 
 def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
@@ -325,35 +288,12 @@ def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
         nonnegative_integer(value.get("child_samples")) is not None,
         _optional_choice(value.get("outcome_reason"), _OUTCOME_REASONS),
         _optional_choice(value.get("outcome_attribution"), _ATTRIBUTIONS),
-_optional_choice(value.get("label_time_provenance"), _PROVENANCES),
+        _optional_choice(value.get("label_time_provenance"), _PROVENANCES),
         _optional_digest(value.get("generation_digest")),
-        _optional_utc(value.get("completed_at")),
         _valid_timing_fields(value),
     ))
 
 
-def _valid_timing_fields(value: cabc.Mapping[str, object]) -> bool:
-    """Check a decoded row's version 5 correlation pair.
-
-    The pair is absent from a version 1 to 4 row, and a version 5 row may also
-    carry it as an explicit null when compaction preserved an older row without
-    inventing a correlation. A present pair must be complete and well formed;
-    half a pair is not a row the writer can produce, so it is refused as
-    corrupt rather than read as a correlation.
-
-    Returns
-    -------
-    bool
-        Whether the correlation pair is absent, or complete and well formed.
-    """
-    if not any(name in value for name in _TIMING_FIELDS):
-        return True
-    if value.get("attempt") is None and value.get("supervisor_generation") is None:
-        return True
-    return all((
-        _bounded_token(value.get("attempt"), _MAX_ATTEMPT_CHARS),
-        _bounded_token(value.get("supervisor_generation"), _MAX_GENERATION_CHARS),
-    ))
 
 
 def _has_supported_version(value: cabc.Mapping[str, object]) -> bool:
