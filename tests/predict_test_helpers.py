@@ -2,6 +2,7 @@
 
 import dataclasses as dc
 import datetime as dt
+import hashlib
 import json
 import tempfile
 import typing as typ
@@ -57,20 +58,26 @@ def hand_event(  # ruff: ignore[too-many-arguments]  # one keyword per scenario 
     admitted_at: dt.datetime | None,
     label: Label,
     verified: bool = True,
+    attempt: str | None = None,
 ) -> Event:
-    """Return one hand-built event for an ordering or weighting scenario.
+    """Return one hand-built verified event for an ordering or weighting case.
 
     The identity is stable for the given index, so a stream built from
     consecutive indices never repeats one unless a test means it to. The
     observation time is verified by default: a hand-built scenario states the
     moment its label was known, so it is proof rather than a store row's lower
-    bound. A test about the unverified case passes ``verified=False``.
+    bound. A test about the unverified case passes ``verified=False``. The
+    attempt identity is derived from the event's own content, so two different
+    events never collide and an exact repeat is an idempotent duplicate.
 
     Returns
     -------
     Event
         The event, with the git origin and a one-second runtime.
     """
+    derived = hashlib.sha256(
+        f"{index}|{admitted_at}|{observed_at}|{label}".encode()
+    ).hexdigest()[:16]
     return Event(
         identity=identity(index),
         origin="git",
@@ -79,6 +86,9 @@ def hand_event(  # ruff: ignore[too-many-arguments]  # one keyword per scenario 
         label=label,
         runtime_seconds=1.0,
         label_observed_verified=verified,
+        completed_at=observed_at,
+        attempt=f"a{derived}" if attempt is None else attempt,
+        supervisor_generation="test-generation",
     )
 
 
@@ -136,15 +146,20 @@ def outcome_record(index: int, outcome: CacheResult, key: object) -> OutcomeReco
     OutcomeRecord
         A record whose origin rotates over the three known origins.
     """
+    observed_at = OBSERVED_AT + dt.timedelta(seconds=30 * index)
     return OutcomeRecord(
         key=typ.cast("typ.Any", key),
         outcome=outcome,
         origin=typ.cast("Origin", ("registry", "git", "path")[index % 3]),
         runtime_seconds=1.0 + index / 100,
-        observed_at=OBSERVED_AT + dt.timedelta(seconds=30 * index),
+        observed_at=observed_at,
         parser_class="cacheable",
         child_sighting="unavailable",
         child_samples=0,
+        completed_at=observed_at,
+        label_available_at=observed_at,
+        attempt=f"g{index}",
+        supervisor_generation="fixed-generation",
     )
 
 

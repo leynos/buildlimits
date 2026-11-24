@@ -11,6 +11,10 @@ from buildlimits.outcome_record_format import (
     _KEY_FIELDS,
     _SUMMARY_COUNTS,
     _SUMMARY_FIELDS,
+_V1_OUTCOME_FIELDS,
+    _V2_OUTCOME_FIELDS,
+    _V3_OUTCOME_FIELDS,
+    _V4_OUTCOME_FIELDS,
     FORMAT_NAME,
     FORMAT_VERSION,
     DecodedStore,
@@ -206,11 +210,12 @@ def _decode_outcome(
 ) -> OutcomeRecord | RecordFailure:
     """Decode one validated outcome mapping.
 
-    A version 1 row has no admission or classification fields, and its absent
+A version 1 row has no admission or classification fields, and its absent
     evidence decodes as None. Neither an older row nor an older document carries
-    the label-time provenance marker or the generation digest, so both decode as
-    None, which is unproven and unattributed rather than false. A present but
-    malformed timestamp, marker or digest is corruption, not an absent value.
+    the label-time provenance marker, the generation digest or the version 5
+    correlation pair, so each decodes as None, which is unproven, unattributed
+    and uncorrelated rather than false. A present but malformed timestamp,
+    marker, digest or token is corruption, not an absent value.
 
     Returns
     -------
@@ -222,9 +227,10 @@ def _decode_outcome(
     key = _decode_key(value.get("key"))
     observed = parse_timestamp(value.get("observed_at"))
     admitted = optional_timestamp(value.get("admitted_at"))
+    completed = optional_timestamp(value.get("completed_at"))
     if isinstance(key, RecordFailure) or observed is None:
         return RecordFailure("corrupt")
-    if admitted is INVALID_TIMESTAMP:
+    if any(stamp is INVALID_TIMESTAMP for stamp in (admitted, completed)):
         return RecordFailure("corrupt")
     if not _valid_outcome_fields(value):
         return RecordFailure("corrupt")
@@ -240,8 +246,11 @@ def _decode_outcome(
         typ.cast("OutcomeReason | None", value.get("outcome_reason")),
         typ.cast("AttributionKind | None", value.get("outcome_attribution")),
         typ.cast("dt.datetime | None", admitted),
-        typ.cast("LabelTimeProvenance | None", value.get("label_time_provenance")),
+typ.cast("LabelTimeProvenance | None", value.get("label_time_provenance")),
         typ.cast("str | None", value.get("generation_digest")),
+        typ.cast("dt.datetime | None", completed),
+        typ.cast("str | None", value.get("attempt")),
+        typ.cast("str | None", value.get("supervisor_generation")),
     )
 
 

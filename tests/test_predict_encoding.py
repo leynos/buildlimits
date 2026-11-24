@@ -25,7 +25,7 @@ def _row(*, origin: Origin = GIT, age: float | None = None) -> Features:
     return Features(
         identity="a" * 64,
         origin=origin,
-        observed_at=EPOCH,
+        available_at=EPOCH,
         age_seconds=age,
         load=3,
     )

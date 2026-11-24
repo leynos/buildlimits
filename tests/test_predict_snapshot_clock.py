@@ -41,21 +41,44 @@ def _snapshot(*events: Event) -> Snapshot:
     )
 
 
-def _backward(*, admitted: bool) -> tuple[Event, Event]:
-    """Return two events whose second was observed before the first."""
-    stamp = EPOCH if admitted else None
+def _backward() -> tuple[Event, Event]:
+    """Return two verified events whose second was observed before the first."""
     return (
         hand_event(
             0,
-            admitted_at=stamp,
+            admitted_at=EPOCH,
             observed_at=EPOCH + dt.timedelta(minutes=10),
             label="hit",
         ),
         hand_event(
             1,
-            admitted_at=stamp,
+            admitted_at=EPOCH + dt.timedelta(minutes=10),
             observed_at=EPOCH + dt.timedelta(minutes=5),
             label="hit",
+        ),
+    )
+
+
+def _unverified() -> tuple[Event, Event]:
+    """Return two rows written before availability was recorded.
+
+    Their observation times run backwards, but neither carries a verified
+    availability time, so there is no release-order question to answer.
+    """
+    return (
+        hand_event(
+            0,
+            admitted_at=None,
+            observed_at=EPOCH + dt.timedelta(minutes=10),
+            label="hit",
+            available_at=None,
+        ),
+        hand_event(
+            1,
+            admitted_at=None,
+            observed_at=EPOCH + dt.timedelta(minutes=5),
+            label="hit",
+            available_at=None,
         ),
     )
 
@@ -73,27 +96,25 @@ def _forward() -> tuple[Event, Event]:
     )
 
 
-def test_an_admission_bearing_history_with_a_backward_clock_is_refused(
+def test_a_verified_history_with_a_backward_clock_is_refused(
     tmp_path: Path,
 ) -> None:
     """Across the step a label could sort before the prediction that used it."""
-    document = snapshot_to_dict(_snapshot(*_backward(admitted=True)))
+    document = snapshot_to_dict(_snapshot(*_backward()))
 
     with pytest.raises(ValueError, match="ran backwards"):
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
 
-def test_a_history_without_admission_times_may_report_a_backward_clock(
-    tmp_path: Path,
-) -> None:
-    """The step only matters where admission times would order predictions."""
-    document = snapshot_to_dict(_snapshot(*_backward(admitted=False)))
+def test_an_unverified_history_may_report_a_backward_clock(tmp_path: Path) -> None:
+    """The step only matters where verified availability would release labels."""
+    document = snapshot_to_dict(_snapshot(*_unverified()))
 
     loaded = load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
     assert len(loaded.events) == 2, "the history is still readable"
-    assert all(event.admitted_at is None for event in loaded.events), (
-        "no admission time can be ordered by the broken clock"
+    assert all(event.label_available_at is None for event in loaded.events), (
+        "no verified label time can be ordered by the broken clock"
     )
 
 
@@ -112,7 +133,7 @@ def test_a_backward_clock_is_refused_before_the_snapshot_is_written(
     earlier = path.read_bytes()
 
     with pytest.raises(ValueError, match="ran backwards"):
-        save_snapshot(path, _snapshot(*_backward(admitted=True)))
+        save_snapshot(path, _snapshot(*_backward()))
 
     assert path.read_bytes() == earlier, "the earlier snapshot is left intact"
 

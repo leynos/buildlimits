@@ -55,6 +55,7 @@ def data_sufficiency(document: cabc.Mapping[str, object]) -> list[str]:
         ),
         _unverified_line(stats),
         admission_line(stats),
+        _scored_line(stats),
     ]
     diagnostics = blocks.diagnostics
     if diagnostics is None:
@@ -76,6 +77,27 @@ def data_sufficiency(document: cabc.Mapping[str, object]) -> list[str]:
         "",
     ]
     return lines
+
+
+def _scored_line(stats: cabc.Mapping[str, object]) -> str:
+    """Return the scored population and why the rest were excluded.
+
+    The exclusion reasons are a closed vocabulary, so the report names the gate
+    each unscored row failed rather than implying the history simply carried
+    too few labels. A repeated attempt is counted beside a contradictory one,
+    because an idempotent retry and an unresolvable pair mean different things.
+
+    Returns
+    -------
+    str
+        The scored count, the exclusion counts and the correlation counts.
+    """
+    return (
+        f"- Scored rows: {as_count(stats.get('scored'))} "
+        f"(exclusions: {as_counts(stats.get('excluded'))}; "
+        f"{as_count(stats.get('duplicates'))} duplicate attempts, "
+        f"{as_count(stats.get('conflicts'))} conflicting attempts)"
+    )
 
 
 def _diagnostics_lines(diagnostics: cabc.Mapping[str, object]) -> list[str]:

@@ -15,7 +15,7 @@ from predict_test_helpers import benchmark_argv, read_results, write_json
 from buildlimits.predict import benchmark_cli
 from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.dataset import Snapshot, Source
-from buildlimits.predict.events import EPOCH, Event
+from buildlimits.predict.events import EPOCH, Event, Label
 from buildlimits.predict.journal_provenance import JournalUnavailable
 from buildlimits.predict.report_codec import config_to_dict
 from buildlimits.predict.snapshot_store import save_snapshot
@@ -42,22 +42,28 @@ def _hand_events() -> tuple[Event, ...]:
         """Return the epoch plus ``seconds``."""
         return EPOCH + dt.timedelta(seconds=seconds)
 
-    return tuple(
-        Event(
+    def event(
+        identity: str, admitted: int, observed: int, label: str, attempt: str
+    ) -> Event:
+        """Return one verified event at the supplied moments."""
+        return Event(
             identity,
             "git",
             stamp(admitted),
             stamp(observed),
-            label,
+            typ.cast("Label", label),
             1.0,
             label_observed_verified=True,
+            completed_at=stamp(observed),
+            attempt=attempt,
+            supervisor_generation="hand-generation",
         )
-        for identity, admitted, observed, label in (
-            (IDENTITY_A, 0, 10, "hit"),
-            (IDENTITY_A, 20, 30, "miss"),
-            (IDENTITY_B, 40, 50, "hit"),
-            (IDENTITY_A, 60, 70, "miss"),
-        )
+
+    return (
+        event(IDENTITY_A, 0, 10, "hit", "g1"),
+        event(IDENTITY_A, 20, 30, "miss", "g2"),
+        event(IDENTITY_B, 40, 50, "hit", "g3"),
+        event(IDENTITY_A, 60, 70, "miss", "g4"),
     )
 
 

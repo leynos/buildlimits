@@ -16,12 +16,14 @@ import typing as typ
 from buildlimits.predict.evaluation import (
     STATUS_INSUFFICIENT,
     STATUS_INSUFFICIENT_ADMISSION,
+    STATUS_INSUFFICIENT_AVAILABILITY,
     STATUS_INSUFFICIENT_HELDOUT,
 )
 from buildlimits.predict.formatting import (
     MISSING,
     admission_line,
     as_count,
+    as_counts,
     as_percent,
 )
 from buildlimits.predict.render_sufficiency import data_sufficiency
@@ -58,6 +60,13 @@ _STATUS_NOTES = {
         "to run, but its records carry no admission time, so no event "
         "could have been predicted before its label was known. No "
         "prediction is reported; the counts describe what is missing."
+    ),
+    STATUS_INSUFFICIENT_AVAILABILITY: (
+        "> **Insufficient label-availability times.** The history records "
+        "when each compilation was admitted, but not when the observer could "
+        "justify its label. A completion time is not a substitute, so no "
+        "event is released to a predictor or scored. No prediction is "
+        "reported; the counts describe what is missing."
     ),
     STATUS_INSUFFICIENT_HELDOUT: (
         "> **Insufficient held-out evidence.** The history is large "
@@ -125,9 +134,15 @@ def _header(document: cabc.Mapping[str, object], count: int) -> list[str]:
         ),
         f"- Window: {stats['span_start'] or MISSING} to {stats['span_end'] or MISSING}",
         (f"- Gaps over threshold: {len(typ.cast('list[object]', stats['gaps']))}"),
-        _split_line(typ.cast("dict[str, object]", document["split"])),
+_split_line(typ.cast("dict[str, object]", document["split"])),
         _replay_line(typ.cast("dict[str, object]", document["replay"])),
         admission_line(stats),
+        (
+            f"- Scored records: {as_count(stats.get('scored'))} "
+            f"(exclusions: {as_counts(stats.get('excluded'))}; "
+            f"{as_count(stats.get('duplicates'))} duplicate attempts, "
+            f"{as_count(stats.get('conflicts'))} conflicting attempts)"
+        ),
         *_provenance_lines(document, blocks),
         "",
     ]
@@ -179,9 +194,9 @@ def _split_line(split: cabc.Mapping[str, object]) -> str:
 def _replay_line(replay: cabc.Mapping[str, object]) -> str:
     """Return the replay accounting bullet.
 
-    The withheld count is read with ``get`` so a document written before the
-    label-provenance marker existed still renders, showing a dash rather than a
-    measured zero.
+    The withheld and unavailable counts are read with ``get`` so a document
+    written before the label-provenance marker existed still renders, showing a
+    dash rather than a measured zero.
 
     Returns
     -------
@@ -191,9 +206,11 @@ def _replay_line(replay: cabc.Mapping[str, object]) -> str:
     return (
         f"- Replay: {as_count(replay['moments'])} admission moments, "
         f"{as_count(replay['unavailable_admission'])} events without a usable "
-        f"admission time, {as_count(replay['applied_labels'])} labels "
-        f"delivered before a prediction, {as_count(replay['unapplied_labels'])} "
-        f"labels too late to inform one, "
+        f"admission time, "
+        f"{as_count(replay.get('unavailable_availability'))} events without a "
+        f"verified label-availability time, {as_count(replay['applied_labels'])} "
+        f"labels delivered before a prediction, "
+        f"{as_count(replay['unapplied_labels'])} labels too late to inform one, "
         f"{as_count(replay.get('unverified_label_time'))} labels withheld "
         "because their recorded time is unverified"
     )
@@ -270,6 +287,17 @@ def _limitations(predictors: cabc.Mapping[str, dict[str, object]]) -> list[str]:
             "- An event with no admission time at or before its own label is "
             "not predicted or scored; it is counted above, not repaired by "
             "assumption."
+        ),
+        (
+            "- An event without a verified label-availability time is not "
+            "released to a predictor or scored either. A completion time is "
+            "retained for provenance but is never used as the moment a label "
+            "became knowable."
+        ),
+        (
+            "- Records that disagree about one attempt identity are unusable "
+            "together; only an exact repeated append is an idempotent "
+            "duplicate."
         ),
         (
             "- The journal supplies counts and a retention span, not a "

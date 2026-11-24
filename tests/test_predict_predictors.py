@@ -35,7 +35,7 @@ def _row(index: int, *, origin: str = "registry") -> Features:
     return Features(
         identity=identity(index),
         origin=typ.cast("Origin", origin),
-        observed_at=EPOCH,
+        available_at=EPOCH,
         age_seconds=None,
         load=0,
     )

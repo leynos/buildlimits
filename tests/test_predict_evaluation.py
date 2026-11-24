@@ -47,6 +47,9 @@ def _all_first_sightings(count: int) -> tuple[Event, ...]:
             "hit" if index % 2 else "miss",
             1.0,
             label_observed_verified=True,
+            completed_at=EPOCH + index * STEP,
+            attempt=f"g{index}",
+            supervisor_generation="test-generation",
         )
         for index in range(count)
     )

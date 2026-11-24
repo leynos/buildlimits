@@ -31,7 +31,7 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.evaluation import Evaluation
     from buildlimits.predict.metrics import Metrics
 
-BENCHMARK_VERSION = 1
+BENCHMARK_VERSION = 2
 # The files one report writes. Kept together so a command can check every
 # destination before the first write replaces anything.
 RESULTS = "results.json"
@@ -121,6 +121,7 @@ def build_document(evaluation: Evaluation, provenance: Provenance) -> dict[str, 
         "replay": {
             "moments": len(evaluation.walk.moments),
             "unavailable_admission": evaluation.walk.unavailable_admission,
+            "unavailable_availability": evaluation.walk.unavailable_availability,
             "applied_labels": evaluation.walk.applied_labels,
             "unapplied_labels": evaluation.walk.unapplied_labels,
             "unverified_label_time": evaluation.walk.unverified_label_time,

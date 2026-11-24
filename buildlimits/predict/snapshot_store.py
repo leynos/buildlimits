@@ -26,6 +26,7 @@ from buildlimits.predict.snapshot_diagnostics_join import (
     require_diagnostics_match,
     require_event_labels_match,
 )
+from buildlimits.predict.timing import audit as timing_audit
 from buildlimits.utc_text import utc_moment, utc_text
 
 if typ.TYPE_CHECKING:
@@ -176,32 +177,41 @@ def _diagnostics_from(
 
 
 def _require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:
-    """Refuse a history whose recorded clock ran backwards under admissions.
+    """Refuse a history whose verified label clock ran backwards.
 
-    The recorder stamps every row of one reading with that reading's own
-    completion moment, so rows a store appended together share a time and a
-    later position carrying an earlier stamp means the wall clock stepped
-    backwards. No monotonic sequence is stored beside the times, so the two
-    sides of a step cannot be separated: an event admitted later could sort
-    before a label observed earlier, and the schedule would predict with a
-    label not yet observed. A history carrying admission times that crosses a
-    step is refused rather than scored; one with no admission times is
-    unaffected, because it is already reported as unpredicted.
+    The recorder stamps each row with the moment the reading that produced it
+    returned, so a later position carrying an earlier availability stamp means
+    the clock stepped backwards. No monotonic sequence is stored beside the
+    times, so the two sides of a step cannot be separated: a label accepted
+    later could sort before a prediction moment that truly preceded it. A
+    history whose verified availability times cross a step is refused rather
+    than scored.
+
+    A record older than a verified one is not itself a step: rows are appended
+    in decision order, not availability order, so a slow compilation may be
+    written after a fast one that started later. Only ordering between two
+    verified availability times is a clock question. A row the audit excludes
+    is not evidence either, so its stamp cannot decide the question; a repeated
+    attempt carries its original's moment and would otherwise report a step
+    that never happened.
 
     Raises
     ------
     ValueError
-        If an admission-bearing history records an earlier observation after a
-        later one.
+        If two verified availability times decrease in append order.
     """
-    if not any(event.admitted_at is not None for event in events):
-        return
-    for earlier, later in itertools.pairwise(events):
-        if later.observed_at < earlier.observed_at:
+    usable = timing_audit(events).usable
+    verified = [
+        event.label_available_at
+        for index, event in enumerate(events)
+        if usable[index] and event.label_available_at is not None
+    ]
+    for earlier, later in itertools.pairwise(verified):
+        if later < earlier:
             msg = (
-                f"{path} records {utc_text(later.observed_at)} after "
-                f"{utc_text(earlier.observed_at)}; admission times cannot order "
-                "a history whose clock ran backwards"
+                f"{path} records {utc_text(later)} after {utc_text(earlier)}; "
+                "label-availability times cannot order a history whose clock "
+                "ran backwards"
             )
             raise ValueError(msg)
 

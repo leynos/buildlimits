@@ -12,6 +12,7 @@ import json
 
 from buildlimits.json_values import nonnegative_integer
 from buildlimits.outcome_record_format import (
+    _TIMING_FIELDS,
     FORMAT_NAME,
     FORMAT_VERSION,
     MAX_RECORD_BYTES,
@@ -51,11 +52,14 @@ _V1_ROW_FIELDS = _V2_ROW_FIELDS - {
     "admitted_at",
 }
 _V3_ROW_FIELDS = _V2_ROW_FIELDS | {"label_time_provenance"}
+_V4_ROW_FIELDS = _V3_ROW_FIELDS | {"generation_digest"}
+_V5_ROW_FIELDS = _V4_ROW_FIELDS | _TIMING_FIELDS
 _ROW_FIELDS_BY_VERSION: dict[int, frozenset[str]] = {
     1: _V1_ROW_FIELDS,
     2: _V2_ROW_FIELDS,
     3: _V3_ROW_FIELDS,
-    FORMAT_VERSION: _V3_ROW_FIELDS | {"generation_digest"},
+    4: _V4_ROW_FIELDS,
+    FORMAT_VERSION: _V5_ROW_FIELDS,
 }
 # The first document version that can state each optional proof. A row that
 # carries one cannot be written beneath an older header, because that shape has
@@ -63,6 +67,9 @@ _ROW_FIELDS_BY_VERSION: dict[int, frozenset[str]] = {
 _FIELD_INTRODUCED: dict[str, int] = {
     "label_time_provenance": 3,
     "generation_digest": 4,
+    "completed_at": FORMAT_VERSION,
+    "attempt": FORMAT_VERSION,
+    "supervisor_generation": FORMAT_VERSION,
 }
 
 
@@ -159,12 +166,11 @@ def _record_document(record: StoreRecord, kind: str, version: int) -> dict[str, 
 
     An absent optional timestamp is written as an explicit JSON null, so a row
     states that no admission moment is known rather than omitting the field. A
-    document predating the label-time provenance marker drops that field, and an
-    outcome row that has already claimed provenance cannot be written into such
-    a document: the older shape has nowhere to state it, and dropping it would
-    turn proof into silence. The generation digest is dropped the same way, and
-    a row that names a generation cannot be written into a document that cannot
-    carry one.
+    document predating a field drops it, and an outcome row that has already
+    claimed that evidence cannot be written into such a document: the older
+    shape has nowhere to state it, and dropping it would turn proof into
+    silence. That covers the label-time provenance marker, the generation
+    digest, and the version 5 correlation pair with its completion moment.
 
     Returns
     -------
@@ -182,6 +188,8 @@ def _record_document(record: StoreRecord, kind: str, version: int) -> dict[str, 
         fields["admitted_at"] = (
             None if record.admitted_at is None else timestamp_text(record.admitted_at)
         )
+        if record.completed_at is not None:
+            fields["completed_at"] = timestamp_text(record.completed_at)
         for name, introduced in _FIELD_INTRODUCED.items():
             if version < introduced and getattr(record, name) is not None:
                 msg = f"an older document cannot state {name.replace('_', ' ')}"

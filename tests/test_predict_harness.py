@@ -72,8 +72,12 @@ def test_predictions_follow_admission_order_not_store_order() -> None:
 def test_labels_observed_with_an_admission_cannot_inform_it() -> None:
     """A row is answered before any label from its own moment is released."""
     stamp = EPOCH + 5 * MINUTE
-    first = hand_event(0, admitted_at=stamp, observed_at=stamp, label="hit")
-    second = hand_event(0, admitted_at=stamp, observed_at=stamp, label="hit")
+    first = hand_event(
+        0, admitted_at=stamp, observed_at=stamp, label="hit", attempt="g-first"
+    )
+    second = hand_event(
+        0, admitted_at=stamp, observed_at=stamp, label="hit", attempt="g-second"
+    )
     later = _causal(2, observed_at=stamp + 10 * MINUTE, label="miss", early=MINUTE)
 
     walk = walk_forward((first, second, later), load_config())
@@ -140,8 +144,11 @@ def test_an_event_without_an_admission_time_is_never_predicted() -> None:
     assert walk.rows[1] is None, "no feature row exists without an admission time"
     assert walk.series["base-rate"].probabilities[1] is None, "nothing is predicted"
     assert walk.unavailable_admission == 1, "the event is reported as unavailable"
-    assert walk.phases[1] is not None, (
-        "it still owns a label for the split, though nothing was scored"
+    assert walk.timing.reasons[1] == "no_admission_time", (
+        "the exclusion names the missing decision time"
+    )
+    assert walk.phases[1] is None, (
+        "an unverified label is never placed in a period or scored"
     )
 
 

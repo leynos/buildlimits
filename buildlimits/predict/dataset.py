@@ -16,6 +16,7 @@ import typing as typ
 from buildlimits.predict.accounting import Diagnostics, HistoryLoss
 from buildlimits.predict.accounting import StoreAccounting as StoreAccounting
 from buildlimits.predict.events import admission_moment, unverified_label
+from buildlimits.predict.timing import audit as timing_audit
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -98,6 +99,11 @@ class StoreHistory:
 class SnapshotStats:
     """What the snapshot's event stream really represents.
 
+    The timing counts separate the two independent gates a scorable record
+    must pass: a trustworthy decision time and a trustworthy label-availability
+    time. ``scored`` is the intersection, and ``excluded`` states why the rest
+    are not scored, so more labels alone never read as chronological validity.
+
     Attributes
     ----------
     events : int
@@ -115,14 +121,24 @@ class SnapshotStats:
     admission_recorded : int
         Events carrying an admission time.
     admission_usable : int
-        Events whose admission time is at or before their own label.
+        Events whose admission time is at or before their verified
+        availability time, or before their historical label time where
+        availability was never verified.
     admission_missing : int
         Events carrying no admission time at all.
     admission_unusable : int
-        Events whose recorded admission time is after their label.
+Events whose recorded admission time is after their label.
     unverified_label_time : int
         Hit or miss labels whose recorded observation time is unverified, so
         the replay withholds them rather than scoring an unsound release time.
+    scored : int
+        Events that pass every timing, label and correlation gate.
+    excluded : Mapping[str, int]
+        Scored-population exclusions by closed reason.
+    duplicates : int
+        Rows that repeated an attempt with identical evidence.
+    conflicts : int
+        Rows whose attempt identity also appeared with different evidence.
     gaps : tuple[Gap, ...]
         Silences longer than the configured threshold.
     """
@@ -138,6 +154,10 @@ class SnapshotStats:
     admission_missing: int
     admission_unusable: int
     unverified_label_time: int
+    scored: int
+    excluded: cabc.Mapping[str, int]
+    duplicates: int
+    conflicts: int
     gaps: tuple[Gap, ...]
 
 
@@ -176,8 +196,9 @@ class Snapshot:
         Returns
         -------
         SnapshotStats
-            Counts, labelled share, time span, identities seen and how many
-            events carry an admission time a prediction could use.
+            Counts, labelled share, time span, identities seen, and the
+            decision, availability and scored populations with their closed
+            exclusion reasons.
         """
         labelled = sum(1 for event in self.events if event.label != "unknown")
         total = len(self.events)
@@ -187,6 +208,7 @@ class Snapshot:
         unverified = sum(
             1 for event in self.events if unverified_label(event) is not None
         )
+        audit = timing_audit(self.events)
         return SnapshotStats(
             events=total,
             labelled=labelled,
@@ -199,6 +221,10 @@ class Snapshot:
             admission_missing=total - len(recorded),
             admission_unusable=len(recorded) - usable,
             unverified_label_time=unverified,
+            scored=audit.scored(),
+            excluded=audit.exclusions(),
+            duplicates=audit.duplicates,
+            conflicts=audit.conflicts,
             gaps=self.gaps,
         )
 

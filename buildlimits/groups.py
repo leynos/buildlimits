@@ -141,11 +141,15 @@ class Groups:
             msg = "groups cannot be placed before the supervisor has started"
             raise RuntimeError(msg)
         entry.group_id = group_id
-        # The two clocks are read together at the one moment admission is
-        # decided. A later wall-clock read would timestamp the release, not the
-        # decision, and no arithmetic can recover the decision time from it.
-        entry.admitted = self.clock()
-        entry.admitted_at = self.wall_clock()
+        # The supervisor's launch handler marks the admission decision before
+        # any placement work. A direct caller that did not mark it is filled in
+        # here, before the fork, so the timestamp still precedes execution. An
+        # already-marked entry is never re-stamped: a later read would describe
+        # process placement rather than the decision.
+        if entry.admitted is None:
+            entry.admitted = self.clock()
+        if entry.admitted_at is None:
+            entry.admitted_at = self.wall_clock()
         spec = self.launch_spec(entry, cached=cached)
         try:
             child = launch.spawn_held(spec)

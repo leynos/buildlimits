@@ -10,7 +10,11 @@ could not see is reported, and the document states that limitation.
 
 A source that records no admission time supports no prediction at all. The
 evaluation then reports insufficient admission times rather than treating a
-missing timestamp as evidence that the label arrived early.
+missing timestamp as evidence that the label arrived early. A source that
+records admission times but never records when a label became available is
+reported separately: the decision time is trusted, but the label's own
+availability is not, and more labels alone do not prove chronological
+validity.
 """
 
 import dataclasses as dc
@@ -31,6 +35,7 @@ if typ.TYPE_CHECKING:
 STATUS_OK = "ok"
 STATUS_INSUFFICIENT = "insufficient data"
 STATUS_INSUFFICIENT_ADMISSION = "insufficient admission times"
+STATUS_INSUFFICIENT_AVAILABILITY = "insufficient label-availability times"
 STATUS_INSUFFICIENT_HELDOUT = "insufficient held-out evidence"
 # One block resamples to itself, so its interval has no width to judge.
 MINIMUM_BLOCKS = 2
@@ -167,14 +172,21 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
     metrics = all_metrics(walk, ensembles, config)
     ablated = ablation_metrics(walk, ablations, config)
     compared = compare(walk, ensembles, config)
-    labelled = sum(1 for phase in walk.phases if phase is not None)
+    labelled = walk.labelled
     predictable = sum(
         1
         for phase, row in zip(walk.phases, walk.rows, strict=True)
         if phase is not None and row is not None
     )
-    status = _status(labelled, predictable, compared.against_base_rate, config)
+    unavailable_availability = walk.unavailable_availability
     withheld = walk.unverified_label_time
+    status = _status(
+        labelled,
+        predictable,
+        unavailable_availability,
+        compared.against_base_rate,
+        config,
+    )
     return Evaluation(
         status=status,
         walk=walk,
@@ -189,6 +201,7 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
         verdict=_verdict(
             labelled,
             predictable,
+unavailable_availability,
             compared.against_base_rate,
             config,
             withheld=withheld,
@@ -197,9 +210,10 @@ def evaluate(walk: Walk, config: Config) -> Evaluation:
     )
 
 
-def _status(
+def _status(  # ruff: ignore[too-many-arguments,too-many-positional-arguments]  # one value per evidence gate; pylint: disable=too-many-arguments,too-many-positional-arguments
     labelled: int,
     predictable: int,
+    unavailable_availability: int,
     against_base: cabc.Mapping[str, Interval | None],
     config: Config,
 ) -> str:
@@ -208,19 +222,25 @@ def _status(
     A run with too much history for ``insufficient data`` can still hold no
     event with a usable admission time, and then nothing could be predicted at
     all: the source simply did not record when each compilation was admitted.
-    That is reported as itself, not as a negative result or as a shortage of
-    held-out evidence. When predictions do exist, too few paired rows, or rows
-    forming a single block, are likewise reported separately.
+    A source that records the decision but never the moment a label became
+    available is reported separately, because the decision time alone cannot
+    prove the label was knowable before a later prediction. Both are reported
+    as themselves, not as a negative result or as a shortage of held-out
+    evidence. When predictions do exist, too few paired rows, or rows forming
+    a single block, are likewise reported separately.
 
     Returns
     -------
     str
-        ``ok``, ``insufficient data``, ``insufficient admission times`` or
-        ``insufficient held-out evidence``.
+        ``ok``, ``insufficient data``, ``insufficient admission times``,
+        ``insufficient label-availability times`` or ``insufficient held-out
+        evidence``.
     """
     if labelled < config.minimum_labelled_events:
         return STATUS_INSUFFICIENT
     if predictable == 0:
+        if unavailable_availability:
+            return STATUS_INSUFFICIENT_AVAILABILITY
         return STATUS_INSUFFICIENT_ADMISSION
     if not any(_is_evidence(interval, config) for interval in against_base.values()):
         return STATUS_INSUFFICIENT_HELDOUT
@@ -243,9 +263,10 @@ def _is_evidence(interval: Interval | None, config: Config) -> bool:
     )
 
 
-def _verdict(  # ruff: ignore[too-many-arguments]  # one evidence count per gate; pylint: disable=too-many-arguments
+def _verdict(  # ruff: ignore[too-many-arguments,too-many-positional-arguments]  # one value per evidence gate; pylint: disable=too-many-arguments,too-many-positional-arguments
     labelled: int,
     predictable: int,
+    unavailable_availability: int,
     against_base: cabc.Mapping[str, Interval | None],
     config: Config,
     *,
@@ -269,7 +290,9 @@ def _verdict(  # ruff: ignore[too-many-arguments]  # one evidence count per gate
     str
         The verdict.
     """
-    status = _status(labelled, predictable, against_base, config)
+    status = _status(
+        labelled, predictable, unavailable_availability, against_base, config
+    )
     if status == STATUS_INSUFFICIENT:
         return (
             f"insufficient data: {labelled} labelled events, "
@@ -279,6 +302,12 @@ def _verdict(  # ruff: ignore[too-many-arguments]  # one evidence count per gate
         return (
             f"insufficient admission times: {labelled} labelled events, "
             f"{predictable} with an admission time at or before their own label"
+        )
+    if status == STATUS_INSUFFICIENT_AVAILABILITY:
+        return (
+            f"insufficient label-availability times: {labelled} labelled "
+            f"events, {unavailable_availability} with an admission time but no "
+            "verified label-availability time"
         )
     if status == STATUS_INSUFFICIENT_HELDOUT:
         return (

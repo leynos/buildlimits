@@ -7,9 +7,7 @@ import typing as typ
 
 from buildlimits import (
     outcome_key,
-    outcome_parser,
     outcome_resources,
-    outcome_shell_keys,
     outcome_shell_stats,
     outcome_shell_status,
     outcome_store_salt,
@@ -29,7 +27,6 @@ from buildlimits.outcome_recorder_types import (
     Ended,
     GateOpen,
     Launched,
-    LaunchPayload,
     Querying,
     Sampled,
     SampleFailed,
@@ -40,7 +37,6 @@ from buildlimits.outcome_sampling import ChildSampler
 from buildlimits.outcome_shell_dependencies import (
     OutcomeDependencies as OutcomeDependencies,
 )
-from buildlimits.outcome_sightings import request_metadata
 from buildlimits.outcome_store import StoreWriter
 from buildlimits.supervisor_outcome_setup import (
     OUTCOME_CLOSE_SECONDS,
@@ -88,6 +84,14 @@ class OutcomeShell:
             self._wall_clock = lambda: dt.datetime.now(dt.UTC)
         else:
             self._wall_clock = dependencies.wall_clock
+        # One generation per supervisor process. A restart mints a new one, so
+        # a group identifier reused by the new process can never join a row
+        # written by the old one.
+        self._generation = (
+            supervisor_outcome_setup.mint_generation()
+            if dependencies.supervisor_generation is None
+            else dependencies.supervisor_generation
+        )
         reaper = ChildReaper() if dependencies.reaper is None else dependencies.reaper
         path = outcome_store_salt.store_path(env)
         writer = dependencies.writer
@@ -207,19 +211,8 @@ class OutcomeShell:
         """Build the bounded key payload and enter the recorder window."""
         if entry.cache_path != "cached":
             return
-        argv = entry.request.argv
-        env = entry.request.env
-        metadata = request_metadata(argv)
-        key = outcome_shell_keys.cache_key(argv, env, self._salt)
-        payload = LaunchPayload(
-            key=key,
-            origin=supervisor_outcome_setup.origin_kind(
-                outcome_key.crate_origin(env, self._salt)
-                if self._salt is not None
-                else None
-            ),
-            parser_class=outcome_parser.parser_class(argv),
-            metadata=metadata,
+        payload = supervisor_outcome_setup.launch_payload(
+            entry, self._salt, self._generation
         )
         self._publish(
             self._recorder.advance(

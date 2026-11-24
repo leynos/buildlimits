@@ -103,7 +103,7 @@ def test_decoder_drops_only_a_torn_final_line() -> None:
         ('{"version":2}\n', "corrupt"),
         ('{"format":"wrong"}\n', "corrupt"),
         (
-            '{"format":"buildlimits-cache-outcomes","version":99}\n',
+'{"format":"buildlimits-cache-outcomes","version":99}\n',
             "version_mismatch",
         ),
         (

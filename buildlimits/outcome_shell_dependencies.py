@@ -42,6 +42,10 @@ class OutcomeDependencies:
         Wall clock that stamps every event the shell emits, or the system UTC
         clock. The recorder reads it for a reading's label time, so a test can
         prove which moment a row carries.
+    supervisor_generation : str | None
+        Names the clock domain and attempt namespace of this supervisor
+        process. Production mints a random token once per process start; a
+        test injects a fixed one so its rows are reproducible.
     """
 
     environment: cabc.Mapping[str, str] | None = None
@@ -50,3 +54,4 @@ class OutcomeDependencies:
     server: ServerProcessPort | None = None
     reaper: ChildReaper | None = None
     wall_clock: cabc.Callable[[], dt.datetime] | None = None
+    supervisor_generation: str | None = None

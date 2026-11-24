@@ -59,6 +59,21 @@ class _EmissionMoment:
 
 
 @dc.dataclass(frozen=True, slots=True)
+class _TimingEvidence:
+    """The complete version 3 timing group one row may carry.
+
+    A typed value rather than a mapping keeps each field's own type, so a
+    completion time cannot be read as an attempt identifier. The moment itself
+    is the reading's own, supplied by the emission; this value adds only the
+    provenance that says which invocation the row belongs to.
+    """
+
+    completed_at: dt.datetime | None
+    attempt: str
+    supervisor_generation: str
+
+
+@dc.dataclass(frozen=True, slots=True)
 class _EventDetails:
     """Common classification values applied to each event in one window."""
 
@@ -340,6 +355,7 @@ def _record_for(
         if launch.runtime_seconds is not None
         else max(0.0, details.now - launch.started_at)
     )
+    verified = _timing_evidence(launch)
     return OutcomeRecord(
         key=launch.payload.key,
         outcome=details.cache_result,
@@ -352,8 +368,39 @@ def _record_for(
         outcome_reason=details.reason,
         outcome_attribution=details.attribution,
         admitted_at=launch.admitted_at,
-        label_time_provenance=evidence.provenance,
+label_time_provenance=evidence.provenance,
         generation_digest=evidence.generation_digest,
+        completed_at=None if verified is None else verified.completed_at,
+        attempt=None if verified is None else verified.attempt,
+        supervisor_generation=(
+            None if verified is None else verified.supervisor_generation
+        ),
+    )
+
+
+def _timing_evidence(launch: _Launch) -> _TimingEvidence | None:
+    """Return the version 5 correlation group for one launch, or no group.
+
+    The moment a row claims is the reading's own, which the recorder stamps
+    from the event that produced it; the label-time provenance marker beside it
+    records that the observer accepted the reading. What this group adds is
+    identity: the attempt that produced the row and the supervisor generation
+    whose clock dated it. A payload without a generation predates that
+    evidence, so no group is written and the row states an explicit null,
+    which the replay reads as uncorrelated rather than as proof.
+
+    Returns
+    -------
+    _TimingEvidence | None
+        The launch's completion moment and correlation tokens, or None.
+    """
+    generation = launch.payload.supervisor_generation
+    if generation is None:
+        return None
+    return _TimingEvidence(
+        completed_at=launch.completed_at,
+        attempt=launch.group_id,
+        supervisor_generation=generation,
     )
 
 

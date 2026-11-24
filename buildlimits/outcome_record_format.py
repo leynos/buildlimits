@@ -43,8 +43,8 @@ type ChildSighting = typ.Literal["seen", "ambiguous", "not_seen", "unavailable"]
 type LabelTimeProvenance = typ.Literal["verified"]
 
 FORMAT_NAME = "buildlimits-cache-outcomes"
-FORMAT_VERSION = 4
-SUPPORTED_FORMAT_VERSIONS = frozenset({1, 2, 3, FORMAT_VERSION})
+FORMAT_VERSION = 5
+SUPPORTED_FORMAT_VERSIONS = frozenset({1, 2, 3, 4, FORMAT_VERSION})
 MAX_RECORD_BYTES = 16 * 1024
 MAX_STORE_BYTES = 16 * 1024 * 1024
 # The largest document an in-place compaction may write. A policy that lets
@@ -56,6 +56,15 @@ _CHILD_SIGHTINGS = frozenset({"seen", "ambiguous", "not_seen", "unavailable"})
 _PARSER_CLASSES = frozenset({"cacheable", "not_compile", "declined"})
 _ATTRIBUTIONS = frozenset({"solo", "unanimous", "inferred", "none"})
 _PROVENANCES = frozenset({"verified"})
+# A correlation identifier is bounded and path-free. The attempt names one
+# admission group within a supervisor generation; the generation names the
+# supervisor process whose clock stamped the row. Both are opaque tokens that
+# reveal no host path, process identifier or compiler argument.
+_MAX_ATTEMPT_CHARS = 32
+_MAX_GENERATION_CHARS = 64
+_TOKEN_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:-"
+)
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -75,7 +84,7 @@ class StoreHeader:
 
 @dc.dataclass(frozen=True, slots=True)
 class OutcomeRecord:
-    """One attributed request with bounded evidence and its admission moment.
+    """One attributed request with bounded evidence and its timing provenance.
 
     Attributes
     ----------
@@ -88,7 +97,11 @@ class OutcomeRecord:
     runtime_seconds : float
         The recorded compilation runtime.
     observed_at : datetime
-        When the label became known.
+        When the label became known, as the source recorded it. A version 1 or
+        2 row carries the completion-derived time the old recorder chose, which
+        ``label_time_provenance`` marks as unproven. The current recorder dates
+        every row at the statistics reading that produced its label, so for a
+        verified row this is also the moment its label became available.
     parser_class : ParserClass
         The argv parser's predicted class.
     child_sighting : ChildSighting
@@ -102,8 +115,9 @@ class OutcomeRecord:
         ``solo``, ``unanimous`` or ``none``; ``None`` for a pre-v2 row.
     admitted_at : datetime | None
         The UTC wall-clock moment the supervisor admitted the compilation,
-        captured at admission. ``None`` means the row predates admission-time
-        recording or the launch was not admitted through the supervisor.
+        captured where the admission decision is applied. ``None`` means the
+        row predates admission-time recording or the launch was not admitted
+        through the supervisor.
     label_time_provenance : Literal["verified"] | None
         Whether ``observed_at`` is proven to be when the label became known.
         The current recorder writes ``verified``, because it dates every row at
@@ -117,6 +131,20 @@ class OutcomeRecord:
         server identity, or the row was emitted without a reading at all. It is
         a correlation key only, so the digest separates label loss per
         generation without ever naming a process.
+    completed_at : datetime | None
+        The UTC wall-clock moment the launch's group completion was handled.
+        ``None`` when the row predates completion recording or the group had
+        not been observed completing when the row was written. It is the
+        launch's own moment, kept apart from the reading that dated the label.
+    attempt : str | None
+        The bounded admission group identifier for this one invocation. A
+        cache key recurs across compilations, so this is what tells two
+        concurrent or retried invocations of one key apart. ``None`` for a
+        version 1 to 4 row.
+    supervisor_generation : str | None
+        The bounded identifier of the supervisor process whose clock stamped
+        the row. It changes on every supervisor start, so ``attempt`` values
+        from different processes never collide. ``None`` for a pre-v5 row.
     """
 
     key: CacheKey
@@ -132,6 +160,9 @@ class OutcomeRecord:
     admitted_at: dt.datetime | None = None
     label_time_provenance: LabelTimeProvenance | None = None
     generation_digest: str | None = None
+    completed_at: dt.datetime | None = None
+    attempt: str | None = None
+    supervisor_generation: str | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -181,11 +212,15 @@ class DecodedStore:
 _KEY_FIELDS = {field.name for field in dc.fields(CacheKey)}
 _IDENTITY_FIELDS = {field.name for field in dc.fields(ToolchainIdentity)}
 _OUTCOME_FIELDS = {field.name for field in dc.fields(OutcomeRecord)} | {"kind"}
-# Version 3 rows predate the generation digest; version 2 rows also predate the
-# label-time provenance marker; version 1 rows also predate admission-time and
-# classification evidence. All stay readable, and every absent field decodes as
-# None rather than a guessed generation, proof or label.
-_V3_OUTCOME_FIELDS = _OUTCOME_FIELDS - {"generation_digest"}
+# Version 5 adds the per-attempt correlation group and the completion moment.
+# Version 4 rows predate that group; version 3 rows also predate the generation
+# digest; version 2 rows also predate the label-time provenance marker; version
+# 1 rows also predate admission-time and classification evidence. All stay
+# readable, and every absent field decodes as None rather than a guessed
+# generation, proof, correlation or label.
+_TIMING_FIELDS = frozenset({"completed_at", "attempt", "supervisor_generation"})
+_V4_OUTCOME_FIELDS = _OUTCOME_FIELDS - _TIMING_FIELDS
+_V3_OUTCOME_FIELDS = _V4_OUTCOME_FIELDS - {"generation_digest"}
 _V2_OUTCOME_FIELDS = _V3_OUTCOME_FIELDS - {"label_time_provenance"}
 _V1_OUTCOME_FIELDS = _V2_OUTCOME_FIELDS - {
     "outcome_reason",
@@ -202,6 +237,7 @@ _ACCEPTED_OUTCOME_SHAPES: dict[int, frozenset[frozenset[str]]] = {
     1: frozenset({frozenset(_V1_OUTCOME_FIELDS)}),
     2: frozenset({frozenset(_V1_OUTCOME_FIELDS), frozenset(_V2_OUTCOME_FIELDS)}),
     3: frozenset({frozenset(_V2_OUTCOME_FIELDS), frozenset(_V3_OUTCOME_FIELDS)}),
+    4: frozenset({frozenset(_V3_OUTCOME_FIELDS), frozenset(_V4_OUTCOME_FIELDS)}),
     FORMAT_VERSION: frozenset({frozenset(_OUTCOME_FIELDS)}),
 }
 _SUMMARY_FIELDS = {field.name for field in dc.fields(WindowSummary)} | {"kind"}
@@ -226,9 +262,47 @@ def _valid_outcome(record: OutcomeRecord) -> bool:
         _optional_choice(record.outcome_reason, _OUTCOME_REASONS),
         _optional_choice(record.outcome_attribution, _ATTRIBUTIONS),
         _optional_utc(record.admitted_at),
-        _optional_choice(record.label_time_provenance, _PROVENANCES),
+_optional_choice(record.label_time_provenance, _PROVENANCES),
         _optional_digest(record.generation_digest),
+        _optional_utc(record.completed_at),
+        _valid_timing_evidence(record),
     ))
+
+
+def _valid_timing_evidence(record: OutcomeRecord) -> bool:
+    """Check the version 5 correlation and completion evidence.
+
+    ``attempt`` and ``supervisor_generation`` are one correlation identity, so
+    a row either carries both or neither: half a pair would let a row claim a
+    correlation it cannot honour. ``completed_at`` is independently optional,
+    because a group that had not ended when its row was written has no
+    completion time, and inventing one would misuse the moment the label
+    actually became available.
+
+    Returns
+    -------
+    bool
+        Whether the correlation pair is absent, or complete and well formed.
+    """
+    if record.attempt is None and record.supervisor_generation is None:
+        return True
+    return all((
+        _bounded_token(record.attempt, _MAX_ATTEMPT_CHARS),
+        _bounded_token(record.supervisor_generation, _MAX_GENERATION_CHARS),
+    ))
+
+
+def _bounded_token(value: object, maximum: int) -> bool:
+    """Check one correlation token for its bound and safe character set.
+
+    Returns
+    -------
+    bool
+        Whether the value is a non-empty path-free token within ``maximum``.
+    """
+    if not isinstance(value, str) or not 0 < len(value) <= maximum:
+        return False
+    return all(character in _TOKEN_CHARS for character in value)
 
 
 def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
@@ -251,8 +325,34 @@ def _valid_outcome_fields(value: cabc.Mapping[str, object]) -> bool:
         nonnegative_integer(value.get("child_samples")) is not None,
         _optional_choice(value.get("outcome_reason"), _OUTCOME_REASONS),
         _optional_choice(value.get("outcome_attribution"), _ATTRIBUTIONS),
-        _optional_choice(value.get("label_time_provenance"), _PROVENANCES),
+_optional_choice(value.get("label_time_provenance"), _PROVENANCES),
         _optional_digest(value.get("generation_digest")),
+        _optional_utc(value.get("completed_at")),
+        _valid_timing_fields(value),
+    ))
+
+
+def _valid_timing_fields(value: cabc.Mapping[str, object]) -> bool:
+    """Check a decoded row's version 5 correlation pair.
+
+    The pair is absent from a version 1 to 4 row, and a version 5 row may also
+    carry it as an explicit null when compaction preserved an older row without
+    inventing a correlation. A present pair must be complete and well formed;
+    half a pair is not a row the writer can produce, so it is refused as
+    corrupt rather than read as a correlation.
+
+    Returns
+    -------
+    bool
+        Whether the correlation pair is absent, or complete and well formed.
+    """
+    if not any(name in value for name in _TIMING_FIELDS):
+        return True
+    if value.get("attempt") is None and value.get("supervisor_generation") is None:
+        return True
+    return all((
+        _bounded_token(value.get("attempt"), _MAX_ATTEMPT_CHARS),
+        _bounded_token(value.get("supervisor_generation"), _MAX_GENERATION_CHARS),
     ))
 
 

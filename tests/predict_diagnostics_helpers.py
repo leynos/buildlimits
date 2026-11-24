@@ -20,6 +20,7 @@ from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_codec import snapshot_to_dict
 
 __all__ = [
+    "CORRELATION_VERSION",
     "NOW",
     "PROVENANCE_VERSION",
     "diagnostics_document",
@@ -34,6 +35,12 @@ NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
 
 PROVENANCE_VERSION = 3
 """The first snapshot version whose events state a label-time provenance."""
+
+CORRELATION_VERSION = 5
+"""The first snapshot version whose events state the per-attempt correlation."""
+
+_CORRELATION_FIELDS = ("completed_at", "attempt", "supervisor_generation")
+"""The event fields the correlation group added, dropped from older shapes."""
 
 
 def history_from_records(*records: object) -> StoreHistory:
@@ -97,7 +104,8 @@ def document_as_version(document: dict[str, object], version: int) -> dict[str, 
     wrote, not a current row with a downgraded header. Version 1 or 2 predates
     the label-time provenance marker, so the marker is dropped with the header;
     version 3 states the marker but predates the per-generation pair, so both
-    maps are dropped; the current version states all three, so it keeps them.
+    maps are dropped; version 4 states those but predates the correlation
+    group, so its fields are dropped; the current version keeps everything.
 
     Returns
     -------
@@ -112,4 +120,8 @@ def document_as_version(document: dict[str, object], version: int) -> dict[str, 
         store = store_block(document)
         store.pop("by_generation", None)
         store.pop("labels_by_generation", None)
+    if version < CORRELATION_VERSION:
+        for event in events_of(document):
+            for field_name in _CORRELATION_FIELDS:
+                event.pop(field_name, None)
     return document

@@ -1,4 +1,10 @@
-"""Admission-time and released-history contracts for the event stream."""
+"""Admission-time and released-history contracts for the event stream.
+
+Each fixture makes the verified label-availability time equal to the historical
+observation time. That models a version 3 recorder that accepted the label at
+the moment the old, completion-derived rows recorded, so a test still checks
+the causality rule rather than the format upgrade.
+"""
 
 import datetime as dt
 import typing as typ
@@ -17,11 +23,12 @@ ORIGIN = typ.cast("Origin", "registry")
 
 def _causal(seconds: int, label: str) -> Event:
     """Return one event for identity ``a`` admitted five seconds before its label."""
+    moment = EPOCH + dt.timedelta(seconds=seconds)
     return Event(
         "a" * 64,
         ORIGIN,
         EPOCH + dt.timedelta(seconds=seconds - 5),
-        EPOCH + dt.timedelta(seconds=seconds),
+        moment,
         typ.cast("Label", label),
         1.0,
         label_observed_verified=True,
@@ -30,11 +37,12 @@ def _causal(seconds: int, label: str) -> Event:
 
 def _admitted(identity: str, *, admitted: int, observed: int) -> Event:
     """Return one event with explicit admission and label times."""
+    moment = EPOCH + dt.timedelta(seconds=observed)
     return Event(
         identity,
         ORIGIN,
         EPOCH + dt.timedelta(seconds=admitted),
-        EPOCH + dt.timedelta(seconds=observed),
+        moment,
         "hit",
         1.0,
         label_observed_verified=True,
@@ -190,7 +198,8 @@ def test_a_load_window_before_the_earliest_moment_counts_nothing() -> None:
     """
     earliest = dt.datetime.min.replace(tzinfo=dt.UTC)
     event = Event(
-        "d" * 64, ORIGIN, earliest, earliest, "hit", 1.0, label_observed_verified=True
+        "d" * 64, ORIGIN, earliest, earliest, "hit", 1.0,
+        label_observed_verified=True,
     )
 
     rows = features((event,), load_window_seconds=60.0)
@@ -201,11 +210,12 @@ def test_a_load_window_before_the_earliest_moment_counts_nothing() -> None:
 def test_batches_follow_store_order_when_a_timestamp_steps_back() -> None:
     """A backward clock step never merges records from separate windows."""
     first = _causal(10, "hit")
+    stepped_at = EPOCH + dt.timedelta(seconds=5)
     stepped = Event(
         "b" * 64,
         ORIGIN,
         EPOCH,
-        EPOCH + dt.timedelta(seconds=5),
+        stepped_at,
         "hit",
         1.0,
         label_observed_verified=True,

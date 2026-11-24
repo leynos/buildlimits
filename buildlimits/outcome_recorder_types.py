@@ -33,12 +33,18 @@ type AttributionKind = typ.Literal["solo", "unanimous", "inferred", "none"]
 
 @dc.dataclass(frozen=True, slots=True)
 class LaunchPayload:
-    """Privacy-safe metadata retained for one cached launch."""
+    """Privacy-safe metadata retained for one cached launch.
+
+    ``supervisor_generation`` names the supervisor process whose clock stamped
+    the row. It is a bounded, opaque token that identifies a clock domain and
+    an attempt namespace without revealing a host path or process identifier.
+    """
 
     key: CacheKey | None
     origin: Origin
     parser_class: ParserClass
     metadata: str | None = None
+    supervisor_generation: str | None = None
 
 
 @dc.dataclass(frozen=True, slots=True)

@@ -54,19 +54,28 @@ def _next(seed: int) -> random.Random:
 def _event(index: int, label: Label, *, admitted_at: dt.datetime | None) -> Event:
     """Build one event at its stream position.
 
+    The synthetic streams model a version 5 recorder: the label becomes
+    available at the historical observation time, its time is marked verified,
+    and each event carries a distinct attempt identity. They never feed a real
+    report, so the provenance only needs to be internally consistent.
+
     Returns
     -------
     Event
         The synthetic event.
     """
+    observed_at = EPOCH + index * STEP
     return Event(
         identity=identity(index % 20),
         origin=_ORIGINS[index % len(_ORIGINS)],
         admitted_at=admitted_at,
-        observed_at=EPOCH + index * STEP,
+        observed_at=observed_at,
         label=label,
         runtime_seconds=1.0 + (index % 7) / 10,
         label_observed_verified=True,
+        completed_at=observed_at,
+        attempt=f"g{index}",
+        supervisor_generation="synthetic-generation",
     )
 
 

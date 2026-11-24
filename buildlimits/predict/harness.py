@@ -18,7 +18,12 @@ import dataclasses as dc
 import time
 import typing as typ
 
-from buildlimits.predict.events import Features, scored_label
+from buildlimits.predict.events import (
+    Features,
+    admission_moment,
+    label_moment,
+    scored_label,
+)
 from buildlimits.predict.history import (
     admission_schedule,
     features,
@@ -28,6 +33,7 @@ from buildlimits.predict.history import (
     unverified_label_count,
 )
 from buildlimits.predict.predictors import single_predictors, update_all
+from buildlimits.predict.timing import TimingAudit, audit
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
@@ -97,8 +103,19 @@ class Walk:
         The tuning/held-out boundary.
     moments : tuple[tuple[int, ...], ...]
         Event indices grouped by equal admission time, in time order.
+    timing : TimingAudit
+        Per-event usability against the timing, label and correlation gates,
+        with the closed exclusion reasons a report counts.
+    labelled : int
+        Events carrying a hit or miss label, whether or not their timing was
+        verified. This is the label-coverage denominator, kept apart from the
+        phase counts so a honeypot of unverified labels cannot hide behind
+        ``insufficient data``.
     unavailable_admission : int
         Events that carry no usable admission time and were never predicted.
+    unavailable_availability : int
+        Events with a usable admission time but no verified label-availability
+        time, which are therefore never predicted or scored.
     applied_labels : int
         Eligible labels delivered before at least one prediction.
     unapplied_labels : int
@@ -114,7 +131,10 @@ class Walk:
     series: dict[str, Series]
     split: Split
     moments: tuple[tuple[int, ...], ...]
+    timing: TimingAudit
+    labelled: int
     unavailable_admission: int
+    unavailable_availability: int
     applied_labels: int
     unapplied_labels: int
     unverified_label_time: int
@@ -153,9 +173,14 @@ def walk_forward(
         The stream, its features, phases and each single predictor's answers.
     """
     stream = tuple(events)
-    moments = prediction_moments(stream)
-    rows = features(stream, load_window_seconds=config.load_window_seconds)
-    phases = _phases(stream, train_fraction=config.train_fraction)
+    timing = audit(stream)
+    moments = prediction_moments(stream, usable=timing.usable)
+    rows = features(
+        stream,
+        load_window_seconds=config.load_window_seconds,
+        usable=timing.usable,
+    )
+    phases = _phases(stream, timing, train_fraction=config.train_fraction)
     replay = _replay(
         single_predictors(config),
         rows,
@@ -168,6 +193,7 @@ def walk_forward(
         )
         for name in replay.probabilities
     }
+    admitted = sum(1 for event in stream if admission_moment(event) is not None)
     return Walk(
         events=stream,
         rows=rows,
@@ -175,7 +201,10 @@ def walk_forward(
         series=series,
         split=_split(stream, phases),
         moments=moments,
-        unavailable_admission=len(stream) - sum(len(group) for group in moments),
+        timing=timing,
+        labelled=sum(1 for event in stream if event.label != "unknown"),
+        unavailable_admission=len(stream) - admitted,
+        unavailable_availability=admitted - sum(len(group) for group in moments),
         applied_labels=replay.applied_labels,
         unapplied_labels=replay.unapplied_labels,
         unverified_label_time=unverified_label_count(stream),
@@ -310,36 +339,47 @@ def _predict_row(
 
 def _phases(
     events: cabc.Sequence[Event],
+    timing: TimingAudit,
     *,
     train_fraction: float,
 ) -> tuple[Phase | None, ...]:
-    """Label each event with the phase its label time belongs to.
+    """Label each event with the phase its verified label time belongs to.
 
     The boundary falls between label batches, never inside one, so every row
-    the store wrote together stays on one side of it. A batch that reaches the
-    target lands wholly in the tuning period, which can leave the tuning share
-    slightly above the configured fraction. With too few labels to reach the
-    boundary every batch is tuning; at a fraction of zero every batch is held
-    out.
+    the observer accepted at one reading stays on one side of it. A batch that
+    reaches the target lands wholly in the tuning period, which can leave the
+    tuning share slightly above the configured fraction. With too few labels to
+    reach the boundary every batch is tuning; at a fraction of zero every batch
+    is held out. An event without a verified availability time cannot be placed
+    in either period: its label was never shown to be knowable, so it is never
+    trained on or scored.
 
     Returns
     -------
     tuple[Phase | None, ...]
         One phase per event, or None where no eligible label arrived.
     """
-    # Only a verified label can be scored, so only it consumes a phase slot.
-    total = sum(1 for event in events if scored_label(event) is not None)
+# Only a verified, correlated label can be scored, so only it consumes a
+    # phase slot.
+    batches = label_batches(events)
+    total = sum(
+        1
+        for batch in batches
+        for index in batch
+        if timing.usable[index] and scored_label(events[index]) is not None
+    )
     target = int(total * train_fraction)
-    phases: list[Phase | None] = []
+    phases: list[Phase | None] = [None] * len(events)
     kept = 0
-    for batch in label_batches(events):
+    for batch in batches:
+        if label_moment(events[batch[0]]) is None:
+            continue
         phase: Phase = "train" if kept < target else "held-out"
         for index in batch:
-            if scored_label(events[index]) is None:
-                phases.append(None)
-            else:
-                phases.append(phase)
-                kept += 1
+            if not timing.usable[index] or scored_label(events[index]) is None:
+                continue
+            phases[index] = phase
+            kept += 1
     return tuple(phases)
 
 
@@ -349,7 +389,7 @@ def _split(events: cabc.Sequence[Event], phases: cabc.Sequence[Phase | None]) ->
     Returns
     -------
     Split
-        Counts on both sides and the first held-out label time.
+        Counts on both sides and the first held-out availability time.
     """
     boundary_index = next(
         (index for index, phase in enumerate(phases) if phase == "held-out"), None
@@ -358,5 +398,7 @@ def _split(events: cabc.Sequence[Event], phases: cabc.Sequence[Phase | None]) ->
     return Split(
         train_labelled=train,
         heldout_labelled=sum(1 for phase in phases if phase == "held-out"),
-        boundary=None if boundary_index is None else events[boundary_index].observed_at,
+        boundary=(
+            None if boundary_index is None else label_moment(events[boundary_index])
+        ),
     )
