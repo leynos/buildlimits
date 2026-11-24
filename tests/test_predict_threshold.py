@@ -22,7 +22,13 @@ import typing as typ
 from pathlib import Path
 
 import pytest
-from outcome_test_helpers import OBSERVED_AT, cache_key
+from outcome_test_helpers import (
+    OBSERVED_AT,
+    VERSION_ONE,
+    VERSION_TWO,
+    cache_key,
+    older_document_row,
+)
 from predict_test_helpers import (
     benchmark_argv,
     hand_event,
@@ -31,7 +37,11 @@ from predict_test_helpers import (
 )
 
 from buildlimits.outcome_record_encode import encode_line
-from buildlimits.outcome_record_format import OutcomeRecord, StoreHeader
+from buildlimits.outcome_record_format import (
+    FORMAT_VERSION,
+    OutcomeRecord,
+    StoreHeader,
+)
 from buildlimits.predict import benchmark_cli, dataset_cli
 from buildlimits.predict.dataset import Snapshot, Source
 from buildlimits.predict.events import EPOCH, Event
@@ -44,9 +54,8 @@ LABELS = 2000
 STEP = dt.timedelta(seconds=30)
 LABEL_DELAY = dt.timedelta(seconds=2)
 
-# A version 1 row predates admission and classification evidence, so writing
-# one means omitting exactly those fields rather than writing nulls.
-_V1_OMITTED_FIELDS = ("outcome_reason", "outcome_attribution", "admitted_at")
+CURRENT_VERSION = FORMAT_VERSION
+"""The store format whose rows carry the evidence this file compares."""
 
 
 def _labelled_record(index: int, *, with_admission: bool) -> OutcomeRecord:
@@ -72,77 +81,16 @@ def _labelled_record(index: int, *, with_admission: bool) -> OutcomeRecord:
     )
 
 
-def _labelled_events(count: int, *, usable: int) -> tuple[Event, ...]:
-    """Return ``count`` verified events, ``usable`` of them predictable.
-
-    Every event carries a hit or miss label whose time is proven, so the label
-    gate counts all of them. Only the first ``usable`` events carry an
-    admission time at or before their label; the rest carry a time after it,
-    which makes them labelled but unpredicted.
-
-    Parameters
-    ----------
-    count : int
-        How many labelled events to build.
-    usable : int
-        How many of them carry a usable admission time.
-
-    Returns
-    -------
-    tuple[Event, ...]
-        The events, in stream order.
-    """
-    events = []
-    for index in range(count):
-        observed = EPOCH + index * STEP
-        admitted = observed - LABEL_DELAY if index < usable else observed + LABEL_DELAY
-        events.append(
-            hand_event(
-                index,
-                admitted_at=admitted,
-                observed_at=observed,
-                label="hit" if index % 2 else "miss",
-            )
-        )
-    return tuple(events)
-
-
-def _verified_snapshot(tmp_path: Path, *, usable: int) -> Path:
-    """Write a snapshot of ``LABELS`` verified events, ``usable`` predictable.
-
-    Returns
-    -------
-    Path
-        The snapshot the benchmark can be pointed at.
-    """
-    events = _labelled_events(LABELS, usable=usable)
-    snapshot = Snapshot(
-        created_at=dt.datetime(2026, 1, 2, tzinfo=dt.UTC),
-        source=Source(
-            salt_id="verified",
-            written_at=OBSERVED_AT,
-            records_total=LABELS,
-            outcome_records=LABELS,
-            summary_records=0,
-        ),
-        journal=JournalUnavailable("journal query skipped"),
-        events=events,
-        gaps=(),
-    )
-    path = tmp_path / "verified.jsonl"
-    save_snapshot(path, snapshot)
-    return path
-
-
 def _write_labelled_store(path: Path, count: int, *, with_admission: bool) -> None:
-    """Write one labelled store whose rows claim no label-time provenance.
+    """Write one labelled store with or without admission evidence.
 
-    Without ``with_admission`` the store alternates the version 1 and version 2
-    shapes and states no admission time at all. With it, every row carries an
-    admission moment two seconds before its own label. Either way no row claims
-    provenance, so the dataset command emits every label time as unverified: a
-    row that says nothing is unproven, whichever document version it is written
-    into.
+    Without ``with_admission`` the store alternates the version 1 and version
+    2 shapes and states no admission time at all, so every label time is
+    unverified as well: the report withholds them rather than treating a
+    recorded time as proof. With it, every row is written in the current
+    shape and carries an admission moment two seconds before its own label.
+    Only the admission evidence differs between the two runs, so a change of
+    status is that evidence's doing.
 
     Parameters
     ----------
@@ -153,15 +101,18 @@ def _write_labelled_store(path: Path, count: int, *, with_admission: bool) -> No
     with_admission : bool
         Whether every row carries a usable admission time.
     """
-    lines = [encode_line(StoreHeader("fixed-salt", OBSERVED_AT))]
+    version = CURRENT_VERSION if with_admission else VERSION_TWO
+    lines = [encode_line(StoreHeader("fixed-salt", OBSERVED_AT, version=version))]
     for index in range(count):
-        line = encode_line(_labelled_record(index, with_admission=with_admission))
-        if not with_admission and index % 2:
-            document = json.loads(line)
-            for field in _V1_OMITTED_FIELDS:
-                document.pop(field)
-            line = json.dumps(document, separators=(",", ":"), sort_keys=True)
-        lines.append(line)
+        record = _labelled_record(index, with_admission=with_admission)
+        document = (
+            json.loads(encode_line(record))
+            if with_admission
+            else older_document_row(
+                record, version=VERSION_ONE if index % 2 else VERSION_TWO
+            )
+        )
+        lines.append(json.dumps(document, separators=(",", ":"), sort_keys=True))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     path.chmod(0o600)
 
