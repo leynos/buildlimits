@@ -19,6 +19,12 @@ host service has not been upgraded; a controlled real-sccache run is the
 evidence that new rows carry the timing group, and no historical row is
 retroactively repaired.
 
+All six commit gates pass at the final commit: `check-fmt`, `lint` (ruff,
+interrogate, both Pylint sweeps, Ambrleaks, Skylos, Nose duplication and the
+action linters), `typecheck`, `test`, `markdownlint` and `nixie`. The opt-in
+host checks also pass: `test-sccache-host` against the real sccache 0.14.0, and
+`test-systemd-user` for the systemd cache-outcome scenarios.
+
 ## The problem
 
 Two independent gates must hold before the offline benchmark may score a
