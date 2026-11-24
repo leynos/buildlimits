@@ -156,8 +156,8 @@ def outcome_record(index: int, outcome: CacheResult, key: object) -> OutcomeReco
         parser_class="cacheable",
         child_sighting="unavailable",
         child_samples=0,
+        label_time_provenance="verified",
         completed_at=observed_at,
-        label_available_at=observed_at,
         attempt=f"g{index}",
         supervisor_generation="fixed-generation",
     )
@@ -227,7 +227,6 @@ def write_admission_only_store(path: Path, count: int) -> None:
                 outcome_attribution="solo" if labelled else "none",
                 admitted_at=record.observed_at - dt.timedelta(seconds=2),
                 completed_at=None,
-                label_available_at=None,
                 attempt=None,
                 supervisor_generation=None,
             )
