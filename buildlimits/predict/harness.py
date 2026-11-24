@@ -115,7 +115,8 @@ class Walk:
         Events that carry no usable admission time and were never predicted.
     unavailable_availability : int
         Events with a usable admission time but no verified label-availability
-        time, which are therefore never predicted or scored.
+        time. A row excluded for another reason, such as a duplicate attempt,
+        is counted by that reason instead of here.
     applied_labels : int
         Eligible labels delivered before at least one prediction.
     unapplied_labels : int
@@ -204,7 +205,11 @@ def walk_forward(
         timing=timing,
         labelled=sum(1 for event in stream if event.label != "unknown"),
         unavailable_admission=len(stream) - admitted,
-        unavailable_availability=admitted - sum(len(group) for group in moments),
+        unavailable_availability=sum(
+            1
+            for event in stream
+            if admission_moment(event) is not None and label_moment(event) is None
+        ),
         applied_labels=replay.applied_labels,
         unapplied_labels=replay.unapplied_labels,
         unverified_label_time=unverified_label_count(stream),

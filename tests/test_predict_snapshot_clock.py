@@ -42,19 +42,29 @@ def _snapshot(*events: Event) -> Snapshot:
 
 
 def _backward() -> tuple[Event, Event]:
-    """Return two verified events whose second was observed before the first."""
+    """Return two verified events whose second was observed before the first.
+
+    Each carries its own attempt identity: two rows sharing one would be a
+    contradictory append, which the audit excludes before any clock question
+    is asked.
+    """
     return (
         hand_event(
             0,
             admitted_at=EPOCH,
             observed_at=EPOCH + dt.timedelta(minutes=10),
             label="hit",
+            attempt="first",
         ),
+        # Appended second, and admitted after the first, but its own reading
+        # was stamped before the first one's: each admission still precedes its
+        # own acceptance, so this is a clock step rather than a bad row.
         hand_event(
             1,
-            admitted_at=EPOCH + dt.timedelta(minutes=10),
+            admitted_at=EPOCH + dt.timedelta(minutes=1),
             observed_at=EPOCH + dt.timedelta(minutes=5),
             label="hit",
+            attempt="second",
         ),
     )
 
@@ -86,12 +96,15 @@ def _unverified() -> tuple[Event, Event]:
 def _forward() -> tuple[Event, Event]:
     """Return two events the store could have appended in this order."""
     return (
-        hand_event(0, admitted_at=EPOCH, observed_at=EPOCH, label="hit"),
+        hand_event(
+            0, admitted_at=EPOCH, observed_at=EPOCH, label="hit", attempt="first"
+        ),
         hand_event(
             1,
             admitted_at=EPOCH + dt.timedelta(minutes=5),
             observed_at=EPOCH + dt.timedelta(minutes=10),
             label="hit",
+            attempt="second",
         ),
     )
 

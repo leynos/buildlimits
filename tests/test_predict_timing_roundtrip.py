@@ -139,3 +139,20 @@ def test_a_duplicate_and_a_conflict_are_counted_apart() -> None:
     assert stats.duplicates == 1, "the exact repeat is an idempotent duplicate"
     assert stats.conflicts == 0, "no pair contradicts itself"
     assert stats.scored == 2, "the original and the distinct attempt are scored"
+
+
+def test_a_duplicate_attempt_is_not_counted_as_missing_availability() -> None:
+    """A repeated row is excluded by its own reason, not as an absent moment.
+
+    Both rows carry a verified availability, so the availability counter must
+    stay at zero and the duplicate must appear only in its own count.
+    """
+    original = event(0, admitted=1.0, available=5.0, attempt="same")
+    retried = typ.cast("typ.Any", original)
+
+    stats = snapshot((original, retried)).stats()
+
+    assert stats.availability_recorded == 2, "both rows carry an availability"
+    assert stats.availability_missing == 0, "neither row is missing one"
+    assert stats.duplicates == 1, "the retry is counted as a duplicate"
+    assert stats.excluded == {"duplicate_attempt": 1}, "under its own reason"
