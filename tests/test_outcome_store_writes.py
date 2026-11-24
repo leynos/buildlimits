@@ -7,6 +7,7 @@ from unittest import mock
 
 import outcome_store_helpers as store_helpers
 import pytest
+from outcome_store_clock import FIXED_NOW
 from outcome_store_helpers import (
     append_and_wait,
     assert_failed_append,
@@ -173,7 +174,9 @@ def test_a_tail_that_cannot_be_repaired_stops_every_append(
         mock.Mock(side_effect=OSError("read-only file system")),
     )
 
-    writer = outcome_store.StoreWriter(path, policy=history_policy(1 << 20))
+    writer = outcome_store.StoreWriter(
+        path, policy=history_policy(1 << 20), wall_clock=lambda: FIXED_NOW
+    )
     try:
         wait_for_results(writer, operation="load", reason="save_failed")
         writer.append(window_summary())
