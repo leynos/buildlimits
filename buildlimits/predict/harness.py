@@ -93,8 +93,8 @@ class Walk:
     events : tuple[Event, ...]
         The stream, in the store's append order.
     rows : tuple[Features | None, ...]
-        Causal features, aligned with ``events``; None where no admission time
-        makes a prediction possible.
+        Causal features aligned with ``events``; None where no prediction is
+        possible.
     phases : tuple[Phase | None, ...]
         The phase of each labelled event, or None for an unscored one.
     series : dict[str, Series]
@@ -114,9 +114,8 @@ class Walk:
     unavailable_admission : int
         Events that carry no usable admission time and were never predicted.
     unavailable_availability : int
-        Events with a usable admission time but no verified label-availability
-        time. A row excluded for another reason, such as a duplicate attempt,
-        is counted by that reason instead of here.
+        Admitted events with no verified availability. A row excluded for
+        another reason is counted by that reason instead.
     applied_labels : int
         Eligible labels delivered before at least one prediction.
     unapplied_labels : int
