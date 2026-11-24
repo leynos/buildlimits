@@ -93,12 +93,12 @@ def test_a_non_utc_offset_is_refused_rather_than_relabelled(
 
 @given(_utc_moment())
 @settings(max_examples=50, derandomize=True, deadline=None)
-def test_utc_text_is_normalised_to_the_utc_timezone(moment: dt.datetime) -> None:
+def test_utc_text_is_normalized_to_the_utc_timezone(moment: dt.datetime) -> None:
     """An accepted moment is always the UTC instant the store names.
 
     The ``+00:00`` spelling and the canonical ``Z`` spelling denote the same
     moment, and both parse to a value whose offset is exactly zero, so no
-    caller has to normalise a timestamp it read back.
+    caller has to normalize a timestamp it read back.
     """
     explicit = moment.replace(tzinfo=dt.UTC).isoformat()
 
