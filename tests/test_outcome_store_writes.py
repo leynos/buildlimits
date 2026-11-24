@@ -37,9 +37,12 @@ from buildlimits.outcome_store_salt import file_salt
 
 
 import time
-from outcome_store_thread_helpers import stalled_append
 
 """Queue pressure, append faults and bounded shutdown for the store writer."""
+"""Queue pressure, append faults and bounded shutdown for the store writer."""
+
+
+
 """Queue pressure, append faults and bounded shutdown for the store writer."""
 
 
