@@ -12,15 +12,17 @@ from outcome_test_helpers import (
     cache_key,
     window_summary,
 )
+from predict_test_helpers import ACTIVE_FILE_ONLY
 
 from buildlimits.metrics_query import Window
 from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.dataset import StoreHistory, build_snapshot, find_gaps
+from buildlimits.predict.journal_codec import journal_from_dict, journal_to_dict
 from buildlimits.predict.journal_provenance import (
+    JournalCounts,
     JournalRestarts,
     count_journal,
-    JournalCounts,
 )
 from buildlimits.predict.records import decode_history, identity_of, label_of
 from buildlimits.predict.snapshot_store import load_snapshot, save_snapshot
@@ -29,33 +31,6 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_vocabulary import CacheResult
     from buildlimits.predict.dataset import Snapshot
 
-NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
-DATED = OBSERVED_AT + dt.timedelta(hours=1)
-
-
-from outcome_store_helpers import window_summary
-from buildlimits.predict.journal_codec import journal_from_dict, journal_to_dict
-
-"""Snapshot extraction, redaction and journal-provenance contracts."""
-if typ.TYPE_CHECKING:
-    from buildlimits.outcome_vocabulary import CacheResult
-    from buildlimits.predict.dataset import Snapshot
-NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
-DATED = OBSERVED_AT + dt.timedelta(hours=1)
-
-
-from predict_test_helpers import ACTIVE_FILE_ONLY
-
-"""Snapshot extraction, redaction and journal-provenance contracts."""
-if typ.TYPE_CHECKING:
-    from buildlimits.outcome_vocabulary import CacheResult
-    from buildlimits.predict.dataset import Snapshot
-NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
-DATED = OBSERVED_AT + dt.timedelta(hours=1)
-"""Snapshot extraction, redaction and journal-provenance contracts."""
-if typ.TYPE_CHECKING:
-    from buildlimits.outcome_vocabulary import CacheResult
-    from buildlimits.predict.dataset import Snapshot
 NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
 DATED = OBSERVED_AT + dt.timedelta(hours=1)
 

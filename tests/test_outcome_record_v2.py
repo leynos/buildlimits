@@ -126,6 +126,24 @@ def test_a_version_one_row_cannot_become_scorable() -> None:
     assert admission_moment(event) is None, "so it cannot be predicted"
 
 
+def _reload_with(replace: dict[str, object]) -> DecodedStore | RecordFailure:
+    """Decode a version-two row after replacing named fields.
+
+    Every case here changes one field of the same row and asks the decoder what
+    it now makes of it, so the edit-and-decode shape is one helper. The
+    assertions stay in each test, because what each malformed row must prove is
+    the contract they differ on.
+
+    Returns
+    -------
+    DecodedStore or RecordFailure
+        The decoded document or the refusal.
+    """
+    row = json.loads(_v2_row())
+    row.update(replace)
+    return _decode(_header(), json.dumps(row, separators=(",", ":")))
+
+
 @pytest.mark.parametrize(
     "admitted",
     [
@@ -138,10 +156,7 @@ def test_a_version_one_row_cannot_become_scorable() -> None:
 )
 def test_a_malformed_admission_time_is_corruption(admitted: object) -> None:
     """A present but unusable admission time is refused, never read as absent."""
-    row = json.loads(_v2_row())
-    row["admitted_at"] = admitted
-
-    loaded = _decode(_header(), json.dumps(row, separators=(",", ":")))
+    loaded = _reload_with({"admitted_at": admitted})
 
     assert isinstance(loaded, RecordFailure), loaded
     assert loaded.reason == "corrupt", "a malformed time is not a missing time"
@@ -171,10 +186,7 @@ def test_the_encoder_refuses_a_naive_admission_time() -> None:
 
 def test_an_explicit_null_admission_remains_unknown() -> None:
     """A row written without admission keeps the explicit unknown value."""
-    row = json.loads(_v2_row())
-    row["admitted_at"] = None
-
-    loaded = _decode(_header(), json.dumps(row, separators=(",", ":")))
+    loaded = _reload_with({"admitted_at": None})
     (record,) = typ.cast("tuple[typ.Any, ...]", _records(loaded))
 
     assert record.admitted_at is None, "null decodes as unknown"

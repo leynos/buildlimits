@@ -53,22 +53,6 @@ DEFAULT_OUTPUT = Path("build/predict/history.jsonl")
 DEFAULT_JOURNAL_SPAN = "4w"
 
 
-
-"""The build-limits-predict-dataset command.
-It reads this host's live cache-outcome store, redacts it into the versioned
-snapshot, and says how much history the snapshot really represents.
-"""
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-    import datetime as dt
-    from buildlimits.metrics_query import Window
-    from buildlimits.outcome_history import HistorySelection
-    from buildlimits.outcome_record_format import DecodedStore
-    from buildlimits.predict.config import Config
-DEFAULT_OUTPUT = Path("build/predict/history.jsonl")
-DEFAULT_JOURNAL_SPAN = "4w"
-
-
 def main(argv: list[str] | None = None, *, edges: Edges | None = None) -> int:
     """Extract the live history into the benchmark snapshot.
 
@@ -391,5 +375,3 @@ class Edges:
     resolve_store: cabc.Callable[[Path | None], Path] = _store_path
     load_config: cabc.Callable[[], Config] = _read_config
     read_inventory: cabc.Callable[[Path], HistoryLoss] = _read_inventory
-# weave: run 'weave explain buildlimits/predict/dataset_cli.py' for per-hunk detail, 'weave check' to verify your resolution
-# weave: run 'weave explain buildlimits/predict/dataset_cli.py' for per-hunk detail, 'weave check' to verify your resolution

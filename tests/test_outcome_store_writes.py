@@ -36,16 +36,6 @@ from buildlimits.outcome_store_clock import Clocks
 from buildlimits.outcome_store_salt import file_salt
 
 
-import time
-
-"""Queue pressure, append faults and bounded shutdown for the store writer."""
-"""Queue pressure, append faults and bounded shutdown for the store writer."""
-
-
-
-"""Queue pressure, append faults and bounded shutdown for the store writer."""
-
-
 def test_writer_reports_queue_overflow_without_waiting_for_the_worker(
     tmp_path: Path,
 ) -> None:

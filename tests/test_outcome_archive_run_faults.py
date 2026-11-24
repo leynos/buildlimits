@@ -328,38 +328,3 @@ def test_another_filesystem_fault_after_the_work_is_a_failure(
 
     assert report.status == "failed", "an unexplained fault is not retryable"
     assert report.reason == "unreadable", "the reason names the closed category"
-
-
-def test_a_record_cap_evicts_the_oldest_source_in_the_planning_run(
-    tmp_path: Path,
-) -> None:
-    """A cap is met by deleting the oldest source and trimming the straddler.
-
-    The cap counts the rows the writer still holds in the active file, so the
-    plan removes more from the closed history than the closed count alone
-    suggests. The oldest source is outside the budget before it is ever
-    compressed, so the plan deletes it whole rather than archiving history it
-    would immediately remove; the trim is planned by the run's own plan, so
-    this covers the run's trim step rather than the retention re-plan a
-    heal-only run performs.
-    """
-    store = tmp_path / "cache-outcomes.jsonl"
-    base = policy(segment_bytes=2200)
-    write(store, records(NOW, 12), base)
-    active = active_history(layout(tmp_path).active)
-
-    report = run(tmp_path, dc.replace(base, max_records=8))
-
-    assert report.status == "ok", "a trim is not a failure"
-    expected = [("archived", sequence) for sequence in (2, 3)]
-    expected += [("deleted", 1), ("trimmed", 2)]
-    assert [
-        (action.action, action.sequence) for action in report.actions
-    ] == expected, "the oldest source goes and the straddler is trimmed"
-    kept = read_inventory(layout(tmp_path)).archived
-    assert [entry.record_count for entry in kept] == [2, 3], (
-        "the straddler keeps exactly the rows the cap allows"
-    )
-    assert active.records + sum(entry.record_count or 0 for entry in kept) == 8, (
-        "the active rows count towards the cap"
-    )

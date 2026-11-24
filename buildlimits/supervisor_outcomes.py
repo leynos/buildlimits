@@ -11,6 +11,7 @@ from buildlimits import (
     outcome_resources,
     outcome_shell_keys,
     outcome_shell_stats,
+    outcome_shell_status,
     outcome_store_salt,
     outcome_telemetry,
     supervisor_outcome_setup,
@@ -36,13 +37,15 @@ from buildlimits.outcome_recorder_types import (
 )
 from buildlimits.outcome_retention import policy_from_settings
 from buildlimits.outcome_sampling import ChildSampler
+from buildlimits.outcome_shell_dependencies import (
+    OutcomeDependencies as OutcomeDependencies,
+)
 from buildlimits.outcome_sightings import request_metadata
 from buildlimits.outcome_store import StoreWriter
 from buildlimits.supervisor_outcome_setup import (
     OUTCOME_CLOSE_SECONDS,
     GroupEnding,
     NullOutcomeShell,
-    OutcomeDependencies,
     build_shell,
 )
 
@@ -64,22 +67,15 @@ __all__ = [
     "OutcomeShell",
     "build_shell",
 ]
-
-
-from buildlimits.outcome_shell_dependencies import (
-    OutcomeDependencies as OutcomeDependencies,
-)
-
-"""Isolate cache-outcome recording from supervisor admission decisions."""
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+
     from buildlimits.outcome_ports import StoreResult
     from buildlimits.outcome_recorder_types import Outputs
     from buildlimits.pending_request import Pending
     from buildlimits.supervisor import Supervisor
 OUTCOME_TICK_SECONDS = 1.0
-__all__ = [
-]
+__all__ = []
 
 
 class OutcomeShell:
@@ -159,19 +155,10 @@ class OutcomeShell:
     def describe(self) -> dict[str, object]:
         """Return bounded live counters without changing recorder state.
 
-        This is a status query, not a loop boundary: the fail-closed
-        ``_guard`` wraps only the methods the supervisor loop calls, so a
-        snapshot fault must not disable a recorder that is still working.
-        A recorder that cannot describe itself reports the fixed unavailable
-        state and keeps running; the next snapshot may succeed.
-
         Returns
         -------
         dict[str, object]
-            The privacy-safe recording state for supervisor status, the fixed
-            disabled state once recording has failed or the shell has closed, or
-            a bounded ``snapshot_unavailable`` marker when the snapshot itself
-            fails.
+            The privacy-safe recording state, or a bounded failure marker.
         """
         if self._disabled or self._closed:
             return supervisor_outcome_setup.disabled_description()
@@ -188,16 +175,7 @@ class OutcomeShell:
         dict[str, object]
             ``limits`` and ``active``, or the bounded failure marker.
         """
-        try:
-            return supervisor_outcome_setup.retention_document(
-                self._supervisor, self._resources.writer
-            )
-        except Exception:  # ruff: ignore[blind-except] - a status read must not fail status.
-            return {
-                "limits": None,
-                "active": None,
-                "reason": "snapshot_unavailable",
-            }
+        return outcome_shell_status.retention(self._supervisor, self._resources.writer)
 
     def close(self, timeout: float = OUTCOME_CLOSE_SECONDS) -> None:
         """Cancel the query, reap its helper and close the writer within a bound."""
@@ -348,14 +326,15 @@ class OutcomeShell:
         for result in self._resources.writer.results():
             self._consume_store_result(result)
 
-    def _consume_store_result(self, result: StoreResult) -> None:
+    def _consume_store_result(self, result: object) -> None:
         """Track and publish one aggregated writer result."""
-        self._counters.record_store(result)
+        store = typ.cast("StoreResult", result)
+        self._counters.record_store(store)
         self._telemetry.store_result(
-            operation=result.operation,
-            reason=result.reason,
-            records=result.records,
-            discarded=result.discarded,
+            operation=store.operation,
+            reason=store.reason,
+            records=store.records,
+            discarded=store.discarded,
         )
 
     def _publish(self, outputs: Outputs) -> None:
@@ -371,8 +350,7 @@ class OutcomeShell:
         Returns
         -------
         dict[str, object]
-            Whether recording is still on, plus bounded counters and the last
-            closed reason.
+            Whether recording is still on, plus bounded counters.
         """
         enabled = not isinstance(self._recorder.state, Disabled)
         return {"enabled": enabled, **self._counters.describe()}
@@ -420,4 +398,3 @@ class OutcomeShell:
             self._telemetry.flush(self._supervisor.clock(), force=True)
         self._resources.close(timeout)
         self._closed = True
-# weave: run 'weave explain buildlimits/supervisor_outcomes.py' for per-hunk detail, 'weave check' to verify your resolution

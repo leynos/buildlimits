@@ -23,6 +23,7 @@ from buildlimits.supervisor_outcomes import (
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
     from pathlib import Path
 
     from buildlimits.config import SupervisorConfig
@@ -32,20 +33,6 @@ if typ.TYPE_CHECKING:
         ServerProcessPort,
         StatisticsPort,
     )
-    from buildlimits.outcome_record_format import StoreRecord
-    from buildlimits.supervisor import Supervisor
-    from buildlimits.tracing import JournalTracer
-
-
-
-"""Small deterministic ports for supervisor outcome-shell tests."""
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
-    import datetime as dt
-    from pathlib import Path
-    from buildlimits.config import SupervisorConfig
-    from buildlimits.nonblocking_child import ChildReaper
-    from buildlimits.outcome_ports import (
     from buildlimits.outcome_record_format import StoreRecord
     from buildlimits.supervisor import Supervisor
     from buildlimits.tracing import JournalTracer

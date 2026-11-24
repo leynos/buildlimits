@@ -17,6 +17,7 @@ from hypothesis.stateful import (
 )
 from outcome_store_fixture_helpers import append_torn_utf8_tail
 from outcome_store_helpers import (
+    append_completion_barrier,
     salt_path,
     stored_records,
     wait_for_results,
@@ -29,14 +30,6 @@ from buildlimits.outcome_key import Salt
 from buildlimits.outcome_ports import StoreResult
 from buildlimits.outcome_store import StoreWriter
 
-_BASE_TIME = dt.datetime(2026, 10, 25, tzinfo=dt.UTC)
-_DAY_SECONDS = 24 * 60 * 60
-_APPEND_FINISHED = threading.Event()
-
-
-from outcome_store_fault_helpers import append_completion_barrier
-
-"""Generated append, compaction, reload, clock and salt store contracts."""
 _BASE_TIME = dt.datetime(2026, 10, 25, tzinfo=dt.UTC)
 _DAY_SECONDS = 24 * 60 * 60
 _APPEND_FINISHED = threading.Event()

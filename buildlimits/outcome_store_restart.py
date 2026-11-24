@@ -158,8 +158,6 @@ def _settle_old_format(store: StoreFiles) -> None:
         store.publish("load", "save_failed")
 
 
-
-
 def restore_loaded_store(
     store: StoreFiles,
     decoded: outcome_records.DecodedStore | outcome_records.RecordFailure | None,
@@ -275,4 +273,3 @@ def active_expired(store: StoreFiles) -> bool:
     if cutoff is None:
         return False
     return min(record.observed_at for record in store.records) < cutoff
-# weave: run 'weave explain buildlimits/outcome_store_restart.py' for per-hunk detail, 'weave check' to verify your resolution
