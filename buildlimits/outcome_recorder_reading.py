@@ -49,6 +49,16 @@ _RETRYABLE_READING_REASONS = frozenset({
 })
 
 
+"""Finish statistics readings and schedule the next bounded query."""
+if typ.TYPE_CHECKING:
+    from buildlimits.outcome_recorder_types import PollResult, Progress, RecorderState
+    from buildlimits.outcome_stats import StatsReading
+    from buildlimits.outcome_vocabulary import OutcomeReason
+OUTCOME_READ_SECONDS = 1.0
+OUTCOME_MAX_BACKOFF_SECONDS = 60.0
+_RETRYABLE_READING_REASONS = frozenset({})
+
+
 def _finish_failure(
     state: Querying,
     moment: _EmissionMoment,

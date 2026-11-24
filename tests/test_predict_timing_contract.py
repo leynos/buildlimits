@@ -407,12 +407,12 @@ def test_the_report_states_the_scored_population_and_its_exclusions() -> None:
 
 
 def _config() -> Config:
-    """Return the pinned parameters with a zero-second load window.
+    """Return the pinned parameters that make each row checkable.
 
     Returns
     -------
     Config
-        Parameters that make every feature row independently checkable.
+        Parameters whose load window is long enough to count earlier labels.
     """
     return dc.replace(load_config(), load_window_seconds=60.0)
 

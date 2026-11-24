@@ -29,6 +29,9 @@ type ExclusionReason = typ.Literal[
     "conflicting_attempt",
 ]
 
+_MINIMUM_GROUP = 2
+"""A repeated attempt needs at least two rows to be a duplicate or a conflict."""
+
 EXCLUSION_REASONS: tuple[ExclusionReason, ...] = (
     "unknown_outcome",
     "no_admission_time",
