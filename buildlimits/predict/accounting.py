@@ -118,6 +118,10 @@ class HistoryLoss:
         Lowest sequence intentionally retained, when recorded.
     quarantined : int
         Segments the inventory knows are corrupt or unsupported.
+    inventory_unavailable : bool
+        Whether closed history was read but its inventory could not be
+        scanned. The counts above are then not measured, and the extraction is
+        not active-only: rows already read remain in the snapshot.
     """
 
     active_only: bool
@@ -127,6 +131,7 @@ class HistoryLoss:
     gaps_truncated: bool = False
     retention_floor: int | None = None
     quarantined: int = 0
+    inventory_unavailable: bool = False
 
     @classmethod
     def active_file_only(cls) -> HistoryLoss:
@@ -137,7 +142,7 @@ class HistoryLoss:
         HistoryLoss
             A value that says closed history was not considered.
         """
-        return cls(active_only=True)
+        return cls(active_only=True, inventory_unavailable=False)
 
 
 @dc.dataclass(frozen=True, slots=True)
@@ -219,13 +224,13 @@ class _DimensionCounters:
 
 
 def _frozen(counts: collections.Counter[str]) -> dict[str, int]:
-    """Return a deterministically ordered plain mapping.
+    """Return a deterministically ordered plain mapping within the load bound.
 
-    The map is capped at the loader's entry bound. A real vocabulary is small;
-    if a corrupted or hostile stream produced more distinct values, the
-    largest counts are kept so the writer can never emit a block its own
-    loader would refuse. A cap that bites is visible because the dropped
-    entries are no longer reported.
+    A real vocabulary is small. If a corrupted or hostile stream produced more
+    distinct values than the loader accepts, the largest counts are kept and
+    the rest are merged into an explicit ``other`` bucket. Dropping them
+    instead would break the invariant that every breakdown sums to the outcome
+    rows, so a snapshot could not report its own loss.
 
     Returns
     -------
@@ -233,7 +238,13 @@ def _frozen(counts: collections.Counter[str]) -> dict[str, int]:
         Counts sorted by key, at most ``_MAX_MAP_ENTRIES`` entries.
     """
     ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    return dict(sorted(ordered[:_MAX_MAP_ENTRIES]))
+    if len(ordered) <= _MAX_MAP_ENTRIES:
+        return dict(sorted(ordered))
+    kept = dict(ordered[: _MAX_MAP_ENTRIES - 1])
+    kept["other"] = kept.get("other", 0) + sum(
+        count for _, count in ordered[_MAX_MAP_ENTRIES - 1 :]
+    )
+    return dict(sorted(kept.items()))
 
 
 def checked_counts(value: object, *, label: str) -> dict[str, int]:

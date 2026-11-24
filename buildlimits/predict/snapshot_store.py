@@ -112,31 +112,68 @@ def load_snapshot(path: Path) -> Snapshot:
         raise TypeError(msg)
     decoded_events = tuple(event_from_dict(row, version=version) for row in events)
     _require_ordered_clock(path, decoded_events)
+    decoded_source = _source_from(path, typ.cast("dict[str, object]", source))
     return Snapshot(
         created_at=_parse_stamp(created),
-        source=_source_from(path, typ.cast("dict[str, object]", source)),
+        source=decoded_source,
         journal=journal_from_dict(journal, label=str(path)),
         events=decoded_events,
         gaps=_gaps_from(path, document.get("stats")),
-        diagnostics=_diagnostics_from(path, document.get("diagnostics")),
+        diagnostics=_diagnostics_from(
+            path, document.get("diagnostics"), source=decoded_source
+        ),
     )
 
 
-def _diagnostics_from(path: Path, value: object) -> Diagnostics | None:
-    """Rebuild the optional label-loss diagnostics.
+def _require_diagnostics_match(
+    path: Path, source: Source, diagnostics: Diagnostics
+) -> None:
+    """Require the diagnostics block to describe the same store as its source.
+
+    Both blocks state the row totals, and the report prints both. A document
+    where they disagree cannot be evidence of any one history, so it is
+    refused before either count reaches a reader.
+
+    Raises
+    ------
+    ValueError
+        If the retained-store counts disagree with the source counts.
+    """
+    store = diagnostics.store
+    if (store.records_total, store.outcome_records, store.summary_records) != (
+        source.records_total,
+        source.outcome_records,
+        source.summary_records,
+    ):
+        msg = f"{path} diagnostics store counts disagree with its source counts"
+        raise ValueError(msg)
+
+
+def _diagnostics_from(
+    path: Path, value: object, *, source: Source
+) -> Diagnostics | None:
+    """Rebuild the optional label-loss diagnostics and join them to its source.
 
     A version 1 snapshot has no block, and a version 2 snapshot may carry an
     explicit null when its writer had no counts. Both mean "unavailable", not
-    "empty".
+    "empty". A present block must describe the same store its source block
+    does, because the report prints both row totals.
 
     Returns
     -------
     Diagnostics | None
         The validated diagnostics, or None when the document carries none.
+
+    Raises
+    ------
+    ValueError
+        If the block disagrees with the source counts.
     """
     if value is None:
         return None
-    return diagnostics_from_dict(value, label=str(path))
+    diagnostics = diagnostics_from_dict(value, label=str(path))
+    _require_diagnostics_match(path, source, diagnostics)
+    return diagnostics
 
 
 def _require_ordered_clock(path: Path, events: cabc.Sequence[Event]) -> None:

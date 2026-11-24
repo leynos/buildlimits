@@ -8,7 +8,7 @@ import pytest
 from outcome_test_helpers import cache_key
 from predict_test_helpers import STORE_HEADER, outcome_record, write_store
 
-from buildlimits import outcome_store_io
+from buildlimits import outcome_segment_inventory, outcome_store_io
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.outcome_segments import SegmentLayout, archive_name, segment_name
 from buildlimits.predict import dataset_cli
@@ -18,6 +18,22 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_vocabulary import CacheResult
     from buildlimits.predict.config import Config
     from buildlimits.predict.dataset import Snapshot
+
+
+def test_a_failed_inventory_scan_is_not_reported_as_active_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The rows already read stay; only their closed-history evidence is lost."""
+
+    def _fail(_layout: object) -> object:
+        raise OSError("the segment directory cannot be listed")
+
+    monkeypatch.setattr(outcome_segment_inventory, "read_inventory", _fail)
+
+    loss = dataset_cli._read_inventory(tmp_path / "cache-outcomes.jsonl")
+
+    assert loss.inventory_unavailable is True, "the failure is recorded"
+    assert loss.active_only is False, "a successful history read was not active-only"
 
 
 def test_dataset_command_writes_a_redacted_snapshot(

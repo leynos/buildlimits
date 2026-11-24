@@ -14,6 +14,7 @@ from outcome_test_helpers import attributed_record
 from predict_test_helpers import write_json
 
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
+from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.dataset import StoreHistory, build_snapshot
 from buildlimits.predict.records import decode_history
 from buildlimits.predict.snapshot_codec import snapshot_to_dict
@@ -116,3 +117,34 @@ def test_an_irreconcilable_diagnostics_block_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="do not reconcile"):
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_diagnostics_must_describe_the_source_store(tmp_path: Path) -> None:
+    """The two row totals in one snapshot cannot name different stores."""
+    document = _document()
+    source = typ.cast("dict[str, object]", document["source"])
+    source["records_total"] = 2
+    source["outcome_records"] = 2
+
+    with pytest.raises(ValueError, match="disagree with its source"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_an_unavailable_inventory_survives_the_snapshot(tmp_path: Path) -> None:
+    """A failed inventory scan is distinct from a measured active-only read."""
+    snapshot = build_snapshot(
+        _history(attributed_record(outcome="hit")),
+        now=NOW,
+        history_loss=HistoryLoss(active_only=False, inventory_unavailable=True),
+    )
+    path = write_json(tmp_path / "history.jsonl", snapshot_to_dict(snapshot))
+
+    loaded = load_snapshot(path)
+
+    assert loaded.diagnostics is not None, "the block is present"
+    assert loaded.diagnostics.history.inventory_unavailable is True, (
+        "the failure is recorded"
+    )
+    assert loaded.diagnostics.history.active_only is False, (
+        "the read was not active-only"
+    )

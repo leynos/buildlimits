@@ -54,17 +54,37 @@ def data_sufficiency(document: cabc.Mapping[str, object]) -> list[str]:
     ]
     diagnostics = data.get("diagnostics")
     if diagnostics is None:
-        lines += [
-            (
-                "- Label-loss diagnostics: unavailable; this snapshot predates "
-                "the retained-store accounting."
-            ),
-            "",
-        ]
-        return lines
-    store = typ.cast("dict[str, object]", typ.cast("dict", diagnostics)["store"])
-    history = typ.cast("dict[str, object]", typ.cast("dict", diagnostics)["history"])
+        lines.append(
+            "- Label-loss diagnostics: unavailable; this snapshot predates "
+            "the retained-store accounting."
+        )
+    else:
+        lines += _diagnostics_lines(typ.cast("dict[str, object]", diagnostics))
+    # The journal's observer counts are independent of the retained-store
+    # block, so they are still worth printing when the store counts are not.
+    lines += _observer_lines(journal)
     lines += [
+        "",
+        (
+            "An ambiguous or unavailable window remains `unknown`; the report "
+            "never turns a missing hit into a miss."
+        ),
+        "",
+    ]
+    return lines
+
+
+def _diagnostics_lines(diagnostics: cabc.Mapping[str, object]) -> list[str]:
+    """Return the retained-store and closed-history bullets.
+
+    Returns
+    -------
+    list[str]
+        Markdown lines.
+    """
+    store = typ.cast("dict[str, object]", diagnostics["store"])
+    history = typ.cast("dict[str, object]", diagnostics["history"])
+    return [
         (
             f"- Label coverage among outcome rows: {as_count(store['labels'])} of "
             f"{as_count(store['outcome_records'])}"
@@ -79,24 +99,31 @@ def data_sufficiency(document: cabc.Mapping[str, object]) -> list[str]:
         f"- By attribution: {as_counts(store['by_attribution'])}",
         f"- By origin: {as_counts(store['by_origin'])}",
         f"- By parser class: {as_counts(store['by_parser_class'])}",
-        (
-            f"- Closed history: archived {as_count(history['archived'])}, "
-            f"sealed {as_count(history['sealed'])}, "
-            f"gaps {as_count(history['gaps'])}"
-            + (" (gap list truncated)" if history.get("gaps_truncated") else "")
-            + (", active file only" if history.get("active_only") else "")
-        ),
+        _closed_history_line(history),
     ]
-    lines += _observer_lines(journal)
-    lines += [
-        "",
-        (
-            "An ambiguous or unavailable window remains `unknown`; the report "
-            "never turns a missing hit into a miss."
-        ),
-        "",
-    ]
-    return lines
+
+
+def _closed_history_line(history: cabc.Mapping[str, object]) -> str:
+    """Return one honest statement of what closed history the snapshot saw.
+
+    A count that was never measured must not read as a measured zero, so the
+    two uninspected cases name themselves instead of printing counts.
+
+    Returns
+    -------
+    str
+        A measured counts line, or the reason no count is available.
+    """
+    if history.get("active_only"):
+        return "- Closed history: not considered (the active file alone was read)"
+    if history.get("inventory_unavailable"):
+        return "- Closed history: inventory unavailable; rows already read are included"
+    return (
+        f"- Closed history: archived {as_count(history['archived'])}, "
+        f"sealed {as_count(history['sealed'])}, "
+        f"gaps {as_count(history['gaps'])}"
+        + (" (gap list truncated)" if history.get("gaps_truncated") else "")
+    )
 
 
 def _rows_read_line(

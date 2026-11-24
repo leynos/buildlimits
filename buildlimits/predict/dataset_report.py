@@ -81,6 +81,9 @@ def _report_diagnostics(snapshot: Snapshot) -> None:
     if history.active_only:
         print("closed history: not considered (the active file alone was read)")
         return
+    if history.inventory_unavailable:
+        print("closed history: inventory unavailable; rows already read are included")
+        return
     print(
         f"closed history: archived={history.archived} sealed={history.sealed} "
         f"gaps={history.gaps} quarantined={history.quarantined} "

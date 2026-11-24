@@ -347,6 +347,22 @@ def test_a_measured_empty_journal_keeps_its_zero_counts() -> None:
     assert note.observer.requests == 0, "the zero is a measured count"
 
 
+def test_an_incomplete_observer_block_is_refused() -> None:
+    """A present block is a measurement, so a missing field is not a zero."""
+    note = count_journal(
+        (Record("supervisor", "cache_outcome", {}, OBSERVED_AT),),
+        since="4w",
+        cap=1000,
+        truncated=False,
+    )
+    encoded = journal_to_dict(note)
+    observer = typ.cast("dict[str, object]", encoded["observer"])
+    observer.pop("readings")
+
+    with pytest.raises(TypeError, match="exactly the recorded fields"):
+        journal_from_dict(encoded, label="test")
+
+
 def test_source_provenance_records_the_store_header() -> None:
     """The snapshot keeps the salt identifier and write time it read."""
     snapshot = build_snapshot(_history(attributed_record(outcome="hit")), now=NOW)

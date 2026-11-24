@@ -148,8 +148,11 @@ def poll(recorder: OutcomeRecorder) -> Reading:
 def start(recorder: OutcomeRecorder) -> None:
     """Wait for the read cadence, then start one statistics query."""
     now = max(time.monotonic(), recorder.state.progress.next_read_at)
-    if now > time.monotonic():
-        time.sleep(now - time.monotonic())
+    # Read the clock once: a second read can pass `now`, making the delay
+    # negative, which time.sleep refuses rather than treating as no wait.
+    delay = now - time.monotonic()
+    if delay > 0:
+        time.sleep(delay)
     recorder.advance(GateOpen(inputs(), now))
     if not isinstance(recorder.state, Querying):
         pytest.fail("the quiet gate did not open a statistics query")
@@ -284,15 +287,15 @@ def run_mixed(recorder: OutcomeRecorder, tools: Toolchain) -> Reading:
                     text=True,
                 )
             )
+            # Register the bounded teardown as soon as the process exists, so
+            # a failure while starting the next one cannot leave this process
+            # waiting on Popen.__exit__'s unbounded wait.
+            stack.callback(end_process, process, 5.0)
             processes.append((group_id, process))
-        try:
-            for group_id, process in processes:
-                _stdout, stderr = process.communicate(timeout=30)
-                assert process.returncode == 0, stderr
-                finish(recorder, group_id)
-        finally:
-            for _group_id, process in processes:
-                end_process(process, 5.0)
+        for group_id, process in processes:
+            _stdout, stderr = process.communicate(timeout=30)
+            assert process.returncode == 0, stderr
+            finish(recorder, group_id)
     return read(recorder)
 
 

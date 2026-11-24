@@ -124,8 +124,8 @@ def _data_sufficiency_section(markdown: str) -> str:
     return "\n".join(lines[start:end]).strip()
 
 
-def test_a_truncated_journal_marks_its_observer_counts() -> None:
-    """Partial observer counts say that the journal cap was reached."""
+def _diagnostics_document() -> dict[str, object]:
+    """Return a document whose store, history and observer counts are measured."""
     document = empty_document()
     data = data_section(document)
     typ.cast("dict[str, object]", data["source"]).update(
@@ -152,13 +152,14 @@ def test_a_truncated_journal_marks_its_observer_counts() -> None:
             "cacheable_labels": 2,
         },
         "history": {
-            "active_only": True,
-            "archived": 0,
+            "active_only": False,
+            "archived": 1,
             "sealed": 0,
             "gaps": 0,
             "gaps_truncated": False,
             "retention_floor": None,
             "quarantined": 0,
+            "inventory_unavailable": False,
         },
     }
     data["journal"] = {
@@ -187,8 +188,18 @@ def test_a_truncated_journal_marks_its_observer_counts() -> None:
             "by_reading_reason": {"none": 1},
         },
     }
+    return document
 
-    markdown = render_markdown(document)
+
+def _history_of(document: dict[str, object]) -> dict[str, object]:
+    """Return the mutation-friendly history block of a diagnostics document."""
+    diagnostics = typ.cast("dict[str, object]", data_section(document)["diagnostics"])
+    return typ.cast("dict[str, object]", diagnostics["history"])
+
+
+def test_a_truncated_journal_marks_its_observer_counts() -> None:
+    """Partial observer counts say that the journal cap was reached."""
+    markdown = render_markdown(_diagnostics_document())
 
     assert "the query reached its record cap" in markdown, (
         "the journal note states the cap"
@@ -196,6 +207,44 @@ def test_a_truncated_journal_marks_its_observer_counts() -> None:
     assert "Observer counts cover only the retained journal window" in markdown, (
         "the observer block warns that its counts are partial"
     )
+
+
+def test_an_active_only_read_does_not_print_unmeasured_counts() -> None:
+    """A file that was never opened is not reported as an empty segment set."""
+    document = _diagnostics_document()
+    _history_of(document).update(active_only=True, archived=0)
+
+    markdown = render_markdown(document)
+
+    assert (
+        "- Closed history: not considered (the active file alone was read)" in markdown
+    ), "the reader is told the history was not examined"
+    assert "- Closed history: archived" not in markdown, "no count is presented"
+
+
+def test_an_unavailable_inventory_says_so_rather_than_printing_zeroes() -> None:
+    """A scan failure is unavailable evidence, not a measured empty history."""
+    document = _diagnostics_document()
+    _history_of(document).update(active_only=False, inventory_unavailable=True)
+
+    markdown = render_markdown(document)
+
+    assert (
+        "- Closed history: inventory unavailable; rows already read are included"
+    ) in markdown, "the failure is named"
+    assert "- Closed history: archived" not in markdown, "no count is presented"
+
+
+def test_observer_counts_are_rendered_without_a_diagnostics_block() -> None:
+    """A pre-accounting snapshot still carries the recorder's own counts."""
+    document = _diagnostics_document()
+    data_section(document).pop("diagnostics")
+
+    markdown = render_markdown(document)
+
+    assert "Label-loss diagnostics: unavailable" in markdown, "the gap is named"
+    assert "- Observer by result: hit=2" in markdown, "the observer still reports"
+    assert "Observer counts: unavailable" not in markdown, "they are not called absent"
 
 
 def test_an_unranked_report_omits_the_detail_tables() -> None:

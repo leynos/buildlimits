@@ -258,7 +258,7 @@ def _read_inventory(store: Path) -> HistoryLoss:
             SegmentLayout.beside(store)
         )
     except OSError:
-        return HistoryLoss.active_file_only()
+        return HistoryLoss(active_only=False, inventory_unavailable=True)
     return HistoryLoss(
         active_only=False,
         archived=len(inventory.archived),

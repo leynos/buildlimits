@@ -68,6 +68,7 @@ def diagnostics_to_dict(diagnostics: Diagnostics | None) -> dict[str, object] | 
             "gaps_truncated": history.gaps_truncated,
             "retention_floor": history.retention_floor,
             "quarantined": history.quarantined,
+            "inventory_unavailable": history.inventory_unavailable,
         },
     }
 
@@ -210,12 +211,21 @@ def _history_loss_from(value: dict[str, object], label: str) -> HistoryLoss:
     ------
     TypeError
         If a flag has the wrong Python type.
+    ValueError
+        If the block claims both an active-only read and a failed inventory.
     """
     active_only = value.get("active_only")
     gaps_truncated = value.get("gaps_truncated")
-    if not isinstance(active_only, bool) or not isinstance(gaps_truncated, bool):
+    # A document written before the field existed still reads as measured
+    # closed history; only the fallback for a failed inventory scan sets it.
+    inventory_unavailable = value.get("inventory_unavailable", False)
+    flags = (active_only, gaps_truncated, inventory_unavailable)
+    if not all(isinstance(flag, bool) for flag in flags):
         msg = f"{label} history flags must be booleans"
         raise TypeError(msg)
+    if active_only and inventory_unavailable:
+        msg = f"{label} history cannot be active-only and inventory-unavailable"
+        raise ValueError(msg)
     retention_floor = value.get("retention_floor")
     if retention_floor is not None:
         retention_floor = _required_count(
@@ -231,6 +241,7 @@ def _history_loss_from(value: dict[str, object], label: str) -> HistoryLoss:
         quarantined=_required_count(
             value.get("quarantined"), label=f"{label} quarantined"
         ),
+        inventory_unavailable=inventory_unavailable,
     )
 
 

@@ -10,6 +10,7 @@ from hypothesis import strategies as st
 from outcome_store_helpers import window_summary
 from outcome_test_helpers import OBSERVED_AT, attributed_record
 
+from buildlimits.predict import accounting as accounting_module
 from buildlimits.predict.accounting import (
     UNRECORDED,
     HistoryLoss,
@@ -195,5 +196,32 @@ def test_history_loss_defaults_to_the_active_file() -> None:
     loss = HistoryLoss.active_file_only()
 
     assert loss.active_only is True, "closed history was not considered"
+    assert loss.inventory_unavailable is False, "the absence was a choice"
     assert loss.gaps == 0, "no gap count is invented"
     assert loss.retention_floor is None, "no floor is invented"
+
+
+def test_a_breakdown_over_the_entry_bound_keeps_its_total(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Overflow values merge into one bucket so the breakdown still sums."""
+    monkeypatch.setattr(accounting_module, "_MAX_MAP_ENTRIES", 2)
+    base = attributed_record(outcome="hit")
+    records = tuple(
+        dc.replace(
+            base,
+            key=dc.replace(
+                base.key,
+                toolchain_identity=dc.replace(
+                    base.key.toolchain_identity, server_version=version
+                ),
+            ),
+        )
+        for version in ("0.12.0", "0.13.0", "0.14.0")
+    )
+
+    accounting = store_accounting(typ.cast("typ.Any", records))
+
+    assert len(accounting.by_server_version) == 2, "the map stays within its bound"
+    assert sum(accounting.by_server_version.values()) == 3, "no count is dropped"
+    assert accounting.by_server_version["other"] == 2, "the overflow is explicit"

@@ -216,15 +216,22 @@ def _observer_from(value: object, label: str) -> ObserverAccounting | None:
         msg = f"{label} journal observer must be an object"
         raise TypeError(msg)
     block = typ.cast("dict[str, object]", value)
+    expected = {*_OBSERVER_COUNT_FIELDS, *_OBSERVER_MAP_FIELDS}
+    # A present block is a measurement, so every field the writer emits must be
+    # there. Defaulting a missing field to zero would report an absent count as
+    # a measured one, which is the error this block exists to prevent.
+    if set(block) != expected:
+        msg = f"{label} journal observer must hold exactly the recorded fields"
+        raise TypeError(msg)
     counts = {
-        name: _journal_count(block.get(name, 0), label, f"observer {name}")
+        name: _journal_count(block[name], label, f"observer {name}")
         for name in _OBSERVER_COUNT_FIELDS
     }
     if any(count < 0 for count in counts.values()):
         msg = f"{label} journal observer counts must not be negative"
         raise ValueError(msg)
     maps = {
-        name: _tally_from(block.get(name, {}), label, f"observer {name}")
+        name: _tally_from(block[name], label, f"observer {name}")
         for name in _OBSERVER_MAP_FIELDS
     }
     return ObserverAccounting(
