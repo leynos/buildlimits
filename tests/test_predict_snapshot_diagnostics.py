@@ -5,12 +5,13 @@ diagnostics block that cannot describe a possible history. These tests keep
 those two directions together, apart from the general document-shape tests.
 """
 
+import dataclasses as dc
 import datetime as dt
 import typing as typ
 from pathlib import Path
 
 import pytest
-from outcome_test_helpers import attributed_record
+from outcome_test_helpers import OBSERVED_AT, attributed_record
 from predict_test_helpers import ACTIVE_FILE_ONLY, write_json
 
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
@@ -27,6 +28,14 @@ def _history(*records: object) -> StoreHistory:
     """Decode records into the history value a snapshot is built from."""
     decoded = DecodedStore(StoreHeader("fixed-salt", NOW), typ.cast("typ.Any", records))
     return decode_history(decoded)
+
+
+def _store_block(document: dict[str, object]) -> dict[str, object]:
+    """Return the mutable diagnostics store block of one encoded document."""
+    return typ.cast(
+        "dict[str, object]",
+        typ.cast("dict[str, object]", document["diagnostics"])["store"],
+    )
 
 
 def _document() -> dict[str, object]:
@@ -101,10 +110,7 @@ def test_a_version_two_event_must_name_admission(tmp_path: Path) -> None:
 def test_an_impossible_cacheable_intersection_is_refused(tmp_path: Path) -> None:
     """A labelled and cacheable pair must share at least one outcome row."""
     document = _document()
-    store = typ.cast(
-        "dict[str, object]",
-        typ.cast("dict[str, object]", document["diagnostics"])["store"],
-    )
+    store = _store_block(document)
     store["cacheable_labels"] = 0
 
     with pytest.raises(ValueError, match="possible intersection"):
@@ -114,13 +120,52 @@ def test_an_impossible_cacheable_intersection_is_refused(tmp_path: Path) -> None
 def test_an_irreconcilable_diagnostics_block_is_refused(tmp_path: Path) -> None:
     """A count that disagrees with its breakdown cannot become evidence."""
     document = _document()
-    store = typ.cast(
-        "dict[str, object]",
-        typ.cast("dict[str, object]", document["diagnostics"])["store"],
-    )
+    store = _store_block(document)
     store["outcome_records"] = 7
 
     with pytest.raises(ValueError, match="do not reconcile"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def _events(document: dict[str, object]) -> list[dict[str, object]]:
+    """Return the mutable event rows of one encoded document."""
+    return typ.cast("list[dict[str, object]]", document["events"])
+
+
+def test_a_dropped_event_is_refused(tmp_path: Path) -> None:
+    """The event stream must hold one row per retained outcome."""
+    document = _document()
+    _events(document).clear()
+
+    with pytest.raises(ValueError, match="events but its diagnostics"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_a_swapped_label_is_refused(tmp_path: Path) -> None:
+    """Matching label totals cannot hide contradictory hit and miss counts."""
+    document = _document()
+    _events(document)[0]["label"] = "miss"
+
+    with pytest.raises(ValueError, match="hit events but its diagnostics"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
+def test_a_removed_admission_time_is_refused(tmp_path: Path) -> None:
+    """An event's admission presence must match the recorded coverage."""
+    adopted = dc.replace(
+        attributed_record(outcome="hit"),
+        admitted_at=OBSERVED_AT - dt.timedelta(seconds=2),
+    )
+    document = snapshot_to_dict(
+        build_snapshot(
+            _history(adopted),
+            now=NOW,
+            history_loss=ACTIVE_FILE_ONLY,
+        )
+    )
+    _events(document)[0]["admitted_at"] = None
+
+    with pytest.raises(ValueError, match="admission times on its events"):
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
 
@@ -131,15 +176,12 @@ def test_diagnostics_labels_must_describe_the_events(tmp_path: Path) -> None:
     only the join to the event stream can refuse it.
     """
     document = _document()
-    store = typ.cast(
-        "dict[str, object]",
-        typ.cast("dict[str, object]", document["diagnostics"])["store"],
-    )
+    store = _store_block(document)
     store["labels"] = 0
     store["cacheable_labels"] = 0
     store["by_result"] = {"unattributed": 1}
 
-    with pytest.raises(ValueError, match="labelled events"):
+    with pytest.raises(ValueError, match="hit events but its diagnostics"):
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
 

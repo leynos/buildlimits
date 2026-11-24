@@ -2613,6 +2613,9 @@ reason = "The two helpers answer opposite questions over the same lookup: the ar
 members = ["buildlimits/outcome_record_format.py", "tests/rustc_linter_acceptance.py"]
 reason = "Both frozen records declare a similar field shape for unrelated contracts: one is a stored outcome window, the other a linter-run configuration. They share no behaviour and no field, so a common abstraction would only couple two independent value types."
 [[tool.duplication_gate.allow]]
+members = ["tests/render_helpers.py::data_section", "buildlimits/predict/render.py::_predictors", "tests/test_predict_snapshot_diagnostics.py::_events", "tests/test_predict_snapshot_store.py::_journal"]
+reason = "One typed accessor for a JSON document field, written four times: each site names the block its own document shape carries (data, predictors, events, journal), and a shared reader would hide which field each module actually reads."
+[[tool.duplication_gate.allow]]
 members = ["tests/test_predict_snapshot_store.py", "tests/test_predict_snapshot_diagnostics.py", "tests/test_predict_snapshot_domains.py"]
 reason = "Matching test preambles: the snapshot-shape, diagnostics and multi-domain suites each name the record, journal and fixture helpers they use, and a shared re-export would hide which dependencies each suite actually needs."
 [[tool.duplication_gate.allow]]
