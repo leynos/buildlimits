@@ -437,12 +437,31 @@ either component's private counters.
   whose rollback cannot remove the partial line leaves bytes no row accounts
   for; that snapshot reports `repair_pending` and stays incomplete until a
   compaction or a fresh active file removes the fragment. A snapshot the writer
-  cannot supply omits the section rather than failing the status read. Closed
-  history is reported by the archive command, which owns it.
+  cannot supply is reported as a bounded `snapshot_unavailable` marker rather
+  than failing or omitting the status read. Closed history is reported by the
+  archive command, which owns it.
 
 None of these figures is a cumulative recorder counter or a journal-reader
 query cap: `record_count` counts rows retained on disk, not outcomes seen since
 start-up, and `--max-records` limits a query rather than the store.
+
+### D10: the header floor is injected at load and validation time
+
+The byte-budget rule must reject a bound that could not hold the replacement
+store header, but the configuration layer must not import the record
+serialization size to learn that floor. `config_retention.retention_rules`
+therefore takes the floor as an argument, and `config.load` and
+`config.validate` accept it as a keyword-only `header_floor`. The composition
+edge supplies `header_floor_bytes()`: the supervisor entry point and the
+archive command each pass it, so both consumers validate against the same
+figure.
+
+The consequence is explicit: a caller that omits `header_floor` still gets the
+range, relationship and retention rules, but not the header check. Direct
+construction in tests may omit it to exercise the legacy defaults; a production
+entry point must pass it. This keeps the policy contract usable without the
+serialization format while making the missing check a caller-visible choice
+rather than a silent import.
 
 ## Goals and non-goals
 

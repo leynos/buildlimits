@@ -137,3 +137,33 @@ def test_an_idle_expiry_reports_the_compaction_it_performed(tmp_path: Path) -> N
 
     assert files.expire_if_aged() is True, "the aged row is compacted away"
     assert files.expire_if_aged() is False, "a compacted store has nothing to expire"
+
+
+def test_a_status_read_does_not_publish_state(tmp_path: Path) -> None:
+    """A read returns the recorded state without replacing it."""
+    files = loaded_with_a_row(tmp_path / "cache-outcomes.jsonl")
+    files.publish_snapshot()
+    recorded = files._published
+    assert recorded is not None, "the worker published one completed state"
+
+    first = files.retention()
+    second = files.retention()
+
+    assert files._published is recorded, (
+        "a status read leaves the published state untouched"
+    )
+    assert first == second, "repeated reads describe the same state"
+
+
+def test_publishing_records_one_coherent_state(tmp_path: Path) -> None:
+    """The publish path pairs one row count with the bytes of that state."""
+    files = loaded_with_a_row(tmp_path / "cache-outcomes.jsonl")
+
+    files.publish_snapshot()
+
+    snapshot = files.retention()
+    assert snapshot.has_metadata is True, "the completed state is measured"
+    assert snapshot.records == len(files.records), "the snapshot counts its rows"
+    assert snapshot.bytes == files.path.stat().st_size, (
+        "the snapshot size is the active file's size in the same state"
+    )

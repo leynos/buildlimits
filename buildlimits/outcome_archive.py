@@ -15,7 +15,6 @@ from buildlimits import (
     outcome_archive_evict,
     outcome_archive_fs,
     outcome_archive_lock,
-    outcome_archive_report,
     outcome_archive_retain,
     outcome_archive_run,
     outcome_archive_settled,
@@ -37,6 +36,9 @@ from buildlimits.outcome_archive_report import (
     RunReport,
     RunStatus,
     Unfinished,
+)
+from buildlimits.outcome_archive_report_builders import (
+    after_work_failure,
     dry_report,
     unfinished_report,
     unsettled_report,
@@ -184,7 +186,9 @@ def _inspect(
     )
     if not settled:
         return unsettled_report(started, dry_run=True, clock=context.clock)
-    return dry_report(_archive_run(context, plan), active, inventory)
+    return dry_report(
+        _archive_run(context, plan), active, inventory, clock=context.clock
+    )
 
 
 def _execute_locked(
@@ -329,7 +333,7 @@ def _execute(
         )
         return (
             None,
-            outcome_archive_report.after_work_failure(run, outcome, "unreadable"),
+            after_work_failure(run, outcome, "unreadable"),
         )
 
 

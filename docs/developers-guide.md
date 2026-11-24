@@ -342,7 +342,7 @@ Each module owns one decision. This table is the single module inventory.
 | `toolchain_env`                                                                    | Filesystem-only compiler lookup, loader-path repair and public `locate_executable` helper                                                                   |
 | `rustc_query`, `rustc_query_grammar`, `rustc_query_workspace`, `rustc_cargo_probe` | Public dispatch and normalization; rustc argument grammar; wrapper identity; Cargo stdin grammar                                                            |
 | `service`, `service_readiness`, `config`                                           | The supervisor entry point, `READY=1` and `STATUS=` notifications, and settings                                                                             |
-| `config_retention`                                                                 | Retention settings and validation rules shared by the supervisor loader and the archive command                                                             |
+| `config_retention`                                                                 | Retention settings, the `RetentionRule` alias and `retention_rules(header_floor)`; the old module-level `RETENTION_RULES` tuple is gone                     |
 | `config_values`                                                                    | Type coercion from parsed TOML values to supervisor field types                                                                                             |
 | `status`, `status_client`, `status_render`, `status_cli`                           | The status document, its transport, rendering and command                                                                                                   |
 | `status_sections`                                                                  | Reading an optional nested status section, treating an absent or malformed one as empty                                                                     |
@@ -413,7 +413,8 @@ Each module owns one decision. This table is the single module inventory.
 | `outcome_archive_lock`                                                             | The archive lock and the disk-headroom guard for one run                                                                                                    |
 | `outcome_archive_fs`                                                               | Private file primitives: no-follow opens, exclusive temporaries, no-clobber publication, descriptor-relative removal and atomic state writes                |
 | `outcome_archive_dirs`                                                             | Descriptor-relative directory walk that creates, syncs and validates each private path component, and returns the descriptor it validated                   |
-| `outcome_archive_report`                                                           | Bounded run report, status vocabulary and the builders for inspections and failed runs                                                                      |
+| `outcome_archive_report`                                                           | Bounded run report shape and closed status vocabulary                                                                                                       |
+| `outcome_archive_report_builders`                                                  | The dry, unsettled, unfinished and post-work-failure builders, each taking its clock at the boundary                                                        |
 | `outcome_archive_settled`                                                          | Building one settled run's report, classifying its status and testing whether retention still owes work                                                     |
 | `outcome_archive_report_fields`                                                    | The shared report fields both settled-report builders derive from one store view                                                                            |
 | `outcome_archive_events`                                                           | One bounded `archive_run` metrics event per timer firing                                                                                                    |
@@ -1166,12 +1167,15 @@ the newest header. `outcome_history_args` defines the shared `--history`,
 `--salt-id` and `--all-salts` imply history mode, and no flag keeps the
 active-store-only behaviour.
 
-`outcome_archive_report` defines the closed report vocabulary. Statuses are
-`ok`, `failed`, `corrupt`, `busy`, `no_headroom` and `unsettled`. The module
-owns the value vocabulary and the builders for inspections and runs that could
-not complete: `dry_report` from a settled inventory and active snapshot,
-`unsettled_report` for a store that never held still, and `unfinished_report`
-and `after_work_failure` for a run that could not start or measure its result.
+`outcome_archive_report` defines the closed report vocabulary and the report
+shape. Statuses are `ok`, `failed`, `corrupt`, `busy`, `no_headroom` and
+`unsettled`. `outcome_archive_report_builders` owns the builders for
+inspections and runs that could not complete: `dry_report` from a settled
+inventory and active snapshot, `unsettled_report` for a store that never held
+still, and `unfinished_report` and `after_work_failure` for a run that could
+not start or measure its result. Each standalone builder takes the clock that
+reads its finish time as a keyword argument; the two builders that already
+receive the run's context read the clock that context carries.
 `outcome_archive_settled` owns `settled_report`, which maps the `SettledStore`
 an executed run measured into the same report, classifies the run's status and
 tests whether retention still owes work. Every builder takes its finish time
@@ -1181,6 +1185,24 @@ random tag a quarantine name records, so both the report's timing and the
 evidence naming are ports a test can substitute. The report names no path and
 carries no raw exception text; the only path a run prints is an unreadable
 configuration file, on standard error before the report exists.
+
+### 9.1.1. The header floor is injected, not imported
+
+The byte-budget rule rejects a `cache_outcomes_max_bytes` that could not hold
+even the store's replacement header. `config_retention` takes the floor as an
+argument instead of importing the serialization size itself:
+`retention_rules(header_floor)` inserts the header rule when a floor is
+supplied and omits it otherwise, and `config.load` and `config.validate` accept
+the same keyword-only `header_floor`.
+
+The composition edge supplies the value. `buildlimits/service.py` and
+`buildlimits/outcome_archive_cli.py` both pass `header_floor_bytes()` from the
+record encoder, so a supervisor start and a timer firing validate against the
+same figure and neither configuration module depends on the record format.
+
+The consequence is deliberate: a caller that omits `header_floor` gets every
+other rule but not the header check. Tests and tools that construct a
+configuration directly may omit it; production entry points must not.
 
 `outcome_archive_codec` owns the JSON document a report is published in, and
 `outcome_archive_exit` owns the process status: 0 for success, 1 for an

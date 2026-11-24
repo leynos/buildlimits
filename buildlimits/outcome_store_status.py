@@ -63,7 +63,9 @@ def publish_snapshot(files: StoreFiles) -> None:
     except OSError:
         size = None
     reason = "repair_pending" if files.torn_tail else None
-    files._published = _Published(files.records, len(files.records), size, reason)
+    files.publish_snapshot_state(
+        _Published(files.records, len(files.records), size, reason)
+    )
 
 
 def retention_snapshot(files: StoreFiles) -> ActiveHistory:

@@ -155,6 +155,18 @@ class StoreFiles:
         """Publish the rows and byte size of one completed store state."""
         outcome_store_status.publish_snapshot(self)
 
+    def publish_snapshot_state(self, published: _Published) -> None:
+        """Record one completed store state for status readers.
+
+        Parameters
+        ----------
+        published : _Published
+            The rows, count, size and reason describing one completed
+            transition. Only the worker's publish path constructs it; the
+            status read returns the recorded state without replacing it.
+        """
+        self._published = published
+
     def retention(self) -> ActiveHistory:
         """Describe the rows the writer currently holds in the active file.
 
