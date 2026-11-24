@@ -39,6 +39,7 @@ _OBSERVER_MAP_FIELDS = (
     "by_reason",
     "by_attribution",
     "by_origin",
+    "by_store_reason",
     "by_gate_reason",
     "by_reading_reason",
 )
@@ -208,7 +209,8 @@ def _observer_from(value: object, label: str) -> ObserverAccounting | None:
     TypeError
         If the block or one of its values has the wrong Python type.
     ValueError
-        If a count is negative.
+        If a count is negative, or the store-reason breakdown does not sum to
+        the discarded total it explains.
     """
     if value is None:
         return None
@@ -219,7 +221,9 @@ def _observer_from(value: object, label: str) -> ObserverAccounting | None:
     expected = {*_OBSERVER_COUNT_FIELDS, *_OBSERVER_MAP_FIELDS}
     # A present block is a measurement, so every field the writer emits must be
     # there. Defaulting a missing field to zero would report an absent count as
-    # a measured one, which is the error this block exists to prevent.
+    # a measured one, which is the error this block exists to prevent. The
+    # observer block is part of this branch's unreleased snapshot format, so
+    # requiring ``by_store_reason`` refuses no document a release wrote.
     if set(block) != expected:
         msg = f"{label} journal observer must hold exactly the recorded fields"
         raise TypeError(msg)
@@ -234,6 +238,9 @@ def _observer_from(value: object, label: str) -> ObserverAccounting | None:
         name: _tally_from(block[name], label, f"observer {name}")
         for name in _OBSERVER_MAP_FIELDS
     }
+    if sum(maps["by_store_reason"].values()) != counts["store_discarded"]:
+        msg = f"{label} journal observer store reasons do not sum to its discards"
+        raise ValueError(msg)
     return ObserverAccounting(
         requests=counts["requests"],
         outcomes=counts["outcomes"],
@@ -248,6 +255,7 @@ def _observer_from(value: object, label: str) -> ObserverAccounting | None:
         by_reason=maps["by_reason"],
         by_attribution=maps["by_attribution"],
         by_origin=maps["by_origin"],
+        by_store_reason=maps["by_store_reason"],
         by_gate_reason=maps["by_gate_reason"],
         by_reading_reason=maps["by_reading_reason"],
     )

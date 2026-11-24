@@ -192,15 +192,28 @@ outcome store with a snapshot document. An output path that cannot be written,
 such as a directory or a read-only location, is reported as a command failure
 with status 1 rather than a traceback.
 
+The command's closed-history evidence is measured against the retention floor
+the archiver recorded in `retention.json`. A recorded floor is passed to the
+segment scan, so a prefix retention deleted on purpose is not reported as lost
+history. A floor that exists but cannot be read is not a fresh store: every
+absent sequence below the survivors could be retention's work or real damage,
+so the command records the inventory as unavailable and keeps the rows it
+already read rather than printing a gap count derived from an unknown floor.
+The quarantine directory is counted from its regular files, because a
+quarantined file's name carries its fault reason and a random token rather than
+a sequence; a directory that cannot be listed makes the inventory unavailable
+for the same reason.
+
 ### 2.3. The prediction domain boundary
 
 `buildlimits.predict` follows the same dependency rule as the admission core:
 values and decisions sit in domain modules, and everything that reaches outside
 the process is an adapter at its edge. The domain modules are `accounting`,
-`bootstrap`, `comparison`, `config`, `dataset`, `ensemble_runs`, `ensembles`,
-`evaluation`, `events`, `fitting`, `harness`, `journal_codec`,
-`journal_provenance`, `metrics`, `predictors`, `probability`, `report`,
-`report_codec` and `scoring`.
+`bootstrap`, `comparison`, `config`, `dataset`, `diagnostics_codec`,
+`ensemble_runs`, `ensembles`, `evaluation`, `events`, `fitting`, `harness`,
+`journal_codec`, `journal_provenance`, `metrics`, `observer_accounting`,
+`predictors`, `probability`, `report`, `report_codec`, `scoring` and
+`snapshot_diagnostics_join`.
 
 `accounting` is the bounded label-loss value: it folds decoded store rows into
 counts by cache result, outcome reason, attribution, origin, parser class,
@@ -210,24 +223,34 @@ journal reader, so the same value describes a snapshot taken by the command and
 a document read back by the benchmark.
 
 None of those modules imports a file-system, JSON, process or command module,
-and none imports an adapter. `journal_codec` and `report_codec` are domain
-modules even though they build documents: neither parses or writes JSON itself.
-`journal_codec` converts the journal provenance in both directions, while
+and none imports an adapter. `journal_codec`, `diagnostics_codec` and
+`report_codec` are domain modules even though they build documents: none of
+them parses or writes JSON itself. `journal_codec` converts the journal
+provenance in both directions, `diagnostics_codec` does the same for the
+snapshot's label-loss block and refuses a block that does not reconcile, and
 `report_codec` only encodes values into plain mappings through its `*_to_dict`
-functions and never decodes one. The report's `data` block, including the
-snapshot's source and summary counts, is built by `report_codec`, so the domain
-report never reaches the JSON codec. `snapshot_codec` is outside the list
-because it does read and write JSON document fragments, and `snapshot_store`
-owns the file those fragments go to.
+functions and never decodes one. Encoding the diagnostics is a domain concern
+because the same module both states every count the report prints and checks
+the totals that make those counts evidence; keeping the two directions together
+is what stops the writer and the loader disagreeing. The report's `data` block,
+including the snapshot's source and summary counts, is built by `report_codec`,
+so the domain report never reaches the JSON codec. `snapshot_diagnostics_join`
+compares the diagnostics block with the source counts and the event rows, so it
+is a domain module too: it describes which documents name one history and
+touches no document format beyond the values it is handed. `snapshot_codec` is
+outside the list because it does read and write JSON document fragments, and
+`snapshot_store` owns the file those fragments go to.
 
 The adapters are `config_loader` (reads and validates the packaged
 configuration), `snapshot_store` (parses and writes a snapshot document),
-`report_writer` (writes a report to a directory), `records` (decodes the
-outcome store into events), `provenance` (`git_revision`: the commit that
-tracks the module), `paths` (`same_file`: whether two paths name one file),
-`dataset_inputs` (every file a snapshot reads, and whether its output would
-replace or sit beside one), `dataset_journal` (the journal lookback option and
-the provenance note) and the two commands `dataset_cli` and `benchmark_cli`.
+`report_writer` (writes a report to a directory), `dataset_report` (prints a
+snapshot's counts for a user, which makes it an output adapter rather than a
+domain value), `records` (decodes the outcome store into events), `provenance`
+(`git_revision`: the commit that tracks the module), `paths` (`same_file`:
+whether two paths name one file), `dataset_inputs` (every file a snapshot
+reads, and whether its output would replace or sit beside one),
+`dataset_journal` (the journal lookback option and the provenance note) and the
+two commands `dataset_cli` and `benchmark_cli`.
 
 `tests/test_predict_boundaries.py` enforces the rule. It parses each listed
 domain module's imports, resolves relative forms against the module's package
@@ -929,14 +952,27 @@ that says the file cannot hold one.
 
 `buildlimits.predict.accounting` folds decoded rows into the bounded
 `StoreAccounting` value stored once in the snapshot's `diagnostics` block.
-`journal_provenance.ObserverAccounting` folds the recorder's journal events
-into the matching observer denominators. The snapshot loader reconciles the
-stored counts before a report can print them, so a corrupted or hand-edited
-block is refused. The quiet-point gate in `outcome_gate` no longer requires an
-empty queue; every reading, baseline included, still requires no cached
-movement or detached drain, because a compilation in flight at the boundary
-would move counters into the next window. A window overflow resets the baseline
-in `outcome_recorder`.
+`observer_accounting.ObserverAccounting` folds the recorder's journal events
+into the matching observer denominators; `journal_provenance` re-exports it
+beside the provenance value it is attached to. Its `by_store_reason` map adds
+the discarded rows by their closed `StoreReason`, so retention loss (`expired`)
+is told apart from a failed write (`save_failed`, `seal_failed`, `corrupt`,
+`version_mismatch`); only a result that actually dropped a row contributes, so
+the map sums to `store_discarded` and a clean append adds nothing to it. The
+snapshot loader reconciles the stored counts before a report can print them, so
+a corrupted or hand-edited block is refused, and the journal codec requires the
+store-reason map to sum to the discarded total. Issue #68 also asks for label
+loss by sccache generation. A store row's key names the server _version_, not
+the generation the recorder observed, so no per-generation breakdown can be
+measured from retained history; both reports print the dimension as
+unavailable, with that reason, rather than omitting it or filling it with a
+count the history cannot support. Adding a generation field to the row was
+rejected because no report could reconcile it with the rows already written.
+
+The quiet-point gate in `outcome_gate` no longer requires an empty queue; every
+reading, baseline included, still requires no cached movement or detached
+drain, because a compilation in flight at the boundary would move counters into
+the next window. A window overflow resets the baseline in `outcome_recorder`.
 
 `OutcomeTelemetry` maps reducer outputs to those metrics and owns the bounded
 `statistics_read` span. `outcome_reading` is transition-only: it carries a

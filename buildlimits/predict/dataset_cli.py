@@ -14,6 +14,7 @@ from pathlib import Path
 from buildlimits import (
     outcome_history,
     outcome_segment_inventory,
+    outcome_segment_state,
 )
 from buildlimits.outcome_history_args import add_history_arguments, selection_from
 from buildlimits.outcome_record_format import RecordFailure
@@ -48,6 +49,22 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_record_format import DecodedStore
     from buildlimits.predict.config import Config
 
+DEFAULT_OUTPUT = Path("build/predict/history.jsonl")
+DEFAULT_JOURNAL_SPAN = "4w"
+
+
+
+"""The build-limits-predict-dataset command.
+It reads this host's live cache-outcome store, redacts it into the versioned
+snapshot, and says how much history the snapshot really represents.
+"""
+if typ.TYPE_CHECKING:
+    import collections.abc as cabc
+    import datetime as dt
+    from buildlimits.metrics_query import Window
+    from buildlimits.outcome_history import HistorySelection
+    from buildlimits.outcome_record_format import DecodedStore
+    from buildlimits.predict.config import Config
 DEFAULT_OUTPUT = Path("build/predict/history.jsonl")
 DEFAULT_JOURNAL_SPAN = "4w"
 
@@ -245,17 +262,26 @@ def _store_path(store: Path | None) -> Path:
 def _read_inventory(store: Path) -> HistoryLoss:
     """Describe the closed history an extraction could not see.
 
-    A scan failure is not a reason to lose the snapshot, so it is reported as
-    "closed history not considered" rather than as an empty history.
+    The scan is told the floor the archiver recorded, so a prefix retention
+    deleted on purpose is not reported as missing history. A floor that exists
+    but cannot be read is not the same fact: every absent sequence below the
+    survivors would then look like a gap retention may or may not have made, so
+    the counts are withheld rather than guessed. A scan failure is treated the
+    same way; neither is a reason to lose the rows already read.
 
     Returns
     -------
     HistoryLoss
-        The inventory counts, or the active-file-only statement on failure.
+        The inventory counts, or the unavailable statement when the floor or
+        the scan cannot be trusted.
     """
+    layout = SegmentLayout.beside(store)
+    floor = outcome_segment_state.read_retention_floor(layout)
+    if floor.state not in {"recorded", "missing"}:
+        return HistoryLoss(active_only=False, inventory_unavailable=True)
     try:
         inventory = outcome_segment_inventory.read_inventory(
-            SegmentLayout.beside(store)
+            layout, retention_floor=floor.sequence
         )
     except OSError:
         return HistoryLoss(active_only=False, inventory_unavailable=True)
@@ -266,7 +292,7 @@ def _read_inventory(store: Path) -> HistoryLoss:
         gaps=len(inventory.gaps),
         gaps_truncated=inventory.gaps_truncated,
         retention_floor=inventory.retention_floor,
-        quarantined=len(inventory.quarantined),
+        quarantined=inventory.quarantined_files,
     )
 
 

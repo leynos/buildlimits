@@ -10,11 +10,13 @@ import typing as typ
 
 from buildlimits.predict.formatting import (
     MISSING,
+    TRUNCATED_OBSERVER_NOTE,
     admission_line,
     as_count,
     as_counts,
     as_percent,
     as_score,
+    generation_unavailable_line,
 )
 
 if typ.TYPE_CHECKING:
@@ -99,6 +101,7 @@ def _diagnostics_lines(diagnostics: cabc.Mapping[str, object]) -> list[str]:
         f"- By attribution: {as_counts(store['by_attribution'])}",
         f"- By origin: {as_counts(store['by_origin'])}",
         f"- By parser class: {as_counts(store['by_parser_class'])}",
+        f"- Label loss {generation_unavailable_line()}",
         _closed_history_line(history),
     ]
 
@@ -107,7 +110,10 @@ def _closed_history_line(history: cabc.Mapping[str, object]) -> str:
     """Return one honest statement of what closed history the snapshot saw.
 
     A count that was never measured must not read as a measured zero, so the
-    two uninspected cases name themselves instead of printing counts.
+    two uninspected cases name themselves instead of printing counts. The
+    measured branch names the quarantined files as well, because the plain
+    command report already prints that count and a reader comparing the two
+    reports must not see one of them omit evidence the snapshot holds.
 
     Returns
     -------
@@ -121,7 +127,8 @@ def _closed_history_line(history: cabc.Mapping[str, object]) -> str:
     return (
         f"- Closed history: archived {as_count(history['archived'])}, "
         f"sealed {as_count(history['sealed'])}, "
-        f"gaps {as_count(history['gaps'])}"
+        f"gaps {as_count(history['gaps'])}, "
+        f"quarantined {as_count(history['quarantined'])}"
         + (" (gap list truncated)" if history.get("gaps_truncated") else "")
     )
 
@@ -176,13 +183,11 @@ def _observer_lines(journal: cabc.Mapping[str, object]) -> list[str]:
         f"- Observer by cache path: {as_counts(block.get('by_cache_path'))}",
         f"- Observer by result: {as_counts(block.get('by_result'))}",
         f"- Observer by reason: {as_counts(block.get('by_reason'))}",
+        (f"- Observer by store reason: {as_counts(block.get('by_store_reason'))}"),
         (f"- Observer by gate reason: {as_counts(block.get('by_gate_reason'))}"),
     ]
     if journal.get("truncated"):
-        lines.append(
-            "- Observer counts cover only the retained journal window; the "
-            "query reached its record cap."
-        )
+        lines.append(f"- {TRUNCATED_OBSERVER_NOTE}")
     return lines
 
 

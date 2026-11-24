@@ -13,7 +13,8 @@
   - By attribution: none=5, solo=3
   - By origin: registry=8
   - By parser class: cacheable=8
-  - Closed history: archived 4, sealed 1, gaps 2
+  - Label loss by generation: unavailable (a store row's key names its sccache version, not the server generation that produced it, so no per-generation label breakdown can be measured)
+  - Closed history: archived 4, sealed 1, gaps 2, quarantined 2
   - Observer counts: unavailable; the snapshot carries no observer-count block.
   
   An ambiguous or unavailable window remains `unknown`; the report never turns a missing hit into a miss.

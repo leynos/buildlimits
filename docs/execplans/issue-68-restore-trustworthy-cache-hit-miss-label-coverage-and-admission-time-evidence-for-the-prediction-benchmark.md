@@ -12,6 +12,8 @@ The benchmark algorithms in
 
 Implemented on the issue branch, including the review follow-up recorded in
 [Label timing and the store-format upgrade](#label-timing-and-the-store-format-upgrade)
+and in
+[Review follow-up: inventory, quarantine and report honesty](#review-follow-up-inventory-quarantine-and-report-honesty)
 below. The live host service has not been upgraded: the before/after report
 below distinguishes the old recorder's retained history from the new code's
 controlled evidence, and says plainly where an operator action is still
@@ -93,7 +95,18 @@ only information available before admission.
   history loss.
 - The dataset command records the observer's own journal counts, including
   admitted requests by cache path and backend, published outcomes by result and
-  reason, writer appends and evictions, and reading skips and failures.
+  reason, writer appends and evictions split by the closed `StoreReason`, and
+  reading skips and failures. The reason split is what separates a row
+  retention expired from one a failed write dropped.
+- Label loss by sccache generation is reported as `by generation: unavailable`
+  with its reason. A store row's key carries the server version, not the
+  generation the recorder observed, and no v3 row field was added, because a
+  field only future rows carry could not be reconciled with retained history.
+- Closed history is measured against the recorded retention floor, so a prefix
+  retention deleted is not reported as a gap. A floor that cannot be read
+  withdraws the gap and quarantine counts as unavailable, and the quarantine
+  count is measured from its directory rather than reported as an always-empty
+  zero.
 - The quiet-point gate no longer requires an empty queue. Every reading,
   baseline included, still requires no cached group to be moving and no
   detached work to be draining, so a delta only ever contains launches its
@@ -288,6 +301,54 @@ are outside the retained file and cannot be recovered by extraction. The
 journal query is capped and says when its cap was reached; the store read is
 bounded by its own retention policy.
 
+### Which discarded rows retention removed and which a write failed
+
+The observer's discarded total previously mixed two different losses. The
+`store_reason` the writer already publishes is now counted into
+`ObserverAccounting.by_store_reason`, so `expired` names a row retention
+removed and `save_failed`, `seal_failed`, `corrupt` and `version_mismatch` name
+a write the store could not keep. Only a writer result that actually discarded
+a row contributes, so the map sums to `store_discarded` and a clean append adds
+nothing to it. The dataset report prints the map and the snapshot loader
+refuses a block whose map does not reconcile.
+
+## Review follow-up: inventory, quarantine and report honesty
+
+A second review round found four ways a report could state a count it had not
+measured, and one dimension it had silently omitted:
+
+- The closed-history scan was not told the recorded retention floor, so a
+  prefix archive retention deleted on purpose was reported as gaps. The dataset
+  command now reads the floor and passes it to the scan. A floor that exists
+  but cannot be read, or a scan that fails, records the inventory as
+  unavailable and keeps the rows already read; no gap count is derived from an
+  unknown floor. A fresh store, whose state is `missing`, still scans with no
+  floor.
+- `Inventory` never populated its quarantine list, so the dataset report's
+  `quarantined` count was always a false measured zero. The inventory now
+  counts the regular files in the quarantine directory, because a quarantined
+  file's name carries its fault reason and a random token rather than a
+  sequence. A directory that cannot be listed makes the inventory unavailable.
+- The plain dataset report printed a truncated journal's observer counts
+  without saying they were partial. It now prints the same sentence the
+  Markdown report uses, and a complete window prints nothing extra.
+- The Markdown report's measured closed-history bullet omitted the quarantined
+  count that the plain report prints. It now includes it; the active-only and
+  inventory-unavailable bullets are unchanged.
+- The snapshot loader joined the diagnostics block to the events by label,
+  row count and admission presence, but not by origin, so a document whose
+  event origin was changed from `registry` to `git` was accepted. The
+  per-origin tally is now compared against `by_origin`, and a single changed
+  origin is refused.
+- The opt-in real-sccache check injected a fixed generation for every ordinary
+  read, so the socket and `/proc` identity path was never exercised. The
+  controlled cold/warm/mixed sequence now drives a plain `PeerServerProcess`;
+  the injectable slot remains only for the deliberate generation-mismatch case.
+- A default-run test now drives admission-time propagation through the shell:
+  a cached entry carrying `admitted_at`, a clean ending, and one completed
+  reading, asserting the row's admission time is the entry's and its label time
+  is the reading's.
+
 ## Limitations
 
 - sccache 0.14 exposes no supported per-request hit/miss signal. Its
@@ -311,6 +372,11 @@ bounded by its own retention policy.
 - The archive byte budget sees larger rows. A policy sized exactly to the old
   row size will retain fewer rows; the retention tests and the documented
   budget are updated accordingly.
+- Label loss by sccache generation is reported as unavailable. A store row's
+  key carries the server version, not the generation the recorder observed, and
+  no v3 row field was added: a field only future rows would carry could not be
+  reconciled with the retained history, so the dimension is named rather than
+  guessed.
 
 ## Verification
 
@@ -332,3 +398,10 @@ make predict-benchmark
 The last two report the sufficiency counts and keep the
 `insufficient data`/`insufficient admission times` statuses until genuine rows
 meet both gates.
+
+`tests/test_predict_threshold.py` confirms the two gates are separate at the
+packaged `minimum_labelled_events=2000`: a mixed version 1/version 2 history
+with exactly 2,000 labels and no admission times reports
+`insufficient admission times`, and the same history with usable admission
+times is scored. The label gate counted the labelled rows correctly in both
+runs, so the admission gate is what prevented a false verdict.

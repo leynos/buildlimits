@@ -10,6 +10,7 @@ from predict_test_helpers import write_store
 from buildlimits.metrics_query import MetricsQueryError, Window
 from buildlimits.metrics_records import Record
 from buildlimits.predict import dataset_cli, dataset_report
+from buildlimits.predict.formatting import TRUNCATED_OBSERVER_NOTE
 from buildlimits.predict.journal_provenance import (
     JournalCounts,
     JournalProvenance,
@@ -176,6 +177,60 @@ def test_a_gate_only_window_reports_its_reason(
     assert "held no observer counts" not in output, "the window is not called empty"
 
 
+def test_a_truncated_journal_marks_its_observer_counts_partial(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A capped query's observer counts are a lower bound, and say so.
+
+    The same sentence the rendered report prints marks them partial, so a
+    reader of either form is told the window is smaller than the lookback.
+    """
+    note = count_journal(
+        (
+            Record(
+                "supervisor",
+                "request_admitted",
+                {"cache_path": "cached", "cache_backend": "sccache"},
+                OBSERVED_AT,
+            ),
+        ),
+        since="4w",
+        cap=1000,
+        truncated=True,
+    )
+
+    dataset_report._report_journal(note)
+
+    output = capsys.readouterr().out
+    assert TRUNCATED_OBSERVER_NOTE in output, "the partial window is named"
+    assert "requests=1" in output, "the measured counts are still printed"
+
+
+def test_a_complete_journal_prints_no_partial_warning(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A window that never reached the cap is printed without the warning."""
+    note = count_journal(
+        (
+            Record(
+                "supervisor",
+                "request_admitted",
+                {"cache_path": "cached", "cache_backend": "sccache"},
+                OBSERVED_AT,
+            ),
+        ),
+        since="4w",
+        cap=1000,
+        truncated=False,
+    )
+
+    dataset_report._report_journal(note)
+
+    output = capsys.readouterr().out
+    assert "requests=1" in output, "the counts are printed"
+    assert TRUNCATED_OBSERVER_NOTE not in output, "a complete window is not marked"
+
+
 def test_observer_accounting_keeps_its_denominators_distinct() -> None:
     """Requests, outcomes, readings and store writes stay separate counts."""
     records = (
@@ -237,7 +292,29 @@ def test_observer_accounting_keeps_its_denominators_distinct() -> None:
                 "store_operation": "append",
                 "store_reason": "none",
                 "store_records": "10",
-                "store_discarded": "2",
+                "store_discarded": "0",
+            },
+            OBSERVED_AT,
+        ),
+        Record(
+            "supervisor",
+            "outcome_store",
+            {
+                "store_operation": "compact",
+                "store_reason": "expired",
+                "store_records": "0",
+                "store_discarded": "7",
+            },
+            OBSERVED_AT,
+        ),
+        Record(
+            "supervisor",
+            "outcome_store",
+            {
+                "store_operation": "append",
+                "store_reason": "save_failed",
+                "store_records": "0",
+                "store_discarded": "3",
             },
             OBSERVED_AT,
         ),
@@ -287,7 +364,14 @@ def test_observer_accounting_keeps_its_denominators_distinct() -> None:
     assert observer.by_attribution == {"none": 1, "solo": 2}, "attribution is named"
     assert observer.by_origin == {"git": 1, "path": 1, "registry": 1}, "origins"
     assert observer.store_records == 10, "appended rows are summed"
-    assert observer.store_discarded == 2, "dropped or evicted rows are summed"
+    assert observer.store_discarded == 10, "dropped or evicted rows are summed"
+    assert observer.by_store_reason == {"expired": 7, "save_failed": 3}, (
+        "retention loss and failed writes are told apart"
+    )
+    assert sum(observer.by_store_reason.values()) == observer.store_discarded, (
+        "the breakdown reconciles with the discarded total, and a clean append "
+        "does not add a reason of its own"
+    )
     assert observer.readings == 2, "completed readings are summed"
     assert observer.readings_skipped == 9, "skipped readings are summed"
     assert observer.readings_failed == 1, "failed readings are summed"

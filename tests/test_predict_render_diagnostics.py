@@ -11,6 +11,7 @@ import typing as typ
 
 from render_helpers import data_section, empty_document
 
+from buildlimits.predict.formatting import TRUNCATED_OBSERVER_NOTE
 from buildlimits.predict.render import render_markdown
 
 
@@ -74,6 +75,7 @@ def _diagnostics_document() -> dict[str, object]:
             "by_reason": {"none": 2},
             "by_attribution": {"solo": 2},
             "by_origin": {"registry": 2},
+            "by_store_reason": {},
             "by_gate_reason": {},
             "by_reading_reason": {"none": 1},
         },
@@ -94,8 +96,50 @@ def test_a_truncated_journal_marks_its_observer_counts() -> None:
     assert "the query reached its record cap" in markdown, (
         "the journal note states the cap"
     )
-    assert "Observer counts cover only the retained journal window" in markdown, (
+    assert f"- {TRUNCATED_OBSERVER_NOTE}" in markdown, (
         "the observer block warns that its counts are partial"
+    )
+
+
+def test_a_complete_journal_prints_no_partial_observer_warning() -> None:
+    """A window that never reached its cap is printed without the warning."""
+    document = _diagnostics_document()
+    typ.cast("dict[str, object]", data_section(document)["journal"])["truncated"] = (
+        False
+    )
+
+    markdown = render_markdown(document)
+
+    assert TRUNCATED_OBSERVER_NOTE not in markdown, "a complete window is not marked"
+    assert "- Observer by result: hit=2" in markdown, "its counts are still printed"
+
+
+def test_the_store_reason_breakdown_is_rendered() -> None:
+    """Retention loss and failed writes are distinguished in the observer block."""
+    document = _diagnostics_document()
+    observer = typ.cast(
+        "dict[str, object]",
+        typ.cast("dict[str, object]", data_section(document)["journal"])["observer"],
+    )
+    observer["store_discarded"] = 5
+    observer["by_store_reason"] = {"expired": 4, "save_failed": 1}
+
+    markdown = render_markdown(document)
+
+    assert "- Observer by store reason: expired=4, save_failed=1" in markdown, (
+        "each reason keeps its own count"
+    )
+
+
+def test_the_missing_generation_dimension_is_named() -> None:
+    """A dimension no row can carry is stated as unavailable, with its reason."""
+    markdown = render_markdown(_diagnostics_document())
+
+    line = next(
+        line for line in markdown.splitlines() if "by generation: unavailable" in line
+    )
+    assert "sccache version" in line and "server generation" in line, (
+        "the reason names what the row does carry"
     )
 
 

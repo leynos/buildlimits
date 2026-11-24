@@ -8,7 +8,11 @@ validated by the snapshot loader.
 import sys
 import typing as typ
 
-from buildlimits.predict.formatting import as_counts
+from buildlimits.predict.formatting import (
+    TRUNCATED_OBSERVER_NOTE,
+    as_counts,
+    generation_unavailable_line,
+)
 from buildlimits.predict.journal_provenance import JournalCounts
 from buildlimits.utc_text import utc_text
 
@@ -54,6 +58,7 @@ def _observer_measured_anything(observer: ObserverAccounting) -> bool:
         observer.by_reason,
         observer.by_attribution,
         observer.by_origin,
+        observer.by_store_reason,
         observer.by_gate_reason,
         observer.by_reading_reason,
     )
@@ -116,6 +121,7 @@ def _report_diagnostics(snapshot: Snapshot) -> None:
         ("server version", store.by_server_version),
     ):
         print(f"by {label}: {as_counts(counts)}")
+    print(generation_unavailable_line())
     if snapshot.journal is not None:
         _report_journal(snapshot.journal)
     history = diagnostics.history
@@ -134,7 +140,13 @@ def _report_diagnostics(snapshot: Snapshot) -> None:
 
 
 def _report_journal(note: JournalProvenance) -> None:
-    """Print the recorder's own counts, which the store cannot provide."""
+    """Print the recorder's own counts, which the store cannot provide.
+
+    A truncated query returns only the newest records within the cap, so its
+    counts are a lower bound on the window. The same sentence the rendered
+    report uses marks them partial here, and a complete window prints nothing
+    extra.
+    """
     if not isinstance(note, JournalCounts):
         return
     observer = note.observer
@@ -153,4 +165,7 @@ def _report_journal(note: JournalProvenance) -> None:
     print(f"observer by cache path: {as_counts(observer.by_cache_path)}")
     print(f"observer by result: {as_counts(observer.by_result)}")
     print(f"observer by reason: {as_counts(observer.by_reason)}")
+    print(f"observer by store reason: {as_counts(observer.by_store_reason)}")
     print(f"observer by gate reason: {as_counts(observer.by_gate_reason)}")
+    if note.truncated:
+        print(f"observer: {TRUNCATED_OBSERVER_NOTE}")

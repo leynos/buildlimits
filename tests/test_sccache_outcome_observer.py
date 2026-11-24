@@ -28,7 +28,7 @@ from sccache_outcome_observer_support import (
     toolchain,
 )
 
-from buildlimits.outcome_queries import SccacheStatistics
+from buildlimits.outcome_queries import PeerServerProcess, SccacheStatistics
 from buildlimits.outcome_recorder_driver import OutcomeRecorder
 
 if typ.TYPE_CHECKING:
@@ -44,13 +44,36 @@ pytestmark = [
 ]
 
 
-def _recorder(
+def _recorder(tools: Toolchain, socket_path: Path) -> OutcomeRecorder:
+    """Build one driver over the real statistics and server-generation ports.
+
+    The generation comes from the production ``PeerServerProcess``, which
+    reads the socket peer and ``/proc``, so the controlled sequence exercises
+    the same identity path the supervisor uses. The driver reads the wall
+    clock, so each row it emits is dated at the reading that produced it, the
+    way the supervisor's shell dates its own.
+
+    Returns
+    -------
+    OutcomeRecorder
+        The driver reading the real ports.
+    """
+    statistics = SccacheStatistics(tools.executable, tools.environment, socket_path)
+    return OutcomeRecorder(
+        statistics,
+        PeerServerProcess(socket_path),
+        wall_clock=lambda: dt.datetime.now(dt.UTC),
+    )
+
+
+def _switchable_recorder(
     tools: Toolchain, socket_path: Path
 ) -> tuple[OutcomeRecorder, list[Generation | GenerationFailure | None]]:
-    """Build one driver over the real statistics port and a switchable server.
+    """Build one driver whose next generation answer a test can change.
 
-    The driver reads the wall clock, so each row it emits is dated at the
-    reading that produced it, the way the supervisor's shell dates its own.
+    The injected slot is the only way to model a server restart between two
+    reads without restarting the private server inside the query, so it is
+    reserved for the deliberate generation-mismatch case.
 
     Returns
     -------
@@ -72,7 +95,7 @@ def test_the_real_sccache_observer_labels_controlled_windows(tmp_path: Path) -> 
     with _private_server(
         tools.executable, tools.environment, tmp_path / "server.log"
     ) as (_server, _scoped):
-        driver, _slot = _recorder(tools, tmp_path / "s.sock")
+        driver = _recorder(tools, tmp_path / "s.sock")
         baseline = read(driver)
         assert baseline.reason == "none", "the fresh generation is the baseline"
         assert baseline.events == (), "an empty baseline emits no label"
@@ -125,7 +148,7 @@ def test_the_real_sccache_observer_refuses_a_restart_window(tmp_path: Path) -> N
     with _private_server(
         tools.executable, tools.environment, tmp_path / "server.log"
     ) as (_server, _scoped):
-        driver, slot = _recorder(tools, tmp_path / "s.sock")
+        driver, slot = _switchable_recorder(tools, tmp_path / "s.sock")
         assert read(driver).reason == "none", "the baseline is accepted"
         restarted = run_restart(driver, slot, tools)
 

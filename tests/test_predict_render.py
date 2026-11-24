@@ -58,7 +58,12 @@ def test_a_scored_report_prints_its_tables_exactly() -> None:
 def test_the_report_states_its_label_loss_denominators(
     snapshot: SnapshotAssertion,
 ) -> None:
-    """The sufficiency block names the rows, labels and refusal reasons."""
+    """The sufficiency block names the rows, labels and refusal reasons.
+
+    The measured closed-history bullet carries the quarantined file count as
+    well as the archived, sealed and gap counts, so the Markdown report states
+    the same evidence the plain command report prints.
+    """
     document = empty_document()
     data = data_section(document)
     typ.cast("dict[str, object]", data["source"]).update(
@@ -91,14 +96,16 @@ def test_the_report_states_its_label_loss_denominators(
             "gaps": 2,
             "gaps_truncated": False,
             "retention_floor": 7,
-            "quarantined": 0,
+            "quarantined": 2,
         },
     }
 
     markdown = render_markdown(document)
 
-    assert _data_sufficiency_section(markdown) == snapshot, (
-        "the sufficiency block is a stable input contract"
+    section = _data_sufficiency_section(markdown)
+    assert section == snapshot, "the sufficiency block is a stable input contract"
+    assert "- Closed history: archived 4, sealed 1, gaps 2, quarantined 2" in section, (
+        "the quarantined count is stated beside the other measured counts"
     )
 
 

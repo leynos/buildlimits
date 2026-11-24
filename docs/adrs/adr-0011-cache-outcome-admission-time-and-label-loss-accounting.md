@@ -99,21 +99,45 @@ The snapshot carries one bounded `diagnostics` block. Its retained-store part
 counts outcome rows by cache result, outcome reason, attribution, origin,
 parser class, child sighting and sccache version, plus recorded and missing
 admission times and the labelled total. Its history part names the archived and
-sealed segments, the missing sequences, the retention floor and whether the gap
-list was truncated.
+sealed segments, the missing sequences, the quarantined file count, the
+retention floor and whether the gap list was truncated. The gap count is
+measured against the retention floor the archiver recorded, so a prefix
+retention deleted is not reported as loss; a floor that cannot be read
+withdraws the gap and quarantine counts as unavailable rather than presenting
+them as measured.
 
 The dataset command also records the observer's own counts from the user
 journal: admitted requests by cache path and backend, published outcomes by
 result, reason, attribution and origin, the writer's appended and dropped or
-evicted rows, completed, skipped and failed readings, and the gate reasons the
-journal witnessed. The four denominators stay distinct: all admitted requests,
-cache-eligible compilations, retained `OutcomeRecord`s and scored outcomes. A
-report states each one rather than dividing by whichever is convenient.
+evicted rows split by the closed `StoreReason`, completed, skipped and failed
+readings, and the gate reasons the journal witnessed. The four denominators
+stay distinct: all admitted requests, cache-eligible compilations, retained
+`OutcomeRecord`s and scored outcomes. A report states each one rather than
+dividing by whichever is convenient.
+
+The `StoreReason` split is what separates retention loss from a failed write:
+`expired` names a row retention removed, while `save_failed`, `seal_failed`,
+`corrupt` and `version_mismatch` name a write the store could not keep. Only a
+writer result that actually discarded a row contributes to the map, so its
+counts sum to the discarded total instead of including the reason of every
+clean append.
+
+Issue #68 also asks for label loss by sccache generation. A store row's key
+carries the server *version*, not the generation the recorder observed when it
+read a window, so this dimension cannot be measured from retained history and
+is not given a new row field: no report could reconcile a field the existing
+rows do not carry. Both the dataset report and the rendered Markdown name it
+`by generation: unavailable` with that reason, which is bounded and honest
+rather than omitted or filled with a count.
 
 The snapshot loader reconciles the diagnostics before a report can print them:
 every breakdown must sum to the outcome rows, the record totals must add up,
-the admission counts must cover the same rows, and the labelled total must
-equal the hit plus miss counts.
+the admission counts must cover the same rows, the labelled total must equal
+the hit plus miss counts, the observer's store reasons must sum to its
+discarded total, and the event rows must agree with the block's per-label,
+per-origin and admission counts. Changing one event's origin changes what the
+Markdown origin table reports about the same history, so it is a join failure
+rather than a harmless edit.
 
 ### D3: repair the observation gate without weakening attribution
 
@@ -247,6 +271,14 @@ the header before it reads any row.
 - **Flush the overflowed window and keep its baseline.** Rejected: the
   overflowed requests remain in the cumulative counters, so later windows
   cannot balance and the loss becomes permanent.
+- **Add a server-generation field to the store row.** Rejected: a row's key
+  already names the server version, and no report could reconcile a new
+  generation field with the rows already written, so the dimension is reported
+  as unavailable instead of adding a field that only future rows would carry.
+- **Report a gap count from an unreadable retention floor.** Rejected: without
+  the floor, an absent sequence below the survivors cannot be told apart from a
+  sequence retention removed on purpose, so the counts are withdrawn rather
+  than printed as loss.
 
 ## Follow-up
 

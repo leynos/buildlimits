@@ -185,6 +185,45 @@ def test_diagnostics_labels_must_describe_the_events(tmp_path: Path) -> None:
         load_snapshot(write_json(tmp_path / "history.jsonl", document))
 
 
+def _two_origin_document() -> dict[str, object]:
+    """Return a document whose two events carry distinct origins."""
+    first = attributed_record(outcome="hit")
+    second = dc.replace(attributed_record(outcome="miss"), origin="git")
+    return snapshot_to_dict(
+        build_snapshot(
+            _history(first, second),
+            now=NOW,
+            history_loss=ACTIVE_FILE_ONLY,
+        )
+    )
+
+
+def test_a_document_whose_origins_reconcile_is_accepted(tmp_path: Path) -> None:
+    """The unchanged document is the control: both origin counts are right."""
+    loaded = load_snapshot(
+        write_json(tmp_path / "history.jsonl", _two_origin_document())
+    )
+
+    assert loaded.diagnostics is not None, "the block is present"
+    assert loaded.diagnostics.store.by_origin == {"git": 1, "registry": 1}, (
+        "one event of each origin"
+    )
+
+
+def test_a_changed_event_origin_is_refused(tmp_path: Path) -> None:
+    """Changing one event's origin names no single history.
+
+    The label counts, the admission counts and the row totals are untouched,
+    so only a per-origin comparison can refuse this document.
+    """
+    document = _two_origin_document()
+    git_event = next(event for event in _events(document) if event["origin"] == "git")
+    git_event["origin"] = "registry"
+
+    with pytest.raises(ValueError, match="records its events by origin"):
+        load_snapshot(write_json(tmp_path / "history.jsonl", document))
+
+
 def test_diagnostics_must_describe_the_source_store(tmp_path: Path) -> None:
     """The two row totals in one snapshot cannot name different stores."""
     document = _document()
