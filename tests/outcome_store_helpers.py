@@ -10,6 +10,7 @@ from unittest import mock
 import pytest
 from outcome_result_waits import wait_for_records as wait_for_records
 from outcome_result_waits import wait_for_results as wait_for_results
+from outcome_store_clock import FIXED_NOW as _NOW
 
 from buildlimits import outcome_records, outcome_store_state
 from buildlimits.outcome_ports import StoreResult
@@ -151,7 +152,7 @@ def start_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
     StoreWriter
         The new asynchronous writer.
     """
-    return StoreWriter(path, queue_capacity=queue_capacity)
+    return StoreWriter(path, queue_capacity=queue_capacity, wall_clock=lambda: _NOW)
 
 
 def ready_writer(path: Path, *, queue_capacity: int = 4096) -> StoreWriter:
