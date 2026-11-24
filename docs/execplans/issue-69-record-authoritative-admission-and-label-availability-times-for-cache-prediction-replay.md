@@ -96,6 +96,8 @@ share one helper module:
 | Old-format snapshot round trip                      | loads, gains no timing and is unscorable                             |
 | Archive round trip                                  | version 3 fields and append order survive byte for byte              |
 | Version 2 store through dataset and benchmark       | reports `insufficient label-availability times`, scores nothing      |
+| Thirty-minute queue wait                            | the decision stays at the token grant, not at arrival                |
+| A label accepted after its own prediction           | trains nothing and answers no later prediction                       |
 
 The producer path is covered by `tests/test_outcome_timing_producer.py`, which
 drives the supervisor's launch handler, the real reducer and the encoder. It
