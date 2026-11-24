@@ -29,7 +29,7 @@ jobs:
     permissions:
       contents: read
       id-token: write # OIDC workflow-source resolution
-    uses: leynos/shared-actions/.github/workflows/mutation-mutmut.yml@859416a90eb3987b46a57682c5d6b8964ad3f0a6
+    uses: leynos/shared-actions/.github/workflows/mutation-mutmut.yml@872f59f53717b5bebe8e24b2f4a7496b089a939a
     with:
       # Flat package layout: the package directory sits at the
       # repository root, so no module prefix is stripped.
