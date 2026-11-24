@@ -322,15 +322,20 @@ def test_an_empty_journal_window_reports_no_span() -> None:
     assert note.span_start is None and note.span_end is None, "no span"
 
 
-def test_an_older_journal_block_has_no_observer_counts() -> None:
-    """A journal note without the observer block decodes as unrecorded, not zero."""
+def _encoded_observer_note() -> dict[str, object]:
+    """Return a journal note whose observer block is a measured count."""
     note = count_journal(
         (Record("supervisor", "cache_outcome", {}, OBSERVED_AT),),
         since="4w",
         cap=1000,
         truncated=False,
     )
-    encoded = journal_to_dict(note)
+    return journal_to_dict(note)
+
+
+def test_an_older_journal_block_has_no_observer_counts() -> None:
+    """A journal note without the observer block decodes as unrecorded, not zero."""
+    encoded = _encoded_observer_note()
     encoded.pop("observer")
 
     decoded = journal_from_dict(encoded, label="test")
@@ -349,13 +354,7 @@ def test_a_measured_empty_journal_keeps_its_zero_counts() -> None:
 
 def test_an_incomplete_observer_block_is_refused() -> None:
     """A present block is a measurement, so a missing field is not a zero."""
-    note = count_journal(
-        (Record("supervisor", "cache_outcome", {}, OBSERVED_AT),),
-        since="4w",
-        cap=1000,
-        truncated=False,
-    )
-    encoded = journal_to_dict(note)
+    encoded = _encoded_observer_note()
     observer = typ.cast("dict[str, object]", encoded["observer"])
     observer.pop("readings")
 

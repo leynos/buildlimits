@@ -163,11 +163,7 @@ def _diagnostics_from(
     -------
     Diagnostics | None
         The validated diagnostics, or None when the document carries none.
-
-    Raises
-    ------
-    ValueError
-        If the block disagrees with the source counts.
+        The join to the source is enforced by ``_require_diagnostics_match``.
     """
     if value is None:
         return None

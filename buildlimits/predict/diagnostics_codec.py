@@ -209,20 +209,20 @@ def _history_loss_from(value: dict[str, object], label: str) -> HistoryLoss:
 
     Raises
     ------
-    TypeError
-        If a flag has the wrong Python type.
     ValueError
         If the block claims both an active-only read and a failed inventory.
+        Each field helper refuses its own wrong type.
     """
-    active_only = value.get("active_only")
-    gaps_truncated = value.get("gaps_truncated")
+    active_only = _require_flag(value.get("active_only"), label=f"{label} active_only")
+    gaps_truncated = _require_flag(
+        value.get("gaps_truncated"), label=f"{label} gaps_truncated"
+    )
     # A document written before the field existed still reads as measured
     # closed history; only the fallback for a failed inventory scan sets it.
-    inventory_unavailable = value.get("inventory_unavailable", False)
-    flags = (active_only, gaps_truncated, inventory_unavailable)
-    if not all(isinstance(flag, bool) for flag in flags):
-        msg = f"{label} history flags must be booleans"
-        raise TypeError(msg)
+    inventory_unavailable = _require_flag(
+        value.get("inventory_unavailable", False),
+        label=f"{label} inventory_unavailable",
+    )
     if active_only and inventory_unavailable:
         msg = f"{label} history cannot be active-only and inventory-unavailable"
         raise ValueError(msg)
@@ -243,6 +243,26 @@ def _history_loss_from(value: dict[str, object], label: str) -> HistoryLoss:
         ),
         inventory_unavailable=inventory_unavailable,
     )
+
+
+def _require_flag(value: object, *, label: str) -> bool:
+    """Read one required boolean flag, naming it in a refusal.
+
+    Returns
+    -------
+    bool
+        The validated flag, narrowed so the value type cannot leak outward.
+
+    Raises
+    ------
+    TypeError
+        If the value is not a boolean. ``0`` and ``1`` are refused rather than
+        read as flags, because JSON distinguishes them from ``false``/``true``.
+    """
+    if not isinstance(value, bool):
+        msg = f"{label} must be a boolean"
+        raise TypeError(msg)
+    return value
 
 
 def _required_count(value: object, *, label: str) -> int:

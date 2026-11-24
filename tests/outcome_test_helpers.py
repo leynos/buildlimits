@@ -18,6 +18,21 @@ if typ.TYPE_CHECKING:
     from buildlimits.outcome_vocabulary import CacheResult
 
 
+def recent_moment() -> dt.datetime:
+    """Return a moment no store retention bound can already have expired.
+
+    A fixture pinned to a calendar date silently ages out once the writer's
+    bound reaches it, and the affected tests then fail for a reason unrelated
+    to the code under test. Tests that need an exact time still pass one.
+
+    Returns
+    -------
+    datetime
+        One hour before the current UTC time.
+    """
+    return dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)
+
+
 class _TimedGateEvent(typ.Protocol):
     """The monotonic time carried by a fake recorder gate event."""
 
