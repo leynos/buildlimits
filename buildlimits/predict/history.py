@@ -138,11 +138,13 @@ def prediction_moments(
     >>> from buildlimits.predict.events import EPOCH, Event
     >>> label = EPOCH + dt.timedelta(seconds=5)
     >>> outcome = Event("a" * 64, "git", EPOCH, label, "hit", 0.1,
-    ...                 label_observed_verified=True)
+    ...                 label_observed_verified=True,
+    ...                 attempt="g1", supervisor_generation="gen")
     >>> prediction_moments((outcome,))
     ((0,),)
     >>> known_first = Event("a" * 64, "git", label, EPOCH, "hit", 0.1,
-    ...                     label_observed_verified=True)
+    ...                     label_observed_verified=True,
+    ...                     attempt="g2", supervisor_generation="gen")
     >>> prediction_moments((known_first,))
     ()
     """
@@ -201,7 +203,8 @@ def admission_schedule(
     --------
     >>> from buildlimits.predict.events import EPOCH, Event
     >>> first = Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1,
-    ...               label_observed_verified=True)
+    ...               label_observed_verified=True,
+    ...               attempt="g1", supervisor_generation="gen")
     >>> stream = (first,)
     >>> tuple(admission_schedule(stream, prediction_moments(stream),
     ...                          released_labels(stream)))
@@ -250,7 +253,8 @@ def features(  # ruff: ignore[too-many-locals]  # one accumulator per feature di
     >>> from buildlimits.predict.events import EPOCH, Event
     >>> first = features(
     ...     (Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1,
-    ...            label_observed_verified=True),),
+    ...            label_observed_verified=True,
+    ...            attempt="g1", supervisor_generation="gen"),),
     ...     load_window_seconds=60.0,
     ... )[0]
     >>> first is not None and first.age_seconds is None and first.load == 0
