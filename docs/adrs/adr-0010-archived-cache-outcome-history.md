@@ -186,6 +186,7 @@ Ownership follows file state, not a shared lock.
   next sequence counter and the segment metadata durably, then renames the
   active file into the sealed directory and installs a fresh header-only active
   file. An empty store installs a header-only active file instead of claiming a
+  sequence that never produces a source, so an idle seal leaves no gap.
 - Every archiver mutation runs under a non-blocking exclusive `flock` on
   `cache-outcomes.archive/archive.lock`. A second invocation reports `busy` and
   exits 75 instead of waiting. The writer never takes that lock, so there is no

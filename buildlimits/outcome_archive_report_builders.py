@@ -75,28 +75,31 @@ def dry_report(
 
 def unsettled_report(
     started_at: dt.datetime,
+    context: ArchiveContext,
     *,
-    clock: cabc.Callable[[], dt.datetime],
     dry_run: bool = False,
-    limits: RetentionLimits | None = None,
 ) -> RunReport:
     """Build a retryable report for a store that never held still.
 
     The writer can keep sealing across every bounded reading, so no inventory
     and active file describe one version of the store. Reporting a plan or a
     count from any of those pairs would undercount history, so nothing is
-    planned, nothing is changed, and the timer retries.
+    planned, nothing is changed, and the timer retries. The context still
+    supplies the configured limits and the clock the finish time is read from,
+    so a retryable report never loses the policy that will be retried.
 
     Returns
     -------
     RunReport
         An ``unsettled`` report with no plan.
     """
+    limits = RetentionLimits.of(context.policy)
     return RunReport(
         status="unsettled",
         started_at=started_at,
-        finished_at=clock(),
+        finished_at=context.clock(),
         dry_run=dry_run,
+        budget_bytes=limits.max_bytes,
         limits=limits,
         maintenance=Maintenance(state_written=False, reason="unsettled"),
     )

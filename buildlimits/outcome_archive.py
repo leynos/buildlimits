@@ -185,7 +185,7 @@ def _inspect(
         context.layout, policy, started, on_retry=context.on_retry
     )
     if not settled:
-        return unsettled_report(started, dry_run=True, clock=context.clock)
+        return unsettled_report(started, context, dry_run=True)
     return dry_report(
         _archive_run(context, plan), active, inventory, clock=context.clock
     )
@@ -211,7 +211,7 @@ def _execute_locked(
         context.layout, policy, started, on_retry=context.on_retry
     )
     if not settled:
-        return unsettled_report(started, clock=context.clock)
+        return unsettled_report(started, context)
     floor, report = _execute(_archive_run(context, plan))
     if floor is None:
         return report

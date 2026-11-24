@@ -7,7 +7,7 @@ from unittest import mock
 import outcome_store_helpers as store_helpers
 import pytest
 from outcome_store_clock import FIXED_NOW
-from outcome_store_fault_helpers import partial_append, stalled_append
+from outcome_store_fault_helpers import stalled_append
 from outcome_store_helpers import (
     append_and_wait,
     assert_failed_append,
