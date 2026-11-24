@@ -9,7 +9,7 @@ from predict_test_helpers import write_store
 
 from buildlimits.metrics_query import MetricsQueryError, Window
 from buildlimits.metrics_records import Record
-from buildlimits.predict import dataset_cli
+from buildlimits.predict import dataset_cli, dataset_report
 from buildlimits.predict.journal_provenance import (
     JournalCounts,
     JournalProvenance,
@@ -124,6 +124,31 @@ def test_observer_counts_survive_the_snapshot_round_trip(tmp_path: Path) -> None
     assert observer.requests == 1, "the admission survives the file"
     assert observer.by_result == {"hit": 1}, "the outcome survives the file"
     assert observer.by_cache_path == {"cached": 1}, "the cache path survives"
+
+
+def test_a_failed_reading_is_reported_without_admissions(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A window holding only a failed reading still names its failure."""
+    note = count_journal(
+        (
+            Record(
+                "supervisor",
+                "outcome_reading",
+                {"readings_failed": "1", "outcome_reason": "timeout"},
+                OBSERVED_AT,
+            ),
+        ),
+        since="4w",
+        cap=1000,
+        truncated=False,
+    )
+
+    dataset_report._report_journal(note)
+
+    output = capsys.readouterr().out
+    assert "failed=1" in output, "the reading failure is printed"
+    assert "held no observer counts" not in output, "the window is not called empty"
 
 
 def test_observer_accounting_keeps_its_denominators_distinct() -> None:

@@ -915,9 +915,10 @@ the rows whose admission is at or before their own label.
 into the matching observer denominators. The snapshot loader reconciles the
 stored counts before a report can print them, so a corrupted or hand-edited
 block is refused. The quiet-point gate in `outcome_gate` no longer requires an
-empty queue and allows a first baseline while work moves; an attributing
-reading still requires no cached movement or detached drain. A window overflow
-resets the baseline in `outcome_recorder`.
+empty queue; every reading, baseline included, still requires no cached
+movement or detached drain, because a compilation in flight at the boundary
+would move counters into the next window. A window overflow resets the baseline
+in `outcome_recorder`.
 
 `OutcomeTelemetry` maps reducer outputs to those metrics and owns the bounded
 `statistics_read` span. `outcome_reading` is transition-only: it carries a

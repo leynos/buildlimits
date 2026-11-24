@@ -203,7 +203,6 @@ class RecorderReadings:
             is_recovery_idle=True,
             has_barrier=False,
             has_query_in_flight=isinstance(machine.state, machine.recorder.Querying),
-            has_baseline=recorder_progress(machine.state).baseline is not None,
         )
         return machine.recorder.GateOpen(inputs=inputs, now=machine.now)
 

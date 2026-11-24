@@ -40,6 +40,7 @@ from buildlimits.outcome_recorder_types import (
     Outputs,
     Querying,
 )
+from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.dataset import build_snapshot
 from buildlimits.predict.records import decode_history
 
@@ -97,7 +98,6 @@ def inputs() -> QuietInputs:
         is_recovery_idle=True,
         has_barrier=False,
         has_query_in_flight=False,
-        has_baseline=True,
     )
 
 
@@ -352,7 +352,11 @@ def assert_extraction(records: list[StoreRecord]) -> None:
     decoded = decode_lines(document)
     if not isinstance(decoded, DecodedStore):
         pytest.fail(f"the retained rows did not decode: {decoded.reason}")
-    snapshot = build_snapshot(decode_history(decoded), now=header.written_at)
+    snapshot = build_snapshot(
+        decode_history(decoded),
+        now=header.written_at,
+        history_loss=HistoryLoss.active_file_only(),
+    )
     stats = snapshot.stats()
 
     assert stats.labelled == 2, "the controlled miss and hit are the labels"

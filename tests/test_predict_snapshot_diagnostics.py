@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from outcome_test_helpers import attributed_record
-from predict_test_helpers import write_json
+from predict_test_helpers import ACTIVE_FILE_ONLY, write_json
 
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
 from buildlimits.predict.accounting import HistoryLoss
@@ -32,7 +32,11 @@ def _history(*records: object) -> StoreHistory:
 def _document() -> dict[str, object]:
     """Return the encoded snapshot of one attributed hit, without a journal."""
     return snapshot_to_dict(
-        build_snapshot(_history(attributed_record(outcome="hit")), now=NOW)
+        build_snapshot(
+            _history(attributed_record(outcome="hit")),
+            now=NOW,
+            history_loss=ACTIVE_FILE_ONLY,
+        )
     )
 
 
@@ -55,6 +59,7 @@ def test_a_version_two_snapshot_round_trips_its_diagnostics(tmp_path: Path) -> N
             attributed_record(outcome="miss"),
         ),
         now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
     )
     path = write_json(tmp_path / "history.jsonl", snapshot_to_dict(snapshot))
 

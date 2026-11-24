@@ -123,11 +123,13 @@ Three changes are made to the quiet-point gate and the window:
   statistics query is already detected by ADR 005 D3's straddle rule, which
   discards the whole reading. The clause added no safety and made a reading
   impossible on a host that keeps work queued continuously.
-- A first baseline may be read while cached work is moving and detached work
-  is draining. A baseline only snapshots the counters; launches already in the
-  window remain accounted for, and a launch during the query is refused by the
-  straddle rule. An attributing reading still requires `cached_moving == 0` and
-  `server_drain == 0`, so every launch in its window has ended cleanly.
+- Every reading, baseline included, requires `cached_moving == 0` and
+  `server_drain == 0`. A baseline taken while a cached compilation is in flight
+  captures counters that no later window accounts for: the launch is emitted
+  with the baseline's own window, but its remaining counters land in the next
+  window's delta. Holding both clauses clear means every delta is composed only
+  of launches its window holds. The queue clause is the one that made a reading
+  impossible on a continuously queued host.
 - A window overflow resets the baseline. The overflowed launches are still in
   sccache's cumulative counters, so keeping the old baseline would make every
   later delta include requests that are no longer in the window.
@@ -143,11 +145,13 @@ window stays `unknown` with its own reason.
   or before the label. A concurrent mixed pair remains `unknown` with
   `mixed_window`; a declined probe is `declined`; a timeout and a generation
   change keep their own reasons.
-- The recorder can establish a baseline on a host that never becomes idle.
-  Whether a later window can be labelled still depends on a genuine quiet
-  instant. Under the measured continuous load, sccache's aggregate counters
-  cannot identify an individual concurrent request, so the honest result is a
-  low label rate with a visible reason distribution, not a target rate.
+- The recorder establishes a baseline at the first point where no cached group
+  is moving and no detached work is draining. A continuously busy host may
+  reach that point rarely; when it does not, the bounded window overflows and
+  reports `window_overflow` rather than guessing. Under the measured continuous
+  load, sccache's aggregate counters cannot identify an individual concurrent
+  request, so the honest result is a low label rate with a visible reason
+  distribution, not a target rate.
 - Existing version 1 history remains readable but contributes no labels or
   admission times to the benchmark. An operator who wants new evidence must run
   the updated supervisor; no historical row is retroactively repaired.
@@ -174,6 +178,10 @@ window stays `unknown` with its own reason.
   007.
 - **Keep `queued == 0`.** Rejected: the measured host never satisfies it, and
   the straddle rule already provides the safety the clause was thought to add.
+- **Take a first baseline while cached work is moving.** Rejected: the
+  counters a moving compilation has not yet published land in the next window's
+  delta, which no window accounts for. Holding the movement clauses for every
+  reading is the only sound rule while sccache exposes only aggregate counters.
 - **Flush the overflowed window and keep its baseline.** Rejected: the
   overflowed requests remain in the cumulative counters, so later windows
   cannot balance and the loss becomes permanent.

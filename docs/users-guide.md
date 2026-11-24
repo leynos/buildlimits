@@ -780,9 +780,9 @@ admission field therefore reports `insufficient admission times` until new rows
 are recorded.
 
 The recorder reads statistics at a quiet point. It no longer requires an empty
-queue, and it may take a first baseline while work is moving, because a
-baseline only snapshots the counters. An attributing window still requires that
-no cached group is moving and no detached cache work is draining, and a launch
+queue, but every boundary, including a baseline, waits until no cached group is
+moving and no detached cache work is draining. A compilation still in flight
+would move counters into the next window without belonging to it. A launch
 during the query discards the reading. sccache 0.14 exposes only aggregate
 counters, so a mixed window of concurrent requests stays `unknown`; the host's
 label rate is a property of its workload, not a number the recorder can

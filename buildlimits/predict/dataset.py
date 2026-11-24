@@ -226,9 +226,9 @@ def build_snapshot(  # ruff: ignore[too-many-arguments] - one explicit input per
     history: StoreHistory,
     *,
     now: dt.datetime,
+    history_loss: HistoryLoss,
     journal: JournalProvenance | None = None,
     gap_threshold_seconds: float = 3600.0,
-    history_loss: HistoryLoss | None = None,
 ) -> Snapshot:
     """Assemble the snapshot document from a decoded history.
 
@@ -243,9 +243,11 @@ def build_snapshot(  # ruff: ignore[too-many-arguments] - one explicit input per
         The journal provenance to keep, or None when no journal was queried.
     gap_threshold_seconds : float
         The shortest silence that the snapshot reports as a gap.
-    history_loss : HistoryLoss | None
-        The closed-history loss statement, or None when the reader did not
-        inspect it. The snapshot reports that absence rather than guessing.
+    history_loss : HistoryLoss
+        What the reader established about closed history. It is required
+        because the snapshot must state the scope it really read; a default
+        would let a caller claim the active file alone was read without having
+        decided that.
 
     Returns
     -------
@@ -258,10 +260,5 @@ def build_snapshot(  # ruff: ignore[too-many-arguments] - one explicit input per
         journal=journal,
         events=history.events,
         gaps=find_gaps(history.events, threshold_seconds=gap_threshold_seconds),
-        diagnostics=Diagnostics(
-            store=history.accounting,
-            history=(
-                HistoryLoss.active_file_only() if history_loss is None else history_loss
-            ),
-        ),
+        diagnostics=Diagnostics(store=history.accounting, history=history_loss),
     )

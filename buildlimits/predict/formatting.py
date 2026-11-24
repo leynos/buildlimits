@@ -4,10 +4,8 @@ A value that is not known is rendered as a dash everywhere, so a missing
 measurement is never mistaken for a zero.
 """
 
+import collections.abc as cabc
 import typing as typ
-
-if typ.TYPE_CHECKING:
-    import collections.abc as cabc
 
 MISSING = "-"
 
@@ -101,12 +99,15 @@ def as_counts(value: object) -> str:
     --------
     >>> as_counts({"miss": 2, "hit": 10})
     'hit=10, miss=2'
+    >>> from types import MappingProxyType
+    >>> as_counts(MappingProxyType({"hit": 3}))
+    'hit=3'
     >>> as_counts({})
     'none'
     """
-    if not isinstance(value, dict):
+    if not isinstance(value, cabc.Mapping):
         return MISSING
-    counts = typ.cast("dict[str, object]", value)
+    counts = typ.cast("cabc.Mapping[str, object]", value)
     return (
         ", ".join(f"{name}={as_count(count)}" for name, count in sorted(counts.items()))
         or "none"

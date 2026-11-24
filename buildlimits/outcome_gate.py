@@ -12,12 +12,13 @@ if typ.TYPE_CHECKING:
 class QuietInputs:
     """Identifier-free inputs needed to decide whether a reading may start.
 
-    ``has_baseline`` separates the two jobs a reading can do. Establishing a
-    baseline only snapshots the counters, so moving work and detached drain do
-    not make it unsafe: any request already in the window is accounted for,
-    and a launch during the query is refused by the straddle rule. Attributing
-    a window needs every launch since the baseline to have ended, so moving
-    work and detached drain remain blocking clauses there.
+    Every reading needs the same boundary. A baseline is not the cheaper job it
+    looks like: sccache increments its counters when a compilation finishes, so
+    a request still in flight when the baseline is taken contributes to the
+    *next* window's delta while belonging to no window at all. That window
+    cannot balance, and the label it would have carried is lost. A baseline is
+    therefore taken only when no cached compilation is in flight, exactly as an
+    attributing reading is.
     """
 
     counts: Counts
@@ -26,7 +27,6 @@ class QuietInputs:
     is_recovery_idle: bool
     has_barrier: bool
     has_query_in_flight: bool
-    has_baseline: bool = True
 
 
 def quiet_point(inputs: QuietInputs) -> GateReason | None:
@@ -37,11 +37,12 @@ def quiet_point(inputs: QuietInputs) -> GateReason | None:
     the whole reading, so requiring an empty queue added no safety and made a
     reading impossible on a host that keeps work queued continuously.
 
-    A baseline reading does not require a motionless host either: it only needs
-    the safety clauses, because it snapshots the counters without attributing
-    any window. An attributing reading additionally requires no cached group
-    to be moving and no detached work to be draining, so every launch in its
-    window has ended cleanly.
+    Cached movement and detached drain are clauses for a baseline as well as
+    for an attributing reading. Their counters are cumulative, so a cached
+    compilation that is still in flight when the boundary is read adds to the
+    following delta without appearing in the following window. Requiring both
+    to be clear means every delta is composed only of launches the window
+    holds.
 
     Returns
     -------
@@ -65,22 +66,13 @@ def quiet_point(inputs: QuietInputs) -> GateReason | None:
     >>> queued = dc.replace(inputs, counts=dc.replace(counts, queued=647))
     >>> quiet_point(queued) is None
     True
-    >>> first = dc.replace(queued, has_baseline=False)
-    >>> quiet_point(first) is None
-    True
-    >>> moving = dc.replace(
-    ...     first, counts=dc.replace(first.counts, cached_moving=3)
-    ... )
-    >>> quiet_point(moving) is None
-    True
+    >>> moving = dc.replace(queued, counts=dc.replace(counts, cached_moving=3))
+    >>> quiet_point(moving)
+    'cached_moving'
     """
-    clauses: list[tuple[bool, GateReason]] = []
-    if inputs.has_baseline:
-        clauses += [
-            (inputs.counts.cached_moving == 0, "cached_moving"),
-            (inputs.counts.server_drain == 0, "server_drain"),
-        ]
-    clauses += [
+    clauses: list[tuple[bool, GateReason]] = [
+        (inputs.counts.cached_moving == 0, "cached_moving"),
+        (inputs.counts.server_drain == 0, "server_drain"),
         (inputs.is_reachable, "unreachable"),
         (inputs.is_cache_allowed, "held"),
         (inputs.is_recovery_idle, "recovering"),

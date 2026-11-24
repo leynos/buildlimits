@@ -16,7 +16,33 @@ if typ.TYPE_CHECKING:
     from pathlib import Path
 
     from buildlimits.predict.dataset import Snapshot
-    from buildlimits.predict.journal_provenance import JournalProvenance
+    from buildlimits.predict.journal_provenance import (
+        JournalProvenance,
+        ObserverAccounting,
+    )
+
+
+def _observer_measured_anything(observer: ObserverAccounting) -> bool:
+    """Report whether any observer counter in the window is non-zero.
+
+    The scalar counters are the denominators every map is drawn from. A window
+    that recorded only a failed reading, for example, has zero requests and
+    outcomes but a non-zero failure count, and that failure must not be hidden.
+
+    Returns
+    -------
+    bool
+        True when at least one observer counter was recorded.
+    """
+    return any((
+        observer.requests,
+        observer.outcomes,
+        observer.store_records,
+        observer.store_discarded,
+        observer.readings,
+        observer.readings_skipped,
+        observer.readings_failed,
+    ))
 
 
 def report_snapshot(snapshot: Snapshot, output: Path) -> None:
@@ -100,8 +126,8 @@ def _report_journal(note: JournalProvenance) -> None:
     if observer is None:
         print("observer: the snapshot carries no observer-count block")
         return
-    if not observer.requests and not observer.outcomes:
-        print("observer: the journal window held no admission or outcome events")
+    if not _observer_measured_anything(observer):
+        print("observer: the journal window held no observer counts")
         return
     print(
         f"observer: requests={observer.requests} outcomes={observer.outcomes} "

@@ -81,7 +81,7 @@ def test_the_report_states_its_label_loss_denominators(
             "admission_recorded": 3,
             "admission_missing": 5,
             "labels": 3,
-            "cacheable_records": 6,
+            "cacheable_records": 8,
             "cacheable_labels": 3,
         },
         "history": {

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 from outcome_test_helpers import attributed_record
-from predict_test_helpers import write_json
+from predict_test_helpers import ACTIVE_FILE_ONLY, write_json
 
 from buildlimits.metrics_records import Record
 from buildlimits.outcome_record_format import DecodedStore, StoreHeader
@@ -54,7 +54,10 @@ def _document(journal: JournalProvenance | None = None) -> dict[str, object]:
     """
     note = _counts_note() if journal is None else journal
     snapshot = build_snapshot(
-        _history(attributed_record(outcome="hit")), now=NOW, journal=note
+        _history(attributed_record(outcome="hit")),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+        journal=note,
     )
     return snapshot_to_dict(snapshot)
 

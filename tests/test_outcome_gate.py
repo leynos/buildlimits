@@ -26,7 +26,6 @@ def ready_inputs() -> QuietInputs:
         is_recovery_idle=True,
         has_barrier=False,
         has_query_in_flight=False,
-        has_baseline=True,
     )
 
 
@@ -46,11 +45,17 @@ def test_queued_work_does_not_block_a_reading(ready_inputs: QuietInputs) -> None
     )
 
 
-def test_a_first_baseline_may_run_while_work_moves(ready_inputs: QuietInputs) -> None:
-    """A baseline snapshots counters, so moving work does not make it unsafe."""
-    first = dc.replace(
+def test_a_boundary_is_not_read_while_cached_work_moves(
+    ready_inputs: QuietInputs,
+) -> None:
+    """A baseline holds until no cached compilation can still move a counter.
+
+    A launch in flight when the boundary is read adds to the next window's
+    delta without appearing in that window, so its label would be lost or
+    misread. No reading, baseline included, may start while one is moving.
+    """
+    moving = dc.replace(
         ready_inputs,
-        has_baseline=False,
         counts=dc.replace(
             ready_inputs.counts,
             queued=647,
@@ -59,12 +64,8 @@ def test_a_first_baseline_may_run_while_work_moves(ready_inputs: QuietInputs) ->
         ),
     )
 
-    assert quiet_point(first) is None, (
-        "a baseline reading needs only the safety clauses"
-    )
-    blocked = dc.replace(first, is_reachable=False)
-    assert quiet_point(blocked) == "unreachable", (
-        "the safety clauses still block a baseline"
+    assert quiet_point(moving) == "cached_moving", (
+        "a moving cached group blocks the boundary"
     )
 
 

@@ -64,8 +64,16 @@ The recorder could open a statistics read only when `queued == 0` and
 the queue clause never held. The bounded window then filled to 64 entries and
 flushed every launch as unattributed. The flush kept the old statistics
 baseline, so the overflowed requests remained in sccache's cumulative counters
-and the next window could not balance either. A first baseline also required a
-motionless host, even though a baseline is only a counter snapshot.
+and the next window could not balance either.
+
+An early revision also relaxed `cached_moving == 0` and `server_drain == 0` for
+the first baseline, on the reasoning that a baseline only snapshots the
+counters. That is unsound with aggregate counters: a compilation still in
+flight when the baseline is read contributes its remaining counters to the next
+window's delta while belonging to no window. Review rejected the relaxation,
+and the movement clauses now hold for every reading. Only the queue clause is
+removed, because the straddle rule already refuses a launch that starts during
+the query.
 
 The second gap was independent: `OutcomeRecord` had a label time and a runtime
 but no admission time, so the benchmark could not prove that a prediction used
@@ -84,9 +92,10 @@ only information available before admission.
 - The dataset command records the observer's own journal counts, including
   admitted requests by cache path and backend, published outcomes by result and
   reason, writer appends and evictions, and reading skips and failures.
-- The quiet-point gate no longer requires an empty queue, and a first baseline
-  may be read while work moves. An attributing reading still requires no cached
-  group to be moving and no detached work to be draining.
+- The quiet-point gate no longer requires an empty queue. Every reading,
+  baseline included, still requires no cached group to be moving and no
+  detached work to be draining, so a delta only ever contains launches its
+  window holds.
 - A window overflow now resets the baseline, so the overflowed requests cannot
   poison later windows.
 

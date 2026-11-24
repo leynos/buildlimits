@@ -10,6 +10,7 @@ from outcome_test_helpers import OBSERVED_AT, cache_key
 from buildlimits import outcome_store_io
 from buildlimits.outcome_record_format import OutcomeRecord, StoreHeader
 from buildlimits.predict import dataset_cli
+from buildlimits.predict.accounting import HistoryLoss
 from buildlimits.predict.config_loader import load_config
 from buildlimits.predict.dataset import Snapshot, Source
 from buildlimits.predict.events import Event
@@ -26,6 +27,15 @@ if typ.TYPE_CHECKING:
     from buildlimits.predict.events import Label
 
 STORE_HEADER = StoreHeader("fixed-salt", dt.datetime(2026, 10, 24, tzinfo=dt.UTC))
+
+ACTIVE_FILE_ONLY = HistoryLoss.active_file_only()
+"""The scope of a test that decodes one in-memory store file.
+
+A test builds its history from a single decoded file, so it has read the
+active file and nothing else. Stating that scope explicitly is what
+`build_snapshot` requires: the snapshot records what the reader established,
+never an assumed default.
+"""
 
 
 def hand_event(

@@ -44,6 +44,22 @@ NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
 DATED = OBSERVED_AT + dt.timedelta(hours=1)
 
 
+from predict_test_helpers import ACTIVE_FILE_ONLY
+
+"""Snapshot extraction, redaction and journal-provenance contracts."""
+if typ.TYPE_CHECKING:
+    from buildlimits.outcome_vocabulary import CacheResult
+    from buildlimits.predict.dataset import Snapshot
+NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
+DATED = OBSERVED_AT + dt.timedelta(hours=1)
+"""Snapshot extraction, redaction and journal-provenance contracts."""
+if typ.TYPE_CHECKING:
+    from buildlimits.outcome_vocabulary import CacheResult
+    from buildlimits.predict.dataset import Snapshot
+NOW = dt.datetime(2026, 11, 17, 12, tzinfo=dt.UTC)
+DATED = OBSERVED_AT + dt.timedelta(hours=1)
+
+
 def _decoded(records: tuple[object, ...]) -> DecodedStore:
     """Wrap records in a store header."""
     return DecodedStore(StoreHeader("fixed-salt", NOW), typ.cast("typ.Any", records))
@@ -56,7 +72,11 @@ def _history(*records: object) -> StoreHistory:
 
 def _one_hit_snapshot() -> Snapshot:
     """Return a snapshot holding one attributed hit."""
-    return build_snapshot(_history(attributed_record(outcome="hit")), now=NOW)
+    return build_snapshot(
+        _history(attributed_record(outcome="hit")),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+    )
 
 
 @pytest.mark.parametrize(
@@ -84,7 +104,10 @@ def test_snapshot_redacts_identity_and_keeps_store_order() -> None:
     )
     earlier_stamp = attributed_record(outcome="miss")
     snapshot = build_snapshot(
-        _history(later_stamp, earlier_stamp), now=NOW, gap_threshold_seconds=60.0
+        _history(later_stamp, earlier_stamp),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+        gap_threshold_seconds=60.0,
     )
 
     assert [event.label for event in snapshot.events] == ["hit", "miss"], (
@@ -146,6 +169,7 @@ def test_unknown_outcomes_are_counted_but_not_labelled() -> None:
             attributed_record(outcome="declined"),
         ),
         now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
     )
     stats = snapshot.stats()
 
@@ -158,7 +182,9 @@ def test_window_summaries_never_become_events() -> None:
     """Window summaries carry no compilation identity and are excluded."""
     summary = window_summary(observed_at=OBSERVED_AT)
     snapshot = build_snapshot(
-        _history(summary, attributed_record(outcome="miss")), now=NOW
+        _history(summary, attributed_record(outcome="miss")),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
     )
 
     assert len(snapshot.events) == 1, "summary excluded"
@@ -172,7 +198,10 @@ def test_gaps_report_silences_over_the_threshold() -> None:
         outcome="hit", observed_at=OBSERVED_AT + dt.timedelta(hours=2)
     )
     snapshot = build_snapshot(
-        _history(first, second), now=NOW, gap_threshold_seconds=3600.0
+        _history(first, second),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+        gap_threshold_seconds=3600.0,
     )
 
     assert len(snapshot.gaps) == 1, "one gap over an hour"
@@ -187,7 +216,7 @@ def test_gap_detection_ignores_short_silences() -> None:
             outcome="miss", observed_at=OBSERVED_AT + dt.timedelta(seconds=30)
         ),
     )
-    snapshot = build_snapshot(_history(*events), now=NOW)
+    snapshot = build_snapshot(_history(*events), now=NOW, history_loss=ACTIVE_FILE_ONLY)
 
     assert not find_gaps(snapshot.events, threshold_seconds=60.0), "no gap"
 
@@ -200,7 +229,12 @@ def test_snapshot_round_trip_preserves_events_and_gaps(tmp_path: Path) -> None:
             outcome="miss", observed_at=OBSERVED_AT + dt.timedelta(hours=3)
         ),
     )
-    snapshot = build_snapshot(_history(*records), now=NOW, gap_threshold_seconds=60.0)
+    snapshot = build_snapshot(
+        _history(*records),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+        gap_threshold_seconds=60.0,
+    )
     path = tmp_path / "history.jsonl"
 
     save_snapshot(path, snapshot)
@@ -364,7 +398,11 @@ def test_an_incomplete_observer_block_is_refused() -> None:
 
 def test_source_provenance_records_the_store_header() -> None:
     """The snapshot keeps the salt identifier and write time it read."""
-    snapshot = build_snapshot(_history(attributed_record(outcome="hit")), now=NOW)
+    snapshot = build_snapshot(
+        _history(attributed_record(outcome="hit")),
+        now=NOW,
+        history_loss=ACTIVE_FILE_ONLY,
+    )
     source = snapshot.source
 
     assert dc.asdict(source)["salt_id"] == "fixed-salt", "salt retained"
