@@ -83,7 +83,7 @@ def label_batches(events: cabc.Sequence[Event]) -> tuple[tuple[int, ...], ...]:
     >>> from buildlimits.predict.events import EPOCH, Event
     >>> label = EPOCH + dt.timedelta(seconds=5)
     >>> verified = Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1,
-    ...                  label_available_at=label)
+    ...                  label_observed_verified=True)
     >>> label_batches((verified,))
     ((0,),)
     """
@@ -138,11 +138,11 @@ def prediction_moments(
     >>> from buildlimits.predict.events import EPOCH, Event
     >>> label = EPOCH + dt.timedelta(seconds=5)
     >>> outcome = Event("a" * 64, "git", EPOCH, label, "hit", 0.1,
-    ...                 label_available_at=label)
+    ...                 label_observed_verified=True)
     >>> prediction_moments((outcome,))
     ((0,),)
     >>> known_first = Event("a" * 64, "git", label, EPOCH, "hit", 0.1,
-    ...                     label_available_at=EPOCH)
+    ...                     label_observed_verified=True)
     >>> prediction_moments((known_first,))
     ()
     """
@@ -200,7 +200,8 @@ def admission_schedule(
     Examples
     --------
     >>> from buildlimits.predict.events import EPOCH, Event
-    >>> first = Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1)
+    >>> first = Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1,
+    ...               label_observed_verified=True)
     >>> stream = (first,)
     >>> tuple(admission_schedule(stream, prediction_moments(stream),
     ...                          released_labels(stream)))
@@ -249,7 +250,7 @@ def features(  # ruff: ignore[too-many-locals]  # one accumulator per feature di
     >>> from buildlimits.predict.events import EPOCH, Event
     >>> first = features(
     ...     (Event("a" * 64, "git", EPOCH, EPOCH, "hit", 0.1,
-    ...            label_available_at=EPOCH),),
+    ...            label_observed_verified=True),),
     ...     load_window_seconds=60.0,
     ... )[0]
     >>> first is not None and first.age_seconds is None and first.load == 0

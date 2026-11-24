@@ -13,14 +13,16 @@ stream, because the walk already holds one answer per event.
 
 import typing as typ
 
-from buildlimits.predict.events import scored_label
+from buildlimits.predict.events import label_moment, scored_label
 from buildlimits.predict.metrics import Metrics, ScoredRow, per_origin, summarize
 
 if typ.TYPE_CHECKING:
     import collections.abc as cabc
+    import datetime as dt
 
     from buildlimits.predict.config import Config
     from buildlimits.predict.ensemble_runs import EnsembleRun
+    from buildlimits.predict.events import Event
     from buildlimits.predict.harness import Walk
     from buildlimits.predict.metrics import Phase
 
@@ -169,13 +171,38 @@ def _scored_rows(
                 predictor=name,
                 identity=event.identity,
                 origin=event.origin,
-                observed_at=event.observed_at,
+                available_at=_verified_moment(event),
                 probability=probability,
                 outcome=1 if label == "hit" else 0,
                 phase=phase,
             ),
         ))
     return tuple(scored)
+
+
+def _verified_moment(event: Event) -> dt.datetime:
+    """Return an event's verified label-availability moment.
+
+    Only predictable events reach this helper: :func:`rows_for` skips every
+    event the walk gave no row, and a row exists only for an event with a
+    verified availability.
+
+    Returns
+    -------
+    datetime
+        The verified availability moment.
+
+    Raises
+    ------
+    AssertionError
+        If a predictable event has no verified availability, which would mean
+        the walk and this scoring pass disagreed about the same stream.
+    """
+    moment = label_moment(event)
+    if moment is None:
+        msg = "a predictable event must carry a verified availability time"
+        raise AssertionError(msg)
+    return moment
 
 
 def rows_for(

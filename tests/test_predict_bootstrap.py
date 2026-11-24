@@ -261,7 +261,7 @@ def test_pairing_ignores_the_observed_time() -> None:
     first = (_row(0.2, 1), _row(0.8, 0))
     second = (_row(0.6, 1), _row(0.9, 0))
     shifted = tuple(
-        dc.replace(row, observed_at=EPOCH + dt.timedelta(days=index))
+        dc.replace(row, available_at=EPOCH + dt.timedelta(days=index))
         for index, row in enumerate(second)
     )
 

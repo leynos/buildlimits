@@ -1,0 +1,157 @@
+# Record authoritative admission and label-availability times for cache prediction replay
+
+This ExecPlan records the implementation and evidence for
+[issue #69](https://github.com/leynos/buildlimits/issues/69). It refines the
+outcome store and recorder in
+[ADR 005](../adrs/adr-0005-cache-outcome-recording.md) and the admission-time
+evidence in
+[ADR 011](../adrs/adr-0011-cache-outcome-admission-time-and-label-loss-accounting.md),
+and it records the timing and correlation contract in
+[ADR 012](../adrs/adr-0012-cache-outcome-timing-and-correlation.md). The
+benchmark algorithms in
+[issue #60](https://github.com/leynos/buildlimits/issues/60) are unchanged:
+this is bounded instrumentation, schema and replay-integration work.
+
+## Status
+
+Implemented on the issue #69 branch, stacked on the issue #68 branch. The live
+host service has not been upgraded; a controlled real-sccache run is the
+evidence that new rows carry the timing group, and no historical row is
+retroactively repaired.
+
+## The problem
+
+Two independent gates must hold before the offline benchmark may score a
+record: sufficient trustworthy labels, and trustworthy decision and
+label-availability times. Issue #68 owns the first gate and the diagnosis of
+label loss. This issue owns the second.
+
+The version 2 store recorded the admission moment but not the moment the
+observer could justify a label. `observed_at` was a completion-derived stamp:
+the attribution path copied one launch's completion time onto every row of a
+window, chosen from reversed launch order. The replay then treated that value
+as the time the label became knowable. A label accepted at time 5 could
+therefore carry a completion stamp of time 2, and a prediction admitted at time
+3 could read it even though the evidence had not been accepted yet.
+
+The store also had no identity for one invocation. A cache key recurs across
+compilations, so concurrent identical invocations, retries, process-identifier
+reuse and supervisor restarts were indistinguishable. Nothing in the retained
+data could prove that an admission time and a label belonged to the same
+attempt, and nothing could tell a retried append from a contradictory one.
+
+## What changed
+
+- The store format is version 3. An outcome row adds `completed_at`,
+  `label_available_at`, `attempt` and `supervisor_generation` as one complete
+  timing group, written together or not at all. Version 1 and 2 rows stay
+  readable and keep their original fields.
+- The supervisor marks the admission decision in its launch handler, before
+  the stray-process guard or the fork. `Groups.place` only fills an entry a
+  direct caller did not mark.
+- The recorder driver pairs the monotonic poll with the injected UTC clock, so
+  an accepted reading names the poll boundary as `label_available_at`. Each row
+  keeps its own `completed_at`; availability never depends on reversed launch
+  order.
+- A bounded `attempt` plus a per-process `supervisor_generation` identify one
+  invocation. An exact repeated append is an idempotent duplicate; a
+  contradictory pair is excluded rather than resolved.
+- The snapshot format is version 3 and carries every timing field. The replay
+  releases a label only at its verified availability time, never at
+  `observed_at`, and never releases, predicts or scores an unverified row.
+  Equal-time batching and the tuning/held-out split both use availability.
+- The snapshot loader refuses a history whose verified availability times
+  decrease in append order, on save as well as load. No monotonic absolute
+  value is persisted; readings from unrelated boot epochs cannot be compared.
+- `SnapshotStats`, the dataset command and the benchmark report separately:
+  labelled records, records with recorded and usable decision timing, records
+  with recorded and usable availability, usable scored records, and exclusions
+  by closed reason. The benchmark adds an
+  `insufficient label-availability times` status beside the existing admission
+  and held-out statuses.
+
+## Acceptance evidence
+
+The issue's regressions are covered by `tests/test_predict_timing_contract.py`,
+which uses only injected clocks:
+
+| Scenario                                            | Assertion                                                            |
+| --------------------------------------------------- | -------------------------------------------------------------------- |
+| A completes at 2, B decides at 3, A accepted at 5   | B sees no load and no age from A                                     |
+| A later decision after 5                            | sees A; a decision at exactly 5 does not                             |
+| Concurrent attempts finishing out of launch order   | each row keeps its own completion and availability                   |
+| Any permutation of completion order (property test) | each row's acceptance is its own and the set of moments is unchanged |
+| Exact duplicate append                              | counted and excluded; it never doubles a predictor's history         |
+| Contradictory attempt pair                          | both copies excluded with `conflicting_attempt`                      |
+| Same attempt token in a new generation              | two distinct attempts                                                |
+| Unverified row                                      | excluded with `no_availability_time`, never backdated                |
+| Availability before decision                        | excluded with `admission_after_availability`                         |
+| Old-format snapshot round trip                      | loads, gains no timing and is unscorable                             |
+| Archive round trip                                  | version 3 fields and append order survive byte for byte              |
+
+The producer path is covered by `tests/test_outcome_timing_producer.py`, which
+drives the supervisor's launch handler, the real reducer and the encoder. It
+pins that both clocks are read at the decision before placement advances them,
+that placement never re-stamps a marked entry, and that a poll without a UTC
+pairing leaves the row unverified. `tests/test_outcome_timing_archive.py` pins
+archival preservation and the retention span.
+
+### Controlled real-sccache evidence
+
+`tests/test_sccache_outcome_observer.py` runs the real statistics and
+generation ports against sccache 0.14.0 and a private cache directory. One run
+of the controlled cold then warm compilation reported:
+
+| Row       | Attempt | `admitted_at` | `completed_at` | `label_available_at` |
+| --------- | ------- | ------------- | -------------- | -------------------- |
+| cold miss | `cold`  | 07.697935Z    | 07.933240Z     | 08.708561Z           |
+| warm hit  | `warm`  | 08.710275Z    | 08.782359Z     | 09.719281Z           |
+
+Both rows are `solo`, carry the injected `observer-generation`, and satisfy
+`admitted_at <= completed_at <= label_available_at`. The availability moment
+lands 0.78 s and 0.94 s after completion: it is the poll at which the observer
+accepted the statistics reading, not the completion timestamp. That is the
+whole point of the change. The extraction over the same rows reports two
+labels, every retained row carrying a verified availability, and
+`unknown_outcome` as the only exclusion, because the mixed, timeout and restart
+rows carry no hit or miss label.
+
+This is a controlled measurement, not a live-host reading. It proves the new
+rows are trustworthy; it does not claim that the live service now records them.
+The live supervisor still runs the previous recorder until an operator upgrades
+and restarts it.
+
+## Limitations
+
+- Version 1 and 2 history remains unscorable by design. No availability time is
+  derived from a completion stamp, a runtime, a file modification time or a
+  journal match.
+- The live supervisor still runs the previous recorder. New rows with the
+  timing group require an operator upgrade and restart; this change does not
+  modify the service.
+- The availability moment is a conservative later bound: it is the poll at
+  which the observer accepted the reading, not the instant the sccache child
+  wrote its output. A later bound is safe for causality because it never
+  releases a label early.
+- sccache 0.14 still exposes no supported per-request label, so label coverage
+  remains issue #68's gate and the mixed-window limitation is unchanged. This
+  issue does not close #68: both evidence gates must hold there.
+- Recording stays observation-only: it does not alter FIFO order, token
+  accounting, queue admission, scheduling or any live prediction.
+
+## Verification
+
+```sh
+make check-fmt
+make lint
+make typecheck
+make test
+make markdownlint
+make nixie
+BUILD_LIMITS_SCCACHE_HOST_CHECK=1 make test-sccache-host
+```
+
+The dataset and benchmark commands keep reporting `insufficient data`,
+`insufficient admission times` or `insufficient label-availability times` until
+genuine rows meet both evidence gates. Synthetic test streams are never
+presented as measured host acceptance.

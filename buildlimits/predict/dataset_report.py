@@ -90,6 +90,12 @@ def report_snapshot(snapshot: Snapshot, output: Path) -> None:
         f"after their own label={stats.admission_unusable}"
     )
     print(f"unverified label times: {stats.unverified_label_time}")
+    print(
+        f"timing evidence: scored={stats.scored} "
+        f"excluded={as_counts(stats.excluded)} "
+        f"duplicate attempts={stats.duplicates} "
+        f"conflicting attempts={stats.conflicts}"
+    )
     _report_diagnostics(snapshot)
     if stats.labelled == 0:
         print(
@@ -109,6 +115,13 @@ def report_snapshot(snapshot: Snapshot, output: Path) -> None:
             "no store row carries an admission time at or before its own label, "
             "so the benchmark cannot predict any event and will report "
             "insufficient admission times rather than use the label time",
+            file=sys.stderr,
+        )
+    elif stats.labelled and stats.unverified_label_time == stats.labelled:
+        print(
+            "no store row proves when its label became known, so the benchmark "
+            "cannot release any label and will report insufficient "
+            "label-availability times rather than use a completion time",
             file=sys.stderr,
         )
 

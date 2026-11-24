@@ -35,8 +35,8 @@ class ScoredRow:
         The hashed compilation identity, never used for scoring itself.
     origin : Origin
         The crate's origin class, used for the per-origin split.
-    observed_at : datetime
-        When the label became known.
+    available_at : datetime
+        When the label became knowable, as the observer verified it.
     probability : float | None
         The answer, or None for an abstention.
     outcome : int
@@ -48,7 +48,7 @@ class ScoredRow:
     predictor: str
     identity: str
     origin: Origin
-    observed_at: dt.datetime
+    available_at: dt.datetime
     probability: float | None
     outcome: int
     phase: Phase

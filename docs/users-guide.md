@@ -792,26 +792,46 @@ server produced their rows. A history written before the field existed reports
 `by generation: unavailable` rather than a measured zero, since no later reader
 can recover evidence that was never written.
 
-An outcome row records the UTC wall-clock moment the supervisor admitted the
-compilation. That time is read where admission is decided, not derived from the
-later label time; a row without one, including every row written before the
-version 2 store, remains unscorable. The store format is version 4 and the
-snapshot format is version 4. Version 1 to 3 documents still load, with the
-newer evidence reported as `unrecorded` or absent rather than guessed, and a
-version 1 or 2 snapshot loads with its events' label times treated as
-unverified. A version 3 or later snapshot event states
-`label_observed_verified`; one that omits it, or sets it to a non-boolean, is
-refused. A history whose rows predate the admission field reports
-`insufficient admission times`. Recording new rows is not by itself enough
-either: a row is scored only when it also proves when its label became known,
-which the version 3 store states and no earlier version does. Admission
-coverage alone cannot make a history scorable.
+An outcome row records three separate moments, never one reused as another:
+
+- the UTC decision moment, read where admission is decided rather than derived
+  from the later label time;
+- the UTC completion moment, when the launch's group completion was handled;
+- the label-availability moment, when the observer accepted the reading that
+  justifies the row's label.
+
+The availability moment is the row's own `observed_at`, and
+`label_time_provenance` states whether that time is proof. The current recorder
+writes `verified` because it dates every row at the reading that produced the
+label. A row without the marker predates it, proves nothing about when its
+label became known, and is withheld: the historical observation time is a lower
+bound, never a release time. The snapshot states the same fact as
+`label_observed_verified`, and a version 3 or later event that omits it, or
+sets it to a non-boolean, is refused.
+
+The row also carries a bounded attempt identifier and the supervisor generation
+that wrote it. The pair names one invocation: an exact repeated append is an
+idempotent duplicate and a contradictory pair is excluded, rather than resolved
+by picking a winner. Neither token contains a path, argument, process
+identifier or host name.
+
+Availability is the only label-release boundary. The benchmark releases a label
+to a prediction only when it became available strictly earlier than that
+prediction's decision; a decision at exactly the availability instant does not
+see it. A completion time is retained for provenance and is never used instead.
+
+The store format is version 5 and the snapshot format is version 5. Version 1
+to 4 documents still load, with the newer evidence reported as `unrecorded` or
+absent rather than guessed. A history whose rows predate the availability
+marker reports `insufficient label-availability times` until new rows are
+recorded, and one whose rows predate the admission field reports
+`insufficient admission times`.
 
 A hit or miss label is dated when the statistics reading that produced it
 returned, not when the compilation finished. sccache exposes no label before
 that reading, so the recorded time is the earliest moment the label could have
-been known, and the benchmark never releases it earlier than that. The version
-3 store row states `label_time_provenance: "verified"`, because the recorder
+been known, and the benchmark never releases it earlier than that. The current
+store row states `label_time_provenance: "verified"`, because the recorder
 that wrote it is the one that dates every row at its reading. A version 1 or 2
 row cannot prove which code dated it, so the dataset command marks every one of
 its label times unverified. The benchmark withholds an unverified label rather
@@ -871,17 +891,20 @@ produces the status `insufficient data`, with the counts that were seen and the
 number of labels withheld for an unverified time. A snapshot that holds no
 usable admission time produces `insufficient admission times` instead: its
 records cannot show what was knowable before each decision, so no prediction is
-reported. A snapshot that carries admission times is also refused when its
-recorded observation times run backwards, because the store stamps each record
-when it appends it: a later position with an earlier stamp means the clock
-stepped back, and the recorded times can no longer order real moments. The
-history is then reported as unreadable rather than scored. A history with a
-handful of usable admission times, below the configured held-out minimum,
-produces `insufficient held-out evidence` rather than a verdict. The report
-never pads the history with synthetic rows to reach a threshold, and a negative
-comparison is printed as found rather than explained away. Both commands exit
-with status 0 on success, 1 when the snapshot or store cannot be read or the
-output cannot be written, and 2 on invalid usage or an unreadable configuration.
+reported. A snapshot that records decisions but no verified label-availability
+time produces `insufficient label-availability times`: the decision is
+trustworthy, but nothing proves when the label became knowable, and more labels
+alone do not establish that. A snapshot whose verified availability times run
+backwards is refused, because the recorder stamps each row when it accepts the
+reading: a later position with an earlier stamp means the clock stepped back,
+and the recorded times can no longer order real moments. The history is then
+reported as unreadable rather than scored. A history with a handful of usable
+admission times, below the configured held-out minimum, produces
+`insufficient held-out evidence` rather than a verdict. The report never pads
+the history with synthetic rows to reach a threshold, and a negative comparison
+is printed as found rather than explained away. Both commands exit with status 0
+on success, 1 when the snapshot or store cannot be read or the output cannot be
+written, and 2 on invalid usage or an unreadable configuration.
 
 ### Adapter environment
 

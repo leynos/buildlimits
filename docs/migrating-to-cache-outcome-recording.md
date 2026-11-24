@@ -29,17 +29,20 @@ incompatible configuration fails before any compiler is admitted. The sccache
 version is not checked at startup: an unsupported version is detected on a
 later statistics reading, which disables recording while admission continues.
 
-The store format is version 4 and the snapshot format is version 4. An outcome
-row adds the UTC `admitted_at` moment captured at admission, `outcome_reason`,
-`outcome_attribution`, the `label_time_provenance` marker that says whether its
-label time is proven, and the `generation_digest` that names the sccache
-generation its reading observed; a snapshot adds the bounded label-loss
-diagnostics, including the per-generation breakdown, and, per event, the
-`label_observed_verified` marker that carries the same statement. Version 1 to
-3 stores and snapshots remain readable, and their rows report the newer
-evidence as `unrecorded` or absent, so a history written before the markers
-existed contributes no proven labels, admission times or generation counts to
-the prediction benchmark.
+The store format is version 5 and the snapshot format is version 5. An outcome
+row adds the UTC `admitted_at` moment captured at admission, `outcome_reason`
+and `outcome_attribution` (version 2), the `label_time_provenance` marker that
+says whether its label time is proven (version 3), the `generation_digest`
+that names the sccache generation its reading observed (version 4), and the
+UTC `completed_at` moment with the bounded `attempt` and
+`supervisor_generation` correlation tokens (version 5). A snapshot adds the
+bounded label-loss diagnostics, including the per-generation breakdown, and,
+per event, the `label_observed_verified` marker that carries the same
+statement as the row's provenance, plus the completion moment and correlation
+pair. Version 1 to 4 stores and snapshots remain readable, and their rows
+report the newer evidence as `unrecorded` or absent, so a history written
+before the markers existed contributes no proven labels, admission times,
+generation counts or correlations to the prediction benchmark.
 
 The compatibility promise covers documents a **release** wrote. Snapshots taken
 by intermediate revisions of this branch before the omission fields existed
@@ -153,6 +156,15 @@ release time. Version 3 is the first format that states a row's own label-time
 provenance, so a history recorded by this release is scored; no historical row
 is repaired or re-stamped.
 
+A version 5 row additionally names the one invocation it belongs to, as the
+bounded `attempt` within a `supervisor_generation`, and keeps the launch's own
+`completed_at` beside the reading's moment. The pair is a correlation key, not
+a proof about the label: an exact repeated append is an idempotent duplicate
+and a contradictory pair is excluded from scoring rather than resolved by
+choosing a side. A version 4 or earlier row states no correlation and is
+reported as uncorrelated, which is a measured absence and never a guessed
+identity.
+
 ### Store and snapshot versions
 
 | Format   | Version | What changed                                                                                |
@@ -160,8 +172,10 @@ is repaired or re-stamped.
 | Store    | 2       | `admitted_at`, `outcome_reason` and `outcome_attribution` on an outcome row                 |
 | Store    | 3       | `label_time_provenance`, written `verified` by the recorder that dates a row                |
 | Store    | 4       | `generation_digest`, a salted key naming the sccache generation a reading observed          |
+| Store    | 5       | `completed_at`, `attempt` and `supervisor_generation` on an outcome row                     |
 | Snapshot | 3       | `label_observed_verified` on every event, so a row states its label-time proof              |
 | Snapshot | 4       | `by_generation` and `labels_by_generation` in the diagnostics, the per-generation breakdown |
+| Snapshot | 5       | `completed_at`, `attempt` and `supervisor_generation` on every event                       |
 
 A version 1 or 2 snapshot still loads, with every event's label time treated as
 unverified. A version 3 or later snapshot event that omits the marker is

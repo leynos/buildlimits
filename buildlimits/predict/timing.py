@@ -205,7 +205,7 @@ def _fingerprint(event: Event) -> tuple[object, ...]:
         event.label,
         event.admitted_at,
         event.completed_at,
-        event.label_available_at,
+        event.label_observed_verified,
         event.observed_at,
         event.runtime_seconds,
     )

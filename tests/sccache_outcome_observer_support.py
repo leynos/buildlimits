@@ -170,7 +170,7 @@ def launch(recorder: OutcomeRecorder, group_id: str, item: LaunchPayload) -> Non
         Launched(
             group_id=group_id,
             is_cached=True,
-            payload=item,
+            payload=dc.replace(item, supervisor_generation="observer-generation"),
             now=time.monotonic(),
             admitted_at=dt.datetime.now(dt.UTC),
             observed_at=dt.datetime.now(dt.UTC),
@@ -380,6 +380,25 @@ def assert_extraction(records: list[StoreRecord]) -> None:
     assert stats.admission_usable == stats.events, (
         "each admission precedes its own label"
     )
+    assert stats.availability_recorded == stats.events, (
+        "every retained row records the poll boundary that accepted it"
+    )
+    assert stats.availability_usable == stats.events, (
+        "each availability follows its own admission"
+    )
+    assert stats.scored == 2, "only the controlled miss and hit are scorable"
+    unscorable = sum(
+        1
+        for record in outcomes(tuple(records))
+        if record.outcome not in {"hit", "miss"}
+    )
+    assert stats.excluded == {"unknown_outcome": unscorable}, (
+        "every excluded row names its closed reason, and no other gate rejected "
+        "a row that was verified at the poll boundary"
+    )
+    assert all(
+        record.label_available_at is not None for record in outcomes(tuple(records))
+    ), "every real row carries the acceptance boundary"
     assert snapshot.diagnostics is not None, "the accounting block is present"
     assert snapshot.diagnostics.store.by_result["hit"] == 1, "one real hit"
     assert snapshot.diagnostics.store.by_result["miss"] == 1, "one real miss"
